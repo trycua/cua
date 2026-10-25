@@ -173,6 +173,20 @@ impl SpaceCreated {
 }
 
 /// Options for a local Space (see [`Spaces::create`]).
+/// [`Spaces::space`]'s per-Space turn, and the last failure under it.
+#[derive(Default)]
+struct ConnectGate {
+    turn: Arc<tokio::sync::Mutex<()>>,
+    failed: std::sync::Mutex<Option<FailedConnect>>,
+}
+
+#[derive(Clone)]
+struct FailedConnect {
+    at: std::time::Instant,
+    presence: crate::dial_backoff::Presence,
+    reason: String,
+}
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct LocalProvision {
     /// Image. Default: the canonical Linux image.
@@ -343,6 +357,7 @@ impl SpacesBuilder {
                 probe_timeout: self.probe_timeout.unwrap_or(DEFAULT_PROBE_TIMEOUT),
                 download_dir,
                 connections: tokio::sync::Mutex::new(HashMap::new()),
+                connecting: Default::default(),
                 dial_backoff: Default::default(),
                 mesh: crate::mesh::MeshClients::default(),
                 #[cfg(feature = "spaces-hotspot")]
@@ -549,6 +564,9 @@ pub(crate) struct Inner {
     probe_timeout: Duration,
     pub(crate) download_dir: PathBuf,
     connections: tokio::sync::Mutex<HashMap<String, Space>>,
+    /// One connect at a time per Space; callers that arrive meanwhile take
+    /// its outcome instead of dialing again.
+    connecting: std::sync::Mutex<HashMap<String, Arc<ConnectGate>>>,
     /// Mesh nodes for `relay:` Spaces ([`crate::mesh`]).
     /// Your computers that did not answer, and when to dial them again.
     pub(crate) dial_backoff: crate::dial_backoff::DialBackoff,
@@ -1472,6 +1490,68 @@ impl Spaces {
     pub async fn space(&self, space: &str) -> Result<Space> {
         let id = self.resolve_now(space).await?;
         let key = id.to_string();
+        if let Some(s) = self.cached_connection(&key).await {
+            return Ok(s);
+        }
+        // One connect per Space at a time, run on its own: an app polling
+        // the list gives up on a computer that does not answer and asks
+        // again before the attempt ended. The attempt goes on (a caller's
+        // deadline does not cancel it), and its outcome answers whoever
+        // asked meanwhile, so a slow computer is dialed once, not once a
+        // poll.
+        let gate = self
+            .inner
+            .connecting
+            .lock()
+            .expect("connecting")
+            .entry(key.clone())
+            .or_default()
+            .clone();
+        let arrived = std::time::Instant::now();
+        let me = self.clone();
+        let attempt = tokio::spawn(async move {
+            let _turn = gate.turn.clone().lock_owned().await;
+            if let Some(s) = me.inner.connections.lock().await.get(&key).cloned() {
+                return Ok(s);
+            }
+            // What the relay says about the computer now: one that came
+            // back (online again, or a new session) is dialed afresh.
+            let presence = match &id {
+                SpaceId::Relay { machine_id } => me.relay_presence(machine_id),
+                _ => None,
+            };
+            if let Some(f) = gate.failed.lock().expect("gate").clone()
+                && f.at >= arrived
+                && f.presence == presence
+            {
+                return Err(Error::SpacesdNotAvailable {
+                    space: key,
+                    reason: f.reason,
+                });
+            }
+            let r = me.connect_space(id, key).await;
+            if let Err(e) = &r {
+                let reason = match e {
+                    Error::SpacesdNotAvailable { reason, .. } => reason.clone(),
+                    e => e.to_string(),
+                };
+                *gate.failed.lock().expect("gate") = Some(FailedConnect {
+                    at: std::time::Instant::now(),
+                    presence,
+                    reason,
+                });
+            }
+            r
+        });
+        attempt
+            .await
+            .map_err(|e| Error::Cancelled(format!("the connect to this Space ended: {e}")))?
+    }
+
+    /// The open connection to `key`, unless its route went stale or it can
+    /// move to the mesh now (then it is dropped, to connect again).
+    async fn cached_connection(&self, key: &str) -> Option<Space> {
+        let key = key.to_string();
         // Bound first: the cache's guard must be gone before the lock is
         // taken again below.
         let cached = self.inner.connections.lock().await.get(&key).cloned();
@@ -1490,7 +1570,7 @@ impl Spaces {
                     .upgrade(&key, crate::mesh::UPGRADE_CHECK)
                     .await
                 {
-                    None => return Ok(s),
+                    None => return Some(s),
                     Some(reason) => {
                         tracing::info!(space = %key, %reason, "moving to the mesh");
                         self.inner.connections.lock().await.remove(&key);
@@ -1502,6 +1582,19 @@ impl Spaces {
                 }
             }
         }
+        None
+    }
+
+    /// [`Spaces::space`] behind a type-erased future: the routed Space's
+    /// connect awaits its host's, and the erased type ends the recursion.
+    fn space_of_host(
+        &self,
+        host: String,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Space>> + Send + '_>> {
+        Box::pin(async move { self.space(&host).await })
+    }
+
+    async fn connect_space(&self, id: SpaceId, key: String) -> Result<Space> {
         let name = match (&id, self.inner.registry.get(&key)?) {
             (_, Some(record)) => Some(record.name),
             (SpaceId::Relay { machine_id }, None) => Some(
@@ -1668,7 +1761,7 @@ impl Spaces {
                 // Provided by a host and reached through it: a forward of
                 // its loopback port over the host's own channel.
                 let (machine, port) = crate::id::routed_host(authority).expect("routed");
-                let host = Box::pin(self.space(&format!("relay:{machine}"))).await?;
+                let host = self.space_of_host(format!("relay:{machine}")).await?;
                 let fwd = host
                     .spacesd()?
                     .forward_tcp(cua_spacesd_client::tunnel::ForwardOptions::new(port))

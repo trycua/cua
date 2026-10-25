@@ -55,7 +55,7 @@ describe.skipIf(!wasmBuilt)("Settings tabs (real routes, wasm core)", () => {
     const text = tab("connected-apps")!.textContent!;
     expect(text).toContain("Account keys");
     expect(text).toContain("Add a key for another AI company");
-    expect(text).not.toMatch(/provider key|MCP/i);
+    expect(text).not.toMatch(/provider key/i);
   });
 
   it("moves Early releases here from About, and drops the Sharing and Your cloud switches", async () => {

@@ -78,6 +78,9 @@ struct State_ {
     /// Every machine read answers 503, as the proxy in front of the
     /// relay does while it has no backend.
     reads_down: bool,
+    /// `/m/<id>` of a machine listed offline answers 502 at once, as the
+    /// relay does once past its start-up grace.
+    refuse_offline: bool,
     /// A relay that predates meta patches: the key is ignored.
     ignore_meta_patches: bool,
     /// A relay (or its control plane) that refuses to change who a computer
@@ -972,6 +975,18 @@ async fn proxied(
     if let Some(r) = refused {
         return r;
     }
+    {
+        let st = s.lock().unwrap();
+        let offline = uri
+            .path()
+            .strip_prefix("/m/")
+            .and_then(|rest| rest.split('/').next())
+            .and_then(|id| st.machines.get(id))
+            .is_some_and(|r| !r.machine.online);
+        if st.refuse_offline && offline {
+            return err(StatusCode::BAD_GATEWAY, "the computer is not connected");
+        }
+    }
     if let Some(target) = target
         && headers
             .get(axum::http::header::CONTENT_TYPE)
@@ -1079,7 +1094,16 @@ async fn forward(
         .and_then(|rest| rest.find('/').map(|i| &rest[i..]))
         .unwrap_or(path);
     let url = format!("{}{path}", target.trim_end_matches('/'));
-    let mut req = reqwest::Client::new().request(method, url).body(payload);
+    // One client for every forward: a client per request read the system
+    // proxy settings each time, which serialized a test's many connects.
+    static HTTP: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    let http = HTTP.get_or_init(|| {
+        reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .expect("fake relay client")
+    });
+    let mut req = http.request(method, url).body(payload);
     for (k, v) in headers {
         if k != axum::http::header::HOST && k != axum::http::header::CONTENT_LENGTH {
             req = req.header(k, v);
@@ -1235,6 +1259,12 @@ impl FakeRelay {
             .unwrap()
             .fail_reads
             .extend(statuses.iter().copied());
+    }
+
+    /// While `on`, a request to a computer listed offline answers 502 at
+    /// once, as the relay does past its start-up grace.
+    pub fn set_refuse_offline(&self, on: bool) {
+        self.state.lock().unwrap().refuse_offline = on;
     }
 
     /// While `down`, every machine read answers 503 "no available server"

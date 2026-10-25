@@ -2933,6 +2933,10 @@ pub(crate) fn setup_options_for_request(
     request: AppHostSetupRequest,
 ) -> Result<cua_sdk::HostSetupOptions> {
     let request = core::host::validate_setup(request).map_err(CuaError::InvalidArgument)?;
+    // The default choice is "let my other devices use this computer": its
+    // screen and Spaces. Pass what the core resolved, not the SDK's own
+    // (CLI) profile defaults, so both agree.
+    let (share_desktop, provide_spaces) = request.settings();
     Ok(cua_sdk::HostSetupOptions {
         mode: Some(request.mode),
         relay_url: request.relay_url,
@@ -2942,8 +2946,8 @@ pub(crate) fn setup_options_for_request(
         driver_bin: None,
         runner: None,
         profile: request.profile,
-        share_desktop: request.share_desktop,
-        provide_spaces: request.provide_spaces,
+        share_desktop: Some(share_desktop),
+        provide_spaces: Some(provide_spaces),
     })
 }
 
@@ -2997,6 +3001,31 @@ mod host_setup_tests {
         })
         .unwrap();
         assert_eq!(o.profile.as_deref(), Some("spare"));
+        assert_eq!(
+            (o.share_desktop, o.provide_spaces),
+            (Some(false), Some(true))
+        );
+        // The default choice, "let my other devices use this computer",
+        // turns on the screen and Spaces; a direct connection only the screen.
+        let o = setup_options_for_request(AppHostSetupRequest {
+            mode: "relay".into(),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(
+            (o.share_desktop, o.provide_spaces),
+            (Some(true), Some(true))
+        );
+        let o = setup_options_for_request(AppHostSetupRequest {
+            mode: "direct".into(),
+            direct: Some("10.0.0.2:4000".into()),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(
+            (o.share_desktop, o.provide_spaces),
+            (Some(true), Some(false))
+        );
     }
 }
 

@@ -1929,6 +1929,13 @@ pub async fn run_host(
                 Some(p) => p,
                 None => tokens,
             };
+            let mut opts = opts;
+            if paired.is_none()
+                && let cua_host::HostMode::Relay { url } = &opts.mode
+                && let Ok(device) = crate::devices_cmd::device_auth(url)
+            {
+                opts.device_session = device.try_session().await;
+            }
             let s = host
                 .setup_staged(opts, tokens)
                 .await

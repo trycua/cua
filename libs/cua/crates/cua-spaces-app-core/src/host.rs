@@ -225,11 +225,14 @@ pub struct HostSetupRequest {
 
 impl HostSetupRequest {
     /// `(share_desktop, provide_spaces)` the request asks for: the
-    /// profile's, then each explicit setting.
+    /// profile's, then each explicit setting. The default profile is one
+    /// choice, "let my other devices use this computer": its screen and
+    /// Spaces (Spaces need the relay, so a direct connection shares only
+    /// the screen).
     pub fn settings(&self) -> (bool, bool) {
         let (mut desktop, mut provide) = match self.profile.as_deref() {
             Some("spare") => (false, true),
-            _ => (true, false),
+            _ => (true, self.mode.trim() != "direct"),
         };
         if let Some(d) = self.share_desktop {
             desktop = d;
@@ -1054,7 +1057,7 @@ it up so you, your teammates and your AI agents can use it from other devices. \
 Cua connects them for you, with no network setup.";
 
 /// The "Use it to" option that shares this computer's screen.
-pub const DESKTOP_CHOICE: &str = "Use this computer from my other devices";
+pub const DESKTOP_CHOICE: &str = "Let my other devices use this computer";
 /// The "Use it to" option for a spare computer that only runs Spaces.
 pub const SPARE_CHOICE: &str = "Run Spaces here and keep its screen private";
 /// The button that sets this computer up (shares its screen).
@@ -1814,7 +1817,7 @@ pub fn form_view(s: &HostFormState, identity: Option<&str>) -> HostFormView {
         let what = if s.spare {
             "This computer runs Spaces, separate computers inside it, that you and your team open from other devices. Its own screen stays private."
         } else {
-            "You and the people you share with can see and use this computer\u{2019}s screen from other devices. Cua connects them for you, with no network setup."
+            "You and the people you share with can see and use this computer\u{2019}s screen, and create Spaces on it, from other devices. Cua connects them for you, with no network setup."
         };
         match identity.filter(|i| !i.is_empty()) {
             _ if s.advanced => {
@@ -2713,6 +2716,28 @@ mod tests {
     }
 
     #[test]
+    fn the_default_choice_turns_on_everything_remote_access_needs() {
+        let relay = validate_setup(HostSetupRequest {
+            mode: "relay".into(),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(relay.settings(), (true, true));
+        let direct = validate_setup(HostSetupRequest {
+            mode: "direct".into(),
+            direct: Some("0.0.0.0:3211".into()),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(direct.settings(), (true, false));
+        // The form's one choice asks for both.
+        assert_eq!(
+            form_view(&form_initial(), None).request.unwrap().settings(),
+            (true, true)
+        );
+    }
+
+    #[test]
     fn setup_settings_are_validated() {
         let spare = validate_setup(HostSetupRequest {
             mode: "relay".into(),
@@ -2730,6 +2755,7 @@ mod tests {
             HostSetupRequest {
                 mode: "relay".into(),
                 share_desktop: Some(false),
+                provide_spaces: Some(false),
                 ..Default::default()
             },
             HostSetupRequest {

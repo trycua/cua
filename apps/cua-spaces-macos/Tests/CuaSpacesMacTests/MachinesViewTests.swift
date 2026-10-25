@@ -105,7 +105,7 @@ struct MachinesViewTests {
             view.groups.flatMap(\.ids).contains(id)
         })
         let me = view.machines.first { $0.current }
-        #expect(me?.toggles.map(\.label) == ["Provide Spaces", "Share this desktop"])
+        #expect(me?.toggles.map(\.label) == ["Let my other devices use this Mac"])
         #expect(me?.toggles.allSatisfy(\.editable) == true)
         #expect(view.summary.contains("online"))
         // Another machine's switches are read-only.

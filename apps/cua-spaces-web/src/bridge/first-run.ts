@@ -466,7 +466,7 @@ export interface FirstRunHook {
   connect(agent: string): Promise<void>;
   /** Starts an agent's own sign-in on this computer (`codex login`). */
   signIn(agent: string): Promise<void>;
-  /** A screen's button: `start`, `continue`, `skip`, `not-now` (next screen), `install` (the CLI), `sign-in`, `set-up`, `open-settings`, `allow` (the app's guide to that System Settings pane), `copy`, `add`. */
+  /** A screen's button: `start`, `continue`, `skip`, `not-now` (next screen), `recheck` (read the agents again), `install` (the CLI), `sign-in`, `set-up`, `open-settings`, `allow` (the app's guide to that System Settings pane), `copy`, `add`. */
   act(id: string, settingsUrl?: string | null): Promise<void>;
   /** Copies `text` (the tab shown), else the selected request. */
   copyPrompt(text?: string): Promise<void>;
@@ -827,9 +827,15 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
     setConnecting(agent);
     setConnectError(null);
     try {
-      setAgents(await adapter.call("agents.configure", { agents: [agent] }));
-      const was = readFirstRun().picked ?? [];
-      writeFirstRun({ picked: was.includes(agent) ? was : [...was, agent] });
+      const rows = await adapter.call("agents.configure", { agents: [agent] });
+      setAgents(rows);
+      // Only an app Cua really got into counts as picked: one that failed is not "connected".
+      if (rows.find((r) => r.agent === agent)?.configured) {
+        const was = readFirstRun().picked ?? [];
+        writeFirstRun({ picked: was.includes(agent) ? was : [...was, agent] });
+      } else {
+        setConnectError(rows.find((r) => r.agent === agent)?.detail ?? "Cua is not in its settings.");
+      }
     } catch (e) {
       setConnectError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -929,6 +935,9 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
               : session.openExternal(settingsUrl)
             ).catch(() => {});
           }
+          break;
+        case "recheck":
+          // "Check again": the agents are read again below.
           break;
         case "copy":
           await copyPrompt();

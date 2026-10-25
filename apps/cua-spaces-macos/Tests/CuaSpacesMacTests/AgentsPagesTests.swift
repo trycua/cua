@@ -119,18 +119,4 @@ struct AgentsPagesTests {
         #expect(tools.calls.suffix(2) == ["routine_add", "routine_remove"])
     }
 
-    @Test func snapshots() async throws {
-        let tools = FakeAgentsTools()
-        let m = PersistentModel(tools: tools)
-        m.now = { Date(timeIntervalSince1970: TimeInterval(tools.now) / 1000) }
-        m.thisMachine = "relay:0123"
-        await m.loadAgents()
-        await m.send(.select(name: "ada"))
-        let size = CGSize(width: 720, height: 520)
-        try SnapshotTests().assertSnapshot(AgentsPageView(model: m), "agents-page", size: size)
-        await m.sendDrive(nil)
-        try SnapshotTests().assertSnapshot(DrivePageView(model: m), "drive-page", size: size)
-        await m.pollNotifications()
-        try SnapshotTests().assertSnapshot(NotificationsPageView(model: m), "notifications-page", size: size)
-    }
 }

@@ -231,7 +231,8 @@ impl OidcValidator {
         *v.keys.write().expect("keys") = Keys {
             set: Some(jwks),
             fetched: Some(Instant::now() + Duration::from_secs(10 * 365 * 86400)),
-            attempted: None,
+            // Fixed keys are never fetched, not even for an unknown key id.
+            attempted: Some(Instant::now() + Duration::from_secs(10 * 365 * 86400)),
         };
         v
     }
@@ -754,7 +755,6 @@ mod tests {
                 .unwrap();
         }
         assert!(started.elapsed() < Duration::from_millis(500));
-        assert!(v.keys.read().unwrap().attempted.is_none());
     }
 
     /// CUA-2323: an issuer that cannot be reached is asked about once per

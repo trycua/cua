@@ -569,7 +569,7 @@ mod tests {
             "designated => identifier \"com.trycua.driver.local\" and certificate leaf = H\"d2badc24c61056ede3b61724c54c5a7d1649ce4d\"",
             "",
             "",
-            "com.trycua.driver.local",
+            crate::bundle::LOCAL_BUNDLE_ID,
             false,
         )
         .unwrap();
@@ -583,7 +583,7 @@ mod tests {
             "designated => cdhash H\"1234\"",
             "TEAM123",
             "",
-            "com.trycua.driver.local",
+            crate::bundle::LOCAL_BUNDLE_ID,
             false,
         );
         assert!(adhoc.is_err());
@@ -592,7 +592,7 @@ mod tests {
             "designated => identifier \"com.trycua.driver\" and certificate leaf[subject.OU] = TEAM123",
             "TEAM123",
             "",
-            "com.trycua.driver.local",
+            crate::bundle::LOCAL_BUNDLE_ID,
             false,
         );
         assert!(wrong_bundle.is_err());
@@ -606,7 +606,7 @@ mod tests {
             "designated => anchor apple generic and identifier \"com.trycua.driver\" and certificate leaf = H\"1234\"",
             "",
             "",
-            "com.trycua.driver",
+            crate::bundle::RELEASE_BUNDLE_ID,
             true,
         )
         .is_err());
@@ -620,7 +620,7 @@ mod tests {
             &requirement,
             RELEASE_TEAM_IDENTIFIER,
             "",
-            "com.trycua.driver",
+            crate::bundle::RELEASE_BUNDLE_ID,
             true,
         )
         .is_err());
@@ -632,7 +632,7 @@ mod tests {
             &requirement,
             RELEASE_TEAM_IDENTIFIER,
             &entitlements,
-            "com.trycua.driver",
+            crate::bundle::RELEASE_BUNDLE_ID,
             true,
         )
         .unwrap();
@@ -642,7 +642,7 @@ mod tests {
             "designated => identifier \"com.trycua.driver\" and certificate leaf[subject.OU] = OTHERTEAM",
             "OTHERTEAM",
             "<key>com.apple.application-identifier</key><string>OTHERTEAM.com.trycua.driver</string><key>keychain-access-groups</key><array><string>OTHERTEAM.com.trycua.driver</string></array>",
-            "com.trycua.driver",
+            crate::bundle::RELEASE_BUNDLE_ID,
             true,
         )
         .is_err());

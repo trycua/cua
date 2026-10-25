@@ -1901,17 +1901,18 @@ async fn signing_in_as_another_account_registers_the_host_again() {
     );
 }
 
-/// The Spaces a computer provides belong to the account that signed in when
-/// they were made: another account neither lists nor deletes them, and they
-/// are back when that account signs in again.
+/// A computer that still runs Spaces for the account that was signed in does
+/// not hand them to another account: it stays paused (and says why) until
+/// they are deleted, and then moves over.
 #[tokio::test]
-async fn provided_spaces_stay_with_their_account_across_a_switch() {
+async fn a_switch_waits_while_spaces_run_for_the_previous_account() {
     let relay = FakeRelay::start().await;
     relay.add_account("acct-a", "user-1", Some("ada@example.com"));
     relay.add_account("acct-b", "user-2", Some("bob@example.com"));
     let f = fixture();
     let host = f.host();
-    host.setup(f.relay_opts(&relay.url), &StaticToken("acct-a".into()))
+    let before = host
+        .setup(f.relay_opts(&relay.url), &StaticToken("acct-a".into()))
         .await
         .unwrap();
     let space = crate::provided::ProvidedSpace {
@@ -1922,21 +1923,28 @@ async fn provided_spaces_stay_with_their_account_across_a_switch() {
         ..Default::default()
     };
     crate::provided::save_provided(&host.paths().dir, &[space]).unwrap();
+    let as_b = StaticToken("acct-b".into());
 
-    host.resume_or_switch_account("user-2", &StaticToken("acct-b".into()))
+    let err = host
+        .resume_or_switch_account("user-2", &as_b)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("still runs 1 Space"), "{err}");
+    let s = host.status().await.unwrap();
+    assert!(
+        s.paused_signed_out && !s.sharing,
+        "the old account's access is closed"
+    );
+    assert_eq!(s.machine_id, before.machine_id, "nothing was re-registered");
+    assert_eq!(host.provided_spaces().unwrap().len(), 1);
+
+    crate::provided::save_provided(&host.paths().dir, &[]).unwrap();
+    let s = host
+        .resume_or_switch_account("user-2", &as_b)
         .await
         .unwrap();
-    assert!(host.provided_spaces().unwrap().is_empty());
-    // The host cannot be removed behind the previous account's Spaces.
-    let err = host.remove().await.unwrap_err();
-    assert!(err.to_string().contains("still provides 1 Space"), "{err}");
-
-    host.resume_or_switch_account("user-1", &StaticToken("acct-a".into()))
-        .await
-        .unwrap();
-    let back = host.provided_spaces().unwrap();
-    assert_eq!(back.len(), 1);
-    assert_eq!(back[0].local_space, "local:one");
+    assert!(!s.paused_signed_out && s.sharing);
+    assert_eq!(s.owner.as_deref(), Some("user-2"));
 }
 
 /// What the owner chose for sharing follows the host across accounts: it is

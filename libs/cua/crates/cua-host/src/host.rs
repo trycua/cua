@@ -2025,7 +2025,9 @@ impl Host {
     /// mesh key was bound to it), so this computer registers under a machine
     /// id of the new account and takes a new mesh key; its name, what it
     /// shares and the Provide Spaces setting stay. The previous account's
-    /// allowlist is not carried over. The registration it leaves is kept
+    /// allowlist is not carried over. While it still runs Spaces for the
+    /// previous account it stays paused instead (they are not handed to
+    /// another account). The registration it leaves is kept
     /// (see [`Registrations`]) for when that account signs in again, so
     /// switching back reuses it: no machines pile up on the relay, and what
     /// is tied to the machine (its provided Spaces) stays with it.
@@ -2048,6 +2050,21 @@ impl Host {
                 "this computer is not set up on a relay".into(),
             ));
         };
+        // The Spaces it provides were made for the previous account's
+        // devices and are tied to its registration: they are not handed to
+        // another account. It stays paused until they are deleted (or that
+        // account signs in again).
+        let provided = crate::provided::load_provided(&self.paths.dir)?;
+        if !provided.is_empty() {
+            return Err(Error::InvalidArgument(format!(
+                "this computer still runs {} Space{} for the account that was signed in \
+                 before; delete {} (or sign in to that account again) to share this \
+                 computer with the account you are signed in to now",
+                provided.len(),
+                if provided.len() == 1 { "" } else { "s" },
+                if provided.len() == 1 { "it" } else { "them" },
+            )));
+        }
         let relay = RelayClient::new(&url)?;
         let token = tokens.access_token().await?;
         let mut kept = self.registrations();
@@ -2109,6 +2126,16 @@ impl Host {
                     .await?
             }
         };
+        // The new registration is kept before anything else can fail, so a
+        // retry reuses it instead of making another machine.
+        kept.insert(
+            reg.machine.owner.id.clone(),
+            StoredRegistration {
+                machine_id: reg.machine.id.clone(),
+                machine_token: reg.machine_token.clone(),
+            },
+        );
+        self.save_registrations(&kept)?;
         // The relay's sharing state follows this computer's own choice
         // (a reused registration keeps whatever it had under its account;
         // a new one starts as sharing). Before anything local changes, so a
@@ -2126,10 +2153,7 @@ impl Host {
         // The active registration is not kept; the others are.
         kept.remove(&reg.machine.owner.id);
         self.save_registrations(&kept)?;
-        // The Spaces this computer provides belong to the registration
-        // that created them: the account that signed in now neither lists
-        // nor deletes the previous account's, which come back with it.
-        self.swap_provided(&policy.owner, &reg.machine.owner.id)?;
+
         write_secret(&self.paths.machine_id, &format!("{}\n", reg.machine.id))?;
         write_secret(&self.paths.machine_token(), &reg.machine_token)?;
         if reg.jwks.is_null() {
@@ -2153,53 +2177,6 @@ impl Host {
         // starts the service with the new registration (and keeps a stopped
         // host stopped on the relay), and is what a retry does if that fails.
         self.resume_signed_in(&reg.machine.owner.id).await
-    }
-
-    /// Sets aside the provided Spaces of `from` (the account being left) and
-    /// brings back those set aside for `to`.
-    fn swap_provided(&self, from: &str, to: &str) -> Result<()> {
-        if from == to {
-            return Ok(());
-        }
-        let live = crate::provided::provided_path(&self.paths.dir);
-        if live.exists() {
-            std::fs::rename(&live, self.provided_stash(from))?;
-        }
-        let back = self.provided_stash(to);
-        if back.exists() {
-            std::fs::rename(&back, &live)?;
-        }
-        Ok(())
-    }
-
-    /// Where the provided Spaces of the account `owner` wait while another
-    /// account is signed in.
-    fn provided_stash(&self, owner: &str) -> PathBuf {
-        let digest = ring::digest::digest(&ring::digest::SHA256, owner.as_bytes());
-        self.paths.dir.join(format!(
-            "provided-spaces.{}.json",
-            &hex::encode(digest.as_ref())[..16]
-        ))
-    }
-
-    /// The provided Spaces of every account that signed in here, the signed
-    /// in one's first.
-    fn all_provided(&self) -> Result<Vec<crate::provided::ProvidedSpace>> {
-        let mut all = crate::provided::load_provided(&self.paths.dir)?;
-        if let Ok(dir) = std::fs::read_dir(&self.paths.dir) {
-            for entry in dir.flatten() {
-                let name = entry.file_name().to_string_lossy().into_owned();
-                if name.starts_with("provided-spaces.")
-                    && name != "provided-spaces.json"
-                    && let Ok(b) = std::fs::read(entry.path())
-                    && let Ok(more) =
-                        serde_json::from_slice::<Vec<crate::provided::ProvidedSpace>>(&b)
-                {
-                    all.extend(more);
-                }
-            }
-        }
-        Ok(all)
     }
 
     /// The registrations of this computer under accounts that are not the
@@ -2558,9 +2535,8 @@ impl Host {
         let Some(config) = self.config()? else {
             return Ok(());
         };
-        // Spaces it provides would keep running with nobody to delete them
-        // (those of other accounts that signed in here included).
-        let provided = self.all_provided()?;
+        // Spaces it provides would keep running with nobody to delete them.
+        let provided = crate::provided::load_provided(&self.paths.dir)?;
         if !provided.is_empty() && !uninstalling {
             return Err(Error::InvalidArgument(format!(
                 "this computer still provides {} Space{} ({}); delete {} first (`{} spaces delete <local:name>`)",

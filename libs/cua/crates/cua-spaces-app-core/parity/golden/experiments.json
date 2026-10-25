@@ -107,7 +107,7 @@
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
           "---",
-          "local | This Mac | Container on this Mac (gVisor when installed) | on *",
+          "local | This Mac | Linux, on this Mac | on *",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on",
           "---",
@@ -242,7 +242,7 @@
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
           "---",
-          "local | This Mac | Container on this Mac (gVisor when installed) | on *",
+          "local | This Mac | Linux, on this Mac | on *",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on",
           "---",
@@ -375,7 +375,7 @@
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
           "---",
-          "local | This Mac | Container on this Mac (gVisor when installed) | on *",
+          "local | This Mac | Linux, on this Mac | on *",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on"
         ]
@@ -493,7 +493,7 @@
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
           "---",
-          "local | This Mac | Container on this Mac (gVisor when installed) | on *",
+          "local | This Mac | Linux, on this Mac | on *",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on"
         ]
@@ -611,7 +611,7 @@
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
           "---",
-          "local | This Mac | Container on this Mac (gVisor when installed) | on *",
+          "local | This Mac | Linux, on this Mac | on *",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on"
         ]
@@ -729,7 +729,7 @@
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
           "---",
-          "local | This Mac | Container on this Mac (gVisor when installed) | on *",
+          "local | This Mac | Linux, on this Mac | on *",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on"
         ]
@@ -852,7 +852,7 @@
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
           "---",
-          "local | This Mac | Container on this Mac (gVisor when installed) | on *",
+          "local | This Mac | Linux, on this Mac | on *",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on"
         ]
@@ -977,7 +977,7 @@
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
           "---",
-          "local | This Mac | Container on this Mac (gVisor when installed) | on *",
+          "local | This Mac | Linux, on this Mac | on *",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on",
           "---",
@@ -1102,7 +1102,7 @@
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
           "---",
-          "local | This Mac | Container on this Mac (gVisor when installed) | on *",
+          "local | This Mac | Linux, on this Mac | on *",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on",
           "---",
@@ -1228,7 +1228,7 @@
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
           "---",
-          "local | This Mac | Container on this Mac (gVisor when installed) | on *",
+          "local | This Mac | Linux, on this Mac | on *",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on",
           "---",
@@ -1353,7 +1353,7 @@
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
           "---",
-          "local | This Mac | Container on this Mac (gVisor when installed) | on *",
+          "local | This Mac | Linux, on this Mac | on *",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on",
           "---",

@@ -46,6 +46,20 @@ async function toSummary(openWhenReady: boolean): Promise<HTMLElement> {
 
 const mount = (cli?: DemoOptions["cli"]) => mountApp("/spaces", { failsCreates: false, listsGhost: false, demo: { cli } });
 
+describe.skipIf(!wasmBuilt)("New Space's Summary, in plain words", () => {
+  it("keeps the image and engine under Advanced", { timeout: 20_000 }, async () => {
+    await mount();
+    const dialog = await toSummary(false);
+    const text = () => dialog.querySelector("[data-summary]")!.textContent!;
+    expect(text()).toContain("Linux, on this Mac");
+    expect(text()).not.toMatch(/gVisor|ghcr\.io/);
+    expect(dialog.querySelector("[data-summary-advanced]")).toBeNull();
+    fireEvent.click(dialog.querySelector("[data-advanced-toggle]")!);
+    await waitFor(() => expect(dialog.querySelector("[data-summary-advanced]")).not.toBeNull());
+    expect(dialog.querySelector("[data-summary-advanced]")!.textContent).toMatch(/ghcr\.io\/trycua\/linux/);
+  });
+});
+
 describe.skipIf(!wasmBuilt)("New Space's Summary, in Terminal", () => {
   it("shows the create the wizard would make, under the released app's CLI", { timeout: 20_000 }, async () => {
     await mount();

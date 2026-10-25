@@ -533,6 +533,61 @@ pub fn transfer_text(
     total: Option<u64>,
     per_second: Option<f64>,
 ) -> Option<String> {
+    transfer_text_with(done, total, per_second, Later::default())
+}
+
+/// What still has to happen after the download [`transfer_text_with`] shows,
+/// so its time left covers the whole create and not only the bytes in
+/// flight (the Linux runtime is followed by the image's download, and every
+/// download by unpacking and starting the Space).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Later {
+    /// Bytes still to download after this transfer.
+    pub bytes: u64,
+    /// Seconds of work that move no bytes after the downloads.
+    pub secs: f64,
+    /// The pace to assume until a rate is measured (a size and pace we
+    /// have measured, as for Linux); none promises no time before a rate.
+    pub pace: Option<f64>,
+}
+
+/// [`Later`] for `p`: the image's download while the runtime is being set
+/// up, then the measured start time ([`crate::wizard::CACHED_START_SECS`]),
+/// plus the runtime's own start while it is being set up.
+pub fn later_for(p: &PendingCreate) -> Later {
+    use crate::wizard::{CACHED_START_SECS, find_image, platform_size};
+    let runtime = setting_up_runtime(p);
+    let bytes = if runtime && p.os == SpaceOs::Linux {
+        p.image
+            .as_deref()
+            .and_then(find_image)
+            .and_then(|i| platform_size(&i, p.arch.as_deref()).map(|s| s.download))
+            .unwrap_or(0)
+    } else {
+        0
+    };
+    // The managed runtime boots its VM before the image can be pulled.
+    let boot = if runtime { RUNTIME_BOOT_SECS } else { 0.0 };
+    Later {
+        bytes,
+        secs: CACHED_START_SECS + boot,
+        pace: (p.os == SpaceOs::Linux).then_some(crate::wizard::FIRST_RUN_BYTES_PER_SEC),
+    }
+}
+
+/// Seconds the built-in Linux runtime's VM takes to boot after its download
+/// (part of the measured 25 Oct 2026 first run, CUA-2281).
+const RUNTIME_BOOT_SECS: f64 = 20.0;
+
+/// [`transfer_text`] with the work after the transfer counted in the time
+/// left. Without a measured rate the first-run pace is used, so a time
+/// left is always shown for a known size and is never short.
+pub fn transfer_text_with(
+    done: Option<u64>,
+    total: Option<u64>,
+    per_second: Option<f64>,
+    later: Later,
+) -> Option<String> {
     let done = done?;
     let total = total.unwrap_or(0);
     // Binary units labeled GB/MB/KB, as the wizard sizes downloads.
@@ -569,11 +624,11 @@ pub fn transfer_text(
         let u = unit(r as u64);
         out.push_str(&format!(" \u{b7} {} {}/s", scaled(r as u64, u, 10.0), u.1));
     }
-    if let (Some(r), true) = (rate, total > 0) {
-        out.push_str(&format!(
-            " \u{b7} {}",
-            time_left(total.saturating_sub(done) as f64 / r)
-        ));
+    // Without a rate nothing is promised, unless a measured pace stands in.
+    let pace = rate.or(later.pace);
+    if let (Some(r), true) = (pace, total > 0) {
+        let secs = (total.saturating_sub(done).saturating_add(later.bytes)) as f64 / r + later.secs;
+        out.push_str(&format!(" \u{b7} {}", time_left(secs)));
     }
     Some(out)
 }
@@ -1762,7 +1817,14 @@ pub fn pending_space(p: &PendingCreate) -> Space {
             error: p.error.clone(),
             credit_url: p.credit_url.clone(),
             transfer: (!failed && !p.cancelling && (p.phase == "pulling" || setting_up_runtime(p)))
-                .then(|| transfer_text(p.bytes_done, p.bytes_total, p.bytes_per_second))
+                .then(|| {
+                    transfer_text_with(
+                        p.bytes_done,
+                        p.bytes_total,
+                        p.bytes_per_second,
+                        later_for(p),
+                    )
+                })
                 .flatten(),
             cancellable: !failed && !p.cancelling && p.space_id.is_none(),
             cancelling: p.cancelling,
@@ -1848,6 +1910,46 @@ pub fn compose(registry: &[Space], state: &CreatesState) -> Vec<Space> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn time_left_counts_the_downloads_and_starts_after_this_one() {
+        let mb = 1u64 << 20;
+        // 456 MB of runtime nearly done, at 20 MB/s: the bytes alone say
+        // seconds; the image still to come and the starts say minutes.
+        let alone = transfer_text(Some(440 * mb), Some(456 * mb), Some(20.0 * mb as f64)).unwrap();
+        assert!(alone.ends_with("less than a minute"), "{alone}");
+        let later = Later {
+            bytes: 1100 * mb,
+            secs: 26.0,
+            pace: None,
+        };
+        let whole = transfer_text_with(
+            Some(440 * mb),
+            Some(456 * mb),
+            Some(20.0 * mb as f64),
+            later,
+        )
+        .unwrap();
+        assert!(whole.ends_with("about 1 min"), "{whole}");
+        // No rate yet: the first-run pace stands in, never a bare "less than a minute".
+        let blind = transfer_text_with(
+            Some(0),
+            Some(1100 * mb),
+            None,
+            Later {
+                bytes: 0,
+                secs: 26.0,
+                pace: Some(crate::wizard::FIRST_RUN_BYTES_PER_SEC),
+            },
+        )
+        .unwrap();
+        assert!(blind.ends_with("about 3 min"), "{blind}");
+        // A stall message promises no time.
+        assert_eq!(
+            transfer_text(Some(mb), Some(10 * mb), None).unwrap(),
+            "1.0 of 10.0 MB"
+        );
+    }
 
     #[test]
     fn preflight_issue_reads_the_daemons_report() {

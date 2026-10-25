@@ -42,6 +42,7 @@ pub mod packet;
 pub mod policy;
 pub mod proto;
 pub mod quic;
+mod reconnect;
 pub mod stun;
 pub mod vnet;
 

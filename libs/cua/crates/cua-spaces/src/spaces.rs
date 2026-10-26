@@ -2146,7 +2146,6 @@ impl Spaces {
     /// dropping the returned future (a closed request) does the same.
     pub async fn create(&self, mut opts: SpaceCreate) -> Result<SpaceCreated> {
         use cua_sandbox_core::progress::{Phase, Progress, report};
-        refuse_windows_on_mac(opts.image.as_deref(), cfg!(target_os = "macos"))?;
         crate::registry::validate_labels(&opts.labels)?;
         let egress = opts.egress.clone();
         if !egress.is_empty() {
@@ -2220,6 +2219,12 @@ impl Spaces {
         }
         let sink = opts.progress.take().map(|p| p.0);
         let (key, on) = self.create_key(&mut opts)?;
+        // A Mac cannot create a Windows VM locally yet. The selected host
+        // may be a Linux or Windows machine that can run it, so do not apply
+        // the coordinator's local runtime restriction to remote placement.
+        if on == On::Local {
+            refuse_windows_on_mac(opts.image.as_deref(), cfg!(target_os = "macos"))?;
+        }
         // The record is written before the Space connects, and the volume
         // attaches on connect: its mounts are known by then.
         self.expect_volumes(&key.id, opts.volumes.clone());
@@ -3713,9 +3718,9 @@ async fn wait_serving(space: &Space, deadline: tokio::time::Instant) {
     }
 }
 
-/// Windows Spaces are not offered from a Mac yet: every create failed at the
-/// image pull. Refuses one up front, in words a person can act on. Windows
-/// and Linux hosts are not affected.
+/// A Mac cannot create a Windows VM locally yet. Refuses a local create up
+/// front, in words a person can act on. Remote host placement is checked by
+/// the selected host instead.
 pub(crate) const WINDOWS_COMING_SOON: &str = "Windows Spaces are coming soon on Mac.";
 
 fn refuse_windows_on_mac(image: Option<&str>, host_is_mac: bool) -> Result<()> {

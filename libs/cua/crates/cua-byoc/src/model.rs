@@ -342,6 +342,8 @@ pub struct ProvisionSpec {
     /// group, whose ingress rules name the group itself; nothing is opened
     /// to any address. `None`: the outbound-only group.
     pub peer_ports: Option<(u16, u16)>,
+    /// Expose hardware virtualization extensions when the host type supports it.
+    pub nested_virtualization: bool,
     /// [`ROLE_HOST`] (an elastic pool host: exactly `machine_type` in
     /// `region`, user data passed through) or [`ROLE_SANDBOX`] / empty.
     pub role: String,

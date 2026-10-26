@@ -27,9 +27,10 @@ use std::sync::Mutex;
 use async_trait::async_trait;
 use aws_sdk_ec2::error::ProvideErrorMetadata;
 use aws_sdk_ec2::types::{
-    BlockDeviceMapping, EbsBlockDevice, Filter, HttpTokensState, InstanceMetadataEndpointState,
-    InstanceMetadataOptionsRequest, InstanceType, LocationType, ResourceType, ShutdownBehavior,
-    Tag, TagSpecification, VolumeType,
+    BlockDeviceMapping, CpuOptionsRequest, EbsBlockDevice, Filter, HttpTokensState,
+    InstanceMetadataEndpointState, InstanceMetadataOptionsRequest, InstanceType, LocationType,
+    NestedVirtualizationSpecification, ResourceType, ShutdownBehavior, Tag, TagSpecification,
+    VolumeType,
 };
 use cua_sandbox_core::Error;
 use cua_sandbox_core::byoc::{CloudCredentials, CloudKind};
@@ -337,6 +338,31 @@ pub fn instance_type(family: &str, arch: &str) -> &'static str {
 
 /// The `amd64` twin of an arm64 type Cua picked (the image may only have
 /// an amd64 build).
+pub fn supports_nested_virtualization(instance_type: &str) -> bool {
+    let family = instance_type.split('.').next().unwrap_or_default();
+    matches!(
+        family,
+        "c7i"
+            | "c7i-flex"
+            | "c8i"
+            | "c8i-flex"
+            | "c8id"
+            | "m7i"
+            | "m7i-flex"
+            | "m8i"
+            | "m8i-flex"
+            | "m8id"
+            | "r7i"
+            | "r7iz"
+            | "r8i"
+            | "r8i-flex"
+            | "r8id"
+            | "x8i"
+            | "i7i"
+            | "i7ie"
+    )
+}
+
 fn for_arch(machine_type: &str, arch: &str) -> String {
     if arch != "amd64" {
         return machine_type.to_string();
@@ -670,6 +696,13 @@ impl Aws {
             .tag_specifications(spec_for(ResourceType::Instance))
             .tag_specifications(spec_for(ResourceType::Volume))
             .user_data(base64::engine::general_purpose::STANDARD.encode(&spec.user_data));
+        if spec.nested_virtualization {
+            req = req.cpu_options(
+                CpuOptionsRequest::builder()
+                    .nested_virtualization(NestedVirtualizationSpecification::Enabled)
+                    .build(),
+            );
+        }
         if let Some(g) = group {
             req = req.security_group_ids(g);
         }

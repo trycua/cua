@@ -6745,8 +6745,8 @@ pub struct AppExperiments {
     /// Sharing a Space with other accounts. On unless turned off: a missing
     /// key reads as on (the plans on cua.ai/pricing list sharing).
     pub sharing: bool,
-    /// The New UI (the shared web UI) is the main window: the user's choice
-    /// or, without one, [`new_ui_default`] ([`crate::settings::resolve_new_ui`]).
+    /// The shared web UI is the main window. Always on in the macOS shell
+    /// ([`crate::settings::resolve_new_ui`]); kept for older files and builds.
     pub web_ui: bool,
 }
 
@@ -6788,15 +6788,14 @@ pub struct AppSettings {
     /// Settings); `None`: never chosen ([`crate::login_item::launch_plan`]).
     pub launch_at_login: Option<bool>,
     /// Settings, Experiments: every switch off unless turned on
-    /// ([`crate::experiments`]). Its `webUi` is the New UI as this launch
-    /// shows it ([`resolve_new_ui`]); the file keeps only [`Self::new_ui`]'s
+    /// ([`crate::experiments`]). Its `webUi` is always on in the macOS
+    /// shell ([`resolve_new_ui`]); the file keeps only [`Self::new_ui`]'s
     /// "on" there, the value older builds read.
     pub experiments: AppExperiments,
-    /// The New UI as the user chose it (Settings, Experiments, "Use classic
-    /// UI"); `None`: never chosen, so
-    /// [`crate::experiments::new_ui_default`] decides. An older build's
-    /// saved `webUi: true` reads as `Some(true)`; its `false` was only the
-    /// saved default, so it reads as never chosen ([`load`]).
+    /// The New UI as an older build's "Use classic UI" saved it. Read and
+    /// kept for those builds, never acted on: the web UI is the only UI
+    /// ([`resolve_new_ui`]). An older build's saved `webUi: true` reads as
+    /// `Some(true)`; its `false` was only the saved default ([`load`]).
     pub new_ui: Option<bool>,
     /// Keyvault copies (import ids) the user dismissed from the notch: it no
     /// longer shows them, nothing is revoked or wiped

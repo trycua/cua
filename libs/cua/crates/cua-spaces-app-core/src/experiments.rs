@@ -296,7 +296,10 @@ mod tests {
         for x in [on, Experiments::default()] {
             let p = page(&x);
             assert!(
-                p.sections[0].rows.iter().all(|r| !r.id.contains("classic_ui") && !r.id.contains("web_ui")),
+                p.sections[0]
+                    .rows
+                    .iter()
+                    .all(|r| !r.id.contains("classic_ui") && !r.id.contains("web_ui")),
                 "no New UI row"
             );
             for row in ["experiment:classic_ui", "experiment:web_ui"] {

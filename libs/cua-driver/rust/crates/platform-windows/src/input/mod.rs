@@ -20,9 +20,11 @@ pub use inject::{
     ForegroundLockGuard, NoActivateGuard,
 };
 pub use keyboard::{
-    is_xaml_host_hwnd, post_char, post_key, post_type_text, post_type_text_with_delay,
-    send_key_synthesized, send_key_synthesized_after_focus, send_text_synthesized,
-    send_text_synthesized_after_focus, wait_for_focused_descendant,
+    exe_basename_is_ambiguous_xaml_host, exe_basename_is_xaml_host, exe_basename_of,
+    has_xaml_descendant_window, is_packaged_exe_path, is_xaml_host_class, is_xaml_host_hwnd,
+    post_char, post_key, post_type_text, post_type_text_with_delay, send_key_synthesized,
+    send_key_synthesized_after_focus, send_text_synthesized, send_text_synthesized_after_focus,
+    wait_for_focused_descendant,
 };
 pub use mouse::{
     has_chromium_descendant, is_chromium_target_window, post_click, post_click_screen,

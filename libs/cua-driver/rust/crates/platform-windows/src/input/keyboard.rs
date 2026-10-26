@@ -18,7 +18,7 @@
 use anyhow::{bail, Result};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
-use windows::Win32::Foundation::{BOOL, HWND, LPARAM, TRUE, WPARAM};
+use windows::Win32::Foundation::{BOOL, FALSE, HWND, LPARAM, TRUE, WPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     MapVirtualKeyW, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
     KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE, KEYEVENTF_UNICODE, MAPVK_VK_TO_VSC,
@@ -35,17 +35,26 @@ use crate::win32::{foreground_matches_target_or_owned_window, windows::Foregroun
 
 // ── XAML / UWP host detection ────────────────────────────────────────────────
 //
-// Two routing signals, OR'd:
+// Three routing signals, OR'd:
 //   1. Top-level window class name matches a known XAML host class.
-//   2. Owning process .exe basename matches a known XAML-hosted .exe.
+//   2. Owning process .exe basename matches an unambiguous XAML-hosted .exe.
+//   3. An ambiguous basename (see `AMBIGUOUS_XAML_HOST_EXES`) matches AND
+//      independent evidence supports XAML (packaged image path, or a descendant
+//      XAML host class).
 //
-// The EXE-basename signal is the more reliable of the two: cross-session
-// `GetClassNameW` can return nothing, and modern apps like Win 11 Notepad
-// keep the legacy `"Notepad"` window class even though they render XAML
-// underneath. Diagnostic data captured by `tools::DebugWindowInfoTool`
-// (see CUA-543) confirms `notepad.exe` is the reliable signal for modern
-// Notepad; class name is not.
+// Signal 2 used to be treated as sufficient on its own ("the more reliable of
+// the two"), which misfires on Windows 10: `C:\Windows\System32\notepad.exe`
+// there is the classic Win32 Notepad — top-level class `Notepad`, `Edit` child
+// control, menu bar, no XAML anywhere — while Windows 11 ships a WinUI3 Notepad
+// under the same basename from `...\WindowsApps\`. Both keep the legacy
+// `Notepad` window class, so for that basename the .exe name is a HINT, never a
+// verdict; the CUA-543 diagnostic comparison only ever covered the Win 11 build.
+// Signal 1 also only looked at the top-level class, which misses WinUI3 apps
+// hosted inside a plain Win32 frame (they nest the composition bridge as a
+// child HWND) — hence the descendant probe used by signal 3.
 
+/// Window classes that identify a XAML / WinUI3 / UWP host. Matched against the
+/// top-level class first, then (for ambiguous basenames) against descendants.
 const XAML_HOST_CLASSES: &[&str] = &[
     "ApplicationFrameWindow",
     "WinUIDesktopWin32WindowClass",
@@ -53,13 +62,21 @@ const XAML_HOST_CLASSES: &[&str] = &[
     "Microsoft.UI.Content.DesktopChildSiteBridge",
 ];
 
+/// Exe basenames that are XAML hosts on their own: only a UWP/packaged host
+/// process ever owns a window under these names.
 const XAML_HOST_EXES: &[&str] = &[
-    "notepad.exe",              // Win 11 modern Notepad (UWP-packaged)
     "calculatorapp.exe",        // UWP Calculator
     "calc.exe",                 // some Win 11 builds expose the stub directly
     "applicationframehost.exe", // generic UWP frame host
     "photos.exe",               // UWP Photos
     "systemsettings.exe",       // modern Settings
+];
+
+/// Exe basenames that exist BOTH as a classic Win32 app and as a XAML host
+/// depending on the OS version / packaging, so the basename alone must never
+/// decide the routing. Corroborated by `xaml_host_evidence`.
+const AMBIGUOUS_XAML_HOST_EXES: &[&str] = &[
+    "notepad.exe", // Win 10 classic Win32 Notepad vs Win 11 WinUI3 Notepad (MSIX)
 ];
 
 fn class_name(hwnd: HWND) -> Option<String> {
@@ -72,7 +89,9 @@ fn class_name(hwnd: HWND) -> Option<String> {
     }
 }
 
-fn owning_exe_basename(hwnd: HWND) -> Option<String> {
+/// Full image path of the process owning `hwnd`. `None` when the process can't
+/// be queried (protected process, dead window, cross-session refusal).
+fn owning_exe_path(hwnd: HWND) -> Option<String> {
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Threading::{
         OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT,
@@ -99,13 +118,90 @@ fn owning_exe_basename(hwnd: HWND) -> Option<String> {
     if result.is_err() || len == 0 {
         return None;
     }
-    let path = String::from_utf16_lossy(&buf[..len as usize]);
-    let name = path
-        .rsplit(|c: char| c == '\\' || c == '/')
+    Some(String::from_utf16_lossy(&buf[..len as usize]))
+}
+
+/// Lowercased basename of an image path (`C:\Windows\System32\Notepad.EXE` ->
+/// `notepad.exe`).
+pub fn exe_basename_of(path: &str) -> String {
+    path.rsplit(|c: char| c == '\\' || c == '/')
         .next()
-        .unwrap_or(&path)
-        .to_ascii_lowercase();
-    Some(name)
+        .unwrap_or(path)
+        .to_ascii_lowercase()
+}
+
+fn owning_exe_basename(hwnd: HWND) -> Option<String> {
+    owning_exe_path(hwnd).map(|p| exe_basename_of(&p))
+}
+
+/// `true` when `path` is a packaged (MSIX / Store) payload. Windows 11's modern
+/// Notepad, Calculator, Photos and Settings all run from `...\WindowsApps\...`,
+/// while the classic Win32 apps with the same names live in `C:\Windows\System32`.
+pub fn is_packaged_exe_path(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    lower.contains("\\windowsapps\\") || lower.contains("/windowsapps/")
+}
+
+/// `true` when `cls` is one of the XAML host window classes.
+pub fn is_xaml_host_class(cls: &str) -> bool {
+    XAML_HOST_CLASSES.iter().any(|known| cls == *known)
+}
+
+/// `true` when this exe basename identifies a XAML host on its own. Comparison
+/// is case-insensitive so callers can pass a raw image name.
+pub fn exe_basename_is_xaml_host(basename: &str) -> bool {
+    let candidate = basename.to_ascii_lowercase();
+    XAML_HOST_EXES.iter().any(|known| candidate == *known)
+}
+
+/// `true` when this exe basename is XAML-hosted only on some installs and
+/// therefore needs corroboration (`xaml_host_evidence`).
+pub fn exe_basename_is_ambiguous_xaml_host(basename: &str) -> bool {
+    let candidate = basename.to_ascii_lowercase();
+    AMBIGUOUS_XAML_HOST_EXES
+        .iter()
+        .any(|known| candidate == *known)
+}
+
+/// `true` when a descendant window of `hwnd` carries a XAML host class. WinUI3
+/// desktop apps keep a plain Win32 top-level frame and host their XAML tree in a
+/// child HWND (`Microsoft.UI.Content.DesktopChildSiteBridge`), so the top-level
+/// class check alone cannot see them.
+pub fn has_xaml_descendant_window(hwnd: u64) -> bool {
+    let parent = HWND(hwnd as *mut _);
+    if parent.0.is_null() {
+        return false;
+    }
+
+    unsafe extern "system" fn find_xaml_class(child: HWND, lparam: LPARAM) -> BOOL {
+        let found = &mut *(lparam.0 as *mut bool);
+        if let Some(cls) = class_name(child) {
+            if is_xaml_host_class(&cls) {
+                *found = true;
+                return FALSE; // stop the walk: one hit is enough
+            }
+        }
+        TRUE
+    }
+
+    let mut found = false;
+    unsafe {
+        let _ = EnumChildWindows(
+            parent,
+            Some(find_xaml_class),
+            LPARAM(&mut found as *mut bool as isize),
+        );
+    }
+    found
+}
+
+/// Corroborating evidence for an ambiguous basename: a packaged (MSIX) image
+/// path, or an XAML host window class somewhere below the top-level window.
+pub fn xaml_host_evidence(hwnd: u64, exe_path: Option<&str>) -> bool {
+    if exe_path.map(is_packaged_exe_path).unwrap_or(false) {
+        return true;
+    }
+    has_xaml_descendant_window(hwnd)
 }
 
 /// `true` iff the given HWND should bypass the PostMessage keyboard
@@ -113,17 +209,19 @@ fn owning_exe_basename(hwnd: HWND) -> Option<String> {
 /// mechanism). See module docs + CUA-543 for the routing rationale.
 pub fn is_xaml_host_hwnd(hwnd: u64) -> bool {
     let h = HWND(hwnd as *mut _);
-    if let Some(cls) = class_name(h) {
-        if XAML_HOST_CLASSES.iter().any(|known| cls == *known) {
-            return true;
-        }
+    if class_name(h).as_deref().map(is_xaml_host_class).unwrap_or(false) {
+        return true;
     }
-    if let Some(exe) = owning_exe_basename(h) {
-        if XAML_HOST_EXES.iter().any(|known| exe == *known) {
-            return true;
+    match owning_exe_basename(h).as_deref() {
+        // Unambiguous UWP / packaged host process: the basename is enough.
+        Some(exe) if exe_basename_is_xaml_host(exe) => true,
+        // Ambiguous basename (`notepad.exe`): the name is only a hint, require
+        // independent evidence before routing away from PostMessage.
+        Some(exe) if exe_basename_is_ambiguous_xaml_host(exe) => {
+            xaml_host_evidence(hwnd, owning_exe_path(h).as_deref())
         }
+        _ => false,
     }
-    false
 }
 
 const KEY_DELAY_MS: u64 = 4;
@@ -999,6 +1097,77 @@ fn key_name_to_vk(key: &str) -> Result<VIRTUAL_KEY> {
         }
     };
     Ok(vk)
+}
+
+#[cfg(test)]
+mod xaml_host_detection_tests {
+    use super::*;
+
+    #[test]
+    fn notepad_basename_is_ambiguous_not_sufficient() {
+        // Windows 10's System32 notepad.exe is a classic Win32 app; Windows 11's
+        // packaged notepad.exe is WinUI3. Same basename, so it must never be a
+        // sufficient signal on its own.
+        assert!(exe_basename_is_ambiguous_xaml_host("notepad.exe"));
+        assert!(exe_basename_is_ambiguous_xaml_host("NOTEPAD.EXE"));
+        assert!(!exe_basename_is_xaml_host("notepad.exe"));
+    }
+
+    #[test]
+    fn unambiguous_uwp_basenames_still_decide_alone() {
+        for exe in [
+            "calculatorapp.exe",
+            "calc.exe",
+            "applicationframehost.exe",
+            "photos.exe",
+            "systemsettings.exe",
+        ] {
+            assert!(exe_basename_is_xaml_host(exe), "{exe}");
+            assert!(!exe_basename_is_ambiguous_xaml_host(exe), "{exe}");
+        }
+        assert!(!exe_basename_is_xaml_host("mspaint.exe"));
+        assert!(!exe_basename_is_ambiguous_xaml_host("mspaint.exe"));
+    }
+
+    #[test]
+    fn packaged_paths_are_detected_case_insensitively() {
+        assert!(is_packaged_exe_path(
+            r"C:\Program Files\WindowsApps\Microsoft.WindowsNotepad_11.0_x64__8wekyb3d8bbwe\notepad.exe"
+        ));
+        assert!(is_packaged_exe_path(
+            r"c:\program files\windowsapps\microsoft.windowscalculator_11.0_x64__8wekyb3d8bbwe\calculatorapp.exe"
+        ));
+        assert!(!is_packaged_exe_path(r"C:\Windows\System32\notepad.exe"));
+        assert!(!is_packaged_exe_path(r"C:\Program Files\Notepad++\notepad++.exe"));
+    }
+
+    #[test]
+    fn basename_extraction_handles_both_separators_and_case() {
+        assert_eq!(exe_basename_of(r"C:\Windows\System32\Notepad.EXE"), "notepad.exe");
+        assert_eq!(exe_basename_of("C:/Windows/System32/notepad.exe"), "notepad.exe");
+        assert_eq!(exe_basename_of("notepad.exe"), "notepad.exe");
+    }
+
+    #[test]
+    fn xaml_host_classes_match_the_documented_set() {
+        for cls in [
+            "ApplicationFrameWindow",
+            "WinUIDesktopWin32WindowClass",
+            "Windows.UI.Core.CoreWindow",
+            "Microsoft.UI.Content.DesktopChildSiteBridge",
+        ] {
+            assert!(is_xaml_host_class(cls), "{cls}");
+        }
+        // Classic Win32 top-level classes / child controls must NOT match.
+        for cls in ["Notepad", "Edit", "msctls_statusbar32", "MSPaintApp", "Shell_TrayWnd"] {
+            assert!(!is_xaml_host_class(cls), "{cls}");
+        }
+    }
+
+    #[test]
+    fn null_hwnd_has_no_xaml_descendant() {
+        assert!(!has_xaml_descendant_window(0));
+    }
 }
 
 #[cfg(test)]

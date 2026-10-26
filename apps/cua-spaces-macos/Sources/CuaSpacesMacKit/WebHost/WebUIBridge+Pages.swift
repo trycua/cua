@@ -37,6 +37,15 @@ extension WebUIBridge {
              "teleport.icon", "teleport.thumbnail", "teleport.plan", "teleport.run", "teleport.sites", "teleport.remembered",
              "teleport.streamWindow":
             return try await teleport(method, args)
+        // Links to things you run (`cua share`): the daemon's shares.
+        case "links.list":
+            return ["links": try await model.backend.links().map { BridgeValue.encode($0) }] as [String: Any]
+        case "links.create":
+            let ttl = (args["ttlSeconds"] as? NSNumber).map { $0.uint32Value }
+            return BridgeValue.encode(try await model.backend.createLink(
+                target: try string(args, "target"), access: args["access"] as? String, ttlSeconds: ttl, name: args["name"] as? String))
+        case "links.stop":
+            return ["stopped": try await model.backend.stopLink(id: try string(args, "id"))] as [String: Any]
         case "sharing.list":
             return BridgeValue.encode(try await model.backend.shares(id: try spaceId(args)))
         case "sharing.share":
@@ -44,6 +53,15 @@ extension WebUIBridge {
                 id: try spaceId(args), who: try string(args, "who"), role: try string(args, "role")))
         case "sharing.unshare":
             return BridgeValue.encode(try await model.backend.unshare(id: try spaceId(args), who: try string(args, "who")))
+
+        // Sharing is for teams: who lost access, and "seen" (empty when signed
+        // out or from a server that predates it).
+        case "sharing.removals":
+            guard model.identity != nil, let reader = model.teamsReader else { return [] as [Any] }
+            return BridgeValue.encode(try await reader.shareRemovals())
+        case "sharing.ackRemovals":
+            if model.identity != nil { try await model.teamsReader?.ackShareRemovals() }
+            return NSNull()
 
         // Settings, Agents: the daemon's agent_keys methods (the key travels
         // once, in agentKeys.set's arguments; answers never carry one).
@@ -89,6 +107,18 @@ extension WebUIBridge {
             input["checking"] = true
             return input
 
+        // The in-app update indicator: Sparkle downloads in the background,
+        // and the page asks to restart.
+        case "update.get": return model.updates.updateState.json
+        case "update.install":
+            guard model.updates.updater != nil else { throw Failure.unsupported("Updates are off in this build") }
+            // The app quits to install: answer first, then start.
+            let answer = model.updates.updateState.json
+            if model.updates.updateState.status == .downloaded {
+                DispatchQueue.main.async { [model] in model.updates.installUpdate() }
+            }
+            return answer
+
         // Settings, launch at login
         case "loginItem.get":
             model.readLoginItem()
@@ -101,6 +131,16 @@ extension WebUIBridge {
         case "loginItem.openSettings":
             await model.press(row: "launch-at-login-approve")
             return NSNull()
+
+        // "Add a machine" and "Share": the account's Teams (Settings, Teams)
+        // and the current one.
+        case "teams.list":
+            await model.reloadTeams()
+            var teams: [[String: Any]] = []
+            if case .ready(let list) = model.teamsState {
+                teams = list.map { ["id": $0.id, "alias": $0.alias, "name": $0.name, "role": $0.role, "plan": $0.plan] }
+            }
+            return ["teams": teams, "currentTeamId": model.settings.currentTeamId.map { $0 as Any } ?? NSNull()] as [String: Any]
 
         // Settings, Devices
         case "devices.get", "devices.enroll", "devices.checkEnrolled", "devices.approve", "devices.rename",
@@ -117,6 +157,28 @@ extension WebUIBridge {
             guard let usage = try await relay.relayUsage(), usage.metered else { return NSNull() }
             return BridgeValue.encode(usage)
 
+        // Processor, memory and disk for Home and a Space's page: This
+        // Mac's own numbers (`HostResourceSampler`), read on each call. The
+        // daemon's per-Space numbers join them once it serves `resources`.
+        case "resources.get":
+            return HostResourceSampler.shared.sample().snapshot()
+        // The Machines page: rename a machine, Remove from account (what
+        // each does to which machine is the core's `machines_view`).
+        case "machines.rename":
+            try await model.renameMachine(id: try string(args, "id"), name: try string(args, "name"))
+            return NSNull()
+        case "machines.remove":
+            let machine = (args["machine"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            let device = (args["device"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            guard machine != nil || device != nil else { throw Failure.badArgs("machine or device") }
+            try await model.removeMachine(machine: machine, device: device)
+            return NSNull()
+        // Each machine's own daemon checks its health; the next
+        // `machines.list` view carries the issues.
+        case "machines.checkHealth":
+            await model.checkMachineHealth()
+            return NSNull()
+
         // Settings, Storage
         case "storage.get":
             let storage = model.storage
@@ -129,10 +191,15 @@ extension WebUIBridge {
         case "notifications.list":
             guard model.persistent.canCallTools else { throw Failure.unsupported("Notifications need the cua daemon") }
             await model.persistent.pollNotifications()
-            return BridgeValue.encode(model.persistent.feed)
+            return model.persistent.feedRows()
         case "notifications.markAllRead":
             guard model.persistent.canCallTools else { throw Failure.unsupported("Notifications need the cua daemon") }
             await model.persistent.markAllRead()
+            return NSNull()
+        case "notifications.markRead":
+            guard model.persistent.canCallTools else { throw Failure.unsupported("Notifications need the cua daemon") }
+            guard let ids = args["ids"] as? [String] else { throw Failure.badArgs("ids: array of strings") }
+            await model.persistent.markRead(ids: ids)
             return NSNull()
 
         // Usage events
@@ -142,8 +209,29 @@ extension WebUIBridge {
             // signal here, before the SDK's own check.
             guard let telemetry = model.telemetrySink, telemetry.status().enabled else { return NSNull() }
             let signals = raw.compactMap(Self.telemetrySignal)
+            // The page's first run moved past Welcome: its usage notice was
+            // on screen, so events may be sent from here (this one included).
+            if raw.contains(where: Self.leftWelcome) { telemetry.acknowledgeNotice() }
             if !signals.isEmpty { telemetry.record(signals) }
             return NSNull()
+
+        // The one-time notice that usage data is now linked to the account
+        // (CUA-1881); no telemetry (a bare model) has none.
+        case "telemetry.linkNotice":
+            guard let telemetry = model.telemetrySink else { return NSNull() }
+            let n = telemetry.linkNotice()
+            return ["due": n.due, "title": n.title, "body": n.body, "okLabel": n.okLabel,
+                    "turnOffLabel": n.turnOffLabel, "detailsLabel": n.detailsLabel, "docsUrl": n.docsUrl] as [String: Any]
+        case "telemetry.acknowledgeLinkNotice":
+            model.telemetrySink?.acknowledgeLinkNotice()
+            return NSNull()
+        // The page's crash reporter (CUA-2343): its consent and build config.
+        case "crashReporting.config":
+            let status = model.telemetrySink?.status()
+            return CrashReporting.bridgeConfig(
+                info: Bundle.main.infoDictionary ?? [:],
+                allowed: status.map { CrashReporting.isAllowed(enabled: $0.enabled, noticeShown: $0.noticeShown) } ?? false,
+                env: ProcessInfo.processInfo.environment)
 
         // A Space's detail
         case "spaces.usage":
@@ -187,6 +275,22 @@ extension WebUIBridge {
                     : HostSetupFailure.presenting(LiveSpacesBackend.words(error)))
             }
             return hostStatus()
+        case "host.joinWithCode":
+            let relay = args["relay"] as? String
+            guard let code = args["code"] as? String,
+                  let cliArgs = JoinWithCode.arguments(code: code, relay: relay) else {
+                throw Failure.badArgs("code: string")
+            }
+            guard let cua = AppEnvironment.bundledCuaPath else {
+                throw Failure.unsupported("This build has no bundled cua to join with")
+            }
+            do {
+                try await JoinWithCode.run(cua: cua, args: cliArgs)
+            } catch let failed as JoinWithCode.FailedRun {
+                throw Failure(code: "failed", message: failed.message)
+            }
+            await model.host.refresh()
+            return hostStatus()
         case "host.action":
             guard model.host.host != nil else { throw Failure.unsupported("This Mac can't be set up for access in this build") }
             let id = try hostAction(try string(args, "action"))
@@ -198,7 +302,19 @@ extension WebUIBridge {
             guard url.hasPrefix("x-apple.systempreferences:"), let u = URL(string: url) else {
                 throw Failure.badArgs("Only System Settings panes open here")
             }
-            NSWorkspace.shared.open(u)
+            // Local Network: the daemon connects (which makes macOS ask, in a
+            // dialog of its own); the pane opens only when it stays blocked
+            // and no macOS prompt is waiting for an answer.
+            if url.contains("Privacy_LocalNetwork") {
+                await model.checkLocalNetworkFromDaemon(every: 0)
+                if model.daemonLocalNetworkAllowed != true, LiveLocalNetworkProbe().promptsShowing() == 0 {
+                    NSWorkspace.shared.open(u)
+                }
+                return NSNull()
+            }
+            // Screen Recording and Accessibility: the app's guide to the
+            // pane (PermissionFlow), never macOS's bare prompt.
+            if !PermissionGuide.guide(url) { NSWorkspace.shared.open(u) }
             return NSNull()
 
         default:
@@ -352,6 +468,21 @@ extension WebUIBridge {
         return NSNull()
     }
 
+    /// The page's first run moved past Welcome (its usage notice was on
+    /// screen): any page left or shown other than Welcome being shown, or
+    /// "Set up later".
+    static func leftWelcome(_ raw: Any) -> Bool {
+        guard let s = raw as? [String: Any] else { return false }
+        switch s["type"] as? String {
+        case "onboarding-page":
+            // Welcome being shown (`shown`, or the funnel's `step_viewed`) is before the notice.
+            let action = s["action"] as? String
+            return !(s["page"] as? String == "welcome" && (action == "shown" || action == "step_viewed"))
+        case "step": return s["step"] as? String == "onboarding_skipped"
+        default: return false
+        }
+    }
+
     /// A usage event as the core's signal: known kinds with every field a
     /// fixed word, flag or duration (anything else is dropped whole, so a
     /// name or a path never reaches the telemetry).
@@ -400,8 +531,13 @@ extension WebUIBridge {
             guard let location = word("location"), let os = word("guestOs"), let kind = word("kind"),
                   let outcome = word("outcome"), let phase = word("failedPhase"), let stalled = flag("stalled"),
                   let elapsed = ms("elapsedMs"), let gpu = flag("gpu"), let errorVariant = variant("errorVariant") else { return nil }
+            // A retried create's final outcome (pages before it send neither).
+            let attempt = (s["retryAttempt"] as? NSNumber).map { CFGetTypeID($0) == CFBooleanGetTypeID() ? 2 : $0.intValue } ?? 0
+            guard attempt == 0 || attempt == 1,
+                  let subclass = s["errorSubclass"] == nil ? "none" : word("errorSubclass") else { return nil }
             return .spaceCreate(location: location, guestOs: os, kind: kind, outcome: outcome, failedPhase: phase,
-                                stalled: stalled, elapsedMs: elapsed, gpu: gpu, errorVariant: errorVariant)
+                                stalled: stalled, elapsedMs: elapsed, gpu: gpu, errorVariant: errorVariant,
+                                retryAttempt: UInt32(attempt), errorSubclass: subclass)
         case "space-create-started":
             guard let location = word("location"), let os = word("guestOs"), let kind = word("kind"),
                   let gpu = flag("gpu") else { return nil }
@@ -411,8 +547,11 @@ extension WebUIBridge {
                   let method = word("mountMethod"), let outcome = word("outcome") else { return nil }
             return .volumeSetup(surface: surface, storage: storage, addToFinder: finder, mountMethod: method, outcome: outcome)
         case "share":
-            guard let action = word("action"), let role = word("role"), let outcome = word("outcome") else { return nil }
-            return .share(action: action, role: role, outcome: outcome)
+            // Why and where a share failed (CUA-1855); a page from before them sends neither.
+            guard let action = word("action"), let role = word("role"), let outcome = word("outcome"),
+                  let errorKind = s["errorKind"] == nil ? "none" : word("errorKind"),
+                  let failedStage = s["failedStage"] == nil ? "none" : word("failedStage") else { return nil }
+            return .share(action: action, role: role, outcome: outcome, errorKind: errorKind, failedStage: failedStage)
         case "app-update":
             guard let action = word("action"), let channel = word("channel"), let trigger = word("trigger") else { return nil }
             return .appUpdate(action: action, channel: channel, trigger: trigger)
@@ -657,7 +796,8 @@ extension WebUIBridge {
             cookieDomains: c["cookieDomains"] as? [String],
             exclude: c["exclude"] as? [String] ?? [],
             fromVault: c["fromVault"] as? [String],
-            includePasswords: c["includePasswords"] as? Bool ?? false))
+            includePasswords: c["includePasswords"] as? Bool ?? false,
+            passwordDomains: c["passwordDomains"] as? [String]))
     }
 
     /// A run's report, as the page reads it (`RunReport`).

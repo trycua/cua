@@ -24,6 +24,8 @@ fn status(a: &AgentStatus) -> cua_spaces_app_core::agents::AgentSetupStatus {
         skills_installed: a.skills_installed.clone(),
         skills_outdated: a.skills_outdated.clone(),
         error: a.error.clone(),
+        sign_in: a.sign_in.clone(),
+        signed_in: a.signed_in,
     }
 }
 

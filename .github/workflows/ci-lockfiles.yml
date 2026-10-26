@@ -44,6 +44,11 @@ concurrency:
   group: ci-lockfiles-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
+
 jobs:
   lockfiles:
     name: lockfiles match manifests

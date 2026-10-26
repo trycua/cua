@@ -1,0 +1,7 @@
+{
+  "storage-driver": "overlay2",
+  "log-driver": "local",
+  "log-opts": { "max-size": "10m", "max-file": "3" },
+  "ip6tables": true,
+  "live-restore": false
+}

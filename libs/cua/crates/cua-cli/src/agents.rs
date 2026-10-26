@@ -3,7 +3,9 @@
 
 use crate::util::{self, internal, line};
 use clap::{Args, Subcommand};
-use cua_agent_setup::{AgentSetup, AgentStatus, Change, McpServer, Outcome, Parts, Target};
+use cua_agent_setup::{
+    AgentSetup, AgentStatus, Change, McpServer, Outcome, Parts, RemoveOptions, Target,
+};
 use cua_sdk::CuaError;
 use std::{
     collections::BTreeSet,
@@ -34,10 +36,14 @@ pub enum AgentsCmd {
     #[command(after_help = "Examples:
   cua agents status")]
     Status,
-    /// Remove the skills and MCP entries cua added (nothing else).
+    /// Remove the Cua Spaces skills and MCP entries cua added (nothing else).
     #[command(after_help = "Examples:
+  # See what would be removed, change nothing
+  cua agents remove --dry-run
   cua agents remove
-  cua agents remove --agents codex --skills-only -y")]
+  cua agents remove --agents codex --skills-only -y
+  # Cua Driver's skill and MCP server too (they stay otherwise)
+  cua agents remove --include-cua-driver")]
     Remove(RemoveArgs),
     /// Refresh installed cua skills and managed MCP entries to this version.
     #[command(after_help = "Examples:
@@ -96,6 +102,14 @@ pub struct RemoveArgs {
     /// Do not ask for confirmation.
     #[arg(long, short = 'y')]
     pub yes: bool,
+    /// Also remove Cua Driver's skill and MCP server (`cua-driver`). Without
+    /// it only Cua Spaces' own entries go: the `cua` server (`cua-local` for
+    /// Local) and the Cua Spaces skills.
+    #[arg(long)]
+    pub include_cua_driver: bool,
+    /// List exactly what would be removed and change nothing.
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 fn err(e: cua_agent_setup::Error) -> CuaError {
@@ -143,18 +157,31 @@ impl Prompt {
         }
     }
 
+    /// One answer, lowercased and trimmed, or `None` when the input ended
+    /// before an answer came (Ctrl-D, a closed terminal). Running out of
+    /// input is never an answer: callers must not treat `None` as yes, no
+    /// or never.
     fn read(&self, out: &mut dyn Write, q: &str) -> Option<String> {
+        // Keys typed before the question was on screen (an extra Enter at
+        // an earlier prompt, a press while the browser sign-in ran) are not
+        // answers to it.
+        discard_typeahead();
         let _ = write!(out, "{q} ");
         let _ = out.flush();
         let mut s = String::new();
         // Bounded: one line.
         match std::io::stdin().lock().read_line(&mut s) {
-            Ok(0) | Err(_) => None,
+            Ok(0) | Err(_) => {
+                line(out, "");
+                None
+            }
             Ok(_) => Some(s.trim().to_ascii_lowercase()),
         }
     }
 
-    /// `[Y/n]` (default yes) or `[y/N]`.
+    /// `[Y/n]` (default yes) or `[y/N]`. Enter takes the default; with no
+    /// answer at all (the input ended) the step is skipped, with a line
+    /// saying so.
     pub fn confirm(&self, out: &mut dyn Write, q: &str, default: bool) -> bool {
         if self.yes {
             return true;
@@ -166,7 +193,10 @@ impl Prompt {
         // Re-ask a bounded number of times on nonsense.
         for _ in 0..5 {
             match self.read(out, &format!("{q} {hint}")).as_deref() {
-                None => return default,
+                None => {
+                    line(out, NO_ANSWER);
+                    return false;
+                }
                 Some("") => return default,
                 Some("y" | "yes") => return true,
                 Some("n" | "no") => return false,
@@ -176,38 +206,65 @@ impl Prompt {
         default
     }
 
-    /// `[y/n/never]`; `None` means never.
-    pub fn yes_no_never(&self, out: &mut dyn Write, q: &str) -> Option<bool> {
+    /// `[y/n/never]`.
+    pub fn yes_no_never(&self, out: &mut dyn Write, q: &str) -> Choice {
         if self.yes {
-            return Some(true);
+            return Choice::Yes;
         }
         for _ in 0..5 {
             match self.read(out, &format!("{q} [y/n/never]")).as_deref() {
-                None => return Some(false),
-                Some("y" | "yes") => return Some(true),
-                Some("n" | "no" | "") => return Some(false),
-                Some("never") => return None,
+                None => return Choice::NoAnswer,
+                Some("y" | "yes") => return Choice::Yes,
+                Some("n" | "no" | "") => return Choice::No,
+                Some("never") => return Choice::Never,
                 Some(_) => line(out, "Please answer y, n or never."),
             }
         }
-        Some(false)
+        Choice::No
+    }
+}
+
+/// The answer to a `[y/n/never]` question.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Choice {
+    Yes,
+    No,
+    /// Do not ask again.
+    Never,
+    /// The input ended before anyone answered. Not a "no": nothing is
+    /// recorded, and the caller says what to run later.
+    NoAnswer,
+}
+
+const NO_ANSWER: &str = "No answer (the input ended), so cua skipped this step.";
+
+/// Throws away input waiting on the terminal (see [`Prompt::read`]).
+fn discard_typeahead() {
+    #[cfg(unix)]
+    // SAFETY: tcflush only acts on the descriptor; it fails harmlessly when
+    // stdin is not a terminal.
+    unsafe {
+        libc::tcflush(libc::STDIN_FILENO, libc::TCIFLUSH);
     }
 }
 
 /// The MCP server agents should launch.
 pub fn mcp_server(setup: &AgentSetup, command: Option<&str>) -> McpServer {
+    // The channel's own server (`cua`, or `cua-local` when this is the Local
+    // CLI), launching the channel's own binary.
+    let channel = setup.env().channel;
     if let Some(c) = command {
-        return McpServer::new(c);
+        return McpServer::for_channel(channel, c);
     }
-    if setup.env().which("cua").is_some() {
+    if setup.env().which(channel.cli_name()).is_some() {
         return McpServer::default_for(setup.env());
     }
     let exe = std::env::current_exe()
         .ok()
         .and_then(|p| p.canonicalize().ok())
         .map(|p| p.display().to_string())
-        .unwrap_or_else(|| "cua".into());
-    McpServer::new(exe)
+        .unwrap_or_else(|| channel.cli_name().into());
+    McpServer::for_channel(channel, exe)
 }
 
 fn print_agents(setup: &AgentSetup, statuses: &[AgentStatus], out: &mut dyn Write) {
@@ -406,7 +463,7 @@ pub fn run_setup(
         return Ok(fail_line(&outcomes));
     }
 
-    line(out, "AI coding agents on this machine:");
+    line(out, "AI coding agents on this computer:");
     print_agents(setup, &statuses, out);
     if ids.is_empty() {
         line(
@@ -698,27 +755,40 @@ pub fn cmd_remove(args: &RemoveArgs, json: bool, out: &mut dyn Write) -> Result<
         skills: !args.mcp_only,
         mcp: !args.skills_only,
     };
-    let prompt = Prompt::new(args.yes || json);
-    if !prompt.confirm(
-        out,
-        "Remove the cua skills and MCP entries that cua added?",
-        false,
-    ) {
-        if !stdin_is_tty() && !args.yes {
-            line(out, "Pass --yes to remove without a prompt.");
+    let opts = RemoveOptions {
+        include_cua_driver: args.include_cua_driver,
+        dry_run: args.dry_run,
+    };
+    if !args.dry_run {
+        let prompt = Prompt::new(args.yes || json);
+        let question = if args.include_cua_driver {
+            "Remove the Cua Spaces and Cua Driver skills and MCP entries that cua added?"
+        } else {
+            "Remove the Cua Spaces skills and MCP entries that cua added?"
+        };
+        if !prompt.confirm(out, question, false) {
+            if !stdin_is_tty() && !args.yes {
+                line(out, "Pass --yes to remove without a prompt.");
+            }
+            return Ok(1);
         }
-        return Ok(1);
     }
-    let res = setup.remove(&ids, parts).map_err(err)?;
+    let res = setup.remove_with(&ids, parts, opts).map_err(err)?;
     let failed = res.iter().any(Outcome::failed);
     if json {
-        util::json_line(out, &serde_json::json!({"outcomes": res}));
+        util::json_line(
+            out,
+            &serde_json::json!({"dry_run": args.dry_run, "outcomes": res}),
+        );
         return Ok(fail_line(&res.iter().collect::<Vec<_>>()));
     }
     let touched: Vec<&Outcome> = res
         .iter()
         .filter(|o| !(o.change == Change::Skipped && o.detail == "not configured by cua"))
         .collect();
+    if args.dry_run {
+        line(out, "Dry run: nothing is changed.");
+    }
     if touched.is_empty() {
         line(out, "Nothing to remove.");
     }
@@ -727,6 +797,24 @@ pub fn cmd_remove(args: &RemoveArgs, json: bool, out: &mut dyn Write) -> Result<
             Target::Skill => format!("skill {}", o.item),
             Target::Mcp => format!("MCP server {}", o.item),
         };
+        let place = tilde(&setup, &o.path);
+        if o.change == Change::Skipped && o.detail == cua_agent_setup::KEPT_CUA_DRIVER {
+            line(out, format!("  - {what}: {place} kept ({})", o.detail));
+            continue;
+        }
+        if args.dry_run && o.change == Change::Removed {
+            if o.detail == "already gone" {
+                line(out, format!("  - {what}: {place} already gone"));
+            } else if o.detail == "restored the previous entry" {
+                line(
+                    out,
+                    format!("  would restore the previous entry of {what}: {place}"),
+                );
+            } else {
+                line(out, format!("  would remove {what}: {place}"));
+            }
+            continue;
+        }
         let detail = if o.detail.is_empty() || o.detail == "removed" {
             String::new()
         } else {
@@ -734,12 +822,7 @@ pub fn cmd_remove(args: &RemoveArgs, json: bool, out: &mut dyn Write) -> Result<
         };
         line(
             out,
-            format!(
-                "  {} {what}: {} {}{detail}",
-                mark(o),
-                tilde(&setup, &o.path),
-                change_word(o)
-            ),
+            format!("  {} {what}: {place} {}{detail}", mark(o), change_word(o)),
         );
     }
     Ok(i32::from(failed))
@@ -801,14 +884,21 @@ pub fn after_login(
         line(out, "");
         match prompt.yes_no_never(
             out,
-            "Configure cua skills and the cua MCP server for your AI coding agent(s)?",
+            "Let your AI coding agents (like Claude Code and Codex) use cua?",
         ) {
-            Some(true) => {}
-            Some(false) => {
+            Choice::Yes => {}
+            Choice::No => {
                 line(out, "Skipped. Run `cua agents setup` any time.");
                 return Ok(0);
             }
-            None => {
+            Choice::NoAnswer => {
+                line(
+                    out,
+                    "No answer (the input ended), so your agents are unchanged. Run `cua agents setup` when you are ready.",
+                );
+                return Ok(0);
+            }
+            Choice::Never => {
                 cua_agent_setup::config::set_onboarding_declined(setup.env(), true)
                     .map_err(|e| internal(e.to_string()))?;
                 line(

@@ -1,0 +1,12 @@
+---
+title: Cursor
+description: Give Cursor Cua Driver to use the apps on your computer, and Cua Spaces to work in computers you can watch.
+---
+
+## Cua Driver
+
+`cua-driver mcp-config --client cursor` prints the MCP configuration for Cursor. Paste it into `~/.cursor/mcp.json`, or into `.cursor/mcp.json` in a project, then restart Cursor. See [Connect your agent](/cua-driver/guides/connect-your-agent) for the skill, permissions and the other clients.
+
+## Cua Spaces
+
+`cua agents setup --agents cursor --yes` adds the `cua` skills and MCP server to `~/.cursor/mcp.json`, and the Cua Spaces app does the same on first run. Then ask Cursor: "List my Cua Spaces." See [Connect your agent to Cua Spaces](/spaces/guides/connect-your-agent) and [Give your agent Spaces](/cua-cli/guides/mcp-server).

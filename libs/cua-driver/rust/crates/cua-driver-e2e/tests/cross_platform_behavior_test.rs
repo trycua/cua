@@ -182,7 +182,11 @@ where
     let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
         let mut fixture = launch_host_with_evidence(spec, &case.cell_id, &mut evidence);
         let sentinel = if delivery == Delivery::Background {
-            Some(ForegroundSentinel::launch(&mut fixture.driver))
+            let mut sentinel = ForegroundSentinel::launch(&mut fixture.driver);
+            if let Some(dir) = fixture.driver.recording_dir() {
+                sentinel.persist_evidence_to(dir);
+            }
+            Some(sentinel)
         } else {
             None
         };
@@ -280,6 +284,19 @@ struct Fixture {
     window_y: f64,
     name: &'static str,
     journal: FixtureJournal,
+}
+
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        if let Some(dir) = self.driver.recording_dir() {
+            std::fs::write(
+                dir.join("fixture-state.json"),
+                serde_json::to_vec_pretty(&self.journal.snapshot())
+                    .expect("serialize fixture state"),
+            )
+            .expect("persist fixture state");
+        }
+    }
 }
 
 fn evidence_for_driver(driver: &McpDriver) -> Evidence {
@@ -392,6 +409,7 @@ fn launch_host_with_evidence(spec: &HostSpec, scenario: &str, evidence: &mut Evi
                         if last_tree.contains("WEB_HARNESS_MARKER_v1")
                             && fixture.journal.contains("WEB_HARNESS_MARKER_v1")
                         {
+                            eprintln!("READY {scenario}: daemon usable, fixture pid={actual_pid} window_id={wid}, AX and journal marker present");
                             return fixture;
                         }
                         thread::sleep(Duration::from_millis(250));
@@ -1654,9 +1672,12 @@ fn shared_case_with_native_hyprland(
             ("electron", "type_text" | "type_submit" | "editor_save", Targeting::Ax) => {
                 vec![RefusalCode::BackgroundUnavailable]
             }
-            ("electron", "scroll", _) | (_, "drag", Targeting::Px) => {
-                vec![RefusalCode::BackgroundUnavailable]
-            }
+            // Electron scroll is delivered in the background through
+            // accessibility (reveal scroll), including inner scrollers.
+            // The shared drag cell is a pointer-event drag, which the
+            // background window-routed drag delivers (CUA-1207). Electron
+            // takes it from the app's main process, which holds the button
+            // that a window-routed press cannot.
             _ => Vec::new(),
         }
     } else if cfg!(target_os = "linux")

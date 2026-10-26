@@ -11,7 +11,8 @@
 //!   so every shell expands and collapses at the same moments;
 //! - [`tiles`]: which Spaces the panel shows, filtered by the header's
 //!   search ([`matches`]), each with its OS icon ([`os_icon`]);
-//! - [`tab`]: the "N Spaces" tab (count over word);
+//! - [`tab`]: the "N Spaces" tab (count over word): the Spaces that are on
+//!   or starting; with none, the closed notch shows no tab at all;
 //! - [`activity`]: the indicator left of the closed notch (a transfer, the
 //!   network hotspot, a Space starting), in that priority.
 //!
@@ -422,9 +423,8 @@ pub fn location(space: &Space, spaces: &[Space]) -> String {
     if space.id == THIS_MACHINE_ID {
         return "This Mac".into();
     }
-    match space.provider.unwrap_or(SpaceProvider::Cloud) {
+    match space.provider.unwrap_or(SpaceProvider::Direct) {
         SpaceProvider::Local => "This Mac".into(),
-        SpaceProvider::Cloud => crate::spaces::sidebar::location_text(space).into(),
         SpaceProvider::Direct => text(&space.host_name).unwrap_or_else(|| {
             space
                 .id
@@ -470,7 +470,6 @@ pub fn matches(space: &Space, query: &str) -> bool {
         space.status.label(),
         &format!("{:?}", space.status),
         space.detail.as_str(),
-        space.fleet_id.as_deref().unwrap_or_default(),
         crate::spaces::sidebar::location_text(space),
         space.host_name.as_deref().unwrap_or_default(),
     ]
@@ -490,16 +489,20 @@ pub fn filter(spaces: &[Space], query: &str) -> Vec<Space> {
         .collect()
 }
 
-/// The Space tiles: MRU order, not this machine, at most [`MAX_TILES`].
+/// The Space tiles: the Spaces the user can open
+/// ([`crate::spaces::openable_spaces`], never This machine or another
+/// machine that only provides Spaces), in MRU order, at most
+/// [`MAX_TILES`]. Stopped Spaces are tiles too (dimmed, and they take
+/// drops), but the tab counts only the ones that are on.
 pub fn tiles(spaces: &[Space], targeted: Option<&str>) -> Vec<NotchTile> {
     tiles_matching(spaces, targeted, "")
 }
 
 /// [`tiles`] narrowed by the header's search.
 pub fn tiles_matching(spaces: &[Space], targeted: Option<&str>, query: &str) -> Vec<NotchTile> {
-    sort_by_mru(spaces)
+    sort_by_mru(&crate::spaces::openable_spaces(spaces))
         .into_iter()
-        .filter(|s| s.id != THIS_MACHINE_ID && matches(s, query))
+        .filter(|s| matches(s, query))
         .take(MAX_TILES)
         .map(|s| NotchTile {
             location: location(&s, spaces),
@@ -844,7 +847,7 @@ pub struct NotchView {
     pub prompt: Option<String>,
     /// Accessibility label of the panel.
     pub label: String,
-    /// "N Spaces": the tab's spoken label (remote Spaces only).
+    /// "N Spaces": the tab's spoken label (Spaces on or starting only).
     pub count_label: String,
     /// The tab's two rows: the count over the word.
     pub tab: NotchTab,
@@ -857,7 +860,8 @@ pub struct NotchView {
     pub activity: Option<NotchActivity>,
     /// The notch is hidden (menu bar only): draw nothing.
     pub hidden: bool,
-    /// The tab shows (closed, no drag in flight; a drag tucks it away).
+    /// The tab shows (closed, no drag in flight, at least one Space on or
+    /// starting; a drag tucks it away, and with none the notch is bare).
     pub show_tab: bool,
     /// The pointer rests on the closed notch while the dwell runs: the
     /// shells grow it by [`NotchMotion::hover_scale`].
@@ -906,17 +910,18 @@ pub struct NotchTab {
     pub word: String,
 }
 
-/// The tab for `spaces`: remote Spaces only (not this machine).
+/// The tab for `spaces`: the Spaces on or starting
+/// ([`crate::spaces::on_count`]), never this machine or a stopped Space.
 pub fn tab(spaces: &[Space]) -> NotchTab {
-    let n = remote_count(spaces);
+    let n = on_count(spaces);
     NotchTab {
         count: n.to_string(),
         word: if n == 1 { "Space" } else { "Spaces" }.into(),
     }
 }
 
-fn remote_count(spaces: &[Space]) -> usize {
-    crate::spaces::openable_count(spaces) as usize
+fn on_count(spaces: &[Space]) -> usize {
+    crate::spaces::on_count(spaces) as usize
 }
 
 /// A button in the open panel's header.
@@ -998,7 +1003,7 @@ pub struct NotchActivity {
     pub estimate_ms: u32,
 }
 
-/// Time to about 80% on a ring without real progress (the measured Fleet
+/// Time to about 80% on a ring without real progress (the measured cloud
 /// bind time).
 pub const ACTIVITY_ESTIMATE_MS: u32 = 80_000;
 
@@ -1048,9 +1053,9 @@ pub fn activity(
         return Some(NotchActivity {
             kind: NotchActivityKind::RemoteAccess,
             label: if connected == 1 {
-                "Someone is connected to this machine".into()
+                "Someone is connected to this computer".into()
             } else {
-                format!("{connected} are connected to this machine")
+                format!("{connected} are connected to this computer")
             },
             symbol: Some(REMOTE_ACCESS_SYMBOL.into()),
             permille: None,
@@ -1213,7 +1218,7 @@ pub fn view(state: &NotchState, spaces: &[Space]) -> NotchView {
         t.signed_in = state.signed_in.contains(&t.id);
     }
     let n = visible.len();
-    let remote = remote_count(spaces);
+    let on = on_count(spaces);
     let searching = !query.is_empty();
     let header = (phase == NotchPhase::Tiles && !drop_mode)
         .then(|| header(&state.query, searching.then_some(n as u32)));
@@ -1246,13 +1251,13 @@ pub fn view(state: &NotchState, spaces: &[Space]) -> NotchView {
         (false, false, None)
     } else {
         (
-            phase == NotchPhase::Closed && state.drag.phase == DragOverlayPhase::Idle,
+            phase == NotchPhase::Closed && state.drag.phase == DragOverlayPhase::Idle && on > 0,
             phase == NotchPhase::Closed && state.hovering,
             activity,
         )
     };
     NotchView {
-        count_label: format!("{remote} {}", if remote == 1 { "Space" } else { "Spaces" }),
+        count_label: format!("{on} {}", if on == 1 { "Space" } else { "Spaces" }),
         tab: tab(spaces),
         hidden: state.hidden,
         header,
@@ -1339,6 +1344,7 @@ mod tests {
         s.id = id.into();
         s.name = name.into();
         s.status = status;
+        s.provider = Some(crate::model::SpaceProvider::Local);
         s
     }
 
@@ -1396,7 +1402,7 @@ mod tests {
         assert_eq!(by("b").symbol, "os-windows");
         assert_eq!(by("c").symbol, "os-macos");
         assert_eq!(by("d").symbol, "os-linux", "no distro reported: Tux");
-        assert_eq!(by("b").label, "Lab PC, Windows, Cua Cloud, Suspended");
+        assert_eq!(by("b").label, "Lab PC, Windows, This Mac, Suspended");
         assert!(by("b").targeted && by("b").dim);
     }
 
@@ -1446,6 +1452,63 @@ mod tests {
         let t = tiles(&[local], None);
         assert_eq!(t[0].location, "This Mac");
         assert_eq!(t[0].label, "Dev, Linux, This Mac, Running");
+    }
+
+    /// Hovering the notch lists the Spaces, never the machines that only
+    /// provide them (CUA-1619): not This machine while it hosts, not one of
+    /// your machines on the relay. The list and the tab's count are the same
+    /// Spaces, searching included.
+    #[test]
+    fn the_tiles_leave_out_the_machines_that_provide_spaces() {
+        use crate::host::{HostSummaryInput, this_machine_space};
+        use crate::model::SpaceProvider;
+        let hosting = HostSummaryInput {
+            configured: true,
+            service_running: true,
+            sharing: true,
+            ..Default::default()
+        };
+        let this_mac = this_machine_space(Some(&hosting), 0, SpaceOs::Macos);
+        let mut machine = space(
+            "relay:studio",
+            "Studio",
+            SpaceOs::Macos,
+            SpaceStatus::Running,
+        );
+        machine.provider = Some(SpaceProvider::Relay);
+        let mut provided = space(
+            "relay:studio/dev",
+            "Dev",
+            SpaceOs::Linux,
+            SpaceStatus::Running,
+        );
+        provided.provider = Some(SpaceProvider::Relay);
+        provided.host = Some("studio".into());
+        let spaces = vec![this_mac, machine, provided];
+
+        let ids = |t: &[NotchTile]| t.iter().map(|t| t.id.clone()).collect::<Vec<_>>();
+        assert_eq!(ids(&tiles(&spaces, None)), ["relay:studio/dev"]);
+        let open = NotchState {
+            open: true,
+            ..Default::default()
+        };
+        let v = view(&open, &spaces);
+        assert_eq!(ids(&v.tiles), ["relay:studio/dev"]);
+        assert_eq!(v.label, "1 Space");
+        assert_eq!(v.count_label, "1 Space");
+        assert_eq!(
+            v.tiles.len(),
+            crate::spaces::openable_count(&spaces) as usize
+        );
+        // The provided Space still says which machine it runs on.
+        assert_eq!(v.tiles[0].location, "Studio");
+        // A search never brings the machines back.
+        assert!(tiles_matching(&spaces, None, "this mac").is_empty());
+        assert!(tiles_matching(&spaces, None, "macos").is_empty());
+        // Only machines: no tiles, "0 Spaces".
+        let v = view(&open, &spaces[..2]);
+        assert!(v.tiles.is_empty());
+        assert_eq!(v.count_label, "0 Spaces");
     }
 
     #[test]
@@ -1536,6 +1599,102 @@ mod tests {
                 image.image_ref
             );
         }
+    }
+
+    /// The tab counts only the Spaces on or starting: four stopped Spaces
+    /// are no tab at all (no "0", no empty pill), one starting brings it
+    /// back. Stopped Spaces stay tiles in the open panel, and drop targets.
+    #[test]
+    fn the_tab_counts_only_spaces_on_or_starting_and_goes_at_zero() {
+        use crate::model::{PowerControl, SpacePower, SpaceProgress};
+        let stopped = |id: &str| {
+            let mut s = space(id, id, SpaceOs::Linux, SpaceStatus::Suspended);
+            s.provider = Some(crate::model::SpaceProvider::Local);
+            s.power = Some(SpacePower {
+                control: PowerControl::Stop,
+                off: true,
+                turning_on: None,
+                error: None,
+                stop_reason: None,
+            });
+            s
+        };
+        let this_mac = crate::host::this_machine_space(
+            Some(&crate::host::HostSummaryInput {
+                configured: true,
+                service_running: true,
+                sharing: true,
+                ..Default::default()
+            }),
+            0,
+            SpaceOs::Macos,
+        );
+        assert_eq!(this_mac.status, SpaceStatus::Local);
+        let mut spaces = vec![
+            this_mac,
+            stopped("a"),
+            stopped("b"),
+            stopped("c"),
+            stopped("d"),
+        ];
+        let closed = NotchState::default();
+
+        // All four stopped, This Mac sharing: nothing to count, no tab.
+        let v = view(&closed, &spaces);
+        assert_eq!(crate::spaces::on_count(&spaces), 0);
+        assert_eq!(v.tab.count, "0");
+        assert_eq!(v.count_label, "0 Spaces");
+        assert!(!v.show_tab, "collapsed at zero");
+        assert_eq!(v.phase, NotchPhase::Closed);
+        // Hovering still opens it on the stopped Spaces, which take drops.
+        let open = view(&reduce(&closed, &NotchEvent::Click).state, &spaces);
+        assert_eq!(open.tiles.len(), 4);
+        assert!(open.tiles.iter().all(|t| t.dim && t.drop_target));
+
+        // One turned on: it is starting, so the tab comes back with 1.
+        spaces[2].power.as_mut().unwrap().turning_on = Some(true);
+        let v = view(&closed, &spaces);
+        assert!(v.show_tab);
+        assert_eq!((v.tab.count.as_str(), v.tab.word.as_str()), ("1", "Space"));
+        // Up and running: still 1.
+        spaces[2].status = SpaceStatus::Running;
+        spaces[2].power.as_mut().unwrap().turning_on = None;
+        spaces[2].power.as_mut().unwrap().off = false;
+        assert_eq!(view(&closed, &spaces).tab.count, "1");
+
+        // Mixed states: running, waiting for approval and being created
+        // count; stopped, failed and deleting do not.
+        let mut approval = space("e", "e", SpaceOs::Linux, SpaceStatus::Approval);
+        approval.provider = Some(crate::model::SpaceProvider::Local);
+        let creating = space("f", "f", SpaceOs::Linux, SpaceStatus::Provisioning);
+        let mut failed = space("g", "g", SpaceOs::Linux, SpaceStatus::Provisioning);
+        failed.progress = Some(SpaceProgress {
+            phase: "pulling".into(),
+            permille: 300,
+            label: "Failed".into(),
+            error: Some("pull failed".into()),
+            transfer: None,
+            cancellable: false,
+            cancelling: false,
+            retrying: false,
+            fix: None,
+        });
+        let deleting = space("h", "h", SpaceOs::Linux, SpaceStatus::Deleting);
+        spaces.extend([approval, creating, failed, deleting]);
+        let v = view(&closed, &spaces);
+        assert_eq!(v.tab.count, "3");
+        assert_eq!(v.count_label, "3 Spaces");
+        assert!(v.show_tab);
+
+        // Everything stops again: collapsed.
+        let all_stopped: Vec<Space> = spaces
+            .iter()
+            .filter(|s| !matches!(s.id.as_str(), "b" | "e" | "f"))
+            .cloned()
+            .collect();
+        let v = view(&closed, &all_stopped);
+        assert_eq!(v.tab.count, "0");
+        assert!(!v.show_tab);
     }
 
     #[test]
@@ -1764,7 +1923,7 @@ mod tests {
             "before the hotspot"
         );
         assert_eq!(a.symbol.as_deref(), Some(REMOTE_ACCESS_SYMBOL));
-        assert_eq!(a.label, "Someone is connected to this machine");
+        assert_eq!(a.label, "Someone is connected to this computer");
         // A transfer in flight still shows its progress first.
         let t = NotchTransfer {
             sent: Some(1),
@@ -1786,7 +1945,7 @@ mod tests {
         );
         assert_eq!(
             activity(&[two], false, None, None).unwrap().label,
-            "2 are connected to this machine"
+            "2 are connected to this computer"
         );
         let gone = this_machine_space(
             Some(&HostSummaryInput {
@@ -1884,7 +2043,7 @@ mod tests {
             (t.progress, t.progress_label.as_deref()),
             (None, Some("Deleting\u{2026}"))
         );
-        assert_eq!(t.label, "Gone, Linux, Cua Cloud, Deleting\u{2026}");
+        assert_eq!(t.label, "Gone, Linux, This Mac, Deleting\u{2026}");
     }
 
     #[test]

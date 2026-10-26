@@ -4,6 +4,7 @@
 import { type ReactElement, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
 import { core } from "../core";
+import { useT } from "../i18n";
 import { hostOs, permissionRows } from "../model/host";
 import {
   initialOnboarding,
@@ -30,7 +31,7 @@ import type { DriveMountInput } from "../model/persistent";
 import type { SettingsRow } from "../model/window";
 import type { SpaceOs } from "../model/types";
 import { answerOrNull, createDriveBridge, type DriveBridge } from "../native/drive";
-import type { SignInStart } from "../native/fleet";
+import type { SignInStart } from "../native/spacesBridge";
 import type { HostBridge, HostStatus, OnboardingMode } from "../native/host";
 import type { AgentDetectReport, AgentSetupReport, InstallerBridge } from "../native/installer";
 import { onboardingFinishedSignals, onboardingSignals } from "../model/telemetry";
@@ -112,12 +113,13 @@ export function InstallerFlow({
   identity?: string;
   installerMode?: OnboardingMode | null;
   initialStep?: InstallerStep;
-  /** Opens a website page in the browser (the Teams waitlist). */
+  /** Opens a website page in the browser (the Teams page). */
   onOpenExternal?: (url: string) => void;
   /** Usage telemetry (the shell's; nothing outside it). */
   telemetry?: TelemetryBridge;
   onDone: (mode: OnboardingMode) => void;
 }) {
+  const t = useT("installer");
   // Settings, Experiments decide the pages (Cua Volume's only with it on).
   const [state, setState] = useState<OnboardingState>(() =>
     reduceOnboarding(
@@ -152,7 +154,7 @@ export function InstallerFlow({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialIdentity]);
 
-  const view = onboardingView(state);
+  const view = onboardingView(state, true);
   // Welcome's usage-data switch starts from the machine's setting (the
   // same one as Settings, Privacy and `cua telemetry off`).
   useEffect(() => {
@@ -322,7 +324,13 @@ export function InstallerFlow({
           <h2 className="onboarding-title">{view.title}</h2>
           <p className="host-setup-lede">{view.lede}</p>
           <footer className="shelf-footer create-cloud-actions">
-            <button type="button" className="primary-button" data-owns-enter onClick={() => send({ type: "start" })}>
+            <button
+              type="button"
+              className="primary-button"
+              data-owns-enter
+              autoFocus
+              onClick={() => send({ type: "start" })}
+            >
               {view.primaryLabel}
             </button>
           </footer>
@@ -435,7 +443,7 @@ export function InstallerFlow({
         <Page
           title={view.title}
           lede={view.lede}
-          below={view.prompts.length > 0 ? <PromptTicker prompts={view.prompts} /> : undefined}
+          below={view.prompts.length > 0 ? <PromptList prompts={view.prompts} /> : undefined}
           primary={
             <button
               type="button"
@@ -447,11 +455,28 @@ export function InstallerFlow({
             </button>
           }
         >
+          <ul className="onboarding-todos">
+            {(view.todos ?? []).map((t) => (
+              <li key={t.id} data-done={t.done || undefined}>
+                <span aria-hidden>{t.done ? "\u2713" : "\u25cb"}</span>
+                <div>
+                  <strong>{t.title}</strong>
+                  <p className="st-note">{t.note}</p>
+                </div>
+                {/* Cua Volume opens its page once its experiment is on (Settings, Experiments). */}
+                {t.action && (t.id !== "volume" || state.experiments?.cuaVolume) ? (
+                  <button type="button" className="secondary-button" onClick={() => send({ type: "todo-chosen", id: t.id })}>
+                    {t.action}
+                  </button>
+                ) : null}
+              </li>
+            ))}
+          </ul>
           <dl className="this-machine-facts">
             {view.summary.map((f) => (
               <div key={f.label}>
                 <dt>{f.label}</dt>
-                <dd>{f.label === "cua command" && state.cliTarget ? <code>{f.value}</code> : f.value}</dd>
+                <dd>{f.value}</dd>
               </div>
             ))}
           </dl>
@@ -483,7 +508,7 @@ export function InstallerFlow({
   return (
     <section
       className="shelf create-cloud onboarding installer"
-      aria-label="Set up Cua"
+      aria-label={t("installer.flow.label")}
       data-step={view.step}
       data-layout={view.step === "welcome" ? "center" : "split"}
     >
@@ -493,7 +518,7 @@ export function InstallerFlow({
         </span>
       )}
       {body}
-      <ol className="installer-steps installer-dots" aria-label="Setup steps">
+      <ol className="installer-steps installer-dots" aria-label={t("installer.flow.steps_label")}>
         {view.dots.map((d) => (
           <li key={d.step} aria-current={d.current ? "step" : undefined} aria-label={d.label} title={d.label} />
         ))}
@@ -503,28 +528,42 @@ export function InstallerFlow({
 }
 
 /**
- * Done's example prompts (the core's), one quoted line each, scrolling up
- * slowly and continuously to suggest what to ask a coding agent. Not
- * interactive: CSS pauses it under the pointer, and with reduced motion it
- * is a static list of the first rows (the duplicate that makes the loop
- * seamless is hidden).
+ * Done's example prompts (the core's): a few static lines to ask a coding
+ * agent now that it has the cua skills and MCP server. Each copies to the
+ * clipboard on click and says "Copied".
  */
-function PromptTicker({ prompts }: { prompts: string[] }) {
-  const row = (text: string) => `\u201C${text}\u201D`;
+function PromptList({ prompts }: { prompts: string[] }) {
+  const t = useT("installer");
+  const [copied, setCopied] = useState<string | null>(null);
+  const timer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+  const copy = (text: string) => {
+    void navigator.clipboard.writeText(text).then(
+      () => {
+        setCopied(text);
+        window.clearTimeout(timer.current);
+        timer.current = window.setTimeout(() => setCopied(null), 1500);
+      },
+      (error: unknown) => console.warn("[Cua Spaces] copy failed", error),
+    );
+  };
   return (
-    <div className="ob-ticker" role="list" aria-label="Example prompts">
-      <div className="ob-ticker-track" style={{ animationDuration: `${prompts.length * 4}s` }}>
+    <div className="ob-prompts">
+      <p className="ob-prompts-label" id="ob-prompts-label">
+        {t("installer.prompts.label")}
+      </p>
+      <ul className="ob-prompts-list" aria-labelledby="ob-prompts-label">
         {prompts.map((p) => (
-          <div key={p} className="ob-ticker-row" role="listitem">
-            {row(p)}
-          </div>
+          <li key={p}>
+            <button type="button" className="ob-prompt" data-owns-enter onClick={() => copy(p)}>
+              <span>{`\u201C${p}\u201D`}</span>
+              <span className="ob-prompt-copied" aria-live="polite">
+                {copied === p ? t("installer.prompts.copied") : ""}
+              </span>
+            </button>
+          </li>
         ))}
-        {prompts.map((p) => (
-          <div key={`again-${p}`} className="ob-ticker-row ob-ticker-again" aria-hidden="true">
-            {row(p)}
-          </div>
-        ))}
-      </div>
+      </ul>
     </div>
   );
 }
@@ -831,6 +870,7 @@ function AgentsStep({
   installer: InstallerBridge;
   onNext: (configured: string[]) => void;
 }) {
+  const t = useT("installer");
   const copy = onboardingCopy();
   const [report, setReport] = useState<AgentDetectReport | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -903,7 +943,7 @@ function AgentsStep({
           </button>
         }
       >
-        <ul className="installer-agents" aria-label="Setup results">
+        <ul className="installer-agents" aria-label={t("installer.agents.results_label")}>
           {summaries.map(({ agent, s }) => (
             <li key={agent.id} className={s.failed.length ? "installer-agent failed" : "installer-agent"}>
               <span className="installer-agent-name" title={s.text}>
@@ -948,7 +988,7 @@ function AgentsStep({
       {!report && !error && <p className="host-setup-lede">{copy.agentsLooking}</p>}
       {report && installed.length === 0 && <p className="host-setup-lede">{copy.agentsNone}</p>}
       {installed.length > 0 && (
-        <fieldset className="installer-agents" aria-label="Detected agents">
+        <fieldset className="installer-agents" aria-label={t("installer.agents.detected_label")}>
           {installed.map((a) => (
             <label key={a.id} className="create-cloud-toggle installer-agent">
               <input type="checkbox" checked={selected.has(a.id)} onChange={() => toggle(a.id)} />

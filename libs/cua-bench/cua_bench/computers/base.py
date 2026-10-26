@@ -65,9 +65,9 @@ class DesktopSetupConfig(TypedDict, total=False):
     width: int
     #: Screen height in pixels.
     height: int
-    #: Registry image or OS alias (``linux``, ``windows``, ``macos:tahoe``), or
-    #: ``pool:<name>`` for an existing Fleet pool. ``--image`` wins, then this,
-    #: then ``CUA_BENCH_IMAGE``, then the canonical image of ``os_type``.
+    #: Registry image or OS alias (``linux``, ``windows``, ``macos:tahoe``).
+    #: ``--image`` wins, then this, then ``CUA_BENCH_IMAGE``, then the canonical
+    #: image of ``os_type``.
     image: str
     #: Preferred kind: ``container`` (Linux only) or ``vm``.
     kind: str
@@ -92,7 +92,7 @@ class DesktopSetupConfig(TypedDict, total=False):
     installed_apps: List[str]
     #: Deprecated and ignored.
     storage: str
-    #: Deprecated: ``"cloud"`` runs on Fleet; use ``--on cloud`` instead.
+    #: Deprecated: ``"cloud"`` named Cua Cloud, which has ended (it raises).
     provider_type: str
 
 

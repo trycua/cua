@@ -27,7 +27,7 @@ use cua_sandbox_core::byoc::{CloudCheck, CloudCredentials, CloudKind};
 
 pub use cua_sandbox_core::byoc::CloudTarget as Target;
 
-use crate::model::{Connection, ProvisionSpec, Resource, Tier};
+use crate::model::{Capabilities, Connection, HostType, ProvisionSpec, Resource, Tier};
 
 /// This crate's result.
 pub type Result<T> = std::result::Result<T, Error>;
@@ -48,6 +48,7 @@ pub fn target_of(c: &Connection) -> Target {
         zone: some(&c.zone),
         project: some(&c.project),
         environment: some(&c.environment),
+        token: None,
     }
 }
 
@@ -105,6 +106,20 @@ pub trait CloudApi: Send + Sync + 'static {
     /// `target` with this provider's defaults filled in (the profile's
     /// region, gcloud's project).
     fn resolve(&self, target: &Target) -> Result<Connection>;
+    /// Called with the target of a connect or test before its checks: a
+    /// cloud that takes an API token (Hetzner) holds `target.token` for
+    /// them. Nothing is saved yet.
+    fn stage_secret(&self, _target: &Target) {}
+
+    /// Called after a connect's checks passed: saves what
+    /// [`CloudApi::stage_secret`] held (or the environment's token) in the
+    /// Cua credential store.
+    fn persist_secret(&self) -> Result<()> {
+        Ok(())
+    }
+
+    /// Called on disconnect: removes what [`CloudApi::persist_secret`] saved.
+    fn forget_secret(&self) {}
 
     /// What it can run for each image family on `conn`, the machine type
     /// Cua picks and the estimated hourly cost.
@@ -140,4 +155,38 @@ pub trait CloudApi: Send + Sync + 'static {
     /// Every resource in `conn`'s account and region tagged
     /// `cua-managed=true` and `cua-owner=<owner>`.
     async fn list_owned(&self, conn: &Connection, owner: &str) -> Result<Vec<Resource>>;
+
+    /// What it supplies to the elastic pool, how it bills, where and its
+    /// limits (`provider-contract.md`). Default: nothing (one sandbox per
+    /// machine only).
+    fn capabilities(&self, _conn: &Connection) -> Capabilities {
+        Capabilities::default()
+    }
+
+    /// The machine types it offers on `conn`, cheapest first (live when the
+    /// API has prices, else a built-in table). Default: none.
+    async fn host_types(&self, _conn: &Connection) -> Result<Vec<HostType>> {
+        Ok(vec![])
+    }
+
+    /// The machine's console or serial log as the cloud has it (`None`: the
+    /// cloud keeps none, or nothing is there yet). Read-only. A failed
+    /// create reads it before deleting the machine, so the reason it never
+    /// came online survives; the caller filters secrets and bounds the time.
+    async fn boot_log(&self, _conn: &Connection, _r: &Resource) -> Result<Option<String>> {
+        Ok(None)
+    }
+}
+
+/// How long to wait before retry `n` (1-based) of a rate-limited or
+/// briefly unavailable cloud call: 0.25 s doubling, at most 3 retries.
+pub(crate) fn retry_backoff(n: u32) -> Option<std::time::Duration> {
+    (n <= 3).then(|| std::time::Duration::from_millis(250 << (n - 1)))
+}
+
+/// Whether an HTTP answer is worth a retry: 429 and 503 always (the cloud
+/// did not act on the call), 500, 502 and 504 only for reads and deletes
+/// (a create that may have happened is never repeated).
+pub(crate) fn retryable_status(status: u16, idempotent: bool) -> bool {
+    matches!(status, 429 | 503) || (idempotent && matches!(status, 500 | 502 | 504))
 }

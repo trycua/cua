@@ -4,18 +4,21 @@
 import { CheckIcon, ChevronRightIcon, LoaderCircleIcon, TriangleAlertIcon } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
-import { useBridge, useConnectCloud, useNewSpaceWizard, useSpaces, type RuntimeSwitch, type WizardAction, type WizardField, type WizardTile, type WizardView } from "@/bridge";
+import { useBridge, useConnectCloud, useNewSpaceWizard, useSpaces, type CreateSpaceArgs, type RuntimeSwitch, type WizardAction, type WizardField, type WizardTile, type WizardView } from "@/bridge";
+import { CliHintBlock, useCliName } from "@/components/cli-hint";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { toastError } from "@/components/ui/toast";
+import { createCommand, openCommand } from "@/lib/cli-commands";
 import { macosLimitText } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
 import { useCreateFromWizard } from "@/hooks/use-new-space";
 import { ConnectCloudDialog } from "./connect-cloud-dialog";
 import { ImageField } from "./image-field";
 import { MenuSelect } from "./menu-select";
+import { RuntimeFixRow } from "./runtime-fix";
 
 /**
  * New Space: System, Resources, Options, Summary, as the native app's sheet.
@@ -43,8 +46,9 @@ export function NewSpaceDialog() {
         open={wizard.open && view !== null}
         onOpenChange={(open) => {
           if (open) return;
-          // Escape closes the image suggestions first.
+          // Escape closes the image suggestions, or a typed value, first.
           if (view?.imageField.open) return send({ type: "dismiss-image-suggestions" });
+          if (view?.resourceEdit) return send({ type: "cancel-resource" });
           wizard.close();
         }}
       >
@@ -357,6 +361,7 @@ function SystemRow({ field: f, v }: { field: WizardField; v: WizardView }) {
               ) : (
                 error
               )}
+              {error && !v.runtimeSwitch && v.plan.placement === "local" ? <RuntimeFixRow /> : null}
               {v.placementHint ? <Note data-placement-hint="">{v.placementHint}</Note> : null}
             </>
           }
@@ -396,7 +401,77 @@ function SystemRow({ field: f, v }: { field: WizardField; v: WizardView }) {
 
 /* ---- Resources ------------------------------------------------------------- */
 
-function Slider({ id, label, value, min, max, text, title, onChange }: { id: string; label: string; value: number; min: number; max: number; text: string; title?: string; onChange: (n: number) => void }) {
+/** The slider's number: click it to type a value. The core checks it against
+ * the slider's own limits (`edit-resource` / `set-resource-text` /
+ * `commit-resource`); Return or leaving the field uses it, Escape keeps the
+ * slider's value. */
+function SliderValue({ id, label, text, edit }: { id: "cpus" | "memory" | "disk"; label: string; text: string; edit: WizardView["resourceEdit"] }) {
+  const { send } = useNewSpaceWizard();
+  if (edit?.field === id) {
+    return (
+      <input
+        id={`ns-${id}-value`}
+        data-value-input={id}
+        autoFocus
+        inputMode="numeric"
+        spellCheck={false}
+        autoComplete="off"
+        aria-label={label}
+        aria-invalid={Boolean(edit.error)}
+        aria-describedby={edit.error ? `ns-${id}-error` : undefined}
+        value={edit.text}
+        onFocus={(e) => e.currentTarget.select()}
+        onChange={(e) => send({ type: "set-resource-text", text: e.target.value })}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            send({ type: "commit-resource" });
+          } else if (e.key === "Escape") {
+            // Keeps the sheet open: only the typed value is dropped.
+            e.preventDefault();
+            e.stopPropagation();
+            send({ type: "cancel-resource" });
+          }
+        }}
+        onBlur={() => send({ type: "commit-resource" })}
+        className="h-6 w-16 rounded-md border border-input bg-transparent px-1.5 text-right text-[13px] tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-ring/60 aria-invalid:border-destructive"
+      />
+    );
+  }
+  return (
+    <button
+      type="button"
+      data-value-text={id}
+      title={`Type a value for ${label.toLowerCase()}`}
+      onClick={() => send({ type: "edit-resource", field: id })}
+      className="w-16 cursor-text rounded-md px-1.5 text-right text-[13px] tabular-nums hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:outline-none"
+    >
+      {text}
+    </button>
+  );
+}
+
+function Slider({
+  id,
+  label,
+  value,
+  min,
+  max,
+  text,
+  title,
+  edit,
+  onChange,
+}: {
+  id: "cpus" | "memory" | "disk";
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  text: string;
+  title?: string;
+  edit: WizardView["resourceEdit"];
+  onChange: (n: number) => void;
+}) {
   return (
     <div className="flex w-72 items-center gap-3" title={title}>
       <input
@@ -411,11 +486,19 @@ function Slider({ id, label, value, min, max, text, title, onChange }: { id: str
         onChange={(e) => onChange(Number(e.target.value))}
         className="h-1 flex-1 accent-brand"
       />
-      <output htmlFor={`ns-${id}`} data-value-text={id} className="w-16 text-right text-[13px] tabular-nums">
-        {text}
-      </output>
+      <SliderValue id={id} label={label} text={text} edit={edit} />
     </div>
   );
+}
+
+/** Why a typed value cannot be used, under its slider (the field's error). */
+function typedError(v: WizardView, id: string): ReactNode {
+  const error = v.resourceEdit?.field === id ? v.resourceEdit.error : null;
+  return error ? (
+    <p role="alert" id={`ns-${id}-error`} data-field-error={id} className="mt-1.5 text-right text-xs text-destructive">
+      {error}
+    </p>
+  ) : null;
 }
 
 function ResourcesStep({ v }: { v: WizardView }) {
@@ -429,12 +512,21 @@ function ResourcesStep({ v }: { v: WizardView }) {
       {sized ? (
         <Group>
           {fieldOf(v, "cpus") ? (
-            <Row id="cpus" label={labelOf(v, "cpus")} htmlFor="ns-cpus">
-              <Slider id="cpus" label={labelOf(v, "cpus")} value={v.cpus} min={v.minCpus} max={v.maxCpus} text={v.cpusText} onChange={(cpus) => send({ type: "set-cpus", cpus })} />
+            <Row id="cpus" label={labelOf(v, "cpus")} htmlFor="ns-cpus" below={typedError(v, "cpus")}>
+              <Slider
+                id="cpus"
+                label={labelOf(v, "cpus")}
+                value={v.cpus}
+                min={v.minCpus}
+                max={v.maxCpus}
+                text={v.cpusText}
+                edit={v.resourceEdit}
+                onChange={(cpus) => send({ type: "set-cpus", cpus })}
+              />
             </Row>
           ) : null}
           {fieldOf(v, "memory") ? (
-            <Row id="memory" label={labelOf(v, "memory")} htmlFor="ns-memory">
+            <Row id="memory" label={labelOf(v, "memory")} htmlFor="ns-memory" below={typedError(v, "memory")}>
               <Slider
                 id="memory"
                 label={labelOf(v, "memory")}
@@ -442,6 +534,7 @@ function ResourcesStep({ v }: { v: WizardView }) {
                 min={v.minMemoryGb}
                 max={v.maxMemoryGb}
                 text={v.memoryText}
+                edit={v.resourceEdit}
                 onChange={(memoryGb) => send({ type: "set-memory", memoryGb })}
               />
             </Row>
@@ -452,7 +545,9 @@ function ResourcesStep({ v }: { v: WizardView }) {
               label={labelOf(v, "disk")}
               htmlFor="ns-disk"
               below={
-                v.diskNote || v.diskResetLabel ? (
+                v.resourceEdit?.field === "disk" && v.resourceEdit.error ? (
+                  typedError(v, "disk")
+                ) : v.diskNote || v.diskResetLabel ? (
                   <div className="mt-1.5 flex items-baseline justify-between gap-4">
                     {v.diskNote ? (
                       <p data-disk-note="" className="text-xs text-muted-foreground">
@@ -478,6 +573,7 @@ function ResourcesStep({ v }: { v: WizardView }) {
                 max={v.maxDiskGb}
                 text={v.diskText}
                 title={v.diskHelp ?? undefined}
+                edit={v.resourceEdit}
                 onChange={(diskGb) => send({ type: "set-disk", diskGb })}
               />
             </Row>
@@ -582,17 +678,73 @@ function OptionsStep({ v }: { v: WizardView }) {
   );
 }
 
-function SummaryStep({ v }: { v: WizardView }) {
+/** The Summary rows only a developer needs (`wizard::SUMMARY_ADVANCED`): they
+ * sit under "Advanced", the same disclosure the System step uses. */
+const SUMMARY_ADVANCED = new Set(["Image", "Kind", "Architecture", "Runtime"]);
+
+function SummaryRow({ fact }: { fact: { label: string; value: string } }) {
   return (
-    <Group data-summary="">
-      {v.summary.map((fact) => (
-        <div key={fact.label} data-summary-row="" className="flex items-baseline justify-between gap-6 px-4 py-2 text-[13px]">
-          <span className="shrink-0 text-muted-foreground">{fact.label}</span>
-          <span className={cn("min-w-0 text-right break-all", fact.label === "Image" && "font-mono text-xs")}>{fact.value}</span>
-        </div>
-      ))}
-    </Group>
+    <div data-summary-row="" className="flex items-baseline justify-between gap-6 px-4 py-2 text-[13px]">
+      <span className="shrink-0 text-muted-foreground">{fact.label}</span>
+      <span className={cn("min-w-0 text-right break-all", fact.label === "Image" && "font-mono text-xs")}>{fact.value}</span>
+    </div>
   );
+}
+
+function SummaryStep({ v }: { v: WizardView }) {
+  const { send } = useNewSpaceWizard();
+  const plain = v.summary.filter((f) => !SUMMARY_ADVANCED.has(f.label));
+  const technical = v.summary.filter((f) => SUMMARY_ADVANCED.has(f.label));
+  return (
+    <>
+      <Group data-summary="">
+        {plain.map((fact) => (
+          <SummaryRow key={fact.label} fact={fact} />
+        ))}
+      </Group>
+      {technical.length ? (
+        <div className="mt-4">
+          <button
+            type="button"
+            data-advanced-toggle=""
+            aria-expanded={v.advanced}
+            onClick={() => send({ type: "toggle-advanced" })}
+            className="flex items-center gap-1 px-1 text-xs font-semibold text-muted-foreground outline-none hover:text-foreground focus-visible:text-foreground"
+          >
+            <ChevronRightIcon className={cn("size-3.5 transition-transform", v.advanced && "rotate-90")} />
+            {v.labels.advanced}
+          </button>
+          {v.advanced ? (
+            <Group className="mt-2" data-summary-advanced="">
+              {technical.map((fact) => (
+                <SummaryRow key={fact.label} fact={fact} />
+              ))}
+            </Group>
+          ) : null}
+        </div>
+      ) : null}
+      <SummaryCommands v={v} />
+    </>
+  );
+}
+
+/** What Create does, as terminal commands (the create the core would make,
+ * then opening it when "Open when it's ready" is on); only with the CLI
+ * installed. */
+function SummaryCommands({ v }: { v: WizardView }) {
+  const { core } = useBridge();
+  const cli = useCliName();
+  if (!cli) return null;
+  let args: CreateSpaceArgs | undefined;
+  try {
+    args = core.tryCall<CreateSpaceArgs>("wizard.createArgs", { plan: v.plan });
+  } catch {
+    args = undefined;
+  }
+  const create = args ? createCommand(cli, args) : null;
+  if (!args || !create) return null;
+  const open = v.plan.openWhenReady ? openCommand(cli, args) : null;
+  return <CliHintBlock commands={open ? [create, open] : [create]} />;
 }
 
 /* ---- Connect by address ---------------------------------------------------- */

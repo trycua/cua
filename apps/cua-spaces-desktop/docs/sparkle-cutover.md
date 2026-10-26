@@ -78,15 +78,39 @@ Those are the rehearsal below.
 1. The Electron app is at parity on macOS and has shipped as betas. The
    beta feed has worked end to end: a beta updated to the next beta.
 2. `STABLE_FEED = true` in `src/updater.ts`. The workflow refuses the
-   cutover otherwise.
-3. Migrated users update on their own. The updater counts as enabled when
-   `swiftMigration.found` is true and `sparkleAutomaticChecks !== false`
-   (Sparkle's default was on). Everyone else stays opt-in.
+   cutover otherwise. `test/release.test.ts` ("serves stable on Windows and
+   Linux, and on macOS only after the cutover") asserts the old value; it
+   changes in the same commit, or electron-mac's tests fail before the
+   build.
+3. Migrated users update on their own (`src/update-prefs.ts`, done).
+   Automatic checks are on for everyone, migrated or not, unless the user
+   turned them off in Settings → About or had turned them off in the Swift
+   app (`swiftMigration.found` with `sparkleAutomaticChecks === false`; the
+   Swift app's Info.plist turns Sparkle's checks on, so the key is only saved
+   when the user changed it). Found updates download in the background and
+   show the in-app "Restart to update" indicator; nothing restarts without a
+   click. A channel carried over from the Swift app that isn't served to the
+   Electron app on macOS (Stable, before `STABLE_FEED`) falls back to the
+   build's channel.
 4. electron-builder sets `generateUpdatesFilesForAllChannels: true` from the
    cutover on. Stable releases then also write `beta*.yml`, so betas move
    on to the stable release.
 5. The install scripts (`scripts/install`) and spaces.cua.ai point at the
    Electron DMG, as a separate change.
+6. The release's `cua` replaces a daemon whose executable is gone or was
+   replaced (`cua-daemon` `identity::verdict`). The daemon the Swift app
+   started keeps running across Sparkle's swap; its file
+   (`Contents/MacOS/cua`) is gone afterwards, and while the Electron app
+   used it the Keyvault refused ("the peer process no longer matches its
+   connect-time audit token"). Fixed in #4942 (cua-spaces 0.8.0-beta.3).
+   It also ends an old daemon that acted on Shutdown but never exited, or
+   that still holds `~/.cua/keyvault.sock` (#4950, fixed in #5191,
+   cua-spaces 0.9.1). Before that fix, such a daemon stayed running
+   untracked and the new one couldn't serve the Keyvault.
+7. Chromium stays out of the keychain on macOS (`--use-mock-keychain`,
+   `src/chromium-keychain.ts`, #5209, cua-spaces 0.9.1). Before that, every
+   Electron update asked for the login keychain password for "Cua Spaces
+   Safe Storage", and the app froze until it was answered.
 
 ## Rehearsal (a staging repository)
 
@@ -112,6 +136,31 @@ releases feed only test Macs.
    `scripts/sparkle/accepts.sh "/Applications/Cua Spaces.app" <dmg> <edSignature from the appcast>`.
 6. Release the next version without the variable. The Electron app updates
    itself from `latest-mac.yml`.
+
+## Rehearsal without a staging repository
+
+The same check can run from trycua/cua (or the staging repository, whose
+CI holds the same signing secrets) without publishing anything:
+
+1. On a throwaway branch with `STABLE_FEED = true` (and the test above),
+   run "CD: Cua Spaces" by hand with `electron_dry_run` and
+   `sparkle_electron` and a version whose `X.Y.Z.<run number>` is above the
+   installed Swift app's. electron-mac signs, notarizes and staples the app
+   and keeps the cutover appcast (`sparkle-appcast`, signed with the release
+   key and checked by `verify-appcast.sh --electron`) and the DMG
+   (`electron-darwin`) as workflow artifacts. Nothing is published: a dry
+   run never uploads, and only a tag publishes.
+2. On a test Mac running a signed Swift build on the Beta channel (or a
+   stable version, for a stable item), point the item's enclosure URL at a
+   server on the loopback interface (the EdDSA signature covers the file,
+   not its URL), serve the appcast and the DMG there, and set the feed for
+   this Mac only:
+   `defaults write com.trycua.spaces.macos SUFeedURL http://127.0.0.1:<port>/cua-spaces-appcast.xml`
+   (Sparkle reads the defaults before Info.plist).
+3. Choose Check Now in the Swift app and install. Check what step 4 above
+   lists. A semver below the published betas also shows the takeover: the
+   Electron app's Check Now then updates from the real `beta*.yml`.
+4. `defaults delete com.trycua.spaces.macos SUFeedURL` and stop the server.
 
 ## The one release (trycua/cua)
 

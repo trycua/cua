@@ -87,9 +87,9 @@ describe("visibleSpaces", () => {
 describe("machineName", () => {
   it("names the machine a Space runs on", () => {
     expect(machineName(MACHINES, SPACES[1]!)).toBe("Mac mini");
-    expect(machineName(MACHINES, { id: "x", provider: "cloud" })).toBe("Cua Cloud");
+    expect(machineName(MACHINES, { id: "x", provider: "direct" })).toBe("a computer added by address");
     expect(machineName(MACHINES, { id: "x", provider: "relay", hostName: "Linux box" })).toBe("Linux box");
-    expect(machineName(MACHINES, { id: "x", provider: "relay" })).toBe("Unknown machine");
+    expect(machineName(MACHINES, { id: "x", provider: "relay" })).toBe("Unknown computer");
   });
 });
 
@@ -118,7 +118,7 @@ describe("space actions", () => {
 describe("isMachineDesktop / realSpaces", () => {
   it("leaves this Mac and relay machines' own desktops out of the Spaces", () => {
     const rows: Space[] = [
-      space("this-mac", "suspended", 1, { provider: "local", name: "This machine" }),
+      space("this-mac", "suspended", 1, { provider: "local", name: "This computer" }),
       space("local-desktop", "local", 1, { provider: "local" }),
       space("relay:96fedb7e1be65c3d31fa18587febde2c", "running", 1, { name: "gamma-4 Mac Studio" }),
       space("relay:space-ca12d6d23907f387", "running", 1, { host: "96fedb7e1be65c3d31fa18587febde2c" }),
@@ -146,7 +146,7 @@ describe("powerButton", () => {
   const on = space("p", "running", 1, { power: { control: "suspend", off: false } });
 
   it("follows the core when it answers", () => {
-    const core = { tryCall: <T,>() => ({ symbol: "power", help: "Suspend", turnOn: false, enabled: true, busy: false }) as T };
+    const core = { tryCall: <T,>() => ({ symbol: "power", help: { code: "spaces.power.suspend", vars: {} }, turnOn: false, enabled: true, busy: false }) as T };
     expect(powerButton(core, on)).toEqual({ help: "Suspend", turnOn: false, busy: false });
     expect(powerButton({ tryCall: <T,>() => null as T }, on)).toBeNull();
   });

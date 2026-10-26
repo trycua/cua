@@ -1,6 +1,7 @@
 name: "CI: Installers"
 
-# install.sh / install.ps1 (scripts/install), the release manifest generator
+# install.sh / install.ps1 and uninstall.sh / uninstall.ps1 (scripts/install),
+# the release manifest generator
 # and the macOS .pkg, exercised against a locally served fake release. Nothing
 # here installs onto the runner outside temp dirs, except the Linux container
 # smoke, which installs into a throwaway container.
@@ -30,6 +31,7 @@ env:
 
 jobs:
   lint:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: shellcheck + shfmt + manifest unit tests
     runs-on: ubuntu-24.04
     steps:
@@ -37,19 +39,20 @@ jobs:
       - name: shellcheck
         run: |
           docker run --rm -v "$PWD:/w:ro" koalaman/shellcheck:stable -s sh \
-            /w/scripts/install/install.sh /w/scripts/install/tests/run.sh /w/scripts/install/tests/docker-pester.sh \
+            /w/scripts/install/install.sh /w/scripts/install/uninstall.sh /w/scripts/install/tests/run.sh /w/scripts/install/tests/docker-pester.sh \
             /w/apps/cua-spaces/scripts/build-pkg.sh /w/apps/cua-spaces/scripts/prepare-cli-sidecar.sh \
             /w/apps/cua-spaces/src-tauri/installer/macos-pkg/postinstall /w/apps/cua-spaces/tests/installer/pkg.test.sh
       - name: shfmt
         run: |
           docker run --rm -v "$PWD:/w:ro" mvdan/shfmt:v3 -d \
-            /w/scripts/install/install.sh /w/scripts/install/tests/run.sh \
+            /w/scripts/install/install.sh /w/scripts/install/uninstall.sh /w/scripts/install/tests/run.sh \
             /w/apps/cua-spaces/scripts/build-pkg.sh /w/apps/cua-spaces/scripts/prepare-cli-sidecar.sh \
             /w/apps/cua-spaces/src-tauri/installer/macos-pkg/postinstall /w/apps/cua-spaces/tests/installer/pkg.test.sh
       - name: release_manifest.py unit tests
         run: python3 -m unittest discover -s scripts/install/tests -v
 
   installer-smoke-linux:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: installer smoke (Linux containers)
     runs-on: ubuntu-24.04
     strategy:
@@ -82,25 +85,32 @@ jobs:
               --merge /tmp/cli.json --out /rel/cua-install-latest/release-artifacts.json
             (cd /rel && python3 -m http.server 8765 >/dev/null 2>&1 &)
             sleep 1
+            mkdir -p /qemu-stubs
+            for t in qemu-img "qemu-system-$(uname -m)"; do printf "#!/bin/sh\nexit 0\n" > "/qemu-stubs/$t" && chmod +x "/qemu-stubs/$t"; done
+            export PATH="/qemu-stubs:$PATH"
             CUA_INSTALL_BASE_URL=http://127.0.0.1:8765 sh /w/install.sh --yes --no-onboarding --mode client
             /usr/local/bin/cua --version
-            # Cua Spaces is macOS-only for now: Linux skips the app.
-            test ! -e /usr/local/bin/cua-spaces
+            # Linux installs the Spaces AppImage next to the CLI.
+            test -x /usr/local/bin/cua-spaces
             # --pair installs the CLI and adds the machine with the code.
             CUA_INSTALL_BASE_URL=http://127.0.0.1:8765 sh /w/install.sh --dry-run --pair K7QM-4XPB-2RHD | grep -q "host setup --pair K7QM-4XPB-2RHD"
           '
 
   installer-smoke-macos:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: installer smoke (macOS, temp prefix + dmg mount + pkg)
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
       - name: install.sh test suite (includes the .dmg mount into --prefix)
         run: sh scripts/install/tests/run.sh
+      - name: uninstall.sh tests under macOS's /bin/sh (a throwaway HOME, no real Keychain or services)
+        run: python3 -m unittest discover -s scripts/install/tests -p 'test_uninstall.py' -v
       - name: .pkg build + expand + postinstall against a temp volume
         run: sh apps/cua-spaces/tests/installer/pkg.test.sh
 
   installer-smoke-windows:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: installer smoke (Windows, install.ps1)
     runs-on: windows-latest
     steps:
@@ -126,3 +136,9 @@ jobs:
           ./scripts/install/install.ps1 -DryRun -Yes -Mode host
           ./scripts/install/install.ps1 -CliOnly -Yes -NoOnboarding -Prefix (Join-Path $env:RUNNER_TEMP 'prefix')
           if (-not (Test-Path (Join-Path $env:RUNNER_TEMP 'prefix/bin/cua.exe'))) { throw 'cua.exe was not installed' }
+      - name: uninstall.ps1 -DryRun changes nothing
+        shell: pwsh
+        run: |
+          $prefix = Join-Path $env:RUNNER_TEMP 'prefix'
+          ./scripts/install/uninstall.ps1 -DryRun -Prefix $prefix
+          if (-not (Test-Path (Join-Path $prefix 'bin/cua.exe'))) { throw 'the dry run removed cua.exe' }

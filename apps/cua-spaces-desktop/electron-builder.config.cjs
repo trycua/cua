@@ -125,10 +125,19 @@ if (azureSigning && !env.AZURE_SIGNING_PUBLISHER) {
  */
 const nativeResources = (platform) => ({ from: `native/${platform}-\${arch}`, to: "native", filter: ["**/*"] });
 
-/** The native directory's files on a platform (src/native/location.ts). */
-function nativeLayout(platform) {
+/** The static cua-spacesd's arch name for electron-builder's Arch enum (x64 = 1, arm64 = 3). */
+const spacesdArch = { 1: "x86_64", 3: "aarch64" };
+
+/**
+ * The native directory's files on a platform (src/native/location.ts). On
+ * Linux the static cua-spacesd sits next to `cua`, which injects it into
+ * images without one (libs/cua/crates/cua-vmm/src/inject.rs).
+ */
+function nativeLayout(platform, arch) {
   const libraryFile = { darwin: "libcua_spaces_ffi.dylib", win32: "cua_spaces_ffi.dll", linux: "libcua_spaces_ffi.so" }[platform];
-  return { libraryFile, files: [libraryFile, "cua_node_runtime.node", platform === "win32" ? "cua.exe" : "cua"] };
+  const files = [libraryFile, "cua_node_runtime.node", platform === "win32" ? "cua.exe" : "cua"];
+  if (platform === "linux") files.push(`cua-spacesd-linux-${spacesdArch[arch] ?? arch}`);
+  return { libraryFile, files };
 }
 
 /** @type {import("electron-builder").Configuration} */
@@ -145,7 +154,19 @@ module.exports = {
   buildVersion,
   asar: true,
   compression: "normal",
-  files: ["package.json", "dist-electron/**/*", "placeholder/**/*", "!**/*.map"],
+  files: [
+    "package.json",
+    "dist-electron/**/*",
+    "placeholder/**/*",
+    "!**/*.map",
+    // @sentry/electron (crash reporting, src/crash-reporting-main.ts) is a runtime dependency.
+    // Its bundler plugins, with the Sentry CLI and the parser they pull in (~35 MB), run in
+    // builds only: the main process never loads them.
+    "!node_modules/@sentry/bundler-plugins/**",
+    "!node_modules/sentry/**",
+    "!node_modules/oxc-parser/**",
+    "!node_modules/@oxc-parser/**",
+  ],
   extraResources: [
     // The built web UI sits next to the asar, served by the cua-spaces:// handler.
     ...(fs.existsSync(path.join(webDist, "index.html"))
@@ -154,7 +175,7 @@ module.exports = {
   ],
   // Every package carries its native layer: without it the app cannot start.
   afterPack: async (context) => {
-    const { libraryFile, files } = nativeLayout(context.electronPlatformName);
+    const { libraryFile, files } = nativeLayout(context.electronPlatformName, context.arch);
     const resources =
       context.electronPlatformName === "darwin"
         ? path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`, "Contents", "Resources")
@@ -178,8 +199,15 @@ module.exports = {
       for (const f of files) await context.packager.signIf(path.join(resources, "native", f));
     }
   },
-  electronLanguages: ["en"],
+  // Chromium's English strings are `en-US.pak`, which "en" alone strips from
+  // Linux and Windows builds: the menus then draw their accelerators with no
+  // modifier ("+N" for Ctrl+N).
+  electronLanguages: ["en", "en-US"],
   electronFuses: env.CUA_SPACES_NO_FUSES === "1" ? null : electronFuses({ resetAdHocSignature: !macSigning }),
+
+  // `cua://add/<code>` (the add-machine link) opens this app: Info.plist on macOS, the desktop
+  // entry's MIME type on Linux. Windows registers it when the app first runs (src/main.ts).
+  protocols: [{ name: "Cua", schemes: ["cua"] }],
 
   mac: {
     appId: "com.trycua.spaces.macos",
@@ -253,8 +281,14 @@ module.exports = {
     executableName: linuxId,
     // 32 to 512 px, symlinks to the Cua Spaces icons so each hicolor size is installed.
     icon: "packaging/linux-icons",
-    // 32x32 for the tray; 128x128@2x (256 px) as the window icon (src/icon.ts).
-    extraResources: [{ from: icons, to: "tray", filter: ["32x32.png", "128x128@2x.png"] }, nativeResources("linux")],
+    // The tray glyphs (light for GNOME's dark top bar, dark for a light
+    // panel; src/tray.ts), 32x32 as the tray's fallback; 128x128@2x
+    // (256 px) as the window icon (src/icon.ts).
+    extraResources: [
+      { from: icons, to: "tray", filter: ["32x32.png", "128x128@2x.png"] },
+      { from: "packaging/linux-tray", to: "tray", filter: ["tray-light.png", "tray-dark.png"] },
+      nativeResources("linux"),
+    ],
     category: "Development",
     // The desktop entry's Comment and the package description (electron-builder
     // writes the description over an entry's own Comment).
@@ -286,7 +320,15 @@ module.exports = {
   // there the confirmation is unavailable and the Keyvault stays off).
   deb: {
     artifactName: "cua-spaces_${version}_${arch}.deb",
-    fpm: [`${path.join(__dirname, "packaging/ai.cua.spaces.policy")}=/usr/share/polkit-1/actions/ai.cua.spaces.policy`],
+    fpm: [
+      // Removing the package turns off what the app set up outside /opt
+      // (unattended access on the relay, the daemon, launch at login): see
+      // the script. An option first: after the first `source=target` fpm reads
+      // everything as a path.
+      "--before-remove",
+      path.join(__dirname, "packaging/linux/prerm.sh"),
+      `${path.join(__dirname, "packaging/ai.cua.spaces.policy")}=/usr/share/polkit-1/actions/ai.cua.spaces.policy`,
+    ],
   },
 
   // Feed for electron-updater (written to app-update.yml); see the header.

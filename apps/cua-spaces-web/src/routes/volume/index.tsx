@@ -7,6 +7,7 @@ import type { ReactNode } from "react";
 
 import { useExperimentFlags, useVolume, useVolumePins, type ConflictView, type DriveAction, type LineView } from "@/bridge";
 import { EmptyState, Page, PageHeader } from "@/components/page";
+import { StorageSection } from "@/components/settings/storage-section";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { volumeUnavailableNote } from "@/lib/volume-notes";
@@ -28,7 +29,7 @@ function VolumePage() {
       <Page className="max-w-3xl">
         <PageHeader title="Volume" />
         <EmptyState icon={<HardDriveIcon />} title="Cua Volume is off">
-          It's an experiment for now. Turn it on in Settings, Experiments.
+          It's an experiment for now. Turn it on in Settings, Advanced.
         </EmptyState>
       </Page>
     );
@@ -149,6 +150,8 @@ function VolumeBody() {
             {view.error}
           </p>
         ) : null}
+
+        <StorageSection />
       </div>
     </Page>
   );

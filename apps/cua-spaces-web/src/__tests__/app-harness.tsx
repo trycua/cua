@@ -8,10 +8,12 @@
 
 import { createMemoryHistory, createRouter, RouterProvider } from "@tanstack/react-router";
 import { render } from "@testing-library/react";
-import { beforeEach } from "vitest";
+import { afterEach, beforeEach } from "vitest";
 import type { DataAdapter } from "@/bridge/adapter";
+import type { MachinesView } from "@/bridge/contracts/host";
+import type { ListStatus } from "@/bridge/contracts/spaces";
 import type { HostEvent } from "@/bridge/protocol";
-import { createDemoAdapter } from "@/bridge/adapters/demo";
+import { createDemoAdapter, type DemoOptions } from "@/bridge/adapters/demo";
 import { BridgeProvider, useBridge, useMachines, useSpaces, type SpacesHook } from "@/bridge";
 import { testCore } from "@/bridge/__tests__/testCore";
 import { ToastProvider } from "@/components/ui/toast";
@@ -47,14 +49,34 @@ export interface TestHost {
   answer?: (op: string, out: unknown) => unknown;
   /** Answers `op` itself instead of the demo host (undefined: the demo's). */
   intercept?: (op: string, args: unknown) => unknown;
+  /** The Machines page as the host's core drew it (`machinesView`). */
+  machinesView?: () => MachinesView | null;
+  /** How far the host's list read got (`listStatus`); undefined: complete. */
+  listStatus?: () => ListStatus;
+  /** The demo host's own options (signed out, a first run). */
+  demo?: DemoOptions;
 }
 
+/** The routers mounted by the running test: a navigation the app started (a
+ * create that finishes sends the person to the new Space) may still be
+ * loading when the test ends, and a router that settles after jsdom is gone
+ * throws `window is not defined`. Each test waits for them to go idle first. */
+const mounted: Array<{ state: { isLoading: boolean } }> = [];
+
+afterEach(async () => {
+  const routers = mounted.splice(0);
+  const deadline = Date.now() + 3000;
+  while (routers.some((r) => r.state.isLoading) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 5));
+});
+
 export async function mountApp(path: string, host: TestHost = { failsCreates: true, listsGhost: true }) {
-  const demo = createDemoAdapter({ latencyMs: 1, stepMs: 4 });
+  const demo = createDemoAdapter({ latencyMs: 1, stepMs: 4, ...host.demo });
   // The page's listeners, so a test can push what the host would (`emit`).
   const listeners = new Set<(event: HostEvent) => void>();
   const adapter: DataAdapter = {
     mode: demo.mode,
+    ...(host.machinesView ? { machinesView: host.machinesView } : {}),
+    ...(host.listStatus ? { listStatus: host.listStatus } : {}),
     subscribe: (l) => {
       listeners.add(l);
       const off = demo.subscribe(l);
@@ -77,6 +99,7 @@ export async function mountApp(path: string, host: TestHost = { failsCreates: tr
     }) as DataAdapter["call"],
   };
   const router = createRouter({ routeTree, history: createMemoryHistory({ initialEntries: [path] }) });
+  mounted.push(router);
   const hooks = {} as { spaces: SpacesHook; machines: ReturnType<typeof useMachines>; core: ReturnType<typeof useBridge>["core"] };
   function Probe() {
     hooks.spaces = useSpaces();

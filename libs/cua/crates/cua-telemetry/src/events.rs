@@ -104,6 +104,11 @@ pub fn error_kind(variant: &str) -> &'static str {
         }
         out
     };
+    // A failed create's Local Network cause comes as its subclass word
+    // (`cua_create_failure::create_failure_kind`); its kind is the parent.
+    if matches!(snake.as_str(), "local_network_denied" | "local_network_vpn") {
+        return "local_network";
+    }
     pick(schema::ERROR_KINDS, &snake, "other")
 }
 
@@ -153,6 +158,11 @@ pub fn location(on: &str) -> &'static str {
         .next()
         .unwrap_or("")
         .to_ascii_lowercase();
+    // Cua Cloud has ended: an attempt there reports `other`. `cloud` stays
+    // in the schema for the events recorded before.
+    if word == "cloud" {
+        return "other";
+    }
     pick(schema::LOCATIONS, &word, "other")
 }
 
@@ -720,21 +730,65 @@ pub fn agent_run_completed(
         .s("duration_bucket", duration_bucket(elapsed))
 }
 
+/// A fixed cause word for a failed agent run, chosen from its recorded
+/// error text: `no_api_key`, `provider_error`, `timeout`, `user_cancelled`,
+/// else `AgentFailed`. The text is only matched, never kept or sent.
+pub fn agent_failure_cause(error: Option<&str>) -> &'static str {
+    let t = error.unwrap_or_default().to_ascii_lowercase();
+    let has = |words: &[&str]| words.iter().any(|w| t.contains(w));
+    if has(&["cancelled", "canceled", "interrupted by user"]) {
+        "user_cancelled"
+    } else if has(&["timed out", "timeout", "deadline"]) {
+        "timeout"
+    } else if has(&[
+        "api key",
+        "api_key",
+        "apikey",
+        "credential",
+        "unauthorized",
+        "authentication",
+        "401",
+        "403",
+        "not logged in",
+        "login required",
+    ]) {
+        "no_api_key"
+    } else if has(&[
+        "rate limit",
+        "429",
+        "overloaded",
+        "quota",
+        "provider",
+        "500",
+        "502",
+        "503",
+        "504",
+        "service unavailable",
+    ]) {
+        "provider_error"
+    } else {
+        "AgentFailed"
+    }
+}
+
 /// How an agent run ended, from its published status (`cua_agents`
-/// `RunStatus::as_str`), the ACP stop reason of its last turn and whether
-/// it recorded an error. None while it still runs (or cannot be read).
+/// `RunStatus::as_str`), the ACP stop reason of its last turn and its
+/// recorded error text (only classified into a cause word). None while it
+/// still runs (or cannot be read).
 pub fn agent_run_end(
     status: &str,
     stop_reason: Option<&str>,
-    recorded_error: bool,
+    recorded_error: Option<&str>,
 ) -> Option<(Outcome, Option<&'static str>)> {
     match status.trim() {
         "idle" if stop_reason.is_some_and(|r| r.trim() == "cancelled") => {
             Some((Outcome::Cancelled, None))
         }
-        "idle" if recorded_error => Some((Outcome::Error, Some("AgentFailed"))),
+        "idle" if recorded_error.is_some() => {
+            Some((Outcome::Error, Some(agent_failure_cause(recorded_error))))
+        }
         "idle" => Some((Outcome::Ok, None)),
-        "failed" => Some((Outcome::Error, Some("AgentFailed"))),
+        "failed" => Some((Outcome::Error, Some(agent_failure_cause(recorded_error)))),
         "crashed" => Some((Outcome::Error, Some("AgentCrashed"))),
         _ => None,
     }
@@ -804,13 +858,27 @@ pub fn create_time_bucket(d: Duration) -> &'static str {
 /// `cua_app_active` (send it with `Telemetry::capture_active_day`, which
 /// keeps it to one per install per UTC day), with no experiment on.
 pub fn app_active() -> Event {
-    app_active_with(&[])
+    app_active_with(&[], "en")
 }
 
 /// `cua_app_active` with the Spaces app's experiments that are on
-/// (`experiments_on`, [`experiments_set`]).
-pub fn app_active_with(experiments: &[&str]) -> Event {
-    Event::new(event::APP_ACTIVE).owned("experiments_on", experiments_set(experiments))
+/// (`experiments_on`, [`experiments_set`]) and its interface language
+/// (`ui_locale`, [`ui_locale`]).
+pub fn app_active_with(experiments: &[&str], locale: &str) -> Event {
+    Event::new(event::APP_ACTIVE)
+        .owned("experiments_on", experiments_set(experiments))
+        .s("ui_locale", ui_locale(locale))
+}
+
+/// The interface language in [`schema::UI_LOCALES`] (matched exactly after
+/// trimming); anything else, including an empty value, is `other`.
+pub fn ui_locale(locale: &str) -> &'static str {
+    let l = locale.trim();
+    schema::UI_LOCALES
+        .iter()
+        .copied()
+        .find(|k| *k == l && *k != "other")
+        .unwrap_or("other")
 }
 
 /// The experiments in `ids` that are in [`schema::EXPERIMENTS`], in its
@@ -855,6 +923,35 @@ pub fn onboarding_page(page: &str, action: &str, choice: &str) -> Option<Event> 
     })
 }
 
+/// One of the first-run funnel events: `step_viewed`, `step_completed`,
+/// `step_failed` (with `reason`) or `skipped` (with `how`, from the same
+/// last argument). None for a step, action or
+/// reason outside the vocabulary. `step_index` and `onboarding_version`
+/// come from the step, so a caller cannot send a wrong one.
+pub fn first_run_step(step: &str, action: &str, reason: &str) -> Option<Event> {
+    let step = pick(schema::FIRST_RUN_STEPS, step, "");
+    let name = match action.trim() {
+        "step_viewed" => event::ONBOARDING_STEP_VIEWED,
+        "step_completed" => event::ONBOARDING_STEP_COMPLETED,
+        "step_failed" => event::ONBOARDING_STEP_FAILED,
+        "step_skipped" => event::ONBOARDING_SKIPPED,
+        _ => return None,
+    };
+    let index = schema::FIRST_RUN_STEPS.iter().position(|s| *s == step)?;
+    let e = Event::new(name)
+        .s("step", step)
+        .n("step_index", index as u64 + 1)
+        .n("onboarding_version", schema::FIRST_RUN_VERSION);
+    Some(match name {
+        event::ONBOARDING_STEP_FAILED => e.s(
+            "reason",
+            pick(schema::FIRST_RUN_FAIL_REASONS, reason, "other"),
+        ),
+        event::ONBOARDING_SKIPPED => e.s("how", pick(schema::FIRST_RUN_SKIP_HOWS, reason, "later")),
+        _ => e,
+    })
+}
+
 /// `cua_space_wizard`; None for an action outside the vocabulary.
 pub fn space_wizard(action: &str) -> Option<Event> {
     let a = pick(schema::WIZARD_ACTIONS, action, "");
@@ -877,6 +974,10 @@ pub struct SpaceCreate<'a> {
     pub gpu: bool,
     /// The error enum's case name (`InsufficientDisk`); empty when the shell had none.
     pub error_variant: &'a str,
+    /// The app ran the create a second time by itself (0 or 1; more is 1).
+    pub retry_attempt: u32,
+    /// The finer cause (`schema::ERROR_SUBCLASSES`); empty is `none`.
+    pub error_subclass: &'a str,
 }
 
 /// `cua_space_create`.
@@ -895,7 +996,11 @@ pub fn space_create(s: &SpaceCreate<'_>, outcome: Outcome, elapsed: Duration) ->
     };
     let error_kind = match outcome {
         Outcome::Error if s.stalled && s.error_variant.is_empty() => "timeout",
-        Outcome::Error => error_kind(s.error_variant),
+        // A failure never reports `none`.
+        Outcome::Error => match error_kind(s.error_variant) {
+            "none" => "other",
+            k => k,
+        },
         _ => "none",
     };
     Event::new(event::SPACE_CREATE)
@@ -908,6 +1013,14 @@ pub fn space_create(s: &SpaceCreate<'_>, outcome: Outcome, elapsed: Duration) ->
         .b("stalled", s.stalled && outcome == Outcome::Error)
         .s("time_bucket", create_time_bucket(elapsed))
         .b("gpu", s.gpu)
+        .n("retry_attempt", u64::from(s.retry_attempt.min(1)))
+        .s(
+            "error_subclass",
+            match outcome {
+                Outcome::Cancelled => "none",
+                _ => pick(schema::ERROR_SUBCLASSES, s.error_subclass, "none"),
+            },
+        )
 }
 
 /// `cua_space_create_started`.
@@ -1047,7 +1160,10 @@ pub fn host_space_provided(
         .s("outcome", outcome.as_str())
         .s(
             "error_kind",
-            error_variant.map(error_kind).unwrap_or("none"),
+            match (outcome, error_variant.map(error_kind)) {
+                (Outcome::Error, None | Some("none")) => "other",
+                (_, k) => k.unwrap_or("none"),
+            },
         )
 }
 
@@ -1097,8 +1213,17 @@ pub fn keyvault_action(a: KeyvaultAction, m: KeyvaultMethod, outcome: Outcome) -
         .s("outcome", outcome.as_str())
 }
 
-/// `cua_share`; None for an action outside the vocabulary.
-pub fn share(action: &str, role: &str, outcome: Outcome) -> Option<Event> {
+/// `cua_share`; None for an action outside the vocabulary. `error_kind`
+/// and `failed_stage` say why and where a failure stopped
+/// ([`schema::SHARE_ERROR_KINDS`], [`schema::SHARE_STAGES`]); both are
+/// `none` when it worked, and a failure with no known kind is `other`.
+pub fn share(
+    action: &str,
+    role: &str,
+    outcome: Outcome,
+    error_kind: &str,
+    failed_stage: &str,
+) -> Option<Event> {
     let a = pick(schema::SHARE_ACTIONS, action, "");
     (!a.is_empty()).then(|| {
         Event::new(event::SHARE)
@@ -1112,6 +1237,26 @@ pub fn share(action: &str, role: &str, outcome: Outcome) -> Option<Event> {
                 },
             )
             .s("outcome", outcome.as_str())
+            .s(
+                "error_kind",
+                match outcome {
+                    Outcome::Ok => "none",
+                    _ => match pick(schema::SHARE_ERROR_KINDS, error_kind, "other") {
+                        "none" => "other",
+                        k => k,
+                    },
+                },
+            )
+            .s(
+                "failed_stage",
+                match outcome {
+                    Outcome::Ok => "none",
+                    _ => match pick(schema::SHARE_STAGES, failed_stage, "other") {
+                        "none" => "other",
+                        st => st,
+                    },
+                },
+            )
     })
 }
 
@@ -1146,4 +1291,87 @@ pub fn device_enroll(method: &str, outcome: Outcome) -> Option<Event> {
             .s("method", m)
             .s("outcome", outcome.as_str())
     })
+}
+
+/// `cua_installer_step`, as `install.sh` and `install.ps1` send it (they
+/// build the same payload themselves; this builder is the reference the
+/// tests hold them to). None for a step outside [`schema::INSTALLER_STEPS`].
+/// `stage` and `error_kind` are kept only on `installer_failed`.
+pub fn installer_step(
+    step: &str,
+    stage: &str,
+    error_kind: &str,
+    installer: &str,
+    items: &[&str],
+) -> Option<Event> {
+    let s = pick(schema::INSTALLER_STEPS, step, "");
+    if s.is_empty() {
+        return None;
+    }
+    let failed = s == "installer_failed";
+    let kind = if failed {
+        pick(schema::INSTALL_ERROR_KINDS, error_kind, "other")
+    } else {
+        "none"
+    };
+    let outcome = match (failed, kind) {
+        (false, _) => Outcome::Ok,
+        (true, "cancelled") => Outcome::Cancelled,
+        (true, _) => Outcome::Error,
+    };
+    let on: Vec<&str> = schema::INSTALL_ITEMS
+        .iter()
+        .copied()
+        .filter(|i| items.iter().any(|x| x.trim() == *i))
+        .collect();
+    Some(
+        Event::new(event::INSTALLER_STEP)
+            .s("step", s)
+            .s("outcome", outcome.as_str())
+            .s(
+                "install_stage",
+                if failed {
+                    pick(schema::INSTALL_STAGES, stage, "other")
+                } else {
+                    "none"
+                },
+            )
+            .s("error_kind", kind)
+            .s("installer", pick(schema::INSTALLERS, installer, "sh"))
+            .owned(
+                "items",
+                if on.is_empty() {
+                    "none".into()
+                } else {
+                    on.join("+")
+                },
+            ),
+    )
+}
+
+/// The kind of Spaces tool `tool` is, when calling it means an agent used
+/// a Space (it acts inside one); None for tools that only list, create,
+/// share or administer Spaces.
+pub fn space_tool_group(tool: &str) -> Option<&'static str> {
+    Some(match tool {
+        "space_bash" | "computer_shell" => "shell",
+        "space_write"
+        | "upload"
+        | "send_file"
+        | "download"
+        | "computer_file_read"
+        | "computer_file_write"
+        | "computer_file_list" => "files",
+        "list_tools" | "call_tool" => "services",
+        "agent_start" | "agent_message" => "agents",
+        "list_space_windows" | "teleport_app" => "other",
+        t if t.starts_with("computer_") && !t.starts_with("computer_access_") => "computer",
+        _ => return None,
+    })
+}
+
+/// `cua_agent_used_space`: an agent's tool call reached a Space and worked.
+/// None for a tool that does not act inside a Space.
+pub fn agent_used_space(tool: &str) -> Option<Event> {
+    space_tool_group(tool).map(|g| Event::new(event::AGENT_USED_SPACE).s("tool_group", g))
 }

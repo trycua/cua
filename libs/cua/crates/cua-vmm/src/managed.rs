@@ -24,7 +24,14 @@
 //!   containers, exec, checkpoints and published ports work as on any
 //!   engine. Ports published on the VM's 127.0.0.1 are forwarded to the
 //!   Mac's 127.0.0.1 by Lima.
-//! * **No host files.** The VM mounts no host directory.
+//! * **Host files: job members' only.** The VM shares (virtiofs) the
+//!   directories cua's job runner keeps a job member's files in
+//!   ([`JOB_SHARES`] under the cua home: its work directory, its run's
+//!   data, the caches and `uv`), at the same paths, so a job member's
+//!   container binds them like on any Linux host. Nothing else of the Mac
+//!   is in the VM. A VM that booted before it shared them (an older cua)
+//!   gets them at its next start: it is restarted at once when no Linux
+//!   Space runs, else a job member is refused until it stops by itself.
 //! * **Lifecycle.** Set up and booted on the first Linux Space that needs
 //!   it ([`ensure`]), with the downloads and the boot reported as the
 //!   create's progress. One VM for every Linux Space; [`ManagedContainers`]
@@ -46,6 +53,24 @@ use crate::host;
 pub const PROFILE: &str = "cua";
 /// Fixed instance name of the runtime VM, as Lima names it.
 pub const INSTANCE_NAME: &str = "colima-cua";
+
+/// The directories under the cua home the VM shares: where cua's job
+/// runner keeps job members' files (`cua_cluster::jobdir`: attempt and work
+/// directories, runs' data, the caches, `uv` for the guest).
+pub const JOB_SHARES: [&str; 4] = ["jobs", "job-data", "job-cache", "job-tools"];
+
+/// The host directories the VM shares ([`JOB_SHARES`] under the cua home).
+pub fn job_shares() -> Vec<PathBuf> {
+    JOB_SHARES
+        .iter()
+        .map(|n| host::cua_home().join(n))
+        .collect()
+}
+
+/// Whether the host directory `path` is in the VM, at the same path.
+pub fn is_shared(path: &Path) -> bool {
+    job_shares().iter().any(|s| path.starts_with(s))
+}
 
 /// The pinned Colima release.
 pub const COLIMA_VERSION: &str = "0.10.3";
@@ -267,6 +292,17 @@ pub fn exists() -> bool {
     instance_dir().join("lima.yaml").is_file()
 }
 
+/// Whether the VM as it runs now shares every job directory (Lima's
+/// configuration of the running instance names each).
+pub fn shares_job_dirs() -> bool {
+    let Ok(y) = std::fs::read_to_string(instance_dir().join("lima.yaml")) else {
+        return false;
+    };
+    job_shares()
+        .iter()
+        .all(|s| y.contains(&s.display().to_string()))
+}
+
 /// The VM runs and its Docker engine answers on [`socket`].
 pub fn running() -> bool {
     #[cfg(unix)]
@@ -277,6 +313,110 @@ pub fn running() -> bool {
     {
         false
     }
+}
+
+/// What the idle check finds in the runtime VM ([`idle_verdict`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IdleVerdict {
+    /// Nothing needs the VM: it may stop.
+    Stop,
+    /// A warm-pool shape the host keeps warm on purpose holds it up.
+    KeptWarm,
+    /// This many Linux Spaces (or jobs) run in it.
+    InUse(usize),
+}
+
+/// Whether the runtime VM may stop. `spaces` are its containers as
+/// `(name, active)` (running or paused), `members` its warm-pool members as
+/// `(name, keep, running)`. Warm-pool members are not Spaces in use (an
+/// idle host stops the VM anyway; the pool refills on the next create)
+/// unless their shape is kept warm on purpose (`pool.warm`).
+pub fn idle_verdict(spaces: &[(&str, bool)], members: &[(&str, bool, bool)]) -> IdleVerdict {
+    if members.iter().any(|(_, keep, running)| *keep && *running) {
+        return IdleVerdict::KeptWarm;
+    }
+    let in_use = spaces
+        .iter()
+        .filter(|(name, active)| *active && !members.iter().any(|(m, _, _)| m == name))
+        .count();
+    if in_use > 0 {
+        IdleVerdict::InUse(in_use)
+    } else {
+        IdleVerdict::Stop
+    }
+}
+
+/// What a request to stop the runtime VM now did ([`ManagedContainers::stop_now`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RuntimeStop {
+    /// It was not running.
+    NotRunning,
+    /// It stopped.
+    Stopped,
+    /// It keeps running for this many Linux Spaces.
+    KeptForSpaces(usize),
+    /// It keeps running for warm Spaces the host keeps ready.
+    KeptWarm,
+    /// An operation on the engine is in flight; nothing was stopped.
+    Busy,
+    /// Stopping it failed; it may still run.
+    Failed(String),
+}
+
+impl RuntimeStop {
+    /// What `cua daemon stop` tells the user when the VM keeps running:
+    /// one sentence saying why and when it stops. `None` when it stopped
+    /// or was not running (or a stop failed: that is logged, not a state
+    /// the user acts on).
+    pub fn keeps_running_sentence(&self) -> Option<String> {
+        match self {
+            Self::KeptForSpaces(n) if *n > 0 => Some(format!(
+                "the Linux runtime keeps running for {n} Space{}; it stops when {}",
+                if *n == 1 { "" } else { "s" },
+                if *n == 1 { "it does" } else { "they do" }
+            )),
+            Self::KeptWarm => Some(
+                "the Linux runtime keeps running for the Spaces this host keeps warm; it stops \
+                 when that setting is removed"
+                    .into(),
+            ),
+            _ => None,
+        }
+    }
+}
+
+const SHUTDOWN_NOTE: &str = "shutdown-note";
+
+/// Leaves what a stopping daemon did to the runtime VM for the command that
+/// asked it to stop ([`take_shutdown_note`]): the sentence when the VM keeps
+/// running, nothing otherwise.
+pub fn record_shutdown(stop: &RuntimeStop) {
+    record_shutdown_in(&root(), stop);
+}
+
+fn record_shutdown_in(dir: &Path, stop: &RuntimeStop) {
+    let file = dir.join(SHUTDOWN_NOTE);
+    match stop.keeps_running_sentence() {
+        Some(s) => {
+            let _ = std::fs::create_dir_all(dir);
+            let _ = std::fs::write(file, s);
+        }
+        None => {
+            let _ = std::fs::remove_file(file);
+        }
+    }
+}
+
+/// The note [`record_shutdown`] left, removed as it is read.
+pub fn take_shutdown_note() -> Option<String> {
+    take_shutdown_note_in(&root())
+}
+
+fn take_shutdown_note_in(dir: &Path) -> Option<String> {
+    let file = dir.join(SHUTDOWN_NOTE);
+    let s = std::fs::read_to_string(&file).ok()?;
+    let _ = std::fs::remove_file(file);
+    Some(s.trim().to_string()).filter(|s| !s.is_empty())
 }
 
 /// Lima's sockets live in the VM's directory and must fit a Unix socket
@@ -336,6 +476,26 @@ const DOCKER_SHIM: &str = "#!/bin/sh\n# Cua's built-in Linux runtime: Colima man
 /// The profile Colima starts the VM from. (The disk is a `start` flag:
 /// Colima does not read `diskImage` from its profile.)
 pub fn profile_yaml(arch: &str, cpus: u32, memory_gib: u32) -> String {
+    profile_yaml_sharing(arch, cpus, memory_gib, &[])
+}
+
+/// [`profile_yaml`] sharing `shares` (host directories, writable, over
+/// virtiofs, at the same paths in the VM). None: no `mounts:` key at all
+/// (an empty list would make Colima mount the home directory).
+pub fn profile_yaml_sharing(arch: &str, cpus: u32, memory_gib: u32, shares: &[PathBuf]) -> String {
+    let mut y = profile_base(arch, cpus, memory_gib);
+    if !shares.is_empty() {
+        y.push_str("mountType: virtiofs\nmounts:\n");
+        for s in shares {
+            // Lima's YAML takes a JSON string (paths with spaces, quotes).
+            let loc = serde_json::to_string(&s.display().to_string()).unwrap_or_default();
+            y.push_str(&format!("  - location: {loc}\n    writable: true\n"));
+        }
+    }
+    y
+}
+
+fn profile_base(arch: &str, cpus: u32, memory_gib: u32) -> String {
     format!(
         "# Written by cua (cua_vmm::managed) before every start.\n\
          cpu: {cpus}\n\
@@ -357,16 +517,169 @@ pub fn profile_yaml(arch: &str, cpus: u32, memory_gib: u32) -> String {
          kubernetes:\n  enabled: false\n\
          forceDiskImage: true\n\
          docker:\n  default-runtime: runsc\n  runtimes:\n    runsc:\n      path: /usr/local/bin/runsc\n      \
-         runtimeArgs:\n        - --allow-suid\n"
+         runtimeArgs:\n        - --allow-suid\n    \
+         cua-runsc:\n      path: /usr/local/lib/cua/cua-runsc\n      runtimeArgs:\n        - --allow-suid\n"
     )
 }
 
-/// What the runtime VM gets: up to 4 CPUs and 4 GiB (Spaces share it).
+/// Environment overrides of the runtime VM's size (CPUs, GiB of memory).
+pub const CPUS_ENV: &str = "CUA_RUNTIME_LINUX_CPUS";
+pub const MEMORY_ENV: &str = "CUA_RUNTIME_LINUX_MEMORY_GIB";
+
+/// The default CPUs: up to 4 (Spaces share them; a CPU limit is a ceiling,
+/// so sharing them is safe).
+const DEFAULT_CPUS: u32 = 4;
+/// The memory when the Mac's is unknown.
+const DEFAULT_MEMORY_GIB: u32 = MIN_GIB;
+/// The smallest VM (the size it had before it was sized from the Mac).
+pub const MIN_GIB: u32 = 4;
+/// The largest VM a default sizing gives (a setting may give more).
+pub const MAX_GIB: u32 = 32;
+
+/// The default memory: 75% of this Mac's, at most [`MAX_GIB`] and at
+/// least [`MIN_GIB`] ([`MIN_GIB`] when it is unknown). Memory is a large
+/// ceiling rather than a size picked for the Spaces: every Space's
+/// container may use its whole limit, and Virtualization.framework backs
+/// guest memory only as the guest touches it (a 48 GiB VM idles at about
+/// 1.9 GB on the host), so a large VM costs little and the guest kernel
+/// does not kill a Space when the Spaces' limits add up to more than 4 GiB.
+pub fn ceiling_gib(host_gib: Option<u32>) -> u32 {
+    host_gib
+        .map(|m| (m * 3 / 4).min(MAX_GIB))
+        .unwrap_or(MIN_GIB)
+        .max(MIN_GIB)
+}
+/// Memory the Mac always keeps for itself, whatever the setting says.
+const HOST_RESERVE_GIB: u32 = 4;
+
+/// What the runtime VM gets: the environment (`CUA_RUNTIME_LINUX_CPUS`,
+/// `CUA_RUNTIME_LINUX_MEMORY_GIB`), else `[runtime] linux_cpus` and
+/// `linux_memory_gib` in `~/.cua/config.toml`, else up to 4 CPUs and
+/// [`ceiling_gib`] of memory. A machine that provides Spaces to others sets these to most of
+/// itself (`cua host setup --profile spare`); every Space then shares that
+/// VM. Read before every boot: a change applies when the VM next starts.
 fn vm_size() -> (u32, u32) {
-    let cpus = std::thread::available_parallelism()
+    let host_cpus = std::thread::available_parallelism()
         .map(|n| n.get() as u32)
-        .unwrap_or(4);
-    (cpus.clamp(1, 4), 4)
+        .unwrap_or(DEFAULT_CPUS);
+    let config = host::cua_home().join("config.toml");
+    let (cfg_cpus, cfg_mem) = size_from_config(&config);
+    let cpus = env_u32(CPUS_ENV).or(cfg_cpus);
+    let mem = env_u32(MEMORY_ENV).or(cfg_mem);
+    clamp_size(cpus, mem, host_cpus, host_memory_gib())
+}
+
+/// The VM size for the requested `cpus` and `mem` (GiB), defaults filled
+/// in and kept within the host: at most every CPU, and memory leaving
+/// [`HOST_RESERVE_GIB`] to the host.
+fn clamp_size(
+    cpus: Option<u32>,
+    mem: Option<u32>,
+    host_cpus: u32,
+    host_mem: Option<u32>,
+) -> (u32, u32) {
+    let host_cpus = host_cpus.max(1);
+    let cpus = cpus
+        .unwrap_or(DEFAULT_CPUS.min(host_cpus))
+        .clamp(1, host_cpus);
+    let max_mem = host_mem
+        .map(|m| m.saturating_sub(HOST_RESERVE_GIB).max(2))
+        .unwrap_or(u32::MAX);
+    let mem = mem
+        .unwrap_or_else(|| ceiling_gib(host_mem))
+        .clamp(2, max_mem.max(2));
+    (cpus, mem)
+}
+
+fn env_u32(key: &str) -> Option<u32> {
+    std::env::var(key)
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
+        .filter(|v| *v > 0)
+}
+
+/// `[runtime] linux_cpus` and `linux_memory_gib` in `path`.
+fn size_from_config(path: &Path) -> (Option<u32>, Option<u32>) {
+    let Some(doc) = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|t| t.parse::<toml_edit::DocumentMut>().ok())
+    else {
+        return (None, None);
+    };
+    let get = |k: &str| {
+        let item = doc.get("runtime")?.get(k)?;
+        item.as_integer()
+            .and_then(|v| u32::try_from(v).ok())
+            .or_else(|| item.as_str()?.trim().parse().ok())
+            .filter(|v| *v > 0)
+    };
+    (get("linux_cpus"), get("linux_memory_gib"))
+}
+
+/// The size a machine dedicated to Spaces gives the runtime VM: every CPU
+/// and three quarters of its memory (the rest stays with macOS).
+fn dedicated_size(host_cpus: u32, host_mem: Option<u32>) -> (u32, u32) {
+    let mem = host_mem.map(|m| m * 3 / 4).unwrap_or(DEFAULT_MEMORY_GIB);
+    clamp_size(Some(host_cpus), Some(mem), host_cpus, host_mem)
+}
+
+/// Gives the runtime VM most of this machine, for a spare machine that
+/// provides Spaces (`cua host setup --profile spare`): writes
+/// `[runtime] linux_cpus` and `linux_memory_gib` to `config` unless the
+/// owner already set either. Returns the size written, if any. It applies
+/// when the VM next starts.
+pub fn dedicate_to_spaces(config: &Path) -> Result<Option<(u32, u32)>> {
+    if size_from_config(config) != (None, None) {
+        return Ok(None);
+    }
+    let host_cpus = std::thread::available_parallelism()
+        .map(|n| n.get() as u32)
+        .unwrap_or(DEFAULT_CPUS);
+    let (cpus, mem) = dedicated_size(host_cpus, host_memory_gib());
+    let mut doc = std::fs::read_to_string(config)
+        .ok()
+        .and_then(|t| t.parse::<toml_edit::DocumentMut>().ok())
+        .unwrap_or_default();
+    if !doc.contains_table("runtime") {
+        doc["runtime"] = toml_edit::table();
+    }
+    doc["runtime"]["linux_cpus"] = toml_edit::value(i64::from(cpus));
+    doc["runtime"]["linux_memory_gib"] = toml_edit::value(i64::from(mem));
+    if let Some(dir) = config.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(config, doc.to_string())?;
+    Ok(Some((cpus, mem)))
+}
+
+/// This Mac's memory in GiB (`hw.memsize`).
+fn host_memory_gib() -> Option<u32> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut size: u64 = 0;
+        let mut len = std::mem::size_of::<u64>();
+        let name = c"hw.memsize";
+        // SAFETY: sysctlbyname writes at most `len` bytes into `size`.
+        let rc = unsafe {
+            libc::sysctlbyname(
+                name.as_ptr(),
+                (&mut size as *mut u64).cast(),
+                &mut len,
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+        if rc == 0 {
+            return u32::try_from(size >> 30).ok();
+        }
+        None
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        None
+    }
 }
 
 /// A `colima` command that sees only cua's own Colima, Lima and VM.
@@ -464,10 +777,12 @@ pub const SETTING_UP: &str = "Setting up the Linux runtime";
 #[cfg(feature = "lume")]
 pub async fn ensure() -> Result<String> {
     if running() {
+        trim_running_vm_once().await;
         return Ok(endpoint());
     }
     let _one = SETUP.lock().await;
     if running() {
+        trim_running_vm_once().await;
         return Ok(endpoint());
     }
     if !supported() {
@@ -501,25 +816,34 @@ pub async fn ensure() -> Result<String> {
     let profile_dir = vm_dir().join(PROFILE);
     std::fs::create_dir_all(&profile_dir)?;
     std::fs::create_dir_all(home())?;
+    // Job members' directories exist before the VM shares them.
+    let shares = job_shares();
+    for d in &shares {
+        if !d.is_dir() {
+            std::fs::create_dir_all(d)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt as _;
+                std::fs::set_permissions(d, std::fs::Permissions::from_mode(0o700))?;
+            }
+        }
+    }
     std::fs::write(
         profile_dir.join("colima.yaml"),
-        profile_yaml(arch, cpus, mem),
+        profile_yaml_sharing(arch, cpus, mem, &shares),
     )?;
     boot(&tools, disk.as_deref()).await?;
     wait_engine().await?;
     // The VM runs cua's disk (gVisor baked in), not one Colima chose.
-    if let Err(e) = run_colima(
-        &tools,
-        &["ssh", "--", "test", "-x", "/usr/local/bin/runsc"],
-        60,
-    )
-    .await
-    {
+    // The same call keeps pointer authentication off in its kernel from
+    // the next boot on ([`AFTER_BOOT`]).
+    if let Err(e) = run_colima(&tools, &["ssh", "--", "sudo", "sh", "-c", AFTER_BOOT], 60).await {
         return Err(VmmError::other(format!(
             "the built-in Linux runtime booted without gVisor ({e}); remove it (Remove host \
              setup) and try again"
         )));
     }
+    install_vfs_trim(&tools).await;
     if let Some(d) = disk {
         // Lima unpacked it into the VM's own disk: the download and Lima's
         // copy of it are not needed again.
@@ -529,10 +853,130 @@ pub async fn ensure() -> Result<String> {
     let _ = std::fs::remove_file(stopped_names_file());
     tracing::info!(
         fresh,
+        cpus,
+        memory_gib = mem,
         secs = started.elapsed().as_secs_f64(),
         "built-in Linux runtime is up"
     );
     Ok(endpoint())
+}
+
+/// Run in the VM after every boot (as root): fails without gVisor, and on
+/// arm64 boots the VM's kernel with `arm64.nopauth` from the next boot on.
+///
+/// gVisor does not carry a process's pointer-authentication keys across a
+/// checkpoint restore yet (gvisor#13542, fix pending upstream), so with PAC
+/// on, every PAC-built program (all of Ubuntu's) in a restored Space dies
+/// with SIGILL. With it off, PAC's instructions are no-ops for every
+/// program in this VM: the Spaces' (as on x86, which has no PAC) and the
+/// VM's own services (Docker, containerd and gVisor's sentry are Go, which
+/// does not use PAC). gVisor remains the isolation boundary. It applies at
+/// the VM's next boot: the VM stops when no Linux Space runs and boots
+/// again on the next one; until then Spaces start cold and checkpoints are
+/// filesystem-only.
+pub const AFTER_BOOT: &str = r#"test -x /usr/local/bin/runsc || exit 3
+if [ "$(uname -m)" = aarch64 ] && [ ! -e /etc/default/grub.d/99-cua-nopauth.cfg ]; then
+  echo 'GRUB_CMDLINE_LINUX_DEFAULT="$GRUB_CMDLINE_LINUX_DEFAULT arm64.nopauth"' > /etc/default/grub.d/99-cua-nopauth.cfg
+  update-grub >/dev/null 2>&1 || rm -f /etc/default/grub.d/99-cua-nopauth.cfg
+fi
+exit 0
+"#;
+
+/// Environment variable: the most inodes the runtime VM's guest keeps
+/// cached before it drops the unused ones ([`vfs_trim_setup`]).
+pub const MAX_CACHED_INODES_ENV: &str = "CUA_RUNTIME_LINUX_MAX_CACHED_INODES";
+
+/// The default: about 10,000 host descriptors (the guest caches roughly two
+/// inodes per descriptor the VM holds on the Mac).
+pub const DEFAULT_MAX_CACHED_INODES: u64 = 20_000;
+
+/// The inode limit from the environment value (default
+/// [`DEFAULT_MAX_CACHED_INODES`]; at least 1,000 so the guest does not
+/// thrash).
+pub fn max_cached_inodes_from(value: Option<&str>) -> u64 {
+    value
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .map_or(DEFAULT_MAX_CACHED_INODES, |n| n.max(1_000))
+}
+
+fn max_cached_inodes() -> u64 {
+    max_cached_inodes_from(std::env::var(MAX_CACHED_INODES_ENV).ok().as_deref())
+}
+
+/// Inodes the guest keeps cached while it is busy before a trim drops them
+/// at once, and the level below which a quiet guest is left alone.
+pub const TRIM_QUIET_FLOOR: u64 = 2_000;
+
+/// Run in the VM after every boot (as root): installs and starts a service
+/// that keeps the guest's inode cache bounded. Every two seconds it drops
+/// the guest's unused dentries and inodes (`drop_caches=2`) when the cache
+/// holds more than `limit` inodes, or when it holds more than
+/// [`TRIM_QUIET_FLOOR`] and has stopped growing (a job finished).
+///
+/// Why. Apple's Virtualization framework serves the shared folders
+/// (virtiofs) from the Mac's processes and keeps one host file descriptor
+/// open per inode the guest has cached. A guest with gigabytes of page
+/// cache never evicts them, so installing a Python or Node environment
+/// grows the count to tens of thousands and a few weeks of jobs to
+/// hundreds of thousands, against the roughly 262,000 the whole Mac
+/// shares (`kern.maxfiles`); then `git`, `ssh` and the guest's own `uv`
+/// fail with ENFILE. Dropping the unused cache releases the host
+/// descriptors at once (measured: 9,179 to 91 in under a second) and loses
+/// nothing: only cache, never data, and files a job holds open stay.
+///
+/// `vm.vfs_cache_pressure` alone does not bound it (measured: the same
+/// 9,242 descriptors at 10000 as at the default 100).
+pub fn vfs_trim_setup(limit: u64) -> String {
+    format!(
+        r#"mkdir -p /usr/local/lib/cua
+cat > /usr/local/lib/cua/cua-vfs-trim <<'EOS'
+#!/bin/sh
+# Written by cua: keeps the host file descriptors of the shared folders bounded.
+# (A proc file is read whole, by cat: a shell's byte-wise read sees pieces.)
+prev=0
+while :; do
+  set -- $(cat /proc/sys/fs/inode-nr)
+  inodes=$1
+  delta=$((inodes > prev ? inodes - prev : prev - inodes))
+  if [ "$inodes" -gt {limit} ] || {{ [ "$inodes" -gt {floor} ] && [ "$delta" -lt 100 ]; }}; then
+    echo 2 > /proc/sys/vm/drop_caches
+  fi
+  prev=$inodes
+  sleep 2
+done
+EOS
+chmod 755 /usr/local/lib/cua/cua-vfs-trim
+systemctl stop cua-vfs-trim 2>/dev/null
+systemctl reset-failed cua-vfs-trim 2>/dev/null
+systemd-run --quiet --unit=cua-vfs-trim --property=Restart=always /usr/local/lib/cua/cua-vfs-trim
+"#,
+        floor = TRIM_QUIET_FLOOR
+    )
+}
+
+/// Installs the guest's cache trimmer ([`vfs_trim_setup`]): best effort,
+/// the jobs run either way (the host file table is what is at stake).
+#[cfg(feature = "lume")]
+async fn install_vfs_trim(tools: &Tools) {
+    let script = vfs_trim_setup(max_cached_inodes());
+    if let Err(e) = run_colima(tools, &["ssh", "--", "sudo", "sh", "-c", &script], 60).await {
+        tracing::warn!("the built-in Linux runtime could not start its cache trimmer: {e}");
+    }
+}
+
+#[cfg(not(feature = "lume"))]
+async fn install_vfs_trim(_: &Tools) {}
+
+/// A VM that booted before it had the trimmer (an older cua's) gets it
+/// once per process, when this process first finds it running.
+async fn trim_running_vm_once() {
+    static DONE: tokio::sync::OnceCell<()> = tokio::sync::OnceCell::const_new();
+    DONE.get_or_init(|| async {
+        if let Some(tools) = installed_tools() {
+            install_vfs_trim(&tools).await;
+        }
+    })
+    .await;
 }
 
 /// `colima start`, its log turned into boot progress. A VM left half-up
@@ -889,8 +1333,8 @@ mod engine_impl {
     use crate::exec::GuestExec;
     use crate::runtime::Runtime;
     use crate::types::{
-        BackendKind, CheckpointInfo, Endpoints, ImageSource, Instance, InstanceSummary, StartSpec,
-        Status,
+        BackendKind, CheckpointInfo, ClaimIdentity, Endpoints, ImageSource, Instance,
+        InstanceSummary, StartSpec, Status,
     };
 
     /// The engine Linux Spaces use here.
@@ -960,21 +1404,90 @@ mod engine_impl {
     /// runs any more.
     pub struct ManagedContainers {
         cfg: ContainerConfig,
-        engine: tokio::sync::Mutex<Option<Arc<ContainerRuntime>>>,
+        engine: Arc<tokio::sync::Mutex<Option<Arc<ContainerRuntime>>>>,
+        idle: Arc<IdleState>,
+    }
+
+    /// What the idle stop checks: operations on the engine still running,
+    /// and a counter that moves on every operation (so a stop scheduled
+    /// before one is called off).
+    #[derive(Default)]
+    struct IdleState {
+        busy: std::sync::atomic::AtomicUsize,
+        activity: std::sync::atomic::AtomicU64,
+    }
+
+    /// Marks an engine operation in flight until dropped.
+    struct Busy(Arc<IdleState>);
+
+    impl Drop for Busy {
+        fn drop(&mut self) {
+            use std::sync::atomic::Ordering::SeqCst;
+            self.0.activity.fetch_add(1, SeqCst);
+            self.0.busy.fetch_sub(1, SeqCst);
+        }
+    }
+
+    /// How long the VM stays up after its last Linux Space went away
+    /// (`CUA_RUNTIME_LINUX_IDLE_SECS`, default 120): creates that follow a
+    /// delete, as a busy host's do, find it running.
+    fn idle_grace() -> std::time::Duration {
+        std::time::Duration::from_secs(
+            std::env::var("CUA_RUNTIME_LINUX_IDLE_SECS")
+                .ok()
+                .and_then(|v| v.trim().parse().ok())
+                .unwrap_or(120),
+        )
     }
 
     impl ManagedContainers {
         pub fn new(cfg: ContainerConfig) -> Self {
             Self {
                 cfg,
-                engine: tokio::sync::Mutex::new(None),
+                engine: Arc::new(tokio::sync::Mutex::new(None)),
+                idle: Arc::new(IdleState::default()),
             }
+        }
+
+        fn busy(&self) -> Busy {
+            use std::sync::atomic::Ordering::SeqCst;
+            self.idle.busy.fetch_add(1, SeqCst);
+            self.idle.activity.fetch_add(1, SeqCst);
+            Busy(self.idle.clone())
         }
 
         /// The engine, booting the VM (and setting it up the first time).
         pub async fn engine(&self) -> Result<Arc<ContainerRuntime>> {
             let uri = ensure().await?;
             self.connect(uri).await
+        }
+
+        /// Mounts of a job member's directories: the VM shares them at the
+        /// same paths (once it booted sharing them; one that did not is
+        /// restarted when no Linux Space runs); any other host directory
+        /// is not in the VM.
+        async fn ready_for_mounts(&self, spec: &StartSpec) -> Result<()> {
+            crate::types::check_mounts(crate::BackendKind::Container, &spec.mounts)?;
+            if let Some(m) = spec.mounts.iter().find(|m| !is_shared(&m.host)) {
+                return Err(VmmError::invalid(format!(
+                    "the built-in Linux runtime shares only cua's job directories, not {}",
+                    m.host.display()
+                )));
+            }
+            if !running() || shares_job_dirs() {
+                return Ok(());
+            }
+            // Booted before it shared them: restart it now if nothing runs
+            // there (the next boot writes the profile that shares them).
+            stop_now_if_idle(&self.engine, &self.cfg).await;
+            if !running() {
+                return Ok(());
+            }
+            Err(VmmError::other(
+                "the built-in Linux runtime started before it shared job directories, and Linux \
+                 Spaces run in it now: it shares them from its next start (it stops once no \
+                 Linux Space runs)",
+            ))
         }
 
         /// The engine when the VM is up; never boots it.
@@ -986,36 +1499,139 @@ mod engine_impl {
         }
 
         async fn connect(&self, uri: String) -> Result<Arc<ContainerRuntime>> {
-            let mut slot = self.engine.lock().await;
+            connect_slot(&self.engine, &self.cfg, uri).await
+        }
+
+        /// Stops the VM now, without the idle grace, when no Linux Space
+        /// or kept-warm member runs in it and no engine operation is in
+        /// flight: what a stopping daemon does, so the VM does not outlive
+        /// it. Says what it did.
+        pub async fn stop_now(&self) -> RuntimeStop {
+            if self.idle.busy.load(std::sync::atomic::Ordering::SeqCst) != 0 {
+                return RuntimeStop::Busy;
+            }
+            stop_now_if_idle(&self.engine, &self.cfg).await
+        }
+
+        /// Refuses with [`VmmError::HostCapacity`] while the host's file
+        /// table is short of room for `what`, after giving back what this
+        /// home can: its idle runtime VM (a VM sharing host directories
+        /// holds a host descriptor per file its guest cached).
+        async fn admit_files(&self, what: &str) -> Result<()> {
+            let min = crate::filetable::min_free();
+            let Some(table) = crate::filetable::read() else {
+                return Ok(());
+            };
+            if crate::filetable::check(table, min).is_ok() {
+                return Ok(());
+            }
+            if self.stop_now().await == RuntimeStop::Stopped
+                && let Some(now) = crate::filetable::read()
+                && crate::filetable::check(now, min).is_ok()
+            {
+                return Ok(());
+            }
+            crate::filetable::admit(what)
+        }
+
+        /// Stops the VM when none of its containers runs (or is paused),
+        /// no engine operation is in flight, and nothing happened for
+        /// [`idle_grace`]: checked again after the grace, in the background.
+        pub async fn stop_if_idle(&self) {
+            use std::sync::atomic::Ordering::SeqCst;
+            let seen = self.idle.activity.load(SeqCst);
+            let idle = self.idle.clone();
+            let engine = self.engine.clone();
+            let cfg = self.cfg.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(idle_grace()).await;
+                if idle.busy.load(SeqCst) != 0 || idle.activity.load(SeqCst) != seen {
+                    return;
+                }
+                stop_now_if_idle(&engine, &cfg).await;
+            });
+        }
+    }
+
+    async fn connect_slot(
+        engine: &tokio::sync::Mutex<Option<Arc<ContainerRuntime>>>,
+        cfg: &ContainerConfig,
+        uri: String,
+    ) -> Result<Arc<ContainerRuntime>> {
+        {
+            let mut slot = engine.lock().await;
             if let Some(rt) = slot.as_ref() {
                 return Ok(rt.clone());
             }
             let rt = Arc::new(
                 ContainerRuntime::connect(ContainerConfig {
                     endpoint: Some(uri),
-                    ..self.cfg.clone()
+                    ..cfg.clone()
                 })
                 .await?,
             );
             *slot = Some(rt.clone());
             Ok(rt)
         }
+    }
 
-        /// Stops the VM when none of its containers runs (or is paused).
-        pub async fn stop_if_idle(&self) {
-            let Some(rt) = self.engine_if_running().await else {
-                return;
-            };
-            let Ok(list) = rt.list().await else {
-                return;
-            };
-            if list.iter().any(|s| s.status != Status::Stopped) {
-                return;
+    /// Stops the VM now when none of its containers runs (or is paused).
+    async fn stop_now_if_idle(
+        engine: &tokio::sync::Mutex<Option<Arc<ContainerRuntime>>>,
+        cfg: &ContainerConfig,
+    ) -> RuntimeStop {
+        if !running() {
+            return RuntimeStop::NotRunning;
+        }
+        let failed = |what: &str, e: VmmError| RuntimeStop::Failed(format!("{what}: {e}"));
+        let rt = match connect_slot(engine, cfg, endpoint()).await {
+            Ok(rt) => rt,
+            Err(e) => return failed("connecting to the Linux runtime", e),
+        };
+        let list = match rt.list().await {
+            Ok(l) => l,
+            Err(e) => return failed("listing the Linux runtime's Spaces", e),
+        };
+        let members = match rt.pool_members().await {
+            Ok(m) => m,
+            Err(e) => return failed("listing the warm pool", e),
+        };
+        let spaces: Vec<(&str, bool)> = list
+            .iter()
+            .map(|s| (s.name.as_str(), s.status != Status::Stopped))
+            .collect();
+        let member_states: Vec<(&str, bool, bool)> = members
+            .iter()
+            .map(|m| (m.name.as_str(), m.keep, m.running))
+            .collect();
+        match idle_verdict(&spaces, &member_states) {
+            IdleVerdict::KeptWarm => return RuntimeStop::KeptWarm,
+            IdleVerdict::InUse(n) => return RuntimeStop::KeptForSpaces(n),
+            IdleVerdict::Stop => {}
+        }
+        let member = |n: &str| members.iter().any(|m| m.name == n);
+        for m in &members {
+            if let Err(e) = rt.delete(&m.name).await {
+                tracing::warn!(member = %m.name, "removing a warm-pool member before the idle stop: {e}");
+                return failed("removing a warm-pool member", e);
             }
-            let names: Vec<String> = list.into_iter().map(|s| s.name).collect();
-            match stop(&names).await {
-                Ok(()) => tracing::info!("stopped the built-in Linux runtime: no Linux Space runs"),
-                Err(e) => tracing::warn!("stopping the idle built-in Linux runtime: {e}"),
+        }
+        let names: Vec<String> = list
+            .into_iter()
+            .map(|s| s.name)
+            .filter(|n| !member(n))
+            .collect();
+        match stop(&names).await {
+            Ok(()) => {
+                // The next boot is a new engine (its kernel settings, what
+                // it supports): connect afresh then.
+                *engine.lock().await = None;
+                tracing::info!("stopped the built-in Linux runtime: no Linux Space runs");
+                RuntimeStop::Stopped
+            }
+            Err(e) => {
+                tracing::warn!("stopping the idle built-in Linux runtime: {e}");
+                RuntimeStop::Failed(e.to_string())
             }
         }
     }
@@ -1031,22 +1647,52 @@ mod engine_impl {
             image: &ImageSource,
             base_name: &str,
         ) -> Result<CheckpointInfo> {
+            let _busy = self.busy();
             self.engine().await?.ensure_base(image, base_name).await
         }
 
         async fn start(&self, spec: &StartSpec) -> Result<Instance> {
-            self.engine().await?.start(spec).await
+            self.admit_files("a Linux Space").await?;
+            if !spec.mounts.is_empty() {
+                self.ready_for_mounts(spec).await?;
+            }
+            let started = {
+                let _busy = self.busy();
+                self.engine().await?.start(spec).await
+            };
+            // A warm-pool member is not a Space in use: once it is up, the
+            // idle stop is checked again (a refill must not keep an idle
+            // host's VM running).
+            if spec.pool_member {
+                self.stop_if_idle().await;
+            }
+            started
+        }
+
+        async fn claim(
+            &self,
+            member: &str,
+            new_name: &str,
+            identity: &ClaimIdentity,
+        ) -> Result<Instance> {
+            let _busy = self.busy();
+            self.engine().await?.claim(member, new_name, identity).await
         }
 
         async fn stop(&self, name: &str) -> Result<()> {
-            let Some(rt) = self.engine_if_running().await else {
-                return if stopped_names().iter().any(|n| n == name) {
-                    Ok(())
-                } else {
-                    Err(VmmError::NotFound(name.into()))
+            {
+                let _busy = self.busy();
+                let Some(rt) = self.engine_if_running().await else {
+                    return if stopped_names().iter().any(|n| n == name) {
+                        Ok(())
+                    } else {
+                        Err(VmmError::NotFound(name.into()))
+                    };
                 };
-            };
-            rt.stop(name).await?;
+                rt.stop(name).await?;
+            }
+            // After the operation is done, so its own end does not call
+            // the idle stop off.
             self.stop_if_idle().await;
             Ok(())
         }
@@ -1056,19 +1702,37 @@ mod engine_impl {
         }
 
         async fn resume(&self, name: &str) -> Result<Instance> {
+            let _busy = self.busy();
             self.engine().await?.resume(name).await
         }
 
         async fn fork(&self, source: &str, new_name: &str) -> Result<()> {
+            let _busy = self.busy();
             self.engine().await?.fork(source, new_name).await
         }
 
         async fn checkpoint(&self, name: &str, checkpoint: &str) -> Result<CheckpointInfo> {
+            let _busy = self.busy();
             self.engine().await?.checkpoint(name, checkpoint).await
         }
 
         async fn delete_checkpoint(&self, checkpoint: &str) -> Result<()> {
             self.engine().await?.delete_checkpoint(checkpoint).await
+        }
+
+        async fn set_egress(
+            &self,
+            name: &str,
+            policy: &crate::egress::EgressPolicy,
+        ) -> Result<crate::egress::Enforcement> {
+            let _busy = self.busy();
+            self.engine().await?.set_egress(name, policy).await
+        }
+
+        async fn egress(&self, name: &str) -> Result<crate::egress::EgressPolicy> {
+            Ok(crate::container::egress::kept(name)
+                .map(|k| k.policy)
+                .unwrap_or_default())
         }
 
         async fn list(&self) -> Result<Vec<InstanceSummary>> {
@@ -1094,10 +1758,13 @@ mod engine_impl {
         }
 
         async fn delete(&self, name: &str) -> Result<()> {
-            if !running() && !stopped_names().iter().any(|n| n == name) {
-                return Err(VmmError::NotFound(name.into()));
+            {
+                let _busy = self.busy();
+                if !running() && !stopped_names().iter().any(|n| n == name) {
+                    return Err(VmmError::NotFound(name.into()));
+                }
+                self.engine().await?.delete(name).await?;
             }
-            self.engine().await?.delete(name).await?;
             self.stop_if_idle().await;
             Ok(())
         }
@@ -1122,11 +1789,215 @@ mod engine_impl {
             self.engine().await?.guest_exec(name).await
         }
     }
+
+    #[cfg(test)]
+    mod idle_tests {
+        use super::*;
+
+        #[tokio::test]
+        async fn an_operation_in_flight_holds_off_the_idle_stop() {
+            use std::sync::atomic::Ordering::SeqCst;
+            let m = ManagedContainers::new(crate::container::ContainerConfig::default());
+            let before = m.idle.activity.load(SeqCst);
+            let guard = m.busy();
+            assert_eq!(m.idle.busy.load(SeqCst), 1);
+            let during = m.idle.activity.load(SeqCst);
+            assert_ne!(before, during);
+            drop(guard);
+            assert_eq!(m.idle.busy.load(SeqCst), 0);
+            // Its end moves the counter again: a stop scheduled while it ran
+            // is called off.
+            assert_ne!(m.idle.activity.load(SeqCst), during);
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_vm_size_defaults_to_4_cpus_and_the_memory_ceiling_within_the_host() {
+        assert_eq!(clamp_size(None, None, 12, Some(96)), (4, 32));
+        assert_eq!(clamp_size(None, None, 2, Some(8)), (2, 4));
+        // A spare machine gives the VM most of itself, never all of it.
+        assert_eq!(clamp_size(Some(12), Some(80), 12, Some(96)), (12, 80));
+        assert_eq!(clamp_size(Some(64), Some(200), 12, Some(96)), (12, 92));
+        assert_eq!(clamp_size(Some(0), Some(1), 12, Some(96)), (1, 2));
+        assert_eq!(clamp_size(Some(8), Some(16), 8, None), (8, 16));
+    }
+
+    #[test]
+    fn a_spare_machine_gives_the_vm_most_of_itself_once() {
+        assert_eq!(dedicated_size(12, Some(96)), (12, 72));
+        assert_eq!(dedicated_size(8, Some(16)), (8, 12));
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("config.toml");
+        std::fs::write(&p, "[default]\non = \"local\"\n").unwrap();
+        let wrote = dedicate_to_spaces(&p).unwrap().expect("written");
+        let text = std::fs::read_to_string(&p).unwrap();
+        assert!(text.contains("on = \"local\""), "{text}");
+        assert_eq!(size_from_config(&p), (Some(wrote.0), Some(wrote.1)));
+        // The owner's own choice is kept.
+        std::fs::write(&p, "[runtime]\nlinux_memory_gib = 8\n").unwrap();
+        assert_eq!(dedicate_to_spaces(&p).unwrap(), None);
+        assert_eq!(size_from_config(&p), (None, Some(8)));
+    }
+
+    #[test]
+    fn the_idle_verdict_keeps_the_vm_for_spaces_and_kept_warm_members_only() {
+        // Nothing runs: stop.
+        assert_eq!(idle_verdict(&[], &[]), IdleVerdict::Stop);
+        // A stopped Space does not hold it; a running or paused one does.
+        assert_eq!(idle_verdict(&[("a", false)], &[]), IdleVerdict::Stop);
+        assert_eq!(
+            idle_verdict(&[("a", true), ("b", true), ("c", false)], &[]),
+            IdleVerdict::InUse(2)
+        );
+        // Warm-pool members are not Spaces in use...
+        assert_eq!(
+            idle_verdict(&[("w1", true)], &[("w1", false, true)]),
+            IdleVerdict::Stop
+        );
+        // ...unless the host keeps their shape warm on purpose.
+        assert_eq!(
+            idle_verdict(&[("w1", true)], &[("w1", true, true)]),
+            IdleVerdict::KeptWarm
+        );
+        // A kept member that is not running holds nothing up.
+        assert_eq!(
+            idle_verdict(&[("w1", false)], &[("w1", true, false)]),
+            IdleVerdict::Stop
+        );
+        // A Space next to members still counts.
+        assert_eq!(
+            idle_verdict(&[("w1", true), ("job", true)], &[("w1", false, true)]),
+            IdleVerdict::InUse(1)
+        );
+    }
+
+    #[test]
+    fn the_daemon_stop_says_why_the_runtime_keeps_running() {
+        assert_eq!(
+            RuntimeStop::KeptForSpaces(2)
+                .keeps_running_sentence()
+                .unwrap(),
+            "the Linux runtime keeps running for 2 Spaces; it stops when they do"
+        );
+        assert_eq!(
+            RuntimeStop::KeptForSpaces(1)
+                .keeps_running_sentence()
+                .unwrap(),
+            "the Linux runtime keeps running for 1 Space; it stops when it does"
+        );
+        for quiet in [
+            RuntimeStop::Stopped,
+            RuntimeStop::NotRunning,
+            RuntimeStop::Busy,
+            RuntimeStop::KeptForSpaces(0),
+            RuntimeStop::Failed("x".into()),
+        ] {
+            assert_eq!(quiet.keeps_running_sentence(), None, "{quiet:?}");
+        }
+        assert!(
+            RuntimeStop::KeptWarm
+                .keeps_running_sentence()
+                .unwrap()
+                .contains("keeps running")
+        );
+    }
+
+    #[test]
+    fn the_inode_limit_defaults_and_never_thrashes() {
+        assert_eq!(max_cached_inodes_from(None), DEFAULT_MAX_CACHED_INODES);
+        assert_eq!(max_cached_inodes_from(Some(" 50000 ")), 50_000);
+        assert_eq!(
+            max_cached_inodes_from(Some("junk")),
+            DEFAULT_MAX_CACHED_INODES
+        );
+        assert_eq!(max_cached_inodes_from(Some("5")), 1_000);
+    }
+
+    #[test]
+    fn the_guest_trimmer_is_a_valid_shell_script_with_its_limits() {
+        let setup = vfs_trim_setup(30_000);
+        assert!(setup.contains("-gt 30000 "), "{setup}");
+        assert!(
+            setup.contains(&format!("-gt {TRIM_QUIET_FLOOR} ")),
+            "{setup}"
+        );
+        assert!(setup.contains("echo 2 > /proc/sys/vm/drop_caches"));
+        // The script the service runs is the heredoc: it must parse.
+        let body = setup
+            .split("<<'EOS'\n")
+            .nth(1)
+            .and_then(|r| r.split("\nEOS\n").next())
+            .expect("heredoc");
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("trim.sh");
+        std::fs::write(&file, body).unwrap();
+        let out = std::process::Command::new("sh")
+            .arg("-n")
+            .arg(&file)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        // The setup itself (the sh -c argument) parses too.
+        let setup_file = dir.path().join("setup.sh");
+        std::fs::write(&setup_file, &setup).unwrap();
+        let out = std::process::Command::new("sh")
+            .arg("-n")
+            .arg(&setup_file)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    #[test]
+    fn the_shutdown_note_is_read_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        record_shutdown_in(d, &RuntimeStop::KeptForSpaces(3));
+        assert_eq!(
+            take_shutdown_note_in(d).unwrap(),
+            "the Linux runtime keeps running for 3 Spaces; it stops when they do"
+        );
+        assert_eq!(take_shutdown_note_in(d), None);
+        // A later stop that stopped everything leaves no stale note.
+        record_shutdown_in(d, &RuntimeStop::KeptForSpaces(1));
+        record_shutdown_in(d, &RuntimeStop::Stopped);
+        assert_eq!(take_shutdown_note_in(d), None);
+    }
+
+    #[test]
+    fn the_vm_size_reads_the_runtime_table() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("config.toml");
+        std::fs::write(
+            &p,
+            "[runtime]\nlinux = \"builtin\"\nlinux_cpus = 10\nlinux_memory_gib = 72\n",
+        )
+        .unwrap();
+        assert_eq!(size_from_config(&p), (Some(10), Some(72)));
+        std::fs::write(
+            &p,
+            "[runtime]\nlinux_cpus = \"many\"\nlinux_memory_gib = \"64\"\n",
+        )
+        .unwrap();
+        assert_eq!(size_from_config(&p), (None, Some(64)));
+        assert_eq!(
+            size_from_config(&dir.path().join("missing.toml")),
+            (None, None)
+        );
+    }
 
     #[test]
     fn the_setting_parses_and_defaults_to_auto() {
@@ -1179,6 +2050,11 @@ mod tests {
         let y = profile_yaml("aarch64", 4, 4);
         assert!(y.contains("default-runtime: runsc"));
         assert!(y.contains("path: /usr/local/bin/runsc"));
+        // The runsc wrapper of memory checkpoints is registered too.
+        assert!(y.contains(
+            "    cua-runsc:\n      path: /usr/local/lib/cua/cua-runsc\n      runtimeArgs:\n        \
+             - --allow-suid\n"
+        ));
         // Setuid (`sudo`, `fusermount3`) works for the Space user (#4667).
         assert!(
             y.contains("      runtimeArgs:\n        - --allow-suid\n"),
@@ -1190,6 +2066,51 @@ mod tests {
         // No `mounts:` key: Colima then mounts nothing (an empty list would
         // mount the home directory).
         assert!(!y.contains("mounts"));
+    }
+
+    /// By default the VM boots at 75% of the Mac, at most 32 GiB, at least
+    /// 4 GiB: the host backs it only as the guest touches it.
+    #[test]
+    fn the_vm_boots_at_three_quarters_of_the_mac_up_to_32_gib() {
+        assert_eq!(ceiling_gib(Some(8)), 6);
+        assert_eq!(ceiling_gib(Some(16)), 12);
+        assert_eq!(ceiling_gib(Some(32)), 24);
+        assert_eq!(ceiling_gib(Some(96)), MAX_GIB);
+        assert_eq!(ceiling_gib(Some(192)), MAX_GIB);
+        assert_eq!(ceiling_gib(Some(4)), MIN_GIB);
+        assert_eq!(ceiling_gib(None), MIN_GIB);
+        // No setting: the ceiling, within the host's reserve.
+        assert_eq!(clamp_size(None, None, 8, Some(16)), (4, 12));
+        // A setting wins.
+        assert_eq!(clamp_size(None, Some(6), 8, Some(16)), (4, 6));
+    }
+
+    #[test]
+    fn the_profile_shares_only_the_job_directories_it_is_given() {
+        let shares = vec![
+            PathBuf::from("/Users/ada/.cua/jobs"),
+            PathBuf::from("/Users/ada/My Cua/job-data"),
+        ];
+        let y = profile_yaml_sharing("aarch64", 4, 4, &shares);
+        assert!(y.contains("mountType: virtiofs\nmounts:\n"), "{y}");
+        assert!(
+            y.contains("  - location: \"/Users/ada/.cua/jobs\"\n    writable: true\n"),
+            "{y}"
+        );
+        assert!(
+            y.contains("  - location: \"/Users/ada/My Cua/job-data\"\n"),
+            "{y}"
+        );
+        assert_eq!(y.matches("location:").count(), 2);
+        // Everything else is the same profile.
+        assert!(y.starts_with(&profile_yaml("aarch64", 4, 4)));
+        assert_eq!(
+            JOB_SHARES,
+            ["jobs", "job-data", "job-cache", "job-tools"],
+            "cua_cluster::jobdir keeps job members' files there"
+        );
+        assert!(is_shared(&host::cua_home().join("jobs/cj-1-1/job")));
+        assert!(!is_shared(&host::cua_home().join("host")));
     }
 
     #[test]

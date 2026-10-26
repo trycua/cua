@@ -1,0 +1,114 @@
+name: "Cua Spaces native layer"
+description: >-
+  Build the Cua Spaces Electron native layer (`pnpm native -- --target T` in
+  apps/cua-spaces-desktop) for one target into apps/cua-spaces-desktop/native/<label>,
+  or restore it from the Actions cache. The cache key is the git tree hash of
+  everything the build reads (libs/cua, the cua-spacesd pin, the build script),
+  the target, the toolchain and the repository, so any run of a commit with
+  the same inputs (a test or dry-run build, then the release) reuses the
+  compiled output. A miss simply builds (with the Rust dependency cache for a
+  cold build) and saves the result. Run after actions/checkout.
+
+inputs:
+  label:
+    description: "Native directory name, <platform>-<arch> (win32-x64, linux-arm64, darwin-arm64, ...)."
+    required: true
+  target:
+    description: "Rust target triple."
+    required: true
+  extra-paths:
+    description: "More files to keep in the cache with the native directory (newline separated, repo-relative)."
+    default: ""
+
+outputs:
+  cache-hit:
+    description: "true when the native layer came from the cache."
+    value: ${{ steps.cache.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    - name: Native cache key
+      id: key
+      shell: bash
+      env:
+        LABEL: ${{ inputs.label }}
+        TARGET: ${{ inputs.target }}
+      run: |
+        set -euo pipefail
+        # Tree hashes of every input of `pnpm native`: the Rust workspace (it
+        # bakes the cua-spacesd pin) and the build script. Identical inputs,
+        # identical key, whatever the commit.
+        inputs_hash="$(git rev-parse HEAD:libs/cua HEAD:libs/cua-spacesd/VERSION HEAD:apps/cua-spaces-desktop/scripts/build-native.mjs | git hash-object --stdin)"
+        repo="${CUA_RELEASE_REPOSITORY//\//-}"
+        echo "key=spaces-native-v1-${LABEL}-${TARGET}-rust1.97.1-${repo}-${inputs_hash}" >> "$GITHUB_OUTPUT"
+    - name: Restore the native layer
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          apps/cua-spaces-desktop/native/${{ inputs.label }}
+          ${{ inputs.extra-paths }}
+        key: ${{ steps.key.outputs.key }}
+    - name: Report the cache
+      shell: bash
+      env:
+        HIT: ${{ steps.cache.outputs.cache-hit || 'false' }}
+        LABEL: ${{ inputs.label }}
+      run: echo "native ${LABEL} cache hit = ${HIT}"
+    - if: steps.cache.outputs.cache-hit != 'true'
+      uses: dtolnay/rust-toolchain@1.97.1
+      with:
+        targets: ${{ inputs.target }}
+    - if: steps.cache.outputs.cache-hit != 'true'
+      name: Install protoc
+      uses: ./.github/actions/setup-protoc
+    - if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'Linux'
+      name: Install Linux build dependencies
+      shell: bash
+      run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential cmake pkg-config libssl-dev
+    # Dependencies and build products of a cold build (a source change).
+    - if: steps.cache.outputs.cache-hit != 'true'
+      uses: ./.github/actions/rust-cache
+      with:
+        workspaces: libs/cua -> target
+        shared-key: spaces-native-${{ inputs.label }}
+        # The Actions cache limit is 50 GB (raised from 10 GB on 23 Oct 2026) and
+        # evicts oldest-first. PR merge refs cannot restore main's entries, so
+        # only the default branch saves the GB-sized dependency cache.
+        save-if: ${{ github.ref == 'refs/heads/main' }}
+        cache-on-failure: true
+    - if: steps.cache.outputs.cache-hit != 'true'
+      uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      with:
+        package_json_file: apps/cua-spaces-desktop/package.json
+    - if: steps.cache.outputs.cache-hit != 'true'
+      uses: actions/setup-node@v4
+      with:
+        node-version: 22
+    # The library, its N-API runtime and the bundled cua; Windows links the
+    # C runtime statically (build-native.mjs), so no VC++ redistributable.
+    - if: steps.cache.outputs.cache-hit != 'true'
+      name: Build the native layer
+      shell: bash
+      working-directory: apps/cua-spaces-desktop
+      env:
+        CARGO_BUILD_JOBS: 4
+        LABEL: ${{ inputs.label }}
+        TARGET: ${{ inputs.target }}
+      run: |
+        set -euo pipefail
+        pnpm install --frozen-lockfile
+        pnpm native -- --target "$TARGET"
+        test -d "native/$LABEL" || { echo "::error::pnpm native wrote no native/$LABEL"; exit 1; }
+    # Linux: the static cua-spacesd the bundled cua injects into images that
+    # lack one, next to cua (inject.rs looks there), from the cua-spacesd
+    # release libs/cua-spacesd/VERSION pins. Fetched on a cache hit too: the
+    # cache key covers the pin, but older entries predate this file.
+    - if: runner.os == 'Linux' && startsWith(inputs.label, 'linux-')
+      name: Bundle the static cua-spacesd
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        LABEL: ${{ inputs.label }}
+      run: .github/scripts/fetch_static_spacesd.sh "${CUA_RELEASE_REPOSITORY:-$GITHUB_REPOSITORY}" "$LABEL" "apps/cua-spaces-desktop/native/$LABEL"

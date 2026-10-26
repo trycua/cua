@@ -167,7 +167,12 @@ pub struct McpServer {
     /// keeps the tool fail-closed (it returns a consent requirement and
     /// delivers nothing).
     broker: Option<Arc<dyn crate::teleport_broker::SessionBroker>>,
+    /// Called with `initialize`'s `clientInfo` (`Null` when absent).
+    on_initialize: Option<ClientInfoHook>,
 }
+
+/// See [`McpServer::with_client_info_hook`].
+pub type ClientInfoHook = Arc<dyn Fn(&Value) + Send + Sync>;
 
 impl std::fmt::Debug for McpServer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -189,6 +194,7 @@ impl McpServer {
             name: SERVER_NAME,
             instructions: INSTRUCTIONS,
             broker: None,
+            on_initialize: None,
         }
     }
 
@@ -201,6 +207,7 @@ impl McpServer {
             name: SERVER_NAME,
             instructions: INSTRUCTIONS,
             broker: None,
+            on_initialize: None,
         }
     }
 
@@ -213,6 +220,14 @@ impl McpServer {
         broker: Arc<dyn crate::teleport_broker::SessionBroker>,
     ) -> Self {
         self.broker = Some(broker);
+        self
+    }
+
+    /// Runs `hook` with the client's `clientInfo` (`name`, `title`,
+    /// `version`) when it initializes, so the host can act as that agent
+    /// (for example label its cursor "Claude Code").
+    pub fn with_client_info_hook(mut self, hook: ClientInfoHook) -> Self {
+        self.on_initialize = Some(hook);
         self
     }
 
@@ -255,14 +270,19 @@ impl McpServer {
 
     /// `tools/list` result: the contract tools, then the extensions'.
     pub fn tools_list(&self) -> Value {
+        // A Space's runtime may be a local runtime provider installed on
+        // this machine: tools that take one name them.
+        let providers = cua_sandbox_core::external::Registry::global().providers();
         let mut tools: Vec<Value> = cua_spaces_contract::tools()
             .into_iter()
             .filter(|t| self.exposes(t.name))
             .map(|t| {
+                let mut schema = t.input_schema.clone();
+                cua_sandbox_core::external::annotate_runtime_schema(&mut schema, &providers);
                 json!({
                     "name": t.name,
                     "description": t.mcp_description(),
-                    "inputSchema": t.input_schema,
+                    "inputSchema": schema,
                     "annotations": {
                         "readOnlyHint": t.annotations.read_only,
                         "destructiveHint": t.annotations.destructive,
@@ -352,6 +372,9 @@ impl McpServer {
                 } else {
                     SUPPORTED_PROTOCOL_VERSIONS[0]
                 };
+                if let Some(hook) = &self.on_initialize {
+                    hook(params.get("clientInfo").unwrap_or(&Value::Null));
+                }
                 json!({
                     "protocolVersion": version,
                     "capabilities": {"tools": {"listChanged": false}},
@@ -373,7 +396,14 @@ impl McpServer {
                     ));
                 }
                 let args = params.get("arguments").cloned().unwrap_or(json!({}));
-                self.call_any(name, args).await.to_result()
+                let out = self.call_any(name, args).await;
+                // Only an MCP client (an AI agent) gets here; the app calls
+                // tools through `call`. Anonymous: the tool's kind, once per
+                // install per day (`cua_agent_used_space`).
+                if !out.is_error && cua_telemetry::events::space_tool_group(name).is_some() {
+                    cua_telemetry::global().capture_agent_used_space(name);
+                }
+                out.to_result()
             }
             other => {
                 return Some(error(
@@ -410,7 +440,7 @@ pub const SPACE_SCOPED_TOOLS: &[&str] = &[
 ];
 
 /// Server instructions sent in `initialize`.
-pub const INSTRUCTIONS: &str = "Cua Spaces: isolated sandboxes. Any image is a Space; the computer-use and file tools need one that runs cua-spacesd (the Spaces images), and every Space reaches the MCP servers it declares with list_tools/call_tool(service=...). Start with list_spaces; create one with create_space(on=\"local\" (free) or \"cloud\" (metered); reuse=true returns a reachable one), or add an existing machine with add_space(url, token). delete_space deletes a Space you created. Then work inside it with space_bash, space_write, upload/send_file/download, and its computer-use tools via list_tools/call_tool. agent_start runs a coding agent inside a Space. Tools marked FOR THE HUMAN draw on the user's own desktop; call them only when asked.";
+pub const INSTRUCTIONS: &str = "Cua Spaces: isolated sandboxes. Any image is a Space; the computer-use and file tools need one that runs cua-spacesd (the Spaces images), and every Space reaches the MCP servers it declares with list_tools/call_tool(service=...). Start with list_spaces; create one with create_space(on=\"local\" (free) or \"aws\", \"gcp\" or \"modal\" (your own cloud account); reuse=true returns a reachable one), or add an existing computer with add_space(url, token). delete_space deletes a Space you created. Then work inside it with space_bash, space_write, upload/send_file/download, and its computer-use tools via list_tools/call_tool. agent_start runs a coding agent inside a Space. Tools marked FOR THE HUMAN draw on the user's own desktop; call them only when asked.";
 
 pub(crate) fn error(id: Value, code: i64, message: &str) -> Value {
     json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}})

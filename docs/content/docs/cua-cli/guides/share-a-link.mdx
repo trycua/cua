@@ -1,0 +1,133 @@
+---
+title: Share a link to anything you run
+description: Give people (and your phone) a Cua link to a dev server, a Space port, a report or a folder, instead of a localhost link.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+A `localhost` link only works on the machine that printed it. `cua share` gives
+you a Cua link that opens on any of your signed-in devices, your phone
+included. Coding agents use it when they start a preview, a dashboard or write a
+report: they hand you the link, not a port number.
+
+```bash skip="host-install"
+cua share 3000                    # a port on this machine
+cua share space:dev:3000          # a port inside a Space
+cua share ./report.html           # a file, read-only
+cua share ./build/                # a folder, read-only, with a listing
+```
+
+Each command prints one line, the link, and nothing else on stdout. `--json`
+prints the share instead: `id`, `url`, `access`, `target`, `owner`,
+`created_at` and `expires_at`.
+
+## Who can open it
+
+| Flag | Who | Ends |
+| --- | --- | --- |
+| none (private) | Only your cua.ai account, on any of your devices | Until you stop it |
+| `--team` | Members of your team, signed in | Until you stop it |
+| `--public --ttl 1h` | Anyone with the link | After the TTL (60 s to 24 h, default 1 h) |
+
+`--ttl 10m` also works on private and team shares. `--name NAME` labels a share
+in the list.
+
+## List and stop
+
+```bash skip="host-install"
+cua share ls                      # id, access, time left, target, link
+cua share stop share-1a2b3c4d5e6f # the link stops working at once
+cua share stop all
+cua share check share-1a2b3c4d5e6f   # open the link once, as its owner
+```
+
+A share belongs to the Cua daemon, not to the shell that made it. It keeps
+working after the agent's shell exits and ends at its TTL, at `cua share stop`,
+or when the Space it points into is deleted.
+
+## Requirements
+
+This machine must be on your cua.ai relay, because the link goes through it:
+run `cua host setup` once and sign in with `cua auth login`. Without that
+`cua share` stops with an error that says so. It never falls back to a
+localhost link.
+
+## On your phone
+
+Open the link in any browser. A private or team link sends you to sign in with
+your cua.ai account, then shows the page. Each share has its own web address (a
+label like `s<id>-<machine>.<domain>` for private and team links, `p<token>-<machine>.<domain>`
+for public ones), so a shared app sees its own root, its links work, and one
+share's cookies never reach another. The sign-in cookie is limited to that one
+share and lasts at most 12 hours. Public links need no sign-in.
+
+<Callout type="warn">
+  The browser sign-in needs the relay's web client configured by the relay
+  operator (`CUA_RELAY_WEB_CLIENT_ID` and a host domain; see "Share links" in
+  the cua-relay README). On cua.ai this is a follow-up: until it is set up,
+  private and team links open from signed-in Cua clients but not from a bare
+  phone browser, and public links are the way to reach a phone.
+</Callout>
+
+## Security
+
+| Property | How |
+| --- | --- |
+| Private and team links | Need the owner's account (or a team member for `--team`), checked for every request |
+| Public links | A random 160-bit token, an expiry, revocable with `cua share stop`, rate limited |
+| Nothing exposed without a check | The share gateway has no network address; only your relay-joined host reaches it |
+| Files and folders | Read-only (GET and HEAD), no `..`, no hidden files (`.git`, `.env`), no symlink that leaves the folder |
+| Audit | Every create, open and stop is a line in `<cua home>/share/audit.jsonl` (hash-chained) |
+
+## From code and agents
+
+<Tabs items={['Python', 'TypeScript', 'Rust', 'MCP']}>
+  <Tab value="Python">
+```python skip="host-install"
+import cua
+from cua import ShareAccess
+
+c = cua.connect()   # shares live in the cua daemon
+s = await c.share("./report.html", access=ShareAccess.PUBLIC, ttl_seconds=3600)
+print(s.url)
+await c.shares()            # active shares
+await c.stop_share(s.id)    # or stop_all_shares()
+```
+  </Tab>
+  <Tab value="TypeScript">
+```ts skip="host-install"
+import { connect, ShareAccess } from "@trycua/cua";
+
+const c = connect();   // shares live in the cua daemon
+const s = await c.share("3000", ShareAccess.Private, undefined, undefined);
+console.log(s.url);
+await c.shares();
+await c.stopShare(s.id);
+```
+  </Tab>
+  <Tab value="Rust">
+```rust skip="host-install"
+let d = cua_daemon::client::ensure_daemon().await?;
+let target = cua_daemon::ShareTarget::parse("3000", &std::env::current_dir()?)?;
+let s = d.create_share(&target, cua_daemon::ShareAccess::Private, None, None).await?;
+println!("{}", s.url);
+d.stop_share(Some(&s.id), false).await?;
+```
+  </Tab>
+  <Tab value="MCP">
+Tools `share`, `share_list` and `share_stop`. `share` creates the link and then
+opens it once to check that it loads, returning the link and the check result.
+Only send the link if `check.ok` is true.
+  </Tab>
+</Tabs>
+
+## For your AGENTS.md
+
+Add this line to the instructions your coding agents read:
+
+```text skip="pseudo"
+Any link to something you ran (preview, dashboard, file): use `cua share`, never localhost; open it once to check it works before sending.
+```
+
+`cua agents setup` installs the same rule in the Cua skills.

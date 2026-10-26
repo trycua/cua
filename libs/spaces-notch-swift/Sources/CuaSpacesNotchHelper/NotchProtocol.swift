@@ -20,6 +20,9 @@ import Foundation
 ///  * `thumbnail` `{id, image?}`: a Space's latest thumbnail (base64 PNG or
 ///    JPEG; none clears it).
 ///  * `ghost` `{image?}`: the dragged window's image.
+///  * `windowUnder` `{id, x, y, below?}`: which window is at a global
+///    top-left point under the dragged window (a window dragged over a
+///    Space tile in the app's own window: is the tile covered there?).
 ///  * `quit`: exit now.
 ///
 /// Helper to Electron:
@@ -35,6 +38,8 @@ import Foundation
 ///  * `stage` `{open}`: the panel finished opening or closing (Electron
 ///    keeps the tiles' thumbnails fresh while open).
 ///  * `error` `{message}`: why the helper is about to exit.
+///  * `windowUnder` `{id, window?}`: the answer, with the request's `id`
+///    (`kCGWindowNumber`; none when no window is there).
 public enum NotchProtocol {
     /// Bumped on any incompatible change; both sides refuse another.
     public static let version = 1
@@ -50,6 +55,10 @@ public enum HostMessage: Equatable {
     case state(HostState)
     case thumbnail(spaceId: String, image: Data?)
     case ghost(image: Data?)
+    /// Which window is at a global top-left point under the dragged window
+    /// `below` (a window drag over the app's own window: is it covered
+    /// there?). Answered with `HelperMessage.windowUnder` and the same `id`.
+    case windowUnder(id: Int, x: Double, y: Double, below: Int?)
     case quit
 }
 
@@ -89,7 +98,7 @@ public struct HostState: Equatable, Decodable {
 }
 
 extension HostMessage: Decodable {
-    private enum Key: String, CodingKey { case type, v, motion, radii, id, image }
+    private enum Key: String, CodingKey { case type, v, motion, radii, id, image, x, y, below }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Key.self)
@@ -105,6 +114,10 @@ extension HostMessage: Decodable {
                               image: try Self.image(c))
         case "ghost":
             self = .ghost(image: try Self.image(c))
+        case "windowUnder":
+            self = .windowUnder(id: try c.decode(Int.self, forKey: .id), x: try c.decode(Double.self, forKey: .x),
+                                y: try c.decode(Double.self, forKey: .y),
+                                below: try c.decodeIfPresent(Int.self, forKey: .below))
         case "quit":
             self = .quit
         case let other:
@@ -145,10 +158,13 @@ public enum HelperMessage: Equatable {
     case action(HelperAction)
     case stage(open: Bool)
     case error(message: String)
+    /// The answer to `HostMessage.windowUnder`: the window's number
+    /// (`kCGWindowNumber`), none when no window is there.
+    case windowUnder(id: Int, window: Int?)
 }
 
 extension HelperMessage: Encodable {
-    private enum Key: String, CodingKey { case type, v, pid, notch, primary, event, action, spaceId, pane, paths, open, message }
+    private enum Key: String, CodingKey { case type, v, pid, notch, primary, event, action, spaceId, pane, paths, open, message, id, window }
 
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: Key.self)
@@ -188,6 +204,10 @@ extension HelperMessage: Encodable {
         case .error(let message):
             try c.encode("error", forKey: .type)
             try c.encode(message, forKey: .message)
+        case .windowUnder(let id, let window):
+            try c.encode("windowUnder", forKey: .type)
+            try c.encode(id, forKey: .id)
+            try c.encodeIfPresent(window, forKey: .window)
         }
     }
 

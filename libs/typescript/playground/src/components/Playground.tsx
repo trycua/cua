@@ -44,8 +44,6 @@ interface PlaygroundProps {
   };
   /** Custom welcome message for empty state */
   welcomeMessage?: string;
-  /** Render prop for cloud VM creation wizard. Injected by cloud website. */
-  renderCloudCreate?: (props: { onCreated: () => void; onCancel: () => void }) => React.ReactNode;
 }
 
 // =============================================================================
@@ -61,7 +59,6 @@ function PlaygroundContentInternal({
   className,
   logo,
   welcomeMessage,
-  renderCloudCreate,
 }: Omit<PlaygroundProps, 'adapters' | 'initialChats'>) {
   const { state, dispatch, adapters } = usePlayground();
   const [showCustomComputerModal, setShowCustomComputerModal] = useState(false);
@@ -245,7 +242,6 @@ function PlaygroundContentInternal({
       <AddSandboxModal
         isOpen={showCustomComputerModal}
         onClose={() => setShowCustomComputerModal(false)}
-        renderCloudCreate={renderCloudCreate}
       />
     </div>
   );

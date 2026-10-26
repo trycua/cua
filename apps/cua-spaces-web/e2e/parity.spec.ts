@@ -40,10 +40,11 @@ const PATHS: Record<ParityScreen, string> = {
   spaces: "/spaces",
   keyvault: "/keyvault",
   settings: "/settings",
+  "settings/general": "/settings/general",
   "settings/about": "/settings/about",
-  "settings/agents": "/settings/agents",
+  "settings/advanced": "/settings/advanced",
+  "settings/connected-apps": "/settings/connected-apps",
   "settings/devices": "/settings/devices",
-  "settings/experiments": "/settings/experiments",
   notifications: "/notifications",
   machines: "/machines",
   agents: "/agents",
@@ -64,7 +65,7 @@ async function open(page: Page, screen: ParityScreen): Promise<void> {
   // Let the host's first answer land, so it can't overwrite a checkpoint.
   if (PATHS[screen] === "/spaces") await page.locator("[data-space-id]").first().waitFor();
   if (screen === "onboarding") await page.locator("[data-step]").first().waitFor();
-  if (screen === "machines") await page.locator("[data-host-panel]").waitFor();
+  if (screen === "machines") await page.locator('[data-machine-detail="this-mac"]').waitFor();
   if (screen === "agents") await page.locator("[data-agent-row]").first().waitFor();
 }
 
@@ -250,43 +251,45 @@ const texts = (page: Page, selector: string) => page.locator(selector).evaluateA
 const attrs = (page: Page, selector: string, name: string) =>
   page.locator(selector).evaluateAll((els, n) => els.map((el) => el.getAttribute(n) ?? ""), name);
 
+/** This machine on the Machines page for the core's host state: its two
+ * switches (on or off, and whether they change here), the notice over them,
+ * the permissions still to grant and Remove from account, as the core's
+ * `machines.view` draws This machine (the SwiftUI page draws the same). */
 async function checkHostPanel(page: Page, cp: Of<"host-panel">): Promise<void> {
   const p = cp.panel;
+  const m = cp.machine!;
   await page.evaluate((state) => window.__cuaParity!.showHost(state), cp.state);
-  // Relay sharing paused: the notice (and its button) in place of the summary.
-  const notice = p.notice && !p.intro ? p.notice : null;
-  if (notice) await expect(page.locator("[data-host-notice]")).toHaveText(notice);
-  else await expect(page.locator("[data-host-summary]")).toHaveText(p.summary);
-  await expect.poll(() => texts(page, "[data-host-notice-action]")).toEqual(notice && p.noticeAction ? [p.noticeAction.label] : []);
-  await expect.poll(() => attrs(page, "[data-host-fact]", "data-host-fact")).toEqual(p.facts.map((f) => f.label));
-  await expect.poll(() => texts(page, "[data-host-fact] > div:last-child")).toEqual(p.facts.map((f) => f.value));
-  if (p.clientsTitle && p.clientsEmpty) await expect(page.locator("[data-host-clients-empty]")).toHaveText(p.clientsEmpty);
-  await expect.poll(() => texts(page, "[data-host-client]")).toEqual(p.clientsTitle && !p.clientsEmpty ? p.clients : []);
+  const detail = page.locator('[data-machine-detail="this-mac"]');
+  if (m.notice) await expect(detail.locator("[data-machine-notice]")).toContainText(m.notice);
+  else await expect(detail.locator("[data-machine-notice]")).toHaveCount(0);
+  // The notice's button (Sign In, Resume Sharing), when it has one.
+  await expect.poll(() => texts(page, "[data-machine-notice] button")).toEqual(m.notice && m.noticeAction ? [m.noticeAction.label] : []);
+  await expect.poll(() => attrs(page, "[data-machine-toggle]", "data-machine-toggle")).toEqual(m.toggles.map((t) => t.id));
+  await expect
+    .poll(() => attrs(page, "[data-machine-toggle] [role=switch]", "aria-checked"))
+    .toEqual(m.toggles.map((t) => String(t.on)));
   await expect
     .poll(() => attrs(page, "[data-host-permission]", "data-host-permission"))
     .toEqual(p.permissionsTitle ? p.permissions.map((x) => x.id) : []);
-  // As the SwiftUI page: setup choices before setup, the buttons after.
-  const choices = p.setupChoices ?? [];
-  await expect.poll(() => attrs(page, "[data-host-choice]", "data-host-choice")).toEqual(choices.map((c) => c.id));
-  const actions = choices.length ? [] : p.actions;
-  await expect.poll(() => texts(page, "[data-host-action]")).toEqual(actions.map((a) => a.label));
+  await expect(detail.locator("[data-machine-remove]")).toHaveCount(m.remove ? 1 : 0);
 }
 
 const readForm = (page: Page) =>
   page.locator("[data-host-field]").evaluateAll((els) =>
     els.map((el) => {
-      const input = el.querySelector("input:not([type=hidden])") as HTMLInputElement | null;
+      const input = el.querySelector("input:not([type=hidden]):not([type=radio])") as HTMLInputElement | null;
       const sw = el.querySelector('[role="switch"]');
+      const radios = el.querySelector('[role="radiogroup"]');
       return {
         id: el.getAttribute("data-host-field"),
-        // A switch's state, a text field's text, or the pressed choice's label.
+        // A switch's state, a text field's text, or the checked choice's label.
         value: sw
           ? sw.getAttribute("aria-checked") === "true"
             ? "on"
             : "off"
-          : input
-            ? input.value
-            : (el.querySelector('[aria-pressed="true"]')?.textContent ?? ""),
+          : radios
+            ? (radios.querySelector("input:checked")?.closest("label")?.textContent ?? "")
+            : (input?.value ?? ""),
         invalid: input?.getAttribute("aria-invalid") === "true",
       };
     }),
@@ -355,8 +358,11 @@ async function checkTelemetry(page: Page, cps: Of<"telemetry">[]): Promise<numbe
   await expect.poll(() => tracked(page)).toContainEqual({ type: "launched", onboardingEligible: false });
   const before = (await tracked(page)).length;
   for (const cp of cps) await track(page, cp.signals);
-  // The getting-started checklist records its own steps as the page loads; they are not this flow's.
-  const ours = (await tracked(page)).slice(before).filter((s) => !(s.type === "step" && s.step.startsWith("checklist_")));
+  // The page records its own events as it loads (the getting-started checklist's steps, the first
+  // ready Space's agent offer, once per install); they are not this flow's.
+  const pages = (s: { type: string; step?: string; feature?: string }) =>
+    (s.type === "step" && s.step?.startsWith("checklist_")) || (s.type === "feature" && s.feature?.startsWith("agent_offer_"));
+  const ours = (await tracked(page)).slice(before).filter((s) => !pages(s));
   expect(ours, "the host recorded the core's events").toEqual(cps.flatMap((c) => c.signals));
 
   await page.evaluate(() => window.__cuaParity!.setTelemetry(false));
@@ -369,11 +375,11 @@ async function checkTelemetry(page: Page, cps: Of<"telemetry">[]): Promise<numbe
   await track(page, [
     { type: "step", step: "signed_in", ok: true, identity: "maya@example.com" },
     { type: "feature", feature: "/Users/maya/secret" },
-    { type: "share", action: "share", role: "viewer", outcome: "ok", email: "grace@example.com" },
+    { type: "share", action: "share", role: "viewer", outcome: "ok", errorKind: "none", failedStage: "none", email: "grace@example.com" },
   ]);
   expect((await tracked(page)).slice(n), "only schema fields and fixed words are sent").toEqual([
     { type: "step", step: "signed_in", ok: true },
-    { type: "share", action: "share", role: "viewer", outcome: "ok" },
+    { type: "share", action: "share", role: "viewer", outcome: "ok", errorKind: "none", failedStage: "none" },
   ]);
   return cps.filter((c) => c.signals.length > 0).length;
 }
@@ -448,7 +454,7 @@ test.describe("parity flows", () => {
           ? await checkTeleport(page, cps)
           : screen === "share"
             ? await checkShare(page, cps)
-            : screen === "volume" || screen === "onboarding" || screen === "settings"
+            : screen === "volume" || screen === "onboarding" || screen === "settings/connected-apps"
               ? await checkVolumeFlow(page, name, cps)
               : await checkScreens(page, screen, cps);
       expect(states, "the replay reached a state the screen draws").toBeGreaterThan(0);

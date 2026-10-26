@@ -3,6 +3,7 @@ name: "CI: Release metadata"
 on:
   pull_request:
     types: [opened, edited, synchronize, reopened, labeled, unlabeled]
+  merge_group:
 
 permissions:
   contents: read
@@ -11,6 +12,7 @@ permissions:
 
 jobs:
   installer-compatibility:
+    if: github.event_name != 'merge_group'
     uses: ./.github/workflows/ci-cua-driver-installer-compat.yml
     permissions:
       contents: read
@@ -18,7 +20,7 @@ jobs:
 
   validate:
     needs: installer-compatibility
-    if: always()
+    if: always() && github.event_name != 'merge_group'
     runs-on: ubuntu-latest
     steps:
       - name: Require successful installer certification
@@ -193,3 +195,35 @@ jobs:
               --changelog libs/python/cua-sandbox/CHANGELOG.md \
               --output /tmp/sandbox-release-manifest.json
           fi
+
+      # The components release-notes.yml renders get the same preflight: a
+      # release PR whose changelog or contributor attribution would not render
+      # fails here, before its tag exists.
+      - name: Preflight release notes for other Release Please components
+        if: >-
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          startsWith(github.event.pull_request.head.ref, 'release-please--branches--')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          COMPONENT="${HEAD_REF##*--components--}"
+          PACKAGE_PATH=$(jq -r --arg c "$COMPONENT" \
+            '.packages | to_entries[] | select(.value.component == $c) | .key' release-please-config.json)
+          if [[ -z "$PACKAGE_PATH" ]]; then
+            echo "No Release Please package for component $COMPONENT"
+            exit 0
+          fi
+          VERSION=$(jq -r --arg p "$PACKAGE_PATH" '.[$p]' .release-please-manifest.json)
+          TAG="$COMPONENT-v$VERSION"
+          PLAN=$(python3 .github/scripts/release_notes.py plan --tag "$TAG")
+          if ! grep -qx 'render=true' <<<"$PLAN"; then
+            echo "$TAG is rendered by its own CD workflow"
+            exit 0
+          fi
+          python3 .github/scripts/release_notes.py render \
+            --tag "$TAG" --ref "$HEAD_SHA" --sha "$HEAD_SHA" \
+            --repository "${{ github.repository }}" --out-dir /tmp/release-notes-preflight
+          cat /tmp/release-notes-preflight/release-body.md

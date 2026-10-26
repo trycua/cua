@@ -3,9 +3,6 @@
 //! Platform renderers (macOS, Windows, Linux) depend on this crate for:
 //! - `CursorConfig` — theme, accessibility, visibility, and motion settings
 //! - `MotionConfig` — glide duration, spring, dwell, idle-hide timings
-//! - `CubicBezier` — Bezier path math (from Cua Driver's Swift `Bezier.swift` /
-//!   `CursorMotionPath.swift`; arc-length helper after trope-cua, see
-//!   THIRD_PARTY_NOTICES.md)
 //! - `trajectory` — the motion styles, timing and effect geometry, which live
 //!   in the `cua-cursor-motion` crate (shared with the `@trycua/cursor-motion` web package)
 //! - `OverlayCommand` — messages sent from MCP tools to the overlay thread
@@ -13,7 +10,7 @@
 //!   display geometry, so screen-coordinate cursors stay on the pointer
 
 pub mod badge_glyphs;
-pub mod bezier;
+pub mod badge_mode;
 pub mod capture_exclusion;
 pub mod capture_utils;
 pub mod motion;
@@ -30,7 +27,7 @@ pub use cua_cursor_motion::dubins as path_planner;
 pub mod z_order;
 
 pub use badge_glyphs::{BadgeChip, BadgeGlyph};
-pub use bezier::CubicBezier;
+pub use badge_mode::BadgeMode;
 pub use motion::{
     MotionConfig, MotionEffects, MotionStyle, MotionTiming, ResolvedEffects, Spring,
     DEFAULT_FIXED_MS,
@@ -117,6 +114,7 @@ impl CursorConfig {
         // Load the saved `cursor.motion.*` defaults; the render map layers
         // them under each cursor it creates.
         motion_defaults::load_active();
+        badge_mode::load_active();
         Self::parse(&args[1..])
     }
 
@@ -402,6 +400,9 @@ pub enum OverlayCommand {
     },
     /// Set the sanitized public label shown beneath this cursor.
     SetSessionLabel(String),
+    /// Keys of a combo the agent is pressing (such as `["cmd", "c"]`). The
+    /// minimal badge shows it briefly; other badge modes ignore it.
+    ShowKeyCombo(Vec<String>),
     /// Show a focus-highlight rectangle around an AX-targeted element.
     /// `[x, y, width, height]` in screen coordinates (top-left origin).
     /// `None` clears the highlight.

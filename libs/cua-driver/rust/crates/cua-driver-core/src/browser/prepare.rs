@@ -31,7 +31,7 @@ fn validate_profile(profile: &PrepareProfile) -> Result<(), BrowserRefusal> {
     match profile.mode {
         PrepareProfileMode::IsolatedNew => {
             if profile.name.is_some() {
-                return Err(refusal(
+                return Err(BrowserRefusal::new(
                     BrowserRefusalCode::BrowserConsentRequired,
                     "profile.name is not valid with mode=isolated_new",
                 ));
@@ -39,7 +39,7 @@ fn validate_profile(profile: &PrepareProfile) -> Result<(), BrowserRefusal> {
         }
         PrepareProfileMode::IsolatedNamed => {
             let Some(name) = profile.name.as_deref() else {
-                return Err(refusal(
+                return Err(BrowserRefusal::new(
                     BrowserRefusalCode::BrowserConsentRequired,
                     "profile.name is required with mode=isolated_named",
                 ));
@@ -50,7 +50,7 @@ fn validate_profile(profile: &PrepareProfile) -> Result<(), BrowserRefusal> {
                     .bytes()
                     .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
             {
-                return Err(refusal(
+                return Err(BrowserRefusal::new(
                     BrowserRefusalCode::BrowserConsentRequired,
                     "profile.name must be 1-64 ASCII letters, digits, '-' or '_'",
                 ));
@@ -86,18 +86,17 @@ where
             outcome = bounded.as_mut() => (None, outcome),
         }
     };
+    let consent_timed_out = outcome.is_err();
     let outcome = match outcome {
         Ok(outcome) => outcome?,
+        Err(_) if action.started() => consent.await.map_err(|mut error| {
+            error
+                .message
+                .push_str(" (consent attempt deadline expired)");
+            error
+        })?,
         Err(_) => {
-            if action.started() {
-                consent.await.map_err(|mut error| {
-                    error
-                        .message
-                        .push_str(" (consent attempt deadline expired)");
-                    error
-                })?;
-            }
-            return Err(refusal(
+            return Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 "browser consent did not settle within its bounded attempt",
             ));
@@ -105,18 +104,24 @@ where
     };
     let accepted = outcome == BrowserConsentOutcome::Accepted;
     if action.started() && !accepted {
-        return Err(refusal(
+        return Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             "browser consent action did not produce a confirmed outcome",
         ));
     }
-    Ok((
-        match result {
-            Some(result) => result,
-            None => claim.as_mut().await,
-        },
-        accepted,
-    ))
+    let result = match result {
+        Some(result) => result,
+        None if consent_timed_out => tokio::time::timeout(Duration::from_secs(4), claim.as_mut())
+            .await
+            .map_err(|_| {
+                BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserWrongTargetRefused,
+                    "browser reconnect did not settle after confirmed consent",
+                )
+            })?,
+        None => claim.as_mut().await,
+    };
+    Ok((result, accepted))
 }
 
 async fn claim_with_delayed_consent<T, Claim, Consent, MakeConsent>(
@@ -246,7 +251,7 @@ impl PendingExistingProfileSetup {
 
     async fn commit(&mut self) -> Result<bool, BrowserRefusal> {
         let request = self.request.clone().ok_or_else(|| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserBindingStale,
                 "the pending browser setup was already finalized",
             )
@@ -265,7 +270,7 @@ impl Drop for PendingExistingProfileSetup {
             return;
         };
         let platform = self.platform.clone();
-        let error = refusal(
+        let error = BrowserRefusal::new(
             BrowserRefusalCode::BrowserBindingStale,
             "the existing-profile setup request ended before commit; rolling back its exact pending setup",
         );
@@ -333,10 +338,6 @@ impl Drop for ManagedBrowser {
 
 pub(crate) type ManagedBrowsers = Mutex<Vec<ManagedBrowser>>;
 
-fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefusal {
-    BrowserRefusal::new(code, message)
-}
-
 fn profile_root() -> Result<PathBuf, BrowserRefusal> {
     if let Some(root) = std::env::var_os("CUA_DRIVER_BROWSER_PROFILE_ROOT") {
         return Ok(PathBuf::from(root));
@@ -362,7 +363,7 @@ fn profile_root() -> Result<PathBuf, BrowserRefusal> {
         })
         .map(|path| path.join("cua-driver").join("browser-profiles"));
     root.ok_or_else(|| {
-        refusal(
+        BrowserRefusal::new(
             BrowserRefusalCode::BrowserRouteUnavailable,
             "could not resolve the current user's driver-owned profile directory",
         )
@@ -534,7 +535,7 @@ fn write_profile_marker(path: &Path, marker: &ProfileMarker) -> Result<(), Brows
         options.mode(0o600);
     }
     let mut file = options.open(&marker_path).map_err(|error| {
-        refusal(
+        BrowserRefusal::new(
             BrowserRefusalCode::BrowserRouteUnavailable,
             format!("could not create the isolated profile ownership marker: {error}"),
         )
@@ -543,7 +544,7 @@ fn write_profile_marker(path: &Path, marker: &ProfileMarker) -> Result<(), Brows
     file.write_all(&bytes)
         .and_then(|_| file.sync_all())
         .map_err(|error| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserRouteUnavailable,
                 format!("could not persist the isolated profile ownership marker: {error}"),
             )
@@ -554,7 +555,7 @@ fn prepare_profile(profile: &PrepareProfile) -> Result<PreparedProfile, BrowserR
     validate_profile(profile)?;
     let root = profile_root()?;
     fs::create_dir_all(&root).map_err(|error| {
-        refusal(
+        BrowserRefusal::new(
             BrowserRefusalCode::BrowserRouteUnavailable,
             format!("could not create the driver-owned profile root: {error}"),
         )
@@ -563,20 +564,20 @@ fn prepare_profile(profile: &PrepareProfile) -> Result<PreparedProfile, BrowserR
     {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).map_err(|error| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserRouteUnavailable,
                 format!("could not restrict the driver-owned profile root: {error}"),
             )
         })?;
     }
     let root_metadata = fs::symlink_metadata(&root).map_err(|error| {
-        refusal(
+        BrowserRefusal::new(
             BrowserRefusalCode::BrowserRouteUnavailable,
             format!("could not inspect the driver-owned profile root: {error}"),
         )
     })?;
     if root_metadata.file_type().is_symlink() || !root_metadata.is_dir() {
-        return Err(refusal(
+        return Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserRouteUnavailable,
             "the driver-owned profile root is not a real directory",
         ));
@@ -595,7 +596,7 @@ fn prepare_profile(profile: &PrepareProfile) -> Result<PreparedProfile, BrowserR
         if profile.mode != PrepareProfileMode::IsolatedNamed
             || !profile_matches_marker(&path, &marker)
         {
-            return Err(refusal(
+            return Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserRouteUnavailable,
                 "the requested profile directory exists but is not proven driver-owned",
             ));
@@ -603,7 +604,7 @@ fn prepare_profile(profile: &PrepareProfile) -> Result<PreparedProfile, BrowserR
         false
     } else {
         fs::create_dir(&path).map_err(|error| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserRouteUnavailable,
                 format!("could not create an isolated browser profile: {error}"),
             )
@@ -613,7 +614,7 @@ fn prepare_profile(profile: &PrepareProfile) -> Result<PreparedProfile, BrowserR
             use std::os::unix::fs::PermissionsExt;
             if let Err(error) = fs::set_permissions(&path, fs::Permissions::from_mode(0o700)) {
                 let _ = fs::remove_dir(&path);
-                return Err(refusal(
+                return Err(BrowserRefusal::new(
                     BrowserRefusalCode::BrowserRouteUnavailable,
                     format!("could not restrict the isolated browser profile: {error}"),
                 ));
@@ -621,7 +622,7 @@ fn prepare_profile(profile: &PrepareProfile) -> Result<PreparedProfile, BrowserR
         }
         let is_empty = fs::read_dir(&path)
             .map_err(|error| {
-                refusal(
+                BrowserRefusal::new(
                     BrowserRefusalCode::BrowserRouteUnavailable,
                     format!("could not verify the isolated browser profile: {error}"),
                 )
@@ -629,7 +630,7 @@ fn prepare_profile(profile: &PrepareProfile) -> Result<PreparedProfile, BrowserR
             .next()
             .is_none();
         if !is_empty {
-            return Err(refusal(
+            return Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserRouteUnavailable,
                 "new isolated browser profile was not empty",
             ));
@@ -657,7 +658,7 @@ async fn wait_for_spawned_endpoint(
     let mut observed_clean_launcher_exit = false;
     loop {
         if let Some(status) = child.try_wait().map_err(|error| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserRouteUnavailable,
                 format!("could not inspect the isolated browser process: {error}"),
             )
@@ -669,7 +670,7 @@ async fn wait_for_spawned_endpoint(
                 // listener and its descendant ownership are attested below.
                 observed_clean_launcher_exit = true;
             } else {
-                return Err(refusal(
+                return Err(BrowserRefusal::new(
                     BrowserRefusalCode::BrowserRouteUnavailable,
                     format!("isolated browser exited before exposing DevTools ({status})"),
                 ));
@@ -681,7 +682,7 @@ async fn wait_for_spawned_endpoint(
                 port_file_text = fs::read_to_string(&port_file).ok();
             })
             .map_err(|error| {
-                refusal(
+                BrowserRefusal::new(
                     BrowserRefusalCode::BrowserRouteUnavailable,
                     format!(
                         "could not read the isolated browser profile with the browser's token: {error}"
@@ -716,7 +717,7 @@ async fn wait_for_spawned_endpoint(
             }
         }
         if Instant::now() >= deadline {
-            return Err(refusal(
+            return Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserRouteUnavailable,
                 if observed_clean_launcher_exit {
                     "isolated browser launcher exited cleanly, but its process tree did not expose a loopback DevTools endpoint before timeout"
@@ -771,7 +772,7 @@ async fn attest_spawned_endpoint(
             }
         }
         if Instant::now() >= deadline {
-            return Err(refusal(
+            return Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserEndpointOwnerMismatch,
                 "the isolated browser profile endpoint did not match live loopback socket ownership",
             ));
@@ -807,7 +808,7 @@ impl BrowserEngine {
             return self.attach_existing_profile(request).await;
         }
         if request.strategy.is_some() {
-            return Err(refusal(
+            return Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserRouteUnavailable,
                 "the requested browser preparation strategy is unsupported",
             ));
@@ -832,13 +833,13 @@ impl BrowserEngine {
         }
 
         if !request.allow_launch {
-            return Err(refusal(
+            return Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserRequiresSetup,
                 "no owned endpoint is available; pass allow_launch=true with an isolated profile and verified approval",
             ));
         }
         let profile_request = request.profile.as_ref().ok_or_else(|| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserConsentRequired,
                 "acting setup requires profile.mode=isolated_new or isolated_named",
             )
@@ -859,7 +860,7 @@ impl BrowserEngine {
                 .await?
                 .executable
                 .ok_or_else(|| {
-                    refusal(
+                    BrowserRefusal::new(
                         BrowserRefusalCode::BrowserRouteUnavailable,
                         "could not prove the requested browser executable for isolated launch",
                     )
@@ -999,16 +1000,18 @@ impl BrowserEngine {
         if frontmost == Some(pid) {
             return Ok(());
         }
-        Err(refusal(
+        Err(BrowserRefusal::new(
             BrowserRefusalCode::BackgroundUnavailable,
             format!(
                 "{limitation}, so attaching now would bring the browser in front of the app the \
-                 user is working in. Nothing was changed. A browser window on another Space than \
-                 the user's attaches in the background: keep or put it on another Space and \
-                 retry. Retry with delivery_mode:\"foreground\" only when nobody is using this \
-                 screen or the user agreed to the browser coming forward; the driver then brings \
-                 the user's app back. Otherwise work from the window's accessibility tree and \
-                 screenshot (get_window_state), which need no attachment."
+                 user is working in. Nothing was changed, and browser_prepare is optional: \
+                 use get_window_state on the browser window and act through its accessibility \
+                 tree (set_value, click by element token), which needs no attachment. If the \
+                 first read shows only browser chrome, read the window again. A browser window \
+                 on another Space than the user's also attaches in the background. Retry with \
+                 delivery_mode:\"foreground\" only when nobody is using this screen or the \
+                 user agreed to the browser coming forward; the driver then brings the user's \
+                 app back."
             ),
         )
         .with_detail(serde_json::json!({
@@ -1034,13 +1037,13 @@ impl BrowserEngine {
         }
 
         let pid = request.pid.ok_or_else(|| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserConsentRequired,
                 "strategy=existing_profile requires an exact pid approval anchor",
             )
         })?;
         let window_id = request.window_id.ok_or_else(|| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserConsentRequired,
                 "strategy=existing_profile requires an exact window_id approval anchor",
             )
@@ -1050,7 +1053,7 @@ impl BrowserEngine {
             .map(Ok)
             .unwrap_or_else(crate::authorization::configured_permission_mode)
             .map_err(|error| {
-                refusal(
+                BrowserRefusal::new(
                     BrowserRefusalCode::BrowserConsentRequired,
                     format!("permission mode is unavailable: {error}"),
                 )
@@ -1059,13 +1062,13 @@ impl BrowserEngine {
             ConsentPath::Unrestricted
         } else if mode == crate::authorization::PermissionMode::Bounded {
             let context = crate::tool::current_dispatch_authorization_context().ok_or_else(|| {
-                refusal(
+                BrowserRefusal::new(
                     BrowserRefusalCode::BrowserConsentRequired,
                     "bounded existing-profile attachment requires a live session authorization context",
                 )
             })?;
             let manifest = context.capability_manifest().ok_or_else(|| {
-                refusal(
+                BrowserRefusal::new(
                     BrowserRefusalCode::BrowserConsentRequired,
                     "bounded existing-profile attachment requires an approved capability manifest",
                 )
@@ -1079,14 +1082,16 @@ impl BrowserEngine {
                         "strategy": {"kind": "existing_profile"},
                     }),
                 )
-                .map_err(|message| refusal(BrowserRefusalCode::BrowserConsentRequired, message))?;
+                .map_err(|message| {
+                    BrowserRefusal::new(BrowserRefusalCode::BrowserConsentRequired, message)
+                })?;
             ConsentPath::BoundedManifest
         } else if crate::authorization::launch_grant_enabled("existing_profile") {
             ConsentPath::LaunchGrant
         } else if self.approval_broker.provider_id().is_some() {
             ConsentPath::Protected
         } else {
-            return Err(refusal(
+            return Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserConsentRequired,
                 "existing-profile attachment in standard mode requires --grant existing-profile or an embedding authorization host; bounded mode requires a matching manifest",
             )
@@ -1097,7 +1102,7 @@ impl BrowserEngine {
             })));
         };
         if request.profile.is_some() || request.allow_launch {
-            return Err(refusal(
+            return Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserConsentRequired,
                 "strategy=existing_profile cannot be combined with profile or allow_launch",
             ));
@@ -1158,7 +1163,7 @@ impl BrowserEngine {
             };
             if current_fingerprint != fingerprint {
                 let error = with_setup_side_effects(
-                    refusal(
+                    BrowserRefusal::new(
                         BrowserRefusalCode::BrowserBindingStale,
                         "the approved browser process changed while remote debugging was being enabled",
                     ),
@@ -1187,7 +1192,7 @@ impl BrowserEngine {
         let endpoint = match endpoint {
             Some(endpoint) => endpoint,
             None => {
-                let error = with_setup_side_effects(refusal(
+                let error = with_setup_side_effects(BrowserRefusal::new(
                     BrowserRefusalCode::BrowserRequiresSetup,
                     "the approved browser still has no uniquely proven DevTools endpoint after bounded setup",
                 ), &setup);
@@ -1203,7 +1208,7 @@ impl BrowserEngine {
         };
         if endpoint.ownership.owner_pid != pid {
             let error = with_setup_side_effects(
-                refusal(
+                BrowserRefusal::new(
                     BrowserRefusalCode::BrowserEndpointOwnerMismatch,
                     "the existing-profile endpoint is not owned by the approved browser process",
                 ),
@@ -1251,7 +1256,7 @@ impl BrowserEngine {
                     .approve(&approval_request)
                     .await
                     .map_err(|error| {
-                        refusal(
+                        BrowserRefusal::new(
                             BrowserRefusalCode::BrowserConsentRequired,
                             format!("existing-profile authorization was not granted: {error}"),
                         )
@@ -1306,13 +1311,14 @@ impl BrowserEngine {
         );
         if let Some(previous) = previous_grant {
             self.pool
-                .release_existing(&previous.endpoint_ws_url, previous.generation)
+                .release_existing(
+                    &previous.endpoint_ws_url,
+                    previous.generation,
+                    super::cdp_ws::SharedSocketRelease::Park,
+                )
                 .await;
             if let Some(protected) = previous.protected_consent.as_ref() {
                 self.approval_broker.revoke(protected).await;
-            }
-            if previous.endpoint_ws_url != endpoint.ws_url {
-                self.pool.release_claim_marker(&previous.endpoint_ws_url);
             }
         }
         let (claimed, displayed_consent_prompt) = match claim_with_delayed_consent(
@@ -1401,7 +1407,7 @@ impl BrowserEngine {
             )
             .await;
             let error = with_prepare_side_effects(
-                refusal(
+                BrowserRefusal::new(
                     BrowserRefusalCode::BrowserReconnectExhausted,
                     "the approved browser socket could not be claimed",
                 )
@@ -1502,11 +1508,11 @@ mod tests {
                     wrong.ws_url.push_str("-host");
                     Ok(Some(wrong))
                 }
-                "malformed" => Err(refusal(
+                "malformed" => Err(BrowserRefusal::new(
                     BrowserRefusalCode::BrowserEndpointOwnerMismatch,
                     "malformed second read",
                 )),
-                _ => Err(refusal(
+                _ => Err(BrowserRefusal::new(
                     BrowserRefusalCode::BrowserRouteUnavailable,
                     "unreadable second read",
                 )),
@@ -1605,7 +1611,7 @@ mod tests {
                     if outcome == 0 || outcome == 2 {
                         Ok(BrowserConsentOutcome::Accepted)
                     } else {
-                        Err(refusal(
+                        Err(BrowserRefusal::new(
                             BrowserRefusalCode::BrowserConsentRevoked,
                             "native action refused",
                         ))
@@ -1614,7 +1620,7 @@ mod tests {
                 let result = claim_with_optional_consent(&mut claim, &action, consent).await;
                 assert!(dropped.load(Ordering::SeqCst));
                 match outcome {
-                    0 => {
+                    0 | 2 => {
                         let (claim, displayed) = result.unwrap();
                         assert_eq!(claim.is_ok(), claim_succeeds);
                         assert!(displayed && settled.load(Ordering::SeqCst));
@@ -1623,19 +1629,34 @@ mod tests {
                         result.unwrap_err().code,
                         BrowserRefusalCode::BrowserConsentRevoked
                     ),
-                    _ => {
-                        assert_eq!(
-                            result.unwrap_err().code,
-                            BrowserRefusalCode::BrowserWrongTargetRefused
-                        );
-                        assert!(
-                            settled.load(Ordering::SeqCst),
-                            "committed worker was detached on timeout"
-                        );
-                    }
+                    _ => unreachable!(),
                 }
             }
         }
+    }
+
+    #[tokio::test]
+    async fn late_confirmed_consent_allows_the_original_pending_claim_to_finish() {
+        let action = BrowserConsentAction::default();
+        let marker = action.clone();
+        let (confirmed, awaiting_confirmation) = tokio::sync::oneshot::channel();
+        let mut claim = Box::pin(async move {
+            awaiting_confirmation.await.unwrap();
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            Ok::<_, anyhow::Error>(7_u8)
+        });
+        let consent = async move {
+            marker.perform(|| ());
+            tokio::time::sleep(Duration::from_millis(4100)).await;
+            confirmed.send(()).unwrap();
+            Ok(BrowserConsentOutcome::Accepted)
+        };
+
+        let (result, displayed) = claim_with_optional_consent(&mut claim, &action, consent)
+            .await
+            .unwrap();
+        assert_eq!(result.unwrap(), 7);
+        assert!(displayed);
     }
 
     #[tokio::test]
@@ -1725,7 +1746,7 @@ mod tests {
         });
         let consent = async {
             tokio::time::sleep(Duration::from_secs(1)).await;
-            Err(refusal(
+            Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 "no consent surface",
             ))
@@ -1838,7 +1859,7 @@ mod tests {
             },
             |action| async move {
                 action.perform(|| ());
-                Err(refusal(
+                Err(BrowserRefusal::new(
                     BrowserRefusalCode::BrowserConsentRevoked,
                     "second consent was revoked",
                 ))
@@ -1939,7 +1960,7 @@ mod tests {
     #[test]
     fn setup_side_effects_are_preserved_on_refusal() {
         let error = with_setup_side_effects(
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserBindingStale,
                 "fixture binding changed",
             )

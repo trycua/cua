@@ -483,8 +483,8 @@ if [ "$OS" = "Darwin" ]; then
     #
     # `ditto` drops the bundle on disk, but LaunchServices registers the new
     # com.trycua.driver.local identity ASYNCHRONOUSLY (seconds later). Until it
-    # does, `open -n -g -a CuaDriverLocal` (what `permissions grant` / MCP use to
-    # launch the daemon) fails with -1728. A synchronous `lsregister -f` closes
+    # does, launching the bundle (what `permissions grant` / MCP do to start
+    # the daemon) can fail with -1728. A synchronous `lsregister -f` closes
     # that race so both the reset and the first launch resolve the bundle id.
     LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister"
     if [ -x "$LSREGISTER" ]; then

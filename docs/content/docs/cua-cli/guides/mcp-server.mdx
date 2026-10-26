@@ -5,28 +5,30 @@ description: 'Serve Spaces, sandbox, computer and skills tools to an AI client w
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-`cua mcp` is a stdio MCP server with the Spaces tools plus sandbox, computer
-and skills tools. `cua daemon mcp` is the same server through `cua daemon`
-(started if needed), so several agents share Spaces, streams and sandboxes.
-For the machine the agent itself runs on, use
-[Cua Driver](/cua-driver/quickstart) instead.
+`cua mcp` is an MCP server, over stdio, that gives an AI client the Spaces tools
+plus sandbox, computer and skills tools. `cua daemon mcp` is the same server
+running through `cua daemon` (started if needed), so several agents can share
+Spaces, streams and sandboxes. To control the machine the agent itself runs on,
+use [Cua Driver](/cua-driver/quickstart) instead.
 
 ```bash skip="third-party-cli"
 claude mcp add cua -- cua daemon mcp
 claude mcp add cua -- cua mcp --sandbox dev --permissions sandbox:readonly,computer:all
 ```
 
-`cua agents setup` adds this entry for detected agents. `--sandbox`
-(`CUA_SANDBOX`) is the default target of the computer tools; each call can pass
-`sandbox`. Cloud sandboxes use the CLI's
-[credentials](/cua-cli/guides/authentication#which-credential-fleet-uses).
-Every tool is in [MCP tools](/cua-cli/reference/mcp-tools).
+`cua agents setup` adds this entry for the agents it detects. `--sandbox`
+(`CUA_SANDBOX`) sets the default sandbox for the computer tools, and each call
+can pass its own `sandbox`. Every tool is listed in
+[MCP tools](/cua-cli/reference/mcp-tools).
 
 ## Supported agents
 
 `cua agents setup --agents <id>` installs the cua skills and adds the `cua`
-server to these user-scope configs. Other servers and comments are kept, and
-`cua agents remove` takes out only what cua added.
+server to these user-level configs. It keeps your other servers and comments,
+and `cua agents remove` takes out only what cua added for Cua Spaces: the `cua`
+server and the Cua Spaces skills. Cua Driver's `cua-driver` server and skill stay
+(`--include-cua-driver` removes them too), and `cua agents remove --dry-run` lists
+exactly what it would remove.
 
 | Agent | id | Skills | MCP config |
 |-------|----|--------|------------|
@@ -54,8 +56,9 @@ Start a new Hermes session (or run `/reload-mcp`) to load the server.
 
 ## Permissions
 
-`--permissions` (`CUA_MCP_PERMISSIONS`) takes `group:action` strings and groups,
-comma-separated. Only granted tools are listed; others are refused.
+`--permissions` (`CUA_MCP_PERMISSIONS`) takes a comma-separated list of
+`group:action` strings and groups. The server lists only the tools you grant and
+refuses the rest.
 
 | Group | Expands to |
 |-------|-----------|
@@ -76,7 +79,7 @@ comma-separated. Only granted tools are listed; others are refused.
 ## Choose a grant
 
 `computer:shell`, `computer:file`, `spaces:space_bash` and `spaces:teleport_app`
-run commands, touch files or use your app sessions in the target;
+run commands, touch files or use your app sessions in the target.
 `sandbox:delete` and `spaces:delete_space` destroy sandboxes.
 
 | Intent | Grant |
@@ -89,4 +92,4 @@ run commands, touch files or use your app sessions in the target;
 Computer-tool coordinates are in the pixel space of the last
 `computer_screenshot` (capped at 1200 px on the long edge). Spaces tools that
 need cua-spacesd return `capability_missing` on images without it; see
-[Use Spaces from an agent](/spaces/guides/use-from-an-agent).
+[Use Spaces from an agent](/spaces/guides/connect-your-agent#what-your-agent-can-do).

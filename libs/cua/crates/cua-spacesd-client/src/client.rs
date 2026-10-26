@@ -12,6 +12,7 @@ use cua_proto::env::v1::{
     self as pb, accessibility_service_client::AccessibilityServiceClient,
     computer_service_client::ComputerServiceClient, driver_service_client::DriverServiceClient,
     filesystem_service_client::FilesystemServiceClient,
+    host_snapshots_service_client::HostSnapshotsServiceClient,
     host_spaces_service_client::HostSpacesServiceClient,
     presence_service_client::PresenceServiceClient, process_service_client::ProcessServiceClient,
     stream_service_client::StreamServiceClient, system_service_client::SystemServiceClient,
@@ -100,7 +101,7 @@ pub struct ConnectOptions {
     pub principal: Option<pb::Principal>,
     /// Wire protocol preference.
     pub transport: TransportPreference,
-    /// Fleet gateway credentials (Fleet endpoints only).
+    /// Gateway credentials (the relay's account session).
     pub gateway: Option<GatewayAuth>,
     /// TCP/TLS connect timeout.
     pub connect_timeout: Duration,
@@ -113,6 +114,9 @@ pub struct ConnectOptions {
     /// Probe with `GetCapabilities` while connecting. Disabling it requires
     /// an explicit transport and skips `SpacesdNotAvailable` detection.
     pub probe: bool,
+    /// Extra headers sent on every request (gRPC, HTTP and WebSocket), as
+    /// sensitive values: for example a mesh forward's session key.
+    pub headers: Vec<(String, String)>,
 }
 
 impl ConnectOptions {
@@ -129,6 +133,7 @@ impl ConnectOptions {
             keepalive: Keepalive::default(),
             retry: RetryPolicy::default(),
             probe: true,
+            headers: Vec::new(),
         }
     }
 
@@ -155,9 +160,10 @@ impl ConnectOptions {
         self
     }
 
-    /// Routes through the Fleet gateway with this bearer and claim.
-    pub fn fleet_gateway(mut self, bearer: Arc<dyn BearerProvider>, claim: Option<String>) -> Self {
-        self.gateway = Some(GatewayAuth { bearer, claim });
+    /// Authenticates through a gateway (the relay) with this bearer; the
+    /// spacesd token moves to `x-cua-env-authorization`.
+    pub fn gateway(mut self, bearer: Arc<dyn BearerProvider>) -> Self {
+        self.gateway = Some(GatewayAuth { bearer });
         self
     }
 
@@ -179,6 +185,12 @@ impl ConnectOptions {
         self
     }
 
+    /// Adds a header sent on every request.
+    pub fn header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.headers.push((name.into(), value.into()));
+        self
+    }
+
     /// Enables or disables the connect-time probe.
     pub fn probe(mut self, probe: bool) -> Self {
         self.probe = probe;
@@ -193,6 +205,7 @@ impl ConnectOptions {
             gateway: self.gateway.clone(),
             connect_timeout: self.connect_timeout,
             keepalive: self.keepalive,
+            headers: self.headers.clone(),
         }
     }
 }
@@ -215,6 +228,9 @@ pub(crate) struct Inner {
     pub(crate) capabilities: RwLock<Option<pb::GetCapabilitiesResponse>>,
     /// Plain-HTTP client for [`SpacesdClient::http`], built on first use.
     pub(crate) http: std::sync::OnceLock<crate::http::HttpClient>,
+    /// The proven bulk lane, once [`SpacesdClient::attach_bulk`] found one.
+    #[cfg(unix)]
+    pub(crate) bulk: std::sync::RwLock<Option<crate::bulk::Lane>>,
 }
 
 /// Async client for one cua-spacesd. Cheap to clone.
@@ -241,6 +257,20 @@ macro_rules! raw_client {
                 .max_encoding_message_size(MAX_MESSAGE_BYTES)
         }
     };
+}
+
+/// Off Unix there is no bulk lane (see `bulk.rs`): the same calls, never attached.
+#[cfg(not(unix))]
+impl SpacesdClient {
+    /// Never attaches a lane off Unix.
+    pub async fn attach_bulk(&self, _path: impl AsRef<std::path::Path>) -> bool {
+        false
+    }
+
+    /// Always `false` off Unix.
+    pub fn bulk_attached(&self) -> bool {
+        false
+    }
 }
 
 impl SpacesdClient {
@@ -333,6 +363,8 @@ impl SpacesdClient {
                 options,
                 capabilities: RwLock::new(caps),
                 http: std::sync::OnceLock::new(),
+                #[cfg(unix)]
+                bulk: std::sync::RwLock::new(None),
             }),
         }
     }
@@ -390,6 +422,9 @@ impl SpacesdClient {
         volume, VolumeServiceClient);
     raw_client!(/// Raw `HostSpacesService` client (a host that provides Spaces).
         host_spaces, HostSpacesServiceClient);
+    raw_client!(/// Raw `HostSnapshotsService` client (a host's checkpoints, and
+        /// copying them between hosts).
+        host_snapshots, HostSnapshotsServiceClient);
 
     /// `GetCapabilities`, cached after the first successful call.
     pub async fn capabilities(&self) -> Result<pb::GetCapabilitiesResponse> {

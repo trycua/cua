@@ -3,6 +3,7 @@
 
 import AppKit
 @testable import CuaSpacesMacKit
+import CuaSDK
 import CuaSpacesFFI
 import Foundation
 import Testing
@@ -32,6 +33,19 @@ struct WebUIHostTests {
         #expect(WebUISchemeHandler.mime("wasm") == "application/wasm")
     }
 
+    /// About's Acknowledgements reads the app's bundled notices at
+    /// `/__app/THIRD_PARTY_NOTICES.md`; no other app file is reachable.
+    @Test func theSchemeHandlerServesTheBundledNoticesAndNothingElseOfTheApp() {
+        let notices = URL(fileURLWithPath: "/tmp/THIRD_PARTY_NOTICES.md")
+        let h = WebUISchemeHandler(root: nil, appFiles: ["THIRD_PARTY_NOTICES.md": notices])
+        #expect(h.appFile("/__app/THIRD_PARTY_NOTICES.md") == notices)
+        #expect(h.appFile("/__app/../Info.plist") == nil)
+        #expect(h.appFile("/__app/Info.plist") == nil)
+        #expect(h.appFile("/THIRD_PARTY_NOTICES.md") == nil)
+        // A debug build finds the checkout's copy.
+        #expect(WebUISchemeHandler.bundledAppFiles()["THIRD_PARTY_NOTICES.md"] != nil)
+    }
+
     @Test func coreRecordsEncodeAsPlainValues() {
         let x = AppExperiments(cuaVolume: true, yourCloud: false, sharing: false, webUi: true)
         let v = BridgeValue.encode(x) as? [String: Any]
@@ -40,9 +54,40 @@ struct WebUIHostTests {
         #expect(BridgeValue.encode(Optional<String>.none) is NSNull)
         #expect(BridgeValue.encode([1, 2]) as? [Int] == [1, 2])
         #expect(BridgeValue.encode(AppSignInPhase.idle) as? String == "idle")
-        let waiting = BridgeValue.encode(AppSignInPhase.waiting(userCode: "AB-12")) as? [String: Any]
+        let waiting = BridgeValue.encode(AppSignInPhase.waiting(userCode: "AB-12", opened: true)) as? [String: Any]
         #expect(waiting?["type"] as? String == "waiting")
         #expect(waiting?["userCode"] as? String == "AB-12")
+        #expect(waiting?["opened"] as? Bool == true)
+        // A failure reaches the page typed (its reason, the line, Details).
+        let failed = BridgeValue.encode(appSignInFailed(reason: .offline, detail: "dns")) as? [String: Any]
+        #expect(failed?["type"] as? String == "failed")
+        #expect(failed?["reason"] as? String == "offline")
+        #expect(failed?["message"] as? String == "Sign-in didn't finish. Can't reach Cua. Check your connection.")
+        #expect(failed?["detail"] as? String == "dns")
+    }
+
+    /// `session.signIn` answers "starting" at once: an earlier attempt's
+    /// failure never reads as this one's, and the page then follows the
+    /// host to its end (`session.changed`), failure included.
+    @Test func signInAnswersStartingThenTheFailureReachesThePage() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cua-webui-\(UUID().uuidString)")
+        let model = AppModel(backend: FixtureSpacesBackend(), keyvault: KeyvaultModel(client: nil),
+                             onboarding: OnboardingModel(statePath: dir.appendingPathComponent("onboarding.json").path),
+                             settingsPath: dir.appendingPathComponent("settings.json").path,
+                             account: FailingAccount(error: CuaError.Http(message: "could not reach the sign-in service: x"),
+                                                     whileStarting: false),
+                             telemetry: FixtureTelemetry())
+        let bridge = WebUIBridge(model: model, allowedOrigins: [])
+        let started = try await bridge.handle("session.signIn", [:]) as? [String: Any]
+        #expect(started?["signIn"] as? String == "starting")
+        for _ in 0..<200 {
+            if case .failed = model.signIn { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let after = try await bridge.handle("session.get", [:]) as? [String: Any]
+        let failed = after?["signIn"] as? [String: Any]
+        #expect(failed?["type"] as? String == "failed")
+        #expect(failed?["reason"] as? String == "offline")
     }
 
     @Test func anUnknownMethodIsUnimplemented() async {
@@ -144,7 +189,7 @@ struct WebUIHostTests {
     @Test func theContractsOperationsAreRouted() {
         for m in ["spaces.cancelCreate", "host.status", "keyvault.approve", "keyvault.deny", "keyvault.revokeGrant",
                   "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
-                  "agents.setup", "agents.configure"] {
+                  "agents.setup", "agents.configure", "agents.signIn", "agents.start", "agents.message"] {
             #expect(WebUIBridge.methods.contains(m), "\(m)")
         }
     }
@@ -262,6 +307,10 @@ struct WebUIHostTests {
         #expect(await failure(bridge, "agents.setup", [:]) == "unsupported")
         #expect(await failure(bridge, "agents.runs", [:]) == "bad_args")
         #expect(await failure(bridge, "agents.pause", [:]) == "bad_args")
+        #expect(await failure(bridge, "agents.start", ["spaceId": "s", "agent": "claude-code", "prompt": "hi"]) == "unsupported")
+        #expect(await failure(bridge, "agents.start", ["spaceId": "s"]) == "bad_args")
+        #expect(await failure(bridge, "agents.message", ["spaceId": "s", "runId": "r", "text": "hi"]) == "unsupported")
+        #expect(await failure(bridge, "agents.message", ["spaceId": "s", "runId": "r"]) == "bad_args")
     }
 
     @Test func agentRunsAndSetupRowsAreTheCoresRecords() async throws {
@@ -277,10 +326,44 @@ struct WebUIHostTests {
         #expect(rows?.first?["skillsTotal"] != nil)
         let configured = try await bridge.handle("agents.configure", ["agents": ["claude-code"]]) as? [[String: Any]]
         #expect(configured?.first { $0["agent"] as? String == "claude-code" }?["configured"] as? Bool == true)
+        // Codex's own ChatGPT sign-in: started on this Mac, and the row says when it is there.
+        #expect(rows?.first { $0["agent"] as? String == "codex" }?["signIn"] as? String == "ChatGPT")
+        #expect(rows?.first { $0["agent"] as? String == "codex" }?["signedIn"] as? Bool == false)
+        let signedIn = try await bridge.handle("agents.signIn", ["agent": "codex"]) as? [[String: Any]]
+        #expect(setup.calls.contains("sign-in:codex"))
+        #expect(signedIn?.first { $0["agent"] as? String == "codex" }?["signedIn"] as? Bool == true)
         // A Settings row's button, as the native one: Remove on a configured agent.
         _ = try await bridge.handle("settings.choose", ["row": "agent:claude-code", "option": "press"])
         let removed = try await bridge.handle("agents.setup", [:]) as? [[String: Any]]
         #expect(removed?.first { $0["agent"] as? String == "claude-code" }?["configured"] as? Bool == false)
+    }
+
+    /// The page opens one notification and marks just that one read; the
+    /// list carries the Space each entry is about (its Open Space).
+    @Test func oneNotificationIsMarkedReadAndCarriesItsSpace() async throws {
+        let backend = BridgeContractTests.ToolBackend(FixtureSpacesBackend())
+        backend.agents.notifications.append(["id": "n2", "at_ms": backend.agents.now - 30_000, "agent": "ada", "kind": "message",
+                                             "title": "ada", "body": "Second.", "read": false])
+        let (bridge, _) = bridge(backend: backend)
+        func list() async throws -> [String: [String: Any]] {
+            let rows = try await bridge.handle("notifications.list", [:]) as? [[String: Any]] ?? []
+            return Dictionary(rows.map { ($0["id"] as? String ?? "", $0) }, uniquingKeysWith: { a, _ in a })
+        }
+        let before = try await list()
+        #expect(before["n1"]?["space"] as? String == "local:dev")
+        #expect(before["n2"]?["space"] is NSNull)
+        #expect(before["n1"]?["body"] as? String == "Your research is ready.")
+        #expect(before["n1"]?["read"] as? Bool == false)
+
+        #expect(try await bridge.handle("notifications.markRead", ["ids": ["n1"]]) is NSNull)
+        let after = try await list()
+        #expect(after["n1"]?["read"] as? Bool == true)
+        #expect(after["n2"]?["read"] as? Bool == false)
+
+        // No ids marks nothing (the daemon would read it as every entry).
+        _ = try await bridge.handle("notifications.markRead", ["ids": [String]()])
+        #expect(try await list()["n2"]?["read"] as? Bool == false)
+        #expect(await failure(bridge, "notifications.markRead", [:]) == "bad_args")
     }
 
     @Test func persistentAgentsListAsCamelCaseRecords() async throws {
@@ -310,6 +393,14 @@ struct WebUIHostTests {
         #expect(model.updates.channel == .beta)
     }
 
+    /// The page's core has no environment: the host names the account app
+    /// Upgrade's billing fallback opens (CUA_ENV, CUA_ACCOUNT_APP_URL).
+    @Test func settingsNameTheAccountApp() async throws {
+        let (bridge, _) = bridge()
+        let s = try await bridge.handle("settings.get", [:]) as? [String: Any]
+        #expect(s?["accountUrl"] as? String == appAccountAppUrl())
+    }
+
     @Test func theGlobalShortcutSaysWhetherTheSystemGaveIt() async throws {
         let (bridge, _) = bridge()
         defer { GlobalShortcut.installed = nil }
@@ -330,8 +421,8 @@ struct WebUIHostTests {
 
     @Test func everyPageOperationIsRouted() {
         for m in ["spaces.add", "clouds.status", "teleport.catalog", "teleport.run", "sharing.share", "volume.overview",
-                  "agents.setupDriver", "about.set", "loginItem.set", "devices.approve", "storage.run",
-                  "notifications.list", "telemetry.track", "spaces.windows", "stream.pip", "spaces.thumbnail", "spaces.sendFiles", "host.setUp", "host.action",
+                  "agents.setupDriver", "about.set", "update.get", "update.install", "loginItem.set", "devices.approve", "storage.run",
+                  "notifications.list", "telemetry.track", "telemetry.linkNotice", "telemetry.acknowledgeLinkNotice", "spaces.windows", "stream.pip", "spaces.thumbnail", "spaces.sendFiles", "host.setUp", "host.action",
                   "host.openSettings"] {
             #expect(WebUIBridge.methods.contains(m), "\(m)")
         }
@@ -343,7 +434,7 @@ struct WebUIHostTests {
     @Test func createOptionsAreTheNativeSheetsEnv() async throws {
         let backend = FixtureSpacesBackend()
         backend.fixtureHosts = [AppSpaceHost(id: "96fedb7e", name: "gamma-4 Mac Studio", via: "relay", online: true,
-                                             os: "macos", limits: [])]
+                                             os: "macos", limits: [], load: nil)]
         let (bridge, model) = bridge(backend: backend)
         let options = try #require(try await bridge.handle("spaces.createOptions", [:]) as? [String: Any])
         let env = try #require(options["env"] as? [String: Any])
@@ -381,16 +472,13 @@ struct WebUIHostTests {
         #expect(await failure(bridge, "spaces.create", ["config": config, "pendingId": "pending:web-2"]) == "cancelled")
     }
 
-    /// While New UI is on, New Space opens its wizard; the native sheet is
-    /// the fallback.
-    @Test func newSpaceOpensTheWebWizardWhileNewUIIsOn() async {
+    /// New Space opens the web wizard, whatever an older build saved for
+    /// the New UI.
+    @Test func newSpaceOpensTheWebWizard() async {
         let (_, model) = bridge()
         var asked: [String?] = []
         model.openWebNewSpace = { on in asked.append(on); return true }
-        await model.openNewSpace()
-        #expect(asked.isEmpty && model.showingNewSpace)
-        model.cancelNewSpace()
-        model.settings.experiments.webUi = true
+        model.settings.experiments.webUi = false
         await model.openNewSpace()
         await model.openNewSpace(on: "host:m1")
         #expect(asked == [nil, "host:m1"])
@@ -414,10 +502,32 @@ struct WebUIHostTests {
         #expect(telemetry.recorded.count == before + 1)
     }
 
+    /// The one-time linking notice: the host's words and whether it is due,
+    /// and closing it is recorded once (CUA-1881).
+    @Test func theLinkNoticeIsTheHostsToShowAndAcknowledge() async throws {
+        let (bridge, model) = bridge()
+        let telemetry = try #require(model.telemetrySink as? FixtureTelemetry)
+        let quiet = try #require(try await bridge.handle("telemetry.linkNotice", [:]) as? [String: Any])
+        #expect(quiet["due"] as? Bool == false)
+        telemetry.linkNoticeDue = true
+        let due = try #require(try await bridge.handle("telemetry.linkNotice", [:]) as? [String: Any])
+        #expect(due["due"] as? Bool == true)
+        #expect(due["title"] as? String == "We've updated how usage data works")
+        #expect(due["okLabel"] as? String == "Got it")
+        #expect(due["turnOffLabel"] as? String == "Turn off usage data")
+        #expect(due["detailsLabel"] as? String == "What is collected")
+        #expect(due["docsUrl"] as? String == "https://cua.ai/docs/cua-sdk/concepts/telemetry")
+        _ = try await bridge.handle("telemetry.acknowledgeLinkNotice", [:])
+        #expect(telemetry.linkNoticeAcknowledged == 1)
+        let after = try #require(try await bridge.handle("telemetry.linkNotice", [:]) as? [String: Any])
+        #expect(after["due"] as? Bool == false)
+    }
+
     @Test func pagesWithoutTheirServiceSayUnsupported() async {
         let (bridge, _) = bridge()
         #expect(await failure(bridge, "volume.overview", [:]) == "unsupported")
         #expect(await failure(bridge, "notifications.list", [:]) == "unsupported")
+        #expect(await failure(bridge, "notifications.markRead", ["ids": ["n1"]]) == "unsupported")
         #expect(await failure(bridge, "about.set", ["autoCheck": true]) == "unsupported")
         #expect(await failure(bridge, "host.openSettings", ["url": "https://example.com"]) == "bad_args")
         #expect(await failure(bridge, "volume.reveal", ["path": "/etc/hosts"]) == "bad_args")
@@ -533,22 +643,35 @@ struct WebUIHostTests {
         #expect(updater.checks == 1)
     }
 
+    @Test func updateInstallRestartsOnlyAfterADownload() async throws {
+        let (bridge, model) = bridge()
+        let updater = FixtureUpdater()
+        model.updates = UpdatesModel(updater: updater, channel: .stable)
+        updater.simulateFound(version: "0.9.3")
+        let a = try #require(try await bridge.handle("update.get", [:]) as? [String: Any])
+        #expect(a["status"] as? String == "available" && a["version"] as? String == "0.9.3")
+        let b = try #require(try await bridge.handle("update.install", [:]) as? [String: Any])
+        #expect(b["status"] as? String == "available")
+        await withCheckedContinuation { k in DispatchQueue.main.async { k.resume() } }
+        #expect(updater.installs == 0)
+        updater.simulateDownloaded()
+        let c = try #require(try await bridge.handle("update.install", [:]) as? [String: Any])
+        // The answer comes before the install starts.
+        #expect(c["status"] as? String == "downloaded")
+        #expect(updater.installs == 0)
+        await withCheckedContinuation { k in DispatchQueue.main.async { k.resume() } }
+        #expect(updater.installs == 1)
+    }
+
     @Test func showWelcomeAgainRestartsTheFirstRun() async throws {
         let (bridge, model) = bridge()
+        var opened = 0
+        model.openOnboarding = { opened += 1 }
         model.onboarding.finish()
         #expect(model.onboarding.completed)
         _ = try await bridge.handle("settings.choose", ["row": "welcome", "option": "show"])
         #expect(!model.onboarding.completed)
-    }
-
-    @Test func turningNewUIOffClosesItsWindow() {
-        let (_, model) = bridge()
-        var closed = 0
-        model.closeWebUI = { closed += 1 }
-        model.chooseExperiment(row: "experiment:web_ui", option: "on")
-        #expect(closed == 0)
-        model.chooseExperiment(row: "experiment:web_ui", option: "off")
-        #expect(closed == 1)
+        #expect(opened == 1, "its window opens, even with only Settings up")
     }
 
     @Test func theNewUIWindowComesBackWhereItWas() {
@@ -563,6 +686,39 @@ struct WebUIHostTests {
         defer { second.window?.close() }
         #expect(second.window?.frame.size == frame.size)
         #expect(second.window?.frame.origin == frame.origin)
+    }
+
+    /// The page's Space tiles become the window-drag targets of its window
+    /// (CSS pixels at the page's zoom), and a targeted tile is named back to
+    /// the page; a new page starts with none.
+    @Test func thePagesTilesAreWindowDropTargets() async throws {
+        _ = NSApplication.shared
+        let (_, model) = bridge()
+        let c = WebUIWindowController(model: model)
+        defer { c.window?.close() }
+        var emitted: [(String, Any?)] = []
+        c.onEmit = { emitted.append(($0, $1)) }
+        _ = try await c.bridge.handle("window.setDropTargets",
+                                      ["targets": [["spaceId": "local:aurora", "x": 20, "y": 60, "width": 232, "height": 180]]])
+        let targets = model.pageDropTargets
+        #expect(targets.window === c.window)
+        #expect(targets.frames == ["local:aurora": CGRect(x: 20, y: 60, width: 232, height: 180)])
+        c.webView.pageZoom = 1.25
+        _ = try await c.bridge.handle("window.setDropTargets",
+                                      ["targets": [["spaceId": "local:aurora", "x": 20, "y": 60, "width": 232, "height": 180]]])
+        #expect(targets.frames["local:aurora"] == CGRect(x: 25, y: 75, width: 290, height: 225))
+        await #expect(throws: (any Error).self) {
+            _ = try await c.bridge.handle("window.setDropTargets", ["targets": [["x": 1]]])
+        }
+        targets.handle(phase: "move", target: "local:aurora")
+        targets.handle(phase: "move", target: "local:aurora")
+        targets.handle(phase: "end", target: "local:aurora")
+        let named = emitted.filter { $0.0 == "window.dropTarget" }.map { ($0.1 as? [String: Any])?["spaceId"] }
+        #expect(named.count == 2)
+        #expect(named.first as? String == "local:aurora")
+        #expect(named.last as? NSNull != nil)
+        c.window?.close()
+        #expect(targets.frames.isEmpty)
     }
 
     @Test func aboutIsTheUpdatesModelsInput() async throws {

@@ -22,7 +22,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Deleting…",
               "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -42,7 +41,6 @@
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
               "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -60,8 +58,8 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux demo [Deleting…] - -",
-          "os-linux keep [Running] - -"
+          "os-linux demo [spaces.status.deleting] - -",
+          "os-linux keep [spaces.status.running] - -"
         ],
         "tiles": [
           "os-linux demo, Linux, This Mac, Deleting… - Deleting…",
@@ -92,7 +90,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Deleting…",
               "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -112,7 +109,6 @@
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
               "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -130,8 +126,8 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux demo [Deleting…] - -",
-          "os-linux keep [Running] - -"
+          "os-linux demo [spaces.status.deleting] - -",
+          "os-linux keep [spaces.status.running] - -"
         ],
         "tiles": [
           "os-linux demo, Linux, This Mac, Deleting… - Deleting…",
@@ -162,7 +158,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Deleting…",
               "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -182,7 +177,6 @@
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
               "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -200,8 +194,8 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux demo [Deleting…] - -",
-          "os-linux keep [Running] - -"
+          "os-linux demo [spaces.status.deleting] - -",
+          "os-linux keep [spaces.status.running] - -"
         ],
         "tiles": [
           "os-linux demo, Linux, This Mac, Deleting… - Deleting…",
@@ -232,7 +226,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Deleting…",
               "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -252,7 +245,6 @@
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
               "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -270,8 +262,8 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux demo [Deleting…] - -",
-          "os-linux keep [Running] - -"
+          "os-linux demo [spaces.status.deleting] - -",
+          "os-linux keep [spaces.status.running] - -"
         ],
         "tiles": [
           "os-linux demo, Linux, This Mac, Deleting… - Deleting…",
@@ -302,7 +294,6 @@
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
               "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -319,7 +310,7 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux keep [Running] - -"
+          "os-linux keep [spaces.status.running] - -"
         ],
         "tiles": [
           "os-linux keep, Linux, This Mac, Running - -"
@@ -349,7 +340,6 @@
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
               "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -366,7 +356,7 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux keep [Running] - -"
+          "os-linux keep [spaces.status.running] - -"
         ],
         "tiles": [
           "os-linux keep, Linux, This Mac, Running - -"
@@ -394,7 +384,6 @@
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
               "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -411,7 +400,7 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux keep [Running] - -"
+          "os-linux keep [spaces.status.running] - -"
         ],
         "tiles": [
           "os-linux keep, Linux, This Mac, Running - -"
@@ -441,7 +430,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Deleting…",
               "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -458,7 +446,7 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux keep [Deleting…] - -"
+          "os-linux keep [spaces.status.deleting] - -"
         ],
         "tiles": [
           "os-linux keep, Linux, This Mac, Deleting… - Deleting…"
@@ -486,7 +474,6 @@
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
               "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -503,7 +490,7 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux keep [Running] - -"
+          "os-linux keep [spaces.status.running] - -"
         ],
         "tiles": [
           "os-linux keep, Linux, This Mac, Running - -"

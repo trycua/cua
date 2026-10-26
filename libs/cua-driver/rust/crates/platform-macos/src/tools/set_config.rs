@@ -23,6 +23,7 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 fn with_cursor_motion_properties(mut schema: Value) -> Value {
     if let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) {
         properties.extend(cursor_overlay::motion_defaults::config_schema_properties());
+        properties.extend(cursor_overlay::badge_mode::config_schema_properties());
     }
     schema
 }
@@ -42,7 +43,9 @@ fn def() -> &'static ToolDef {
             cursor.motion.effects.<trail|glow|magnet|ripple|squish> are saved to \
             ~/.cua-driver/config.json and seed sessions started afterwards. \
             start_session cursor_motion and set_agent_cursor_motion override them; \
-            reduced motion always wins."
+            reduced motion always wins.\n\nAgent cursor badge: cursor.badges is \
+            minimal (default), verbose or off, saved to ~/.cua-driver/config.json \
+            and applied to every cursor at once."
             .into(),
         input_schema: with_cursor_motion_properties(serde_json::json!({
             "type": "object",
@@ -101,6 +104,11 @@ impl Tool for SetConfigTool {
         // validated and persisted like the other config.json keys.
         let motion_keys = match cursor_overlay::motion_defaults::apply_config_args(&args) {
             Ok(keys) => keys,
+            Err(message) => return ToolResult::error(message),
+        };
+
+        let badge_key = match cursor_overlay::badge_mode::apply_config_args(&args) {
+            Ok(key) => key,
             Err(message) => return ToolResult::error(message),
         };
 
@@ -176,6 +184,9 @@ impl Tool for SetConfigTool {
                 " — saved {} (applies to sessions started from now on)",
                 motion_keys.join(", ")
             ));
+        }
+        if let Some(key) = badge_key {
+            pip_note.push_str(&format!(" — saved {key} (applies now)"));
         }
         let scope_note = if session_id.is_some() {
             " (session-scoped; persisted default unchanged)"

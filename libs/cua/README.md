@@ -9,7 +9,7 @@ sandboxes (`libs/cua-spacesd`). Architecture overview:
  Python / Node / Swift / Kotlin / wasm
         |  UniFFI (cua-sdk is the only #[uniffi::export] crate)
  +------+------------------------------------------------------------+
- | cua-sdk -- cua-sandbox-core -- cua-vmm / cua-image / cua-fleet     |
+ | cua-sdk -- cua-sandbox-core -- cua-vmm / cua-image                |
  |    |              +-- cua-spacesd-client (client) -- cua-proto (generated)    |
  |    +-- cua-spaces, cua-teleport, cua-daemon (same runtime on a UDS) |
  +------------------------------+-------------------------------------+
@@ -48,7 +48,7 @@ let sb = cua.sandboxes().create(SandboxCreateOptions {
     services: HashMap::from([("mcp".into(), 8765)]),
     wait_for: vec![ReadinessProbe::http("mcp", "/health")],
     cloud: Some(CloudOptions { warm: Some(true), ..Default::default() }), // ignored locally
-    ..SandboxCreateOptions::new("local", "python:3.12-slim")   // or "cloud"
+    ..SandboxCreateOptions::new("local", "python:3.12-slim")   // or "aws"
 }).await?;
 let svc = sb.service("mcp".into())?;
 let r = svc.request("POST".into(), "/mcp".into(), Some(body), None, Some(headers)).await?;
@@ -58,8 +58,8 @@ let fwd = sb.forward(8765).await?;                           // loopback URL: fw
 let info = sb.info(); // id, phase, location, services, expires_at_unix, provider_details
 ```
 
-- `public_url` is a signed URL in the cloud and, locally, a loopback URL
-  with its own token served by the `cua daemon` (started on demand).
+- `public_url` is a loopback URL with its own token served by the
+  `cua daemon` (started on demand).
 - `sb.mcp(service, None)` is an MCP client (the official Rust SDK, rmcp) and
   `sb.mcp_config(service, None)` the URL and headers for any MCP client; no
   cua-spacesd needed.
@@ -67,12 +67,10 @@ let info = sb.info(); // id, phase, location, services, expires_at_unix, provide
   every runtime: the sandbox reaches a sidecar at its `name`, a sidecar
   reaches the sandbox at `main`, and with sidecars the service names `main`,
   `sidecars` and `sc` are reserved. Local ones share the sandbox's network
-  namespace and need `runtime: Some("runc".into())` where gVisor would run; the cloud runs
-  them on gVisor and KubeVirt. `registry_secret` pulls a private image.
-- Cloud `command`, `env` and args run on both runtimes (`processMode: Run`,
-  sent whenever they are set). `build` adds layers locally; cloud remote
-  builds wait on the cloud builder (`cua-fleet` feature `fleet-remote-builds`)
-  and fail with a clear error until then.
+  namespace and need `runtime: Some("runc".into())` where gVisor would run.
+  `registry_secret` pulls a private image.
+- `command`, `env` and args run on both runtimes (`processMode: Run`, sent
+  whenever they are set). `build` adds layers locally.
 - `Image.linux()` and the CLI alias `linux` resolve to
   `ghcr.io/trycua/linux:24.04` (`windows:2022`, `macos:26`) through one
   resolver, `cua_image::resolve`, which picks the variant a backend runs.
@@ -84,8 +82,7 @@ Docs: [Sandboxes](https://cua.ai/docs/cua-sdk).
 | Crate | Contents |
 |---|---|
 | `cua-proto` | `proto/` codegen: prost messages and tonic clients and servers for `cua.env.v1` and `cua.daemon.v1`. Also the descriptor set, well-known constants (ports, metadata keys, HTTP paths) and the client-stream fallback registry. |
-| `cua-spacesd-client` | Ergonomic spacesd client: reconnect, keepalive, chunked transfer, gRPC vs gRPC-Web, auth, and the Fleet gateway adapter. |
-| `cua-fleet` | Fleet pools, templates, claims and images over `libs/fleet/sdk` (cyclops-sdk, a read-only mirror this crate path-depends on). Auto-managed pools and the one runtime/image pairing check. |
+| `cua-spacesd-client` | Ergonomic spacesd client: reconnect, keepalive, chunked transfer, gRPC vs gRPC-Web, and auth. |
 | `cua-vmm` | Local runtimes: Lume, QEMU and OCI containers (gVisor when available). |
 | `cua-image` | OCI pull and push, containerDisk and rootfs formats, `ImageSpec`, local builder. |
 | `cua-sandbox-core` | One daemon-agnostic `Sandbox` over the `local`, `cloud` and `direct` locations, and the placement model (`on`, `kind`, `runtime`) and user defaults (`cua config`); cua-sandbox-compatible state files (`~/.cua/sandboxes`). |
@@ -96,14 +93,16 @@ Docs: [Sandboxes](https://cua.ai/docs/cua-sdk).
 | `cua-teleport` | Teleport SEND: export providers, keychain read, approval gate, upload over `TeleportService` (`cua teleport push`). See its [README](crates/cua-teleport/README.md). Receive lives in cua-spacesd. |
 | `cua-teleport-bundle` | Effect-free bundle format and per-app layout data shared by sender and receiver. |
 | `cua-host` | Unattended access (`cua host`): installs cua-spacesd as a per-OS service that joins a cua-relay as your account or serves on a direct ip:port, plus the relay machine-directory client. |
+| `cua-cluster` | A machine's part of batch runs on all your machines: the job runner behind `HostJobsService` (a fresh Space per job, a durable ledger keyed by job id and account, attempt fencing), placement scoring and node links (direct, relay, mesh). |
+| `cua-spaces-cluster` | The pool coordinator (FSL-1.1-MIT): durable job queue, scheduler, leases and reconcile, durable Spaces, the pool log on the relay a machine taking over rebuilds from, and the pool agent every signed-in daemon runs (`cua sb run --on auto`). See [Use all your machines](https://cua.ai/docs/spaces/guides/add-a-computer#use-all-your-computers). |
 | `cua-auth` | Sign in to Cua (browser PKCE with a loopback redirect, device-code fallback), refresh, and the credential store shared by the CLI, SDK, daemon and Spaces app. |
 | `cua-agent-setup` | Agent onboarding: detect AI coding agents, install the bundled skills (`skills/`, synced by `scripts/sync-skills.sh`) and configure the cua MCP server (`cua agents`). See its [README](crates/cua-agent-setup/README.md). |
 | `cua-media-protocol`, `cua-media-transport`, `cua-media-codec` | Media plane shared with cua-spacesd: wire v2 types, framing (RVD2 video, RAU2 audio, QUIC), encoder probing/selection and Opus. |
 | `cua-media-client`, `cua-viewer`, `cua-logging` | Media client state and decode, the native proxy-window viewer, shared file logging. |
 | `cua-daemon` | The SDK runtime and its host: `cua.daemon.v1` on the socket and loopback, env passthrough (`/v1/sandboxes/<name>/env/...`, `/v1/spaces/<key>/env/...`), the ticketed webview media bridge, the Spaces MCP server at `/mcp` and `cua daemon mcp`. Feature `test-fixtures` adds loopback fixtures; the `cua-test-fixtures` binary lives in `libs/cua-spacesd/tests/spaces-e2e` (build it with `scripts/build-test-fixtures.sh`). |
-| `cua-sdk` | The **only** `#[uniffi::export]` crate (UniFFI `=0.31.0`): `Cua.embedded` / `Cua.connect`, sandboxes, env (typed plus a proto3-JSON escape hatch over every `cua.env.v1` RPC), media sessions with `FrameSink`/`AudioSink`, Fleet, local runtimes and images, Spaces, auth and agent setup; a wasm32 browser subset. |
+| `cua-sdk` | The **only** `#[uniffi::export]` crate (UniFFI `=0.31.0`): `Cua.embedded` / `Cua.connect`, sandboxes, env (typed plus a proto3-JSON escape hatch over every `cua.env.v1` RPC), media sessions with `FrameSink`/`AudioSink`, local runtimes and images, Spaces, auth and agent setup; a wasm32 browser subset. |
 | `cua-bindgen` | The pinned UniFFI CLI used by `scripts/generate-uniffi-bindings.mjs`. |
-| `cua-cli` | The `cua` binary (shipped in the `cua` wheel, `@trycua/cua`, the install scripts and the Spaces app): `auth`, `agents`, `sandbox`, `config`, `do`, `mcp`, `skills`, `trajectory`, `wif-token`, `fleet`, `image`, `env`, `daemon`, `runtime`, `host`, `spaces`, `teleport`. Reference: [docs.cua.ai/reference/cua-cli](https://cua.ai/docs/cua-cli/reference/cli). |
+| `cua-cli` | The `cua` binary (shipped in the `cua-cli` wheel, a dependency of the `cua` wheel, `@trycua/cua`, the install scripts and the Spaces app): `auth`, `agents`, `sandbox`, `config`, `do`, `mcp`, `skills`, `trajectory`, `image`, `env`, `daemon`, `runtime`, `host`, `spaces`, `teleport`. Reference: [docs.cua.ai/reference/cua-cli](https://cua.ai/docs/cua-cli/reference/cli). |
 
 Language packages generated from `cua-sdk` (drift-checked by
 `scripts/generate-uniffi-bindings.mjs --check`):
@@ -128,7 +127,7 @@ them and never written by hand.
 | Package | Files | Services |
 |---|---|---|
 | `cua.env.v1` | `common`, `system`, `process`, `filesystem`, `computer`, `windows`, `accessibility`, `driver`, `stream`, `presence`, `teleport`, `tunnel`, `volume` | `SystemService`, `ProcessService`, `FilesystemService`, `ComputerService`, `WindowsService`, `AccessibilityService`, `DriverService`, `StreamService`, `PresenceService`, `TeleportService`, `TunnelService`, `VolumeService` |
-| `cua.daemon.v1` | `sandboxes`, `spaces`, `runtime`, `daemon` | `SandboxService`, `SpaceService`, `RuntimeService`, `DaemonService` |
+| `cua.daemon.v1` | `sandboxes`, `checkpoints`, `pools`, `spaces`, `runtime`, `daemon` | `SandboxService`, `PoolService`, `SpaceService`, `RuntimeService`, `DaemonService` |
 
 Rules. `common.proto` has the full text of each.
 
@@ -140,7 +139,7 @@ Rules. `common.proto` has the full text of each.
   - Bidirectional RPCs are forbidden.
 - **Auth.**
   - RPCs use `authorization: Bearer <token>` or `x-cua-env-authorization`
-    (the Fleet gateway strips `authorization`).
+    (a gateway in front of the daemon may strip `authorization`).
   - The media, tunnel and hotspot sockets use short-lived tickets from
     `OpenMedia`, `Forward` and `StartHotspot`.
   - `x-cua-principal-bin` carries a serialized `Principal`.

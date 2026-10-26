@@ -626,8 +626,21 @@ fn navigate_initial_page(port: u16, server: &BrowserFixtureServer) {
     let mut last_error = None;
     let mut last_navigate = None;
     loop {
-        let targets = browser_http_json(port, "/json/list")
-            .unwrap_or_else(|error| panic!("read harness CDP targets: {error}"));
+        // A freshly launched browser's DevTools HTTP server can stall or
+        // drop one request while it finishes first-run setup (seen on Windows
+        // Edge). Retry inside the same bounded deadline instead of failing the
+        // case on a single transient read.
+        let targets = match browser_http_json(port, "/json/list") {
+            Ok(targets) => targets,
+            Err(error) => {
+                assert!(
+                    Instant::now() < deadline,
+                    "read harness CDP targets: {error}"
+                );
+                thread::sleep(Duration::from_millis(250));
+                continue;
+            }
+        };
         let pages = targets
             .as_array()
             .into_iter()
@@ -1865,7 +1878,19 @@ fn run_roundtrip(spec: &BrowserSpec) {
                     "session": session,
                 }),
             );
+            assert_ne!(
+                click.action_effect(),
+                Some("suspected_noop"),
+                "{}",
+                click.raw
+            );
             assert_eq!(click.action_effect(), Some("unverifiable"), "{}", click.raw);
+            assert_eq!(
+                click.structured()["evidence"][0]["kind"],
+                "value_readback",
+                "{}",
+                click.raw
+            );
             wait_for_text(&fixture.server, "lbl-counter", "counter=1");
 
             let snapshot = fixture.driver.call(
@@ -1942,11 +1967,13 @@ fn run_trust_gated_dom_click(spec: &BrowserSpec) {
                 click.raw
             );
             assert!(
-                click.text().contains("application effect not verified")
-                    && click.text().contains("trust-gated controls"),
+                click.text().contains(
+                    "target state remained unchanged; application effect is unverifiable"
+                ),
                 "{}",
                 click.raw
             );
+            assert_eq!(click.structured()["evidence"][0]["kind"], "value_readback");
             wait_for_text(
                 &fixture.server,
                 "standalone-trust-gated-state",
@@ -2432,7 +2459,7 @@ fn run_trusted_click(spec: &BrowserSpec) {
         std::env::consts::OS,
         spec.name
     );
-    let case = if cfg!(any(target_os = "linux", target_os = "macos")) {
+    let case = if cfg!(target_os = "linux") {
         refusal_case(
             &spec.name,
             "trusted_click",
@@ -2459,7 +2486,7 @@ fn run_trusted_click(spec: &BrowserSpec) {
                     "session": session,
                 }),
             );
-            if cfg!(any(target_os = "linux", target_os = "macos")) {
+            if cfg!(target_os = "linux") {
                 assert_eq!(click.action_effect(), Some("refused"), "{}", click.raw);
                 assert!(
                     click.text().contains("browser_input_trust_unavailable"),
@@ -2915,12 +2942,21 @@ fn run_existing_profile_setup(spec: &BrowserSpec) {
                 prepared.structured()["side_effects"]["created_profile"],
                 false
             );
-            let setup_port = devtools_active_port(fixture._profile.path()).unwrap_or_else(|| {
-                panic!(
-                    "existing-profile setup exposed no DevToolsActivePort in {}",
+            // The browser writes DevToolsActivePort when its listener comes up,
+            // which can trail the setup call's return (slow on Windows runners):
+            // poll for it instead of reading the file once.
+            let port_deadline = Instant::now() + Duration::from_secs(15);
+            let setup_port = loop {
+                if let Some(port) = devtools_active_port(fixture._profile.path()) {
+                    break port;
+                }
+                assert!(
+                    Instant::now() < port_deadline,
+                    "existing-profile setup exposed no DevToolsActivePort in {} within 15 s",
                     fixture._profile.path().display()
-                )
-            });
+                );
+                std::thread::sleep(Duration::from_millis(100));
+            };
 
             let public_result = prepared.raw.to_string();
             assert!(!public_result.contains("ws://"), "{}", prepared.raw);
@@ -3536,7 +3572,7 @@ fn run_multi_tab(spec: &BrowserSpec) {
                     "session": session,
                 }),
             );
-            let trusted_clicks = if cfg!(target_os = "windows") {
+            let trusted_clicks = if !cfg!(target_os = "linux") {
                 assert_eq!(
                     trusted.action_effect(),
                     Some("unverifiable"),
@@ -4931,12 +4967,15 @@ fn run_two_window_collision(spec: &BrowserSpec) {
                 launch_additional_window(&mut fixture);
             assert_eq!(second_pid, fixture.pid);
             assert_ne!(second_window_id, fixture.window_id);
+            let session = format!("standalone-two-window-{}", fixture.pid);
+            let attached_before = prepare_same_space_attachment(&mut fixture, &session).is_some();
             run_with_background_oracles(&mut fixture, |fixture| {
-                let session = format!("standalone-two-window-{}", fixture.pid);
-                let started = fixture
-                    .driver
-                    .call("start_session", serde_json::json!({ "session": session }));
-                assert!(!started.is_error(), "start_session failed: {}", started.raw);
+                if !attached_before {
+                    let started = fixture
+                        .driver
+                        .call("start_session", serde_json::json!({ "session": session }));
+                    assert!(!started.is_error(), "start_session failed: {}", started.raw);
+                }
                 let prepared = fixture.driver.call(
                     "browser_prepare",
                     serde_json::json!({
@@ -4946,13 +4985,17 @@ fn run_two_window_collision(spec: &BrowserSpec) {
                         "strategy": {"kind": "existing_profile"},
                     }),
                 );
-                assert_eq!(prepared.structured()["status"], "ok", "{}", prepared.raw);
-                assert_eq!(
-                    prepared.structured()["action"],
-                    "attached_existing_profile",
-                    "{}",
-                    prepared.raw
-                );
+                if attached_before {
+                    assert_same_space_background_refusal(&prepared);
+                } else {
+                    assert_eq!(prepared.structured()["status"], "ok", "{}", prepared.raw);
+                    assert_eq!(
+                        prepared.structured()["action"],
+                        "attached_existing_profile",
+                        "{}",
+                        prepared.raw
+                    );
+                }
                 let refused = fixture.driver.call(
                     "get_browser_state",
                     serde_json::json!({

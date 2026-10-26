@@ -39,7 +39,38 @@ pub struct FakeLume {
     /// A booted VM stops on its own before it gets an address (the guest
     /// crashed: "stopped while booting").
     pub boot_fails: bool,
+    /// How `POST /lume/pull/start` pulls go; `None` refuses them.
+    pub pull: Option<FakePull>,
+    /// Polls each async pull has had so far, by VM name.
+    pub pulling: BTreeMap<String, u64>,
+    /// The server stopped (a killed `lume serve`): it accepts nothing more.
+    pub dead: bool,
 }
+
+/// An async pull: it reports `step` more bytes of `total` on each
+/// `GET /lume/vms/:name`, then after `polls` polls ends as `end` says.
+#[derive(Clone)]
+pub struct FakePull {
+    pub polls: u64,
+    pub step: u64,
+    pub total: u64,
+    pub end: PullEnd,
+}
+
+#[derive(Clone, PartialEq)]
+pub enum PullEnd {
+    /// The pull finishes: a stopped VM of that name.
+    Completes,
+    /// Lume reports the pull failed with this cause.
+    Fails(String),
+    /// The pull is gone and no VM was made (cancelled outside the SDK).
+    Vanishes,
+    /// `lume serve`, and the pull inside it, die.
+    ServeDies,
+}
+
+/// What [`handle`] answers when the fake's serve just died: no response.
+const DIE: u16 = 0;
 
 fn not_found(name: &str) -> (u16, Value) {
     (
@@ -54,6 +85,56 @@ fn handle(st: &mut FakeLume, method: &str, path: &str, body: Value) -> (u16, Val
     let name = path.strip_prefix("/lume/vms/").unwrap_or("");
     match (method, path) {
         ("GET", "/lume/host/status") => (200, json!({ "status": "ok" })),
+        ("POST", "/lume/pull/start") => {
+            let Some(_) = st.pull else {
+                return (404, json!({ "message": "no route" }));
+            };
+            let vm = body["name"].as_str().unwrap().to_string();
+            st.pulling.insert(vm.clone(), 0);
+            (202, json!({ "message": "Pull started", "name": vm }))
+        }
+        ("GET", _) if st.pulling.contains_key(name) => {
+            let pull = st.pull.clone().unwrap();
+            let n = st.pulling.get_mut(name).unwrap();
+            *n += 1;
+            if *n <= pull.polls {
+                let done = (*n * pull.step).min(pull.total);
+                return (
+                    200,
+                    json!({
+                        "name": name, "status": "pulling",
+                        "downloadProgress": done as f64 * 100.0 / pull.total as f64,
+                        "downloadedBytes": done, "totalBytes": pull.total,
+                        "bytesPerSecond": 1000.0
+                    }),
+                );
+            }
+            match pull.end {
+                PullEnd::Completes => {
+                    st.pulling.remove(name);
+                    let vm = json!({
+                        "name": name, "os": "macOS", "cpuCount": 4, "memorySize": 8u64 << 30,
+                        "diskSize": { "allocated": 1u64 << 30, "total": 150u64 << 30 },
+                        "display": "1024x768", "status": "stopped"
+                    });
+                    st.vms.insert(name.to_string(), vm.clone());
+                    (200, vm)
+                }
+                PullEnd::Fails(cause) => (
+                    400,
+                    json!({ "message": format!("Pull failed for '{name}': {cause}") }),
+                ),
+                PullEnd::Vanishes => {
+                    st.pulling.remove(name);
+                    not_found(name)
+                }
+                PullEnd::ServeDies => {
+                    st.pulling.clear();
+                    st.dead = true;
+                    (DIE, Value::Null)
+                }
+            }
+        }
         ("POST", "/lume/vms/clone") => {
             let src = body["name"].as_str().unwrap();
             let new = body["newName"].as_str().unwrap().to_string();
@@ -131,12 +212,17 @@ fn handle(st: &mut FakeLume, method: &str, path: &str, body: Value) -> (u16, Val
 /// Minimal HTTP/1.1 server (one request per connection, like lume).
 pub async fn serve(state: Arc<Mutex<FakeLume>>) -> String {
     let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", l.local_addr().unwrap());
+    let addr = l.local_addr().unwrap();
+    let url = format!("http://{addr}");
     tokio::spawn(async move {
         loop {
             let Ok((mut s, _)) = l.accept().await else {
                 return;
             };
+            // A dead serve closes its socket: later connects are refused.
+            if state.lock().unwrap().dead {
+                return;
+            }
             let state = state.clone();
             tokio::spawn(async move {
                 let mut buf = Vec::new();
@@ -181,6 +267,11 @@ pub async fn serve(state: Arc<Mutex<FakeLume>>) -> String {
                     return;
                 }
                 let (code, resp) = handle(&mut state.lock().unwrap(), method, path, body);
+                if code == DIE {
+                    // Wake the accept loop so it sees the serve died.
+                    let _ = tokio::net::TcpStream::connect(addr).await;
+                    return;
+                }
                 let resp = resp.to_string();
                 let out = format!(
                     "HTTP/1.1 {code} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{resp}",
@@ -198,6 +289,7 @@ pub async fn serve(state: Arc<Mutex<FakeLume>>) -> String {
 pub fn runtime(url: String) -> LumeRuntime {
     let home = temp_home();
     LumeRuntime::new(LumeConfig {
+        channel: cua_home::channel::CuaChannel::Stable,
         url,
         spawn_serve: false,
         allow_install: false,

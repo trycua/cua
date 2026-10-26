@@ -3,13 +3,13 @@
 
 /** New Space and "Connect a cloud" for components (see `new-space.ts`). */
 
-import { useContext, useEffect, useState, useSyncExternalStore } from "react";
+import { useContext, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { isUnsupported } from "./adapter";
 import { BridgeContext } from "./BridgeProvider";
 import type { CoreClient } from "./core";
-import type { CloudConnectAction, CloudConnectView, RuntimeSwitch, WizardAction, WizardEnv, WizardView } from "./contracts/new-space";
+import type { CloudConnectAction, CloudConnectView, CloudTarget, RuntimeFix, RuntimeSwitch, WizardAction, WizardEnv, WizardView } from "./contracts/new-space";
 import type { Space, SpaceOs } from "./contracts/spaces";
-import { useMachines, useSession, useSettings, useSpaces } from "./hooks";
+import { useMachines, useSettings, useSpaces } from "./hooks";
 import { newPendingId } from "./store";
 import {
   CLOSED_NEW_SPACE,
@@ -39,7 +39,6 @@ function useNewSpaceEnv(): { core: CoreClient; env: WizardEnv; s: NewSpaceSessio
   if (!ctx) throw new Error("bridge hooks need a <BridgeProvider> above them");
   const s = useSyncExternalStore(subscribe, read, read);
   const { data: settings } = useSettings();
-  const { data: sessionData } = useSession();
   const { data: machines } = useMachines();
   const core = ctx.core;
   const env =
@@ -49,10 +48,9 @@ function useNewSpaceEnv(): { core: CoreClient; env: WizardEnv; s: NewSpaceSessio
           options: s.options,
           clouds: s.clouds,
           defaultLocation: settings?.values.defaultLocation,
-          cloudAvailable: Boolean(sessionData?.fleet.configured),
           machines,
         })
-      : ({ defaultLocation: "local", cloudAvailable: false, localAvailable: true, maxCpus: 8 } as WizardEnv));
+      : ({ defaultLocation: "local", localAvailable: true, maxCpus: 8 } as WizardEnv));
   return { core, env, s };
 }
 
@@ -241,6 +239,17 @@ export interface ConnectCloudHook {
   close(): void;
   /** Sends an action; Test and Connect run the host's request the core asks for. */
   send(action: CloudConnectAction): Promise<void>;
+  /** Hetzner's API token as typed: memory only, dropped when Connect finishes or the sheet closes. */
+  token: string;
+  setToken(text: string): void;
+}
+
+/** The core's request target, with the held token attached when it asks (and `uses_token` removed). */
+export function withToken(target: CloudTarget, token: string): CloudTarget {
+  const out: CloudTarget = { ...target };
+  delete out.uses_token;
+  if (target.uses_token && token) out.token = token;
+  return out;
 }
 
 /** "Connect a cloud": the core's sheet over `clouds.*`. */
@@ -251,15 +260,34 @@ export function useConnectCloud(): ConnectCloudHook {
   const ready = core.status === "ready";
   const input = s.connect.pinnedInput ?? (ready ? connectInput(core, s.clouds) : { providers: [] });
   const view = s.connect.open && s.connect.state && ready ? cloudConnectView(core, input, s.connect.state) : null;
-  const close = () => update((x) => ({ ...x, connect: { ...CLOSED_NEW_SPACE.connect } }));
+  // The token never enters the core, the session store or any saved state.
+  const [token, setTokenState] = useState("");
+  const tokenRef = useRef("");
+  const setToken = (text: string) => {
+    const was = tokenRef.current !== "";
+    tokenRef.current = text;
+    setTokenState(text);
+    if (was !== (text !== "")) reduce({ type: "set-token-entered", entered: text !== "" });
+  };
+  const dropToken = () => {
+    tokenRef.current = "";
+    setTokenState("");
+  };
+  const close = () => {
+    dropToken();
+    update((x) => ({ ...x, connect: { ...CLOSED_NEW_SPACE.connect } }));
+  };
   const reduce = (action: CloudConnectAction) =>
     update((x) => (x.connect.state ? { ...x, connect: { ...x.connect, state: cloudConnectReduce(core, input, x.connect.state, action) } } : x));
 
   return {
     open: s.connect.open,
     view,
+    token,
+    setToken,
     show() {
       if (!ready) return;
+      dropToken();
       update((x) => ({ ...x, connect: { open: true, state: cloudConnectInitial(core), pinnedInput: null } }));
       void ctx.ready.then(loadHostData);
     },
@@ -276,17 +304,71 @@ export function useConnectCloud(): ConnectCloudHook {
       if (!request || !ctx.adapter) return;
       try {
         if (request.kind === "test") {
-          const r = await ctx.adapter.call("clouds.test", { target: request.target });
+          const r = await ctx.adapter.call("clouds.test", { target: withToken(request.target, tokenRef.current) });
           reduce({ type: "tested", ok: r.ok, account: r.account ?? "", checks: r.checks.map((c) => ({ name: c.name, ok: c.ok, detail: c.detail ?? "" })) });
         } else {
-          const r = await ctx.adapter.call("clouds.connect", { target: request.target, makeDefault: request.make_default });
+          const r = await ctx.adapter.call("clouds.connect", { target: withToken(request.target, tokenRef.current), makeDefault: request.make_default });
+          dropToken();
           reduce({ type: "connected", label: r.label ?? r.title });
           const store = await ctx.ready;
           await Promise.all([loadHostData(store), refreshSettings()]);
           close();
         }
       } catch (e) {
+        if (request.kind === "connect") dropToken();
         reduce({ type: "failed", error: isUnsupported(e) ? "This app can't connect a cloud yet." : e instanceof Error ? e.message : String(e) });
+      }
+    },
+  };
+}
+
+/* ---- Windows: the runtime fix ("Install Docker Desktop") ------------------ */
+
+/** How often the options are read again while a fix runs, and for how long after one started. */
+export const RUNTIME_FIX_POLL_MS = 3_000;
+export const RUNTIME_FIX_FOLLOW_MS = 15 * 60_000;
+
+export interface RuntimeFixHook {
+  /** What the host offers beside "no local runtime" (null when it offers nothing, or a runtime is ready). */
+  fix: RuntimeFix | null;
+  /** Starts the fix's action; the options are read again until it settles. */
+  run(): Promise<void>;
+  /** Why the host refused to start it. */
+  error: string | null;
+}
+
+/**
+ * The host's fix for a machine with no local runtime (Windows: install or
+ * start Docker Desktop). While it runs, or for a while after it started,
+ * the options are read again so the reason, the button and the wizard's
+ * Continue follow the install and the engine's start.
+ */
+export function useRuntimeFix(): RuntimeFixHook {
+  const ctx = useContext(BridgeContext)!;
+  const s = useSyncExternalStore(subscribe, read, read);
+  const local = s.options?.local;
+  const fix = local && !local.available ? (local.fix ?? null) : null;
+  const [startedAt, setStartedAt] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const following = Boolean(fix?.busy) || (startedAt !== null && Date.now() - startedAt < RUNTIME_FIX_FOLLOW_MS && !local?.available);
+  useEffect(() => {
+    if (!following) return;
+    const timer = setInterval(() => void ctx.ready.then(loadHostData), RUNTIME_FIX_POLL_MS);
+    return () => clearInterval(timer);
+  }, [following, ctx.ready]);
+  return {
+    fix,
+    error,
+    async run() {
+      const action = fix?.action;
+      if (!action || !ctx.adapter) return;
+      setError(null);
+      try {
+        await ctx.adapter.call("spaces.fixRuntime", { action });
+        setStartedAt(Date.now());
+        await ctx.ready.then(loadHostData);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
       }
     },
   };

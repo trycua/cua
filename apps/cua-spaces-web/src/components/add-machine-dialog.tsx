@@ -2,14 +2,16 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { CheckIcon, ChevronRightIcon, CopyIcon, ExternalLinkIcon, LoaderCircleIcon } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { encode } from "uqr";
 
-import { expiresInText, useMachines, usePairingCode, useSession, type HostFormField, type HostSetupGuide, type Machine, type PairingHook } from "@/bridge";
+import { expiresInText, FINISHING_SETUP, teamName, useFlag, useMachines, useTeamChoices, usePairingCode, useSession, type HostFormField, type HostSetupGuide, type Machine, type PairingHook } from "@/bridge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogDescription, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { Segmented } from "@/components/ui/segmented";
+import { Select } from "@/components/ui/select";
 import { toast } from "@/components/ui/toast";
+import { UpgradeCard } from "@/components/upgrade-card";
 import { cn } from "@/lib/utils";
 
 /** Where Cua Spaces is downloaded (`teleport::flow::CUA_INSTALL_URL`). */
@@ -40,12 +42,15 @@ export function AddMachineDialog({
   onOpenChange,
   guide,
   pollMs,
+  team = null,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   guide: HostSetupGuide;
   /** How often to ask whether the link was used (tests). */
   pollMs?: number;
+  /** The team (organization id) chosen at first; default: the current team, when it can take machines. */
+  team?: string | null;
 }) {
   const { data: session, signIn } = useSession();
   const { data: listed, refresh } = useMachines();
@@ -54,7 +59,15 @@ export function AddMachineDialog({
   // Signed in but not enrolled: this device can't vouch for a new machine
   // (known once the machines are read).
   const notice = machines.find((m) => m.current)?.accessNotice ?? null;
-  const pairing = usePairingCode({ open, enabled: signedIn && listed !== undefined && !notice, pollMs, onUsed: () => void refresh().catch(() => {}) });
+  // Which team the new machine joins (none: just this account). The
+  // account's teams that can take machines, the current one first.
+  const choices = useTeamChoices(open && signedIn);
+  const [picked, setPicked] = useState<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (!open) setPicked(undefined);
+  }, [open]);
+  const chosen = picked !== undefined ? picked : (team ?? choices.current);
+  const pairing = usePairingCode({ open, enabled: signedIn && listed !== undefined && !notice, pollMs, team: chosen, onUsed: () => void refresh().catch(() => {}) });
   const fail = (title: string) => (e: unknown) => toast(title, { description: e instanceof Error ? e.message : String(e) });
 
   // Any reason there is no link: the manual steps are the way, so show them.
@@ -64,7 +77,7 @@ export function AddMachineDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogPopup className="top-[8vh] w-[min(600px,calc(100vw-2rem))]" data-add-machine={pairing.phase}>
         <div className="max-h-[84vh] overflow-y-auto px-6 pt-5 pb-4">
-          <DialogTitle className="text-[15px] font-semibold">Add a machine</DialogTitle>
+          <DialogTitle className="text-[15px] font-semibold">Add a computer</DialogTitle>
           <DialogDescription className="mt-1 text-[13px] text-muted-foreground">
             {manualOnly
               ? "Any Mac, Linux or Windows computer you own can run Spaces for you. You set it up on that computer, and it shows up here once it is online."
@@ -73,7 +86,7 @@ export function AddMachineDialog({
 
           {!signedIn ? (
             <Notice>
-              <p>Sign in to add a machine with a link. You can also set it up by hand.</p>
+              <p>Sign in to add a computer with a link. You can also set it up by hand.</p>
               <Button size="sm" className="mt-2" onClick={() => void signIn().catch(fail("Couldn't start sign-in"))}>
                 Sign in
               </Button>
@@ -84,13 +97,30 @@ export function AddMachineDialog({
             <Notice>
               {pairing.error?.unsupported
                 ? "Your Cua relay can't make links yet. Set the computer up by hand instead."
-                : `Couldn't make a link: ${pairing.error?.message ?? "unknown error"}. Set the computer up by hand instead.`}
+                : `${pairing.error?.message ?? "Couldn't make a link."} Set the computer up by hand instead.`}
               <Button variant="outline" size="sm" className="mt-2 flex" onClick={pairing.renew}>
                 Try again
               </Button>
             </Notice>
           ) : (
-            <PairingPanel pairing={pairing} machines={machines} />
+            <>
+              {choices.teams.length > 0 && pairing.phase !== "used" ? (
+                <div className="mt-4 flex items-center gap-2 text-[13px]" data-add-machine-team={chosen ?? "me"}>
+                  <span className="text-muted-foreground">Add it for</span>
+                  <Select
+                    aria-label="Add it for"
+                    className="h-8 min-w-40"
+                    value={chosen ?? "me"}
+                    options={[
+                      { value: "me", label: "Just me" },
+                      ...choices.teams.map((t) => ({ value: t.id, label: `${teamName(t)} (team)` })),
+                    ]}
+                    onValueChange={(v) => setPicked(v === "me" ? null : v)}
+                  />
+                </div>
+              ) : null}
+              <PairingPanel pairing={pairing} machines={machines} />
+            </>
           )}
 
           {pairing.phase === "used" ? null : <ManualSteps guide={guide} open={manualOnly} />}
@@ -114,7 +144,9 @@ function Notice({ children }: { children: ReactNode }) {
 
 /** The link, its QR code, the commands, and how long it lasts. */
 function PairingPanel({ pairing, machines }: { pairing: PairingHook; machines: Machine[] }) {
+  const cards = useFlag("upsell_cards");
   const [shell, setShell] = useState<Shell>("sh");
+  const { openExternal } = useSession();
   const { phase, code } = pairing;
 
   if (phase === "idle" || phase === "minting" || !code) {
@@ -127,11 +159,38 @@ function PairingPanel({ pairing, machines }: { pairing: PairingHook; machines: M
 
   if (phase === "used") {
     const name = machines.find((m) => m.id === code.machine)?.name;
+    const team = pairing.team;
+    if (team?.phase === "adding") {
+      return (
+        <div className="mt-5 flex items-center gap-2 text-[13px] text-muted-foreground" data-pairing-team="adding">
+          <LoaderCircleIcon className="size-3.5 animate-spin" aria-hidden /> {FINISHING_SETUP}
+        </div>
+      );
+    }
+    // Only a team owner gets the checkout link, so only an owner gets the card.
+    const failedText = team?.phase === "failed" ? (team.error ?? "") : "";
+    const cardReason = !team?.upgradeUrl ? null : /no free seats/.test(failedText) ? "seats" : /as many computers as it has seats/.test(failedText) ? "machines" : null;
+    const asCard = cards && cardReason !== null;
     return (
-      <div className="mt-5 flex items-center gap-2.5 rounded-lg border bg-card px-3 py-3 text-[13px]" data-pairing-added>
+      <>
+      <div className="mt-5 flex items-center gap-2.5 rounded-lg border bg-card px-3 py-3 text-[13px]" data-pairing-added data-pairing-team={team?.phase}>
         <CheckIcon className="size-4 shrink-0 text-success" aria-hidden />
-        <span>{name ? `Added ${name}.` : "Added the computer."} It shows in your machines.</span>
+        <span className="min-w-0 flex-1">
+          {name ? `Added ${name}.` : "Added the computer."}{" "}
+          {team?.phase === "added"
+            ? "Your team can use it now."
+            : team?.phase === "failed"
+              ? `It isn't on your team yet. ${team.error ?? "Something went wrong."}`
+              : "It shows in your computers."}
+        </span>
+        {team?.phase === "failed" && team.upgradeUrl && !asCard ? (
+          <Button size="sm" data-pairing-upgrade="" onClick={() => void openExternal(team.upgradeUrl!).catch(() => {})}>
+            Upgrade
+          </Button>
+        ) : null}
       </div>
+      {asCard ? <UpgradeCard reason={cardReason} className="mt-3" /> : null}
+      </>
     );
   }
 
@@ -156,6 +215,13 @@ function PairingPanel({ pairing, machines }: { pairing: PairingHook; machines: M
             <div className="mb-1 text-xs font-medium text-muted-foreground">Link</div>
             {code.url ? <CopyField text={code.url} label="Copy link" /> : null}
           </div>
+          {code.code ? (
+            <div data-pairing-code>
+              <div className="mb-1 text-xs font-medium text-muted-foreground">Code</div>
+              <CopyField text={code.code} label="Copy code" mono />
+              <p className="mt-1.5 text-xs text-muted-foreground">Already have Cua Spaces there? Open Computers, choose Join with a code and enter it.</p>
+            </div>
+          ) : null}
           <div>
             <Segmented aria-label="The other computer's system" value={shell} options={SHELLS} onValueChange={setShell} />
             {command ? <CopyField text={command} label="Copy command" mono /> : null}
@@ -242,12 +308,12 @@ function ManualSteps({ guide, open }: { guide: HostSetupGuide; open: boolean }) 
 
       <Step n={2} title="Sign in with the same account">
         <p>
-          Use {identity ? <span className="font-medium text-foreground">{identity}</span> : "the account you use here"}. Machines join the
+          Use {identity ? <span className="font-medium text-foreground">{identity}</span> : "the account you use here"}. Computers join the
           account they are set up with.
         </p>
       </Step>
 
-      <Step n={3} title="Open This machine and choose how to use it">
+      <Step n={3} title="Open This computer and choose how to use it">
         <ul className="mt-1 divide-y overflow-hidden rounded-lg border bg-card">
           {guide.choices.map((c) => (
             <li key={c.id} className="px-3 py-2">
@@ -259,7 +325,7 @@ function ManualSteps({ guide, open }: { guide: HostSetupGuide; open: boolean }) 
       </Step>
 
       <Step n={4} title={guide.form ? `Fill in the form and press ${quote(submitLabel(guide.form.submitLabel))}` : "Set it up for access"}>
-        <p>It connects through the Cua relay, so you don't need to forward ports. Under Advanced you can choose a direct connection instead.</p>
+        <p>It connects through the Cua relay, so you don't need to forward ports.</p>
         {basic.length ? (
           <dl className="mt-2 divide-y overflow-hidden rounded-lg border bg-card">
             {basic.map((f) => (
@@ -274,7 +340,7 @@ function ManualSteps({ guide, open }: { guide: HostSetupGuide; open: boolean }) 
       </Step>
 
       <Step n={5} title="Grant permissions if it shares its desktop">
-        <p>On a Mac, This machine lists the System Settings panes to turn on, such as Screen Recording and Accessibility.</p>
+        <p>On a Mac, This computer lists the System Settings panes to turn on, such as Screen Recording and Accessibility.</p>
       </Step>
     </ol>
   );

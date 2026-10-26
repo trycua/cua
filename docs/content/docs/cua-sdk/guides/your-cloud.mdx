@@ -1,18 +1,22 @@
 ---
 title: Use your own cloud
-description: Run sandboxes and Spaces in your own AWS, Google Cloud or Modal account with --on aws, --on gcp or --on modal, with Cua's tags, time limits and cleanup on everything it creates.
+description: Run sandboxes and Spaces in your own AWS, Google Cloud, Hetzner or Modal account. Connect it, create on it, what Cua creates there, costs and cleanup.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
 Sandboxes and Spaces can run in a cloud account you own: `--on aws` (EC2),
-`--on gcp` (Compute Engine) or `--on modal` (Modal Sandboxes). The same images,
-the same SDK calls and the same `cua-bench` runs work there; you pay the cloud
-directly.
+`--on gcp` (Compute Engine), `--on hetzner` (Hetzner Cloud servers) or
+`--on modal` (Modal Sandboxes). The same images,
+SDK calls and `cua-bench` runs work there, and you pay the cloud directly.
 
 Each sandbox dials out to the cua.ai relay as a machine of your account, so
-nothing in your cloud listens on the internet, and your laptop, your agents and
-the Cua Spaces app reach it wherever they are.
+nothing in your cloud listens on the internet. Your laptop, your agents and the
+Cua Spaces app reach it wherever they are. Streams, files and presence pass
+through relay.cua.ai, and only your devices and the accounts you share a Space
+with can reach the sandbox. The guest holds only its own machine token, never
+your account credentials. An account holds at most 32 machines, and each cloud
+sandbox uses one until you delete it.
 
 <Callout type="warn">
   Everything here creates resources that your cloud account bills for. Cua
@@ -27,6 +31,8 @@ the Cua Spaces app reach it wherever they are.
   - **AWS**: a profile in `~/.aws` (access keys, SSO or an assumed role).
   - **Google Cloud**: `gcloud auth login` and a project with the Compute Engine
     API enabled.
+  - **Hetzner**: a project API token with Read & Write access. Hetzner has no
+    sign-in, so Cua keeps the token itself. See [Notes for each cloud](#notes-for-each-cloud).
   - **Modal**: a profile in `~/.modal.toml` (`modal token new`).
 - A cua.ai sign-in (`cua auth login`). Each cloud sandbox joins the relay as a
   machine of your account.
@@ -41,32 +47,34 @@ cua cloud status
 ```
 
 `cua cloud test` checks an account without creating anything. It checks the
-credentials, runs a dry run of a create, and reads the quota, the region and the
-machine types:
+credentials, runs a dry run of a create, and reads the quota, the region and
+the machine types:
 
 ```bash test="cli-shape" id="cua-cloud-test"
 cua cloud test aws --profile default --region us-west-2
 ```
 
 `cua cloud connect` runs the same checks and connects only when they pass.
-`--default` also makes it the default location, so `cua sb create` and
-`create_space` go there when no location is given:
+`--default` also makes the cloud the default location, so `cua sb create` and
+`create_space` go there when you give no location:
 
 ```bash test="cli-shape" id="cua-cloud-connect"
 cua cloud connect aws --region us-west-2 --default
 cua cloud connect gcp --project my-project --region us-central1
 cua cloud connect modal --environment sandboxes
+cua cloud connect hetzner --region fsn1
 ```
 
 `--ttl-hours` sets how long each sandbox there lives before it deletes itself
-(default 8; `0` keeps it until you delete it; Modal caps a sandbox at 24):
+(default 8; `0` keeps it until you delete it; Modal caps a sandbox at 24; a
+Hetzner server shuts itself down then, and `cua cloud sweep --delete` removes it):
 
 ```bash test="cli-shape" id="cua-cloud-connect-ttl"
 cua cloud connect aws --ttl-hours 2
 ```
 
 The Cua Spaces app does the same from **New Space**, **Your cloud**,
-**Connect a cloud**.
+**Connect a cloud**. Hetzner asks for the API token there.
 
 ## Create sandboxes and Spaces
 
@@ -78,7 +86,7 @@ cua sb exec aws:research -- uname -a
 cua sb delete aws:research
 ```
 
-From Python, including `cua-bench`'s runs:
+From Python, including `cua-bench` runs:
 
 ```python skip="your-cloud" id="your-cloud-python"
 from cua_sandbox import Image, Sandbox
@@ -102,53 +110,156 @@ cua spaces start relay:cloud-0123456789abcdef
 cua spaces delete relay:cloud-0123456789abcdef --force
 ```
 
+On Hetzner, `--on hetzner` takes container images only, and stopping a Space
+does not stop the charge (see [Notes for each cloud](#notes-for-each-cloud)).
+
 Agents use the same `create_space` tool with `on="aws"`, and `cloud_status`,
-`cloud_test`, `cloud_connect` and `cloud_sweep` from the
-[Spaces contract](/spaces/reference/cloud).
+`cloud_test`, `cloud_connect`, `cloud_disconnect`, `cloud_sweep` and
+`cloud_audit` from the
+[Spaces contract](/spaces/reference/spaces#your-cloud).
 
 ## What Cua creates
 
-One VM (or Modal sandbox) per sandbox, tagged `cua-managed=true` with your
-owner id and an expiry, and recorded in `~/.cua/cloud/state.json`. Nothing
-else: no IAM users or keys, no change to existing networks. What each cloud
-creates, the prices and the per-cloud notes:
-[Your cloud resources and costs](/cua-sdk/guides/your-cloud-resources).
+| Cloud | Per sandbox | Shared |
+|---|---|---|
+| AWS | One EC2 instance and its disk. Docker runs the image on it. | One security group with no inbound rules, in the region's default VPC. |
+| Google Cloud | One Compute Engine instance and its disk. Docker runs the image on it. | A network with no inbound rules, so the project's default firewall rules never apply to it. |
+| Hetzner | One server with an IPv4 address and Docker (Ubuntu 24.04), and no SSH key. Docker runs the image on it. | One firewall, `cua-sb-<owner>`, with no rules: Hetzner drops all inbound traffic. Your project's other firewalls are never used or changed. |
+| Modal | One Modal sandbox running the image. | Nothing. |
+
+- Nothing else is created: no IAM users or keys, and no change to existing
+  networks, security groups or firewall rules.
+- The VM installs only Docker. The image carries its own cua-spacesd.
+- Every resource carries these tags (labels on Google Cloud and Hetzner):
+
+  | Tag | Value |
+  |---|---|
+  | `cua-managed` | `true` |
+  | `cua-owner` | This cua home's owner id |
+  | `cua-space` | The sandbox's name |
+  | `cua-machine` | Its relay machine |
+  | `cua-created-by` | The cua version |
+  | `cua-expires` | When it expires (Unix seconds) |
+
+- Cua records every resource in `~/.cua/cloud/state.json` before the cloud
+  call, with its cloud id once it has one.
+- Every action is also appended to `~/.cua/cloud/audit.jsonl` (see it with
+  `cua cloud audit`): who recorded, created, confirmed or deleted what, and
+  when. Names and ids only, never a secret.
+
+Cua creates no IAM users, roles or keys, so it acts as whatever identity you
+connect. [Least privilege in your cloud](/cua-sdk/guides/your-cloud-safety)
+has the AWS policy and Google Cloud permissions for a dedicated identity, and
+what Cua keeps when a machine does not come online.
+
+## Costs
+
+`cua cloud status` shows the estimated on-demand price of each image family
+per hour while it runs (compute and disk, not network). A stopped VM bills only
+its disk.
+
+| Cloud | `linux` | `linux-slim` |
+|---|---|---|
+| AWS | `t4g.medium` (arm64), about $0.04/hour | `t4g.small`, about $0.03/hour |
+| Google Cloud | `e2-medium`, about $0.04/hour | `e2-small`, about $0.03/hour |
+| Hetzner | `cx23`, about $0.0114/hour | the same |
+| Modal | 1 core (2 vCPU) and 4 GiB, about $0.24/hour | the same |
+
+- Hetzner: `cx23` is $0.0104/hour plus $0.001/hour for the server's IPv4
+  address (checked 2026-10-22 against the Hetzner API). `cua cloud status`
+  shows the live price of the type a create would pick. An Arm image uses
+  `cax11`.
+- Windows and Omarchy are not offered yet. They run as VMs inside the cloud's
+  VM, which needs a nested-virtualization machine type. `cua cloud status`
+  says so next to them.
+- macOS is not offered. On AWS it would need an EC2 Mac dedicated host, which
+  has a 24-hour minimum.
+
+## Notes for each cloud
+
+- **AWS**:
+  - One region per connection (`--region`, else the profile's). Profiles, SSO
+    and assume-role profiles from `~/.aws` work as the AWS CLI's do.
+  - The instance allows only IMDSv2 with a hop limit of 1, so the sandbox's
+    containers cannot read the instance's metadata (or its user data). It has
+    no key pair and no instance profile.
+  - A new account's vCPU quota may be low. `cua cloud test aws` does not read
+    it yet, and a create past it fails with AWS's own message.
+- **Google Cloud**:
+  - One project and zone per connection (`--project`, `--region`, `--zone`).
+  - The instance has no service account, so nothing on it can call Google
+    APIs. Its containers reach the metadata server only for DNS.
+  - `cua cloud test gcp` says when the Compute Engine API is disabled.
+- **Hetzner**:
+  - One location per connection (`--region`, default `fsn1`; also `nbg1`,
+    `hel1`, `ash`, `hil`, `sin`). Cua picks the cheapest shared-vCPU type of
+    the location that fits the image.
+  - Create a project API token in the Hetzner Cloud Console under **Security**,
+    **API tokens**, with **Read & Write** access. A read-only token is refused.
+  - Give the token to `cua cloud connect hetzner` on standard input
+    (`--token-stdin`) or in `HCLOUD_TOKEN`; the `hcloud` CLI's active context also works. Cua saves a
+    token you give it only after the checks pass, in its credential store (the
+    system vault on a Cua-signed Mac, a private file in the cua home
+    elsewhere), never in `config.toml`.
+  - **Container images only.** Hetzner Cloud servers have no `/dev/kvm`, so
+    VM images (Windows, Omarchy) are refused with that reason.
+  - **Primary IPv4 limit.** Every server takes one primary IPv4 address, and a
+    new project starts with 5, so it holds about 5 Cua servers. Servers get no
+    IPv6 address, so it would not take a second one from the limit. A create
+    past the limit fails with Hetzner's own message. Ask Hetzner to raise the
+    limit, or delete servers.
+  - **A stopped server is still billed.** Hetzner bills the reserved
+    resources, so `stop` keeps the disk but does not stop the charge. Delete
+    the Space to stop paying.
+  - Hetzner cannot delete a server from inside it. The server shuts itself
+    down at its time limit, and `cua cloud sweep` (or any later create)
+    deletes it. Until then it is billed.
+  - The API allows about 3600 requests an hour per project; Cua backs off
+    when Hetzner answers 429.
+- **Modal**:
+  - One environment per connection (`--environment`) and a `~/.modal.toml`
+    profile (`--profile`).
+  - Sandboxes run under gVisor by default. `--runtime microvm` uses Modal's VM
+    runtime. Neither has `/dev/kvm`, so only Linux images run.
+  - A sandbox cannot be stopped and started, and lives at most 24 hours.
+  - Cua talks to Modal through `cua-modal-helper`, which uses Modal's official
+    Go SDK. Build it with `go build` in
+    `libs/cua/crates/cua-contrib/modal-helper`, and put it next to `cua`, on
+    `PATH`, or in `CUA_MODAL_HELPER`.
 
 ## Time limits and cleanup
 
-Three things end a sandbox that nobody deleted:
+Four things end a sandbox that nobody deleted:
 
 - **It shuts itself down.** A VM runs `shutdown` at its time limit and checks
   it again after every reboot or start. Shutting down deletes it (AWS
-  terminates on shutdown; Google Cloud's run limit deletes it). Modal ends a
-  sandbox at its timeout.
+  terminates on shutdown; Google Cloud's run limit deletes it). On Hetzner it
+  only powers the server off (still billed) until a sweep deletes it. Modal
+  ends a sandbox at its timeout.
 - **A failed create cleans up.** Whatever it made is deleted, and its relay
   machine is removed.
 - **`cua cloud sweep`** lists expired sandboxes and anything Cua created whose
-  sandbox is gone. With `--delete` it deletes them; `--all` includes every Cua
-  resource in that cloud:
+  sandbox is gone. With `--delete` it deletes them. `--all` includes every Cua
+  resource in that cloud.
+- **The daemon sweeps for you.** While the Cua daemon runs, it sweeps every
+  connected cloud with `--delete` (not `--all`) every 15 minutes
+  (`CUA_CLOUD_SWEEP_SECS` changes the interval; `0` turns it off). How it
+  works: [Cleanup, disconnect and audit in your cloud](/cua-sdk/guides/your-cloud-cleanup#the-automatic-sweep).
 
-  ```bash test="cli-shape" id="cua-cloud-sweep"
-  cua cloud sweep
-  cua cloud sweep aws --delete
-  cua cloud sweep --all --delete
-  ```
+```bash test="cli-shape" id="cua-cloud-sweep"
+cua cloud sweep
+cua cloud sweep aws --delete
+cua cloud sweep --all --delete
+```
 
 The sweeper touches only a resource that the cloud shows with
 `cua-managed=true` and this home's `cua-owner`, and that this home recorded or
 that carries its owner id. It never matches by name. Untagged resources and
 other owners' resources are never deleted, whatever they are called.
 
-`cua cloud disconnect` forgets a cloud and deletes nothing. It lists what Cua
-still records there.
+`cua cloud disconnect` refuses while sandboxes Cua created still run in that
+cloud, so none is forgotten and left to bill (`--delete` removes them first),
+and `cua cloud audit` shows what Cua did in your clouds. Details:
+[Cleanup, disconnect and audit in your cloud](/cua-sdk/guides/your-cloud-cleanup#disconnecting).
 
-## The relay
-
-Each sandbox is one machine of your cua.ai account on the relay:
-
-- Streams, files and presence pass through relay.cua.ai. There is no direct
-  path from your cloud to your laptop.
-- An account holds at most 32 machines. Each cloud sandbox uses one, and its
-  delete removes it.
-- Only your devices and the accounts you share a Space with can reach it. The
-  guest holds only its own machine token, never your account credentials.
+Details: [Least privilege in your cloud](/cua-sdk/guides/your-cloud-safety) and [Cleanup, disconnect and audit](/cua-sdk/guides/your-cloud-cleanup). For the other places a sandbox runs, see [Choose where sandboxes run](/cua-sdk/guides/local-runtimes).

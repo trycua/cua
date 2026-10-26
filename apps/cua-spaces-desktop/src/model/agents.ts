@@ -25,6 +25,7 @@ import type {
   AppAgentsView,
   AppSpaceAgentRun,
 } from "../native/generated/index";
+import { removeBackups, sweepBackupsOnce } from "./agent-backups";
 import { ToolError } from "./backend";
 import { words } from "./errors";
 import { NotStarted, type LiveGate, type LiveServices } from "./pending";
@@ -121,6 +122,29 @@ export class PersistentAgents {
     const args: Record<string, unknown> = { space, run_id: runId, cursor };
     if (max !== null) args.max = max;
     return this.call("agent_events", args);
+  }
+
+  /** Starts a coding agent in a Space (`agent_start`): its answer as is. Saved
+   * provider keys the harness reads are forwarded by the daemon unnamed. */
+  async startRun(
+    space: string,
+    agent: string,
+    prompt: string,
+    o: { repo: string | null; branch: string | null; model: string | null; envFromHost: string[] },
+  ): Promise<Json> {
+    const args: Record<string, unknown> = { space, agent, prompt };
+    if (o.repo) args.repo = o.repo;
+    if (o.branch) args.branch = o.branch;
+    if (o.model) args.model = o.model;
+    if (o.envFromHost.length) args.env_from_host = o.envFromHost;
+    return this.call("agent_start", args);
+  }
+
+  /** Sends a reply to a run (`agent_message`): queued while a turn runs, or the turn is interrupted first with `force`. */
+  async sendMessage(space: string, runId: string, text: string, force: boolean): Promise<Json> {
+    const args: Record<string, unknown> = { space, run_id: runId, text };
+    if (force) args.force = true;
+    return this.call("agent_message", args);
   }
 
   /** The selected agent's home (files only, recursively), its routines, every
@@ -358,7 +382,7 @@ export function agentKeysInput(report: Json | null, error: string | null): AppAg
       addedMs: BigInt(typeof k.added_ms === "number" && k.added_ms >= 0 ? Math.floor(k.added_ms) : 0),
     }))
     .filter((k) => k.env !== "");
-  const unavailable = report?.available === false ? (typeof report.unavailable === "string" ? report.unavailable : "this machine can't keep keys") : undefined;
+  const unavailable = report?.available === false ? (typeof report.unavailable === "string" ? report.unavailable : "this computer can't keep keys") : undefined;
   return { keys, unavailable, error: error ?? undefined };
 }
 
@@ -376,9 +400,18 @@ export interface AgentSetupRunning {
   setUpCuaDriver(agents: string[]): Promise<AppAgentSetupOutcomeInput[]>;
   /** Removes what cua added for `agents`. */
   remove(agents: string[]): Promise<AppAgentSetupOutcomeInput[]>;
+  /** Starts `agent`'s own sign-in on this computer (`codex login`); returns once it runs. */
+  signIn(agent: string): Promise<void>;
+  /** Deletes the config copies (`.cua-backup-*`) earlier versions left, once per install. */
+  sweepLeftovers?(): void;
 }
 
-/** The SDK's `AgentSetup`, registering the app's own `cua` as the MCP server. */
+/**
+ * The SDK's `AgentSetup`, registering the app's own `cua` as the MCP server.
+ * The server has no name here: the SDK names it for the app's channel (`cua`,
+ * `cua-local` for Cua Spaces Local), so a Local app never writes over the
+ * released app's entry, and it installs the channel's skill copies.
+ */
 export class LiveAgentSetup implements AgentSetupRunning {
   private readonly server: AgentMcpServer | undefined;
 
@@ -387,7 +420,7 @@ export class LiveAgentSetup implements AgentSetupRunning {
     private readonly inner: AgentSetupLike,
     cuaBinary: string | null,
   ) {
-    this.server = cuaBinary ? { name: "cua", command: cuaBinary, args: ["mcp"], env: new Map() } : undefined;
+    this.server = cuaBinary ? { name: "", command: cuaBinary, args: ["mcp"], env: new Map() } : undefined;
   }
 
   private outcomes(list: AgentSetupOutcome[]): AppAgentSetupOutcomeInput[] {
@@ -414,7 +447,27 @@ export class LiveAgentSetup implements AgentSetupRunning {
   }
 
   async remove(agents: string[]): Promise<AppAgentSetupOutcomeInput[]> {
-    return this.outcomes(await this.inner.remove(agents, true, true));
+    const configs = this.configsOf(agents);
+    const out = this.outcomes(await this.inner.remove(agents, true, true));
+    // The copies setup made of each config file are no use once Cua is out of it.
+    for (const c of configs) removeBackups(c);
+    return out;
+  }
+
+  /** The config files Cua edits for `agents` (every agent: none named). */
+  configsOf(agents?: string[]): string[] {
+    return this.inner
+      .detect()
+      .filter((i) => !agents || agents.includes(i.id))
+      .flatMap((i) => (i.mcpConfig ? [i.mcpConfig] : []));
+  }
+
+  async signIn(agent: string): Promise<void> {
+    this.inner.signIn(agent);
+  }
+
+  sweepLeftovers(): void {
+    sweepBackupsOnce(this.configsOf());
   }
 }
 
@@ -439,6 +492,8 @@ export class PendingAgentSetup implements AgentSetupRunning {
   setUp = async (agents: string[], skills: boolean, mcp: boolean) => (await this.s()).setUp(agents, skills, mcp);
   setUpCuaDriver = async (agents: string[]) => (await this.s()).setUpCuaDriver(agents);
   remove = async (agents: string[]) => (await this.s()).remove(agents);
+  signIn = async (agent: string) => (await this.s()).signIn(agent);
+  sweepLeftovers = () => this.gate.current?.agentSetup?.sweepLeftovers?.();
 }
 
 /** The Settings rows for the coding agents, and the changes made to them (the SwiftUI app's `AppModel.agentRows`, `configureAllAgents`, `agentAction`). */
@@ -450,6 +505,7 @@ export class CodingAgents {
   pending: string[] = [];
   /** Why the last change failed, per agent. */
   private readonly failures = new Map<string, string>();
+  private swept = false;
   onChange: () => void = () => {};
 
   constructor(
@@ -464,6 +520,15 @@ export class CodingAgents {
       return;
     }
     const rows = this.native.appAgentSettingsRows(await this.setup.statuses(), this.setup.skillsTotal());
+    // Once per run: the copies of config files that setup left behind in earlier versions.
+    if (!this.swept) {
+      this.swept = true;
+      try {
+        this.setup.sweepLeftovers?.();
+      } catch {
+        // Clutter, not a failure.
+      }
+    }
     this.rows = rows.map((r) => {
       const why = this.failures.get(r.agent);
       return why === undefined ? r : { ...r, configured: false, detail: why };
@@ -510,6 +575,13 @@ export class CodingAgents {
       }
       this.onChange();
     }
+  }
+
+  /** Starts `agent`'s own sign-in (`codex login` opens the browser); the rows follow when it is done. */
+  async signIn(agent: string): Promise<void> {
+    if (!this.setup) return;
+    await this.setup.signIn(agent);
+    await this.reload();
   }
 
   /** A Settings row was pressed (`agent:<id>`): configure it, or remove what cua added when it is configured. */

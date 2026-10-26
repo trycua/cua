@@ -158,7 +158,7 @@ async fn lists_owned_and_shared_relay_machines_as_spaces() {
     assert_eq!(err.tag(), "unauthenticated");
     assert_eq!(
         err.to_string(),
-        "Relay authentication failed. Sign in again to refresh your machines."
+        "Relay authentication failed. Sign in again to refresh your computers."
     );
 }
 
@@ -273,7 +273,7 @@ async fn relay_spaces_carry_the_enrolled_device_session() {
     assert_eq!(err.tag(), "permission_denied", "{err}");
     assert_eq!(
         err.to_string(),
-        "This device could not list relay machines. Check its account access."
+        "This device could not list relay computers. Check its account access."
     );
     assert_eq!(
         bare.list_all().await.unwrap_err().tag(),
@@ -507,7 +507,7 @@ async fn discovery_errors_do_not_expose_provider_payloads() {
     assert_eq!(error.tag(), "relay");
     assert_eq!(
         error.to_string(),
-        "relay: Could not refresh relay machines."
+        "relay: Could not refresh relay computers."
     );
 }
 
@@ -585,4 +585,56 @@ async fn signed_out_lists_this_machines_spaces() {
     // Signed in again: the machines come back.
     *tokens.token.lock().unwrap() = Some("owner".into());
     assert_eq!(spaces.list_all().await.unwrap().len(), 2);
+}
+
+/// A relay deploy (the proxy in front of it answers 503 "no available
+/// server" for a while) keeps the machines it listed a moment ago instead
+/// of failing the whole Space list; with nothing listed before, or a
+/// failure that is not a hiccup, the list fails as before.
+#[tokio::test]
+async fn a_relay_hiccup_lists_the_last_directory() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("owner-token", "user-1", Some("ada@example.com"));
+    cua_host::RelayClient::new(&relay.url)
+        .unwrap()
+        .register(
+            "owner-token",
+            &cua_host::relay::RegisterRequest {
+                id: MACHINE.into(),
+                name: "studio-mac".into(),
+                allow: vec![],
+                host: None,
+                meta: Default::default(),
+            },
+        )
+        .await
+        .unwrap();
+    let account = || RelayAccount::new(&relay.url, Arc::new(StaticToken("owner-token".into())));
+    let home = tempfile::tempdir().unwrap();
+    let spaces = Spaces::builder().home(home.path()).relay(account()).build();
+    assert_eq!(spaces.list_all().await.unwrap().len(), 1);
+
+    relay.set_reads_down(true);
+    let all = spaces.list_all().await.unwrap();
+    assert_eq!(all.len(), 1);
+    assert_eq!(all[0].id, format!("relay:{MACHINE}"));
+
+    // Nothing listed before: the failure shows.
+    let other = tempfile::tempdir().unwrap();
+    let fresh = Spaces::builder()
+        .home(other.path())
+        .relay(account())
+        .build();
+    let err = fresh.list_all().await.unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("Could not refresh relay computers."),
+        "{err}"
+    );
+
+    // Not a hiccup (a 500): the failure shows.
+    relay.set_reads_down(false);
+    relay.fail_reads(&[500]);
+    assert!(spaces.list_all().await.is_err());
+    assert_eq!(spaces.list_all().await.unwrap().len(), 1);
 }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { CheckIcon, CopyIcon } from "lucide-react";
+import { CheckIcon, ChevronRightIcon, CopyIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { isUnsupported, useAgents, type AgentSetupRow } from "@/bridge";
@@ -15,7 +15,8 @@ import { cn } from "@/lib/utils";
  * What the cua MCP server is and how an agent gets it: the agents on this
  * machine (`agents.setup`, the SDK's agent setup), one button that sets up
  * every installed one (`agents.configure`, the same as `cua agents setup`),
- * and the config entry for doing it by hand.
+ * and, under a closed "Advanced", the config entry for doing it by hand. Rows
+ * show the agent and its state only; file paths stay in Advanced.
  */
 
 type Manual = "claude-code" | "codex" | "hermes" | "openclaw";
@@ -95,7 +96,7 @@ export function ConnectAgentDialog({ open, onOpenChange }: { open: boolean; onOp
 
           <section className="mt-5">
             <div className="mb-2 flex items-center justify-between gap-3">
-              <h3 className="text-xs font-semibold">On this machine</h3>
+              <h3 className="text-xs font-semibold">On this computer</h3>
               {rows && rows.length > 0 ? (
                 <Button size="sm" variant={pending.length ? "default" : "outline"} disabled={busy || pending.length === 0} onClick={setUpAll}>
                   {busy ? "Setting up…" : pending.length ? `Set up ${pending.length === 1 ? "1 agent" : `${pending.length} agents`}` : "All set up"}
@@ -107,7 +108,7 @@ export function ConnectAgentDialog({ open, onOpenChange }: { open: boolean; onOp
                 <p className="px-3 py-3 text-xs text-muted-foreground">Looking for agents…</p>
               ) : rows.length === 0 ? (
                 <p className="px-3 py-3 text-xs text-muted-foreground">
-                  {detectError ?? "This app can't look for agents here. Run cua agents setup in a terminal, or add the server by hand below."}
+                  {detectError ?? "This app can't look for agents here. Run cua agents setup in a terminal, or add it by hand under Advanced below."}
                 </p>
               ) : (
                 <ul className="divide-y">
@@ -123,14 +124,17 @@ export function ConnectAgentDialog({ open, onOpenChange }: { open: boolean; onOp
             </p>
           </section>
 
-          <section className="mt-6">
-            <h3 className="mb-2 text-xs font-semibold">Add it by hand</h3>
+          <details className="group mt-6" data-connect-advanced="">
+            <summary className="flex cursor-default list-none items-center gap-1 text-[13px] text-muted-foreground outline-none hover:text-foreground focus-visible:text-foreground [&::-webkit-details-marker]:hidden">
+              <ChevronRightIcon className="size-3.5 transition-transform group-open:rotate-90" aria-hidden /> Advanced
+            </summary>
+            <h3 className="mt-3 mb-2 text-xs font-semibold">Add it by hand</h3>
             <Segmented aria-label="Agent" value={manual} options={MANUAL_OPTIONS} onValueChange={setManual} />
             <Snippet file={MANUAL[manual].file} text={MANUAL[manual].snippet} />
             <p className="mt-2 text-xs text-muted-foreground">
               Use the full path to <code className="font-mono">cua</code> if the agent runs without your shell's PATH, as apps opened from the Dock do.
             </p>
-          </section>
+          </details>
 
           <div className="mt-6 flex justify-end">
             <Button variant="outline" onClick={() => onOpenChange(false)}>
@@ -148,11 +152,10 @@ function SetupRow({ row }: { row: AgentSetupRow }) {
     <li className="flex items-center gap-3 px-3 py-2">
       <div className="min-w-0 flex-1">
         <div className={cn("text-[13px]", !row.installed && "text-muted-foreground")}>{row.name}</div>
-        {row.installed && row.mcpConfig ? <div className="truncate font-mono text-2xs text-muted-foreground">{row.mcpConfig}</div> : null}
       </div>
       <span className={cn("inline-flex shrink-0 items-center gap-1 text-xs", row.configured ? "text-foreground" : "text-muted-foreground")}>
         {row.configured ? <CheckIcon className="size-3.5 text-success" aria-hidden /> : null}
-        {!row.installed ? "Not installed" : row.configured ? "Set up" : "Not set up"}
+        {row.configured ? "Set up" : !row.installed ? "Not installed" : "Not set up"}
       </span>
     </li>
   );

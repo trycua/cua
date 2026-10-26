@@ -24,6 +24,20 @@ on:
       - "libs/cua/crates/cua-cli/**"
       - "libs/python/cua-sandbox/**"
       - "libs/cua-bench/cua_bench/**"
+      - "docs/content/docs/cua-sdk/guides/local-runtimes.mdx"
+      - ".github/actions/cua-sandbox/**"
+      - "tests/e2e/cua-sdk/python/test_docs_blocks.py"
+      - ".github/workflows/ci-cua-contrib.yml"
+  push:
+    branches: [main]
+    paths:
+      - "libs/cua/crates/cua-contrib/**"
+      - "libs/cua/crates/cua-sandbox-core/**"
+      - "libs/cua/crates/cua-daemon/**"
+      - "libs/cua/crates/cua-sdk/**"
+      - "libs/cua/crates/cua-cli/**"
+      - "libs/python/cua-sandbox/**"
+      - "libs/cua-bench/cua_bench/**"
       - "docs/content/docs/cua-sdk/guides/contrib-providers.mdx"
       - ".github/actions/cua-sandbox/**"
       - "tests/e2e/cua-sdk/python/test_docs_blocks.py"
@@ -35,9 +49,12 @@ permissions:
 
 concurrency:
   group: ci-cua-contrib-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
   # Cua programs and packages run here never send usage telemetry.
   CUA_TELEMETRY: "0"
   DO_NOT_TRACK: "1"
@@ -47,6 +64,7 @@ env:
 
 jobs:
   rust:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: providers against their API mocks
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -56,14 +74,11 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install protoc
-        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
-        with:
-          version: "29.x"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+        uses: ./.github/actions/setup-protoc
       - uses: dtolnay/rust-toolchain@1.97.1
         with:
           components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua
           key: cua-contrib
@@ -77,12 +92,16 @@ jobs:
           && cargo test --locked -p cua-sandbox-core --test contrib -- --test-threads=4
       - name: The CLI builds with and without contrib
         run: |
-          if cargo tree --locked -p cua-cli -e normal -i aws-sdk-ec2; then exit 1; fi
+          # The default CLI must not pull the AWS SDK (only --features byoc does).
+          # cargo tree exits 0 with "nothing to print" when the crate is in the
+          # lockfile but not in this tree, so test its output, not its status.
+          if cargo tree --locked -p cua-cli -e normal -i aws-sdk-ec2 2>/dev/null | grep -q .; then exit 1; fi
           cargo check --locked -p cua-cli
           cargo check --locked -p cua-cli --features contrib
           cargo check --locked -p cua-cli --features byoc
 
   modal-helper:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: cua-modal-helper (Modal's Go SDK)
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -95,7 +114,24 @@ jobs:
         with:
           go-version-file: libs/cua/crates/cua-contrib/modal-helper/go.mod
           cache-dependency-path: libs/cua/crates/cua-contrib/modal-helper/go.sum
+      # Module downloads from proxy.golang.org time out now and then. setup-go
+      # restores the module cache by go.sum; a miss downloads here with retries
+      # and a fallback proxy (the pipe tries the next on any error), so a slow
+      # proxy no longer fails vet, test or build.
+      - name: Download modules (retried, fallback proxy)
+        env:
+          GOPROXY: https://proxy.golang.org|https://goproxy.io|direct
+        run: |
+          for attempt in 1 2 3 4; do
+            go mod download && exit 0
+            echo "::warning::go mod download failed (attempt $attempt)"
+            sleep $((attempt * 15))
+          done
+          exit 1
       - name: Vet, test and build
+        env:
+          GOPROXY: https://proxy.golang.org|https://goproxy.io|direct
+          GOFLAGS: -mod=readonly
         run: |
           test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
           go vet ./...
@@ -103,6 +139,7 @@ jobs:
           go build -o /dev/null .
 
   matrix:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: support matrix (recorded doctor reports)
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -116,18 +153,22 @@ jobs:
           python3 contrib_matrix.py check
 
   e2e:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: cua-bench and docs on --on daytona (mocks)
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - name: Install protoc
-        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+      # The debug builds plus uv's Python wheels (pyarrow) outgrew the runner's
+      # free disk (ENOSPC unpacking into the uv cache).
+      - uses: ./.github/actions/linux-rust-prep
         with:
-          version: "29.x"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          install-deps: "false"
+          free-more: "true"
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
       - uses: dtolnay/rust-toolchain@1.97.1
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua
           key: cua-contrib-e2e

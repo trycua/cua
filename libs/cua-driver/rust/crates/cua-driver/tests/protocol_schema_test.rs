@@ -243,6 +243,10 @@ fn assert_tools_list_schema_shape(mut d: RawDriver) {
         "browser_prepare",
         // The batch's default for its steps' own delivery_mode.
         "run_steps",
+        // macOS desktop move_cursor refuses over a background app unless
+        // foreground is requested.
+        #[cfg(target_os = "macos")]
+        "move_cursor",
         // macOS set_value has no delivery ladder.
         #[cfg(any(target_os = "linux", target_os = "windows"))]
         "set_value",
@@ -272,11 +276,10 @@ fn assert_tools_list_schema_shape(mut d: RawDriver) {
         .find(|tool| tool["name"] == "browser_click")
         .expect("browser_click not found in tools/list");
     assert!(
-        browser_click["description"]
-            .as_str()
-            .is_some_and(|description| description
-                .contains("including Linux Chromium and macOS Chromium configurations")),
-        "browser_click description should name macOS and Linux: {}",
+        browser_click["description"].as_str().is_some_and(
+            |description| description.contains("including Linux Chromium configurations")
+        ),
+        "browser_click description should name Linux: {}",
         browser_click["description"]
     );
     let schema_tools: BTreeSet<&str> = tools

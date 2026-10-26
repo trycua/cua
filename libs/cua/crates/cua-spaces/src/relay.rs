@@ -28,6 +28,9 @@ pub struct RelayAccount {
     pub tokens: Arc<dyn AccountTokens>,
     /// This client device (its session rides on every relay call).
     pub device: Option<Arc<DeviceAuth>>,
+    /// The Spaces API Teams go through (`None`: the environment's,
+    /// [`cua_host::spaces_api::SpacesApiClient::current`]).
+    pub spaces_api: Option<String>,
 }
 
 impl RelayAccount {
@@ -37,6 +40,22 @@ impl RelayAccount {
             url: url.into(),
             tokens,
             device: None,
+            spaces_api: None,
+        }
+    }
+
+    /// Teams (organizations) go through the Spaces API at `url` instead of
+    /// the environment's.
+    pub fn with_spaces_api(mut self, url: impl Into<String>) -> Self {
+        self.spaces_api = Some(url.into());
+        self
+    }
+
+    /// The Spaces API client Teams go through.
+    pub fn spaces_api(&self) -> cua_host::Result<cua_host::spaces_api::SpacesApiClient> {
+        match &self.spaces_api {
+            Some(u) => cua_host::spaces_api::SpacesApiClient::new(u),
+            None => cua_host::spaces_api::SpacesApiClient::current(),
         }
     }
 
@@ -54,10 +73,25 @@ impl RelayAccount {
         }
     }
 
+    /// Which account is signed in now (the access token's `sub`), when the
+    /// session says. A long-running node compares it with the account it
+    /// started for.
+    pub async fn account_subject(&self) -> Option<String> {
+        let token = self.tokens.access_token().await.ok()?;
+        cua_host::token_subject(&token)
+    }
+
     /// A directory client carrying the device session.
     pub async fn client(&self) -> cua_host::Result<cua_host::RelayClient> {
         Ok(cua_host::RelayClient::new(&self.url)?.with_device_session(self.device_session().await))
     }
+}
+
+/// Another account is signed in now than the one state was started for
+/// (`started`; each as [`RelayAccount::account_subject`]). Unknown on either
+/// side is never a change: only a known switch restarts anything.
+pub fn account_changed(started: &Option<String>, now: &Option<String>) -> bool {
+    matches!((started, now), (Some(a), Some(b)) if a != b)
 }
 
 /// The gateway bearer of `relay:<id>` connections: the account token in
@@ -174,8 +208,8 @@ impl crate::Spaces {
                 format!("{id} ({name}) is a running Space; delete it with `cua spaces delete {id}`")
             } else {
                 format!(
-                    "{id} ({name}) is one of your machines and is connected now; take it off \
-                     the relay with `cua host remove` on that machine"
+                    "{id} ({name}) is one of your computers and is connected now; take it off \
+                     the relay with `cua host remove` on that computer"
                 )
             }));
         }
@@ -202,5 +236,42 @@ impl crate::Spaces {
         self.inner.thumbnails.remove(&id.to_string());
         #[cfg(feature = "spaces-agents")]
         self.forget_attached_machine(machine_id);
+    }
+}
+
+#[cfg(test)]
+mod account_tests {
+    use super::*;
+    use base64::Engine as _;
+
+    fn token(sub: &str) -> String {
+        let b = |v: &str| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(v);
+        format!("{}.{}.sig", b("{}"), b(&format!(r#"{{"sub":"{sub}"}}"#)))
+    }
+
+    #[tokio::test]
+    async fn the_signed_in_account_is_the_tokens_subject() {
+        let a = RelayAccount::new(
+            "http://relay",
+            Arc::new(cua_host::StaticToken(token("user-a"))),
+        );
+        assert_eq!(a.account_subject().await.as_deref(), Some("user-a"));
+        // Not a JWT, or not signed in: unknown, never a different account.
+        let opaque = RelayAccount::new("http://relay", Arc::new(cua_host::StaticToken("x".into())));
+        assert_eq!(opaque.account_subject().await, None);
+        let out = RelayAccount::new(
+            "http://relay",
+            Arc::new(cua_host::StaticToken(String::new())),
+        );
+        assert_eq!(out.account_subject().await, None);
+    }
+
+    #[test]
+    fn only_a_known_switch_of_account_counts() {
+        let s = |v: &str| Some(v.to_string());
+        assert!(account_changed(&s("a"), &s("b")));
+        assert!(!account_changed(&s("a"), &s("a")));
+        assert!(!account_changed(&None, &s("b")));
+        assert!(!account_changed(&s("a"), &None));
     }
 }

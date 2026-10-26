@@ -4,28 +4,36 @@
 //! | axis | values | default |
 //! |---|---|---|
 //! | [`On`] (where) | `local`, `cloud`, `direct:<addr>`, `relay:<id>`, or a registered provider | `local` (see [`crate::settings`]) |
-//! | [`Kind`] (what) | `auto`, `container`, `vm` | `auto`: from the image |
-//! | [`Runtime`] (engine) | `auto`, `gvisor`, `runc`, `qemu`, `lume`, `kubevirt`, or a provider's own | `auto`: the safest available |
+//! | [`Kind`] (what) | `auto`, `container`, `vm`, `microvm` | `auto`: from the image |
+//! | [`Runtime`] (engine) | `auto`, `gvisor`, `runc`, `qemu`, `lume`, `firecracker`, `containerization`, `kubevirt`, or a provider's own | `auto`: the safest available |
 //!
 //! Each location advertises the kinds it runs and the runtimes for each
 //! kind ([`Capabilities`]); [`validate`] and [`select`] check a request
 //! against them and fail with an [`PlacementError`] that lists the valid
 //! options. The built-in locations:
 //!
-//! | location | container | vm |
-//! |---|---|---|
-//! | `local` | `gvisor` (auto when available), `runc` | `qemu` (auto), `lume` (auto for macOS guests) |
-//! | `cloud` | `gvisor` | `kubevirt` |
+//! | location | container | vm | microvm |
+//! |---|---|---|---|
+//! | `local` | `gvisor` (auto when available), `runc` | `qemu` (auto), `lume` (auto for macOS guests) | `firecracker` (Linux with KVM), `containerization` (macOS 26, Apple silicon) |
+//! | `cloud` | `gvisor` | `kubevirt` | |
 //! | `direct:` / `relay:` | an existing machine: kind and runtime stay `auto` | |
 //!
 //! Third-party providers ([`register_provider`]) add locations with their
 //! own kinds and runtimes (`--on e2b`, ...), validated the same way.
+//! External runtime providers installed on this machine
+//! ([`crate::external`]) add `local` runtimes under the kind they present
+//! as; `auto` never picks them.
 //!
 //! `auto` kind comes from the image: macOS and Windows images are VMs; an
 //! image with a container rootfs is a container; an image that only offers
 //! a disk (a containerDisk or a Lume image) is a VM. `auto` runtime is the
 //! first runtime the location lists for that kind that fits the image and
 //! the host (gVisor before runc; Lume for a macOS guest).
+//!
+//! A `microvm` is never chosen by `auto`: it boots the image's container
+//! rootfs with its own kernel (locally Firecracker on Linux and Apple's
+//! Containerization on a Mac; Modal's VM runtime with `--on modal --runtime
+//! microvm`), asked for with `--kind microvm`.
 
 use cua_image::resolve::Variant;
 use std::fmt;
@@ -48,6 +56,11 @@ pub enum On {
     Host(String),
     /// A registered third-party provider, by name.
     Provider(String),
+    /// The least-loaded of your machines that can take it: this one and
+    /// the ones that provide Spaces (yours, and those shared with you to
+    /// use), and Modal only when you connected it and no machine has room.
+    /// Never the default: an omitted `on` is [`On::Local`].
+    Auto,
 }
 
 impl On {
@@ -61,6 +74,7 @@ impl On {
             On::Relay(_) => "relay",
             On::Host(_) => "host",
             On::Provider(p) => p,
+            On::Auto => "auto",
         }
     }
 
@@ -92,8 +106,8 @@ impl On {
                             "{prefix} needs an address, for example {prefix}{}",
                             match prefix {
                                 "direct:" => "127.0.0.1:3211",
-                                "host:" => "<machine name or id>",
-                                _ => "<machine-id>",
+                                "host:" => "<computer name or id>",
+                                _ => "<computer-id>",
                             }
                         ),
                         valid_on(),
@@ -105,6 +119,7 @@ impl On {
         match lower.as_str() {
             "local" => return Ok(On::Local),
             "cloud" => return Ok(On::Cloud),
+            "auto" => return Ok(On::Auto),
             _ => {}
         }
         if let Some(p) = provider(&lower) {
@@ -119,11 +134,12 @@ impl On {
             return Ok(On::Provider(lower));
         }
         let hint = match lower.as_str() {
-            "fleet" => " (the cloud location is `cloud`)".to_string(),
+            "fleet" => " (Cua Cloud has ended)".to_string(),
             "docker" | "container" => {
                 " (`--on` says where it runs; use `--kind container`)".to_string()
             }
             "vm" => " (`--on` says where it runs; use `--kind vm`)".to_string(),
+            "microvm" => " (`--on` says where it runs; use `--kind microvm`)".to_string(),
             other if Runtime::parse(other).is_ok_and(|r| r != Runtime::Auto) => {
                 format!(" (`--on` says where it runs; use `--runtime {other}`)")
             }
@@ -151,7 +167,7 @@ impl On {
                 let lower = t.to_ascii_lowercase();
                 let reserved = matches!(
                     lower.as_str(),
-                    "fleet" | "docker" | "container" | "vm" | "auto"
+                    "fleet" | "docker" | "container" | "vm" | "microvm"
                 ) || Runtime::parse(&lower)
                     .is_ok_and(|r| !matches!(r, Runtime::Other(_)));
                 if t.is_empty() || t.contains(':') || reserved {
@@ -192,15 +208,20 @@ pub enum Kind {
     Container,
     /// A virtual machine with its own kernel.
     Vm,
+    /// A lightweight VM with its own kernel that boots the image's
+    /// container rootfs (Firecracker): VM isolation, container images,
+    /// snapshot-fast starts.
+    MicroVm,
 }
 
 impl Kind {
-    /// `auto`, `container` or `vm`.
+    /// `auto`, `container`, `vm` or `microvm`.
     pub fn as_str(self) -> &'static str {
         match self {
             Kind::Auto => "auto",
             Kind::Container => "container",
             Kind::Vm => "vm",
+            Kind::MicroVm => "microvm",
         }
     }
 
@@ -210,19 +231,21 @@ impl Kind {
             "" | "auto" => Ok(Kind::Auto),
             "container" => Ok(Kind::Container),
             "vm" => Ok(Kind::Vm),
+            "microvm" | "micro-vm" => Ok(Kind::MicroVm),
             other => {
                 let hint = match other {
                     "docker" | "rootfs" => " (a container is `container`)",
-                    "qemu" | "lume" | "kubevirt" | "gvisor" | "runc" | "runsc" => {
-                        " (that is a runtime: use `--runtime`)"
-                    }
+                    "qemu" | "lume" | "kubevirt" | "gvisor" | "runc" | "runsc" | "firecracker"
+                    | "containerization" => " (that is a runtime: use `--runtime`)",
                     _ => "",
                 };
                 Err(PlacementError::new(
                     Axis::Kind,
                     s.trim(),
                     format!("unknown kind {:?}{hint}", s.trim()),
-                    ["auto", "container", "vm"].map(String::from).to_vec(),
+                    ["auto", "container", "vm", "microvm"]
+                        .map(String::from)
+                        .to_vec(),
                 ))
             }
         }
@@ -258,17 +281,29 @@ pub enum Runtime {
     Lume,
     /// KubeVirt: a VM in Cua cloud.
     Kubevirt,
-    /// A third-party provider's own runtime.
+    /// Firecracker: a microVM on a Linux host with KVM.
+    Firecracker,
+    /// Virtualization.framework through cua's own monitor (`cua-vz`): a
+    /// microVM on an Apple silicon Mac (macOS 14+), with checkpoints and
+    /// forks.
+    Vz,
+    /// Apple's Containerization: a microVM per Space on a Mac with macOS 26
+    /// (Apple silicon), through cua's own copy of the `container` CLI.
+    Containerization,
+    /// A third-party provider's own runtime (Modal's `microvm`, ...).
     Other(String),
 }
 
 impl Runtime {
     /// The built-in runtimes, in display order.
-    pub const BUILTIN: [Runtime; 5] = [
+    pub const BUILTIN: [Runtime; 8] = [
         Runtime::Gvisor,
         Runtime::Runc,
         Runtime::Qemu,
         Runtime::Lume,
+        Runtime::Firecracker,
+        Runtime::Vz,
+        Runtime::Containerization,
         Runtime::Kubevirt,
     ];
 
@@ -281,6 +316,9 @@ impl Runtime {
             Runtime::Qemu => "qemu",
             Runtime::Lume => "lume",
             Runtime::Kubevirt => "kubevirt",
+            Runtime::Firecracker => "firecracker",
+            Runtime::Vz => "vz",
+            Runtime::Containerization => "containerization",
             Runtime::Other(s) => s,
         }
     }
@@ -297,6 +335,9 @@ impl Runtime {
             "qemu" => Runtime::Qemu,
             "lume" => Runtime::Lume,
             "kubevirt" => Runtime::Kubevirt,
+            "firecracker" => Runtime::Firecracker,
+            "vz" | "virtualization" => Runtime::Vz,
+            "containerization" | "apple" | "apple-container" => Runtime::Containerization,
             "container" | "vm" => {
                 return Err(PlacementError::new(
                     Axis::Runtime,
@@ -329,6 +370,7 @@ impl Runtime {
         match self {
             Runtime::Gvisor | Runtime::Runc => Some(Kind::Container),
             Runtime::Qemu | Runtime::Lume | Runtime::Kubevirt => Some(Kind::Vm),
+            Runtime::Firecracker | Runtime::Vz | Runtime::Containerization => Some(Kind::MicroVm),
             Runtime::Auto | Runtime::Other(_) => None,
         }
     }
@@ -455,11 +497,43 @@ impl Capabilities {
     }
 }
 
-/// The built-in `local` capabilities.
+/// The `local` capabilities: the built-in runtimes, then the installed
+/// external runtime providers ([`crate::external`]), each under the kind it
+/// presents as. With no provider installed, exactly
+/// [`builtin_local_capabilities`].
 pub fn local_capabilities() -> Capabilities {
+    local_capabilities_with(&crate::external::Registry::global().providers())
+}
+
+/// [`builtin_local_capabilities`] plus `providers` (never chosen by `auto`:
+/// they come after the built-ins of their kind).
+pub fn local_capabilities_with(
+    providers: &[std::sync::Arc<crate::external::ExternalProvider>],
+) -> Capabilities {
+    let mut caps = builtin_local_capabilities();
+    for p in providers {
+        let runtime = p.runtime();
+        match caps.kinds.iter_mut().find(|k| k.kind == p.kind) {
+            Some(k) if !k.runtimes.contains(&runtime) => k.runtimes.push(runtime),
+            Some(_) => {}
+            None => caps.kinds.push(KindSupport {
+                kind: p.kind,
+                runtimes: vec![runtime],
+            }),
+        }
+    }
+    caps
+}
+
+/// The `local` capabilities of the runtimes built into cua.
+pub fn builtin_local_capabilities() -> Capabilities {
     Capabilities {
         name: "local".into(),
-        description: "this machine: a container (gVisor or runc) or a VM (QEMU or Lume)".into(),
+        description: "this computer: a container (gVisor or runc), a VM (QEMU or Lume) or a \
+                      microVM (Firecracker on Linux with KVM; on a Mac, cua's own \
+                      Virtualization.framework monitor, or Apple's Containerization on \
+                      macOS 26)"
+            .into(),
         kinds: vec![
             KindSupport {
                 kind: Kind::Container,
@@ -468,6 +542,10 @@ pub fn local_capabilities() -> Capabilities {
             KindSupport {
                 kind: Kind::Vm,
                 runtimes: vec![Runtime::Qemu, Runtime::Lume],
+            },
+            KindSupport {
+                kind: Kind::MicroVm,
+                runtimes: vec![Runtime::Firecracker, Runtime::Vz, Runtime::Containerization],
             },
         ],
     }
@@ -532,9 +610,11 @@ pub fn provider(name: &str) -> Option<Capabilities> {
         .cloned()
 }
 
-/// Every location: `local`, `cloud`, then the registered providers.
+/// Every location: `local`, then the registered providers. Cua Cloud
+/// (`cloud`) has ended and is no longer listed; it still parses, and a
+/// create there fails with [`crate::CLOUD_ENDED`].
 pub fn locations() -> Vec<Capabilities> {
-    let mut v = vec![local_capabilities(), cloud_capabilities()];
+    let mut v = vec![local_capabilities()];
     v.extend(
         providers_lock()
             .read()
@@ -557,8 +637,9 @@ fn valid_on() -> Vec<String> {
             v.push((*name).to_string());
         }
     }
+    v.push("auto".into());
     v.push("direct:<addr>".into());
-    v.push("host:<machine>".into());
+    v.push("host:<computer>".into());
     v
 }
 
@@ -574,14 +655,14 @@ pub fn capabilities(on: &On) -> Capabilities {
         }),
         // A host runs what this build runs locally (it is a cua machine);
         // the host itself refuses what its runtimes cannot do.
-        On::Host(_) => Capabilities {
-            name: "host".into(),
-            description: "one of your machines that provides Spaces".into(),
-            ..local_capabilities()
+        On::Host(_) | On::Auto => Capabilities {
+            name: on.location().into(),
+            description: "one of your computers that provides Spaces".into(),
+            ..builtin_local_capabilities()
         },
         On::Direct(_) | On::Relay(_) => Capabilities {
             name: on.location().into(),
-            description: "an existing machine".into(),
+            description: "an existing computer".into(),
             kinds: vec![],
         },
     }
@@ -637,6 +718,14 @@ pub struct HostFacts {
     pub gvisor: Option<bool>,
     /// An Apple silicon Mac (Lume runs).
     pub apple_silicon: bool,
+    /// Linux with a usable `/dev/kvm` (Firecracker runs).
+    pub kvm: bool,
+    /// An Apple silicon Mac on macOS 26 or later (Apple's Containerization
+    /// runs).
+    pub apple_containers: bool,
+    /// An Apple silicon Mac on macOS 14 or later with cua's microVM monitor
+    /// (`cua-vz`) installed: microVMs with checkpoints and forks.
+    pub vz: bool,
 }
 
 impl HostFacts {
@@ -645,7 +734,31 @@ impl HostFacts {
         Self {
             gvisor: None,
             apple_silicon: cfg!(all(target_os = "macos", target_arch = "aarch64")),
+            kvm: cfg!(target_os = "linux")
+                && std::fs::OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open("/dev/kvm")
+                    .is_ok(),
+            apple_containers: cfg!(all(target_os = "macos", target_arch = "aarch64"))
+                && cua_vmm::host::macos_major().is_some_and(|m| m >= 26),
+            vz: vz_installed(),
         }
+    }
+}
+
+/// Whether macOS microVMs under `cua-vz` can run here: an Apple silicon
+/// Mac on macOS 14+ with the monitor and the guest init installed.
+fn vz_installed() -> bool {
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    {
+        cua_vmm::microvm::vz::unsupported_reason().is_none()
+            && cua_vmm::microvm::vz::vz_bin().is_some()
+            && cua_vmm::microvm::assets::init_bin().is_some()
+    }
+    #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+    {
+        false
     }
 }
 
@@ -674,7 +787,9 @@ pub fn validate(on: &On, kind: Kind, runtime: &Runtime) -> Result<Kind, Placemen
             return Err(PlacementError::new(
                 Axis::Kind,
                 kind.as_str(),
-                format!("--kind {kind} does not apply to {on}: it connects to an existing machine"),
+                format!(
+                    "--kind {kind} does not apply to {on}: it connects to an existing computer"
+                ),
                 vec!["auto".into()],
             ));
         }
@@ -683,7 +798,7 @@ pub fn validate(on: &On, kind: Kind, runtime: &Runtime) -> Result<Kind, Placemen
                 Axis::Runtime,
                 runtime.as_str(),
                 format!(
-                    "--runtime {runtime} does not apply to {on}: it connects to an existing machine"
+                    "--runtime {runtime} does not apply to {on}: it connects to an existing computer"
                 ),
                 vec!["auto".into()],
             ));
@@ -715,6 +830,11 @@ pub fn validate(on: &On, kind: Kind, runtime: &Runtime) -> Result<Kind, Placemen
         ));
     }
     if *runtime == Runtime::Auto {
+        return Ok(kind);
+    }
+    // Another machine's external runtime providers are its own: that
+    // machine checks the runtime when it creates the Space.
+    if matches!(on, On::Host(_)) && matches!(runtime, Runtime::Other(_)) {
         return Ok(kind);
     }
     let Some(runtime_kind) = caps.kind_of(runtime) else {
@@ -770,7 +890,7 @@ pub fn select(
             on: on.clone(),
             kind: Kind::Auto,
             runtime: Runtime::Auto,
-            reason: "an existing machine".into(),
+            reason: "an existing computer".into(),
         });
     }
     let caps = capabilities(on);
@@ -819,7 +939,7 @@ pub fn select(
     }
 
     // The image must offer that kind.
-    if kind == Kind::Container && image.only_vm() {
+    if matches!(kind, Kind::Container | Kind::MicroVm) && image.only_vm() {
         return Err(PlacementError::new(
             Axis::Kind,
             kind.as_str(),
@@ -832,15 +952,12 @@ pub fn select(
     }
     if image.known() {
         let fits = match kind {
-            Kind::Container => image.has(Variant::Rootfs),
+            // A microVM boots the container rootfs.
+            Kind::Container | Kind::MicroVm => image.has(Variant::Rootfs),
             _ => image.has(Variant::Containerdisk) || image.has(Variant::Lume),
         };
         if !fits {
-            let other = if kind == Kind::Container {
-                "vm"
-            } else {
-                "container"
-            };
+            let other = if kind == Kind::Vm { "container" } else { "vm" };
             return Err(PlacementError::new(
                 Axis::Image,
                 kind.as_str(),
@@ -880,11 +997,84 @@ pub fn select(
                     Runtime::Qemu
                 }
             }
+            // A Mac's microVMs run under cua's own monitor (checkpoints
+            // and forks), else on Apple's Containerization.
+            (On::Local, Kind::MicroVm) if host.vz => {
+                why.push(
+                    "microVMs on a Mac run on Virtualization.framework (cua-vz, with \
+                     checkpoints and forks)"
+                        .into(),
+                );
+                Runtime::Vz
+            }
+            (On::Local, Kind::MicroVm) if host.apple_containers => {
+                why.push("microVMs on a Mac run on Apple's Containerization".into());
+                Runtime::Containerization
+            }
             _ => offered.first().cloned().unwrap_or(Runtime::Auto),
         }
     };
 
     // The runtime must fit the image and the host.
+    if runtime == Runtime::Containerization && !host.apple_containers {
+        return Err(PlacementError::new(
+            Axis::Runtime,
+            "containerization",
+            "Apple's Containerization runs only on Apple silicon Macs with macOS 26 or later"
+                .into(),
+            with_auto(
+                offered
+                    .iter()
+                    .filter(|r| match r {
+                        Runtime::Containerization => false,
+                        Runtime::Firecracker => host.kvm,
+                        Runtime::Vz => host.vz,
+                        _ => true,
+                    })
+                    .map(|r| r.to_string()),
+            ),
+        ));
+    }
+    if runtime == Runtime::Vz && !host.vz {
+        return Err(PlacementError::new(
+            Axis::Runtime,
+            "vz",
+            "macOS microVMs (vz) run on an Apple silicon Mac with macOS 14 or later, with cua's \
+             monitor (cua-vz) installed next to cua"
+                .into(),
+            with_auto(
+                offered
+                    .iter()
+                    .filter(|r| match r {
+                        Runtime::Vz => false,
+                        Runtime::Firecracker => host.kvm,
+                        Runtime::Containerization => host.apple_containers,
+                        _ => true,
+                    })
+                    .map(|r| r.to_string()),
+            ),
+        ));
+    }
+    if runtime == Runtime::Firecracker && !host.kvm {
+        return Err(PlacementError::new(
+            Axis::Runtime,
+            "firecracker",
+            "Firecracker microVMs run only on Linux with KVM (/dev/kvm); use --kind container \
+             or --kind vm here (on a Mac, --runtime vz or containerization)"
+                .into(),
+            with_auto(
+                offered
+                    .iter()
+                    .filter(|r| match r {
+                        Runtime::Firecracker => false,
+                        Runtime::Vz => host.vz,
+                        Runtime::Containerization => host.apple_containers,
+                        _ => true,
+                    })
+                    .map(|r| r.to_string()),
+            ),
+        ));
+    }
     if runtime == Runtime::Lume && !host.apple_silicon {
         return Err(PlacementError::new(
             Axis::Runtime,
@@ -902,7 +1092,7 @@ pub fn select(
         return Err(PlacementError::new(
             Axis::On,
             "cloud",
-            cua_image::resolve::FLEET_MACOS_UNSUPPORTED.into(),
+            cua_image::resolve::CLOUD_MACOS_UNSUPPORTED.into(),
             vec!["local".into()],
         ));
     }
@@ -916,7 +1106,11 @@ pub fn select(
     }
     if image.known() {
         let needs: &[Variant] = match runtime {
-            Runtime::Gvisor | Runtime::Runc => &[Variant::Rootfs],
+            Runtime::Gvisor
+            | Runtime::Runc
+            | Runtime::Firecracker
+            | Runtime::Vz
+            | Runtime::Containerization => &[Variant::Rootfs],
             Runtime::Qemu | Runtime::Kubevirt => &[Variant::Containerdisk],
             Runtime::Lume => &[Variant::Lume],
             Runtime::Auto | Runtime::Other(_) => &[],
@@ -926,6 +1120,11 @@ pub fn select(
                 .iter()
                 .filter(|r| match r {
                     Runtime::Gvisor | Runtime::Runc => image.has(Variant::Rootfs),
+                    Runtime::Firecracker => image.has(Variant::Rootfs) && host.kvm,
+                    Runtime::Vz => image.has(Variant::Rootfs) && host.vz,
+                    Runtime::Containerization => {
+                        image.has(Variant::Rootfs) && host.apple_containers
+                    }
                     Runtime::Qemu | Runtime::Kubevirt => image.has(Variant::Containerdisk),
                     Runtime::Lume => image.has(Variant::Lume) && host.apple_silicon,
                     _ => true,
@@ -971,10 +1170,39 @@ mod tests {
     const MAC: HostFacts = HostFacts {
         gvisor: Some(true),
         apple_silicon: true,
+        kvm: false,
+        apple_containers: true,
+        vz: true,
+    };
+    /// macOS 26 without cua-vz (an install from before it shipped).
+    const MAC_26_NO_VZ: HostFacts = HostFacts {
+        gvisor: Some(true),
+        apple_silicon: true,
+        kvm: false,
+        apple_containers: true,
+        vz: false,
+    };
+    /// An Apple silicon Mac before macOS 26, without cua-vz.
+    const MAC_15: HostFacts = HostFacts {
+        gvisor: Some(true),
+        apple_silicon: true,
+        kvm: false,
+        apple_containers: false,
+        vz: false,
     };
     const LINUX_NO_GVISOR: HostFacts = HostFacts {
         gvisor: Some(false),
         apple_silicon: false,
+        kvm: false,
+        apple_containers: false,
+        vz: false,
+    };
+    const LINUX_KVM: HostFacts = HostFacts {
+        gvisor: Some(true),
+        apple_silicon: false,
+        kvm: true,
+        apple_containers: false,
+        vz: false,
     };
 
     fn linux() -> ImageFacts {
@@ -1000,6 +1228,19 @@ mod tests {
             On::Host("mac-mini".into())
         );
         assert_eq!(On::parse_or_host("local").unwrap(), On::Local);
+        // `auto` is the least-loaded of your machines, never a machine
+        // called "auto", and never what an omitted `on` means.
+        assert_eq!(On::parse("auto").unwrap(), On::Auto);
+        assert_eq!(On::parse(" AUTO ").unwrap(), On::Auto);
+        assert_eq!(On::parse_or_host("auto").unwrap(), On::Auto);
+        assert_eq!(On::Auto.to_string(), "auto");
+        assert!(!On::Auto.is_existing_machine());
+        assert!(validate(&On::Auto, Kind::Vm, &Runtime::Lume).is_ok());
+        // `cluster` is no location (it was never released).
+        assert_eq!(
+            On::parse_or_host("cluster").unwrap(),
+            On::Host("cluster".into())
+        );
         // Engine and kind words keep their pointer to --runtime / --kind.
         for word in ["docker", "vm", "qemu", "lume", "fleet", "x:y"] {
             assert!(On::parse_or_host(word).is_err(), "{word}");
@@ -1026,7 +1267,11 @@ mod tests {
         assert_eq!(Kind::parse("VM").unwrap(), Vm);
         assert_eq!(rt("runsc"), Runtime::Gvisor);
         assert_eq!(rt(""), Runtime::Auto);
-        assert_eq!(rt("firecracker"), Runtime::Other("firecracker".into()));
+        assert_eq!(rt("firecracker"), Runtime::Firecracker);
+        assert_eq!(Kind::parse("microvm").unwrap(), MicroVm);
+        // Modal's VM runtime keeps its wire word.
+        assert_eq!(rt("microvm"), Runtime::Other("microvm".into()));
+        assert_eq!(rt("youki"), Runtime::Other("youki".into()));
     }
 
     #[test]
@@ -1037,13 +1282,13 @@ mod tests {
             ("gvisor", "--runtime gvisor"),
             ("docker", "--kind container"),
             ("vm", "--kind vm"),
-            ("fleet", "`cloud`"),
+            ("fleet", "Cua Cloud has ended"),
         ] {
             let e = On::parse(word).unwrap_err();
             assert_eq!(e.axis, Axis::On, "{word}");
             assert!(e.message.contains(hint), "{word}: {}", e.message);
             assert!(e.valid.contains(&"local".to_string()), "{word}");
-            assert!(e.valid.contains(&"cloud".to_string()), "{word}");
+            assert!(!e.valid.contains(&"cloud".to_string()), "{word}");
         }
         assert!(
             On::parse("direct:")
@@ -1053,7 +1298,13 @@ mod tests {
         );
         let e = Kind::parse("qemu").unwrap_err();
         assert!(e.message.contains("runtime"), "{}", e.message);
-        assert_eq!(e.valid, ["auto", "container", "vm"]);
+        assert_eq!(e.valid, ["auto", "container", "vm", "microvm"]);
+        assert!(
+            Kind::parse("firecracker")
+                .unwrap_err()
+                .message
+                .contains("runtime")
+        );
         let e = Runtime::parse("vm").unwrap_err();
         assert!(e.message.contains("--kind vm"), "{}", e.message);
     }
@@ -1082,6 +1333,13 @@ mod tests {
             (On::Local, Vm, "gvisor", Err(Axis::Runtime)),
             (On::Local, Vm, "runc", Err(Axis::Runtime)),
             (On::Local, Vm, "kubevirt", Err(Axis::Runtime)),
+            (On::Local, Auto, "firecracker", Ok(MicroVm)),
+            (On::Local, MicroVm, "auto", Ok(MicroVm)),
+            (On::Local, MicroVm, "firecracker", Ok(MicroVm)),
+            (On::Local, MicroVm, "qemu", Err(Axis::Runtime)),
+            (On::Local, MicroVm, "gvisor", Err(Axis::Runtime)),
+            (On::Local, Vm, "firecracker", Err(Axis::Runtime)),
+            (On::Local, Container, "firecracker", Err(Axis::Runtime)),
             // cloud
             (On::Cloud, Auto, "auto", Ok(Auto)),
             (On::Cloud, Container, "auto", Ok(Container)),
@@ -1098,6 +1356,8 @@ mod tests {
             (On::Cloud, Vm, "gvisor", Err(Axis::Runtime)),
             (On::Cloud, Vm, "qemu", Err(Axis::Runtime)),
             (On::Cloud, Vm, "lume", Err(Axis::Runtime)),
+            (On::Cloud, MicroVm, "auto", Err(Axis::Kind)),
+            (On::Cloud, Auto, "firecracker", Err(Axis::Runtime)),
             // an existing machine
             (On::Direct("h:1".into()), Auto, "auto", Ok(Auto)),
             (On::Direct("h:1".into()), Container, "auto", Err(Axis::Kind)),
@@ -1141,7 +1401,14 @@ mod tests {
         );
         let e = validate(&On::Cloud, Vm, &Runtime::Gvisor).unwrap_err();
         assert_eq!(e.valid, ["auto", "kubevirt"]);
-        let e = validate(&On::Local, Vm, &Runtime::Other("firecracker".into())).unwrap_err();
+        let e = validate(&On::Local, Vm, &Runtime::Firecracker).unwrap_err();
+        assert_eq!(e.valid, ["auto", "qemu", "lume"]);
+        assert!(
+            e.message.contains("runs microvm sandboxes, not vm ones"),
+            "{}",
+            e.message
+        );
+        let e = validate(&On::Local, Vm, &Runtime::Other("youki".into())).unwrap_err();
         assert_eq!(e.valid, ["auto", "qemu", "lume"]);
     }
 
@@ -1250,6 +1517,104 @@ mod tests {
     }
 
     #[test]
+    fn a_microvm_boots_the_rootfs_on_linux_with_kvm() {
+        let s = select(&On::Local, MicroVm, &Runtime::Auto, &linux(), &LINUX_KVM).unwrap();
+        assert_eq!((s.kind, s.runtime), (MicroVm, Runtime::Firecracker));
+        let s = select(
+            &On::Local,
+            Auto,
+            &Runtime::Firecracker,
+            &linux(),
+            &LINUX_KVM,
+        )
+        .unwrap();
+        assert_eq!(s.kind, MicroVm);
+        // auto never picks a microVM.
+        let s = select(&On::Local, Auto, &Runtime::Auto, &linux(), &LINUX_KVM).unwrap();
+        assert_eq!(s.kind, Container);
+        // No KVM and no Containerization (a Mac before macOS 26): refused
+        // with the alternatives.
+        let e = select(&On::Local, MicroVm, &Runtime::Auto, &linux(), &MAC_15).unwrap_err();
+        assert_eq!(e.axis, Axis::Runtime);
+        assert!(e.message.contains("Linux with KVM"), "{}", e.message);
+        // A disk-only image has no rootfs to boot.
+        let disk = img(Some("linux"), &[Containerdisk]);
+        let e = select(&On::Local, MicroVm, &Runtime::Auto, &disk, &LINUX_KVM).unwrap_err();
+        assert_eq!(e.axis, Axis::Image);
+        assert_eq!(e.valid, ["auto", "vm"]);
+        let mac = img(Some("macos"), &[Lume]);
+        assert!(select(&On::Local, MicroVm, &Runtime::Auto, &mac, &LINUX_KVM).is_err());
+    }
+
+    #[test]
+    fn a_microvm_on_a_mac_runs_under_cua_vz_else_apples_containerization() {
+        // `--kind microvm` on a Mac with cua-vz: Virtualization.framework,
+        // whose microVMs checkpoint and fork.
+        let s = select(&On::Local, MicroVm, &Runtime::Auto, &linux(), &MAC).unwrap();
+        assert_eq!((s.kind, s.runtime), (MicroVm, Runtime::Vz));
+        assert!(
+            s.reason.contains("Virtualization.framework"),
+            "{}",
+            s.reason
+        );
+        for w in ["vz", "virtualization"] {
+            let s = select(&On::Local, Auto, &rt(w), &linux(), &MAC).unwrap();
+            assert_eq!((s.kind, s.runtime), (MicroVm, Runtime::Vz));
+        }
+        // Without cua-vz (an older install) on macOS 26: Apple's
+        // Containerization, as before.
+        let s = select(&On::Local, MicroVm, &Runtime::Auto, &linux(), &MAC_26_NO_VZ).unwrap();
+        assert_eq!((s.kind, s.runtime), (MicroVm, Runtime::Containerization));
+        assert!(s.reason.contains("Containerization"), "{}", s.reason);
+        // Containerization by name (or its short words) where it runs.
+        for w in ["containerization", "apple", "apple-container"] {
+            let s = select(&On::Local, Auto, &rt(w), &linux(), &MAC).unwrap();
+            assert_eq!((s.kind, s.runtime), (MicroVm, Runtime::Containerization));
+        }
+        // `auto` keeps a Mac's Linux Spaces on their default (a container).
+        let s = select(&On::Local, Auto, &Runtime::Auto, &linux(), &MAC).unwrap();
+        assert_eq!(s.kind, Container);
+        // Containerization: not before macOS 26, nor on Linux.
+        for host in [&MAC_15, &LINUX_KVM] {
+            let e = select(
+                &On::Local,
+                MicroVm,
+                &Runtime::Containerization,
+                &linux(),
+                host,
+            )
+            .unwrap_err();
+            assert_eq!(e.axis, Axis::Runtime);
+            assert!(e.message.contains("macOS 26"), "{}", e.message);
+        }
+        // vz: not without cua-vz, nor on Linux; the alternatives offered
+        // are the ones that run there.
+        let e = select(&On::Local, MicroVm, &Runtime::Vz, &linux(), &MAC_26_NO_VZ).unwrap_err();
+        assert_eq!(e.axis, Axis::Runtime);
+        assert!(e.message.contains("macOS 14"), "{}", e.message);
+        assert_eq!(e.valid, ["auto", "containerization"]);
+        let e = select(&On::Local, MicroVm, &Runtime::Vz, &linux(), &LINUX_KVM).unwrap_err();
+        assert_eq!(e.valid, ["auto", "firecracker"]);
+        let e = select(&On::Local, MicroVm, &Runtime::Firecracker, &linux(), &MAC).unwrap_err();
+        assert!(e.message.contains("--runtime vz"), "{}", e.message);
+        assert_eq!(e.valid, ["auto", "vz", "containerization"]);
+        // A disk-only or macOS image has no rootfs to boot.
+        let disk = img(Some("linux"), &[Containerdisk]);
+        let e = select(&On::Local, MicroVm, &Runtime::Auto, &disk, &MAC).unwrap_err();
+        assert_eq!(e.axis, Axis::Image);
+        let e = select(&On::Local, MicroVm, &Runtime::Vz, &disk, &MAC).unwrap_err();
+        assert_eq!(e.axis, Axis::Image, "{}", e.message);
+        let mac = img(Some("macos"), &[Lume]);
+        assert!(select(&On::Local, MicroVm, &Runtime::Auto, &mac, &MAC).is_err());
+        // They are microVM runtimes, not VM or container ones.
+        for r in [Runtime::Containerization, Runtime::Vz] {
+            assert!(validate(&On::Local, Vm, &r).is_err());
+            assert!(validate(&On::Local, Container, &r).is_err());
+            assert_eq!(r.builtin_kind(), Some(MicroVm));
+        }
+    }
+
+    #[test]
     fn host_limits() {
         let mac = img(Some("macos"), &[Lume]);
         let e = select(&On::Local, Auto, &Runtime::Auto, &mac, &LINUX_NO_GVISOR).unwrap_err();
@@ -1260,29 +1625,45 @@ mod tests {
     }
 
     #[test]
+    fn every_own_cloud_word_parses_as_a_location() {
+        for w in ["aws", "gcp", "hetzner", "modal", "HETZNER"] {
+            assert_eq!(
+                On::parse(w).unwrap(),
+                On::Provider(w.to_ascii_lowercase()),
+                "{w}"
+            );
+        }
+        assert!(crate::provider::is_cloud_location("hetzner"));
+        assert!(crate::provider::is_provider_location("hetzner"));
+        // The error for an unknown word lists hetzner among the valid ones.
+        let e = On::parse("hetznr").unwrap_err();
+        assert!(e.valid.iter().any(|v| v == "hetzner"), "{:?}", e.valid);
+    }
+
+    #[test]
     fn providers_are_registered_and_validated_by_their_capabilities() {
         register_provider(Capabilities {
             name: "Testbox".into(),
             description: "a test provider".into(),
             kinds: vec![KindSupport {
                 kind: Container,
-                runtimes: vec![Runtime::Other("firecracker".into())],
+                runtimes: vec![Runtime::Other("youki".into())],
             }],
         })
         .unwrap();
         let on = On::parse("testbox").unwrap();
         assert_eq!(on, On::Provider("testbox".into()));
         assert!(locations().iter().any(|c| c.name == "testbox"));
-        assert_eq!(validate(&on, Auto, &rt("firecracker")).unwrap(), Container);
+        assert_eq!(validate(&on, Auto, &rt("youki")).unwrap(), Container);
         let e = validate(&on, Vm, &Runtime::Auto).unwrap_err();
         assert_eq!(
             (e.axis, e.valid.clone()),
             (Axis::Kind, vec!["auto".into(), "container".into()])
         );
         let e = validate(&on, Auto, &Runtime::Gvisor).unwrap_err();
-        assert_eq!(e.valid, ["auto", "firecracker"]);
+        assert_eq!(e.valid, ["auto", "youki"]);
         let s = select(&on, Auto, &Runtime::Auto, &ImageFacts::default(), &MAC).unwrap();
-        assert_eq!((s.kind, s.runtime), (Container, rt("firecracker")));
+        assert_eq!((s.kind, s.runtime), (Container, rt("youki")));
         assert!(
             register_provider(Capabilities {
                 name: "cloud".into(),

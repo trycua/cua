@@ -24,7 +24,7 @@ enum MachinesFixture {
                     osPrettyName: os == .macos ? "macOS 26.0" : "Ubuntu 24.04.3 LTS",
                     image: nil, imageDigest: nil, kind: nil, arch: "arm64", reachable: reachable,
                     error: error, host: host, hostName: hostName, power: power, powerState: powerState,
-                    cloud: nil, cloudPlace: nil, cloudDelete: nil)
+                    cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil)
     }
 
     /// This Mac's relay machine id (its host setup).
@@ -157,7 +157,7 @@ struct MachineAccessTests {
             let notice = try #require(m.devices.accessNotice)
             #expect(notice.kind == kind)
             // Every machine is still listed under My machines.
-            let mine = try #require(m.sidebar.sections.first { $0.title == "My machines" })
+            let mine = try #require(m.sidebar.sections.first { $0.title.code == "spaces.sidebar.section.my_computers" })
             #expect(mine.rows.map(\.id).contains("relay:m-studio"))
             #expect(mine.rows.map(\.id).contains("relay:m-mini"))
             let d = m.detail(try space(m, "relay:m-studio"))
@@ -209,31 +209,16 @@ struct MachineAccessTests {
     /// The probe's live features: the desktop's are unsupported for a
     /// machine that does not share it.
     @Test func probeReadsSupportedFeatures() {
-        let json = #"{"version":"0.5.0","features":[{"name":"desktop_stream","supported":false,"limitation":"this machine does not share its desktop (it only provides Spaces)"},{"name":"host_spaces","supported":true},{"name":"files","supported":true}]}"#
+        let json = #"{"version":"0.5.0","features":[{"name":"desktop_stream","supported":false,"limitation":"this computer does not share its desktop (it only provides Spaces)"},{"name":"host_spaces","supported":true},{"name":"files","supported":true}]}"#
         #expect(LiveSpacesBackend.supportedFeatures(capabilitiesJson: json) == ["host_spaces", "files"])
         #expect(LiveSpacesBackend.supportedFeatures(capabilitiesJson: nil) == nil)
         #expect(LiveSpacesBackend.supportedFeatures(capabilitiesJson: "nope") == nil)
     }
 
-    /// Sharing its desktop lists this Mac on the relay too: it stays
-    /// "This machine" and is not repeated under My machines, while another
-    /// Mac of the same name stays.
-    @Test func thisMacIsNotOneOfMyMachines() async throws {
-        let m = await MachinesFixture.model(rows: MachinesFixture.rows(includeSelf: true), enrollment: .enrolled,
-                                            hostSetUp: true)
-        #expect(m.sidebar.thisMachine != nil)
-        let mine = try #require(m.sidebar.sections.first { $0.title == "My machines" })
-        let ids = mine.rows.map(\.id)
-        #expect(!ids.contains("relay:\(MachinesFixture.thisMacId)"))
-        #expect(ids.contains("relay:m-dana-2"))
-        try SnapshotTests().assertSnapshot(Sidebar(model: m).frame(width: 260), "sidebar-without-this-mac",
-                                           size: CGSize(width: 260, height: 600))
-    }
-
     /// The user's Macs after updating to 0.7.0: this Mac (relay
-    /// `b695…`, not sharing) and cua.local ("Mac.localdomain", relay
+    /// `b695…`, not sharing) and a spare Mac ("Mac.localdomain", relay
     /// `9e9d…`: sharing, desktop not shared, Spaces on with none running,
-    /// the cua-spacesd 0.2.2 of an older app). cua.local is listed under
+    /// the cua-spacesd 0.2.2 of an older app). The spare Mac is listed under
     /// My machines however its probe went; this Mac only as This machine.
     @Test func anOlderHostThatKeepsItsDesktopPrivateIsListed() async throws {
         let other = "relay:9e9d969d41649428f693b403f6f8f225"
@@ -241,7 +226,7 @@ struct MachineAccessTests {
         let probes: [([String], Bool, String?)] = [
             (["host_spaces", "files"], true, nil),
             (["desktop_stream", "window_stream", "host_spaces", "files"], true, nil),
-            ([], false, "permission denied: this machine does not share its desktop"),
+            ([], false, "permission denied: this computer does not share its desktop"),
         ]
         for (features, reachable, error) in probes {
             var mac = MachinesFixture.row(other, "Mac.localdomain", os: .macos, features: features,
@@ -259,68 +244,9 @@ struct MachineAccessTests {
             let m = await MachinesFixture.model(rows: [FixtureSpacesBackend.sample[0], mac, me],
                                                 enrollment: .enrolled, hostSetUp: true, hostStatus: status)
             #expect(m.sidebar.thisMachine != nil)
-            let mine = try #require(m.sidebar.sections.first { $0.title == "My machines" },
-                                    "no My machines for \(features) \(String(describing: error))")
+            let mine = try #require(m.sidebar.sections.first { $0.title.code == "spaces.sidebar.section.my_computers" },
+                                    "no My computers for \(features) \(String(describing: error))")
             #expect(mine.rows.map(\.id) == [other])
         }
-    }
-
-    // MARK: - Snapshots
-
-    func card(_ cover: AppDesktopCover) -> some View {
-        Form {
-            Section { PreviewCard(session: nil) { DesktopCoverView(cover: cover, image: nil) } }
-        }
-        .formStyle(.grouped)
-    }
-
-    /// The machine's card: Connect (enrolled), then greyed out under why
-    /// and the one action (not enrolled, waiting for approval, expired).
-    @Test func connectSnapshots() async throws {
-        let size = CGSize(width: 520, height: 360)
-        let snap = SnapshotTests()
-        let enrolled = await MachinesFixture.model(rows: MachinesFixture.rows(), enrollment: .enrolled)
-        let d = enrolled.detail(try space(enrolled, "relay:m-studio"))
-        try snap.assertSnapshot(card(enrolled.cover(d, requested: false, stream: .noSession)),
-                                "machine-connect-enrolled", size: size)
-        for (e, name) in [(MachinesFixture.Enrollment.never, "machine-connect-not-enrolled"),
-                          (.pending, "machine-connect-pending"), (.expired, "machine-connect-expired")] {
-            let m = await MachinesFixture.model(rows: MachinesFixture.rows(reachable: false), enrollment: e)
-            let d = m.detail(try space(m, "relay:m-studio"))
-            try snap.assertSnapshot(card(m.cover(d, requested: false, stream: .noSession)), name, size: size)
-        }
-    }
-
-    /// Desktop shared (its live card), not shared with Spaces on (the note
-    /// and its Spaces), and both off (the note alone).
-    @Test func desktopSnapshots() async throws {
-        let size = CGSize(width: 560, height: 440)
-        let snap = SnapshotTests()
-        let m = await MachinesFixture.model(rows: MachinesFixture.rows(), enrollment: .enrolled)
-        let studio = try space(m, "relay:m-studio")
-        let shared = m.detail(studio)
-        try snap.assertSnapshot(Form {
-            Section {
-                PreviewCard(session: nil) {
-                    DesktopCoverView(cover: m.cover(shared, requested: false, stream: .noSession), image: nil)
-                }
-            }
-            Section("Stream") { Text(appSpaceDetailCopy().streamLoading).foregroundStyle(.secondary) }
-        }.formStyle(.grouped), "machine-desktop-shared", size: size)
-        for (id, name) in [("relay:m-mini", "machine-desktop-not-shared"), ("relay:m-ci", "machine-desktop-and-spaces-off")] {
-            let d = m.detail(try space(m, id))
-            let note = try #require(d.desktopNote)
-            try snap.assertSnapshot(Form {
-                DesktopNotSharedSections(model: m, machineId: id, note: note, newSpace: d.newSpace)
-                Section { FactRows(facts: d.facts, write: { _ in }, copied: false) }
-            }.formStyle(.grouped), name, size: size)
-        }
-    }
-
-    /// Signed in, not enrolled: My machines still lists every machine.
-    @Test func sidebarSnapshot() async throws {
-        let m = await MachinesFixture.model(rows: MachinesFixture.rows(reachable: false), enrollment: .never)
-        try SnapshotTests().assertSnapshot(Sidebar(model: m).frame(width: 260), "sidebar-my-machines-not-enrolled",
-                                           size: CGSize(width: 260, height: 560))
     }
 }

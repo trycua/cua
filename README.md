@@ -66,7 +66,7 @@ Bring your own agent and model, or explore CUA-S1 for specialized decisions. Cua
 
 ## Cua Spaces
 
-Cua Spaces is a desktop app that gives your agents full desktops. Each desktop is a Space: a macOS VM built locally on your Mac, or a Linux or Omarchy image. Spaces run on your Mac, on other machines you own, and in [your own cloud account](https://cua.ai/docs/cua-sdk/guides/your-cloud) (AWS, Google Cloud or Modal), and the app keeps them in your menu bar and notch.
+Cua Spaces is a desktop app that gives your agents full desktops. Each desktop is a Space: a macOS VM built locally on your Mac, or a Linux or Omarchy image. Spaces run on your Mac, on other machines you own, and in [your own cloud account](https://cua.ai/docs/cua-sdk/guides/local-runtimes#your-own-cloud) (AWS, Google Cloud or Modal), and the app keeps them in your menu bar and notch.
 
 - **Teleport.** Move a signed-in app, such as Chrome or Slack, into a Space and it opens there still signed in. Your sessions stay in the Cua Keyvault, encrypted on your Mac, and reach a Space only after you approve.
 - **Multiplayer.** You and your agents work on the same desktop, each with your own cursor. Step in to make a choice, then hand the desktop back.
@@ -80,11 +80,11 @@ https://github.com/user-attachments/assets/a2ccc86b-10d0-48c0-bee6-7ae652ba1c59
 curl -fsSL https://cua.ai/install.sh | sh
 ```
 
-On macOS the installer selects the Cua Spaces app by default and adds the `cua` CLI. You can also [download the signed `.dmg`](https://github.com/trycua/cua/releases/download/cua-spaces-v0.1.0/cua-spaces-0.1.0-darwin-universal.dmg), or get the `.pkg` from the [Cua Spaces 0.1.0 release](https://github.com/trycua/cua/releases/tag/cua-spaces-v0.1.0).
+On macOS the installer selects the Cua Spaces app by default and adds the `cua` CLI. You can also [download the signed `.dmg`](https://github.com/trycua/cua/releases/download/cua-spaces-v0.9.4/cua-spaces-0.9.4-darwin-universal.dmg), or get the `.pkg` from the [Cua Spaces 0.9.4 release](https://github.com/trycua/cua/releases/tag/cua-spaces-v0.9.4).
 
-Spaces is free for individuals. Pro and Teams plans are coming soon. The app is source-available under [FSL-1.1-MIT](#licensing).
+Spaces is free for individuals. Pro is $18 a month and Teams is $30 per seat a month, available now from 1 seat. See [pricing](https://cua.ai/pricing). The app is source-available under [FSL-1.1-MIT](#licensing).
 
-**[Quickstart](https://cua.ai/docs/spaces/quickstart)** | **[Teleport an app](https://cua.ai/docs/spaces/guides/teleport-an-app)** | **[Share a Space](https://cua.ai/docs/spaces/guides/share-a-space)** | **[Host Spaces on a spare Mac (relay, Tailscale or SSH)](https://cua.ai/docs/start-here/host-spaces-on-your-spare-mac)** | **[Your own cloud](https://cua.ai/docs/cua-sdk/guides/your-cloud)** | **[App source](apps/cua-spaces-macos/README.md)**
+**[Quickstart](https://cua.ai/docs/spaces/quickstart)** | **[Teleport an app](https://cua.ai/docs/spaces/guides/teleport-an-app)** | **[Share a Space](https://cua.ai/docs/spaces/guides/share-a-space)** | **[Host Spaces on a spare Mac (relay, Tailscale or SSH)](https://cua.ai/docs/spaces/guides/add-a-computer#use-a-spare-mac-to-host-spaces)** | **[Your own cloud](https://cua.ai/docs/cua-sdk/guides/local-runtimes#your-own-cloud)** | **[App source](apps/cua-spaces-macos/README.md)**
 
 ---
 
@@ -148,7 +148,7 @@ curl -fsSL https://cua.ai/install.sh | sh
 irm https://cua.ai/install.ps1 | iex
 ```
 
-In a terminal the script shows a short checklist: the `cua` CLI, the Cua Spaces app (default on macOS), the cua-driver MCP and skill for your agents, and hosting this machine. It then runs `cua auth login`, which signs you in and offers to install cua skills and the cua MCP server into your AI coding agents (Claude Code, Codex, Cursor, and others). Preselect items with `sh -s -- --select cua-driver`, or skip the checklist with `--only cua-driver`. See [the installer options](scripts/install/README.md).
+In a terminal the script first says what Cua Spaces is. The command-line tools (the `cua` program) are always installed; you choose whether to add the Cua Spaces app (on by default) and Cua Driver, which lets AI agents use your apps while you keep working (off by default). It then runs `cua auth login`, which signs you in and offers to set up your AI coding agents (Claude Code, Codex, Cursor, and others). The app asks on its first run whether your other devices may use this computer. Add Cua Driver with `sh -s -- --select cua-driver`, or skip the choice with `--only cua-driver`. See [the installer options](scripts/install/README.md).
 
 ```sh
 cua sb create ubuntu --name dev          # a gVisor container, set up on first use
@@ -166,8 +166,8 @@ async with Sandbox.ephemeral(Image.linux(), local=True) as sb:
     print((await sb.shell.run("uname -a")).stdout)
 ```
 
-- **SDK:** the same API in Python (`pip install cua`), TypeScript (`@trycua/cua`), Swift (`Cua`) and Kotlin (generated bindings), running embedded in your process or through a shared `cua daemon`.
-- **Sandboxes need no agent inside.** Readiness comes from the runtime and optional port probes. Images that ship cua-spacesd (port 3211) add processes, files, screenshots, input through cua-driver, and low-latency video and audio streaming.
+- **SDK:** the same API in Python (`pip install cua`), TypeScript (`@trycua/cua`) and Rust (`cua-sdk`), running embedded in your process or through a shared `cua daemon`. Swift and Kotlin bindings are not yet released.
+- **Sandboxes need no agent inside.** Readiness comes from the runtime and optional port probes. Images that ship cua-spacesd (port 3211) add processes, files, screenshots, input through cua-driver, and low-latency video and audio streaming. There is no agent layer in the SDK either: drive sandboxes from your own harness ([guide](https://cua.ai/docs/cua-sdk/guides/own-harness)).
 - **Your own machines.** `cua host setup` makes this machine reachable through the cua.ai relay with no port forwarding.
 
 **[SDK README](libs/cua/README.md)** | **[Quickstart](https://cua.ai/docs/cua-sdk/quickstart)** | **[CLI reference](https://cua.ai/docs/cua-cli/reference/cli)** | **[Sandbox SDK reference](https://cua.ai/docs/cua-sdk/reference/sandbox)**
@@ -213,7 +213,7 @@ uv tool run --from 'cua-bench[browser]' playwright install chromium
 | [cua SDK and CLI](libs/cua/README.md)                   | Rust core and the `cua` command: sandboxes, local runtimes, images, Spaces           |
 | [cua (Python)](libs/cua/python/README.md)               | The cua SDK for Python (`pip install cua`)                                           |
 | [@trycua/cua](libs/cua/typescript/README.md)            | The cua SDK for Node and the browser, plus `@trycua/cua/spaces`                      |
-| [Cua (Swift)](libs/cua/swift/README.md)                 | The cua SDK for Swift (SwiftPM, XCFramework)                                         |
+| [Cua (Swift)](libs/cua/swift/README.md)                 | The cua SDK for Swift (SwiftPM, XCFramework; not yet released)                       |
 | [cua-sandbox](libs/python/cua-sandbox/README.md)        | High-level Python `Sandbox`/`Image`/`Pool` API, a thin wrapper over the cua SDK      |
 | [cua-spacesd](libs/cua-spacesd/README.md)         | In-sandbox daemon on port 3211: processes, files, desktop, streaming (gRPC)          |
 | [Cua Spaces for macOS](apps/cua-spaces-macos/README.md) | The Spaces app on macOS: menu bar and notch, live streams, teleport, agent threads   |
@@ -224,7 +224,7 @@ uv tool run --from 'cua-bench[browser]' playwright install chromium
 
 ### Deprecated packages
 
-Cua no longer maintains these. They will not receive updates or fixes, and existing releases stay on npm and PyPI. See [Migrate from deprecated packages](https://cua.ai/docs/cua-sdk/guides/migrate-from-deprecated-packages).
+Cua no longer maintains these. They will not receive updates or fixes, and existing releases stay on npm and PyPI. See [Migrate from deprecated packages](https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended#deprecated-packages).
 
 | Package                                                  | Registry | Use instead                                                                                                                                      |
 | -------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -242,7 +242,7 @@ Cua no longer maintains these. They will not receive updates or fixes, and exist
 - [Blog](https://cua.ai/blog): tutorials, updates, and research
 - [Discord](https://discord.com/invite/mVnXXpdE85): community support and discussions
 - [GitHub Issues](https://github.com/trycua/cua/issues): bug reports and feature requests
-- [Security](SECURITY.md): private vulnerability reporting
+- [Security](.github/SECURITY.md): private vulnerability reporting
 
 ## Citation
 
@@ -262,15 +262,15 @@ For reproducibility, include the Cua release or commit used in your experiments.
 
 ## Contributing
 
-We welcome contributions. See our [Contributing Guidelines](CONTRIBUTING.md) for details.
+We welcome contributions. See our [Contributing Guidelines](.github/CONTRIBUTING.md) for details.
 
 ## Licensing
 
 Everything outside Cua Spaces and Cua Driver Bench is MIT-licensed ([LICENSE](LICENSE.md)): the cua SDK and its Python, TypeScript, Swift and Kotlin packages, the `cua` command and `cua daemon`, Cua Driver, Lume and the rest of this repository unless a directory says otherwise.
 Cua Spaces is source-available under [FSL-1.1-MIT](https://fsl.software): the Spaces apps, cua-spacesd, the Cua Keyvault, teleport, Cua Volume (`cua-volume`) and the streaming client, codecs and viewers. The streaming wire protocol stays MIT. It is free to use, self-host and build on, with no competing hosted service, and each release becomes MIT two years after it ships.
-Cua Driver Bench (`benchmarks/cua-driver-bench`) is under the same [FSL-1.1-MIT](benchmarks/cua-driver-bench/LICENSE); versions published before 11 Oct 2026 (#4973, #4978) were MIT.
-The MIT parts never depend on the FSL parts. Some subdirectories carry their own licence; [LICENSING.md](LICENSING.md) lists each one and how the two fit together.
-Offering Spaces, or Cua Driver Bench, as a hosted or managed service? See [COMMERCIAL.md](COMMERCIAL.md). For use of our names and logo, see [TRADEMARKS.md](TRADEMARKS.md).
+Cua Driver Bench (`libs/cua-driver-bench`) is under the same [FSL-1.1-MIT](libs/cua-driver-bench/LICENSE); versions published before 11 Oct 2026 (#4973, #4978) were MIT.
+The MIT parts never depend on the FSL parts. Some subdirectories carry their own licence; [LICENSING.md](legal/LICENSING.md) lists each one and how the two fit together.
+Offering Spaces, or Cua Driver Bench, as a hosted or managed service? See [COMMERCIAL.md](legal/COMMERCIAL.md). For use of our names and logo, see [TRADEMARKS.md](legal/TRADEMARKS.md).
 
 Third-party components have their own licenses:
 
@@ -305,8 +305,8 @@ Apple, macOS, Ubuntu, Canonical, and Microsoft are trademarks of their respectiv
 
 Thank you to all our [GitHub Sponsors](https://github.com/sponsors/trycua).
 
-|                                                       [Adam Cohen Hillel](https://github.com/adamcohenhillel)                                                        |                                                         [CodeRabbit](https://github.com/coderabbitai)                                                         |                                                         [Zephyr Cloud IO](https://github.com/ZephyrCloudIO)                                                         |
-| :------------------------------------------------------------------------------------------------------------------------------------------------------------------: | :-----------------------------------------------------------------------------------------------------------------------------------------------------------: | :-----------------------------------------------------------------------------------------------------------------------------------------------------------------: |
-| <a href="https://github.com/adamcohenhillel"><img src="https://avatars.githubusercontent.com/u/633840?s=128&v=4" alt="Adam Cohen Hillel" width="64" height="64"></a> | <a href="https://github.com/coderabbitai"><img src="https://avatars.githubusercontent.com/u/132028505?s=128&v=4" alt="CodeRabbit" width="64" height="64"></a> | <a href="https://github.com/ZephyrCloudIO"><img src="https://avatars.githubusercontent.com/u/144168943?s=128&v=4" alt="Zephyr Cloud IO" width="64" height="64"></a> |
+|                                                         [CodeRabbit](https://github.com/coderabbitai)                                                         |                                                         [Zephyr Cloud IO](https://github.com/ZephyrCloudIO)                                                         |
+| :-----------------------------------------------------------------------------------------------------------------------------------------------------------: | :-----------------------------------------------------------------------------------------------------------------------------------------------------------------: |
+| <a href="https://github.com/coderabbitai"><img src="https://avatars.githubusercontent.com/u/132028505?s=128&v=4" alt="CodeRabbit" width="64" height="64"></a> | <a href="https://github.com/ZephyrCloudIO"><img src="https://avatars.githubusercontent.com/u/144168943?s=128&v=4" alt="Zephyr Cloud IO" width="64" height="64"></a> |
 
 </div>

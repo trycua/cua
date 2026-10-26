@@ -19,7 +19,6 @@ use std::any::Any;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use cua_fleet::FleetClient;
 use cua_spaces::SpacesBuilder;
 
 /// What an extension sees of the runtime being built.
@@ -30,8 +29,6 @@ pub struct ExtensionContext<'a> {
     /// Whether `home` was set explicitly (tests and fixtures) rather than
     /// defaulted.
     pub home_explicit: bool,
-    /// The Fleet client, when configured.
-    pub fleet: Option<&'a FleetClient>,
     /// A fixture home standing in for the host's app data
     /// (`RuntimeConfig::teleport_home`): nothing may read the real machine.
     pub teleport_home: Option<&'a Path>,
@@ -91,6 +88,19 @@ pub trait AttachedExtension: Send + Sync + 'static {
     ) -> cua_spaces::extension::BoxFuture<'a, ()> {
         let _ = runtime;
         Box::pin(async {})
+    }
+
+    /// Batch runs on the account's machines (`SpaceService.PoolRequest`):
+    /// the answer to one request when this extension coordinates them
+    /// (`target` `local` or `pool`; status and JSON body).
+    fn pool_request<'a>(
+        &'a self,
+        target: &'a str,
+        method: &'a str,
+        params: serde_json::Value,
+    ) -> Option<cua_spaces::extension::BoxFuture<'a, (u16, serde_json::Value)>> {
+        let _ = (target, method, params);
+        None
     }
 
     /// For [`crate::Runtime::attached`] (downcasting to the concrete type).

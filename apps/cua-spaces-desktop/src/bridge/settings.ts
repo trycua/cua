@@ -9,15 +9,17 @@
 // runtimes, launch at login, usage data, the update channel, the
 // experiments, Welcome's "Show again", the coding agents (`model.agents`)
 // and the Keyvault's switches (`model.keyvault`).
-import type { AppLoginItemStatus, AppSettingsInput, AppTelemetryInput } from "../native/generated/index";
+import type { AppLoginItemStatus, AppSettingsInput, AppTeamInput, AppTelemetryInput } from "../native/generated/index";
 import type { AppModel } from "../model/app-model";
 import { words } from "../model/errors";
 import { bounded } from "../model/time";
 import { string } from "./args";
+import { consentMayHaveChanged } from "../crash-reporting";
 import type { BridgeContext } from "./context";
 import { Failure, type Handlers } from "./host";
 import { hostParts, type HostParts } from "./host-parts";
 import { encode } from "./value";
+import { cliSetting } from "./cli";
 
 function telemetryInput(model: AppModel): AppTelemetryInput | undefined {
   try {
@@ -38,14 +40,12 @@ export function settingsPage(model: AppModel, parts: HostParts) {
     signIn: model.signIn,
     canSignOut: model.account !== null && model.identity !== null,
     menuBar: model.settings.menuBar,
-    defaultLocation: model.settings.defaultLocation,
-    locationLockedBy: undefined,
     telemetry: telemetryInput(model),
     agents: coding.rows ?? undefined,
     agentsBusy: coding.busy,
     agentsPending: coding.pending,
-    // No Cua Cloud billing in the apps (the row stays hidden).
-    billing: undefined,
+    // Teams from the Spaces API (read by `settings.get`).
+    teams: model.teams.input(),
     loginItem:
       login.status === null
         ? undefined
@@ -63,14 +63,15 @@ export function settingsPage(model: AppModel, parts: HostParts) {
     keyvaultProtection: model.keyvault.page.protection,
     autoConnect: model.settings.autoConnect,
     lumeSource: model.lumeSource ?? undefined,
-    linuxSource: model.linuxSource ?? undefined,
+    // The built-in Linux runtime is a gVisor VM on a Mac; Docker is the runtime elsewhere, so no row.
+    linuxSource: process.platform === "darwin" ? (model.linuxSource ?? undefined) : undefined,
   };
   const page = model.native.appSettingsPage(input);
   return model.native.appSettingsWithStorage(page, parts.storage.section, model.settings.experiments);
 }
 
-/** The SwiftUI app's "New UI (preview)": this app is the web UI, so its switch (and its note) is not offered here. */
-export const WEB_UI_ROWS = new Set(["experiment:web_ui", "experiment:web_ui-note"]);
+/** The SwiftUI app's New UI switch ("Use classic UI", and the older `experiment:web_ui`): this app is the web UI, so it (and its note) is not offered here. */
+export const WEB_UI_ROWS = new Set(["experiment:classic_ui", "experiment:classic_ui-note", "experiment:web_ui", "experiment:web_ui-note"]);
 
 export function experimentsPage(model: AppModel) {
   const page = model.native.appExperimentsPage(model.settings.experiments);
@@ -78,13 +79,18 @@ export function experimentsPage(model: AppModel) {
 }
 
 /** `settings.get`'s answer: General, Experiments, the update channel (null:
- * no updater) and the global shortcut (null: none here). */
+ * no updater), the global shortcut (null: none here) and the account app. */
 export function settingsState(model: AppModel, parts: HostParts) {
   return {
     page: encode(settingsPage(model, parts)),
     experiments: encode(experimentsPage(model)),
     updateChannel: parts.updates.updater === null ? null : parts.updates.channelWord,
     globalShortcut: parts.system?.globalShortcut?.() ?? null,
+    // The account app (CUA_ENV, CUA_ACCOUNT_APP_URL): the page's core has no
+    // environment, so Upgrade's billing fallback names this one.
+    accountUrl: model.native.appAccountAppUrl(),
+    // The CLI this app installs and whether it is here (`cli.ts`).
+    cli: cliSetting(model),
   };
 }
 
@@ -111,6 +117,8 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
   const load = async () => {
     parts().loginItem.read();
     if (!model.servicesIn) return;
+    // Teams: the account's organizations (a failure shows in its row).
+    await bounded(10, () => model.teams.reload());
     if (model.agents.coding.rows === null) await bounded(10, () => model.agents.coding.reload());
     const [lume, linux] = await Promise.all([bounded(5, () => model.backend.lumeSource()), bounded(5, () => model.backend.linuxSource())]);
     if (lume !== null) model.lumeSource = lume;
@@ -120,6 +128,10 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
   /** A choice row changed (`AppModel.choose`). */
   const choose = async (row: string, option: string): Promise<void> => {
     switch (row) {
+      case "team-current":
+        // Settings, Teams: the team to work in (saved; the option is its id).
+        save({ currentTeamId: option });
+        return;
       case "notch":
         // "Spaces tab in the notch" (shown) or the menu bar only (hide); the notch follows `settings.changed`.
         save({ menuBar: option === "hide" });
@@ -134,12 +146,21 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
         model.linuxSource = (await model.backend.linuxSource()) ?? option;
         model.changed("settings");
         return;
-      case "default-location":
-        save({ defaultLocation: option === "cloud" ? model.native.AppLocation.Cloud : model.native.AppLocation.Local });
-        return;
       case "auto-connect":
         save({ autoConnect: option === "on" });
         return;
+      case "global-shortcut": {
+        // The keys that bring the app forward from any app (Mac). The option is the accelerator.
+        const system = parts().system;
+        if (!system?.setGlobalShortcut) throw Failure.failed("This computer has no shortcut to change.");
+        try {
+          system.setGlobalShortcut(option);
+        } catch (e) {
+          throw Failure.failed(e instanceof Error ? e.message : String(e));
+        }
+        model.changed("settings");
+        return;
+      }
       case "launch-at-login": {
         const login = parts().loginItem;
         login.set(option === "on");
@@ -162,6 +183,11 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
         return;
       case "telemetry":
         model.telemetry?.setEnabled(option === "on");
+        // Off also stops crash reports (crash-reporting.ts).
+        consentMayHaveChanged();
+        // The switch sits beside the usage note (Welcome, Settings): the
+        // notice was seen.
+        model.telemetry?.acknowledgeNotice();
         model.changed("settings");
         return;
       default:
@@ -170,6 +196,17 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
   };
 
   return {
+    // "Add a machine" and "Share": the account's Teams (Settings, Teams) and the current one.
+    "teams.list": async () => {
+      if (model.servicesIn) await bounded(10, () => model.teams.reload());
+      const input = model.teams.input();
+      const state = input.state as { tag: string; inner?: { teams?: AppTeamInput[] } };
+      const teams = state.tag === "Ready" ? (state.inner?.teams ?? []) : [];
+      return {
+        teams: teams.map((t) => ({ id: t.id, alias: t.alias, name: t.name, role: t.role, plan: t.plan })),
+        currentTeamId: input.currentTeamId ?? null,
+      };
+    },
     "settings.get": async () => {
       await load();
       return settingsState(model, parts());

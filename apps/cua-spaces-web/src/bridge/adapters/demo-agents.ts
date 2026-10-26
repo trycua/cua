@@ -30,7 +30,10 @@ export function demoPersistentAgents(now: number): PersistentAgent[] {
   ];
 }
 
-export function demoAgentSetup(): AgentSetupRow[] {
+/** `fresh`: a first run, so Cua isn't in any agent's settings yet. `only`:
+ * just these agents installed (`[]`: none, `?demo=agents-none`; `codex`:
+ * `?demo=agents-codex`). */
+export function demoAgentSetup(fresh = false, only: string[] | null = null): AgentSetupRow[] {
   const row = (agent: string, name: string, installed: boolean, configured: boolean, mcpConfig: string | null, skillsDir: string | null): AgentSetupRow => ({
     agent,
     name,
@@ -41,15 +44,39 @@ export function demoAgentSetup(): AgentSetupRow[] {
     skillsTotal: 6,
     mcpConfig,
     skillsDir,
+    // Codex signs in with ChatGPT on its own (`codex login`); the demo isn't signed in yet.
+    signIn: agent === "codex" ? "ChatGPT" : null,
+    signedIn: false,
   });
-  return [
+  const rows = [
     row("claude-code", "Claude Code", true, true, "~/.claude.json", "~/.claude/skills"),
     row("codex", "OpenAI Codex", true, true, "~/.codex/config.toml", "~/.agents/skills"),
     row("hermes", "Hermes", true, false, "~/.hermes/config.yaml", "~/.hermes/skills"),
     row("openclaw", "OpenClaw", true, false, "~/.openclaw/openclaw.json", "~/.agents/skills"),
     row("cursor", "Cursor", true, true, "~/.cursor/mcp.json", "~/.cursor/skills"),
+    row("vscode", "VS Code (Copilot agent mode)", true, false, "~/Library/Application Support/Code/User/mcp.json", "~/.agents/skills"),
     row("gemini-cli", "Gemini CLI", false, false, "~/.gemini/settings.json", "~/.gemini/skills"),
+    // The rest of the supported apps, not installed: "Show all" lists them with their marks.
+    ...(
+      [
+        ["cline", "Cline"],
+        ["kiro", "Kiro"],
+        ["opencode", "OpenCode"],
+        ["pi", "Pi"],
+        ["windsurf", "Windsurf (Devin Desktop)"],
+        ["copilot-cli", "GitHub Copilot CLI"],
+        ["amp", "Amp"],
+        ["goose", "Goose"],
+        ["zed", "Zed"],
+        ["antigravity", "Google Antigravity"],
+      ] as const
+    ).map(([agent, name]) => row(agent, name, false, false, null, null)),
   ];
+  return rows.map((r) => {
+    const installed = only ? only.includes(r.agent) : r.installed;
+    const configured = fresh ? false : installed && r.configured;
+    return { ...r, installed, configured, skillsInstalled: configured ? r.skillsTotal : 0, detail: !installed ? "Not installed" : configured ? r.detail : "Not set up" };
+  });
 }
 
 /* ---- Event scripts ---------------------------------------------------------- */
@@ -61,6 +88,16 @@ class Script {
   private turn = 0;
   private tools = 0;
   constructor(private t: number) {}
+
+  /** Writes after `events` (a reply to a run that already has turns). */
+  static after(events: AgentEvent[], t: number): Script {
+    const s = new Script(t);
+    const last = events[events.length - 1];
+    s.seq = last?.seq ?? 0;
+    s.turn = events.reduce((n, e) => Math.max(n, e.turn), 0);
+    s.tools = events.filter((e) => e.kind === "tool_call").length;
+    return s;
+  }
 
   private push(e: Omit<AgentEvent, "seq" | "ts_ms" | "turn">, gapMs: number): this {
     this.t += gapMs;
@@ -134,6 +171,8 @@ export interface DemoRunRecord {
   live: boolean;
   /** Set when a pause cut the run short. */
   stoppedAt?: number;
+  /** Shown as `needsYou` once every event is written, until a reply. */
+  asks?: { title: string; detail: string };
 }
 
 const ONBOARDING_DIFF = `## Onboarding copy
@@ -151,7 +190,7 @@ I kept the structure and only changed the words. Three screens change:
 + <p>Set up takes about a minute.</p>
 
 - <p>Sign in to sync your Spaces across all your devices!</p>
-+ <p>Sign in to see your Spaces on every machine you use.</p>
++ <p>Sign in to see your Spaces on every computer you use.</p>
 \`\`\`
 
 The longest sentence went from 31 words to 14. Nothing else in \`routes/onboarding\` reads the old strings, and \`pnpm test\` still passes.
@@ -165,7 +204,7 @@ function adaRun(t0: number): DemoRunRecord {
     .tool("read", "Read apps/cua-spaces-web/src/routes/spaces/index.tsx")
     .tool("execute", 'rg -n "shrink|min-w" apps/cua-spaces-web/src/components', "completed", "3 matches in 2 files")
     .say(
-      "The overflow comes from the state label. `StateLabel` sits in a flex row next to the Space name, and it has no `shrink-0`, so a long machine name pushes it out of the tile instead of truncating.\n\nThe name already has `truncate`, but its wrapper needs `min-w-0` for that to work inside flex:\n\n```tsx\n<div className=\"min-w-0 flex-1\">\n  <div className=\"truncate\">{space.name}</div>\n</div>\n```\n\nI haven't changed anything yet.",
+      "The overflow comes from the state label. `StateLabel` sits in a flex row next to the Space name, and it has no `shrink-0`, so a long computer name pushes it out of the tile instead of truncating.\n\nThe name already has `truncate`, but its wrapper needs `min-w-0` for that to work inside flex:\n\n```tsx\n<div className=\"min-w-0 flex-1\">\n  <div className=\"truncate\">{space.name}</div>\n</div>\n```\n\nI haven't changed anything yet.",
     )
     .usage()
     .end()
@@ -279,10 +318,63 @@ export function demoRunRecords(t0: number): DemoRunRecord[] {
     ),
     finished(
       "relay:mac-mini/qa-windows",
-      { runId: "run-claw-4", agent: "openclaw", status: "idle", reason: "waiting for a follow-up", summary: "Install the 0.6.1 Windows build and note what breaks", createdAt: Math.floor((t0 - 3 * 60 * MIN) / 1000) },
+      { runId: "run-claw-4", agent: "openclaw", status: "idle", reason: "waiting for a follow-up", summary: "Install the 0.6.1 Windows build and note what breaks", needsYou: { title: "OpenClaw needs you to sign in to GitHub", detail: "It is checking the installer in qa-windows and can't go on until you sign in." }, createdAt: Math.floor((t0 - 3 * 60 * MIN) / 1000) },
       installer,
     ),
   ];
+}
+
+/** A run started from the app (`agents.start`): it reads the task, gets the
+ * code, runs the tests and answers, then asks to sign in to GitHub before it
+ * posts anything, so the conversation shows every step. Written over about
+ * twenty seconds from `t0`. */
+export function demoStartedRun(space: string, runId: string, agent: string, prompt: string, t0: number, repo?: string): DemoRunRecord {
+  const where = repo ?? "the project";
+  const s = new Script(t0)
+    .prompt(prompt)
+    .thought("Get the code first, then find out how its tests run.", 1400)
+    .tool("execute", `git clone ${where}`, "completed", "Cloned into ./project", 2600)
+    .tool("read", "Read pyproject.toml", "completed", undefined, 900)
+    .tool("execute", "python -m pip install -e '.[dev]'", "completed", "Installed 31 packages", 3400)
+    .tool("execute", "python -m pytest -q", "completed", "70 passed in 41.2s", 4200)
+    .say(
+      "All **70 tests pass** on this clean computer (Python 3.12, 41 seconds). Nothing was skipped.\n\nTo post the result on your pull request I need to be signed in to GitHub here. Can you sign in, or should I skip posting?",
+      90,
+    )
+    .end();
+  return {
+    space,
+    live: true,
+    events: s.events,
+    asks: { title: "Sign in to GitHub", detail: "The agent needs a GitHub sign-in on this computer to post the result." },
+    run: {
+      runId,
+      agent,
+      status: "running",
+      reason: "a turn is running",
+      summary: prompt.split("\n")[0]!.slice(0, 120),
+      createdAt: Math.floor(t0 / 1000),
+      phase: "thinking",
+      turn: 1,
+    },
+  };
+}
+
+/** `agents.message` on a demo run: the reply is a new turn, answered in a few seconds. */
+export function demoReply(rec: DemoRunRecord, text: string, t: number): void {
+  const written = writtenEvents(rec, t);
+  const s = Script.after(written, t).prompt(text);
+  if (/sign|signed|logged|done|go ahead|yes/i.test(text)) {
+    s.tool("execute", "gh pr comment --body-file result.md", "completed", "Posted a comment", 2200)
+      .say("Posted the result on your pull request. You can keep this computer for the next check, or throw it away.", 80);
+  } else {
+    s.thought("Read the reply and carry on.", 800).say("Got it. I'll go on with that.", 80);
+  }
+  s.end();
+  rec.events = [...written, ...s.events];
+  rec.live = true;
+  rec.stoppedAt = undefined;
+  rec.asks = undefined;
 }
 
 /** The events written by `now`. */
@@ -300,6 +392,8 @@ export function runAt(rec: DemoRunRecord, now: number): SpaceAgentRun {
   const status: AgentRunStatus = done ? "idle" : "running";
   return {
     ...rec.run,
+    turn: last?.turn ?? rec.run.turn,
+    needsYou: done && rec.asks ? rec.asks : null,
     status,
     reason: done ? "waiting for a follow-up" : "a turn is running",
     phase: done ? "waiting" : last?.kind === "message" ? "responding" : "tool",

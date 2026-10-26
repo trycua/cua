@@ -175,6 +175,7 @@ enum VMError: Error, LocalizedError {
     case notFound(String)
     case notInitialized(String)
     case notRunning(String)
+    case unsafeOwner(String)
     case alreadyRunning(String)
     case installNotStarted(String)
     case stopTimeout(String)
@@ -194,6 +195,8 @@ enum VMError: Error, LocalizedError {
             return "Virtual machine not found: \(name)"
         case .notInitialized(let name):
             return "Virtual machine not initialized: \(name)"
+        case .unsafeOwner(let name):
+            return "Cannot verify the owner of VM ‘\(name)’. Stop the VM from the terminal that started it."
         case .notRunning(let name):
             return "Virtual machine not running: \(name)"
         case .alreadyRunning(let name):

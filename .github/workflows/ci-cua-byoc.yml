@@ -16,12 +16,24 @@ on:
       - "libs/cua/crates/cua-spaces/src/cloud.rs"
       - "libs/cua/crates/cua-contrib/modal-helper/**"
       - ".github/workflows/ci-cua-byoc.yml"
+  push:
+    branches: [main]
+    paths:
+      - "libs/cua/crates/cua-byoc/**"
+      - "libs/cua/crates/cua-sandbox-core/**"
+      - "libs/cua/crates/cua-daemon/**"
+      - "libs/cua/crates/cua-spaces/src/cloud.rs"
+      - "libs/cua/crates/cua-contrib/modal-helper/**"
+      - ".github/workflows/ci-cua-byoc.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
   # Cua programs and packages run here never send usage telemetry.
   CUA_TELEMETRY: "0"
   DO_NOT_TRACK: "1"
@@ -40,14 +52,11 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install protoc
-        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
-        with:
-          version: "29.x"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+        uses: ./.github/actions/setup-protoc
       - uses: dtolnay/rust-toolchain@1.97.1
         with:
           components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua
           key: cua-byoc

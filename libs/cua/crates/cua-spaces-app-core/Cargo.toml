@@ -24,6 +24,9 @@ telemetry = ["dep:cua-telemetry"]
 
 [dependencies]
 cua-home.workspace = true
+# A failed create's cause as a fixed telemetry word (no dependencies, so
+# also in the wasm build).
+cua-create-failure.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 cua-keyvault = { workspace = true, optional = true }
@@ -32,8 +35,15 @@ async-trait = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true, features = ["sync"] }
 
 [dev-dependencies]
+# Sign-in drift test (`tests/sign_in_failures.rs`): every real cua-auth
+# sign-in failure maps to a reason with words.
+cua-auth.workspace = true
+url.workspace = true
+base64.workspace = true
 # Wire-drift tests: the core's Keyvault mirror types decode the broker's
 # real serde output.
 cua-keyvault.workspace = true
+# Drift guard: the first run lists every agent the setup's registry knows.
+cua-agent-setup.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tempfile.workspace = true

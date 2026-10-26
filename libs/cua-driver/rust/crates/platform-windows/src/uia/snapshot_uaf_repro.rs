@@ -114,6 +114,7 @@ fn snapshot_with(ptrs: Vec<usize>) -> UiaSnapshot {
                 center: (0, 0),
                 rect: None,
                 msaa_role: None,
+                read_while_minimized: false,
             })
             .collect(),
     }

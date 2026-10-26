@@ -19,13 +19,15 @@
 use crate::model::{Location, Runtime, SpaceKind, SpaceOs};
 use crate::spaces::sidebar::Fact;
 use serde::{Deserialize, Serialize};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock, RwLock};
 
 const IMAGES_JSON: &str = include_str!("../../../../images/sandbox-images.json");
 
 /// The image list's local engine.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+///
+/// JSON is a plain word: `container`, `qemu`, `lume`, or the name of an
+/// external runtime provider ([`LocalEngine::External`]).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum LocalEngine {
     /// A container (gVisor when installed, else runc).
     Container,
@@ -33,63 +35,272 @@ pub enum LocalEngine {
     Qemu,
     /// A Lume VM.
     Lume,
+    /// An external runtime provider installed on this Mac, by its name
+    /// ([`ExternalRuntimeInfo::name`]).
+    External(String),
 }
 
 impl LocalEngine {
     /// Tile description.
-    pub fn label(self) -> &'static str {
+    pub fn label(&self) -> String {
         match self {
-            LocalEngine::Container => "Container on this Mac (gVisor when installed)",
-            LocalEngine::Qemu => "QEMU virtual machine on this Mac",
-            LocalEngine::Lume => "Lume virtual machine (Apple silicon)",
+            LocalEngine::Container => "Linux, on this Mac".into(),
+            LocalEngine::Qemu => "QEMU virtual machine on this Mac".into(),
+            LocalEngine::Lume => "Lume virtual machine (Apple silicon)".into(),
+            LocalEngine::External(n) => format!("{} on this Mac", external_runtime_label(n)),
         }
     }
 
-    /// [`Self::label`] in a shell on `os` ("Container on this PC ...").
-    pub fn label_on(self, os: SpaceOs) -> String {
-        let label = self.label();
+    /// [`Self::label`] in a shell on `os` ("Linux, on this PC").
+    pub fn label_on(&self, os: SpaceOs) -> String {
+        Self::on(self.label(), os)
+    }
+
+    /// The engine as a developer names it, for the Summary's Advanced rows
+    /// (the plain [`Self::label`] everywhere else).
+    pub fn technical_label_on(&self, os: SpaceOs) -> String {
+        match self {
+            LocalEngine::Container => {
+                Self::on("Container on this Mac (gVisor when installed)".into(), os)
+            }
+            _ => self.label_on(os),
+        }
+    }
+
+    fn on(label: String, os: SpaceOs) -> String {
         if os == SpaceOs::Macos {
-            label.into()
+            label
         } else {
             label.replace("this Mac", os.this_machine_lower())
         }
     }
 
-    /// The `local_status().backends` that run it.
-    pub fn backends(self) -> &'static [&'static str] {
-        match self {
+    /// The `local_status().backends` that run it (an external runtime
+    /// provider's doctor check is named after it).
+    pub fn backends(&self) -> Vec<String> {
+        let names: &[&str] = match self {
             LocalEngine::Container => &["container", "managed", "docker", "runsc"],
             LocalEngine::Qemu => &["qemu", "qemudocker"],
             LocalEngine::Lume => &["lume"],
+            LocalEngine::External(n) => return vec![n.clone()],
+        };
+        names.iter().map(|n| n.to_string()).collect()
+    }
+
+    /// The JSON word.
+    pub fn as_str(&self) -> &str {
+        match self {
+            LocalEngine::Container => "container",
+            LocalEngine::Qemu => "qemu",
+            LocalEngine::Lume => "lume",
+            LocalEngine::External(n) => n,
         }
+    }
+
+    /// Parses the JSON word; `None` for one no engine or provider can have.
+    pub fn parse(word: &str) -> Option<Self> {
+        Some(match word {
+            "container" => LocalEngine::Container,
+            "qemu" => LocalEngine::Qemu,
+            "lume" => LocalEngine::Lume,
+            w if crate::model::valid_runtime_word(w) => LocalEngine::External(w.to_string()),
+            _ => return None,
+        })
     }
 }
 
-/// The image list's cloud engine.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum CloudEngine {
-    /// gVisor containers.
-    Gvisor,
-    /// KubeVirt VMs.
-    Kubevirt,
+impl Serialize for LocalEngine {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
 }
 
-impl CloudEngine {
-    /// Tile description.
-    pub fn label(self) -> &'static str {
-        match self {
-            CloudEngine::Gvisor => "gVisor container in Cua Cloud",
-            CloudEngine::Kubevirt => "Virtual machine in Cua Cloud",
-        }
+impl<'de> Deserialize<'de> for LocalEngine {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let word = String::deserialize(deserializer)?;
+        LocalEngine::parse(&word)
+            .ok_or_else(|| serde::de::Error::custom(format!("unknown local engine `{word}`")))
     }
+}
 
-    fn runtime(self) -> Runtime {
-        match self {
-            CloudEngine::Gvisor => Runtime::Gvisor,
-            CloudEngine::Kubevirt => Runtime::Kubevirt,
+/// An image an external runtime provider offers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalImage {
+    /// The reference to create a Space from.
+    pub reference: String,
+    /// A short title.
+    pub title: String,
+    /// The provider's default image.
+    pub default: bool,
+}
+
+/// An external runtime provider installed on this Mac, as `cua runtime
+/// doctor` reports it ([`external_runtimes_from_doctor`]). Registered with
+/// [`set_external_runtimes`], its images join the New Space catalog in a
+/// group of their own and run only on this Mac.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalRuntimeInfo {
+    /// Its name: the runtime word a create passes (`acme`).
+    pub name: String,
+    /// The name it gives itself ("macOS VMs"), else its name.
+    pub label: String,
+    /// One line about it, when it gave one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// What its Spaces present as (a micro VM is a virtual machine).
+    pub kind: SpaceKind,
+    /// The guest operating systems it runs (`macos`, `linux`, `windows`).
+    #[serde(default)]
+    pub os: Vec<String>,
+    /// The guest architectures it runs (`arm64`, `amd64`).
+    #[serde(default)]
+    pub arch: Vec<String>,
+    /// It can create Spaces now.
+    pub ready: bool,
+    /// Its doctor's one line.
+    #[serde(default)]
+    pub detail: String,
+    /// The images it offers.
+    #[serde(default)]
+    pub images: Vec<ExternalImage>,
+}
+
+/// One `external` entry of the doctor's JSON report, as written.
+#[derive(Deserialize)]
+struct DoctorExternal {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    display_name: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    kind: String,
+    #[serde(default)]
+    os: Vec<String>,
+    #[serde(default)]
+    arch: Vec<String>,
+    #[serde(default)]
+    images: Vec<ExternalImage>,
+    #[serde(default)]
+    ready: bool,
+    #[serde(default)]
+    detail: String,
+    #[serde(default)]
+    ignored: Option<String>,
+}
+
+/// The external runtime providers in a `cua runtime doctor` JSON report
+/// (its `external` list), in report order. Entries for ignored
+/// executables, names that are not runtime words (or name a built-in
+/// engine) and unknown kinds are skipped; anything unexpected is an empty
+/// list.
+pub fn external_runtimes_from_doctor(report_json: &str) -> Vec<ExternalRuntimeInfo> {
+    let Ok(report) = serde_json::from_str::<serde_json::Value>(report_json) else {
+        return vec![];
+    };
+    let Some(list) = report.get("external").and_then(|v| v.as_array()) else {
+        return vec![];
+    };
+    let mut out: Vec<ExternalRuntimeInfo> = Vec::new();
+    for entry in list {
+        let Ok(e) = serde_json::from_value::<DoctorExternal>(entry.clone()) else {
+            continue;
+        };
+        let builtin = !matches!(Runtime::parse(&e.name), Some(Runtime::Other(_)))
+            || !matches!(LocalEngine::parse(&e.name), Some(LocalEngine::External(_)));
+        if e.ignored.is_some() || builtin || out.iter().any(|o| o.name == e.name) {
+            continue;
         }
+        let kind = match e.kind.as_str() {
+            "container" => SpaceKind::Container,
+            "vm" | "microvm" => SpaceKind::Vm,
+            _ => continue,
+        };
+        let label = match e.display_name.trim() {
+            "" => e.name.clone(),
+            l => l.to_string(),
+        };
+        out.push(ExternalRuntimeInfo {
+            label,
+            description: Some(e.description.trim().to_string()).filter(|d| !d.is_empty()),
+            kind,
+            os: e.os,
+            arch: e.arch,
+            ready: e.ready,
+            detail: e.detail,
+            images: e
+                .images
+                .into_iter()
+                .filter(|i| !i.reference.trim().is_empty())
+                .collect(),
+            name: e.name,
+        });
     }
+    out
+}
+
+struct Registered {
+    runtimes: Vec<ExternalRuntimeInfo>,
+    catalog: Arc<Catalog>,
+}
+
+fn registered() -> &'static RwLock<Registered> {
+    static REGISTERED: OnceLock<RwLock<Registered>> = OnceLock::new();
+    REGISTERED.get_or_init(|| {
+        RwLock::new(Registered {
+            runtimes: vec![],
+            catalog: Arc::new(with_external(base_catalog(), &[])),
+        })
+    })
+}
+
+/// Registers the external runtime providers installed on this Mac (from
+/// [`external_runtimes_from_doctor`]) for the whole process: their images
+/// join the catalog, and [`Runtime::Other`] and [`LocalEngine::External`]
+/// take their labels. An empty list removes them again.
+pub fn set_external_runtimes(runtimes: Vec<ExternalRuntimeInfo>) {
+    let mut r = registered().write().unwrap_or_else(|e| e.into_inner());
+    if r.runtimes == runtimes {
+        return;
+    }
+    r.catalog = Arc::new(with_external(base_catalog(), &runtimes));
+    r.runtimes = runtimes;
+}
+
+/// The external runtime providers registered with
+/// [`set_external_runtimes`] (none until then).
+pub fn external_runtimes() -> Vec<ExternalRuntimeInfo> {
+    registered()
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .runtimes
+        .clone()
+}
+
+/// A registered provider's label, else `name` itself.
+pub fn external_runtime_label(name: &str) -> String {
+    registered()
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .runtimes
+        .iter()
+        .find(|r| r.name == name)
+        .map_or_else(|| name.to_string(), |r| r.label.clone())
+}
+
+/// The doctor line of a registered provider, when it gave one.
+fn external_runtime_detail(name: &str) -> Option<String> {
+    registered()
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .runtimes
+        .iter()
+        .find(|r| r.name == name)
+        .map(|r| r.detail.trim().to_string())
+        .filter(|d| !d.is_empty())
 }
 
 /// The catalog's image tier (canonical images only).
@@ -102,6 +313,8 @@ pub enum ImageTier {
     Full,
     /// macOS: full plus one pinned Xcode.
     Xcode,
+    /// Linux: slim plus the Docker engine, a VM with dockerd up at boot.
+    Docker,
 }
 
 /// One image of the catalog.
@@ -124,8 +337,6 @@ pub struct SandboxImage {
     pub spacesd: bool,
     /// Local engine.
     pub local: Option<LocalEngine>,
-    /// Cloud engine.
-    pub cloud: Option<CloudEngine>,
     /// `slim`, `full` or `xcode` (canonical images only).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tier: Option<ImageTier>,
@@ -218,7 +429,8 @@ struct Catalog {
     groups: Vec<ImageGroup>,
 }
 
-fn catalog() -> &'static Catalog {
+/// The catalog of `libs/images/sandbox-images.json` alone.
+fn base_catalog() -> &'static Catalog {
     static CATALOG: OnceLock<Catalog> = OnceLock::new();
     CATALOG.get_or_init(|| {
         let file: ImageFile =
@@ -252,6 +464,75 @@ fn catalog() -> &'static Catalog {
             groups,
         }
     })
+}
+
+/// `base` with one group per external runtime provider after it: the
+/// images it offers for a guest OS the apps know, run only on this Mac.
+fn with_external(base: &Catalog, runtimes: &[ExternalRuntimeInfo]) -> Catalog {
+    let mut catalog = Catalog {
+        all: base.all.clone(),
+        images: base.images.clone(),
+        groups: base.groups.clone(),
+    };
+    for r in runtimes {
+        let Some(os) = r.os.first().and_then(|o| SpaceOs::parse(o)) else {
+            continue;
+        };
+        let group = format!("runtime:{}", r.name);
+        let images: Vec<SandboxImage> = r
+            .images
+            .iter()
+            .filter(|i| !catalog.all.iter().any(|a| a.image_ref == i.reference))
+            .map(|i| SandboxImage {
+                image_ref: i.reference.clone(),
+                group: group.clone(),
+                os,
+                name: match i.title.trim() {
+                    "" => r.label.clone(),
+                    t => t.to_string(),
+                },
+                variant: r.kind,
+                summary: r.description.clone().unwrap_or_else(|| r.label.clone()),
+                spacesd: true,
+                local: Some(LocalEngine::External(r.name.clone())),
+                tier: None,
+                published: true,
+                distro: None,
+                arch: r.arch.clone(),
+                sizes: None,
+                // An external runtime takes no GPU option.
+                gpu: false,
+            })
+            .collect();
+        if images.is_empty() {
+            continue;
+        }
+        // The provider's default image first.
+        let mut images = images;
+        images.sort_by_key(|i| {
+            !r.images
+                .iter()
+                .any(|e| e.default && e.reference == i.image_ref)
+        });
+        catalog.all.extend(images.iter().cloned());
+        catalog.images.extend(images.iter().cloned());
+        catalog.groups.push(ImageGroup {
+            id: group,
+            label: r.label.clone(),
+            images,
+        });
+    }
+    catalog
+}
+
+/// The catalog the wizard offers: the image file's, then the registered
+/// external runtime providers' ([`set_external_runtimes`]).
+fn catalog() -> Arc<Catalog> {
+    registered()
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .catalog
+        .clone()
 }
 
 /// Every image the pickers show, in file order.
@@ -467,20 +748,24 @@ pub fn image_suggestions(query: &str) -> Vec<ImageGroup> {
         .collect()
 }
 
-/// Whether `image` can run in `on`.
+/// Whether `image` can run in `on`. An external runtime provider's image
+/// runs only on this Mac.
 pub fn can_place(image: &SandboxImage, on: Location) -> bool {
+    if matches!(image.local, Some(LocalEngine::External(_))) {
+        return on == Location::Local;
+    }
     match on {
-        Location::Cloud => crate::model::CLOUD_SPACES_OFFERED && image.cloud.is_some(),
         Location::Local => image.local.is_some(),
         // Whether the connected cloud runs it is its own answer
         // ([`cloud_offer`]); every image is a candidate. A machine of
-        // yours runs it with its own runtimes ([`host_refusal`]).
-        Location::Yours | Location::Host => true,
+        // yours runs it with its own runtimes ([`host_refusal`]); Auto picks
+        // one of those (or this Mac) that can.
+        Location::Yours | Location::Host | Location::Auto => true,
     }
 }
 
 /// What "Your cloud" says while no cloud is connected.
-pub const YOUR_CLOUD_CONNECT_DETAIL: &str = "Connect AWS, Google Cloud or Modal.";
+pub const YOUR_CLOUD_CONNECT_DETAIL: &str = "Connect AWS, Google Cloud, Hetzner or Modal.";
 
 /// The link that opens the "Connect a cloud" sheet.
 pub const CONNECT_CLOUD_LABEL: &str = "Connect a cloud\u{2026}";
@@ -513,7 +798,7 @@ pub struct CloudOffer {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectedCloud {
-    /// The SDK's `on` word: `aws`, `gcp`, `modal`.
+    /// The SDK's `on` word: `aws`, `gcp`, `hetzner`, `modal`.
     pub name: String,
     /// `AWS`, `Google Cloud`, `Modal`.
     pub title: String,
@@ -572,6 +857,45 @@ pub struct SpaceHost {
     /// it is online and refused because its owner stopped sharing it.
     #[serde(default)]
     pub limits: Vec<HostLimit>,
+    /// How busy it is, when it answered and reports it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub load: Option<HostLoad>,
+}
+
+/// How busy one of your machines is (its job runner's view).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostLoad {
+    /// CPU it offers, in thousandths.
+    pub millicpus_total: u32,
+    /// Of that, free.
+    pub millicpus_free: u32,
+    /// Memory it offers (MiB).
+    pub memory_total_mb: u64,
+    /// Of that, free.
+    pub memory_free_mb: u64,
+    /// Spaces running there.
+    pub spaces: u32,
+    /// Why it takes nothing now (empty: it does).
+    #[serde(default)]
+    pub problem: String,
+}
+
+/// The one short line under a machine of yours in the sidebar: "Paused"
+/// while it takes nothing, else "3 running · 40% CPU". `None` while it is
+/// offline or reports no load.
+pub fn host_load_text(host: &SpaceHost) -> Option<String> {
+    let load = host.load.as_ref().filter(|_| host.online)?;
+    if !load.problem.trim().is_empty() {
+        return Some("Paused".into());
+    }
+    let running = format!("{} running", load.spaces);
+    if load.millicpus_total == 0 {
+        return Some(running);
+    }
+    let used = load.millicpus_total.saturating_sub(load.millicpus_free) as u64;
+    let pct = (used * 100 + load.millicpus_total as u64 / 2) / load.millicpus_total as u64;
+    Some(format!("{running} \u{b7} {pct}% CPU"))
 }
 
 /// The [`HostLimit::resource`] of a machine that is online but whose owner
@@ -659,14 +983,14 @@ pub struct RuntimeSwitch {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlacementOption {
-    /// What choosing it sets as the create's `on`: `local`, `cloud`,
-    /// `host:<machine>`, or a connected cloud's word (`aws`).
+    /// What choosing it sets as the create's `on`: `auto`, `local`,
+    /// `cloud`, `host:<machine>`, or a connected cloud's word (`aws`).
     pub id: String,
     /// The menu's text: "This Mac", "Mac mini", "Mac mini (offline)",
     /// "Mac mini (not sharing)", "AWS · us-west-2".
     pub label: String,
-    /// Its group, in menu order (a separator between groups): `this-mac`,
-    /// `hosts`, `clouds`.
+    /// Its group, in menu order (a separator between groups): `auto`,
+    /// `this-mac`, `hosts`, `clouds`.
     pub group: String,
     /// Chosen.
     pub selected: bool,
@@ -762,19 +1086,21 @@ pub fn selected_host<'a>(state: &WizardState, env: &'a WizardEnv) -> Option<&'a 
     env.hosts.iter().find(|h| h.id == id)
 }
 
-/// The engines `image` runs on in `on`, the default first.
+/// The engines `image` runs on in `on`, the default first. An external
+/// runtime provider's image runs only on that provider (never picked
+/// automatically).
 pub fn runtime_options(image: &SandboxImage, on: Location) -> Vec<Runtime> {
     match on {
-        Location::Cloud => image.cloud.map(|c| vec![c.runtime()]).unwrap_or_default(),
-        Location::Local => match image.local {
+        Location::Local => match &image.local {
+            Some(LocalEngine::External(n)) => vec![Runtime::Other(n.clone())],
             Some(LocalEngine::Container) => vec![Runtime::Auto, Runtime::Gvisor, Runtime::Runc],
             Some(LocalEngine::Qemu) => vec![Runtime::Auto, Runtime::Qemu],
             Some(LocalEngine::Lume) => vec![Runtime::Auto, Runtime::Lume],
             None => vec![],
         },
         // The cloud picks the machine and the engine; a machine of yours
-        // picks its engine.
-        Location::Yours | Location::Host => vec![Runtime::Auto],
+        // picks its engine (so does wherever Auto places it).
+        Location::Yours | Location::Host | Location::Auto => vec![Runtime::Auto],
     }
 }
 
@@ -817,6 +1143,7 @@ pub fn kind_options(image: &SandboxImage, on: Location) -> Vec<KindOption> {
 pub fn local_runtime_ready(image: &SandboxImage, backends: &[String]) -> bool {
     image
         .local
+        .as_ref()
         .is_some_and(|e| e.backends().iter().any(|b| backends.iter().any(|x| x == b)))
 }
 
@@ -824,24 +1151,39 @@ pub fn local_runtime_ready(image: &SandboxImage, backends: &[String]) -> bool {
 /// [`WizardEnv::local_details`]: the first detail of its backends, without
 /// the doctor's setup plan and trailing period.
 fn local_engine_detail(image: &SandboxImage, env: &WizardEnv) -> Option<String> {
+    let engine = image.local.as_ref()?;
+    // A provider's own line, without the doctor's "label (kind): " prefix.
+    if let LocalEngine::External(n) = engine
+        && let Some(d) = external_runtime_detail(n)
+    {
+        return Some(d.trim_end_matches('.').trim().to_string());
+    }
     let details = env.local_details.as_ref()?;
-    let engine = image.local?;
     engine.backends().iter().find_map(|b| {
-        let d = details.get(*b)?;
+        let d = details.get(b)?;
         let d = d.split("; setup would:").next().unwrap_or(d).trim();
         let d = d.trim_end_matches('.').trim();
         (!d.is_empty()).then(|| d.to_string())
     })
 }
 
-/// This Mac can run `image` now: a local runtime answers, and (when the
-/// doctor's list is known) one of the image's engines is among them.
+/// What a Windows PC without QEMU is told (the same words as the daemon's
+/// preflight, `cua_vmm::preflight::QEMU_MISSING_WINDOWS`).
+const WINDOWS_QEMU_MISSING: &str = "Virtual computers on Windows need a free program called QEMU, \
+    and it isn't installed on this PC. Install it from qemu.org (the Windows download), then try \
+    again.";
+
+/// This Mac can run `image` now: a local runtime answers, and one of the
+/// image's engines is among the doctor's ready ones. While that list is not
+/// known, every engine counts as ready except QEMU: the app never installs
+/// it (a Windows PC has no way to), and a Windows VM's image is gigabytes
+/// that would download only for the create to fail.
 fn local_ready(image: &SandboxImage, env: &WizardEnv) -> bool {
     env.local_available
-        && env
-            .local_backends
-            .as_ref()
-            .is_none_or(|b| local_runtime_ready(image, b))
+        && match env.local_backends.as_ref() {
+            Some(b) => local_runtime_ready(image, b),
+            None => image.local != Some(LocalEngine::Qemu),
+        }
 }
 
 /// The first machine of yours that can run `image` now (online, not at a
@@ -1034,50 +1376,19 @@ fn default_memory_gb(image: &SandboxImage) -> u32 {
 pub const STEPS: [&str; 4] = ["System", "Resources", "Options", "Summary"];
 /// Memory slider bounds, GB (local).
 pub const MEMORY_GB_RANGE: (u32, u32) = (2, 16);
-/// vCPU slider bounds for Cua Cloud: the everyday range,
-/// `cua_fleet::CLOUD_DEFAULT_RANGE_CPUS` (a cua-sdk test keeps them equal).
-/// The SDK accepts more (up to 64); Fleet decides what an account may run.
-pub const CLOUD_CPU_RANGE: (u32, u32) = (1, 8);
-/// Memory slider bounds for Cua Cloud, GB: the everyday range,
-/// `cua_fleet::CLOUD_DEFAULT_RANGE_MEMORY_MB` (1-32 GB); desktops start
-/// at 2.
-pub const CLOUD_MEMORY_GB_RANGE: (u32, u32) = (2, 32);
-
-/// Cua Cloud rates for this account (the SDK's `Fleet.usage_pricing()`,
-/// read from Fleet's `GET /api/config`).
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CloudPricing {
-    /// USD per reserved vCPU per hour.
-    pub vcpu_hour_usd: f64,
-    /// USD per reserved GB (GiB) of memory per hour.
-    pub memory_gib_hour_usd: f64,
-}
-
-/// `About $0.18/hour` for `cpus` vCPUs and `memory_gb` GB at `pricing`,
-/// or `None` without usable rates (never a guess).
-pub fn price_text(pricing: Option<&CloudPricing>, cpus: u32, memory_gb: u32) -> Option<String> {
-    let p = pricing.filter(|p| {
-        p.vcpu_hour_usd.is_finite()
-            && p.memory_gib_hour_usd.is_finite()
-            && p.vcpu_hour_usd > 0.0
-            && p.memory_gib_hour_usd > 0.0
-    })?;
-    let usd = f64::from(cpus) * p.vcpu_hour_usd + f64::from(memory_gb) * p.memory_gib_hour_usd;
-    Some(if usd < 0.005 {
-        "Under $0.01/hour".to_string()
-    } else {
-        format!("About ${usd:.2}/hour")
-    })
-}
-
+/// vCPU slider bounds on a machine of yours or in your cloud: the everyday
+/// range.
+pub const REMOTE_CPU_RANGE: (u32, u32) = (1, 8);
+/// Memory slider bounds there, GB: the everyday range (1-32 GB); desktops
+/// start at 2.
+pub const REMOTE_MEMORY_GB_RANGE: (u32, u32) = (2, 32);
 /// The sliders' bounds where the Space runs: `(cpus, memory GB)`.
 fn size_ranges(placement: Location, env: &WizardEnv) -> ((u32, u32), (u32, u32)) {
     match placement {
         // A machine of yours: the everyday range (its own size is not known
         // here; it refuses what it cannot run).
-        Location::Cloud | Location::Yours | Location::Host => {
-            (CLOUD_CPU_RANGE, CLOUD_MEMORY_GB_RANGE)
+        Location::Yours | Location::Host | Location::Auto => {
+            (REMOTE_CPU_RANGE, REMOTE_MEMORY_GB_RANGE)
         }
         Location::Local => ((1, env.max_cpus.max(1)), MEMORY_GB_RANGE),
     }
@@ -1095,8 +1406,6 @@ fn effective_size(state: &WizardState, env: &WizardEnv) -> (u32, u32) {
 pub struct WizardEnv {
     /// Where "Run on" starts (Settings, `cua config set default.on`).
     pub default_location: Location,
-    /// Signed in (or client credentials).
-    pub cloud_available: bool,
     /// A local container backend or Lume exists.
     pub local_available: bool,
     /// Why local is unavailable.
@@ -1127,9 +1436,6 @@ pub struct WizardEnv {
     /// when known.
     #[serde(default)]
     pub storage: Option<LocalStorage>,
-    /// This account's Cua Cloud rates, when known (no estimate without).
-    #[serde(default)]
-    pub cloud_pricing: Option<CloudPricing>,
     /// The user's connected clouds (`cloud_status`), for "Your cloud"
     /// (offered only while its experiment is on: [`offered_clouds`]).
     #[serde(default)]
@@ -1145,13 +1451,18 @@ pub struct WizardEnv {
     /// Resources step shows no GPU row for it.
     #[serde(default)]
     pub gpus: Option<Vec<GpuChoice>>,
+    /// Picks the name an unnamed Space gets ([`generated_space_name`]);
+    /// `None`: this process's own randomness. A core without randomness
+    /// (the wasm build) is given one; tests give a fixed one.
+    #[serde(default)]
+    pub name_seed: Option<u64>,
 }
 
 /// A runtime's GPU option, as the wizard offers it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GpuChoice {
-    /// `lume`, `qemu`, `container`, `gvisor`, `fleet`.
+    /// `lume`, `qemu`, `container`, `gvisor`, `cloud`.
     pub runtime: String,
     /// What the create passes as `gpu` (`paravirtual`).
     pub id: String,
@@ -1299,6 +1610,59 @@ pub struct WizardState {
     pub gpu: bool,
     /// The address form.
     pub address: AddressForm,
+    /// The name the Space gets when Name is left empty
+    /// ([`generated_space_name`], chosen when the wizard opens).
+    #[serde(default)]
+    pub generated_name: String,
+    /// A slider's value being typed (its number was clicked).
+    #[serde(default)]
+    pub resource_edit: Option<ResourceEdit>,
+}
+
+/// A Resources slider whose value can be typed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ResourceField {
+    /// CPU cores.
+    Cpus,
+    /// Memory, GB.
+    Memory,
+    /// Disk, GB.
+    Disk,
+}
+
+impl ResourceField {
+    /// The field id ([`WizardField::id`]).
+    pub fn id(self) -> &'static str {
+        match self {
+            ResourceField::Cpus => "cpus",
+            ResourceField::Memory => "memory",
+            ResourceField::Disk => "disk",
+        }
+    }
+}
+
+/// A slider's value as typed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResourceEdit {
+    /// Which slider.
+    pub field: ResourceField,
+    /// The text as typed.
+    pub text: String,
+}
+
+/// The name an unnamed Space gets: `space-` and ten hex digits, the form
+/// the SDK gives one it names itself (`cua_spaces::Spaces::create`). The
+/// wizard picks it when it opens, shows it, and creates the Space with it.
+pub fn generated_space_name(seed: Option<u64>) -> String {
+    let n = seed.unwrap_or_else(|| {
+        use std::hash::{BuildHasher, Hasher};
+        std::collections::hash_map::RandomState::new()
+            .build_hasher()
+            .finish()
+    });
+    format!("space-{:010x}", n & 0xff_ffff_ffff)
 }
 
 /// An input to the wizard.
@@ -1386,6 +1750,21 @@ pub enum WizardAction {
     },
     /// The disk slider's Reset: back to the image's own disk.
     ResetDisk,
+    /// A slider's number clicked: its value can be typed.
+    EditResource {
+        /// Which slider.
+        field: ResourceField,
+    },
+    /// The typed value's text.
+    SetResourceText {
+        /// Text.
+        text: String,
+    },
+    /// Return (or leaving the field): the typed value is used when it is
+    /// within the slider's limits; otherwise the field stays with why.
+    CommitResource,
+    /// Escape: the slider's value stays.
+    CancelResource,
     /// The GPU checkbox.
     SetGpu {
         /// Checked.
@@ -1434,15 +1813,13 @@ pub enum WizardAction {
     },
 }
 
-/// `location`, or this Mac when the apps do not offer it
-/// ([`crate::model::CLOUD_SPACES_OFFERED`]), no cloud of the user's is
-/// offered ([`offered_clouds`]), or it names no machine (a default is
-/// never one of your machines).
+/// `location`, or this Mac when no cloud of the user's is offered
+/// ([`offered_clouds`]) or it names no machine (a default is never one of
+/// your machines).
 fn offered_location(location: Location, env: &WizardEnv) -> Location {
     match location {
-        Location::Cloud if !crate::model::CLOUD_SPACES_OFFERED => Location::Local,
         Location::Yours if offered_clouds(env).is_empty() => Location::Local,
-        Location::Host => Location::Local,
+        Location::Host | Location::Auto => Location::Local,
         l => l,
     }
 }
@@ -1475,6 +1852,8 @@ pub fn initial(env: &WizardEnv) -> WizardState {
         host: None,
         gpu: false,
         address: AddressForm::default(),
+        generated_name: generated_space_name(env.name_seed),
+        resource_edit: None,
     };
     follow_to_host(&mut state, env);
     state
@@ -1578,12 +1957,9 @@ fn rebase(state: &mut WizardState, image_ref: &str) {
     state.memory_gb = default_memory_gb(&next);
     state.disk_gb = None;
     // Follow the image to where it can run (the choice when possible).
-    if !can_place(&next, state.placement) {
-        let other = state.placement.other();
-        if can_place(&next, other) {
-            state.placement = other;
-            state.picked = true;
-        }
+    if !can_place(&next, state.placement) && can_place(&next, Location::Local) {
+        state.placement = Location::Local;
+        state.picked = true;
     }
 }
 
@@ -1656,6 +2032,7 @@ pub fn reduce(state: &WizardState, action: &WizardAction, env: &WizardEnv) -> Wi
             let open = match placement {
                 Location::Yours => !offered_clouds(env).is_empty(),
                 Location::Host => selected_host(&s, env).is_some(),
+                Location::Auto => !env.hosts.is_empty(),
                 _ => true,
             };
             if open && can_place(&image, *placement) {
@@ -1681,8 +2058,8 @@ pub fn reduce(state: &WizardState, action: &WizardAction, env: &WizardEnv) -> Wi
                     s.host = Some(id.to_string());
                 } else if on == "local" {
                     s.placement = Location::Local;
-                } else if on == "cloud" {
-                    s.placement = Location::Cloud;
+                } else if on == "auto" {
+                    s.placement = Location::Auto;
                 } else {
                     s.placement = Location::Yours;
                     s.cloud = Some(on.clone());
@@ -1703,7 +2080,7 @@ pub fn reduce(state: &WizardState, action: &WizardAction, env: &WizardEnv) -> Wi
                 }
             }
         }
-        WizardAction::SetRuntime { runtime } => s.runtime_choice = *runtime,
+        WizardAction::SetRuntime { runtime } => s.runtime_choice = runtime.clone(),
         WizardAction::SetCpus { cpus } => {
             let ((lo, hi), _) = size_ranges(s.placement, env);
             s.cpus = (*cpus).clamp(lo, hi);
@@ -1718,15 +2095,36 @@ pub fn reduce(state: &WizardState, action: &WizardAction, env: &WizardEnv) -> Wi
             }
         }
         WizardAction::ResetDisk => s.disk_gb = None,
+        WizardAction::EditResource { field } => {
+            if let Some((value, _, _)) = resource_now(&s, env, *field) {
+                s.resource_edit = Some(ResourceEdit {
+                    field: *field,
+                    text: value.to_string(),
+                });
+            }
+        }
+        WizardAction::SetResourceText { text } => {
+            if let Some(e) = s.resource_edit.as_mut() {
+                e.text = text.clone();
+            }
+        }
+        WizardAction::CommitResource => commit_resource(&mut s, env),
+        WizardAction::CancelResource => s.resource_edit = None,
         WizardAction::SetGpu { on } => s.gpu = *on,
         WizardAction::SetName { name } => s.name = name.clone(),
         WizardAction::SetOpenWhenReady { on } => s.open_when_ready = *on,
         WizardAction::Next => {
+            // A typed value is used first (one that breaks the limits
+            // keeps the step, with why).
+            commit_resource(&mut s, env);
             if s.step < 3 && view(&s, env).can_continue {
                 s.step += 1;
             }
         }
-        WizardAction::Back => s.step = s.step.saturating_sub(1),
+        WizardAction::Back => {
+            s.resource_edit = None;
+            s.step = s.step.saturating_sub(1);
+        }
         WizardAction::ShowAddress => s.mode = WizardMode::Address,
         WizardAction::HideAddress => s.mode = WizardMode::Create,
         WizardAction::SetAddress { url } => s.address.url = url.clone(),
@@ -1744,6 +2142,83 @@ pub fn reduce(state: &WizardState, action: &WizardAction, env: &WizardEnv) -> Wi
         }
     }
     s
+}
+
+/// A slider's value and limits now: `(value, min, max)`; `None` when it
+/// does not show.
+fn resource_now(s: &WizardState, env: &WizardEnv, field: ResourceField) -> Option<(u32, u32, u32)> {
+    let eff = effective(s, env);
+    let ((c0, c1), (m0, m1)) = size_ranges(eff.placement, env);
+    let (cpus, memory_gb) = effective_size(&eff, env);
+    match field {
+        ResourceField::Cpus => Some((cpus, c0, c1)),
+        ResourceField::Memory => Some((memory_gb, m0, m1)),
+        ResourceField::Disk => {
+            if eff.placement != Location::Local {
+                return None;
+            }
+            let (min, max) = disk_bounds(&image_of(&eff), env)?;
+            Some((eff.disk_gb.unwrap_or(min).clamp(min, max), min, max))
+        }
+    }
+}
+
+/// The typed text as a number: digits, with an optional unit
+/// (`8`, `8 GB`, `4 cores`).
+fn typed_number(text: &str) -> Option<u32> {
+    let t = text.trim().to_ascii_lowercase();
+    let digits = ["cores", "core", "gb", "g"]
+        .iter()
+        .find_map(|u| t.strip_suffix(u))
+        .unwrap_or(&t)
+        .trim();
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    digits.parse().ok()
+}
+
+/// The typed value, or why it cannot be used: the slider's own limits
+/// (its min and max, the disk the image needs and the room on the volume).
+fn typed_value(s: &WizardState, env: &WizardEnv, edit: &ResourceEdit) -> Result<u32, String> {
+    let Some((_, min, max)) = resource_now(s, env, edit.field) else {
+        return Err(String::new());
+    };
+    let n = typed_number(&edit.text).ok_or_else(|| "Enter a whole number.".to_string())?;
+    if (min..=max).contains(&n) {
+        return Ok(n);
+    }
+    Err(match edit.field {
+        ResourceField::Cpus => format!("Choose {min} to {max} cores."),
+        ResourceField::Memory => format!("Choose {min} to {max} GB."),
+        ResourceField::Disk if n < min => {
+            format!("A VM disk cannot shrink below the image's {min} GB.")
+        }
+        ResourceField::Disk => match volume_of(&image_of(&effective(s, env)), env) {
+            Some(v) if max < MAX_DISK_GB => format!("{} has room for up to {max} GB.", v.name),
+            _ => format!("Choose {min} to {max} GB."),
+        },
+    })
+}
+
+/// Uses the typed value when it is within the limits (and closes the
+/// field); leaves the field open otherwise.
+fn commit_resource(s: &mut WizardState, env: &WizardEnv) {
+    let Some(edit) = s.resource_edit.clone() else {
+        return;
+    };
+    if resource_now(s, env, edit.field).is_none() {
+        s.resource_edit = None;
+        return;
+    }
+    if let Ok(n) = typed_value(s, env, &edit) {
+        match edit.field {
+            ResourceField::Cpus => s.cpus = n,
+            ResourceField::Memory => s.memory_gb = n,
+            ResourceField::Disk => s.disk_gb = Some(n),
+        }
+        s.resource_edit = None;
+    }
 }
 
 /// How far along a step is.
@@ -1810,10 +2285,10 @@ pub struct CreatePlan {
     /// Name, when given.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    /// vCPUs (local and Cua Cloud).
+    /// vCPUs (local and remote).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cpus: Option<u32>,
-    /// Memory MB (local and Cua Cloud).
+    /// Memory MB (local and remote).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory_mb: Option<u32>,
     /// Local VMs only: grow the disk to this many GB (larger than the
@@ -1865,8 +2340,8 @@ pub fn create_failed_text_on(
 pub struct CreateSpaceArgs {
     /// Image ref.
     pub image: String,
-    /// The SDK's `on`: `local`, `cloud`, `host:<machine>`, or a connected
-    /// cloud's word (`aws`, `gcp`, `modal`).
+    /// The SDK's `on`: `local`, `cloud`, `auto`, `host:<machine>`, or a
+    /// connected cloud's word (`aws`, `gcp`, `hetzner`, `modal`).
     pub on: String,
     /// `container` / `vm`.
     pub kind: SpaceKind,
@@ -1902,7 +2377,7 @@ pub fn create_args(plan: &CreatePlan) -> CreateSpaceArgs {
             p => p.as_str().to_string(),
         },
         kind: plan.image.variant,
-        runtime: plan.runtime,
+        runtime: plan.runtime.clone(),
         name: plan.name.clone(),
         cpus: plan.cpus,
         memory_mb: plan.memory_mb,
@@ -1914,17 +2389,20 @@ pub fn create_args(plan: &CreatePlan) -> CreateSpaceArgs {
 
 /// The runtime whose GPU option applies: the local engine of `image` (a
 /// container's by its runtime), or the cloud's.
-fn gpu_runtime(image: &SandboxImage, placement: Location, runtime: Runtime) -> &'static str {
+fn gpu_runtime(image: &SandboxImage, placement: Location, runtime: &Runtime) -> &'static str {
     match placement {
-        Location::Cloud => "fleet",
         // Your cloud's machine types carry no GPU option (yet): no row.
         Location::Yours => "yours",
-        // Nor do your other machines (their runtimes are not this Mac's).
+        // Nor do your other machines (their runtimes are not this Mac's),
+        // nor Auto (the machine is not known yet).
         Location::Host => "host",
+        Location::Auto => "auto",
         Location::Local => match image.local {
             Some(LocalEngine::Lume) => "lume",
             Some(LocalEngine::Qemu) => "qemu",
-            Some(LocalEngine::Container) if runtime == Runtime::Gvisor => "gvisor",
+            Some(LocalEngine::Container) if *runtime == Runtime::Gvisor => "gvisor",
+            // An external runtime provider offers no GPU option: no row.
+            Some(LocalEngine::External(_)) => "external",
             _ => "container",
         },
     }
@@ -1936,7 +2414,7 @@ pub fn gpu_row(
     state: &WizardState,
     env: &WizardEnv,
     image: &SandboxImage,
-    runtime: Runtime,
+    runtime: &Runtime,
 ) -> (Option<GpuRow>, Option<String>) {
     let want = gpu_runtime(image, state.placement, runtime);
     let Some(choice) = env
@@ -2065,6 +2543,19 @@ pub struct WizardLabels {
     pub advanced: String,
 }
 
+/// A slider's value being typed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResourceEditView {
+    /// Which slider.
+    pub field: ResourceField,
+    /// The text as typed.
+    pub text: String,
+    /// Why it cannot be used, in one line (the slider's limits).
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
 /// The wizard as drawn.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -2159,8 +2650,16 @@ pub struct WizardView {
     /// The GPU row (Resources), where the runtime offers a GPU.
     #[serde(default)]
     pub gpu: Option<GpuRow>,
+    /// A slider's value being typed: the field shows instead of its number
+    /// (its error is also the field's [`WizardField::error`]).
+    #[serde(default)]
+    pub resource_edit: Option<ResourceEditView>,
     /// Name as typed.
     pub name: String,
+    /// The name the Space gets: the one typed, else the generated one
+    /// (the Name field's placeholder).
+    #[serde(default)]
+    pub space_name: String,
     /// The name breaks the DNS-label rule.
     pub name_invalid: bool,
     /// Why, in one line.
@@ -2187,7 +2686,7 @@ pub struct WizardView {
     pub labels: WizardLabels,
 }
 
-fn runtime_word(r: Runtime, variant: SpaceKind, os: SpaceOs) -> String {
+fn runtime_word(r: &Runtime, variant: SpaceKind, os: SpaceOs) -> String {
     format!(
         "{} {} on {}",
         r.label(),
@@ -2250,7 +2749,15 @@ fn fields(
     placement_error: Option<String>,
     name_error: Option<String>,
     disk_editable: bool,
+    resource_edit: Option<&ResourceEditView>,
 ) -> Vec<WizardField> {
+    // A typed value's error is its field's.
+    let typed = |id: &str| WizardField {
+        error: resource_edit
+            .filter(|e| e.field.id() == id)
+            .and_then(|e| e.error.clone()),
+        ..field(id, "")
+    };
     let yours = state.placement == Location::Yours;
     match (state.mode, state.step) {
         (WizardMode::Address, _) => vec![
@@ -2299,15 +2806,32 @@ fn fields(
         // The cloud picks the machine: no sliders, its facts only.
         (WizardMode::Create, 1) if yours => vec![],
         (WizardMode::Create, 1) => {
-            let mut f = vec![field("cpus", "CPU cores"), field("memory", "Memory")];
+            let mut f = vec![
+                WizardField {
+                    label: "CPU cores".into(),
+                    ..typed("cpus")
+                },
+                WizardField {
+                    label: "Memory".into(),
+                    ..typed("memory")
+                },
+            ];
             if disk_editable {
-                f.push(field("disk", "Disk"));
+                f.push(WizardField {
+                    label: "Disk".into(),
+                    ..typed("disk")
+                });
             }
             f
         }
         (WizardMode::Create, 2) => vec![
             WizardField {
-                placeholder: Some("Optional".into()),
+                // The name it gets when left empty.
+                placeholder: Some(if state.generated_name.is_empty() {
+                    "Optional".into()
+                } else {
+                    state.generated_name.clone()
+                }),
                 error: name_error,
                 ..field("name", "Name")
             },
@@ -2337,6 +2861,16 @@ pub fn size_text(bytes: u64) -> String {
     }
 }
 
+/// `3.3–7.3 GB`, `900 MB–2.1 GB`: a range, its unit said once when both ends
+/// share it.
+pub fn size_range_text(low: u64, high: u64) -> String {
+    let (a, b) = (size_text(low), size_text(high));
+    match (a.rsplit_once(' '), b.rsplit_once(' ')) {
+        (Some((n, ua)), Some((_, ub))) if ua == ub => format!("{n}\u{2013}{b}"),
+        _ => format!("{a}\u{2013}{b}"),
+    }
+}
+
 /// `ARM`, `x64` (an OCI or Rust architecture name; others as they are).
 pub fn arch_label(arch: &str) -> String {
     crate::model::arch_label(arch).unwrap_or(arch).to_string()
@@ -2352,6 +2886,58 @@ fn arch_label_on(os: SpaceOs, arch: &str) -> String {
 /// The platform that runs ([`crate::model::run_arch`]).
 fn run_arch(image: &SandboxImage, placement: Location, host: Option<&str>) -> Option<String> {
     crate::model::run_arch(&image.arch, placement == Location::Local, host)
+}
+
+/// A container Space's disk range on this machine, bytes: what it takes at
+/// first (the unpacked image plus the one-time Linux runtime download) up to
+/// what it can take as it fills. The one place this is worked out: the
+/// wizard's Disk row and the empty home's Linux card both read it.
+pub fn container_footprint(s: &PlatformSize, runtime_download: u64) -> (u64, u64) {
+    let low = s.unpacked.saturating_add(runtime_download);
+    let high = low.saturating_add(s.disk).saturating_add(s.download);
+    (low, high)
+}
+
+/// The one-time Linux runtime download the first Linux Space needs, bytes
+/// (the managed runtime image; the wizard reads the live figure from the
+/// storage probe, this is the figure a fresh Mac gets).
+pub const LINUX_RUNTIME_DOWNLOAD_BYTES: u64 = 477_884_184;
+
+/// What the first Linux Space on a fresh Mac takes, measured on a Mac mini
+/// on 25 Oct 2026 (CUA-2281): about 180 s for the 456 MB runtime plus the
+/// 1.1 GB image (download, unpack, runtime start), so bytes per second over
+/// the whole first create.
+pub const FIRST_RUN_BYTES_PER_SEC: f64 = 9_100_000.0;
+
+/// Seconds a Linux Space takes to start once its image is on the Mac
+/// (container create, start, cua-spacesd: 1 + 0.3 + 0.2 + 3.5 + 0.1 s
+/// measured through the SDK, rounded up).
+pub const CACHED_START_SECS: f64 = 6.0;
+
+/// Seconds the first Linux Space takes: the downloads at the measured first
+/// run's pace.
+pub fn first_run_seconds(download: u64, runtime_download: u64) -> f64 {
+    (download.saturating_add(runtime_download)) as f64 / FIRST_RUN_BYTES_PER_SEC + CACHED_START_SECS
+}
+
+/// "About 3 minutes", "About 1 minute", "A few seconds": a duration the way
+/// a person would say it, rounded to the minute.
+pub fn duration_text(secs: f64) -> String {
+    if !secs.is_finite() || secs < 0.0 {
+        return String::new();
+    }
+    if secs < 20.0 {
+        return "A few seconds".into();
+    }
+    if secs < 50.0 {
+        return "Under a minute".into();
+    }
+    let mins = (secs / 60.0).round().max(1.0) as u64;
+    match mins {
+        1 => "About 1 minute".into(),
+        m if m < 60 => format!("About {m} minutes"),
+        m => format!("About {} h {} min", m / 60, m % 60),
+    }
 }
 
 /// The image's sizes on `arch` (else its first platform).
@@ -2380,10 +2966,11 @@ pub fn disk_can_grow(image: &SandboxImage) -> bool {
 /// The volume a local Space of `image` is written to.
 fn volume_of<'a>(image: &SandboxImage, env: &'a WizardEnv) -> Option<&'a StorageVolume> {
     let s = env.storage.as_ref()?;
-    match image.local? {
+    match image.local.as_ref()? {
         LocalEngine::Lume => s.lume.as_ref(),
         LocalEngine::Qemu => s.qemu.as_ref(),
         LocalEngine::Container => s.container.as_ref(),
+        LocalEngine::External(_) => None,
     }
 }
 
@@ -2451,8 +3038,9 @@ struct DiskView {
 fn disk_view(state: &WizardState, image: &SandboxImage, env: &WizardEnv, os: SpaceOs) -> DiskView {
     let local = state.placement == Location::Local;
     let host = env.host_arch.as_deref();
-    // A machine of yours runs its own platform: not guessed here.
-    let arch = if state.placement == Location::Host {
+    // A machine of yours runs its own platform: not guessed here (nor
+    // where Auto places it).
+    let arch = if matches!(state.placement, Location::Host | Location::Auto) {
         None
     } else {
         run_arch(image, state.placement, host)
@@ -2495,13 +3083,9 @@ fn disk_view(state: &WizardState, image: &SandboxImage, env: &WizardEnv, os: Spa
     });
     if let Some(s) = size {
         if bounds.is_none() {
-            let initial = s.unpacked.saturating_add(runtime_download);
             let footprint = if image.local == Some(LocalEngine::Container) {
-                format!(
-                    "{}–{} initially; grows with use",
-                    size_text(initial),
-                    size_text(initial.saturating_add(s.disk).saturating_add(s.download))
-                )
+                let (low, high) = container_footprint(s, runtime_download);
+                format!("{} initially; grows with use", size_range_text(low, high))
             } else {
                 size_text(s.disk)
             };
@@ -2573,6 +3157,7 @@ fn effective(state: &WizardState, env: &WizardEnv) -> WizardState {
     let placement = match state.placement {
         Location::Yours if offered_clouds(env).is_empty() => Location::Local,
         Location::Host if selected_host(state, env).is_none() => Location::Local,
+        Location::Auto if env.hosts.is_empty() => Location::Local,
         p => p,
     };
     WizardState {
@@ -2591,6 +3176,7 @@ fn local_detail(image: &SandboxImage, env: &WizardEnv, os: SpaceOs) -> String {
     } else {
         image
             .local
+            .as_ref()
             .map(|l| l.label_on(os))
             .unwrap_or_else(|| "Not available for this image.".into())
     }
@@ -2616,10 +3202,14 @@ fn via_text(host: &SpaceHost) -> &'static str {
     }
 }
 
-/// The "Run on" menu: This Mac, each machine of yours that provides Spaces
-/// (disabled with why while offline, not sharing or at its limit), then each connected
-/// cloud while the "Your cloud" experiment is on (Cua Cloud first, while
-/// the apps offer it).
+/// What the "Run on" menu's Auto says.
+pub const AUTO_PLACEMENT_DETAIL: &str =
+    "Least-loaded of your machines: this Mac or one of your machines that provides Spaces.";
+
+/// The "Run on" menu: Auto (while you have a machine that provides
+/// Spaces), This Mac, each machine of yours that provides Spaces (disabled
+/// with why while offline, not sharing or at its limit), then each
+/// connected cloud while the "Your cloud" experiment is on.
 pub fn placement_options(state: &WizardState, env: &WizardEnv) -> Vec<PlacementOption> {
     placement_options_on(state, env, SpaceOs::Macos)
 }
@@ -2634,14 +3224,30 @@ pub fn placement_options_on(
     let state = &effective(state, env);
     let image = image_of(state);
     let placement = state.placement;
-    let mut out = vec![PlacementOption {
+    let mut out = Vec::new();
+    if !env.hosts.is_empty() {
+        let enabled = can_place(&image, Location::Auto);
+        out.push(PlacementOption {
+            id: Location::Auto.as_str().into(),
+            label: Location::Auto.label().into(),
+            group: "auto".into(),
+            selected: placement == Location::Auto,
+            enabled,
+            detail: if enabled {
+                AUTO_PLACEMENT_DETAIL.into()
+            } else {
+                "This image runs only on this Mac.".into()
+            },
+        });
+    }
+    out.push(PlacementOption {
         id: "local".into(),
         label: Location::Local.label_on(os).into(),
         group: "this-mac".into(),
         selected: placement == Location::Local,
         enabled: image.local.is_some(),
         detail: local_detail(&image, env, os),
-    }];
+    });
     for h in &env.hosts {
         let why = host_refusal(&image, h);
         out.push(PlacementOption {
@@ -2658,23 +3264,6 @@ pub fn placement_options_on(
                 .unwrap_or_else(|| via_text(h).into()),
         });
     }
-    if crate::model::CLOUD_SPACES_OFFERED {
-        out.push(PlacementOption {
-            id: "cloud".into(),
-            label: Location::Cloud.label().into(),
-            group: "clouds".into(),
-            selected: placement == Location::Cloud,
-            enabled: can_place(&image, Location::Cloud),
-            detail: if !env.cloud_available {
-                "Sign in to Cua to create cloud Spaces.".to_string()
-            } else {
-                image
-                    .cloud
-                    .map(|c| c.label().to_string())
-                    .unwrap_or_else(|| "Not available for this image yet.".into())
-            },
-        });
-    }
     let chosen = selected_cloud(state, env).map(|c| c.name.as_str());
     for c in offered_clouds(env) {
         out.push(PlacementOption {
@@ -2688,6 +3277,11 @@ pub fn placement_options_on(
     }
     out
 }
+
+/// The Windows tile's title on a Mac host.
+const WINDOWS_SOON_TITLE: &str = "Windows (coming soon)";
+/// Its tooltip.
+const WINDOWS_SOON_DETAIL: &str = "Windows Spaces are coming soon on Mac.";
 
 /// The wizard as drawn.
 pub fn view(state: &WizardState, env: &WizardEnv) -> WizardView {
@@ -2704,9 +3298,9 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
     let placement = state.placement;
     let engines = runtime_options(&image, placement);
     let runtime = if engines.contains(&state.runtime_choice) {
-        state.runtime_choice
+        state.runtime_choice.clone()
     } else {
-        engines.first().copied().unwrap_or(Runtime::Auto)
+        engines.first().cloned().unwrap_or(Runtime::Auto)
     };
     let kinds = kind_options(&base_of(state), placement);
     let cloud = selected_cloud(state, env);
@@ -2725,9 +3319,11 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
     let runtime_switch = (placement == Location::Local)
         .then(|| runtime_switch(&image, env))
         .flatten();
+    // Your other machines cannot run an external runtime provider's image.
     let placement_hint = (placement == Location::Local
         && !local_ready
         && image.local.is_some()
+        && !matches!(image.local, Some(LocalEngine::External(_)))
         && usable_host(&image, env).is_none())
     .then(|| match env.hosts.iter().find(|h| !h.online) {
         // Yours, but its service is down: how it comes back.
@@ -2744,25 +3340,40 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
     })
     .filter(|h| !h.is_empty());
     let placement_ready = match placement {
-        Location::Cloud => env.cloud_available,
         Location::Local => local_ready,
         Location::Yours => offer.is_some(),
         Location::Host => host.is_some() && host_why.is_none(),
+        // This Mac or a machine of yours that can take it now.
+        Location::Auto => local_ready || usable_host(&image, env).is_some(),
     };
     let name = state.name.trim().to_string();
     let name_invalid = !name.is_empty() && !valid_space_name(&name);
+    // Left empty, the Space gets the name generated when the wizard opened.
+    let space_name = if name.is_empty() {
+        state.generated_name.clone()
+    } else {
+        name.clone()
+    };
+    let resource_edit = state.resource_edit.as_ref().map(|e| ResourceEditView {
+        field: e.field,
+        text: e.text.clone(),
+        error: typed_value(state, env, e).err().filter(|m| !m.is_empty()),
+    });
     let custom = custom_ref(state).is_some();
     let image_error = validate_image_ref(&state.image_text);
     let disk = disk_view(state, &image, env, os);
+    let windows_soon = os == SpaceOs::Macos && image.os == SpaceOs::Windows;
     let can_continue = image.os != SpaceOs::Unknown
+        && !windows_soon
         && match state.step {
             0 => placeable && placement_ready && image_error.is_none(),
-            1 => disk.error.is_none(),
+            1 => disk.error.is_none() && resource_edit.as_ref().is_none_or(|e| e.error.is_none()),
             2 => !name_invalid,
             _ => true,
         };
     let images = &catalog().images;
     let pressed_os = selected_os(state);
+    let host_os = os;
     let os_tiles = [
         (SpaceOs::Linux, "Linux", "Ubuntu desktop with cua-spacesd"),
         (SpaceOs::Windows, "Windows", "Windows Server VM"),
@@ -2779,12 +3390,18 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
                 reasons.into_iter().next()
             })
             .flatten();
+        // Windows Spaces are not offered from a Mac yet: shown, not chosen.
+        let soon = host_os == SpaceOs::Macos && os == SpaceOs::Windows;
         Tile {
             id: os.as_str().into(),
-            title: title.into(),
-            detail: why.clone().unwrap_or_else(|| detail.into()),
+            title: if soon { WINDOWS_SOON_TITLE } else { title }.into(),
+            detail: if soon {
+                WINDOWS_SOON_DETAIL.to_string()
+            } else {
+                why.clone().unwrap_or_else(|| detail.into())
+            },
             pressed: pressed_os == Some(os),
-            enabled: images.iter().any(|i| i.os == os) && why.is_none(),
+            enabled: !soon && images.iter().any(|i| i.os == os) && why.is_none(),
         }
     })
     .collect();
@@ -2795,7 +3412,6 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
         .map(|o| o.id.clone())
         .unwrap_or_else(|| "local".into());
     let placement_error = (!placement_ready && placeable).then(|| match placement {
-        Location::Cloud => "Sign in to use Cua Cloud.".to_string(),
         Location::Yours => match cloud {
             Some(c) => cloud_refusal(&image, c)
                 .unwrap_or_else(|| format!("{} does not run this image.", c.title)),
@@ -2803,7 +3419,8 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
         },
         Location::Host => host_why
             .clone()
-            .unwrap_or_else(|| "Choose a machine.".to_string()),
+            .unwrap_or_else(|| "Choose a computer.".to_string()),
+        Location::Auto => "None of your computers can take it now.".to_string(),
         Location::Local if runtime_switch.is_some() => match image.local {
             Some(LocalEngine::Container) => {
                 format!(
@@ -2817,15 +3434,34 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
             ),
         },
         Location::Local => {
-            if env.local_available {
+            if let Some(LocalEngine::External(n)) = &image.local {
+                let label = external_runtime_label(n);
+                match local_engine_detail(&image, env) {
+                    Some(why) => format!("{label} is not ready on this Mac: {why}."),
+                    None => format!("{label} is not ready on this Mac."),
+                }
+            } else if env.local_available {
                 let what = match image.local {
                     Some(LocalEngine::Lume) => "Lume",
                     Some(LocalEngine::Qemu) => "QEMU",
                     _ => "container",
                 };
-                match local_engine_detail(&image, env) {
-                    Some(why) => format!("{} cannot run {what} Spaces: {why}.", os.this_machine()),
-                    None => format!("{} cannot run {what} Spaces.", os.this_machine()),
+                let why = local_engine_detail(&image, env);
+                if image.local == Some(LocalEngine::Qemu)
+                    && os == SpaceOs::Windows
+                    && why
+                        .as_deref()
+                        .is_none_or(|w| w.starts_with("QEMU not found"))
+                {
+                    // Cua never installs QEMU on Windows: say what to get.
+                    WINDOWS_QEMU_MISSING.to_string()
+                } else {
+                    match why {
+                        Some(why) => {
+                            format!("{} cannot run {what} Spaces: {why}.", os.this_machine())
+                        }
+                        None => format!("{} cannot run {what} Spaces.", os.this_machine()),
+                    }
                 }
             } else {
                 env.local_reason
@@ -2851,13 +3487,11 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
         })
         .collect();
     let engine_text = match placement {
-        Location::Cloud => image
-            .cloud
-            .map(|c| c.label().to_string())
-            .unwrap_or_else(|| "Not available in Cua Cloud yet".into()),
-        Location::Local => match image.local {
-            Some(l) if runtime == Runtime::Auto => l.label_on(os),
-            Some(_) => runtime_word(runtime, image.variant, os),
+        Location::Local => match &image.local {
+            // A provider is its own engine: "macOS VMs on this Mac".
+            Some(l @ LocalEngine::External(_)) => l.label_on(os),
+            Some(l) if runtime == Runtime::Auto => l.technical_label_on(os),
+            Some(_) => runtime_word(&runtime, image.variant, os),
             None => format!("Not available on {}", os.this_machine_lower()),
         },
         Location::Yours => match offer {
@@ -2871,19 +3505,21 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
             Some(h) => format!("{} on {}", image.variant.label(), h.name),
             None => image.variant.label().to_string(),
         },
+        Location::Auto => image.variant.label().to_string(),
     };
     let cores = |n: u32| format!("{n} {}", if n == 1 { "core" } else { "cores" });
     let local = placement == Location::Local;
     let (cpus, memory_gb) = effective_size(state, env);
     let ((min_cpus, max_cpus), (min_memory_gb, max_memory_gb)) = size_ranges(placement, env);
     // No price on the user's own hardware (this Mac, one of your machines,
-    // or a machine added by address): only placements that bill show one.
-    let price = if local || placement == Location::Host || state.mode == WizardMode::Address {
+    // or a machine added by address): only a cloud of yours shows one.
+    let price = if local
+        || matches!(placement, Location::Host | Location::Auto)
+        || state.mode == WizardMode::Address
+    {
         None
-    } else if yours {
-        offer.and_then(|o| cloud_price_text(o.usd_per_hour))
     } else {
-        price_text(env.cloud_pricing.as_ref(), cpus, memory_gb)
+        offer.and_then(|o| cloud_price_text(o.usd_per_hour))
     };
     // When a Space in your cloud deletes itself.
     let lifetime = cloud.filter(|_| yours).map(|c| ttl_text(c.ttl_hours));
@@ -2911,7 +3547,11 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
             value: match (cloud.filter(|_| yours), host) {
                 (Some(c), _) => c.label.clone(),
                 (None, Some(h)) => h.name.clone(),
-                _ => placement.label_on(os).into(),
+                _ => match &image.local {
+                    // "Linux, on this Mac": the plain words, not the engine's.
+                    Some(l @ LocalEngine::Container) if local => l.label_on(os),
+                    _ => placement.label_on(os).into(),
+                },
             },
             copy: None,
             help: None,
@@ -2992,7 +3632,7 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
             warning: None,
         });
     }
-    let (gpu, gpu_option) = gpu_row(state, env, &image, runtime);
+    let (gpu, gpu_option) = gpu_row(state, env, &image, &runtime);
     if let Some(row) = gpu.as_ref().filter(|r| r.on) {
         summary.push(Fact {
             label: "GPU".into(),
@@ -3004,10 +3644,10 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
     }
     summary.push(Fact {
         label: "Name".into(),
-        value: if name.is_empty() {
+        value: if space_name.is_empty() {
             "Chosen automatically".into()
         } else {
-            name.clone()
+            space_name.clone()
         },
         copy: None,
         help: None,
@@ -3030,8 +3670,8 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
         cloud: cloud.filter(|_| yours).map(|c| c.name.clone()),
         host: host.map(|h| h.id.clone()),
         image: image.clone(),
-        runtime,
-        name: (!name.is_empty()).then(|| name.clone()),
+        runtime: runtime.clone(),
+        name: (!space_name.is_empty()).then(|| space_name.clone()),
         // In your cloud the machine type sets the size.
         cpus: (!yours).then_some(cpus),
         memory_mb: (!yours).then_some(memory_gb * 1024),
@@ -3090,7 +3730,7 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
             .iter()
             .map(|r| MenuOption {
                 value: r.as_str().into(),
-                label: r.label().into(),
+                label: r.label(),
             })
             .collect(),
         runtime,
@@ -3117,7 +3757,7 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
         resource_facts: if yours {
             let mut f = vec![fact_line("kind", "Kind", image.variant.label().into())];
             if let Some(o) = offer.filter(|o| !o.machine_type.is_empty()) {
-                f.push(fact_line("machine", "Machine", o.machine_type.clone()));
+                f.push(fact_line("machine", "Computer", o.machine_type.clone()));
             }
             if let Some(l) = lifetime.clone() {
                 f.push(fact_line("lifetime", "Deletes itself", l));
@@ -3128,7 +3768,9 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
         },
         resources_error: disk.error.clone(),
         gpu,
+        resource_edit: resource_edit.clone(),
         name: state.name.clone(),
+        space_name: space_name.clone(),
         name_invalid,
         name_error: name_error.clone(),
         open_when_ready: state.open_when_ready,
@@ -3170,6 +3812,7 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
             placement_error_for_fields,
             name_error,
             disk.bounds.is_some(),
+            resource_edit.as_ref(),
         ),
         labels: WizardLabels {
             cancel: "Cancel".into(),
@@ -3183,21 +3826,28 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
 mod tests {
     use super::*;
 
-    /// `s` placed in Cua Cloud, which the apps do not offer
-    /// ([`crate::model::CLOUD_SPACES_OFFERED`]) and `reduce` refuses: the
-    /// cloud paths stay covered for when they do.
+    /// `s` placed in the user's own cloud (no estimate of its own: the
+    /// remote paths of the view).
     fn in_cloud(s: &WizardState) -> WizardState {
         WizardState {
-            placement: Location::Cloud,
+            placement: Location::Yours,
             picked: true,
             ..s.clone()
+        }
+    }
+
+    /// `e` with one connected cloud of the user's, so a placement in it holds.
+    fn with_cloud(e: &WizardEnv) -> WizardEnv {
+        WizardEnv {
+            clouds: vec![aws()],
+            experiments: your_cloud_on(),
+            ..e.clone()
         }
     }
 
     fn env() -> WizardEnv {
         WizardEnv {
             default_location: Location::Local,
-            cloud_available: false,
             local_available: true,
             local_reason: None,
             local_backends: Some(vec!["docker".into()]),
@@ -3207,11 +3857,20 @@ mod tests {
             lume_source: None,
             linux_source: None,
             storage: None,
-            cloud_pricing: None,
             clouds: vec![],
             hosts: vec![],
-            experiments: crate::experiments::Experiments::default(),
+            experiments: your_cloud_off(),
             gpus: None,
+            name_seed: Some(0x2a),
+        }
+    }
+
+    /// The "Your cloud" experiment turned off (the tests' baseline; it is on
+    /// by default).
+    fn your_cloud_off() -> crate::experiments::Experiments {
+        crate::experiments::Experiments {
+            your_cloud: false,
+            ..Default::default()
         }
     }
 
@@ -3364,7 +4023,6 @@ mod tests {
     /// This Mac: 212 GB free on the startup disk, 40 GB in Colima.
     fn storage_env() -> WizardEnv {
         WizardEnv {
-            cloud_available: true,
             local_backends: None,
             storage: Some(LocalStorage {
                 reserve_bytes: 5 * GIB,
@@ -3376,6 +4034,79 @@ mod tests {
             }),
             ..env()
         }
+    }
+
+    #[test]
+    fn windows_is_coming_soon_on_a_mac_and_cannot_continue() {
+        let e = env();
+        let s = reduce(
+            &initial(&e),
+            &WizardAction::ChooseOs {
+                os: SpaceOs::Windows,
+            },
+            &e,
+        );
+        let mac = view_on(&s, &e, SpaceOs::Macos);
+        let tile = mac.os_tiles.iter().find(|t| t.id == "windows").unwrap();
+        assert!(!tile.enabled && tile.title.contains("coming soon"));
+        assert!(!mac.can_continue);
+        let win = view_on(&s, &e, SpaceOs::Windows);
+        let tile = win.os_tiles.iter().find(|t| t.id == "windows").unwrap();
+        assert_eq!(tile.title, "Windows");
+    }
+
+    /// A Windows VM runs on QEMU, which the app never installs: on a PC
+    /// without it (or before the doctor answered) the Windows image is not
+    /// offered here, so nothing downloads gigabytes only to fail.
+    #[test]
+    fn a_windows_vm_needs_qemu_ready_here() {
+        let image = "ghcr.io/trycua/windows:2022";
+        let blocked = |e: &WizardEnv| {
+            let s = reduce(
+                &initial(e),
+                &WizardAction::ChooseImage {
+                    image_ref: image.into(),
+                },
+                e,
+            );
+            let s = reduce(&s, &WizardAction::ChoosePlacement { on: "local".into() }, e);
+            let v = view_on(&s, e, SpaceOs::Windows);
+            assert_eq!(v.image.image_ref, image);
+            (!v.can_continue).then(|| v.placement_error.unwrap_or_default())
+        };
+        let unknown = WizardEnv {
+            local_backends: None,
+            ..env()
+        };
+        assert_eq!(blocked(&unknown).as_deref(), Some(WINDOWS_QEMU_MISSING));
+        // Docker Desktop is up, QEMU is not: the doctor's reason.
+        let docker_only = WizardEnv {
+            local_backends: Some(vec!["container".into()]),
+            local_details: Some(
+                [(
+                    "qemu".to_string(),
+                    "QEMU not found; missing: qemu-system-x86_64 / qemu-img".to_string(),
+                )]
+                .into(),
+            ),
+            ..env()
+        };
+        assert_eq!(blocked(&docker_only).as_deref(), Some(WINDOWS_QEMU_MISSING));
+        // A Linux container is still offered with the same env.
+        let linux = reduce(
+            &initial(&unknown),
+            &WizardAction::ChooseImage {
+                image_ref: "ghcr.io/trycua/linux:24.04".into(),
+            },
+            &unknown,
+        );
+        assert!(view_on(&linux, &unknown, SpaceOs::Windows).can_continue);
+        // QEMU ready: Windows is offered.
+        let qemu = WizardEnv {
+            local_backends: Some(vec!["qemu".into()]),
+            ..env()
+        };
+        assert_eq!(blocked(&qemu), None);
     }
 
     /// A container image on a Mac whose container engine is not ready says
@@ -3416,6 +4147,23 @@ mod tests {
                  container engine."
             )
         );
+    }
+
+    #[test]
+    fn plain_words_first_and_the_engine_as_a_developer_names_it() {
+        assert_eq!(LocalEngine::Container.label(), "Linux, on this Mac");
+        assert_eq!(
+            LocalEngine::Container.label_on(SpaceOs::Windows),
+            "Linux, on this PC"
+        );
+        assert_eq!(
+            LocalEngine::Container.technical_label_on(SpaceOs::Macos),
+            "Container on this Mac (gVisor when installed)"
+        );
+        assert_eq!(duration_text(190.0), "About 3 minutes");
+        assert_eq!(duration_text(200.0), "About 3 minutes");
+        assert_eq!(duration_text(30.0), "Under a minute");
+        assert_eq!(duration_text(100.0), "About 2 minutes");
     }
 
     fn on(image_ref: &str, e: &WizardEnv) -> WizardState {
@@ -3476,9 +4224,8 @@ mod tests {
         assert_eq!(
             v.resource_facts[2].value,
             format!(
-                "{}–{} initially; grows with use (download {})",
-                size_text(p.unpacked),
-                size_text(p.unpacked + p.disk + p.download),
+                "{} initially; grows with use (download {})",
+                size_range_text(p.unpacked, p.unpacked + p.disk + p.download),
                 size_text(p.download)
             )
         );
@@ -3504,9 +4251,14 @@ mod tests {
                 && f.value
                     .contains("includes 455 MB one-time Linux runtime download")
         }));
-        assert!(v.summary.iter().any(
-            |f| f.label == "Disk" && f.value.starts_with(&size_text(p.unpacked + (455 << 20)))
-        ));
+        assert!(v.summary.iter().any(|f| {
+            f.label == "Disk"
+                && f.value.starts_with(
+                    size_text(p.unpacked + (455 << 20))
+                        .trim_end_matches(" GB")
+                        .trim_end_matches(" MB"),
+                )
+        }));
         e.storage.as_mut().unwrap().linux_runtime_download_bytes = 0;
         assert!(
             !view(&s, &e)
@@ -3529,9 +4281,9 @@ mod tests {
                 .all(|f| f.label != "Download" && f.label != "Disk")
         );
         let mut remote = s;
-        remote.placement = Location::Cloud;
+        remote.placement = Location::Yours;
         assert!(
-            !view(&remote, &e)
+            !view(&remote, &with_cloud(&e))
                 .resource_facts
                 .iter()
                 .any(|f| f.value.contains("one-time Linux runtime download"))
@@ -3569,9 +4321,8 @@ mod tests {
                 (
                     "Disk".into(),
                     format!(
-                        "{}–{} initially; grows with use (download {})",
-                        size_text(p.unpacked),
-                        size_text(p.unpacked + p.disk + p.download),
+                        "{} initially; grows with use (download {})",
+                        size_range_text(p.unpacked, p.unpacked + p.disk + p.download),
                         size_text(p.download)
                     )
                 ),
@@ -3588,9 +4339,8 @@ mod tests {
         assert_eq!(
             v.resource_facts[2].value,
             format!(
-                "{}–{} initially; grows with use",
-                size_text(p.unpacked),
-                size_text(p.unpacked + p.disk + p.download)
+                "{} initially; grows with use",
+                size_range_text(p.unpacked, p.unpacked + p.disk + p.download)
             )
         );
     }
@@ -3636,7 +4386,10 @@ mod tests {
 
     #[test]
     fn a_linux_vm_disk_grows_with_the_slider() {
-        let e = storage_env();
+        let e = WizardEnv {
+            local_backends: Some(vec!["qemu".into()]),
+            ..storage_env()
+        };
         let mut s = on("ghcr.io/trycua/linux:24.04-disk", &e);
         let v = view(&s, &e);
         let p = sizes("ghcr.io/trycua/linux:24.04-disk", "arm64");
@@ -3712,17 +4465,13 @@ mod tests {
         );
         assert_eq!(other.disk_gb, None);
         let cloud = in_cloud(&s);
-        let v = view(&cloud, &e);
+        let v = view(&cloud, &with_cloud(&e));
         assert!(!v.disk_editable && v.plan.disk_gb.is_none());
         assert_eq!(
             facts(&v),
             [
                 ("Kind".into(), "Virtual machine".into()),
-                ("Architecture".into(), "x64".into()),
-                (
-                    "Disk".into(),
-                    size_text(sizes("ghcr.io/trycua/linux:24.04-disk", "amd64").disk)
-                ),
+                ("Deletes itself".into(), "After 8 hours".into()),
             ]
         );
     }
@@ -3830,10 +4579,10 @@ mod tests {
         .summary;
         let a = summary.iter().find(|f| f.label == "Architecture").unwrap();
         assert_eq!(a.value, "x64 (emulated)");
-        // No warning in the cloud, or on an x64 Mac.
+        // No warning in your cloud, or on an x64 Mac.
         let cloud = in_cloud(&s);
         assert!(
-            view(&cloud, &e)
+            view(&cloud, &with_cloud(&e))
                 .resource_facts
                 .iter()
                 .all(|f| f.symbol.is_none())
@@ -3881,7 +4630,6 @@ mod tests {
             runtime_options(&linux, Location::Local),
             [Runtime::Auto, Runtime::Gvisor, Runtime::Runc]
         );
-        assert_eq!(runtime_options(&linux, Location::Cloud), [Runtime::Gvisor]);
         let kinds = kind_options(&linux, Location::Local);
         assert_eq!(kinds.len(), 2);
         assert_eq!(kinds[1].image.image_ref, "ghcr.io/trycua/linux:24.04-disk");
@@ -3967,40 +4715,38 @@ mod tests {
         }
     }
 
-    /// Fleet's default rates (trycua/cloud `DefaultUsageVCPUHourPriceUSD`,
-    /// `DefaultUsageMemoryGiBHourPriceUSD`).
-    const RATES: CloudPricing = CloudPricing {
-        vcpu_hour_usd: 0.044625,
-        memory_gib_hour_usd: 0.0223125,
-    };
-
-    fn cloud_env(pricing: Option<CloudPricing>) -> WizardEnv {
-        WizardEnv {
-            default_location: Location::Cloud,
-            cloud_available: true,
-            cloud_pricing: pricing,
+    #[test]
+    fn a_linked_cloud_is_in_run_on_by_default() {
+        let e = WizardEnv {
+            clouds: vec![aws()],
+            experiments: Default::default(),
             ..env()
-        }
+        };
+        let v = view(&initial(&e), &e);
+        assert_eq!(
+            menu(&v).last().map(String::as_str),
+            Some("aws [clouds] AWS \u{b7} us-west-2"),
+            "a fresh install lists the linked cloud"
+        );
+        let off = WizardEnv {
+            experiments: your_cloud_off(),
+            ..e
+        };
+        assert!(
+            !menu(&view(&initial(&off), &off))
+                .iter()
+                .any(|m| m.starts_with("aws "))
+        );
     }
 
     #[test]
     fn your_cloud_is_disabled_until_one_is_connected() {
-        // A Cua Cloud default still starts on this Mac, and there is no
-        // Cua Cloud tile while the apps do not offer it.
-        let e = WizardEnv {
-            default_location: Location::Cloud,
-            cloud_available: true,
-            ..env()
-        };
+        let e = env();
         let s = initial(&e);
         assert_eq!(s.placement, Location::Local);
         let v = view(&s, &e);
         let ids: Vec<&str> = v.placements.iter().map(|o| o.id.as_str()).collect();
-        assert_eq!(
-            ids,
-            ["local"],
-            "This Mac only: no Cua Cloud, nothing connected"
-        );
+        assert_eq!(ids, ["local"], "This Mac only: nothing connected");
         assert!(v.placements[0].selected && v.placements[0].enabled);
         assert_eq!(v.placement_id, "local");
         assert!(
@@ -4025,14 +4771,6 @@ mod tests {
             &e,
         );
         assert_eq!(picked.placement, Location::Local);
-        let synced = reduce(
-            &s,
-            &WizardAction::SyncDefault {
-                location: Location::Cloud,
-            },
-            &e,
-        );
-        assert_eq!(synced.placement, Location::Local);
         let yours_default = WizardEnv {
             default_location: Location::Yours,
             ..e
@@ -4064,8 +4802,14 @@ mod tests {
             "each cloud is its own entry: no second menu"
         );
         // Systems and kinds it cannot run are greyed out with why.
-        let win = v.os_tiles.iter().find(|t| t.id == "windows").unwrap();
-        assert!(!win.enabled);
+        let soon = v.os_tiles.iter().find(|t| t.id == "windows").unwrap();
+        assert!(!soon.enabled);
+        assert_eq!(soon.title, "Windows (coming soon)");
+        assert_eq!(soon.detail, "Windows Spaces are coming soon on Mac.");
+        // Off a Mac, the cloud's own reason shows.
+        let v_linux = view_on(&s, &e, SpaceOs::Linux);
+        let win = v_linux.os_tiles.iter().find(|t| t.id == "windows").unwrap();
+        assert!(!win.enabled && win.title == "Windows");
         assert!(
             win.detail
                 .starts_with("Windows on AWS is not offered yet. Ask your agent to deploy the ")
@@ -4198,6 +4942,7 @@ mod tests {
             online,
             os: "macos".into(),
             limits: vec![],
+            load: None,
         }
     }
 
@@ -4415,9 +5160,9 @@ mod tests {
     }
 
     /// The "Run on" menu lists This Mac and your machines; your clouds
-    /// only with the "Your cloud" experiment. Disabled machines say why.
+    /// unless "Your cloud" was turned off (it is on by default). Disabled machines say why.
     #[test]
-    fn the_run_on_menu_lists_every_machine_and_clouds_only_with_the_experiment() {
+    fn the_run_on_menu_lists_every_machine_and_clouds_unless_the_experiment_is_off() {
         let mut e = WizardEnv {
             hosts: hosts(),
             clouds: vec![aws()],
@@ -4428,17 +5173,19 @@ mod tests {
         assert_eq!(
             menu(&v),
             [
+                "auto [auto] Auto",
                 "local [this-mac] This Mac *",
                 "host:m-mini [hosts] Mac mini",
                 "host:lab [hosts] lab",
                 "host:m-studio [hosts] Studio (offline) (disabled)",
             ],
-            "no cloud without the experiment, though AWS is connected"
+            "no cloud with the experiment off, though AWS is connected"
         );
-        let studio = &v.placements[3];
+        let studio = &v.placements[4];
         assert_eq!(studio.detail, "Studio is offline.");
-        assert_eq!(v.placements[1].detail, "Through the Cua relay");
-        assert_eq!(v.placements[2].detail, "Over Tailscale or your network");
+        assert_eq!(v.placements[0].detail, AUTO_PLACEMENT_DETAIL);
+        assert_eq!(v.placements[2].detail, "Through the Cua relay");
+        assert_eq!(v.placements[3].detail, "Over Tailscale or your network");
         // A cloud cannot be chosen while hidden, nor an offline machine.
         let s1 = reduce(&s, &WizardAction::ChoosePlacement { on: "aws".into() }, &e);
         assert_eq!(s1.placement, Location::Local);
@@ -4457,15 +5204,142 @@ mod tests {
             menu(&v).last().map(String::as_str),
             Some("aws [clouds] AWS \u{b7} us-west-2")
         );
-        assert_eq!(v.placements.len(), 5);
+        assert_eq!(v.placements.len(), 6);
         // Off again while AWS is chosen: back on this Mac, AWS untouched.
         let on_aws = reduce(&s, &WizardAction::ChoosePlacement { on: "aws".into() }, &e);
         assert_eq!(view(&on_aws, &e).placement_id, "aws");
-        e.experiments = Default::default();
+        e.experiments = your_cloud_off();
         let v = view(&on_aws, &e);
         assert_eq!(v.placement_id, "local");
         assert_eq!(create_args(&v.plan).on, "local");
         assert_eq!(e.clouds.len(), 1, "still connected");
+    }
+
+    /// Auto ("the least-loaded of your machines") is offered only while you
+    /// have a machine that provides Spaces, never chosen for you, and
+    /// creates with `on="auto"`: the machine's own engine, no price, no
+    /// guessed architecture.
+    #[test]
+    fn auto_places_on_the_least_loaded_machine_only_with_machines() {
+        // No machine of yours: no Auto, and it cannot be chosen.
+        let alone = env();
+        let s = initial(&alone);
+        assert!(
+            view(&s, &alone).placements.iter().all(|o| o.id != "auto"),
+            "no Auto without a machine that provides Spaces"
+        );
+        let s1 = reduce(
+            &s,
+            &WizardAction::ChoosePlacement { on: "auto".into() },
+            &alone,
+        );
+        assert_eq!(s1.placement, Location::Local);
+        let s1 = reduce(
+            &s,
+            &WizardAction::SetPlacement {
+                placement: Location::Auto,
+            },
+            &alone,
+        );
+        assert_eq!(s1.placement, Location::Local);
+
+        // With machines: offered first, This Mac stays the default (even
+        // when the setting says Auto).
+        let e = WizardEnv {
+            hosts: hosts(),
+            local_backends: Some(vec!["docker".into(), "lume".into()]),
+            ..env()
+        };
+        for e in [
+            e.clone(),
+            WizardEnv {
+                default_location: Location::Auto,
+                ..e.clone()
+            },
+        ] {
+            let v = view(&initial(&e), &e);
+            assert_eq!(v.placement_id, "local");
+            assert_eq!(create_args(&v.plan).on, "local");
+            let auto = &v.placements[0];
+            assert_eq!(
+                (
+                    auto.id.as_str(),
+                    auto.label.as_str(),
+                    auto.enabled,
+                    auto.selected
+                ),
+                ("auto", "Auto", true, false)
+            );
+        }
+
+        // Chosen: on="auto", the machine picks its engine.
+        let s = reduce(
+            &initial(&e),
+            &WizardAction::ChoosePlacement { on: "auto".into() },
+            &e,
+        );
+        assert_eq!(s.placement, Location::Auto);
+        let v = view(&s, &e);
+        assert_eq!(v.placement_id, "auto");
+        assert!(v.can_continue, "{:?}", v.placement_error);
+        assert_eq!(v.runtimes.len(), 1);
+        assert_eq!(v.price, None);
+        assert_eq!(v.gpu, None);
+        let args = create_args(&v.plan);
+        assert_eq!(args.on, "auto");
+        assert_eq!(args.disk_gb, None);
+        // The machines went away: back on this Mac.
+        let gone = WizardEnv {
+            hosts: vec![],
+            ..e.clone()
+        };
+        assert_eq!(create_args(&view(&s, &gone).plan).on, "local");
+    }
+
+    /// A machine's sidebar line: what runs there and its CPU, "Paused"
+    /// while it takes nothing, nothing while offline or unreported.
+    #[test]
+    fn a_machine_says_how_busy_it_is() {
+        let load = HostLoad {
+            millicpus_total: 10_000,
+            millicpus_free: 6_000,
+            memory_total_mb: 32_768,
+            memory_free_mb: 16_384,
+            spaces: 3,
+            problem: String::new(),
+        };
+        let busy = SpaceHost {
+            load: Some(load.clone()),
+            ..host("m-mini", "Mac mini", "relay", true)
+        };
+        assert_eq!(
+            host_load_text(&busy).as_deref(),
+            Some("3 running \u{b7} 40% CPU")
+        );
+        let paused = SpaceHost {
+            load: Some(HostLoad {
+                problem: "sharing is paused".into(),
+                ..load.clone()
+            }),
+            ..busy.clone()
+        };
+        assert_eq!(host_load_text(&paused).as_deref(), Some("Paused"));
+        let no_cpu = SpaceHost {
+            load: Some(HostLoad {
+                millicpus_total: 0,
+                millicpus_free: 0,
+                spaces: 0,
+                ..load
+            }),
+            ..busy.clone()
+        };
+        assert_eq!(host_load_text(&no_cpu).as_deref(), Some("0 running"));
+        let offline = SpaceHost {
+            online: false,
+            ..busy
+        };
+        assert_eq!(host_load_text(&offline), None);
+        assert_eq!(host_load_text(&host("lab", "lab", "direct", true)), None);
     }
 
     /// A machine the relay sees connected whose owner stopped sharing it is
@@ -4493,11 +5367,12 @@ mod tests {
         assert_eq!(
             menu(&v),
             [
+                "auto [auto] Auto",
                 "local [this-mac] This Mac *",
                 "host:m-gamma [hosts] gamma-4 Mac Studio (not sharing) (disabled)",
             ]
         );
-        assert_eq!(v.placements[1].detail, line);
+        assert_eq!(v.placements[2].detail, line);
         // The SDK's own words win, with one full stop.
         let sdk = WizardEnv {
             hosts: vec![stopped(
@@ -4505,7 +5380,7 @@ mod tests {
             )],
             ..env()
         };
-        assert_eq!(view(&initial(&sdk), &sdk).placements[1].detail, line);
+        assert_eq!(view(&initial(&sdk), &sdk).placements[2].detail, line);
         // It is online: not "offline", and never chosen for you.
         let s = reduce(
             &initial(&e),
@@ -4514,7 +5389,7 @@ mod tests {
         );
         let v = view(&s, &e);
         assert_eq!(v.placement_id, "local");
-        assert!(!v.placements[1].label.contains("offline"));
+        assert!(!v.placements[2].label.contains("offline"));
         // Said once, where an offline machine's hint would be.
         assert_eq!(v.placement_hint.as_deref(), Some(line));
         // Picked on purpose (a preset): Continue says why not.
@@ -4547,7 +5422,7 @@ mod tests {
             ..env()
         };
         assert_eq!(
-            view(&initial(&e), &e).placements[1].label,
+            view(&initial(&e), &e).placements[2].label,
             "gamma-4 Mac Studio (offline)"
         );
     }
@@ -4611,6 +5486,7 @@ mod tests {
         assert_eq!(
             labels,
             [
+                "Auto",
                 "This Mac",
                 "Mac mini (at its limit)",
                 "lab (not a Mac)",
@@ -4618,7 +5494,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            v.placements[1].detail,
+            v.placements[2].detail,
             "Mac mini is at its limit: Apple's macOS license allows two macOS VMs per Mac."
         );
         // Linux on the Mac mini is fine (two of four Spaces in use).
@@ -4636,96 +5512,6 @@ mod tests {
             ..e.clone()
         };
         assert_eq!(view(&mini, &gone).placement_id, "local");
-    }
-
-    #[test]
-    fn cloud_spaces_are_sized_within_the_everyday_range_and_priced() {
-        let e = cloud_env(Some(RATES));
-        let mut s = in_cloud(&reduce(&initial(&e), &WizardAction::Next, &e));
-        let v = view(&s, &e);
-        assert_eq!(v.step, 1);
-        let ids: Vec<&str> = v.fields.iter().map(|f| f.id.as_str()).collect();
-        assert_eq!(ids, ["cpus", "memory"], "sliders, no disk in the cloud");
-        assert_eq!((v.min_cpus, v.max_cpus), CLOUD_CPU_RANGE);
-        assert_eq!((v.min_memory_gb, v.max_memory_gb), CLOUD_MEMORY_GB_RANGE);
-        // Linux defaults: 2 vCPUs + 4 GB = $0.08925 + $0.08925.
-        assert_eq!(v.price.as_deref(), Some("About $0.18/hour"));
-        s = reduce(&s, &WizardAction::SetCpus { cpus: 64 }, &e);
-        s = reduce(&s, &WizardAction::SetMemory { memory_gb: 1024 }, &e);
-        let v = view(&s, &e);
-        assert_eq!(
-            (v.cpus, v.memory_gb),
-            (8, 32),
-            "clamped to the everyday cloud range"
-        );
-        assert_eq!(v.price.as_deref(), Some("About $1.07/hour"));
-        s = reduce(&s, &WizardAction::SetCpus { cpus: 0 }, &e);
-        s = reduce(&s, &WizardAction::SetMemory { memory_gb: 0 }, &e);
-        let v = view(&s, &e);
-        assert_eq!((v.cpus, v.memory_gb), (1, 2));
-        assert_eq!(v.price.as_deref(), Some("About $0.09/hour"));
-        // The plan and the SDK call carry the cloud size.
-        let args = create_args(&v.plan);
-        assert_eq!(
-            (args.cpus, args.memory_mb, args.disk_gb),
-            (Some(1), Some(2048), None)
-        );
-        s.step = 3;
-        let v = view(&s, &e);
-        let fact = |l: &str| {
-            v.summary
-                .iter()
-                .find(|f| f.label == l)
-                .map(|f| f.value.clone())
-        };
-        assert_eq!(fact("Resources").as_deref(), Some("1 core, 2 GB memory"));
-        assert_eq!(fact("Cost").as_deref(), Some("About $0.09/hour"));
-    }
-
-    #[test]
-    fn no_cloud_rates_no_estimate_and_no_price_locally() {
-        let e = cloud_env(None);
-        let mut s = in_cloud(&reduce(&initial(&e), &WizardAction::Next, &e));
-        assert_eq!(view(&s, &e).price, None, "never a guessed price");
-        s.step = 3;
-        assert!(view(&s, &e).summary.iter().all(|f| f.label != "Cost"));
-        for bad in [0.0, -1.0, f64::NAN, f64::INFINITY] {
-            let p = CloudPricing {
-                vcpu_hour_usd: bad,
-                ..RATES
-            };
-            assert_eq!(price_text(Some(&p), 2, 4), None, "{bad}");
-        }
-        let e = WizardEnv {
-            cloud_pricing: Some(RATES),
-            ..env()
-        };
-        let s = reduce(&initial(&e), &WizardAction::Next, &e);
-        assert_eq!(view(&s, &e).price, None, "no price on your own hardware");
-        // A machine added by address is your hardware too.
-        let s = reduce(&s, &WizardAction::ShowAddress, &e);
-        assert_eq!(view(&s, &e).price, None);
-    }
-
-    #[test]
-    fn a_size_follows_the_placement_limits() {
-        // 16 GB chosen locally is kept in the cloud; 12 vCPUs fit neither
-        // this 8-core Mac nor the cloud cap.
-        let e = WizardEnv {
-            cloud_available: true,
-            max_cpus: 12,
-            cloud_pricing: Some(RATES),
-            ..env()
-        };
-        let mut s = reduce(&initial(&e), &WizardAction::SetCpus { cpus: 12 }, &e);
-        s = reduce(&s, &WizardAction::SetMemory { memory_gb: 16 }, &e);
-        assert_eq!((view(&s, &e).cpus, view(&s, &e).memory_gb), (12, 16));
-        s = in_cloud(&s);
-        let v = view(&s, &e);
-        assert_eq!((v.cpus, v.memory_gb), (CLOUD_CPU_RANGE.1, 16));
-        assert_eq!(v.plan.cpus, Some(CLOUD_CPU_RANGE.1));
-        // 8 x 0.044625 + 16 x 0.0223125 = 0.714.
-        assert_eq!(v.price.as_deref(), Some("About $0.71/hour"));
     }
 
     #[test]
@@ -5038,5 +5824,221 @@ mod tests {
                 name: Some("lab".into())
             })
         );
+    }
+
+    /// Clicking a slider's number lets its value be typed: a value within
+    /// the slider's limits is used; one outside keeps the field open with
+    /// why, and Continue waits for it.
+    #[test]
+    fn a_resource_value_can_be_typed_within_the_sliders_limits() {
+        let e = env();
+        let s = reduce(&initial(&e), &WizardAction::Next, &e);
+        assert_eq!(s.step, 1);
+        let edit = |s: &WizardState, field, text: &str| {
+            let s = reduce(s, &WizardAction::EditResource { field }, &e);
+            reduce(&s, &WizardAction::SetResourceText { text: text.into() }, &e)
+        };
+        let field_error = |v: &WizardView, id: &str| {
+            v.fields
+                .iter()
+                .find(|f| f.id == id)
+                .and_then(|f| f.error.clone())
+        };
+        // Clicking shows the value as it is.
+        let open = reduce(
+            &s,
+            &WizardAction::EditResource {
+                field: ResourceField::Cpus,
+            },
+            &e,
+        );
+        assert_eq!(
+            view(&open, &e).resource_edit.map(|r| r.text),
+            Some(view(&s, &e).cpus.to_string())
+        );
+        // Within the limits (a unit is fine): used, and the field closes.
+        let typed = reduce(
+            &edit(&s, ResourceField::Cpus, " 6 cores"),
+            &WizardAction::CommitResource,
+            &e,
+        );
+        let v = view(&typed, &e);
+        assert_eq!((v.cpus, v.cpus_text.as_str()), (6, "6 cores"));
+        assert!(v.resource_edit.is_none());
+        let typed = reduce(
+            &edit(&s, ResourceField::Memory, "12 GB"),
+            &WizardAction::CommitResource,
+            &e,
+        );
+        assert_eq!(view(&typed, &e).memory_text, "12 GB");
+        // Outside: the slider's limits, said on the field; nothing changes
+        // and Continue waits.
+        let (lo, hi) = MEMORY_GB_RANGE;
+        for (field, text, why) in [
+            (ResourceField::Cpus, "9", "Choose 1 to 8 cores.".to_string()),
+            (ResourceField::Cpus, "0", "Choose 1 to 8 cores.".to_string()),
+            (
+                ResourceField::Memory,
+                "64",
+                format!("Choose {lo} to {hi} GB."),
+            ),
+            (
+                ResourceField::Memory,
+                "lots",
+                "Enter a whole number.".to_string(),
+            ),
+            (
+                ResourceField::Memory,
+                "",
+                "Enter a whole number.".to_string(),
+            ),
+        ] {
+            let bad = reduce(&edit(&s, field, text), &WizardAction::CommitResource, &e);
+            let v = view(&bad, &e);
+            assert_eq!(
+                v.resource_edit.as_ref().and_then(|r| r.error.as_deref()),
+                Some(why.as_str()),
+                "{text}"
+            );
+            assert_eq!(field_error(&v, field.id()), Some(why.clone()));
+            assert!(!v.can_continue, "{text}");
+            assert_eq!(
+                (v.cpus, v.memory_gb),
+                (view(&s, &e).cpus, view(&s, &e).memory_gb)
+            );
+            assert_eq!(reduce(&bad, &WizardAction::Next, &e).step, 1, "{text}");
+            // Escape keeps the slider's value and clears the error.
+            let v = view(&reduce(&bad, &WizardAction::CancelResource, &e), &e);
+            assert!(
+                v.resource_edit.is_none()
+                    && v.can_continue
+                    && field_error(&v, field.id()).is_none()
+            );
+        }
+        // Continue uses a valid typed value.
+        let next = reduce(&edit(&s, ResourceField::Cpus, "3"), &WizardAction::Next, &e);
+        assert_eq!(
+            (next.step, next.cpus, next.resource_edit.clone()),
+            (2, 3, None)
+        );
+    }
+
+    /// The disk takes a typed size between the image's and the room on its
+    /// volume, with the slider's words when it is outside.
+    #[test]
+    fn a_typed_disk_size_keeps_the_images_disk_and_the_volumes_room() {
+        let e = WizardEnv {
+            storage: Some(LocalStorage {
+                reserve_bytes: 5 * GIB,
+                lume: Some(vol(212, "Macintosh HD")),
+                qemu: Some(StorageVolume {
+                    total_bytes: 300 * GIB,
+                    ..vol(212, "Macintosh HD")
+                }),
+                container: Some(vol(40, "Colima")),
+                pulled: vec![],
+                linux_runtime_download_bytes: 0,
+            }),
+            ..storage_env()
+        };
+        let s = on("ghcr.io/trycua/linux:24.04-disk", &e);
+        let min = view(&s, &e).min_disk_gb;
+        assert_eq!(view(&s, &e).max_disk_gb, 300);
+        let typed = |text: &str| {
+            let t = reduce(
+                &s,
+                &WizardAction::EditResource {
+                    field: ResourceField::Disk,
+                },
+                &e,
+            );
+            let t = reduce(&t, &WizardAction::SetResourceText { text: text.into() }, &e);
+            reduce(&t, &WizardAction::CommitResource, &e)
+        };
+        let v = view(&typed("120"), &e);
+        assert_eq!((v.disk_gb, v.plan.disk_gb), (120, Some(120)));
+        let small = view(&typed(&(min - 1).to_string()), &e);
+        assert_eq!(
+            small.resource_edit.and_then(|r| r.error),
+            Some(format!(
+                "A VM disk cannot shrink below the image's {min} GB."
+            ))
+        );
+        let big = view(&typed("301"), &e);
+        assert_eq!(
+            big.resource_edit.and_then(|r| r.error).as_deref(),
+            Some("Macintosh HD has room for up to 300 GB.")
+        );
+        // A container has no disk slider: nothing to type.
+        let c = on("ghcr.io/trycua/linux:24.04", &e);
+        let c = reduce(
+            &c,
+            &WizardAction::EditResource {
+                field: ResourceField::Disk,
+            },
+            &e,
+        );
+        assert!(c.resource_edit.is_none());
+    }
+
+    /// Left empty, the Space gets the name generated when the wizard
+    /// opened: the Name field's placeholder, the Summary and the create all
+    /// say it. A typed name wins.
+    #[test]
+    fn an_unnamed_space_shows_and_gets_its_generated_name() {
+        let e = env();
+        let s = initial(&e);
+        assert_eq!(s.generated_name, "space-000000002a");
+        assert_eq!(generated_space_name(Some(u64::MAX)), "space-ffffffffff");
+        let other = generated_space_name(None);
+        assert!(other.starts_with("space-") && other.len() == 16 && valid_space_name(&other));
+        let mut s = s;
+        for _ in 0..2 {
+            s = reduce(&s, &WizardAction::Next, &e);
+        }
+        let v = view(&s, &e);
+        let placeholder = v
+            .fields
+            .iter()
+            .find(|f| f.id == "name")
+            .and_then(|f| f.placeholder.clone());
+        assert_eq!(placeholder.as_deref(), Some("space-000000002a"));
+        assert_eq!(v.space_name, "space-000000002a");
+        let name_row = |v: &WizardView| {
+            v.summary
+                .iter()
+                .find(|f| f.label == "Name")
+                .map(|f| f.value.clone())
+        };
+        assert_eq!(name_row(&v).as_deref(), Some("space-000000002a"));
+        assert_eq!(
+            create_args(&v.plan).name.as_deref(),
+            Some("space-000000002a")
+        );
+        assert_eq!(
+            creating_text(&v.plan),
+            "Creating space-000000002a. It appears in the list when it is ready."
+        );
+        let named = view(
+            &reduce(
+                &s,
+                &WizardAction::SetName {
+                    name: " dev ".into(),
+                },
+                &e,
+            ),
+            &e,
+        );
+        assert_eq!(name_row(&named).as_deref(), Some("dev"));
+        assert_eq!(named.plan.name.as_deref(), Some("dev"));
+        // An older state without one keeps the old words and lets the SDK
+        // name it.
+        let old = WizardState {
+            generated_name: String::new(),
+            ..s
+        };
+        let v = view(&old, &e);
+        assert_eq!(name_row(&v).as_deref(), Some("Chosen automatically"));
+        assert_eq!(v.plan.name, None);
     }
 }

@@ -96,11 +96,27 @@ impl HostSpacesService for FakeDaemon {
         }))
     }
 
+    async fn set_host_warm(
+        &self,
+        _: tonic::Request<cua_proto::env::v1::SetHostWarmRequest>,
+    ) -> Result<tonic::Response<cua_proto::env::v1::SetHostWarmResponse>, tonic::Status> {
+        Err(tonic::Status::unimplemented("warm pools"))
+    }
+
     async fn set_host_space_power(
         &self,
         _: tonic::Request<SetHostSpacePowerRequest>,
     ) -> Result<tonic::Response<SetHostSpacePowerResponse>, tonic::Status> {
         Ok(tonic::Response::new(SetHostSpacePowerResponse::default()))
+    }
+
+    async fn set_host_space_egress(
+        &self,
+        _: tonic::Request<SetHostSpaceEgressRequest>,
+    ) -> Result<tonic::Response<SetHostSpaceEgressResponse>, tonic::Status> {
+        Ok(tonic::Response::new(SetHostSpaceEgressResponse {
+            enforced: "host".into(),
+        }))
     }
 
     async fn cancel_host_space(
@@ -116,6 +132,26 @@ impl HostSpacesService for FakeDaemon {
         self.callers.lock().unwrap().push(who);
         Ok(tonic::Response::new(CancelHostSpaceResponse {
             message: format!("Cancelled {}", req.into_inner().space),
+        }))
+    }
+
+    async fn diagnose_host(
+        &self,
+        req: tonic::Request<DiagnoseHostRequest>,
+    ) -> Result<tonic::Response<DiagnoseHostResponse>, tonic::Status> {
+        let who = req
+            .metadata()
+            .get(CALLER_METADATA)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        self.callers.lock().unwrap().push(who);
+        // A forwarded call never names another machine to hop to.
+        let hop = !req.into_inner().machine.is_empty();
+        Ok(tonic::Response::new(DiagnoseHostResponse {
+            report: None,
+            cua_version: if hop { "hop".into() } else { "9.9.9".into() },
+            os: "macos".into(),
         }))
     }
 }
@@ -469,6 +505,20 @@ async fn a_host_provides_spaces_through_the_relay_and_keeps_its_desktop_private(
         (who["account"].as_str(), who["role"].as_str()),
         (Some("ada"), Some("owner"))
     );
+    // The machine's health, for its Machines page: forwarded whether or
+    // not it provides Spaces, with the verified caller.
+    let health = owner
+        .host_spaces()
+        .diagnose_host(DiagnoseHostRequest {
+            machine: "another-machine".into(),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(health.cua_version, "9.9.9");
+    let who: serde_json::Value =
+        serde_json::from_str(daemon.callers.lock().unwrap().last().unwrap()).unwrap();
+    assert_eq!(who["account"].as_str(), Some("ada"));
 
     // Sharing the desktop again lets the owner in (the policy reloads).
     write_policy(&policy, "ada", true, true, &socket);

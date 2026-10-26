@@ -12,6 +12,8 @@ export {
   useAgentTimeline,
   useAgents,
   useBridge,
+  useFeatureRecorded,
+  useFeatureRecorder,
   useKeyvault,
   useMachines,
   useOnboarding,
@@ -36,7 +38,7 @@ export { createAdapter, createDemoAdapter, createElectronAdapter, createTauriAda
 export { detectMode } from "./detect";
 export { loadCore, type CoreClient, type CoreParity, type CoreStatus, type ParityFlow } from "./core";
 export type { Machine, HostSetupGuide, KeyvaultAppGroup, KeyvaultViews } from "./derive";
-export { machineIdOf } from "./derive";
+export { listView, machineIdOf } from "./derive";
 export type {
   AgentRunSummary,
   AgentState,
@@ -50,9 +52,11 @@ export type {
   SessionData,
   SettingsData,
 } from "./store";
+export { newPendingId } from "./store";
 export type { TranscriptItem, TranscriptStep } from "./transcript";
 export { GRID_COLUMNS, iconKey, thumbnailKey, useTeleport, type TeleportHook, type TeleportSession, type TeleportStore } from "./teleport";
 export { useShareSheet, type ShareHook, type ShareSession } from "./share";
+export { useShareRemovalNote, type ShareRemovalNoteHook } from "./removal-note";
 export {
   agentKeyForm,
   agentKeysView,
@@ -71,6 +75,7 @@ export {
   type AppearanceTheme,
   type HostEvent,
   type HostOperations,
+  type CliInfo,
   type GlobalShortcut,
   type HostSettings,
   type OpName,
@@ -93,11 +98,24 @@ export type * from "./contracts/devices";
 export type * from "./contracts/notifications";
 export * from "./settings-hooks";
 export { hasNotch, passedSteps, signInCodeText, type SavedOnboarding } from "./onboarding";
-export { useConnectCloud, useFirstSpaceOffers, useNewSpaceRequests, useNewSpaceWizard, type ConnectCloudHook, type FirstSpaceHook, type NewSpaceWizardHook } from "./new-space-hooks";
+export { signInFailedFromError, signInFailedPhase, signInFooter, type FailedPhase, type SignInFooterInput } from "./sign-in";
+export {
+  useConnectCloud,
+  useFirstSpaceOffers,
+  useNewSpaceRequests,
+  useNewSpaceWizard,
+  useRuntimeFix,
+  type ConnectCloudHook,
+  type FirstSpaceHook,
+  type NewSpaceWizardHook,
+  type RuntimeFixHook,
+} from "./new-space-hooks";
+export { runCreateFix, type CreateFixActions } from "./create-retry";
 export { createFailedText, emptyHome, type EmptyHome, type EmptyTile, type FirstSpaceOffer } from "./new-space";
 export type * from "./contracts/volume";
 export * from "./volume";
 export { ThumbnailStore, THUMBNAIL_CAP, THUMBNAIL_REFRESH_MS, thumbnailStore, useSpaceThumbnail } from "./thumbnails";
+export { useWindowDropTarget } from "./window-drop";
 export { useSpaceFiles, parseDropped, dropSendingText, dropSentText, sendFiles, splitDrop, type DropStatus, type SpaceFilesHook } from "./space-files";
 export { agentRunLines, useDesktopCover, useSpaceDetail, type AgentRunLine, type DetailFor, type DetailReadings, type PipOutcome, type SpaceDetailHook } from "./space-detail";
 export type * from "./ops/space-detail";
@@ -105,7 +123,12 @@ export { useThisMachine, type HostFailure, type HostFormView as HostSetupFormVie
 export type { HostFormAction, HostSetupRequest } from "./ops/host-setup";
 export type { TelemetrySignal } from "./ops/telemetry";
 export { useStartup, type StartupHook } from "./startup";
-export { expiresInText, PAIRING_POLL_MS, pairingUnsupported, usePairingCode, type PairingHook, type PairingPhase } from "./pairing";
+export { useLinkNotice, TURN_OFF_FAILED, type LinkNoticeHook } from "./link-notice";
+export type { TelemetryLinkNotice } from "./ops/telemetry";
+export { defaultTeam, eligibleTeams, teamName, useTeamChoices, type TeamChoices } from "./teams";
+export { joinFailureText, useJoinWithCode, type JoinHook, type JoinPhase } from "./join";
+export { displayPairingCode, normalizePairingCode, pairingLinkRelay } from "./pairing-code";
+export { BUY_PRO_URL, BUY_TEAMS_URL, expiresInText, FINISHING_SETUP, PAIRING_POLL_MS, pairingUnsupported, planFailure, usePairingCode, type PairingHook, type PairingPhase } from "./pairing";
 export { READY_STARTUP, type StartupAction, type StartupPhase, type StartupState } from "./ops/startup";
 export {
   CHECKLIST_STEPS,
@@ -119,9 +142,71 @@ export {
 export {
   useRelayUsage,
   useRelayUsageView,
+  usePlanLimitNotice,
   RELAY_USAGE_FOCUS_MS,
   RELAY_USAGE_POLL_MS,
+  type PlanCard,
+  type PlanLink,
   type RelayAllowanceNotice,
   type RelayUsage,
   type RelayUsageView,
 } from "./relay-usage";
+
+export { linkEnds, needsRelaySetup, useLinks, type LinksHook } from "./links";
+export type { LinkAccess, LinkCreate, ShareLink } from "./ops/links";
+export {
+  useResources,
+  hostResources,
+  spaceResources,
+  RESOURCES_HIDDEN_MS,
+  RESOURCES_VISIBLE_MS,
+  type ComputerResources,
+  type DiskOnHost,
+  type DiskWarning,
+  type GuestUsage,
+  type ResourcesSnapshot,
+  type SpaceResources,
+} from "./resources";
+export {
+  resetUpsellMemory,
+  useQuiet,
+  useTrackPlanClick,
+  useUpsellCard,
+  useUpsellCardAvailable,
+  useUpsellGate,
+  useUpsellPrompt,
+  type UpsellCard,
+  type UpsellCardReason,
+  type UpsellCardState,
+  type UpsellGate,
+  type UpsellPrompt,
+  type UpsellSurface,
+} from "./upsell";
+export { flagOn, setFlagOverride, setRemoteFlags, useFlag, type FlagName } from "./flags";
+export type { CreateReport, ReportPart, ReportSend } from "./diagnostic-report";
+export {
+  FIRST_RUN_POLL_MS,
+  TEAMMATES_KEY,
+  UPSELL_DISMISSED_KEY,
+  firstRunPermissions,
+  firstRunTodos,
+  firstRunView,
+  firstRunCliView,
+  firstRunSteps,
+  cliMissing,
+  cliPresent,
+  useCliInstall,
+  type CliInstallHook,
+  noteTeammates,
+  readFirstRun,
+  resetFirstRunCache,
+  useFirstRun,
+  useFirstRunSaved,
+  useScreenPermissions,
+  writeFirstRun,
+  type FirstRunHook,
+  type ScreenPermissions,
+  type FirstRunUsage,
+  type FirstRunSaved,
+} from "./first-run";
+export type * from "./contracts/first-run";

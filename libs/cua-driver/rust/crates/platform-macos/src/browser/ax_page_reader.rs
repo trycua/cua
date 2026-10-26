@@ -29,6 +29,33 @@ const SKIP_ROLES: &[&str] = &[
 const TEXT_ROLES: &[&str] = &["AXStaticText", "AXHeading", "AXWebArea"];
 
 impl AXPageReader {
+    /// The part of a window-scoped AX tree that is page content: every
+    /// `AXWebArea` row and the rows nested under it. A window-scoped walk also
+    /// carries the app's menu bar and the browser's own toolbar, which are not
+    /// the page; reading them as page text answers a `get_text` or `query_dom`
+    /// with "Apple, About This Mac, ...". `None` when the tree has no web area
+    /// (the page's accessibility tree is not built, or the window is not a
+    /// page).
+    pub fn web_area_markdown(tree_markdown: &str) -> Option<String> {
+        let mut out: Vec<&str> = Vec::new();
+        let mut area_indent: Option<usize> = None;
+        for line in tree_markdown.lines() {
+            let indent = line.len() - line.trim_start().len();
+            if let Some(base) = area_indent {
+                if indent > base {
+                    out.push(line);
+                    continue;
+                }
+                area_indent = None;
+            }
+            if parse_ax_line(line).is_some_and(|el| el.role == "AXWebArea") {
+                area_indent = Some(indent);
+                out.push(line);
+            }
+        }
+        (!out.is_empty()).then(|| out.join("\n"))
+    }
+
     /// Extract readable text from an AX tree markdown string.
     pub fn extract_text(tree_markdown: &str) -> String {
         let mut lines_out: Vec<String> = Vec::new();
@@ -218,5 +245,42 @@ fn css_selector_to_ax_roles(selector: &str) -> Vec<&'static str> {
         "li" => vec!["AXStaticText"],
         "*" | "" => vec![],
         _ => vec![],
+    }
+}
+
+#[cfg(test)]
+mod web_area_tests {
+    use super::AXPageReader;
+
+    const TREE: &str = "\
+- [0] AXMenuBar
+  - [1] AXMenuBarItem \"Apple\"
+    - [2] AXMenuItem \"About This Mac\"
+- [3] AXWindow \"Orders - Chrome\"
+  - [4] AXToolbar
+    - [5] AXTextField \"Address and search bar\"
+  - [6] AXWebArea \"Orders\"
+    - [7] AXHeading \"Your loans\"
+    - [8] AXStaticText \"Hedge trimmer, due 3 Nov\"
+  - [9] AXButton \"Back\"
+";
+
+    #[test]
+    fn web_area_markdown_keeps_only_page_rows() {
+        let page = AXPageReader::web_area_markdown(TREE).expect("web area");
+        assert!(page.contains("Hedge trimmer"));
+        assert!(page.contains("Your loans"));
+        assert!(!page.contains("About This Mac"));
+        assert!(!page.contains("Address and search bar"));
+        assert!(!page.contains("\"Back\""));
+        let text = AXPageReader::extract_text(&page);
+        assert!(text.contains("Hedge trimmer, due 3 Nov"));
+        assert!(!text.contains("Apple"));
+    }
+
+    #[test]
+    fn a_tree_without_a_web_area_has_no_page_content() {
+        let tree = "- [0] AXMenuBar\n  - [1] AXMenuBarItem \"Apple\"\n- [2] AXWindow \"x\"\n";
+        assert_eq!(AXPageReader::web_area_markdown(tree), None);
     }
 }

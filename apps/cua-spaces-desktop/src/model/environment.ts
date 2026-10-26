@@ -7,14 +7,13 @@
 // the window's critical path. Nothing here reads the keychain or waits on
 // the daemon before the window shows: the page shows the launch
 // (`startup.get`) on stand-ins that wait for the services.
-import { execFile } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { Native } from "../native/load";
-import { appCoreStatePaths } from "../migrate-swift";
+import { appCoreStatePaths, swiftSupportDir } from "../migrate-swift";
 import { nativeFiles } from "../native/location";
-import type { CuaLike } from "../native/generated/index";
+import type { AppMachinesViewAbout, CuaLike } from "../native/generated/index";
 import { PendingAgentSetup, LiveAgentSetup } from "./agents";
 import { AppModel } from "./app-model";
 import { LiveSpacesBackend } from "./backend";
@@ -29,6 +28,9 @@ import { LiveGate, PendingAccount, PendingSpacesBackend, type LiveServices } fro
 import { LiveAccount, LiveTelemetry, hostAccount } from "./services";
 import { BundledCuaKeychain, StartupModel } from "./startup";
 import { withTimeout } from "./time";
+import { LinuxRuntime, nodeLinuxSystem, type RelaunchSpec } from "./linux-runtime";
+import { WindowsRuntime, nodeWindowsSystem } from "./windows-runtime";
+import { osLine } from "./updates";
 
 /** Whether the first run finished (`onboarding.json`'s `completed`); null when unknown. */
 export function readOnboardingCompleted(file: string): boolean | null {
@@ -51,6 +53,8 @@ export interface EnvironmentOptions {
   openUrl: (url: string) => Promise<boolean>;
   env?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
+  /** Linux: starts this app again as given and quits (Electron's `app.relaunch` and `app.exit`); without it no restart fix is offered. */
+  relaunch?: (spec: RelaunchSpec) => void;
 }
 
 export interface Environment {
@@ -99,6 +103,9 @@ export function makeModel(o: EnvironmentOptions): Environment {
   const backend = new PendingSpacesBackend(gate);
   const account = new PendingAccount(gate);
   const telemetry = new LiveTelemetry(native);
+  // A first run that finished here had the notice on its Welcome page;
+  // earlier builds never recorded that, so their machines sent nothing.
+  if (!firstRunDue) telemetry.acknowledgeNotice();
   const host = new HostModel(native, null);
   const devices = new DevicesModel(native, () => gate.current?.devices ?? null);
   const cloud = new CloudModel(native, () => backend.current);
@@ -119,6 +126,14 @@ export function makeModel(o: EnvironmentOptions): Environment {
     keyvault,
     servicesIn: () => gate.current !== null,
     cpus: os.availableParallelism?.() ?? os.cpus().length,
+    // The checklist beside the app core's settings; on macOS, the SwiftUI
+    // app's ticks are where a first launch starts from.
+    checklistPath: path.join(path.dirname(settingsPath), "checklist.json"),
+    checklistSeedPath: platform === "darwin" ? path.join(swiftSupportDir(env.HOME || os.homedir()), "checklist.json") : null,
+    hostOs: platform === "win32" ? native.AppSpaceOs.Windows : platform === "linux" ? native.AppSpaceOs.Linux : native.AppSpaceOs.Macos,
+    windowsRuntime: platform === "win32" ? new WindowsRuntime(nodeWindowsSystem(), path.join(os.tmpdir(), "cua-spaces")) : null,
+    linuxRuntime: platform === "linux" && o.relaunch ? new LinuxRuntime(nodeLinuxSystem(o.relaunch, env), env) : null,
+    about: thisComputer(o.version, platform),
   });
 
   // Signed out is null (setup signs in first); anything else is the error itself.
@@ -138,8 +153,7 @@ export function makeModel(o: EnvironmentOptions): Environment {
     // Signed in now (access given after the start): read it again.
     if (gate.current) model.attachLive();
   };
-  // First launch: the bundled `cua` on PATH, silently (the SwiftUI app's first run does the same).
-  if (cua && firstRunDue) startup.onReady.push(() => void installCliSilently(native, cua));
+  // The bundled `cua` goes on PATH only when someone chooses it (the first run's terminal step, or Settings): not at launch.
   startup.begin();
   return { model, supervisor, settingsPath, onboardingPath, cua };
 }
@@ -170,10 +184,10 @@ export async function makeLiveServices(native: Native, supervisor: DaemonSupervi
  * The SDK on this app's own daemon (`Cua.auto`: the daemon when it accepts
  * connections, else embedded). When another build's daemon came up in
  * between, the SDK refuses it with `DaemonNotRunning`, and one more start
- * replaces it. Cua Cloud uses the signed-in session.
+ * replaces it. The signed-in session drives the relay account.
  */
 async function makeCua(native: Native, supervisor: DaemonSupervisor | null): Promise<CuaLike> {
-  const config = native.CuaConfig.create({ fleetFromEnv: true, fleetFromSession: true });
+  const config = native.CuaConfig.create({ accountFromSession: true });
   try {
     return native.Cua.auto(config);
   } catch (error) {
@@ -260,35 +274,19 @@ export async function reconnect(model: AppModel, supervisor: DaemonSupervisor, r
   return true;
 }
 
-/**
- * Windows: the key the uninstaller reads (packaging/installer.nsh) to remove
- * the `cua` this app put on PATH with the app, and nothing it did not: the
- * file it copied, and its folder's PATH entry when this app added it.
- * Elsewhere the CLI stays, like the user's ~/.cua: the .deb's is a link into
- * the app that goes with it, as the SwiftUI app's into its bundle.
- */
-export const WINDOWS_APP_KEY = "HKCU\\Software\\ai.cua.spaces.desktop";
+export { WINDOWS_APP_KEY, cliRecordArgs, recordCliInstall } from "./cli-record";
 
-/** The `reg add` calls that record an installed CLI. */
-export function cliRecordArgs(target: string, addedToPath: boolean): string[][] {
-  const value = (name: string, data: string) => ["add", WINDOWS_APP_KEY, "/v", name, "/t", "REG_SZ", "/d", data, "/f"];
-  return [value("CliInstalled", target), ...(addedToPath ? [value("CliPathAdded", path.win32.dirname(target))] : [])];
-}
-
-const reg = (args: string[]) =>
-  new Promise<void>((resolve, reject) => execFile("reg", args, { windowsHide: true }, (error) => (error ? reject(error) : resolve())));
-
-/** Puts the bundled `cua` on PATH: a current install, or a build without the CLI, writes nothing. */
-export async function installCliSilently(native: Native, cua: string, platform: NodeJS.Platform = process.platform, record = reg): Promise<void> {
-  try {
-    // The installer finds the CLI next to the "executable" it is given.
-    const installer = native.AppCliInstaller.forExecutable(path.join(path.dirname(cua), "cua-spaces"));
-    const plan = await installer.plan();
-    if (plan.upToDate || !plan.source) return;
-    const installed = await installer.install({ modifyPath: !plan.onPath });
-    console.log(`[cua-spaces] installed the cua command at ${installed.target}`);
-    if (platform === "win32") for (const args of cliRecordArgs(installed.target, !plan.onPath)) await record(args);
-  } catch (error) {
-    console.warn(`[cua-spaces] could not install the cua command: ${words(error)}`);
-  }
+/** This computer as the Machines page's Details names it: its name, the
+ * app's version and its system ("macOS 26.5.2"), read once. */
+export function thisComputer(version: string, platform: NodeJS.Platform = process.platform): () => AppMachinesViewAbout {
+  let about: AppMachinesViewAbout | null = null;
+  return () => {
+    about ??= {
+      computerName: computerName(platform),
+      appVersion: version,
+      // Electron's own read of the system version (`26.5.2`); the Darwin release otherwise.
+      osVersion: osLine(platform, os.release(), process.arch, (process as { getSystemVersion?: () => string }).getSystemVersion?.()).replace(/ \([^)]*\)$/, ""),
+    };
+    return about;
+  };
 }

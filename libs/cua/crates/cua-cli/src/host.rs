@@ -3,7 +3,7 @@
 //! machines; `add` / `rm`: register or forget a Space).
 
 use crate::auth;
-use crate::util::line;
+use crate::util::{hint_line, line};
 use clap::Subcommand;
 use cua_host::{
     AccountTokens, DeviceAuth, Host, HostStatus, MachinePatch, RelayClient, RunnerKind,
@@ -16,39 +16,42 @@ use std::sync::Arc;
 
 #[derive(Subcommand, Debug)]
 pub enum HostCmd {
-    /// Set this machine up for unattended access: install cua-spacesd as
+    /// Set this computer up for unattended access: install cua-spacesd as
     /// a service that joins the cua.ai relay as your account (default) or
-    /// serves on a direct ip:port.
+    /// serves on a direct ip:port. By default (the `desktop` profile) it
+    /// shares this computer's desktop, also with `--provide-spaces`;
+    /// `--profile spare` or `--no-desktop --provide-spaces` provides Spaces
+    /// only, so it is a host in your pool (`cua run` jobs run in Spaces
+    /// there) whose own desktop stays private. Running it again with
+    /// the same options changes nothing (a stopped service starts again).
     #[command(after_help = "Examples:
   # Join the cua.ai relay as your account (shares this desktop)
   cua host setup
-  # A spare machine: do not share its desktop, run Spaces for your devices
+  # A spare computer: do not share its desktop, run Spaces for your devices
   cua host setup --profile spare --name \"Mac mini (spare)\"
   cua host setup --no-desktop --provide-spaces
-  # Serve on the LAN instead of the relay
-  cua host setup --direct 0.0.0.0:3211 --name studio-mac
-  # A spare Mac on your tailnet that runs Spaces, without the relay
-  # (prints the command that adds it on your laptop)
-  cua host setup --direct 100.101.102.103:3211 --profile spare
-  # Add this machine with a one-time code from the Cua Spaces app
-  # (Add a machine) or `cua host pair`: no sign-in needed here
-  cua host setup --pair K7QM-4XPB-2RHD")]
+  # Add this computer with a one-time code from the Cua Spaces app
+  # (Add a computer) or `cua host pair`: no sign-in needed here
+  cua host setup --pair K7QM-4XPB-2RHD
+  # Keep this computer off the end-to-end encrypted mesh (relay HTTPS only):
+  # run setup with CUA_MESH=off in the environment
+  # Self-hosting teams: cua help advanced")]
     Setup {
         /// Relay URL (default $CUA_RELAY_URL, else the CUA_ENV relay, https://relay.cua.ai in production).
-        #[arg(long, conflicts_with = "direct")]
+        #[arg(long, hide = true, conflicts_with = "direct")]
         relay: Option<String>,
         /// Join with a one-time pairing code (or add-machine link) made in
         /// the Cua Spaces app or with `cua host pair`, instead of signing
-        /// in here. The machine joins the account (or team) that made it.
+        /// in here. The computer joins the account (or team) that made it.
         #[arg(long, value_name = "CODE", conflicts_with_all = ["direct", "remote"])]
         pair: Option<String>,
         /// When sign-in is needed, use a device code to approve it in a
-        /// browser on another machine. The account session is not saved.
+        /// browser on another computer. The account session is not saved.
         #[arg(long, conflicts_with = "direct")]
         remote: bool,
         /// Serve directly on ip:port with a local env token (LAN /
         /// port-forwarded) instead of joining a relay.
-        #[arg(long)]
+        #[arg(long, hide = true)]
         direct: Option<String>,
         /// Display name (default: the host name).
         #[arg(long)]
@@ -60,22 +63,28 @@ pub enum HostCmd {
         /// one, or the release download).
         #[arg(long)]
         driver_bin: Option<PathBuf>,
-        /// auto | systemd | launchd | windows-task | process.
+        /// auto | systemd | launchd | app-helper | windows-task | process.
+        /// On a Mac with the Cua Spaces app, auto is app-helper: the
+        /// service runs as the app's own login item ("Cua Spaces").
         #[arg(long, default_value = "auto")]
         runner: String,
-        /// What this machine is for: `desktop` (share this desktop; the
-        /// default) or `spare` (do not share the desktop; provide Spaces).
-        #[arg(long, default_value = "desktop", value_parser = ["desktop", "spare"])]
-        profile: String,
-        /// Share this machine's own desktop as a Space.
+        /// What this computer is for: `desktop` (share this desktop; the
+        /// default, also with `--provide-spaces`) or `spare` (do not share
+        /// the desktop; provide Spaces).
+        #[arg(long, value_parser = ["desktop", "spare"])]
+        profile: Option<String>,
+        /// Share this computer's own desktop as a Space.
         #[arg(long, overrides_with = "no_desktop")]
         desktop: bool,
-        /// Do not share this machine's own desktop (screen, input, shell,
+        /// Do not share this computer's own desktop (screen, input, shell,
         /// files): relayed callers reach only the Spaces it provides.
         #[arg(long)]
         no_desktop: bool,
-        /// Create Spaces for your enrolled devices on this machine's
-        /// runtimes (Lume macOS VMs, Docker Linux containers).
+        /// Create Spaces for your enrolled devices on this computer's
+        /// runtimes (Lume macOS VMs, Docker Linux containers). On its own
+        /// it keeps the default `desktop` profile, so this computer's
+        /// desktop is shared too; add `--no-desktop` (or use `--profile
+        /// spare`) to provide Spaces only.
         #[arg(long, overrides_with = "no_provide_spaces")]
         provide_spaces: bool,
         /// Do not create Spaces for other devices.
@@ -85,12 +94,26 @@ pub enum HostCmd {
         #[arg(long)]
         max_spaces: Option<u32>,
         /// With --direct and Spaces: take host calls, and connections to
-        /// the Spaces this machine forwards, from any address (and allow a
+        /// the Spaces this computer forwards, from any address (and allow a
         /// public --direct address). By default only loopback, Tailscale
         /// and private LAN addresses may. The direct listener is plaintext
-        /// and its token is a shell on this machine: prefer Tailscale.
-        #[arg(long, requires = "direct")]
+        /// and its token is a shell on this computer: prefer Tailscale.
+        #[arg(long, hide = true, requires = "direct")]
         allow_any_address: bool,
+        /// Serve on this machine's tailnet address (Tailscale or Headscale;
+        /// port 3211 unless --direct says otherwise), and let the tailnet
+        /// identify callers: you (this machine's tailnet user) and the
+        /// tailnet users you --allow need no env token. Your tailnet's ACLs
+        /// decide who can reach it at all.
+        #[arg(long, hide = true, conflicts_with = "relay")]
+        tailnet: bool,
+        /// This computer exists only for Cua work (a cloud instance made for
+        /// it; `cua cloud add aws` sets its hosts up this way): jobs may run in its
+        /// own Space (`kind = "machine"`), with its GPU and drivers as they
+        /// are. Never on a computer you also use: there jobs run in macOS VMs
+        /// or containers.
+        #[arg(long)]
+        dedicated: bool,
     },
     /// Make a one-time code (with a link and the install command) that adds
     /// another computer to your account: run the command it prints on that
@@ -100,13 +123,19 @@ pub enum HostCmd {
   cua host pair
   cua host pair --name build-box --expires 60
   cua host pair --list
-  cua host pair --revoke pc_0123456789abcdef")]
+  cua host pair --revoke pc_0123456789abcdef
+  # Add the computer to a team: waits for it to join, then adds it
+  cua host pair --team AIGIS")]
     Pair {
-        /// Add the machine for this team (its id). Experimental: needs
-        /// CUA_EXPERIMENTAL_TEAMS=1.
+        /// Add the computer to this team (id, alias or name; owner or admin):
+        /// waits until the computer joins, then makes it a team computer.
         #[arg(long)]
         team: Option<String>,
-        /// Name the machine gets (default: its own host name).
+        /// With --team: print the code and exit instead of waiting; add the
+        /// computer later with `cua team add-machine <team> relay:<id>`.
+        #[arg(long, requires = "team")]
+        no_wait: bool,
+        /// Name the computer gets (default: its own host name).
         #[arg(long)]
         name: Option<String>,
         /// Minutes until the code expires (1 to 1440).
@@ -119,10 +148,10 @@ pub enum HostCmd {
         #[arg(long, value_name = "ID", conflicts_with_all = ["team", "name"])]
         revoke: Option<String>,
         /// Relay URL (default $CUA_RELAY_URL, else the CUA_ENV relay, https://relay.cua.ai in production).
-        #[arg(long)]
+        #[arg(long, hide = true)]
         relay: Option<String>,
     },
-    /// Show or change what this machine shares: its own desktop, and
+    /// Show or change what this computer shares: its own desktop, and
     /// whether it creates Spaces for your other devices.
     #[command(after_help = "Examples:
   cua host config
@@ -130,7 +159,7 @@ pub enum HostCmd {
   cua host config --desktop off --provide-spaces on
   cua host config --max-spaces 6")]
     Config {
-        /// Share this machine's own desktop: on | off.
+        /// Share this computer's own desktop: on | off.
         #[arg(long, value_parser = ["on", "off"])]
         desktop: Option<String>,
         /// Create Spaces for your enrolled devices: on | off.
@@ -143,7 +172,7 @@ pub enum HostCmd {
         #[arg(long)]
         max_macos_vms: Option<u32>,
     },
-    /// Show whether this machine is set up, the service, and who is
+    /// Show whether this computer is set up, the service, and who is
     /// connected.
     #[command(after_help = "Examples:
   cua host status")]
@@ -156,8 +185,8 @@ pub enum HostCmd {
     #[command(after_help = "Examples:
   cua host start")]
     Start,
-    /// Share a relay machine (this one, or `--machine`) with other cua.ai
-    /// accounts (id or verified email). Run from an enrolled device; every
+    /// Share a relay computer (this one, or `--machine`) with people in your
+    /// team (id or verified email). Run from an enrolled device; every
     /// change is in the owner's audit log (`cua devices audit`).
     #[command(after_help = "Examples:
   cua host share friend@example.com
@@ -166,18 +195,18 @@ pub enum HostCmd {
         /// Accounts to add. Repeatable.
         #[arg(required = true)]
         who: Vec<String>,
-        /// Machine id (default: this machine).
-        #[arg(long)]
+        /// Computer id (default: this computer).
+        #[arg(long, visible_alias = "computer", value_name = "COMPUTER")]
         machine: Option<String>,
-        /// Relay URL (default: the one this machine joined, else
+        /// Relay URL (default: the one this computer joined, else
         /// $CUA_RELAY_URL / https://relay.cua.ai).
-        #[arg(long)]
+        #[arg(long, hide = true)]
         relay: Option<String>,
         /// Do not ask for confirmation.
         #[arg(long)]
         yes: bool,
     },
-    /// Stop sharing a relay machine with accounts; their open connections
+    /// Stop sharing a relay computer with accounts; their open connections
     /// are cut.
     #[command(after_help = "Examples:
   cua host unshare friend@example.com")]
@@ -185,12 +214,27 @@ pub enum HostCmd {
         /// Accounts to remove. Repeatable.
         #[arg(required = true)]
         who: Vec<String>,
-        /// Machine id (default: this machine).
-        #[arg(long)]
+        /// Computer id (default: this computer).
+        #[arg(long, visible_alias = "computer", value_name = "COMPUTER")]
         machine: Option<String>,
         /// Relay URL.
-        #[arg(long)]
+        #[arg(long, hide = true)]
         relay: Option<String>,
+    },
+    /// macOS: move the host service into the Cua Spaces app, as its "Cua
+    /// Spaces Helper" login item, from the LaunchAgent that older versions
+    /// installed. This machine keeps its id, registration and Spaces; if
+    /// the helper does not take over, the old service is put back. macOS
+    /// then asks once for Screen Recording and Accessibility for Cua Spaces
+    /// Helper.
+    #[command(after_help = "Examples:
+  cua host migrate
+  # Try again after a move that was rolled back
+  cua host migrate --force")]
+    Migrate {
+        /// Try again even if a move failed before with this version.
+        #[arg(long)]
+        force: bool,
     },
     /// Unregister from the relay, uninstall the service and delete the host
     /// configuration (asks first).
@@ -203,22 +247,43 @@ pub enum HostCmd {
         /// to ask on (scripts, agents): without it nothing is removed.
         #[arg(long, short)]
         force: bool,
+        /// For an uninstall of Cua Spaces: turns off the Spaces this computer
+        /// provides and takes them off the relay too, instead of refusing
+        /// while it provides any. The Spaces and their data stay on this
+        /// computer.
+        #[arg(long)]
+        uninstalling: bool,
     },
 }
 
 #[derive(Subcommand, Debug)]
 pub enum SpacesCmd {
-    /// Registered Spaces and your machines on the relay.
+    /// Registered Spaces and your computers on the relay.
     #[command(
         visible_alias = "list",
-        after_help = "Examples:
+        after_help = "CPU, MEMORY and DISK ON THIS MAC show what each Space was given and what it
+uses now (the numbers the Cua Spaces app shows); for another of your
+computers they show what it last reported. Numbers only: no file names.
+
+Examples:
   cua spaces ls
-  cua spaces ls --json"
+  cua spaces ls --no-size
+  cua spaces ls --json
+  # Only the Spaces created with these labels
+  cua spaces ls --label team=research --label run=7"
     )]
     Ls {
         /// Relay URL (default $CUA_RELAY_URL, else the CUA_ENV relay, https://relay.cua.ai in production).
-        #[arg(long)]
+        #[arg(long, hide = true)]
         relay: Option<String>,
+        /// Only Spaces with this label (`key=value`; repeat to require
+        /// several).
+        #[arg(long, value_name = "KEY=VALUE")]
+        label: Vec<String>,
+        /// Do not measure what each Space takes on this computer's disk
+        /// (that walk can take a moment with many Spaces).
+        #[arg(long)]
+        no_size: bool,
     },
     /// Register a Space after a capabilities handshake with its cua-spacesd
     /// (or, for another URL, an MCP initialize). Re-adding an address
@@ -227,12 +292,12 @@ pub enum SpacesCmd {
   cua spaces add 10.0.0.5:3211 --token \"$TOKEN\" --name studio
   cua spaces add local:my-sandbox
   cua spaces add http://127.0.0.1:8765/mcp --service tools
-  # A machine that provides Spaces over Tailscale, without the relay
+  # A computer that provides Spaces over Tailscale, without the relay
   # (`cua host setup --direct ... --provide-spaces` on it prints this)
   cua spaces add 100.101.102.103:3211 --host --name \"Mac mini (spare)\" --token \"$TOKEN\"")]
     Add {
         /// The Space's cua-spacesd (`http(s)://host:port`, `host:port`,
-        /// default port 3211), a Space id (`local:<name>`, `cloud:<name>`),
+        /// default port 3211), a Space id (`local:<name>`),
         /// or any MCP endpoint URL.
         url: String,
         /// spacesd token (or the bearer an MCP endpoint needs).
@@ -245,26 +310,36 @@ pub enum SpacesCmd {
         /// (default `mcp`).
         #[arg(long)]
         service: Option<String>,
-        /// It is a machine that provides Spaces over its direct address
+        /// It is a computer that provides Spaces over its direct address
         /// (Tailscale or LAN): `--on host:<name>` finds it without the
         /// relay. Its token is stored like any direct Space's.
         #[arg(long, conflicts_with = "service")]
         host: bool,
     },
-    /// Create Spaces: on this machine, on one of your machines that
-    /// provides Spaces (`cua host setup --provide-spaces` there), or in the
-    /// cloud.
+    /// Create Spaces: on this computer, on one of your computers that
+    /// provides Spaces (`cua host setup --no-desktop --provide-spaces` there),
+    /// or in your own cloud account.
     #[command(after_help = "Examples:
   cua spaces create linux
+  # On the least-loaded of your machines
+  cua spaces create linux --on auto
   # Two macOS VMs on your spare Mac mini (matched by name)
   cua spaces create macos:26 --on \"spare mac mini\" --count 2
-  cua spaces create --on host:0123abcd4567ef89 linux --json")]
+  cua spaces create --on host:0123abcd4567ef89 linux --json
+  # Kept on your machines: created again on another one if its machine goes away
+  cua spaces create linux --on auto --durable --name research
+  # In your AWS account, on a pool host of exactly this type and region
+  cua spaces create linux --on aws --instance-type c7g.xlarge --region us-west-2
+  # Labels are kept with the Space; `cua spaces ls --label team=research` filters
+  cua spaces create linux --label team=research --label run=7")]
     Create {
         /// Image: an alias (`linux`, `macos`, `macos:26`) or a registry
         /// reference. Default: the canonical Linux image.
         image: Option<String>,
-        /// Where: `local`, `cloud`, `host:<machine>`, or a machine name
-        /// (`mac-mini`, "spare mac mini"). Default: your default location.
+        /// Where: `local`, `auto` (the least-loaded of your computers),
+        /// `aws`, `gcp`, `modal`, `host:<computer>`, or a computer name
+        /// (`mac-mini`, "spare mac mini"). Default: your default location
+        /// (`local` unless set).
         #[arg(long)]
         on: Option<String>,
         /// How many (1 to 8).
@@ -293,6 +368,124 @@ pub enum SpacesCmd {
         /// silicon; https://cua.ai/docs/lume/guides/gpu-passthrough).
         #[arg(long, num_args = 0..=1, default_missing_value = "auto", value_name = "OPTION")]
         gpu: Option<String>,
+        /// Keep it on your machines (with `--on auto`): when its machine
+        /// goes away it is created again on another one, with the same name
+        /// (its disk starts fresh). `cua spaces delete <name>` deletes it
+        /// for good.
+        #[arg(long)]
+        durable: bool,
+        /// A fork source (a "bake" Space): a local QEMU VM's guest RAM is a
+        /// shared file, so `cua sb checkpoint` takes milliseconds and forks
+        /// of its checkpoints share its pages. Other kinds ignore it.
+        #[arg(long)]
+        forkable: bool,
+        /// The cloud machine type of the pool host it runs on (with `--on
+        /// <cloud>` or `--on auto`; default: the pool picks).
+        #[arg(long)]
+        instance_type: Option<String>,
+        /// The cloud region or location of that host (default: the pool
+        /// picks, near you).
+        #[arg(long)]
+        region: Option<String>,
+        /// Mount a named volume of Cua Volume in the Space:
+        /// `NAME:PATH[:ro]`, or `NAME/SUBFOLDER:PATH[:ro]` for a folder of
+        /// it. Repeat for several. Make one with `cua volume named create`.
+        #[arg(long = "volume", value_name = "NAME:PATH[:ro]")]
+        volumes: Vec<String>,
+        /// A label to keep with the Space (`key=value`; repeat for more; up
+        /// to 64, keys up to 63 bytes, values up to 256, none empty). Not
+        /// with `--durable`.
+        #[arg(long, value_name = "KEY=VALUE")]
+        label: Vec<String>,
+        /// Block this destination from the guest's first instruction (IP,
+        /// CIDR or `all`; repeat for more). Enforced by the host, outside
+        /// the guest. See `cua spaces egress`.
+        #[arg(long, value_name = "ADDR|CIDR|all")]
+        egress_deny: Vec<String>,
+        /// Keep this destination reachable where --egress-deny blocks it.
+        #[arg(long, value_name = "ADDR|CIDR|all")]
+        egress_allow: Vec<String>,
+    },
+    /// Keep Spaces of one image ready where the elastic pool puts them, so
+    /// the next creates of that shape start in a fraction of a second
+    /// (`--list` shows the prewarms, `--remove ID` ends one).
+    #[command(after_help = "Examples:
+  cua spaces prewarm ghcr.io/trycua/linux:24.04-slim --count 16 --on aws --ttl 1h
+  cua spaces prewarm linux --count 4 --kind container --cpus 1 --memory-mb 512
+  cua spaces prewarm --list
+  cua spaces prewarm --remove pw-1a2b3c")]
+    Prewarm {
+        /// Image (an alias or a registry reference).
+        #[arg(required_unless_present_any = ["list", "remove"])]
+        image: Option<String>,
+        /// How many to keep ready (1 to 256).
+        #[arg(long, default_value_t = 1)]
+        count: u32,
+        /// Where: `auto` (default), `local`, a linked cloud or
+        /// `host:<machine>`.
+        #[arg(long)]
+        on: Option<String>,
+        /// How long to keep them (`30m`, `2h`; default 1h, at most 7d).
+        #[arg(long)]
+        ttl: Option<String>,
+        /// auto | container | vm | microvm.
+        #[arg(long)]
+        kind: Option<String>,
+        /// vCPUs each.
+        #[arg(long)]
+        cpus: Option<u32>,
+        /// Memory each, MiB.
+        #[arg(long)]
+        memory_mb: Option<u64>,
+        /// Only this cloud machine type.
+        #[arg(long)]
+        instance_type: Option<String>,
+        /// Only this cloud region.
+        #[arg(long)]
+        region: Option<String>,
+        /// List the prewarms and how many each keeps ready.
+        #[arg(long, conflicts_with_all = ["image", "remove"])]
+        list: bool,
+        /// End a prewarm (its ready Spaces go).
+        #[arg(long, value_name = "ID", conflicts_with = "image")]
+        remove: Option<String>,
+    },
+    /// Choose which destinations a Space may reach: block some, or block
+    /// everything except a few. The machine the Space runs on enforces it,
+    /// outside the guest (nothing in the guest, root included, can change
+    /// it). Replaces the whole policy at once; `--clear` removes it. By IP
+    /// address or CIDR (`all` is every address), not by hostname. DNS works
+    /// only while the resolver the guest uses is not blocked.
+    ///
+    /// Everything is allowed unless a rule says otherwise: every --deny
+    /// entry blocks that destination, and every --allow entry is an
+    /// exception that wins over a --deny. --allow alone blocks nothing.
+    /// Loopback, replies to connections made to the Space and IPv6 neighbor
+    /// discovery are never filtered. Containers (runc, gVisor), and QEMU and
+    /// Firecracker VMs on Linux take a policy; macOS VMs, Apple
+    /// Containerization, Cua Cloud and your own cloud accounts refuse one
+    /// and say why.
+    #[command(after_help = "Examples:
+  # Block one network
+  cua spaces egress studio --deny 10.0.0.0/8
+  # Only 1.1.1.1 and one network stay reachable
+  cua spaces egress studio --deny all --allow 1.1.1.1 --allow 203.0.113.0/24
+  # Back to unrestricted
+  cua spaces egress studio --clear")]
+    Egress {
+        /// Space id or name.
+        space: String,
+        /// A destination to block (IPv4/IPv6 address, CIDR or `all`; repeat
+        /// for more).
+        #[arg(long, value_name = "ADDR|CIDR|all")]
+        deny: Vec<String>,
+        /// A destination that stays reachable where --deny blocks it
+        /// (repeat for more).
+        #[arg(long, value_name = "ADDR|CIDR|all")]
+        allow: Vec<String>,
+        /// Remove the policy.
+        #[arg(long, conflicts_with_all = ["deny", "allow"])]
+        clear: bool,
     },
     /// Cancel a create that is still running (here, in the daemon, or in
     /// another terminal): it stops and what it made is removed. Finished
@@ -306,18 +499,18 @@ pub enum SpacesCmd {
         /// create starts) or its name.
         space: String,
     },
-    /// The GPU options each runtime offers on this machine (or in the
-    /// cloud).
+    /// The GPU options each runtime offers on this computer (or in your
+    /// own cloud account).
     #[command(after_help = "Examples:
   cua spaces gpus
   cua spaces gpus --json")]
     Gpus {
-        /// `local` (default) or `cloud`.
+        /// `local` (default), `aws`, `gcp` or `modal`.
         #[arg(long)]
         on: Option<String>,
     },
-    /// Delete a Space's sandbox (on this machine, on the machine that
-    /// provides it, or in the cloud) and forget it (asks first).
+    /// Delete a Space's sandbox (on this computer, on the computer that
+    /// provides it, or in your own cloud account) and forget it (asks first).
     #[command(after_help = "Examples:
   cua spaces delete relay:space-0123456789abcdef
   cua spaces delete local:studio --force")]
@@ -328,17 +521,48 @@ pub enum SpacesCmd {
         #[arg(long, short)]
         force: bool,
     },
-    /// Turn a Space off: a local container or QEMU VM is suspended (its
-    /// memory is kept), a Lume VM or a Space one of your machines provides
-    /// is stopped (its disk is kept), and so is a Space in your own cloud
-    /// (`--on aws`, `gcp`; compute billing stops). Fleet cloud Spaces,
-    /// Modal sandboxes and Spaces added by address cannot be turned off.
+    /// Turn a Space off: a local VM (QEMU or Lume) or a Space one of your
+    /// computers provides is stopped, keeping its disk and freeing its
+    /// memory, and so is a Space in your own cloud (`--on aws`, `gcp`:
+    /// compute billing stops; `hetzner`: still billed). A local container
+    /// is stopped or suspended as its runtime can. `cua spaces suspend`
+    /// keeps a local Space's memory instead. Modal sandboxes and Spaces
+    /// added by address cannot be turned off.
     #[command(after_help = "Examples:
   cua spaces stop local:studio
   cua spaces stop relay:space-0123456789abcdef --json")]
     Stop {
         /// Space id or name.
         space: String,
+    },
+    /// Suspend a local Space (a container or QEMU VM): its memory is kept,
+    /// and stays in use, so it resumes where it was with `cua spaces
+    /// start`. `cua spaces stop` frees the memory instead.
+    #[command(after_help = "Examples:
+  cua spaces suspend local:studio")]
+    Suspend {
+        /// Space id or name.
+        space: String,
+    },
+    /// Give a local VM Space more or fewer vCPUs, more or less memory, or a
+    /// bigger disk. It shuts down and boots again from its own disk (a
+    /// stopped one boots): its files stay, its running processes do not. A
+    /// disk never shrinks.
+    #[command(after_help = "Examples:
+  cua spaces resize local:builder --memory-mb 24576
+  cua spaces resize builder --cpus 8 --disk-gb 200 --json")]
+    Resize {
+        /// Space id or name.
+        space: String,
+        /// vCPUs.
+        #[arg(long)]
+        cpus: Option<u32>,
+        /// Memory in MiB.
+        #[arg(long)]
+        memory_mb: Option<u64>,
+        /// Grow the disk to this many GiB.
+        #[arg(long)]
+        disk_gb: Option<u32>,
     },
     /// Turn a Space back on: resume a suspended one or boot a stopped one.
     #[command(after_help = "Examples:
@@ -349,7 +573,9 @@ pub enum SpacesCmd {
         space: String,
     },
     /// Forget a registered Space and its stored token. The sandbox keeps
-    /// running. The `relay:<machine>` record of a Space that registered
+    /// running. A Space cua created (on this computer or in a cloud) is
+    /// refused while its sandbox exists: use `cua spaces delete` (or `stop`).
+    /// The `relay:<computer>` record of a Space that registered
     /// itself and is gone (not connected) also leaves your relay directory.
     #[command(
         visible_alias = "remove",
@@ -361,18 +587,23 @@ pub enum SpacesCmd {
         /// Space id, address or display name (as `cua spaces ls` shows).
         space: String,
     },
-    /// Let another cua.ai account watch (viewer) or use (editor) a Space,
-    /// through the relay. They open it as `relay:<machine>`.
+    /// Let someone in your team watch (viewer) or use (editor) a Space,
+    /// through the relay. They open it as `relay:<computer>`. Sharing is for
+    /// teams: you need a team, and they must be in it (or share with the
+    /// whole team as `team:<id>`).
     #[command(after_help = "Examples:
   cua spaces share local:studio bob@example.com
   cua spaces share local:studio bob@example.com --role editor
   cua spaces share relay:0123abcd4567ef89 acct-42 --role viewer
+  # The whole team, to watch
+  cua spaces share local:studio team:acme --role viewer
   # From a script or agent: confirm with Touch ID or your password here
   cua spaces share local:studio bob@example.com --yes")]
     Share {
         /// Space id, address or display name.
         space: String,
-        /// Their email (verified by cua.ai) or account id.
+        /// Their email (verified by cua.ai) or account id, in your team; or
+        /// `team:<id>` for the whole team.
         who: String,
         /// `viewer`: presence and a view-only stream. `editor`: full use.
         #[arg(long, default_value = "viewer", value_parser = ["viewer", "editor"])]
@@ -420,9 +651,9 @@ pub enum SpacesCmd {
         space: String,
     },
     /// Take a Space off the relay (every share with it ends). With a
-    /// `relay:<machine>` id, removes that machine's record from your relay
+    /// `relay:<computer>` id, removes that computer's record from your relay
     /// directory: a Space that registered itself (also after it was
-    /// deleted), or a machine of yours that is gone. Only its owner can.
+    /// deleted), or a computer of yours that is gone. Only its owner can.
     #[command(
         name = "relay-unregister",
         after_help = "Examples:
@@ -451,6 +682,18 @@ pub fn daemon_share_gate(yes: bool, terminal: bool) -> std::result::Result<(), C
          will confirm it; sharing through the daemon cannot skip that confirmation"
             .into(),
     ))
+}
+
+/// What the daemon asks the person at this computer for, in this OS's words
+/// (it was always "Touch ID", also on a Linux server that has none).
+pub fn share_confirm_prompt() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Confirm the share on this computer (Touch ID or your password)."
+    } else if cfg!(target_os = "windows") {
+        "Confirm the share on this computer (Windows Hello or your password)."
+    } else {
+        "Confirm the share on this computer (your password, asked by the desktop's polkit agent; a machine with no desktop session cannot confirm)."
+    }
 }
 
 /// Confirms a share on the terminal (the `cua` CLI without a daemon).
@@ -520,6 +763,37 @@ fn print_shares(s: &cua_sdk::SpaceShares, json: bool, out: &mut dyn Write) {
     }
 }
 
+/// What `cua spaces rm` says about a Space whose sandbox still exists on
+/// this machine: `rm` only forgets, so it refuses rather than orphan it.
+fn rm_refused_for_local(id: &str) -> CuaError {
+    CuaError::InvalidArgument(format!(
+        "{id} is a Space created on this machine and its sandbox still exists: `cua spaces rm` \
+         would only forget it and leave it running. Use `cua spaces delete {id}` to delete it \
+         (or `cua spaces stop {id}` to keep it)"
+    ))
+}
+
+/// What `cua spaces rm` says about a Space in the cloud: its sandbox is
+/// billed until it is deleted, and forgetting the Space would leave it
+/// running with nothing pointing at it.
+fn rm_refused_for_cloud(id: &str) -> CuaError {
+    CuaError::InvalidArgument(format!(
+        "{id} is a Space in a cloud and its sandbox is billed until it is deleted: `cua spaces \
+         rm` would only forget it and leave it running. Use `cua spaces delete {id}` to delete \
+         it"
+    ))
+}
+
+/// Whether `cua spaces rm` must refuse this Space: a Space whose sandbox cua
+/// created and that still exists (a local one, a Cua Cloud claim, or one in
+/// your own cloud, which `cloud_delete` marks).
+fn rm_refusal(id: &str, cloud_delete: &str, local_sandbox_exists: bool) -> Option<CuaError> {
+    if id.starts_with("cloud:") || !cloud_delete.is_empty() {
+        return Some(rm_refused_for_cloud(id));
+    }
+    (id.starts_with("local:") && local_sandbox_exists).then(|| rm_refused_for_local(id))
+}
+
 fn space_json(s: &cua_sdk::SpaceInfo) -> serde_json::Value {
     serde_json::json!({
         "id": s.id,
@@ -534,10 +808,65 @@ fn space_json(s: &cua_sdk::SpaceInfo) -> serde_json::Value {
         "host_name": s.host_name,
         "power": s.power,
         "power_state": s.power_state,
+        "durable": s.durable,
+        "labels": s.labels,
+        "expires_at_unix": s.expires_at_unix,
+        "on_expire": s.on_expire,
+        "created_at_unix": s.created_at_unix,
+        "egress": {"allow": s.egress.allow, "deny": s.egress.deny},
+        "egress_enforced": s.egress_enforced.map(|_| "host"),
+        "stop_reason": s.stop_reason,
     })
 }
 
+/// `--label key=value` words as the labels they set.
+fn parse_labels(words: &[String]) -> Result<std::collections::HashMap<String, String>, CuaError> {
+    words
+        .iter()
+        .map(|w| cua_spaces::registry::parse_label(w))
+        .collect::<Result<_, _>>()
+        .map_err(|e| match e {
+            cua_spaces::Error::InvalidArgument(m) => CuaError::InvalidArgument(m),
+            other => CuaError::InvalidArgument(other.to_string()),
+        })
+}
+
+/// The Spaces that carry every label of `want`.
+fn with_labels(
+    list: &mut Vec<cua_spaces::SpaceInfo>,
+    want: &std::collections::HashMap<String, String>,
+) {
+    list.retain(|s| want.iter().all(|(k, v)| s.labels.get(k) == Some(v)));
+}
+
+/// ` [k=v, k2=v2]` for a Space with labels, else nothing.
+fn label_suffix(s: &cua_spaces::SpaceInfo) -> String {
+    if s.labels.is_empty() {
+        return String::new();
+    }
+    let pairs: Vec<String> = s.labels.iter().map(|(k, v)| format!("{k}={v}")).collect();
+    format!(" [{}]", pairs.join(", "))
+}
+
 /// What `cua spaces stop` / `start` did: the message, or one JSON line.
+/// The line that says when Spaces landed in your cloud ("3 of 16 Spaces
+/// placed in your cloud: Hetzner pool · hetzner-2 (cpx11, hil) ·
+/// $0.0338/h"); `None` when none did.
+fn cloud_summary(placed: &[(String, String)], total: usize) -> Option<String> {
+    if placed.is_empty() {
+        return None;
+    }
+    let mut places: Vec<&str> = placed.iter().map(|(_, p)| p.as_str()).collect();
+    places.sort_unstable();
+    places.dedup();
+    Some(format!(
+        "{} of {total} Space{} placed in your cloud: {}",
+        placed.len(),
+        if total == 1 { "" } else { "s" },
+        places.join("; ")
+    ))
+}
+
 fn power_line(r: cua_sdk::SpacePowerReport, json: bool, out: &mut dyn Write) {
     if json {
         line(
@@ -593,6 +922,16 @@ pub async fn run_spaces_sdk(
         }
         SpacesCmd::Rm { space } => {
             let info = spaces.resolve(space.clone()).await?;
+            // A Space cua created owns a sandbox (billed, for a cloud one):
+            // forgetting it would leave that sandbox running with nothing
+            // pointing at it.
+            let local_exists = match info.id.strip_prefix("local:") {
+                Some(name) => cua.sandboxes().get(name.to_string()).await.is_ok(),
+                None => false,
+            };
+            if let Some(e) = rm_refusal(&info.id, &info.cloud_delete, local_exists) {
+                return Err(e);
+            }
             spaces.remove(space).await?;
             if json {
                 line(
@@ -606,12 +945,21 @@ pub async fn run_spaces_sdk(
         SpacesCmd::Share {
             space, who, role, ..
         } => {
+            let who = team_who(&who).await?;
+            if who.starts_with("team:") && !json {
+                eprintln!(
+                    "Adding {space} to the team… (right after a Teams checkout this can take up to a minute while the plan is set up)"
+                );
+            }
             let s = spaces.space(space).await?;
             print_shares(&s.share(who, Some(role)).await?, json, out);
         }
         SpacesCmd::Unshare { space, who, all } => {
             let s = spaces.space(space).await?;
-            let who = if all { None } else { who };
+            let who = match who {
+                Some(w) if !all => Some(team_who(&w).await?),
+                _ => None,
+            };
             print_shares(&s.unshare(who).await?, json, out);
         }
         SpacesCmd::Shares { space } => {
@@ -653,7 +1001,160 @@ pub async fn run_spaces_sdk(
             }
         }
         SpacesCmd::Stop { space } => power_line(spaces.stop(space).await?, json, out),
+        SpacesCmd::Suspend { space } => power_line(spaces.suspend(space).await?, json, out),
+        SpacesCmd::Resize {
+            space,
+            cpus,
+            memory_mb,
+            disk_gb,
+        } => {
+            let r = spaces.resize(space, cpus, memory_mb, disk_gb).await?;
+            if json {
+                line(
+                    out,
+                    serde_json::json!({"space": r.space, "cpus": r.cpus,
+                        "memory_mb": r.memory_mb, "disk_gb": r.disk_gb, "message": r.message})
+                    .to_string(),
+                );
+            } else {
+                line(out, r.message);
+            }
+        }
         SpacesCmd::Start { space } => power_line(spaces.start(space).await?, json, out),
+        SpacesCmd::Prewarm {
+            image,
+            count,
+            on,
+            ttl,
+            kind,
+            cpus,
+            memory_mb,
+            instance_type,
+            region,
+            list,
+            remove,
+        } => {
+            let fmt = |p: &cua_sdk::Prewarm| {
+                let at: Vec<String> = p
+                    .placements
+                    .iter()
+                    .map(|pl| format!("{} {}/{}", pl.host, pl.ready, pl.count))
+                    .collect();
+                format!(
+                    "{}  {}  {}/{} ready  {} vCPU {} MiB  on {}  until {}",
+                    p.id,
+                    p.image,
+                    p.ready,
+                    p.count,
+                    p.cpus,
+                    p.memory_mb,
+                    if at.is_empty() {
+                        "-".into()
+                    } else {
+                        at.join(", ")
+                    },
+                    humantime::format_rfc3339_seconds(
+                        std::time::UNIX_EPOCH + std::time::Duration::from_secs(p.expires_at)
+                    )
+                )
+            };
+            let row = |p: &cua_sdk::Prewarm| {
+                serde_json::json!({"id": p.id, "image": p.image, "kind": p.kind, "cpus": p.cpus,
+                    "memory_mb": p.memory_mb, "count": p.count, "ready": p.ready,
+                    "expires_at": p.expires_at, "new_hosts": p.new_hosts,
+                    "placements": p.placements.iter().map(|pl| serde_json::json!({
+                        "host": pl.host, "machine": pl.machine, "count": pl.count, "ready": pl.ready})).collect::<Vec<_>>()})
+            };
+            if list {
+                let all = spaces.prewarms().await?;
+                if json {
+                    line(
+                        out,
+                        serde_json::Value::Array(all.iter().map(row).collect()).to_string(),
+                    );
+                } else if all.is_empty() {
+                    line(out, "No prewarms.");
+                } else {
+                    for p in &all {
+                        line(out, fmt(p));
+                    }
+                }
+            } else if let Some(id) = remove {
+                let removed = spaces.remove_prewarm(id.clone()).await?;
+                if json {
+                    line(out, serde_json::json!({"removed": removed}).to_string());
+                } else if removed {
+                    line(out, format!("Ended {id}: its ready Spaces go."));
+                } else {
+                    line(out, format!("No prewarm {id}."));
+                }
+            } else {
+                let ttl_secs = ttl
+                    .map(|t| {
+                        humantime::parse_duration(t.trim())
+                            .map(|d| d.as_secs())
+                            .map_err(|e| CuaError::InvalidArgument(format!("--ttl {t}: {e}")))
+                    })
+                    .transpose()?;
+                let p = spaces
+                    .prewarm(
+                        image.unwrap_or_default(),
+                        cua_sdk::PrewarmOptions {
+                            count: Some(count),
+                            on,
+                            kind,
+                            cpus,
+                            memory_mb,
+                            ttl_secs,
+                            instance_type,
+                            region,
+                        },
+                    )
+                    .await?;
+                if json {
+                    line(out, row(&p).to_string());
+                } else {
+                    line(out, fmt(&p));
+                }
+            }
+        }
+        SpacesCmd::Egress {
+            space,
+            deny,
+            allow,
+            clear,
+        } => {
+            if deny.is_empty() && allow.is_empty() && !clear {
+                return Err(CuaError::InvalidArgument(
+                    "name what to block (--deny) or keep reachable (--allow), or --clear to \
+                     remove the policy"
+                        .into(),
+                ));
+            }
+            let policy = cua_sdk::EgressPolicy { allow, deny };
+            spaces.set_egress(space.clone(), policy.clone()).await?;
+            if json {
+                line(
+                    out,
+                    serde_json::json!({"space": space,
+                        "egress": {"allow": policy.allow, "deny": policy.deny},
+                        "egress_enforced": (!clear).then_some("host")})
+                    .to_string(),
+                );
+            } else if clear {
+                line(out, format!("Removed the egress policy of {space}."));
+            } else {
+                line(
+                    out,
+                    format!(
+                        "Set the egress policy of {space}: {} blocked, {} kept reachable \
+                         (enforced by its host, outside the guest).",
+                        policy.deny.len(),
+                        policy.allow.len()
+                    ),
+                );
+            }
+        }
         SpacesCmd::Cancel { space } => {
             let o = spaces.cancel_create(space).await?;
             if json {
@@ -720,7 +1221,23 @@ pub async fn run_spaces_sdk(
             memory_mb,
             disk_gb,
             gpu,
+            durable,
+            forkable,
+            instance_type,
+            region,
+            volumes,
+            label,
+            egress_deny,
+            egress_allow,
         } => {
+            let volumes = parse_volumes(&volumes)?;
+            let labels = parse_labels(&label)?;
+            let egress = (!egress_deny.is_empty() || !egress_allow.is_empty()).then(|| {
+                cua_sdk::EgressPolicy {
+                    allow: egress_allow.clone(),
+                    deny: egress_deny.clone(),
+                }
+            });
             if !(1..=8).contains(&count) {
                 return Err(CuaError::InvalidArgument(format!(
                     "--count {count}: create 1 to 8 Spaces at a time"
@@ -747,7 +1264,24 @@ pub async fn run_spaces_sdk(
                 disk_gb,
                 gpu: gpu.clone(),
                 create_id: Some(format!("cli:{run}:{n}")),
+                durable,
+                forkable: forkable.then_some(true),
+                instance_type: instance_type.clone(),
+                region: region.clone(),
+                volumes: volumes.clone(),
+                labels: labels.clone(),
+                egress: egress.clone(),
                 ..Default::default()
+            };
+            // Durable Spaces are kept by the coordinator of your machines,
+            // which the cua daemon of Cua Spaces runs: go through it.
+            let spaces = if durable && cua.mode() == cua_sdk::CuaMode::Embedded {
+                cua_daemon::client::ensure_daemon()
+                    .await
+                    .map_err(|e| CuaError::Internal(format!("the cua daemon: {e}")))?;
+                cua_sdk::Cua::connect(None, None)?.spaces()
+            } else {
+                spaces
             };
             let names: Vec<Option<String>> = (1..=count)
                 .map(|n| {
@@ -764,13 +1298,21 @@ pub async fn run_spaces_sdk(
             // What each create is doing, on one updating line of the
             // terminal (never in --json output).
             let show = !json && std::io::stderr().is_terminal() && count == 1;
+            let steps = Arc::new(crate::util::StepLines::new(
+                crate::util::CreateWords::for_image(
+                    image.as_deref().unwrap_or_default(),
+                    kind.as_deref().unwrap_or_default(),
+                    true,
+                ),
+            ));
             let creates = names.into_iter().enumerate().map(|(i, n)| {
                 let options = one(i as u32 + 1, n);
                 let spaces = spaces.clone();
+                let steps = steps.clone();
                 async move {
                     if show {
                         Box::pin(
-                            spaces.create_with_progress(options, Arc::new(ProgressLine::default())),
+                            spaces.create_with_progress(options, Arc::new(StepListener(steps))),
                         )
                         .await
                     } else {
@@ -803,16 +1345,21 @@ pub async fn run_spaces_sdk(
             };
             crate::util::exit_on_ctrl_c();
             if show {
-                eprint!("\r\x1b[2K");
+                steps.finish();
             }
             let mut failed = 0;
+            let mut first_failure = 1;
             let mut rows = Vec::new();
+            let mut in_cloud: Vec<(String, String)> = Vec::new();
             for r in results {
                 match r {
                     Ok(created) => {
                         let Some(info) = created.space else {
                             continue;
                         };
+                        if !info.cloud.is_empty() {
+                            in_cloud.push((info.cloud.clone(), info.cloud_place.clone()));
+                        }
                         if !json {
                             line(
                                 out,
@@ -832,18 +1379,30 @@ pub async fn run_spaces_sdk(
                     }
                     Err(e) => {
                         failed += 1;
+                        if failed == 1 {
+                            first_failure = crate::exit_code(&e);
+                        }
                         if !json {
                             eprintln!("cua: {e}");
                         }
-                        rows.push(serde_json::json!({"error": e.to_string()}));
+                        // `code` is the SDK error's name (`HostCapacity`),
+                        // for a script that branches on it.
+                        rows.push(serde_json::json!({
+                            "error": e.to_string(),
+                            "code": e.variant(),
+                        }));
                     }
                 }
             }
             if json {
                 line(out, serde_json::json!({ "spaces": rows }).to_string());
+            } else if let Some(line_) = cloud_summary(&in_cloud, count as usize) {
+                line(out, line_);
             }
             if failed == count as usize {
-                return Ok(1);
+                // The same exit code `cua` gives that error elsewhere (3 not
+                // found, 8 no room on the machine).
+                return Ok(first_failure);
             }
         }
         SpacesCmd::Delete { space, force } => {
@@ -861,7 +1420,25 @@ pub async fn run_spaces_sdk(
                     return Err(crate::sandbox::needs_force(&format!("delete {space}")));
                 }
             }
-            let message = spaces.delete(space.clone()).await?;
+            // A durable Space goes for good, through the daemon that keeps
+            // it (deleting only its current copy would have it created
+            // again).
+            let durable = durable_spaces().await.into_iter().find(|d| {
+                d["name"].as_str() == Some(space.as_str())
+                    || d["space"].as_str() == Some(space.as_str())
+            });
+            let message = match durable.as_ref().and_then(|d| d["name"].as_str()) {
+                Some(name) if cua.mode() == cua_sdk::CuaMode::Embedded => {
+                    crate::runs::request(
+                        "pool",
+                        "durable_delete",
+                        serde_json::json!({"name": name}),
+                    )
+                    .await?;
+                    format!("Deleted the durable Space {name} (it is not created again).")
+                }
+                _ => spaces.delete(space.clone()).await?,
+            };
             if json {
                 line(
                     out,
@@ -950,8 +1527,9 @@ impl AccountTokens for SetupTokens {
 /// Signs in for `cua host setup` without storing the session.
 async fn sign_in_for_setup(flow: cua_auth::Flow) -> cua_host::Result<String> {
     let unauth = |e: cua_auth::Error| cua_host::Error::Unauthenticated(e.to_string());
-    let pending = auth::session().begin_login(flow).await.map_err(unauth)?;
-    eprintln!("Sign in to cua.ai to register this machine (the session is not stored here):");
+    let mut pending = auth::session().begin_login(flow).await.map_err(unauth)?;
+    pending.return_to = Some(cua_auth::ReturnTo::Terminal);
+    eprintln!("Sign in to cua.ai to register this computer (the session is not stored here):");
     eprintln!("  {}", pending.url);
     if let Some(code) = &pending.user_code {
         eprintln!("Enter this code if prompted: {code}");
@@ -992,7 +1570,16 @@ fn host_error(e: cua_host::Error, m: String) -> CuaError {
         E::Unauthenticated(_) => CuaError::Unauthenticated(m),
         E::PermissionDenied(_) => CuaError::PermissionDenied(m),
         E::NotFound(_) => CuaError::NotFound(m),
-        E::Relay(_) | E::Download(_) => CuaError::Http(m),
+        E::Relay(_) | E::Download(_) | E::Throttled { .. } => CuaError::Http(m),
+        // The plain sentence, then where to upgrade.
+        E::PlanLimit(_) => {
+            let url = cua_home::plan_limit::PlanLimit::parse(&m)
+                .map(|l| l.upgrade_url(&cua_home::env::account_app_url()));
+            CuaError::Http(match url {
+                Some(url) => format!("{m} Upgrade: {url}"),
+                None => m,
+            })
+        }
         E::Service(_) => CuaError::Runtime(m),
         E::Io(_) | E::Internal(_) => CuaError::Internal(m),
     }
@@ -1000,17 +1587,17 @@ fn host_error(e: cua_host::Error, m: String) -> CuaError {
 
 fn render(s: &HostStatus, out: &mut dyn Write) {
     if !s.configured {
-        line(
+        hint_line(
             out,
-            "This machine is not set up for access (run `cua host setup`).",
+            "This computer is not set up for access (run `cua host setup`).",
         );
         return;
     }
     let name = s.name.clone().unwrap_or_default();
     if s.paused_signed_out {
-        line(
+        hint_line(
             out,
-            "Relay sharing is paused: the Cua app on this machine is signed out. \
+            "Relay sharing is paused: the Cua app on this computer is signed out. \
              Sign in to it again (or run `cua host start`) to share it.",
         );
     }
@@ -1018,7 +1605,7 @@ fn render(s: &HostStatus, out: &mut dyn Write) {
         Some("relay") => line(
             out,
             format!(
-                "{name}: relay {} as machine {}",
+                "{name}: relay {} as computer {}",
                 s.relay_url.clone().unwrap_or_default(),
                 s.machine_id.clone().unwrap_or_default()
             ),
@@ -1051,6 +1638,17 @@ fn render(s: &HostStatus, out: &mut dyn Write) {
             }
         ),
     );
+    if s.service.kind == "app-helper" && s.legacy_service {
+        hint_line(
+            out,
+            "  the old LaunchAgent (com.trycua.spacesd.host) is still there: run `cua host migrate` to remove it",
+        );
+    } else if s.service.kind == "launchd" && s.helper_available {
+        hint_line(
+            out,
+            "  tip: `cua host migrate` moves this service into the Cua Spaces app (its login item)",
+        );
+    }
     line(
         out,
         format!(
@@ -1111,19 +1709,22 @@ fn ago(now_ms: u64, at_ms: u64) -> String {
     }
 }
 
+/// Whether this machine's desktop is shared, as `cua host setup` and
+/// `cua host status` say it.
+fn desktop_line(share_desktop: bool) -> String {
+    format!(
+        "  desktop: {}",
+        if share_desktop {
+            "shared (this computer is a Space)"
+        } else {
+            "not shared (its screen, input, shell and files are off limits)"
+        }
+    )
+}
+
 /// The two settings: the desktop, and Spaces for your other devices.
 fn render_settings(s: &HostStatus, out: &mut dyn Write) {
-    line(
-        out,
-        format!(
-            "  desktop: {}",
-            if s.share_desktop {
-                "shared (this machine is a Space)"
-            } else {
-                "not shared (its screen, input, shell and files are off limits)"
-            }
-        ),
-    );
+    line(out, desktop_line(s.share_desktop));
     if s.provide_spaces {
         let limit = |n: u32| {
             if n == 0 {
@@ -1285,7 +1886,26 @@ pub async fn run_host(
             no_provide_spaces,
             max_spaces,
             allow_any_address,
+            tailnet,
+            dedicated,
         } => {
+            let direct = match (direct, tailnet) {
+                (Some(addr), _) => Some(addr),
+                (None, true) => {
+                    let ip = cua_host::direct::tailscale_ip().ok_or_else(|| {
+                        CuaError::InvalidArgument(
+                            "--tailnet: no tailnet address on this machine (is Tailscale, or a \
+                             Headscale-coordinated client, up?)"
+                                .into(),
+                        )
+                    })?;
+                    Some(cua_host::direct::authority(
+                        ip,
+                        cua_home::channel::CuaChannel::current().ports().tcp,
+                    ))
+                }
+                (None, false) => None,
+            };
             // A pasted add-machine link names its relay (`?relay=`) when the
             // code came from another relay than the default.
             let relay = relay.or_else(|| pair.as_deref().and_then(cua_host::pairing_link_relay));
@@ -1295,6 +1915,7 @@ pub async fn run_host(
                 })?),
                 None => SetupOptions::relay(relay.unwrap_or_else(cua_host::relay_url_from_env)),
             };
+            opts.tailnet = tailnet;
             // The code is single use: install the driver first, so a failed
             // download does not spend it.
             opts.download_first = pair.is_some();
@@ -1302,7 +1923,10 @@ pub async fn run_host(
             opts.allow = allow;
             opts.driver_bin = driver_bin;
             opts.runner = RunnerKind::parse(&runner).map_err(host_err)?;
-            opts = opts.profile(cua_host::HostProfile::parse(&profile).map_err(host_err)?);
+            opts = opts.profile(
+                cua_host::HostProfile::parse(profile.as_deref().unwrap_or("desktop"))
+                    .map_err(host_err)?,
+            );
             if desktop {
                 opts.share_desktop = true;
             }
@@ -1317,6 +1941,34 @@ pub async fn run_host(
             }
             opts.max_spaces = max_spaces;
             opts.allow_any_address = allow_any_address;
+            opts.dedicated = dedicated;
+            let spaces_only = opts.provide_spaces && !opts.share_desktop;
+            // Running it again changes nothing when this machine already
+            // is that host; a host whose service stopped is started again
+            // (no sign-in, the code is not spent).
+            if let cua_host::HostMode::Relay { url } = &opts.mode
+                && !opts.tailnet
+                && opts.driver_bin.is_none()
+                && opts.allow.is_empty()
+                && opts.max_spaces.is_none()
+            {
+                // Only what this command line says: a re-run that leaves out
+                // the profile keeps what the machine shares.
+                let want = crate::onboard::Want {
+                    relay: url.clone(),
+                    share_desktop: (profile.is_some() || desktop || no_desktop)
+                        .then_some(opts.share_desktop),
+                    provide_spaces: (profile.is_some() || provide_spaces || no_provide_spaces)
+                        .then_some(opts.provide_spaces),
+                    dedicated,
+                    name: opts.name.clone(),
+                    runner: (runner != "auto").then(|| runner.clone()),
+                };
+                let state = crate::onboard::HostState::read(&host).await;
+                if state.is_up(&want) || state.is_down(&want) {
+                    return setup_unchanged(&host, state, &want, pair.is_some(), json, out).await;
+                }
+            }
             // A pairing code stands in for the account: nothing to sign in.
             let paired = pair
                 .as_deref()
@@ -1327,6 +1979,12 @@ pub async fn run_host(
                 Some(p) => p,
                 None => tokens,
             };
+            if paired.is_none()
+                && let cua_host::HostMode::Relay { url } = &opts.mode
+                && let Ok(device) = crate::devices_cmd::device_auth(url)
+            {
+                opts.device_session = device.try_session().await;
+            }
             let s = host
                 .setup_staged(opts, tokens)
                 .await
@@ -1335,6 +1993,30 @@ pub async fn run_host(
                     host_error(e, message)
                 })?;
             emit(&s, json, out)?;
+            if s.provide_spaces && !json {
+                line(
+                    out,
+                    crate::onboard::jobs_line(dedicated, &cua_cluster::sysinfo::accelerators()),
+                );
+            }
+            // A spare Mac that only provides Spaces gives its Linux runtime
+            // VM most of itself (every local Linux Space shares that VM),
+            // unless the owner already sized it.
+            if spaces_only
+                && cfg!(target_os = "macos")
+                && let Ok(Some((cpus, mem))) =
+                    cua_vmm::managed::dedicate_to_spaces(&cua_sandbox_core::settings::config_path())
+            {
+                let note = crate::util::hint(&format!(
+                    "Linux Spaces here share a {cpus}-CPU, {mem} GiB runtime VM \
+                     (cua config set runtime.linux_memory_gib N to change it)."
+                ));
+                if json {
+                    eprintln!("{note}");
+                } else {
+                    line(out, note);
+                }
+            }
             // macOS Spaces here need Local Network access, which only this
             // Mac's own screen can grant: say exactly what to allow.
             if let Ok(Some(config)) = host.config()
@@ -1361,9 +2043,15 @@ pub async fn run_host(
             // so to stderr when the output is JSON for a program).
             if let Some(pair) = host.pairing_command().map_err(host_err)? {
                 let lines = [
-                    "On your laptop, add this machine (the token is a shell on this machine: \
-                     keep it private):"
-                        .to_string(),
+                    if tailnet {
+                        "On a device of yours or of a teammate you allowed (on this tailnet), add \
+                         this computer:"
+                            .to_string()
+                    } else {
+                        "On your laptop, add this computer (the token is a shell on this computer: \
+                         keep it private):"
+                            .to_string()
+                    },
                     format!("  {pair}"),
                 ];
                 for l in lines {
@@ -1377,6 +2065,7 @@ pub async fn run_host(
         }
         HostCmd::Pair {
             team,
+            no_wait,
             name,
             expires,
             list,
@@ -1391,6 +2080,7 @@ pub async fn run_host(
                 device,
                 relay,
                 team,
+                no_wait,
                 name,
                 expires,
                 list,
@@ -1399,11 +2089,59 @@ pub async fn run_host(
                 out,
             )
             .await
-            .map_err(host_err)?;
+            .map_err(crate::team_cmd::err)?;
+        }
+        HostCmd::Migrate { force } => {
+            let m = host
+                .migrate_service(force, env!("CARGO_PKG_VERSION"))
+                .await
+                .map_err(host_err)?;
+            if json {
+                writeln!(
+                    out,
+                    "{}",
+                    serde_json::to_string_pretty(&m)
+                        .map_err(|e| CuaError::Internal(e.to_string()))?
+                )
+                .map_err(|e| CuaError::Internal(e.to_string()))?;
+            } else {
+                line(out, format!("{}: {}", m.outcome, m.detail));
+                if m.permissions_needed {
+                    hint_line(
+                        out,
+                        "macOS will ask you once more for Screen Recording and Accessibility, \
+                         now for Cua Spaces: allow both in System Settings > Privacy & \
+                         Security (`cua host status` lists them). The old \"cua-spacesd\" \
+                         entries there can be removed with the minus button.",
+                    );
+                }
+            }
+            return Ok(match m.outcome.as_str() {
+                "rolled-back" | "kept" => 1,
+                _ => 0,
+            });
         }
         HostCmd::Status => {
             let s = host.status().await.map_err(host_err)?;
-            emit(&s, json, out)?;
+            // This Mac's processor, memory and disk, with or without setup.
+            let resources = crate::resources_view::fetch(
+                &cua_spaces::Spaces::builder().home(home).build(),
+                true,
+            )
+            .await;
+            if json {
+                let status =
+                    serde_json::to_value(&s).map_err(|e| CuaError::Internal(e.to_string()))?;
+                line(
+                    out,
+                    crate::resources_view::status_json(status, &resources).to_string(),
+                );
+            } else {
+                render(&s, out);
+                for l in crate::resources_view::this_mac_lines(&resources) {
+                    line(out, l);
+                }
+            }
             if !s.configured {
                 return Ok(1);
             }
@@ -1449,7 +2187,7 @@ pub async fn run_host(
             if !yes
                 && !(crate::util::interactive()
                     && crate::util::confirm(
-                        &format!("Let {} reach this machine?", who.join(", ")),
+                        &format!("Let {} reach this computer?", who.join(", ")),
                         false,
                     ))
             {
@@ -1472,12 +2210,15 @@ pub async fn run_host(
                 .map_err(host_err)?;
             print_allow(&allow, json, out);
         }
-        HostCmd::Remove { force } => {
+        HostCmd::Remove {
+            force,
+            uninstalling,
+        } => {
             use crate::sandbox::{DeleteConfirmation, confirm_delete};
             use std::io::IsTerminal as _;
             match confirm_delete(force, std::io::stdin().is_terminal(), || {
                 crate::util::confirm(
-                    "Remove this machine's access setup (unregister it and delete its tokens)?",
+                    "Remove this computer's access setup (unregister it and delete its tokens)?",
                     false,
                 )
             }) {
@@ -1488,19 +2229,114 @@ pub async fn run_host(
                 }
                 DeleteConfirmation::NeedsForce => {
                     return Err(crate::sandbox::needs_force(
-                        "remove this machine's access setup",
+                        "remove this computer's access setup",
                     ));
                 }
             }
-            host.remove().await.map_err(host_err)?;
+            if uninstalling {
+                host.remove_for_uninstall().await.map_err(host_err)?;
+            } else {
+                host.remove().await.map_err(host_err)?;
+            }
             if json {
                 line(out, r#"{"removed":true}"#);
             } else {
-                line(out, "This machine is no longer set up for access.");
+                line(out, "This computer is no longer set up for access.");
             }
         }
     }
     Ok(0)
+}
+
+/// `cua host setup` on a machine that already is the host asked for: says
+/// so (with the accelerators found), or starts its stopped service again.
+async fn setup_unchanged(
+    host: &Host,
+    state: crate::onboard::HostState,
+    want: &crate::onboard::Want,
+    paired: bool,
+    json: bool,
+    out: &mut dyn Write,
+) -> Result<i32, CuaError> {
+    let started = !state.is_up(want);
+    let state = if started {
+        let status = host.start_sharing().await.map_err(host_err)?;
+        crate::onboard::HostState {
+            status: serde_json::to_value(status).unwrap_or_default(),
+            dedicated: state.dedicated,
+        }
+    } else {
+        state
+    };
+    if json {
+        line(
+            out,
+            serde_json::json!({"changed": started, "started": started, "host": state.status})
+                .to_string(),
+        );
+        return Ok(0);
+    }
+    if started {
+        line(
+            out,
+            format!(
+                "Started the host service again: {} is back on {}.",
+                state.status["name"].as_str().unwrap_or("this computer"),
+                state.status["relayUrl"].as_str().unwrap_or("the relay"),
+            ),
+        );
+    } else {
+        line(out, state.summary());
+    }
+    line(
+        out,
+        desktop_line(state.status["shareDesktop"].as_bool() == Some(true)),
+    );
+    if paired {
+        line(
+            out,
+            "The pairing code was not needed (this computer has joined already); if it was not used before, it still works on another computer.",
+        );
+    }
+    if state.status["provideSpaces"].as_bool() == Some(true) {
+        line(
+            out,
+            crate::onboard::jobs_line(state.dedicated, &cua_cluster::sysinfo::accelerators()),
+        );
+    }
+    Ok(0)
+}
+
+/// How long an uninstall waits for one Space to turn off.
+const UNINSTALL_STOP_WAIT: std::time::Duration = std::time::Duration::from_secs(45);
+
+/// `cua host remove --uninstalling`: turns off (keeping its data) each Space
+/// this machine provides, so nothing of this machine stays reachable
+/// through the relay. Best effort, each reported on stderr.
+pub async fn turn_off_provided_spaces<F, Fut>(home: &Path, open: F)
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<Arc<cua_sdk::Cua>, CuaError>>,
+{
+    let provided = Host::new(home).provided_spaces().unwrap_or_default();
+    if provided.is_empty() {
+        return;
+    }
+    let cua = match open().await {
+        Ok(cua) => cua,
+        Err(e) => {
+            eprintln!("Could not turn off the Spaces this computer provides: {e}");
+            return;
+        }
+    };
+    for space in provided {
+        let id = space.local_space;
+        match tokio::time::timeout(UNINSTALL_STOP_WAIT, cua.spaces().stop(id.clone())).await {
+            Ok(Ok(_)) => eprintln!("Turned off {id}."),
+            Ok(Err(e)) => eprintln!("Could not turn off {id}: {e}"),
+            Err(_) => eprintln!("Timed out turning off {id}."),
+        }
+    }
 }
 
 fn print_allow(allow: &[String], json: bool, out: &mut dyn Write) {
@@ -1513,8 +2349,23 @@ fn print_allow(allow: &[String], json: bool, out: &mut dyn Write) {
     }
 }
 
-/// `cua host pair`: mints (default), lists or revokes pairing codes as the
-/// account from this enrolled device.
+/// `who` as it is shared with: a `team:<name>` becomes `team:<organization
+/// id>` (the Spaces API resolves names and aliases); anything else as is.
+async fn team_who(who: &str) -> Result<String, CuaError> {
+    match who.trim().strip_prefix("team:") {
+        Some(t)
+            if !cua_host::spaces_api::is_org_ref(t)
+                && !cua_host::spaces_api::is_legacy_team_id(t) =>
+        {
+            Ok(format!(
+                "team:{}",
+                crate::team_cmd::resolve_team(&crate::util::cua_home(), t).await?
+            ))
+        }
+        _ => Ok(who.trim().to_string()),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn pair_codes(
     home: &Path,
@@ -1522,6 +2373,7 @@ async fn pair_codes(
     device: Option<&DeviceAuth>,
     relay: Option<String>,
     team: Option<String>,
+    no_wait: bool,
     name: Option<String>,
     expires: u64,
     list: bool,
@@ -1530,6 +2382,12 @@ async fn pair_codes(
     out: &mut dyn Write,
 ) -> cua_host::Result<()> {
     let url = relay_url(relay.clone(), home);
+    // The relay the other machine is told to join: --relay, else a custom
+    // `$CUA_RELAY_URL` (CUA_ENV, passed along, picks the rest).
+    let relay_arg = crate::onboard::relay_for_line(
+        relay.as_deref(),
+        std::env::var("CUA_RELAY_URL").ok().as_deref(),
+    );
     // The device session is per relay: with --relay, this device's
     // enrollment there.
     let other = match relay {
@@ -1550,7 +2408,7 @@ async fn pair_codes(
         } else {
             line(
                 out,
-                format!("Revoked {id}: it can no longer add a machine."),
+                format!("Revoked {id}: it can no longer add a computer."),
             );
         }
         return Ok(());
@@ -1578,12 +2436,36 @@ async fn pair_codes(
             "--expires is 1 to 1440 minutes".into(),
         ));
     }
+    // A team is an organization of the Spaces API: the relay code carries
+    // no team (the relay's own teams are retired), and the machine becomes
+    // a team machine once it joins (below).
+    let api = cua_host::spaces_api::SpacesApiClient::current()?;
+    let org = match &team {
+        Some(t) => {
+            let org = api.resolve_org(&token, t).await?;
+            if !org.manages() {
+                return Err(cua_host::Error::PermissionDenied(format!(
+                    "only an owner or admin of {} can add computers to it",
+                    org.label()
+                )));
+            }
+            if !org.has("team_machines") {
+                eprintln!(
+                    "Note: {} has no team computers on its plan yet (buy Teams at app.cua.ai); a plan bought a moment ago is waited for.",
+                    org.label()
+                );
+            }
+            Some(org)
+        }
+        None => None,
+    };
+    let minted_name = name.clone();
     let minted = client
         .create_pairing_code(
             &token,
             &cua_host::PairingCodeRequest {
                 name,
-                team,
+                team: None,
                 ttl_secs: Some(expires * 60),
             },
         )
@@ -1594,31 +2476,127 @@ async fn pair_codes(
         .filter(|c| cua_host::normalize_pairing_code(c).is_some())
         .ok_or_else(|| cua_host::Error::Relay("the relay returned no pairing code".into()))?;
     let link = cua_host::add_machine_url(&code, &url);
-    let sh = cua_host::install_command(&code, &url, "linux");
+    // The other machine joins as a host that provides Spaces (so jobs and
+    // Spaces can run there), on this relay when it is not the default one.
+    let shown = cua_host::display_pairing_code(&code);
+    let name_arg = minted_name.as_deref();
+    let setup = format!(
+        "cua {}",
+        crate::onboard::pair_setup_args(&shown, name_arg, relay_arg.as_deref())
+    );
+    let env = crate::onboard::env_prefix();
+    let sh = crate::onboard::add_line(
+        &shown,
+        &crate::onboard::InstallSource::Release,
+        &env,
+        relay_arg.as_deref(),
+        name_arg,
+    );
+    // `CUA_INSTALL_URL`: a staging build of the Linux `cua` and
+    // `cua-spacesd` instead of the release.
+    let staging = match crate::onboard::InstallSource::from_env()
+        .map_err(|e| cua_host::Error::InvalidArgument(e.to_string()))?
+    {
+        src @ crate::onboard::InstallSource::Tarball { .. } => Some(crate::onboard::add_line(
+            &shown,
+            &src,
+            &env,
+            relay_arg.as_deref(),
+            name_arg,
+        )),
+        crate::onboard::InstallSource::Release => None,
+    };
     let ps = cua_host::install_command(&code, &url, "windows");
     if json {
         line(
             out,
             serde_json::json!({
                 "id": minted.id, "code": code, "url": link, "expires_at": minted.expires_at,
-                "team": minted.team, "install": {"sh": sh, "powershell": ps},
+                "team": org.as_ref().map(|o| o.id.clone()),
+                "install": {"sh": sh, "powershell": ps, "setup": setup, "staging": staging},
             })
             .to_string(),
         );
     } else {
-        for l in [
+        let mut lines = vec![
             format!(
                 "Code {code} (works once, expires in {expires} min; id {})",
                 minted.id
             ),
             format!("Open on the other computer: {link}"),
             "Or run there:".to_string(),
+            format!("  cua installed:  {env}{setup}"),
             format!("  macOS / Linux:  {sh}"),
-            format!("  Windows:        {ps}"),
-            format!("  cua installed:  cua host setup --pair {code}"),
-        ] {
+        ];
+        if let Some(st) = &staging {
+            lines.push(format!("  Staging build (Linux):  {st}"));
+        }
+        lines.push(format!("  Windows:        {ps}"));
+        lines.push(crate::util::hint(
+            "It joins your pool as a host that provides Spaces; see it with `cua computers`.",
+        ));
+        for l in lines {
             line(out, l);
         }
+    }
+    let Some(org) = org else {
+        return Ok(());
+    };
+    let later = crate::util::hint(&format!(
+        "cua team add-machine {} relay:<computer id>",
+        org.id
+    ));
+    if no_wait {
+        if !json {
+            line(
+                out,
+                format!("When it has joined, add it to {}: {later}", org.label()),
+            );
+        }
+        return Ok(());
+    }
+    if !json {
+        line(
+            out,
+            format!(
+                "Waiting for the computer to join, to add it to {} (Ctrl-C to stop; then: {later})…",
+                org.label()
+            ),
+        );
+    }
+    let mut said = false;
+    let machine = client
+        .add_paired_machine_to_team(
+            &api,
+            &token,
+            &minted.id,
+            &org.id,
+            minted.expires_at.max(1),
+            std::time::Duration::from_secs(3),
+            |_| {
+                if !said && !json {
+                    eprintln!(
+                        "{} (the team's plan is on its way)",
+                        cua_host::spaces_api::FINISHING_SETUP
+                    );
+                    said = true;
+                }
+            },
+        )
+        .await?;
+    if json {
+        line(
+            out,
+            serde_json::json!({ "team": org.id, "machine": machine }).to_string(),
+        );
+    } else {
+        line(
+            out,
+            format!(
+                "relay:{machine} joined and is a computer of {}.",
+                org.label()
+            ),
+        );
     }
     Ok(())
 }
@@ -1641,7 +2619,7 @@ async fn change_allow(
     let local_id = config.as_ref().and_then(|c| c.machine_id.clone());
     let id = machine.or(local_id.clone()).ok_or_else(|| {
         cua_host::Error::InvalidArgument(
-            "this machine is not on a relay; pass --machine <id> (`cua spaces ls`)".into(),
+            "this computer is not on a relay; pass --machine <id> (`cua spaces ls`)".into(),
         )
     })?;
     let url = relay
@@ -1721,6 +2699,31 @@ pub fn relay_url(flag: Option<String>, home: &Path) -> String {
     cua_host::relay_url_for(flag.as_deref(), home)
 }
 
+/// How loaded one of your machines that provide Spaces is, for `cua spaces
+/// ls`: "3 running · 40% CPU · 55% memory", or why it takes nothing now.
+pub fn load_text(h: &cua_spaces::host_spaces::HostOffer) -> String {
+    if !h.online {
+        return String::new();
+    }
+    let Some(n) = &h.node else {
+        return "provides Spaces".into();
+    };
+    if !n.problem.is_empty() {
+        return format!("takes nothing now: {}", n.problem);
+    }
+    let pct = |free: u64, total: u64| {
+        (100 * total.saturating_sub(free))
+            .checked_div(total)
+            .unwrap_or(0)
+    };
+    format!(
+        "{} running · {}% CPU · {}% memory",
+        n.running.values().sum::<u32>(),
+        pct(u64::from(n.millicpus_free), u64::from(n.millicpus_total)),
+        pct(n.memory_free_mb, n.memory_total_mb)
+    )
+}
+
 /// A Space's name as the apps show it: the name typed at create
 /// (`local:<name>`, `cloud:<name>`), not the container hostname (12 hex
 /// digits) its cua-spacesd reported. The same rule as the app core's
@@ -1744,6 +2747,42 @@ fn display_name(s: &cua_spaces::SpaceInfo) -> String {
 
 /// `cua spaces ls --json`: each Space as the registry has it, plus
 /// `display_name` (the name the list and the apps show).
+/// `--volume NAME[/SUBFOLDER]:PATH[:ro|:rw]` arguments as volume mounts.
+pub(crate) fn parse_volumes(args: &[String]) -> Result<Vec<cua_sdk::VolumeMount>, CuaError> {
+    let mut out = Vec::new();
+    for a in args {
+        let bad = |why: &str| {
+            CuaError::InvalidArgument(format!(
+                "--volume {a:?}: {why}; write it as NAME:PATH[:ro] (for example shared:/mnt/shared:ro)"
+            ))
+        };
+        let parts: Vec<&str> = a.split(':').collect();
+        if !(2..=3).contains(&parts.len()) {
+            return Err(bad("expected a name and a path"));
+        }
+        let read_only = match parts.get(2).copied() {
+            None | Some("rw") => false,
+            Some("ro") => true,
+            Some(other) => return Err(bad(&format!("{other:?} is not ro or rw"))),
+        };
+        let (name, subpath) = match parts[0].split_once('/') {
+            Some((n, s)) => (n, s),
+            None => (parts[0], ""),
+        };
+        out.push(cua_sdk::VolumeMount {
+            name: name.to_string(),
+            path: parts[1].to_string(),
+            read_only,
+            subpath: subpath.to_string(),
+        });
+    }
+    let core: Vec<cua_spaces::named_volumes::VolumeMount> =
+        out.iter().cloned().map(Into::into).collect();
+    cua_spaces::named_volumes::validate(&core)
+        .map_err(|e| CuaError::InvalidArgument(e.to_string()))?;
+    Ok(out)
+}
+
 fn ls_json(list: &[cua_spaces::SpaceInfo]) -> Vec<serde_json::Value> {
     list.iter()
         .map(|s| {
@@ -1758,26 +2797,86 @@ fn ls_json(list: &[cua_spaces::SpaceInfo]) -> Vec<serde_json::Value> {
 
 /// `cua spaces ls` rows: every Space (its id, then its name as the apps
 /// show it), with the Spaces a machine provides indented under it (or,
-/// when that machine is not listed, marked with its name).
-fn grouped_lines(list: &[cua_spaces::SpaceInfo]) -> Vec<String> {
+/// when that machine is not listed, marked with its name), and how loaded
+/// each of your computers is (`load`, by machine).
+/// [`grouped_lines_with`] for the tests of `resources_view`.
+#[cfg(test)]
+pub(crate) fn grouped_lines_for_tests(
+    list: &[cua_spaces::SpaceInfo],
+    columns: Option<&crate::resources_view::Columns<'_>>,
+) -> Vec<String> {
+    grouped_lines_with(list, columns, &Default::default())
+}
+
+#[cfg(test)]
+fn grouped_lines(
+    list: &[cua_spaces::SpaceInfo],
+    load: &std::collections::HashMap<String, String>,
+) -> Vec<String> {
+    grouped_lines_with(list, None, load)
+}
+
+/// [`grouped_lines`] with the CPU, MEMORY and DISK ON THIS MAC columns (and
+/// their header) when `columns` is given.
+fn grouped_lines_with(
+    list: &[cua_spaces::SpaceInfo],
+    columns: Option<&crate::resources_view::Columns<'_>>,
+    load: &std::collections::HashMap<String, String>,
+) -> Vec<String> {
+    use crate::resources_view::{CPU_WIDTH, MEMORY_WIDTH};
     let row = |s: &cua_spaces::SpaceInfo, indent: &str| {
-        let line = format!(
-            "{indent}{:<width$} {:<24} {:<7} {}",
-            s.id,
-            display_name(s),
-            s.provider.as_str(),
-            s.spacesd_version,
-            width = 48usize.saturating_sub(indent.len()),
-        );
+        let key = s.id.strip_prefix("relay:").unwrap_or(&s.name);
+        let s_load = load.get(key).filter(|l| !l.is_empty());
+        let width = 48usize.saturating_sub(indent.len());
+        let line = match columns {
+            None => format!(
+                "{indent}{:<width$} {:<24} {:<7} {}",
+                s.id,
+                display_name(s),
+                s.provider.as_str(),
+                s.spacesd_version,
+            ),
+            Some(c) => {
+                let cells = c.cells(s);
+                format!(
+                    "{indent}{:<width$} {:<24} {:<8} {:<9} {:<CPU_WIDTH$} {:<MEMORY_WIDTH$} {}",
+                    s.id,
+                    display_name(s),
+                    s.provider.as_str(),
+                    s.spacesd_version,
+                    cells.cpu,
+                    cells.memory,
+                    cells.disk,
+                )
+            }
+        };
+        // A durable Space says so (it moves when its machine goes away).
+        let line = if s.durable.is_empty() {
+            line
+        } else {
+            format!("{} (durable)", line.trim_end())
+        };
+        let line = format!("{}{}", line.trim_end(), label_suffix(s));
         // A Space turned off says so (`cua spaces start` turns it on), as
         // does a machine the relay cannot reach now (offline, not sharing).
-        match (s.power_state.as_str(), s.status.as_str()) {
+        let line = match (s.power_state.as_str(), s.status.as_str()) {
+            // One that stopped on its own says why ("stopped: out of memory").
+            ("stopped", _) if !s.stop_reason.is_empty() => {
+                format!("{} (stopped: {})", line.trim_end(), s.stop_reason)
+            }
             ("suspended" | "stopped", _) => format!("{} ({})", line.trim_end(), s.power_state),
             (_, status) if !status.is_empty() => format!("{} ({status})", line.trim_end()),
             _ => line,
+        };
+        match s_load {
+            Some(l) => format!("{} · {l}", line.trim_end()),
+            None => line,
         }
     };
     let mut out = Vec::new();
+    if columns.is_some() && !list.is_empty() {
+        out.push(crate::resources_view::header(48));
+    }
     for s in list.iter().filter(|s| s.host.is_empty()) {
         // A Space in your cloud names its cloud ("AWS · us-west-2").
         if s.host_name.is_empty() {
@@ -1849,11 +2948,14 @@ pub async fn run_add_host(
             serde_json::json!({ "host": host, "space": info.id, "via": "direct" }).to_string(),
         );
     } else {
+        // The command is spelled with this build's CLI name here, not rewritten
+        // afterwards: the host's name is the user's, and may read "cua host".
         line(
             out,
             format!(
-                "Added host {host:?} ({}, direct). Create Spaces on it with `cua spaces create --on \"host:{host}\"`.",
-                info.id
+                "Added host {host:?} ({}, direct). Create Spaces on it with `{} spaces create --on \"host:{host}\"`.",
+                info.id,
+                crate::util::cli()
             ),
         );
     }
@@ -1876,7 +2978,10 @@ async fn power_from_daemon(list: &mut [cua_spaces::SpaceInfo]) {
         let client = cua_daemon::client::existing_daemon().await.ok()?;
         let r = client
             .spaces()
-            .list_spaces(cua_proto::daemon::v1::ListSpacesRequest {})
+            .list_spaces(cua_proto::daemon::v1::ListSpacesRequest {
+                // Only the power of this machine's rows is read here.
+                known_now: true,
+            })
             .await
             .ok()?;
         Some(r.into_inner().spaces)
@@ -1918,7 +3023,12 @@ pub async fn run_spaces(
     json: bool,
     out: &mut dyn Write,
 ) -> Result<i32, CuaError> {
-    let SpacesCmd::Ls { relay } = cmd else {
+    let SpacesCmd::Ls {
+        relay,
+        label,
+        no_size,
+    } = cmd
+    else {
         return Err(CuaError::Internal(
             "only `cua spaces ls` runs over the registry directly".into(),
         ));
@@ -1941,71 +3051,145 @@ pub async fn run_spaces(
     let mut list = spaces
         .list()
         .map_err(|e| CuaError::Internal(e.to_string()))?;
+    with_labels(&mut list, &parse_labels(&label)?);
     power_from_daemon(&mut list).await;
+    // Durable Spaces, from the coordinator of your machines (through the
+    // daemon, when one runs): marked, and the ones waiting for a machine.
+    let durable = durable_spaces().await;
+    for d in &durable {
+        if let Some(s) = list
+            .iter_mut()
+            .find(|s| Some(s.id.as_str()) == d["space"].as_str())
+        {
+            s.durable = d["name"].as_str().unwrap_or_default().to_string();
+            // Shown by its durable name, whichever copy it is now.
+            s.name = s.durable.clone();
+        }
+    }
+    // Your machines that provide Spaces, with how loaded they are (each asked
+    // at once, bounded).
+    let hosts = tokio::time::timeout(std::time::Duration::from_secs(8), spaces.hosts())
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .unwrap_or_default();
+    let resources = crate::resources_view::fetch(&spaces, !no_size).await;
+    let columns = crate::resources_view::Columns {
+        resources: &resources,
+        own_machine: spaces.this_relay_machine_id(),
+    };
     if json {
-        line(
-            out,
-            serde_json::json!({ "spaces": ls_json(&list), "relay_error": relay_error }).to_string(),
-        );
+        let mut rows = ls_json(&list);
+        for (row, info) in rows.iter_mut().zip(&list) {
+            columns.annotate(info, row);
+        }
+        let mut body = serde_json::json!({ "spaces": rows, "machines": hosts, "durable": durable,
+                                          "relay_error": relay_error });
+        if let (Some(o), Some(extra)) = (
+            body.as_object_mut(),
+            crate::resources_view::ls_extras(&resources)
+                .as_object()
+                .cloned(),
+        ) {
+            o.extend(extra);
+        }
+        line(out, body.to_string());
         return Ok(0);
     }
+    let load: std::collections::HashMap<String, String> =
+        hosts.iter().map(|h| (h.id.clone(), load_text(h))).collect();
     if list.is_empty() {
         line(out, "No Spaces.");
     }
-    for l in grouped_lines(&list) {
+    for l in grouped_lines_with(&list, Some(&columns), &load) {
         line(out, l);
     }
+    for d in durable
+        .iter()
+        .filter(|d| d["space"].as_str().is_none_or(str::is_empty))
+    {
+        line(
+            out,
+            format!(
+                "{:<48} {:<24} (durable, waiting for a machine{})",
+                "-",
+                d["name"].as_str().unwrap_or_default(),
+                d["error"]
+                    .as_str()
+                    .filter(|e| !e.is_empty())
+                    .map(|e| format!(": {e}"))
+                    .unwrap_or_default()
+            ),
+        );
+    }
     if let Some(e) = relay_error {
-        line(out, format!("(relay machines unavailable: {e})"));
+        line(out, format!("(relay computers unavailable: {e})"));
+    }
+    if let Some(w) = columns.warning() {
+        line(out, w);
     }
     Ok(0)
 }
 
-/// Prints a create's progress on one updating line of stderr:
-/// "Downloading image 4.2 of 22.1 GB · 85 MB/s · about 4 min".
-#[derive(Default)]
-struct ProgressLine {
-    last: std::sync::Mutex<String>,
+/// The durable Spaces the coordinator of your machines keeps, when a cua
+/// daemon of Cua Spaces runs (none otherwise; bounded).
+async fn durable_spaces() -> Vec<serde_json::Value> {
+    if cua_daemon::client::existing_daemon().await.is_err() {
+        return vec![];
+    }
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        crate::runs::request("pool", "durable_list", serde_json::Value::Null),
+    )
+    .await
+    {
+        Ok(Ok(v)) => v["spaces"].as_array().cloned().unwrap_or_default(),
+        _ => vec![],
+    }
 }
 
-impl cua_sdk::SpaceCreateListener for ProgressLine {
+/// Passes a Space create's progress to the terminal's step lines.
+struct StepListener(Arc<crate::util::StepLines>);
+
+impl cua_sdk::SpaceCreateListener for StepListener {
     fn on_progress(&self, p: cua_sdk::SpaceCreateProgress) {
-        let words = match p.phase.as_str() {
-            "preparing" => "Preparing",
-            "pulling" => "Downloading image",
-            "creating" => "Creating",
-            "booting" => "Booting",
-            "waiting_for_services" => "Starting services",
-            "connecting" => "Connecting",
-            _ => return,
+        use cua_sandbox_core::progress::{Phase, Progress, Transfer};
+        let Some(phase) = Phase::parse(&p.phase) else {
+            return;
         };
-        let detail = match (p.bytes_done, p.bytes_total) {
-            (Some(done), total) => cua_sandbox_core::progress::Transfer {
-                done,
-                total: total.unwrap_or(0),
-                per_second: p.bytes_per_second,
-            }
-            .describe(),
-            _ => p
-                .fraction
-                .map(|f| format!("{:.0}%", f * 100.0))
-                .unwrap_or_default(),
-        };
-        let text = if p.space.is_empty() {
-            format!("{words} {detail}")
-        } else {
-            format!("{}: {words} {detail}", p.space)
-        };
-        let mut last = self.last.lock().unwrap_or_else(|e| e.into_inner());
-        if *last != text {
-            eprint!("\r\x1b[2K{}", text.trim_end());
-            *last = text;
+        let mut out = Progress::phase(phase).detail(p.detail);
+        if let Some(f) = p.fraction {
+            out = out.fraction(f);
         }
+        if let Some(done) = p.bytes_done {
+            out = out.bytes(Transfer {
+                done,
+                total: p.bytes_total.unwrap_or(0),
+                per_second: p.bytes_per_second,
+            });
+        }
+        self.0.show(&out);
     }
 }
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn spaces_placed_in_your_cloud_are_said_once() {
+        assert_eq!(cloud_summary(&[], 16), None);
+        let p = "Hetzner pool · hetzner-2 (cpx11, hil) · $0.0338/h".to_string();
+        let placed = vec![("hetzner".to_string(), p.clone()); 3];
+        assert_eq!(
+            cloud_summary(&placed, 16).unwrap(),
+            format!("3 of 16 Spaces placed in your cloud: {p}")
+        );
+        assert_eq!(
+            cloud_summary(&placed[..1], 1).unwrap(),
+            format!("1 of 1 Space placed in your cloud: {p}")
+        );
+    }
+
     use super::*;
     use cua_host::StaticToken;
     use cua_host::service::FakeServiceManager;
@@ -2022,6 +3206,41 @@ mod tests {
             .c
     }
 
+    /// `cua spaces rm` names the command that deletes a local Space.
+    #[test]
+    fn the_share_prompt_names_this_os_not_touch_id_everywhere() {
+        let p = share_confirm_prompt();
+        assert_eq!(p.contains("Touch ID"), cfg!(target_os = "macos"));
+        assert!(p.starts_with("Confirm the share"));
+    }
+
+    #[test]
+    fn rm_of_a_local_space_points_to_delete() {
+        let e = rm_refused_for_local("local:studio").to_string();
+        assert!(e.contains("cua spaces delete local:studio"), "{e}");
+        assert!(e.contains("leave it running"), "{e}");
+    }
+
+    /// `cua spaces rm` refuses a Space in a cloud (billed sandbox) and
+    /// forgets one whose sandbox cua did not create.
+    #[test]
+    fn rm_refuses_cloud_spaces_and_points_to_delete() {
+        for (id, cloud_delete) in [
+            ("cloud:studio", ""),
+            ("relay:abcdef0123456789", "here"),
+            ("relay:abcdef0123456789", "host:other-mac"),
+            ("relay:abcdef0123456789", "elsewhere"),
+        ] {
+            let e = rm_refusal(id, cloud_delete, false).expect(id).to_string();
+            assert!(e.contains(&format!("cua spaces delete {id}")), "{e}");
+            assert!(e.contains("billed"), "{e}");
+        }
+        assert!(rm_refusal("local:studio", "", true).is_some());
+        assert!(rm_refusal("local:gone", "", false).is_none());
+        assert!(rm_refusal("direct:10.0.0.5:3211", "", false).is_none());
+        assert!(rm_refusal("relay:abcdef0123456789", "", false).is_none());
+    }
+
     fn parse_spaces(args: &[&str]) -> Result<SpacesCmd, clap::Error> {
         #[derive(clap::Parser)]
         struct W {
@@ -2032,6 +3251,32 @@ mod tests {
             .map(|w| w.c)
     }
 
+    /// `cua host setup` (and `status`) always says whether the desktop is
+    /// shared.
+    #[test]
+    fn setup_output_says_whether_the_desktop_is_shared() {
+        let text = |share: bool| {
+            let s = HostStatus {
+                configured: true,
+                mode: Some("relay".into()),
+                share_desktop: share,
+                provide_spaces: true,
+                ..Default::default()
+            };
+            let mut out = Vec::new();
+            render(&s, &mut out);
+            String::from_utf8(out).unwrap()
+        };
+        assert!(text(true).contains("\n  desktop: shared"), "{}", text(true));
+        assert!(
+            text(false).contains("\n  desktop: not shared"),
+            "{}",
+            text(false)
+        );
+        assert!(desktop_line(true).starts_with("  desktop: shared"));
+        assert!(desktop_line(false).starts_with("  desktop: not shared"));
+    }
+
     #[test]
     fn spare_machines_and_spaces_on_them_parse() {
         match parse(&["setup", "--profile", "spare", "--max-spaces", "6"]) {
@@ -2039,7 +3284,7 @@ mod tests {
                 profile,
                 max_spaces,
                 ..
-            } => assert_eq!((profile.as_str(), max_spaces), ("spare", Some(6))),
+            } => assert_eq!((profile.as_deref(), max_spaces), (Some("spare"), Some(6))),
             other => panic!("{other:?}"),
         }
         match parse(&["setup", "--no-desktop", "--provide-spaces"]) {
@@ -2049,8 +3294,8 @@ mod tests {
                 provide_spaces,
                 ..
             } => assert_eq!(
-                (profile.as_str(), no_desktop, provide_spaces),
-                ("desktop", true, true)
+                (profile.as_deref(), no_desktop, provide_spaces),
+                (None, true, true)
             ),
             other => panic!("{other:?}"),
         }
@@ -2114,6 +3359,134 @@ mod tests {
     }
 
     #[test]
+    fn egress_flags_parse_and_conflict() {
+        let parse = |a: &[&str]| parse_spaces(a).unwrap();
+        match parse(&[
+            "egress",
+            "studio",
+            "--deny",
+            "all",
+            "--allow",
+            "1.1.1.1",
+            "--allow",
+            "10.0.0.0/8",
+        ]) {
+            SpacesCmd::Egress {
+                space,
+                deny,
+                allow,
+                clear,
+            } => {
+                assert_eq!(space, "studio");
+                assert_eq!(deny, ["all"]);
+                assert_eq!(allow, ["1.1.1.1", "10.0.0.0/8"]);
+                assert!(!clear);
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(matches!(
+            parse(&["egress", "studio", "--clear"]),
+            SpacesCmd::Egress { clear: true, .. }
+        ));
+        // Clearing and naming rules together is a contradiction.
+        assert!(parse_spaces(&["egress", "studio", "--clear", "--deny", "all"]).is_err());
+        match parse(&[
+            "create",
+            "linux",
+            "--egress-deny",
+            "all",
+            "--egress-allow",
+            "1.1.1.1",
+        ]) {
+            SpacesCmd::Create {
+                egress_deny,
+                egress_allow,
+                ..
+            } => {
+                assert_eq!(egress_deny, ["all"]);
+                assert_eq!(egress_allow, ["1.1.1.1"]);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn label_flags_parse_filter_and_show() {
+        let words = |w: &[&str]| w.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let want = parse_labels(&words(&["team=research", "run=7"])).unwrap();
+        assert_eq!(want["team"], "research");
+        for bad in ["team", "team=", "=x"] {
+            assert!(
+                matches!(
+                    parse_labels(&words(&[bad])),
+                    Err(CuaError::InvalidArgument(_))
+                ),
+                "{bad}"
+            );
+        }
+        let space = |id: &str, labels: &[(&str, &str)]| cua_spaces::SpaceInfo {
+            id: id.into(),
+            name: id.into(),
+            provider: cua_spaces::Provider::Local,
+            spacesd_version: String::new(),
+            stop_reason: String::new(),
+            volumes: Vec::new(),
+            features: vec![],
+            os: String::new(),
+            os_name: String::new(),
+            os_pretty_name: String::new(),
+            image: String::new(),
+            image_digest: String::new(),
+            kind: String::new(),
+            arch: String::new(),
+            services: vec![],
+            added_at: None,
+            host: String::new(),
+            host_name: String::new(),
+            power: String::new(),
+            power_state: String::new(),
+            cloud: String::new(),
+            cloud_place: String::new(),
+            cloud_delete: String::new(),
+            status: String::new(),
+            durable: String::new(),
+            labels: labels
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+            expires_at_unix: 0,
+            on_expire: String::new(),
+            created_at_unix: 0,
+            egress: Default::default(),
+            egress_enforced: None,
+        };
+        let mut list = vec![
+            space("local:a", &[("team", "research"), ("run", "7")]),
+            space("local:b", &[("team", "research")]),
+            space("local:c", &[]),
+        ];
+        with_labels(&mut list, &Default::default());
+        assert_eq!(list.len(), 3, "no filter keeps every Space");
+        with_labels(
+            &mut list,
+            &parse_labels(&words(&["team=research"])).unwrap(),
+        );
+        assert_eq!(
+            list.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+            ["local:a", "local:b"]
+        );
+        with_labels(&mut list, &want);
+        assert_eq!(list.len(), 1, "every label must match");
+        assert_eq!(list[0].id, "local:a");
+        assert_eq!(label_suffix(&list[0]), " [run=7, team=research]");
+        assert_eq!(label_suffix(&space("local:c", &[])), "");
+        let rows = grouped_lines(&list, &Default::default());
+        assert!(rows[0].contains("[run=7, team=research]"), "{rows:?}");
+        let json = ls_json(&list);
+        assert_eq!(json[0]["labels"]["run"], "7");
+    }
+
+    #[test]
     fn ls_takes_power_from_the_daemon_where_the_registry_has_none() {
         let space = |id: &str, power: &str| cua_spaces::SpaceInfo {
             id: id.into(),
@@ -2138,6 +3511,15 @@ mod tests {
             cloud_place: String::new(),
             cloud_delete: String::new(),
             status: String::new(),
+            durable: String::new(),
+            volumes: Vec::new(),
+            labels: Default::default(),
+            expires_at_unix: 0,
+            on_expire: String::new(),
+            created_at_unix: 0,
+            egress: Default::default(),
+            egress_enforced: None,
+            stop_reason: String::new(),
         };
         let mut list = vec![
             space("local:box", ""),
@@ -2195,13 +3577,26 @@ mod tests {
             cloud_place: String::new(),
             cloud_delete: String::new(),
             status: String::new(),
+            durable: String::new(),
+            volumes: Vec::new(),
+            labels: Default::default(),
+            expires_at_unix: 0,
+            on_expire: String::new(),
+            created_at_unix: 0,
+            egress: Default::default(),
+            egress_enforced: None,
+            stop_reason: String::new(),
         };
-        let lines = grouped_lines(&[
-            space("relay:space-1", "mini1234"),
-            space("relay:studio99", ""),
-            space("relay:mini1234", ""),
-            space("relay:space-2", "gone5678"),
-        ]);
+        let none = std::collections::HashMap::new();
+        let lines = grouped_lines(
+            &[
+                space("relay:space-1", "mini1234"),
+                space("relay:studio99", ""),
+                space("relay:mini1234", ""),
+                space("relay:space-2", "gone5678"),
+            ],
+            &none,
+        );
         assert!(lines[0].starts_with("relay:studio99"), "{lines:?}");
         assert!(lines[1].starts_with("relay:mini1234"), "{lines:?}");
         assert!(lines[2].starts_with("  relay:space-1"), "{lines:?}");
@@ -2215,10 +3610,13 @@ mod tests {
             s.provider = cua_spaces::Provider::Direct;
             s
         };
-        let lines = grouped_lines(&[
-            direct("direct:100.64.0.9:41001", "direct:100.64.0.9:3211"),
-            direct("direct:100.64.0.9:3211", ""),
-        ]);
+        let lines = grouped_lines(
+            &[
+                direct("direct:100.64.0.9:41001", "direct:100.64.0.9:3211"),
+                direct("direct:100.64.0.9:3211", ""),
+            ],
+            &none,
+        );
         assert!(lines[0].starts_with("direct:100.64.0.9:3211"), "{lines:?}");
         assert!(
             lines[1].starts_with("  direct:100.64.0.9:41001"),
@@ -2230,9 +3628,60 @@ mod tests {
         stopped.status = "not sharing".into();
         let mut off = space("relay:studio99", "");
         off.status = "offline".into();
-        let lines = grouped_lines(&[stopped, off]);
+        let lines = grouped_lines(&[stopped, off], &none);
         assert!(lines[0].ends_with("(not sharing)"), "{lines:?}");
         assert!(lines[1].ends_with("(offline)"), "{lines:?}");
+        // A machine that provides Spaces says how loaded it is.
+        let load: std::collections::HashMap<String, String> = [(
+            "mini1234".to_string(),
+            "2 running · 40% CPU · 55% memory".to_string(),
+        )]
+        .into();
+        let lines = grouped_lines(&[space("relay:mini1234", "")], &load);
+        assert!(
+            lines[0].ends_with("· 2 running · 40% CPU · 55% memory"),
+            "{lines:?}"
+        );
+    }
+
+    #[test]
+    fn volume_arguments_are_name_path_and_mode() {
+        let v = parse_volumes(&[
+            "shared:/mnt/shared".into(),
+            "data/in/raw:/data:ro".into(),
+            "w:/w:rw".into(),
+        ])
+        .unwrap();
+        assert_eq!(v[0].name, "shared");
+        assert_eq!(v[0].path, "/mnt/shared");
+        assert!(!v[0].read_only);
+        assert_eq!(
+            (v[1].name.as_str(), v[1].subpath.as_str()),
+            ("data", "in/raw")
+        );
+        assert!(v[1].read_only);
+        assert!(!v[2].read_only);
+        for bad in [
+            "shared",
+            "shared:rel",
+            "Shared:/mnt/x",
+            "a:/b:wx",
+            "a:/b:ro:x",
+            "a:/mnt/a",
+            "",
+        ] {
+            let r = parse_volumes(&[bad.into()]);
+            if bad == "a:/mnt/a" {
+                assert!(r.is_ok());
+            } else {
+                assert!(r.is_err(), "{bad}");
+            }
+        }
+        // Overlapping paths are refused by name.
+        let e = parse_volumes(&["a:/mnt".into(), "b:/mnt/b".into()])
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("inside"), "{e}");
     }
 
     /// A Space created from the app lists by the name typed there, not the
@@ -2263,13 +3712,39 @@ mod tests {
             cloud_place: String::new(),
             cloud_delete: String::new(),
             status: String::new(),
+            durable: String::new(),
+            volumes: Vec::new(),
+            labels: Default::default(),
+            expires_at_unix: 0,
+            on_expire: String::new(),
+            created_at_unix: 0,
+            egress: Default::default(),
+            egress_enforced: None,
+            stop_reason: String::new(),
         };
-        let lines = grouped_lines(std::slice::from_ref(&s));
+        let lines = grouped_lines(std::slice::from_ref(&s), &Default::default());
         let cols: Vec<&str> = lines[0].split_whitespace().collect();
         assert_eq!(
             cols,
             ["local:e2e-1005-cli", "e2e-1005-cli", "local", "0.5.3"]
         );
+        // Stopped on its own: the line says why, and so does --json.
+        s.power = "stop".into();
+        s.power_state = "stopped".into();
+        s.stop_reason = "out of memory".into();
+        let lines = grouped_lines(std::slice::from_ref(&s), &Default::default());
+        assert!(
+            lines[0].ends_with("(stopped: out of memory)"),
+            "{}",
+            lines[0]
+        );
+        assert_eq!(
+            ls_json(std::slice::from_ref(&s))[0]["stop_reason"],
+            "out of memory"
+        );
+        s.stop_reason = String::new();
+        let lines = grouped_lines(std::slice::from_ref(&s), &Default::default());
+        assert!(lines[0].ends_with("(stopped)"), "{}", lines[0]);
         let json = ls_json(std::slice::from_ref(&s));
         assert_eq!(json[0]["id"], "local:e2e-1005-cli");
         assert_eq!(json[0]["name"], "327b8dc70418");
@@ -2466,13 +3941,19 @@ mod tests {
         let v: serde_json::Value = serde_json::from_slice(&out).unwrap();
         assert_eq!(v["configured"], true);
         assert_eq!(v["mode"], "relay");
+        // This Mac's numbers ride along.
+        assert!(v["resources"]["thisMac"]["memoryTotal"].as_u64().unwrap() > 0);
         let id = v["machineId"].as_str().unwrap().to_string();
 
         // `cua spaces ls` as the owner shows the machine.
         let mut out = Vec::new();
         // No --relay: the relay this machine joined.
         run_spaces(
-            SpacesCmd::Ls { relay: None },
+            SpacesCmd::Ls {
+                relay: None,
+                label: vec![],
+                no_size: false,
+            },
             &home,
             Some(Arc::new(StaticToken("acct".into()))),
             None,
@@ -2484,6 +3965,44 @@ mod tests {
         let text = String::from_utf8(out).unwrap();
         assert!(text.contains(&format!("relay:{id}")), "{text}");
         assert!(text.contains("lab-box") && text.contains("relay"), "{text}");
+        // The new columns, and this machine's own row shows this Mac.
+        assert!(text.starts_with("ID "), "{text}");
+        for column in ["CPU", "MEMORY", "DISK ON THIS MAC"] {
+            assert!(text.lines().next().unwrap().contains(column), "{text}");
+        }
+        let row = text.lines().find(|l| l.contains("lab-box")).unwrap();
+        assert!(row.contains(" busy"), "{row}");
+        assert!(row.contains(" free of "), "{row}");
+
+        // `--json` carries the same numbers.
+        let mut out = Vec::new();
+        run_spaces(
+            SpacesCmd::Ls {
+                relay: None,
+                no_size: true,
+                label: vec![],
+            },
+            &home,
+            Some(Arc::new(StaticToken("acct".into()))),
+            None,
+            true,
+            &mut out,
+        )
+        .await
+        .unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&out).unwrap();
+        assert!(v["thisMac"]["cpuCount"].as_u64().unwrap() >= 1, "{v}");
+        assert!(v["warning"]["level"].as_str().is_some(), "{v}");
+        let own = v["spaces"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["id"] == format!("relay:{id}"))
+            .unwrap();
+        assert!(
+            own["resources"]["memoryTotal"].as_u64().unwrap() > 0,
+            "{own}"
+        );
 
         let mut out = Vec::new();
         run_host(
@@ -2839,9 +4358,6 @@ mod tests {
         let cua = cua_sdk::Cua::embedded(cua_sdk::CuaConfig {
             state_dir: Some(dir.path().join("sandboxes").display().to_string()),
             spaces_home: Some(dir.path().join("cua").display().to_string()),
-            fleet_pool_home: Some(dir.path().join("pools").display().to_string()),
-            fleet_from_env: false,
-            fleet_from_session: false,
             ..Default::default()
         })
         .unwrap();

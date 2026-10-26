@@ -60,7 +60,7 @@ async fn canonical_index_picks_rootfs_for_containers() {
     for b in [
         Backend::Auto,
         Backend::Local,
-        Backend::Fleet,
+        Backend::Provider,
         Backend::Container,
     ] {
         let got = go(&r, LINUX, b, "arm64").await.unwrap();
@@ -123,16 +123,16 @@ async fn tier_tags_keep_their_disk_sibling() {
 }
 
 #[tokio::test]
-async fn fleet_is_amd64_and_flags_emulation() {
+async fn provider_flags_emulation() {
     let mut r = FakeRegistry::default();
     r.index("ghcr.io/me/armonly:1", &["arm64"], false, None);
-    let got = go(&r, "ghcr.io/me/armonly:1", Backend::Fleet, "amd64")
+    let got = go(&r, "ghcr.io/me/armonly:1", Backend::Provider, "amd64")
         .await
         .unwrap();
     assert_eq!(got.arch.as_deref(), Some("arm64"));
     assert!(got.emulated);
     let (r, _, _) = canonical(true);
-    let got = go(&r, LINUX, Backend::Fleet, "amd64").await.unwrap();
+    let got = go(&r, LINUX, Backend::Provider, "amd64").await.unwrap();
     assert_eq!(got.arch.as_deref(), Some("amd64"));
     assert_eq!(got.architectures, vec!["amd64", "arm64"]);
 }
@@ -177,8 +177,8 @@ async fn lume_and_other_macos() {
     assert_eq!(got.os, "macos");
     assert_eq!(got.pinned_ref, format!("ghcr.io/trycua/macos@{lume}"));
     assert_eq!(got.variant_ref, "ghcr.io/trycua/macos:26");
-    // Fleet runs no macOS variant: typed error.
-    let e = go(&r, "ghcr.io/trycua/macos:26", Backend::Fleet, "amd64")
+    // A cloud provider runs no macOS variant: typed error.
+    let e = go(&r, "ghcr.io/trycua/macos:26", Backend::Provider, "amd64")
         .await
         .unwrap_err();
     match &e {
@@ -195,7 +195,10 @@ async fn lume_and_other_macos() {
     for (backend, says) in [
         (Backend::Local, "cannot run here"),
         (Backend::Auto, "cannot run here"),
-        (Backend::Fleet, "Fleet does not offer macOS sandboxes"),
+        (
+            Backend::Provider,
+            "cloud providers do not offer macOS sandboxes",
+        ),
     ] {
         let e = go(&r, "ghcr.io/me/mac:1", backend, "arm64")
             .await
@@ -286,7 +289,7 @@ fn backend_and_variant_names() {
         ("kubevirt", Backend::Vm),
         ("qemu", Backend::Vm),
         ("", Backend::Auto),
-        ("fleet", Backend::Fleet),
+        ("provider", Backend::Provider),
     ] {
         assert_eq!(Backend::parse(s).unwrap(), b);
     }
@@ -463,11 +466,11 @@ async fn live_canonical_images_resolve() {
         (Variant::Containerdisk, Some(true), "linux"),
         "{disk_tag:?}"
     );
-    let fleet = resolve_with(&c, &linux, Backend::Fleet, "amd64")
+    let provider = resolve_with(&c, &linux, Backend::Provider, "amd64")
         .await
         .unwrap();
     assert_eq!(
-        (fleet.variant, fleet.arch.as_deref()),
+        (provider.variant, provider.arch.as_deref()),
         (Variant::Rootfs, Some("amd64"))
     );
     let win = resolve_with(&c, "ghcr.io/trycua/windows:2022", Backend::Local, "arm64")

@@ -16,7 +16,7 @@
 
 import { isUnsupported, type BridgeMode, type DataAdapter } from "./adapter";
 import type { CoreClient } from "./core";
-import type { TelemetryView } from "./contracts/host";
+import type { SignInFailure, TelemetryView } from "./contracts/host";
 import type { OnboardingAction, OnboardingFlowState } from "./contracts/onboarding";
 import type { CreateAction, CreatesState } from "./contracts/spaces";
 import { sanitizeSignals, type TelemetrySignal } from "./ops/telemetry";
@@ -54,6 +54,11 @@ export function telemetrySignInFailed(core: CoreClient, message: string | null):
   return signals(core.tryCall("telemetry.signInFailed", { message }));
 }
 
+/** A sign-in failed for `reason` or was cancelled (null): its kind only. */
+export function telemetrySignInFailure(core: CoreClient, reason: SignInFailure | null): TelemetrySignal[] {
+  return signals(core.tryCall("telemetry.signInFailure", { reason }));
+}
+
 /** What a create, power or delete step means (`telemetry.creates`). */
 export function telemetryCreates(core: CoreClient, state: CreatesState | null, action: CreateAction, now: number): TelemetrySignal[] {
   return signals(core.tryCall("telemetry.creates", { state, action, now }));
@@ -77,9 +82,9 @@ export function telemetryEnroll(core: CoreClient, state: unknown, action: unknow
 /* ---- Sending ---------------------------------------------------------------------- */
 
 /** Hosts that record `app_launched` themselves when they start (Tauri's
- * `telemetry::init`, the SwiftUI app's `appTelemetryStart`); the page
- * records it only where nothing else does. */
-export const HOST_RECORDS_LAUNCH: Record<BridgeMode, boolean> = { tauri: true, webkit: true, electron: false, demo: false };
+ * `telemetry::init`, the SwiftUI and Electron apps' `appTelemetryStart`);
+ * the page records it only where nothing else does. */
+export const HOST_RECORDS_LAUNCH: Record<BridgeMode, boolean> = { tauri: true, webkit: true, electron: true, demo: false };
 
 /** Usage data may be sent: the switch is on and the notice was shown. */
 export function telemetryAllowed(view: TelemetryView | null | undefined): boolean {

@@ -56,12 +56,16 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
   # Cua programs and packages run here never send usage telemetry.
   CUA_TELEMETRY: "0"
   DO_NOT_TRACK: "1"
 
 jobs:
   pacman:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: Arch native pacman updates
     runs-on: ubuntu-latest
     container: archlinux:base-devel
@@ -78,7 +82,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: "libs/cua-driver/rust -> target"
           key: arch-pacman
@@ -117,9 +121,12 @@ jobs:
             libs/cua-driver/rust/pacman-build.jsonl
 
   unit:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: Rust Linux unit and compile
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 10 to 14 minutes warm. The headroom covers a run with neither the
+    # sccache nor the apt package cache warm while the Ubuntu mirror is slow.
+    timeout-minutes: 45
     env:
       # Dozens of debug test binaries: line tables keep backtraces useful
       # without full debug info filling the runner disk at link time.
@@ -135,16 +142,16 @@ jobs:
       - name: Verify shared fixture scroll journal
         run: node --test libs/cua-driver/tests/fixtures/shared/web/journal.test.cjs
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: "libs/cua-driver/rust -> target"
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install Linux build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev \
-            libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev \
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev
+            libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
             imagemagick xvfb xauth x11-utils ffmpeg dbus-daemon
       - name: Prove the AT-SPI connection graph excludes peer-to-peer
         working-directory: libs/cua-driver/rust

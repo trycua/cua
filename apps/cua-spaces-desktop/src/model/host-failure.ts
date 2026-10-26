@@ -9,7 +9,7 @@
 // that runs the host service.
 import type { PresentedFailure } from "../bridge/host";
 
-export type HostFailureKind = "download" | "network" | "guiSession" | "signedOut" | "service" | "other";
+export type HostFailureKind = "download" | "network" | "throttled" | "guiSession" | "signedOut" | "service" | "other";
 
 export interface HostSetupFailure extends PresentedFailure {
   kind: HostFailureKind;
@@ -27,8 +27,22 @@ export function thisComputer(platform: NodeJS.Platform): string {
 
 const SYSTEM: Partial<Record<NodeJS.Platform, string>> = { darwin: "macOS", win32: "Windows", linux: "Linux" };
 
+/**
+ * Seconds to wait when the raw error is the server telling us to slow down
+ * (the host's own sentence, or a bare HTTP 429 "Too Many Requests" from an
+ * older host): a number, null for "unknown", undefined when it is not that.
+ * Only the generic throttle: a 429 that says why (a limit, a quota) is not.
+ */
+export function throttledWait(raw: string): number | null | undefined {
+  const own = /too many attempts right now\. wait (\d+) seconds?/i.exec(raw);
+  if (own) return Number(own[1]);
+  if (/\bhttp 429\b[:\s]*too many requests\s*$/i.test(raw.trim())) return null;
+  return undefined;
+}
+
 /** Which kind of failure the raw setup error is. */
 export function classify(raw: string): HostFailureKind {
+  if (throttledWait(raw) !== undefined) return "throttled";
   const s = raw.toLowerCase();
   const any = (needles: string[]) => needles.some((n) => s.includes(n));
   const word = (w: string) => new RegExp(`\\b${w}\\b`).test(s);
@@ -66,7 +80,7 @@ export function classify(raw: string): HostFailureKind {
 }
 
 /** The title and message for a kind. */
-export function failureWords(kind: HostFailureKind, platform: NodeJS.Platform = "darwin"): [string, string] {
+export function failureWords(kind: HostFailureKind, platform: NodeJS.Platform = "darwin", raw = ""): [string, string] {
   const here = thisComputer(platform);
   const system = SYSTEM[platform] ?? "The system";
   const remote = platform === "darwin" ? "Screen Sharing" : "Remote Desktop";
@@ -79,6 +93,13 @@ export function failureWords(kind: HostFailureKind, platform: NodeJS.Platform = 
       ];
     case "network":
       return ["Couldn’t connect", "Cua Spaces couldn’t reach the internet. Check your connection and try again."];
+    case "throttled": {
+      const secs = throttledWait(raw);
+      return [
+        "Too many attempts right now",
+        secs ? `Trying again in ${secs} ${secs === 1 ? "second" : "seconds"}.` : "Wait a few seconds, then try again.",
+      ];
+    }
     case "guiSession":
       return [
         `Sign in to ${here} first`,
@@ -90,7 +111,10 @@ export function failureWords(kind: HostFailureKind, platform: NodeJS.Platform = 
     case "service":
       return [
         "Couldn’t start the Cua host service",
-        `${system} didn’t start the service your other devices connect to. Try again; ` + `if it keeps failing, restart ${here}.`,
+        `${system} didn’t start the service your other devices connect to. Try again; ` +
+          (platform === "win32"
+            ? "if it keeps failing, open Cua Spaces as administrator (right-click it, Run as administrator) and set up access once more."
+            : `if it keeps failing, restart ${here}.`),
       ];
     case "other":
       return [`Couldn’t set up ${here} for access`, "Something went wrong. Try again, or open Details to see what happened."];
@@ -99,6 +123,6 @@ export function failureWords(kind: HostFailureKind, platform: NodeJS.Platform = 
 
 /** The failure for a raw error (its kind read from the words, or given: the account refused, whatever its words). */
 export function presentHostFailure(raw: string, platform: NodeJS.Platform = "darwin", kind: HostFailureKind = classify(raw)): HostSetupFailure {
-  const [title, message] = failureWords(kind, platform);
+  const [title, message] = failureWords(kind, platform, raw);
   return { kind, title, message, details: raw, actionLabel: kind === "signedOut" ? SIGN_IN_LABEL : RETRY_LABEL };
 }

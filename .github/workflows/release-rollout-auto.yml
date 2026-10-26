@@ -1,0 +1,129 @@
+name: "Release: auto rollout (Cua Spaces)"
+
+# Advances the Cua Spaces staged rollout by itself (health-gated, with auto-pause),
+# the pattern of Play Store, Firebase and Sentry release health. Hourly it reads the
+# stage from the live feeds, and when a stage has run 24h and every health gate
+# passes it dispatches release-rollout.yml for the next one (10 -> 50 -> 100). If a
+# gate fails it dispatches `pause` and posts an alert. Gates and thresholds:
+# .github/scripts/release_rollout_auto.py. Manual dispatch of release-rollout.yml
+# keeps working and is what this workflow calls; a person can still pause or advance.
+#
+# Hold: set the repository variable SPACES_ROLLOUT_HOLD to any text (the reason), or
+# put the label `spaces-rollout-hold` on any open issue. A hold stops advancing; a
+# failing gate still pauses. Remove the variable or close the issue to release it.
+# Resuming after a pause is a person's call (run release-rollout.yml).
+#
+# Run it by hand with dry_run on (the default for a manual run) to see the decision
+# without dispatching, pausing or alerting anything. Scheduled runs act.
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Print the decision, dispatch and alert nothing"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  actions: write
+  issues: read
+
+concurrency:
+  group: release-rollout-auto-spaces
+  cancel-in-progress: false
+
+jobs:
+  decide:
+    name: "Rollout decision${{ inputs.dry_run && ' (dry run)' || '' }}"
+    if: github.repository == 'trycua/cua'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: cua-spaces-latest
+      POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
+      INCIDENT_IO_API_KEY: ${{ secrets.INCIDENT_IO_API_KEY }}
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+      ALERTMANAGER_INTAKE_TOKEN: ${{ secrets.ALERTMANAGER_INTAKE_TOKEN }}
+      HOLD_VAR: ${{ vars.SPACES_ROLLOUT_HOLD }}
+      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            .github
+            config
+          persist-credentials: false
+      - name: Check the scripts
+        run: |
+          python3 .github/scripts/tests/test_release_rollout.py
+          python3 .github/scripts/tests/test_release_rollout_auto.py
+      - name: Fetch the feeds
+        run: |
+          set -euo pipefail
+          mkdir -p feed
+          for pattern in 'latest*.yml' cua-spaces-appcast.xml; do
+            gh release download "$TAG" --pattern "$pattern" --dir feed --clobber --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
+          done
+          ls -l feed
+      - name: Look for a hold
+        id: hold
+        run: |
+          hold="${HOLD_VAR:-}"
+          if [ -z "$hold" ]; then
+            n=$(gh issue list --repo "$GITHUB_REPOSITORY" --label spaces-rollout-hold --state open --json number --jq 'map("#\(.number)") | join(" ")')
+            [ -n "$n" ] && hold="label spaces-rollout-hold on $n"
+          fi
+          echo "hold=$hold" >> "$GITHUB_OUTPUT"
+      - name: Decide
+        id: decide
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/release_rollout_auto.py --feed-dir feed --hold "${{ steps.hold.outputs.hold }}" | tee decision.json
+          {
+            echo "action=$(jq -r .action decision.json)"
+            echo "next=$(jq -r '.next // ""' decision.json)"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "## Spaces rollout: $(jq -r .action decision.json)$([ "$DRY_RUN" = true ] && echo ' (dry run)')"
+            echo
+            jq -r '"- version: \(.version), stage: \(.stage)%, since: \(.since // "n/a"), age: \(.age_hours // "n/a")h", "- why: \(.why)", (.gates[]? | "- gate \(.gate): **\(.status)**, \(.detail)")' decision.json
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Advance
+        if: ${{ steps.decide.outputs.action == 'advance' && env.DRY_RUN != 'true' }}
+        run: |
+          gh workflow run release-rollout.yml --repo "$GITHUB_REPOSITORY" \
+            -f component=spaces -f platform=all -f channel=stable -f dry_run=false \
+            -f stage="${{ steps.decide.outputs.next }}" \
+            -f reason="auto: $(jq -r .why decision.json)"
+      - name: Pause and alert
+        if: ${{ steps.decide.outputs.action == 'pause' && env.DRY_RUN != 'true' }}
+        run: |
+          set -euo pipefail
+          why=$(jq -r .why decision.json)
+          gh workflow run release-rollout.yml --repo "$GITHUB_REPOSITORY" \
+            -f component=spaces -f platform=all -f channel=stable -f dry_run=false \
+            -f stage=pause -f reason="auto-pause: $why"
+          python3 - <<'PY'
+          import base64, json, os, urllib.request
+          d = json.load(open("decision.json"))
+          run = "%s/%s/actions/runs/%s" % (os.environ["GITHUB_SERVER_URL"], os.environ["GITHUB_REPOSITORY"], os.environ["GITHUB_RUN_ID"])
+          alert = [{
+              "labels": {"alertname": "SpacesRolloutAutoPaused", "source": "github-actions", "severity": "warning",
+                         "environment": "release", "repo": os.environ["GITHUB_REPOSITORY"], "workflow": "release-rollout-auto"},
+              "annotations": {"summary": "Cua Spaces %s auto-paused at %s%%" % (d["version"], d["stage"]),
+                              "description": d["why"] + " Resume with Release: staged rollout (Cua Spaces) after the fix.",
+                              "run_url": run},
+          }]
+          auth = base64.b64encode(("alerts:" + os.environ["ALERTMANAGER_INTAKE_TOKEN"]).encode()).decode()
+          req = urllib.request.Request("https://am.cua.ai/api/v2/alerts", json.dumps(alert).encode(),
+                                       {"Content-Type": "application/json", "Authorization": "Basic " + auth,
+                                        "User-Agent": "workflow-alerts-" + os.environ["GITHUB_REPOSITORY"].replace("/", "-")})
+          urllib.request.urlopen(req, timeout=30).read()
+          PY
+      - name: Dry run note
+        if: ${{ env.DRY_RUN == 'true' }}
+        run: echo "Dry run, nothing was dispatched or posted." >> "$GITHUB_STEP_SUMMARY"

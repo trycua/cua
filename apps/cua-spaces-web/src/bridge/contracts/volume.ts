@@ -22,7 +22,7 @@ export type { DriveCheckInput, DriveS3Input, DriveStorageInput, DriveStorageUpda
 
 /* ---- Experiments ----------------------------------------------------------- */
 
-/** `experiments::Experiments`: Settings, Experiments' switches (all off by default). */
+/** `experiments::Experiments`: Settings, Experiments' switches (all off by default except sharing, on unless turned off). */
 export interface Experiments {
   cuaVolume?: boolean;
   yourCloud?: boolean;
@@ -30,7 +30,7 @@ export interface Experiments {
   webUi?: boolean;
 }
 
-export const NO_EXPERIMENTS: Required<Experiments> = { cuaVolume: false, yourCloud: false, sharing: false, webUi: false };
+export const NO_EXPERIMENTS: Required<Experiments> = { cuaVolume: false, yourCloud: true, sharing: true, webUi: false };
 
 /* ---- The daemon's answers (volume_*) ---------------------------------------- */
 

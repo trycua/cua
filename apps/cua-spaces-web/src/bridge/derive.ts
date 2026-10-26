@@ -17,7 +17,9 @@ import type {
   HostPanelView,
   HostSetupChoice,
   HostStatus,
+  MachinePageRow,
   MachineRow,
+  MachinesView,
   SettingsInput,
   SettingsPage,
 } from "./contracts/host";
@@ -32,10 +34,11 @@ import type {
   VaultState,
   VaultView,
 } from "./contracts/keyvault";
-import type { CreateAction, CreatesState, PendingCreate, Space, SpaceOs, SpaceRow, SpaceStatus } from "./contracts/spaces";
-import type { RelayUsage, RelayUsageView } from "./ops/relay-usage";
+import type { CreateAction, CreatesState, ListStatus, ListView, PendingCreate, Space, SpaceOs, SpaceRow, SpaceStatus } from "./contracts/spaces";
+import type { RelayAllowanceNotice, RelayUsage, RelayUsageView } from "./ops/relay-usage";
 import type { SessionSnapshot, SettingsSnapshot } from "./protocol";
 import { notSharingOf, realLimits } from "./sharing";
+import { hostOs, type HostOs } from "./host-os";
 
 /* ---- Spaces --------------------------------------------------------------- */
 
@@ -66,7 +69,8 @@ function fallbackRowToSpace(row: SpaceRow, now: number): Space {
     name: displayName(row.name || row.id),
     os,
     status,
-    detail: status === "running" ? "Running" : "Stopped",
+    // "Stopped: out of memory" when it stopped on its own (`spaces::off_text`).
+    detail: status === "running" ? "Running" : off && row.stopReason ? `Stopped: ${row.stopReason}` : "Stopped",
     lastUsedAt: Number.isFinite(added) ? added : now,
     scene: SCENES[os],
     provider: row.provider,
@@ -79,7 +83,11 @@ function fallbackRowToSpace(row: SpaceRow, now: number): Space {
     host: row.host,
     hostName: row.hostName,
     power: row.power
-      ? { control: row.power === "stop" ? "stop" : "suspend", off: status !== "running" }
+      ? {
+          control: row.power === "stop" ? "stop" : "suspend",
+          off: status !== "running",
+          stopReason: off && row.stopReason ? row.stopReason : undefined,
+        }
       : undefined,
   };
 }
@@ -103,13 +111,85 @@ export function validateImageRef(core: CoreClient, ref: string): string | null {
 
 const PHASES = ["preparing", "pulling", "creating", "booting", "waiting_for_services", "connecting"];
 const PHASE_LABEL: Record<string, string> = {
-  preparing: "Preparing…",
-  pulling: "Downloading…",
+  preparing: "Starting…",
+  pulling: "Downloading image…",
   creating: "Creating…",
-  booting: "Starting…",
-  waiting_for_services: "Starting…",
+  booting: "Booting…",
+  waiting_for_services: "Starting Cua inside the Space…",
   connecting: "Connecting…",
 };
+
+/** What follows a download (`creating::Later`): bytes still to fetch, seconds
+ * of work that move none, and a measured pace to assume until a rate is known. */
+export interface Later {
+  bytes: number;
+  secs: number;
+  pace?: number;
+}
+
+/** Measured on a Mac mini, 25 Oct 2026 (CUA-2281): `wizard::FIRST_RUN_BYTES_PER_SEC`. */
+export const FIRST_RUN_BYTES_PER_SEC = 9_100_000;
+/** `wizard::CACHED_START_SECS`: a Linux Space starting from a cached image. */
+export const CACHED_START_SECS = 6;
+
+/** "12.4 of 30.0 GB · 85 MB/s · about 4 min" (`creating::transfer_text_with`). */
+export function transferText(
+  p: Pick<PendingCreate, "bytesDone" | "bytesTotal" | "bytesPerSecond">,
+  later: Later = { bytes: 0, secs: 0 },
+): string | null {
+  if (p.bytesDone == null) return null;
+  const unit = (n: number): [number, string] =>
+    n >= 2 ** 30 ? [2 ** 30, "GB"] : n >= 2 ** 20 ? [2 ** 20, "MB"] : n >= 1024 ? [1024, "KB"] : [1, "bytes"];
+  const scaled = (n: number, [size]: [number, string], below: number) => {
+    const v = n / size;
+    return size > 1 && v < below ? v.toFixed(1) : Math.round(v).toString();
+  };
+  const total = p.bytesTotal ?? 0;
+  let out: string;
+  if (total > 0) {
+    const u = unit(total);
+    out = `${scaled(Math.min(p.bytesDone, total), u, 100)} of ${scaled(total, u, 100)} ${u[1]}`;
+  } else {
+    const u = unit(p.bytesDone);
+    out = `${scaled(p.bytesDone, u, 100)} ${u[1]}`;
+  }
+  const measured = p.bytesPerSecond != null && Number.isFinite(p.bytesPerSecond) && p.bytesPerSecond > 0 ? p.bytesPerSecond : null;
+  if (measured) {
+    const u = unit(Math.floor(measured));
+    out += ` · ${scaled(Math.floor(measured), u, 10)} ${u[1]}/s`;
+  }
+  // Without a rate nothing is promised, unless a measured pace stands in.
+  const pace = measured ?? later.pace ?? null;
+  if (pace && total > 0) {
+    const secs = (Math.max(0, total - p.bytesDone) + later.bytes) / pace + later.secs;
+    const mins = Math.round(secs / 60);
+    out +=
+      secs < 60
+        ? " · less than a minute"
+        : mins < 60
+          ? ` · about ${mins} min`
+          : mins % 60 === 0
+            ? ` · about ${mins / 60} h`
+            : ` · about ${Math.floor(mins / 60)} h ${mins % 60} min`;
+  }
+  return out;
+}
+
+/** The step a create is on, in its kind of Space's words (`creating::stage_label`). */
+function stageLabel(p: Pick<PendingCreate, "os" | "kind" | "phase">): string {
+  const vm = p.os === "macos" || p.os === "windows" || p.kind === "vm";
+  const container = !vm && p.kind === "container";
+  const os = p.os === "macos" ? "macOS" : p.os === "windows" ? "Windows" : p.os === "linux" ? "Linux" : "";
+  if (p.phase === "pulling" && p.os === "macos") return "Downloading macOS (first time only)…";
+  if (p.phase === "creating" && vm) return "Preparing the disk…";
+  if (p.phase === "creating" && container) return "Creating the container…";
+  if (p.phase === "booting" && vm && os) return `Booting ${os}…`;
+  if (p.phase === "booting" && container) return "Starting the container…";
+  return PHASE_LABEL[p.phase] ?? "Starting…";
+}
+
+/** [`stageLabel`] (the fallback's words), for tests. */
+export const stageLabelForTest = stageLabel;
 
 function fallbackReduce(state: CreatesState, a: CreateAction): CreatesState {
   const pending = [...state.pending];
@@ -131,13 +211,17 @@ function fallbackReduce(state: CreatesState, a: CreateAction): CreatesState {
         pulled: false,
         permille: 0,
         image: a.image ?? null,
+        kind: a.kind ?? null,
       });
       break;
     case "progress":
       patch(a.id, (p) => {
         const i = Math.max(0, PHASES.indexOf(a.phase));
         const permille = Math.round(((i + (a.fraction ?? 0)) / PHASES.length) * 1000);
-        return { ...p, phase: a.phase, fraction: a.fraction, permille: Math.max(p.permille, Math.min(990, permille)) };
+        const bytes = a.bytesDone != null
+          ? { bytesDone: a.bytesDone, bytesTotal: a.bytesTotal ?? null, bytesPerSecond: a.bytesPerSecond ?? null }
+          : a.phase === p.phase ? {} : { bytesDone: null, bytesTotal: null, bytesPerSecond: null };
+        return { ...p, ...bytes, phase: a.phase, fraction: a.fraction, permille: Math.max(p.permille, Math.min(990, permille)) };
       });
       break;
     case "finish":
@@ -199,16 +283,20 @@ function fallbackCompose(spaces: Space[], state: CreatesState): Space[] {
       name: p.name,
       os: p.os,
       status: "provisioning",
-      detail: p.error ? "Failed" : (PHASE_LABEL[p.phase] ?? "Creating…"),
+      detail: p.error ? "Failed" : stageLabel(p),
       lastUsedAt: p.startedAt,
       startedAt: p.startedAt,
       scene: SCENES[p.os],
-      provider: p.provider === "relay" ? "relay" : p.provider,
+      provider: p.provider,
       progress: {
         phase: p.phase,
         permille: p.permille,
-        label: p.error ? "Failed" : (PHASE_LABEL[p.phase] ?? "Creating…"),
+        label: p.error ? "Failed" : stageLabel(p),
         error: p.error ?? undefined,
+        transfer:
+          !p.error && p.phase === "pulling"
+            ? (transferText(p, p.os === "linux" ? { bytes: 0, secs: CACHED_START_SECS, pace: FIRST_RUN_BYTES_PER_SEC } : { bytes: 0, secs: 0 }) ?? undefined)
+            : undefined,
         cancellable: !p.error && !p.cancelling,
         cancelling: p.cancelling,
       },
@@ -243,6 +331,12 @@ export interface Machine {
   /** Online, but its owner stopped sharing it: why, in one line. Calls to it
    * are refused, so New Space lists it as not sharing. */
   notSharing?: string;
+  /** The core's status word for the row (`machines::status_word`), when
+   * the host listed the rows with the core. */
+  status?: string;
+  /** The core's Spaces count for the row (`machines::spaces_label`; empty
+   * for a device of its own), when the host listed the rows with the core. */
+  spacesLabel?: string;
   /** The machine this UI runs on. */
   current: boolean;
   model?: string;
@@ -269,14 +363,64 @@ export interface Machine {
   accessNotice?: MachineAccessNotice;
 }
 
+/** One Machines row as the core lists it, from the page's own machine
+ * (an older host's rows, merged here): the core draws the page from it. */
+function pageRowOf(m: Machine, spaces: readonly Space[]): MachinePageRow {
+  const own = m.current ? spaces.find((s) => s.id === "this-mac") : spaces.find((s) => s.id === `relay:${m.id}`);
+  // The Spaces on it, never its own desktop (`machines::page_rows`).
+  const n = spaces.filter((s) => (m.current ? s.provider === "local" && s.id !== "this-mac" : s.host === m.id)).length;
+  return {
+    id: m.id,
+    name: m.name,
+    online: m.online,
+    os: m.os,
+    via: m.current ? "local" : "relay",
+    current: m.current,
+    device: m.device ? m.id : null,
+    deviceOnly: Boolean(m.device),
+    spaceId: own?.id ?? null,
+    stoppedSharing: Boolean(m.online && m.notSharing),
+    lastSeen: m.lastSeen ?? null,
+    status: m.status ?? (!m.online ? "Offline" : m.notSharing ? "Not sharing" : "Online"),
+    spaces: n,
+    spacesLabel: m.spacesLabel ?? (m.device ? "" : n === 0 ? "No Spaces" : `${n} Space${n === 1 ? "" : "s"}`),
+  };
+}
+
+/**
+ * The Machines page as every UI draws it (`machines.view`): the host's own
+ * when it sent one (what the SwiftUI page shows), else the core's from the
+ * rows listed here. Null without the core.
+ */
+export function machinesView(
+  core: CoreClient | undefined,
+  input: { hostView: MachinesView | null; machines: readonly Machine[]; spaces: readonly Space[]; host: object | null; nowSecs?: number },
+): MachinesView | null {
+  if (input.hostView) return input.hostView;
+  const current = input.machines.find((m) => m.current);
+  const hostOs = current && ["macos", "linux", "windows"].includes(current.os) ? current.os : "macos";
+  return (
+    core?.tryCall<MachinesView>("machines.view", {
+      input: {
+        page: { hostOs, spaces: input.spaces, now: input.nowSecs ?? Math.floor(Date.now() / 1000) },
+        rows: input.machines.map((m) => pageRowOf(m, input.spaces)),
+        host: input.host,
+      },
+    }) ?? null
+  );
+}
+
 /** Which machine a Space runs on: its relay host, the machine itself for
  * its own desktop (`relay:<machine>`), or this machine for a local Space;
  * undefined for cloud Spaces. */
-export function machineIdOf(space: Pick<Space, "id" | "host" | "provider">, machines: Pick<MachineRow, "id" | "current">[]): string | undefined {
-  if (space.host) return space.host;
-  if (space.provider === "local") return machines.find((m) => m.current)?.id;
+export function machineIdOf(space: Pick<Space, "id" | "host" | "provider">, machines: Pick<MachineRow, "id" | "current" | "host">[]): string | undefined {
+  const current = machines.find((m) => m.current);
+  // This computer's own relay machine id is this computer's row.
+  const here = (id: string) => (current?.host?.machineId && id === current.host.machineId ? current.id : id);
+  if (space.host) return here(space.host);
+  if (space.provider === "local") return current?.id;
   if (space.provider === "relay" && space.id.startsWith("relay:")) {
-    const own = space.id.slice("relay:".length);
+    const own = here(space.id.slice("relay:".length));
     if (machines.some((m) => m.id === own)) return own;
   }
   return undefined;
@@ -358,6 +502,7 @@ export function machinesInput(rows: MachineRow[], now: number): MachinesInput {
  * (`mergeMachines`). The device adds its detail and last session; a
  * device that is none of the machines stays a row of its own. */
 export function mergeMachineRows(rows: MachineRow[], core?: CoreClient, nowSecs = Math.floor(Date.now() / 1000)): MachineRow[] {
+  if (rows.some((r) => r.merged)) return rows;
   if (!rows.some((r) => r.device || r.presence != null)) return rows;
   const byId = new Map(rows.filter((r) => !r.device).map((r) => [r.id, r] as const));
   const devices = new Map(rows.filter((r) => r.device).map((r) => [r.id, r] as const));
@@ -392,6 +537,8 @@ export function toMachines(rows: MachineRow[], spaces: Space[], core?: CoreClien
       panel: m.current && m.host && core ? hostPanel(core, m.host) : undefined,
       ...(m.current && m.host?.progress ? { hostProgress: m.host.progress } : {}),
       ...(notSharing ? { notSharing } : {}),
+      ...(m.status ? { status: m.status } : {}),
+      ...(m.spacesLabel != null ? { spacesLabel: m.spacesLabel } : {}),
       ...(m.device ? { device: true } : {}),
       ...(m.current && m.accessNotice ? { accessNotice: m.accessNotice } : {}),
     };
@@ -452,20 +599,20 @@ export function hostPanelFromState(core: CoreClient, state: object | null, statu
 }
 
 function fallbackPanel(s: HostStatus | null): HostPanelView {
-  const base: HostPanelView = { title: "This machine", summary: "Checking…", configured: false, facts: [], clients: [], permissions: [], openSettingsLabel: "Open Settings", actions: [] };
+  const base: HostPanelView = { title: "This computer", summary: "Checking…", configured: false, facts: [], clients: [], permissions: [], openSettingsLabel: "Open Settings", actions: [] };
   if (!s) return base;
   if (!s.configured) {
-    return { ...base, summary: "Other devices can’t reach this machine yet.", intro: FALLBACK_INTRO, setupChoices: FALLBACK_CHOICES };
+    return { ...base, summary: "Your other devices can’t reach this computer yet.", intro: FALLBACK_INTRO, setupChoices: FALLBACK_CHOICES };
   }
   const via = s.mode === "direct" ? "Direct" : "Relay";
   const summary = !s.service.running ? "Host service stopped" : !s.sharing ? "Not sharing" : `Sharing · ${via}`;
-  const access = s.mode === "direct" ? `Direct at ${s.directUrl || "this machine’s address"}` : s.relayUrl ? `Relay ${s.relayUrl}` : "Relay";
+  const access = s.mode === "direct" ? `Direct at ${s.directUrl || "this computer’s address"}` : s.relayUrl ? `Relay ${s.relayUrl}` : "Relay";
   return {
     ...base,
     summary,
     configured: true,
     facts: [
-      { label: "Name", value: s.name || "This machine" },
+      { label: "Name", value: s.name || "This computer" },
       { label: "Access", value: access },
       { label: "Service", value: `${s.service.kind} · ${s.service.running ? "running" : s.service.installed ? "stopped" : "not installed"}` },
     ],
@@ -476,10 +623,10 @@ function fallbackPanel(s: HostStatus | null): HostPanelView {
 }
 
 const FALLBACK_INTRO =
-  "This is the computer you are using now. Set it up for access to reach it and its Spaces from your other devices and your agents, over the Cua relay with no port forwarding.";
+  "This is the computer you’re using now. Set it up so you, your teammates and your AI agents can use it from other devices. Cua connects them for you, with no network setup.";
 const FALLBACK_CHOICES: HostSetupChoice[] = [
-  { id: "desktop", label: "Share this desktop", buttonLabel: "Set Up…" },
-  { id: "spare", label: "Use as a spare machine for Spaces", buttonLabel: "Set Up…" },
+  { id: "desktop", label: "Let my other devices use this computer", buttonLabel: "Set Up…" },
+  { id: "spare", label: "Run Spaces here and keep its screen private", buttonLabel: "Set Up…" },
 ];
 
 /** What "Add a machine" explains: the core's words for host setup, as the
@@ -489,15 +636,15 @@ export interface HostSetupGuide {
   intro: string;
   /** The ways to set it up (`host::setup_choices`). */
   choices: HostSetupChoice[];
-  /** The setup form with Advanced open (`host.formView`), when the core is loaded. */
+  /** The setup form (`host.formView`), when the core is loaded. */
   form: HostFormView | null;
 }
 
 export function hostSetupGuide(core: CoreClient): HostSetupGuide {
   const panel = hostPanel(core, { configured: false, sharing: false, service: { installed: false, running: false, kind: "process" }, clients: [], permissions: [] });
   const initial = core.tryCall<unknown>("host.formInitial");
-  const state = initial === undefined ? undefined : core.tryCall<unknown>("host.formReduce", { state: initial, action: { type: "toggle-advanced" } });
-  const form = state === undefined ? null : (core.tryCall<HostFormView>("host.formView", { state, identity: null }) ?? null);
+  // As setup shows it: Cua's relay. Self-hosting is under Settings → Advanced.
+  const form = initial === undefined ? null : (core.tryCall<HostFormView>("host.formView", { state: initial, identity: null }) ?? null);
   return { intro: panel.intro ?? FALLBACK_INTRO, choices: panel.setupChoices?.length ? panel.setupChoices : FALLBACK_CHOICES, form };
 }
 
@@ -512,15 +659,12 @@ export function settingsPage(
   /** Settings, AI agents: the coding agents read from the host (null: not yet, an empty section). */
   agents?: Pick<SettingsInput, "agents" | "agentsBusy" | "agentsPending">,
 ): SettingsPage | null {
-  const loc = settings.values.defaultLocation;
   const input: SettingsInput = {
-    identity: session?.fleet.identity ?? null,
-    apiKeyClient: session?.fleet.authMode === "client-credentials" ? (session.fleet.clientId ?? null) : null,
+    identity: session?.account.identity ?? null,
+    apiKeyClient: session?.account.authMode === "client-credentials" ? (session.account.clientId ?? null) : null,
     signIn: signIn ?? { kind: "idle" },
-    canSignOut: session?.fleet.authMode === "user",
+    canSignOut: session?.account.authMode === "user",
     menuBar: settings.values.menuBar,
-    defaultLocation: loc === "cloud" ? "cloud" : loc === "local" ? "local" : loc.startsWith("host:") ? "host" : "yours",
-    locationLockedBy: settings.defaultLocation?.source === "env" ? (settings.defaultLocation.env ?? null) : null,
     telemetry: settings.telemetry
       ? {
           enabled: settings.telemetry.enabled,
@@ -591,12 +735,13 @@ export function keyvaultViews(
   overview: KeyvaultOverview,
   now: number,
   state: VaultState = INITIAL_VAULT_STATE,
+  os: HostOs = hostOs(),
 ): KeyvaultViews | null {
   if (core.status !== "ready") return null;
   return {
-    page: core.call<KvPage>("keyvault.page", { overview, now }),
+    page: core.call<KvPage>("keyvault.page", { overview, now, hostOs: os }),
     sidebar: core.call<KvSidebar>("keyvault.sidebar", { overview, now }),
-    vault: core.call<VaultView>("keyvault.vaultView", { overview, state, now }),
+    vault: core.call<VaultView>("keyvault.vaultView", { overview, state, now, hostOs: os }),
   };
 }
 
@@ -679,8 +824,38 @@ export function orderRuns<T extends SpaceAgentRun>(core: CoreClient, runs: T[]):
 /* ---- Relay usage ---------------------------------------------------------- */
 
 /** Settings' Relay usage row and the notice past the allowance (the core's
- * `relayUsage.view`). No stand-in: without the core the page shows
+ * `relayUsage.view`; Upgrade falls back to `accountApp`'s billing page, the
+ * host's account app, as the page's core has no environment). No stand-in: without the core the page shows
  * neither, rather than words of its own. */
-export function relayUsageView(core: CoreClient, usage: RelayUsage): RelayUsageView | null {
-  return core.tryCall<RelayUsageView | null>("relayUsage.view", { usage }) ?? null;
+export function relayUsageView(core: CoreClient, usage: RelayUsage, accountApp: string | null = null): RelayUsageView | null {
+  return core.tryCall<RelayUsageView | null>("relayUsage.view", accountApp ? { usage, accountApp } : { usage }) ?? null;
+}
+
+/** A refused new session (the relay's plan limit) as the sentence with
+ * Upgrade, from an error's text (the core's `relayUsage.planLimit`); null
+ * for any other error, or without the core. */
+export function planLimitNotice(core: CoreClient, error: string, accountApp: string | null = null): RelayAllowanceNotice | null {
+  return core.tryCall<RelayAllowanceNotice | null>("relayUsage.planLimit", accountApp ? { error, accountApp } : { error }) ?? null;
+}
+
+/**
+ * The Spaces page's empty state and "Reaching N computers…" line
+ * (`spaces.listView`): "Create your first Space" only for a complete list
+ * with no Space, so a daemon still starting or computers still answering
+ * never read as an empty account.
+ */
+export function listView(core: CoreClient, status: ListStatus, count: number): ListView {
+  const input = { loaded: status.loaded, incomplete: status.incomplete, reaching: status.reaching, count };
+  return core.tryCall<ListView>("spaces.listView", { input }) ?? fallbackListView(input);
+}
+
+function fallbackListView(i: { loaded: boolean; incomplete: boolean; reaching: number; count: number }): ListView {
+  const reachingLine = !i.loaded
+    ? "Loading Spaces…"
+    : !i.incomplete
+      ? null
+      : i.reaching === 0
+        ? "Reaching your computers…"
+        : `Reaching ${i.reaching} computer${i.reaching === 1 ? "" : "s"}…`;
+  return { empty: i.loaded && !i.incomplete && i.count === 0, reachingLine };
 }

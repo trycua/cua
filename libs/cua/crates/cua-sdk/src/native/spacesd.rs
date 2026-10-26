@@ -13,6 +13,91 @@ use std::{
     },
 };
 
+/// A loopback (or `bind`) TCP port that reaches a guest port through
+/// cua-spacesd's tunnel ([`SpacesdClient::forward_tcp`]). Stopped by `stop`
+/// or when dropped.
+#[derive(uniffi::Object)]
+pub struct SpacesdForward {
+    local_addr: String,
+    guest_port: u16,
+    inner: std::sync::Mutex<Option<cua_spacesd_client::TcpForward>>,
+}
+
+#[uniffi::export]
+impl SpacesdForward {
+    /// `host:port` accepting connections.
+    pub fn local_addr(&self) -> String {
+        self.local_addr.clone()
+    }
+
+    /// Guest port.
+    pub fn guest_port(&self) -> u16 {
+        self.guest_port
+    }
+
+    /// Stops listening and revokes the driver-side forward (also done when
+    /// it is dropped).
+    pub async fn stop(&self) -> Result<()> {
+        let fwd = self.inner.lock().unwrap().take();
+        if let Some(f) = fwd {
+            run(async move { Ok(f.close().await?) }).await?;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for SpacesdForward {
+    fn drop(&mut self) {
+        if let Some(f) = self.inner.lock().unwrap().take() {
+            // Revoking needs the SDK runtime (the caller's thread has none).
+            super::runtime().spawn(async move {
+                let _ = f.close().await;
+            });
+        }
+    }
+}
+
+/// Chunks buffered ahead of the reader of a [`SpacesdDownload`].
+const DOWNLOAD_BUFFER_CHUNKS: usize = 8;
+
+/// A download in progress ([`SpacesdClient::open_download`]).
+#[derive(uniffi::Object)]
+pub struct SpacesdDownload {
+    rx: Arc<tokio::sync::Mutex<tokio::sync::mpsc::Receiver<Result<Vec<u8>>>>>,
+    task: tokio::task::AbortHandle,
+}
+
+#[uniffi::export]
+impl SpacesdDownload {
+    /// The next chunk, or `None` once the whole file arrived.
+    pub async fn next_chunk(&self) -> Result<Option<Vec<u8>>> {
+        let rx = self.rx.clone();
+        run(async move { rx.lock().await.recv().await.transpose() }).await
+    }
+
+    /// Stops the transfer.
+    pub fn cancel(&self) {
+        self.task.abort();
+    }
+}
+
+impl Drop for SpacesdDownload {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+struct ChannelSink(tokio::sync::mpsc::Sender<Result<Vec<u8>>>);
+
+impl cua_spacesd_client::DownloadSink for ChannelSink {
+    async fn write(&mut self, chunk: bytes::Bytes) -> cua_spacesd_client::Result<()> {
+        self.0
+            .send(Ok(chunk.to_vec()))
+            .await
+            .map_err(|_| cua_spacesd_client::Error::Protocol("download reader closed".into()))
+    }
+}
+
 impl SpacesdCommand {
     fn to_env(&self) -> cua_spacesd_client::Command {
         let mut c = cua_spacesd_client::Command::new(self.program.clone()).args(self.args.clone());
@@ -35,6 +120,16 @@ impl SpacesdCommand {
         if let Some(p) = self.pty {
             c = c.pty(p.cols, p.rows);
         }
+        if let Some(key) = &self.request_id {
+            c = c.request_id(key.clone());
+        }
+        if let Some(epoch) = self.epoch {
+            c = c.epoch(epoch);
+        }
+        if let Some(bytes) = self.scrollback_bytes {
+            c = c.scrollback(bytes);
+        }
+        c.kill_on_disconnect = self.kill_on_disconnect;
         c
     }
 }
@@ -45,6 +140,8 @@ impl From<cua_spacesd_client::ExitStatus> for ExitInfo {
             success: s.success(),
             code: s.code,
             signal: s.signal.map(|x| enum_suffix(format!("{x:?}"))),
+            signal_number: s.signal_number,
+            signal_name: s.signal_name,
             timed_out: s.timed_out,
             error: s.error,
         }
@@ -108,6 +205,10 @@ pub struct SpacesdProcess {
     handle: Arc<tokio::sync::Mutex<Option<cua_spacesd_client::ProcessHandle>>>,
     writer_id: String,
     sequence: AtomicU64,
+    /// Started through `sudo` (see `SpacesdClient::spawn` in the client).
+    via_sudo: bool,
+    /// Wakes a pending `next_event` when the caller detaches.
+    detached: Arc<tokio::sync::Notify>,
 }
 
 impl SpacesdProcess {
@@ -118,6 +219,8 @@ impl SpacesdProcess {
         SpacesdProcess {
             client,
             pid: h.pid(),
+            via_sudo: h.via_sudo(),
+            detached: Arc::new(tokio::sync::Notify::new()),
             tag: h.tag().map(str::to_string),
             handle: Arc::new(tokio::sync::Mutex::new(Some(h))),
             writer_id: format!("cua-sdk-{:016x}", rand_u64()),
@@ -171,12 +274,30 @@ impl SpacesdProcess {
     /// Reconnects transparently from the last seen offset.
     pub async fn next_event(&self) -> Result<Option<ProcessEvent>> {
         let handle = self.handle.clone();
+        let (client, pid, via_sudo) = (self.client.clone(), self.pid, self.via_sudo);
+        let detached = self.detached.clone();
         run(async move {
-            let mut guard = handle.lock().await;
+            let mut guard = tokio::select! {
+                g = handle.lock() => g,
+                _ = detached.notified() => return Ok(None),
+            };
             let Some(h) = guard.as_mut() else {
                 return Ok(None);
             };
-            Ok(h.next_event().await?.map(Into::into))
+            let ev: Option<ProcessEvent> = tokio::select! {
+                ev = h.next_event() => ev?.map(Into::into),
+                // `detach` while waiting: stop at once (the process runs on).
+                _ = detached.notified() => return Ok(None),
+            };
+            // The driver stopped `sudo` (a timeout or a signal): what `sudo`
+            // ran is root's and must not outlive it.
+            if via_sudo
+                && let Some(x) = ev.as_ref().and_then(|e| e.exit.as_ref())
+                && (x.timed_out || x.signal.is_some() || x.signal_number.is_some())
+            {
+                let _ = client.kill_tree(pid, true).await;
+            }
+            Ok(ev)
         })
         .await
     }
@@ -219,8 +340,11 @@ impl SpacesdProcess {
         .await
     }
 
-    /// Sends a signal by name (`term`, `kill`, `SIGINT`, ...).
-    pub async fn signal(&self, signal: String) -> Result<()> {
+    /// Sends a signal by name (`term`, `kill`, `SIGINT`, ...). With
+    /// `process_group`, to the process's whole group (everything it started),
+    /// as a terminal's Ctrl-C does; by default to the process alone.
+    #[uniffi::method(default(process_group = false))]
+    pub async fn signal(&self, signal: String, process_group: bool) -> Result<()> {
         let sig = parse_signal(&signal)?;
         let (client, process) = (self.client.clone(), Some(self.selector()));
         run(async move {
@@ -229,7 +353,7 @@ impl SpacesdProcess {
                 .signal_process(pb::SignalProcessRequest {
                     process,
                     signal: sig as i32,
-                    process_group: false,
+                    process_group,
                 })
                 .await?;
             Ok(())
@@ -237,9 +361,11 @@ impl SpacesdProcess {
         .await
     }
 
-    /// SIGKILL.
+    /// SIGKILL to the process and its process group (what it started),
+    /// including a command run as another user through `sudo`.
     pub async fn kill(&self) -> Result<()> {
-        self.signal("kill".into()).await
+        let (client, pid, via_sudo) = (self.client.clone(), self.pid, self.via_sudo);
+        run(async move { Ok(client.kill_tree(pid, via_sudo).await?) }).await
     }
 
     /// Resizes the PTY.
@@ -263,8 +389,11 @@ impl SpacesdProcess {
         .await
     }
 
-    /// Stops receiving output without affecting the process.
+    /// Stops receiving output without affecting the process. A pending
+    /// `next_event` returns `None` at once.
     pub async fn detach(&self) {
+        self.detached.notify_waiters();
+        self.detached.notify_one();
         let handle = self.handle.clone();
         let _ = run(async move {
             if let Some(h) = handle.lock().await.take() {
@@ -316,8 +445,34 @@ impl UploadOptions {
             },
             permissions: self.permissions,
             create_parents: self.create_parents,
+            run_as: self.user.clone().filter(|u| !u.is_empty()),
+            metadata: self
+                .metadata
+                .iter()
+                .flatten()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+            xattr_namespace: self.xattr_namespace.clone().filter(|n| !n.is_empty()),
             ..Default::default()
         }
+    }
+}
+
+fn file_access(
+    user: Option<String>,
+    xattr_namespace: Option<String>,
+) -> cua_spacesd_client::FileAccess {
+    cua_spacesd_client::FileAccess {
+        run_as: user.filter(|u| !u.is_empty()),
+        xattr_namespace: xattr_namespace.filter(|n| !n.is_empty()),
+    }
+}
+
+fn download_options(user: Option<String>, chunk_size: u32) -> cua_spacesd_client::DownloadOptions {
+    cua_spacesd_client::DownloadOptions {
+        chunk_size,
+        run_as: user.filter(|u| !u.is_empty()),
+        ..Default::default()
     }
 }
 
@@ -337,8 +492,8 @@ pub struct SpacesdHttpRequest {
     pub method: String,
     /// Absolute path under the endpoint, for example `/mcp`. Never a URL.
     pub path: String,
-    /// Extra headers. Credentials (`authorization`, the env and Fleet claim
-    /// headers) are the client's and cannot be set here.
+    /// Extra headers. Credentials (`authorization` and the env headers) are
+    /// the client's and cannot be set here.
     #[uniffi(default = [])]
     pub headers: Vec<SpacesdHttpHeader>,
     /// Request body (empty for none).
@@ -362,15 +517,19 @@ pub struct SpacesdHttpResponse {
     pub body: Vec<u8>,
 }
 
-/// Re-mints the WebSocket upgrade headers when a socket is opened. Fleet
-/// access tokens are short-lived (about five minutes), so a bearer taken when
-/// the client was created makes the gateway refuse (302) every media socket
-/// opened later on a long-lived client.
+/// Re-mints the WebSocket upgrade headers when a socket is opened. A gateway's
+/// access tokens are short-lived, so a bearer taken when the client was
+/// created makes the gateway refuse every media socket opened later on a
+/// long-lived client.
 pub(crate) type WsHeaderRefresh = Arc<
     dyn Fn() -> futures_util::future::BoxFuture<'static, Result<Vec<(String, String)>>>
         + Send
         + Sync,
 >;
+
+/// Reports which way a client's calls go now (see [`SpacesdClient::route`]).
+pub(crate) type RouteSource =
+    Arc<dyn Fn() -> futures_util::future::BoxFuture<'static, Result<String>> + Send + Sync>;
 
 /// Client for one cua-spacesd.
 #[derive(uniffi::Object)]
@@ -380,12 +539,15 @@ pub struct SpacesdClient {
     /// creation.
     #[cfg_attr(not(feature = "media"), allow(dead_code))]
     pub(crate) ws_headers: Vec<(String, String)>,
-    /// Fresh headers at use (cloud Spaces); `None` when they never expire.
+    /// Fresh headers at use (a Space behind a gateway); `None` when they never
+    /// expire.
     #[cfg_attr(not(feature = "media"), allow(dead_code))]
     pub(crate) ws_refresh: Option<WsHeaderRefresh>,
-    /// Where the spacesd runs (`local`, `cloud`, `direct`, `relay`), for
+    /// Where the spacesd runs (`local`, `direct`, `relay`, your cloud), for
     /// agent-run telemetry. `direct` (reached by address) unless set.
     pub(crate) location: String,
+    /// The Space's live route, for a client a Space handed out.
+    pub(crate) route: Option<RouteSource>,
 }
 
 impl SpacesdClient {
@@ -398,7 +560,15 @@ impl SpacesdClient {
             ws_headers,
             ws_refresh: None,
             location: "direct".into(),
+            route: None,
         }
+    }
+
+    /// A client whose [`SpacesdClient::route`] asks `route` (the Space it
+    /// came from).
+    pub(crate) fn with_route(mut self, route: RouteSource) -> Self {
+        self.route = Some(route);
+        self
     }
 
     /// The same client, recorded as running at `location`.
@@ -408,7 +578,7 @@ impl SpacesdClient {
     }
 
     /// A client whose WebSocket headers are re-minted by `refresh` each time
-    /// a socket is opened (a cloud Space's Fleet bearer).
+    /// a socket is opened (a Space behind a gateway).
     pub(crate) fn with_ws_refresh(mut self, refresh: WsHeaderRefresh) -> Self {
         self.ws_refresh = Some(refresh);
         self
@@ -416,16 +586,16 @@ impl SpacesdClient {
 
     /// Rust hosts: headers WebSocket upgrades on this route need, as of
     /// creation. Prefer [`SpacesdClient::current_ws_headers`] for a socket
-    /// opened later: a cloud Space's bearer expires within minutes.
+    /// opened later: a gateway's bearer expires within minutes.
     pub fn ws_headers(&self) -> Vec<(String, String)> {
         self.ws_headers.clone()
     }
 
     /// Rust hosts: headers a WebSocket upgrade opened now needs, with a
-    /// fresh Fleet bearer for a cloud Space.
+    /// fresh bearer for a Space behind a gateway.
     pub async fn current_ws_headers(&self) -> Result<Vec<(String, String)>> {
         match &self.ws_refresh {
-            // On the SDK runtime: the refresh may do Fleet I/O.
+            // On the SDK runtime: the refresh may do I/O.
             Some(refresh) => run(refresh()).await,
             None => Ok(self.ws_headers.clone()),
         }
@@ -456,6 +626,25 @@ impl SpacesdClient {
         match self.client.transport() {
             cua_spacesd_client::Transport::Native => "grpc".into(),
             cua_spacesd_client::Transport::GrpcWeb => "grpc-web".into(),
+        }
+    }
+
+    /// Which way calls go now, in one line: `local <host:port>` (a Space on
+    /// this machine), `direct <address>`, `relay <relay URL>` (the relay's
+    /// HTTPS path), `mesh direct <ip:port> rtt <ms> ms` (end to end over the
+    /// mesh, straight to the machine: a LAN neighbour), `mesh relayed` or
+    /// `cloud`. A Space one of your own machines provides prefers the
+    /// direct path and falls back to the relay by itself (`CUA_MESH=off`
+    /// turns that off). A client made otherwise reports where its spacesd
+    /// runs (`local`, `cloud`, `direct`) and the endpoint it dials.
+    pub async fn route(&self) -> Result<String> {
+        match &self.route {
+            Some(route) => run(route()).await,
+            None => Ok(format!(
+                "{} {}",
+                self.location,
+                self.client.endpoint().origin()
+            )),
         }
     }
 
@@ -594,16 +783,30 @@ impl SpacesdClient {
         })
     }
 
-    /// Downloads `path` into memory.
-    pub async fn download(&self, path: String) -> Result<Vec<u8>> {
-        env_call!(self, |c| Ok(c.download(&path).await?.to_vec()))
+    /// Downloads `path` into memory. `user` reads as that guest user (see
+    /// `UploadOptions.user`).
+    #[uniffi::method(default(user = None))]
+    pub async fn download(&self, path: String, user: Option<String>) -> Result<Vec<u8>> {
+        let options = download_options(user, 0);
+        env_call!(self, |c| {
+            let mut out = Vec::new();
+            c.download_with(&path, options, &mut out).await?;
+            Ok(out)
+        })
     }
 
-    /// Downloads `path` to a local file.
-    pub async fn download_file(&self, path: String, local_path: String) -> Result<TransferResult> {
+    /// Downloads `path` to a local file. `user` reads as that guest user.
+    #[uniffi::method(default(user = None))]
+    pub async fn download_file(
+        &self,
+        path: String,
+        local_path: String,
+        user: Option<String>,
+    ) -> Result<TransferResult> {
+        let options = download_options(user, 0);
         env_call!(self, |c| {
             let r = c
-                .download_to_file(&path, std::path::Path::new(&local_path), Default::default())
+                .download_to_file(&path, std::path::Path::new(&local_path), options)
                 .await?;
             Ok(TransferResult {
                 size: r.size,
@@ -613,29 +816,132 @@ impl SpacesdClient {
         })
     }
 
-    /// `Stat`.
-    pub async fn stat(&self, path: String) -> Result<FileEntry> {
-        env_call!(self, |c| Ok(c.stat(&path).await?.into()))
+    /// Forwards a TCP port on this machine to guest `port` through
+    /// cua-spacesd's tunnel: works for any Space this client reaches (on
+    /// this machine, one of your machines or the cloud). `bind` is the
+    /// local address to listen on (default `127.0.0.1:0`, a free loopback
+    /// port; `0.0.0.0:0` serves the LAN).
+    pub async fn forward_tcp(
+        &self,
+        port: u16,
+        bind: Option<String>,
+    ) -> Result<Arc<SpacesdForward>> {
+        let mut options = cua_spacesd_client::ForwardOptions::new(port);
+        if let Some(b) = bind.filter(|b| !b.trim().is_empty()) {
+            options.bind = b
+                .trim()
+                .parse()
+                .map_err(|e| CuaError::InvalidArgument(format!("bind {b:?}: {e}")))?;
+        }
+        env_call!(self, |c| {
+            let f = c.forward_tcp(options).await?;
+            Ok(Arc::new(SpacesdForward {
+                local_addr: f.local_addr().to_string(),
+                guest_port: f.guest_port(),
+                inner: std::sync::Mutex::new(Some(f)),
+            }))
+        })
     }
 
-    /// `ListDir` (depth 1 = direct children).
-    pub async fn list_dir(&self, path: String, depth: u32) -> Result<Vec<FileEntry>> {
+    /// Streams `path` in chunks: one read that resumes where a dropped
+    /// stream stopped and checks each segment's SHA-256, delivered through
+    /// a small buffer (memory stays bounded whatever the file size). Read it
+    /// with [`SpacesdDownload::next_chunk`]; dropping it, or `cancel`, stops
+    /// the transfer.
+    #[uniffi::method(default(chunk_size = None, user = None))]
+    pub async fn open_download(
+        &self,
+        path: String,
+        chunk_size: Option<u32>,
+        user: Option<String>,
+    ) -> Result<Arc<SpacesdDownload>> {
+        let client = self.client.clone();
+        let (tx, rx) = tokio::sync::mpsc::channel(DOWNLOAD_BUFFER_CHUNKS);
+        let task = super::runtime().spawn(async move {
+            let mut sink = ChannelSink(tx.clone());
+            let options = download_options(user, chunk_size.unwrap_or(0));
+            if let Err(e) = client.download_with(&path, options, &mut sink).await {
+                let _ = tx.send(Err(e.into())).await;
+            }
+        });
+        Ok(Arc::new(SpacesdDownload {
+            rx: Arc::new(tokio::sync::Mutex::new(rx)),
+            task: task.abort_handle(),
+        }))
+    }
+
+    /// `Stat`. `user` acts as that guest user (see `UploadOptions.user`);
+    /// `xattr_namespace` picks the extended-attribute prefix reported in
+    /// `FileEntry.metadata` (default `user.cua.meta.`). `no_follow` reports
+    /// a symbolic link itself rather than its target.
+    #[uniffi::method(default(user = None, xattr_namespace = None, no_follow = false))]
+    pub async fn stat(
+        &self,
+        path: String,
+        user: Option<String>,
+        xattr_namespace: Option<String>,
+        no_follow: bool,
+    ) -> Result<FileEntry> {
+        let access = file_access(user, xattr_namespace);
         env_call!(self, |c| Ok(c
-            .list_dir(&path, depth)
+            .stat_with(&path, no_follow, &access)
+            .await?
+            .into()))
+    }
+
+    /// `ListDir` (depth 1 = direct children), as `user`.
+    #[uniffi::method(default(user = None, xattr_namespace = None))]
+    pub async fn list_dir(
+        &self,
+        path: String,
+        depth: u32,
+        user: Option<String>,
+        xattr_namespace: Option<String>,
+    ) -> Result<Vec<FileEntry>> {
+        let access = file_access(user, xattr_namespace);
+        env_call!(self, |c| Ok(c
+            .list_dir_with(&path, depth, &access)
             .await?
             .into_iter()
             .map(Into::into)
             .collect()))
     }
 
-    /// `MakeDir` (with parents).
-    pub async fn make_dir(&self, path: String) -> Result<FileEntry> {
-        env_call!(self, |c| Ok(c.make_dir(&path).await?.into()))
+    /// `MakeDir` (with parents), as `user`: the new directories are owned
+    /// by that user.
+    #[uniffi::method(default(user = None))]
+    pub async fn make_dir(&self, path: String, user: Option<String>) -> Result<FileEntry> {
+        let access = file_access(user, None);
+        env_call!(self, |c| Ok(c.make_dir_with(&path, &access).await?.into()))
     }
 
-    /// `Remove`.
-    pub async fn remove(&self, path: String, recursive: bool) -> Result<()> {
-        env_call!(self, |c| Ok(c.remove(&path, recursive).await?))
+    /// `Remove`, as `user`.
+    #[uniffi::method(default(user = None))]
+    pub async fn remove(&self, path: String, recursive: bool, user: Option<String>) -> Result<()> {
+        let access = file_access(user, None);
+        env_call!(self, |c| Ok(c
+            .remove_with(&path, recursive, &access)
+            .await?))
+    }
+
+    /// `Move`: renames `source` to `destination`, as `user`. `overwrite`
+    /// replaces an existing destination (otherwise it fails with
+    /// `AlreadyExists`); `create_parents` makes the destination's missing
+    /// parent directories (owned by `user`).
+    #[uniffi::method(default(overwrite = false, create_parents = false, user = None))]
+    pub async fn move_path(
+        &self,
+        source: String,
+        destination: String,
+        overwrite: bool,
+        create_parents: bool,
+        user: Option<String>,
+    ) -> Result<FileEntry> {
+        let access = file_access(user, None);
+        env_call!(self, |c| Ok(c
+            .move_path(&source, &destination, overwrite, create_parents, &access)
+            .await?
+            .into()))
     }
 
     // ------------------------------------------------------------ computer
@@ -696,8 +1002,12 @@ impl SpacesdClient {
 
     /// Full `ComputerService.Pointer` from proto3 JSON.
     pub async fn pointer_json(&self, request_json: String) -> Result<String> {
-        self.call_json("/cua.env.v1.ComputerService/Pointer".into(), request_json)
-            .await
+        self.call_json(
+            "/cua.env.v1.ComputerService/Pointer".into(),
+            request_json,
+            None,
+        )
+        .await
     }
 
     /// Types text.
@@ -728,8 +1038,12 @@ impl SpacesdClient {
 
     /// Full `ComputerService.Keyboard` from proto3 JSON.
     pub async fn keyboard_json(&self, request_json: String) -> Result<String> {
-        self.call_json("/cua.env.v1.ComputerService/Keyboard".into(), request_json)
-            .await
+        self.call_json(
+            "/cua.env.v1.ComputerService/Keyboard".into(),
+            request_json,
+            None,
+        )
+        .await
     }
 
     /// Clipboard text.
@@ -758,8 +1072,8 @@ impl SpacesdClient {
     // --------------------------------------------------------------- http
 
     /// Sends one plain-HTTP request to the spacesd port with this
-    /// client's endpoint and credentials (through the Fleet gateway when the
-    /// endpoint is a Fleet service). Used for streamable-HTTP MCP at `/mcp`,
+    /// client's endpoint and credentials (through a gateway when the
+    /// endpoint is behind one). Used for streamable-HTTP MCP at `/mcp`,
     /// for example by typed cua-driver clients. Not retried.
     pub async fn http(&self, request: SpacesdHttpRequest) -> Result<SpacesdHttpResponse> {
         let call = cua_spacesd_client::HttpCall {
@@ -799,28 +1113,60 @@ impl SpacesdClient {
     /// (`/cua.env.v1.WindowsService/ListWindows`) or `Service/Method`.
     /// Covers windows, accessibility, driver tools, teleport, tunnels and
     /// every other RPC without a typed method.
-    pub async fn call_json(&self, method: String, request_json: String) -> Result<String> {
+    ///
+    /// `user` makes a file request (`FilesystemService` `Stat`, `ListDir`,
+    /// `MakeDir`, `Move`, `Remove`, `CreateWatcher`, `CreateSignedUrl`,
+    /// `BeginUpload`) act as that guest user: it sets the request's
+    /// `run_as` (in `header` for `BeginUpload`) and checks that the guest
+    /// agent supports acting as another user. Any other method refuses it,
+    /// and so does a request that already names a different `run_as`.
+    #[uniffi::method(default(user = None))]
+    pub async fn call_json(
+        &self,
+        method: String,
+        request_json: String,
+        user: Option<String>,
+    ) -> Result<String> {
         let path = json::normalize(&method)?;
-        env_call!(self, |c| json::call_unary(
-            c.channel(),
-            &path,
-            &request_json
-        )
-        .await)
+        let request_json = json::with_run_as(&path, &request_json, user.as_deref())?;
+        if user.as_deref().is_some_and(|u| !u.is_empty()) {
+            let access = file_access(user, None);
+            env_call!(self, |c| {
+                c.require_file_features(access.run_as.as_deref(), false)
+                    .await?;
+                json::call_unary(c.channel(), &path, &request_json).await
+            })
+        } else {
+            env_call!(self, |c| json::call_unary(
+                c.channel(),
+                &path,
+                &request_json
+            )
+            .await)
+        }
     }
 
     /// Calls a server-streaming `cua.env.v1` RPC and collects at most
     /// `max_messages` responses (or until the stream ends or `timeout_ms`
     /// elapses).
+    ///
+    /// `user` acts as that guest user for `WatchDir` and `ReadFile`, as for
+    /// `call_json`.
+    #[uniffi::method(default(user = None))]
     pub async fn call_json_stream(
         &self,
         method: String,
         request_json: String,
         max_messages: u32,
         timeout_ms: u32,
+        user: Option<String>,
     ) -> Result<Vec<String>> {
         let path = json::normalize(&method)?;
+        let request_json = json::with_run_as(&path, &request_json, user.as_deref())?;
+        let access = file_access(user, None);
         env_call!(self, |c| {
+            c.require_file_features(access.run_as.as_deref(), false)
+                .await?;
             json::call_stream(
                 c.channel(),
                 &path,
@@ -935,8 +1281,8 @@ mod tests {
         }
     }
 
-    /// A long-lived client to a cloud Space: its Fleet bearer expires while
-    /// the client is held, so every media socket must carry the bearer
+    /// A long-lived client to a Space behind a gateway: its bearer expires
+    /// while the client is held, so every media socket must carry the bearer
     /// current when the socket opens, never the one from creation.
     #[tokio::test]
     async fn media_sockets_carry_the_bearer_current_at_open() {
@@ -954,12 +1300,7 @@ mod tests {
         let counter = minted.clone();
         let refresh: WsHeaderRefresh = Arc::new(move || {
             let n = counter.fetch_add(1, Ordering::SeqCst) + 1;
-            Box::pin(async move {
-                Ok(vec![
-                    ("authorization".into(), format!("Bearer fresh-{n}")),
-                    ("x-cua-fleet-claim".into(), "claim-1".into()),
-                ])
-            })
+            Box::pin(async move { Ok(vec![("authorization".into(), format!("Bearer fresh-{n}"))]) })
         });
         let stale = vec![("authorization".to_string(), "Bearer stale".to_string())];
         let client = SpacesdClient::new(inner, stale.clone()).with_ws_refresh(refresh);
@@ -980,17 +1321,15 @@ mod tests {
             }
             let log = env.media.lock().unwrap();
             assert!(log.attaches > before, "media socket never attached");
-            seen.lock()
-                .unwrap()
-                .push((log.last_authorization.clone(), log.last_claim.clone()));
+            seen.lock().unwrap().push(log.last_authorization.clone());
             drop(log);
             drop(session);
         }
         assert_eq!(
             *seen.lock().unwrap(),
             vec![
-                (Some("Bearer fresh-1".into()), Some("claim-1".into())),
-                (Some("Bearer fresh-2".into()), Some("claim-1".into())),
+                Some("Bearer fresh-1".to_string()),
+                Some("Bearer fresh-2".to_string()),
             ]
         );
         assert_eq!(minted.load(Ordering::SeqCst), 2, "one refresh per socket");

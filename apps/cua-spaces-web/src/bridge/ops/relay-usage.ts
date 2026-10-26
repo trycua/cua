@@ -55,17 +55,39 @@ export interface RelayAllowanceNotice {
   dismiss: string;
   /** A dismissal holds for this month and these reasons. */
   dismissKey: string;
+  /** `warn`: 80% of the relay hours (a prompt, held back during a live
+   * session or an agent run). `limit`: the allowance is used (always shown). */
+  level: "warn" | "limit";
+}
+
+/** `relay_usage::PlanLink`: a button that opens a page on the account app. */
+export interface PlanLink {
+  label: string;
+  url: string;
+}
+
+/** `relay_usage::PlanCard`: Settings' plan card, always there. */
+export interface PlanCard {
+  plan: "free" | "pro" | "teams" | string;
+  /** "Free plan". */
+  label: string;
+  detail: string;
+  /** "Get Pro". */
+  primary: PlanLink | null;
+  /** "Start a team". */
+  secondary: PlanLink | null;
 }
 
 /** `relay_usage::RelayUsageView`: Settings' row and the notice. */
 export interface RelayUsageView {
-  /** "Relay usage". */
+  /** "Remote use". */
   label: string;
-  /** "Live sessions 1 of 2 · Relay hours 6.5 of 20 this month". */
+  /** "Live sessions 1 of 2 · Remote hours 6.5 of 20 this month". */
   line: string;
   /** "Free plan". */
   plan: string;
   notice: RelayAllowanceNotice | null;
+  planCard: PlanCard;
 }
 
 export interface RelayUsageOps {

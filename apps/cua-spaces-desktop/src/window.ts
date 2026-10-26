@@ -5,14 +5,16 @@ import { app, BrowserWindow, ipcMain, screen, shell, type BrowserWindowConstruct
 import { existsSync, writeFileSync } from "node:fs";
 import * as path from "node:path";
 import { captureRoutes } from "./capture";
+import { opensOutside } from "./external-url";
 import { windowIconPath } from "./icon";
 import { APP_ORIGIN } from "./protocol";
 import { readSettings, writeSettings, type WindowBounds } from "./settings";
 import { DIM_CHANNEL, overlayColors, overlaySteps } from "./overlay";
 import { KEYBOARD_CHANNEL, applyKeyboard } from "./keyboard";
 import { BACKGROUND, resolvedTheme } from "./theme";
+import { showWhenReady } from "./show-when-ready";
 
-const TITLEBAR_HEIGHT = 40;
+const TITLEBAR_HEIGHT = 48;
 // Room for the macOS traffic lights at x=16 plus a gap.
 const MAC_TITLEBAR_LEFT_INSET = 78;
 const DEFAULT_SIZE = { width: 1280, height: 820 };
@@ -26,7 +28,7 @@ function titleBarOptions(): Pick<
   if (process.platform === "darwin") {
     return {
       titleBarStyle: "hiddenInset",
-      // Vertically centred on the 40px top bar (button radius ~6px).
+      // Vertically centred on the 48px top bar (button radius ~6px).
       trafficLightPosition: { x: 16, y: TITLEBAR_HEIGHT / 2 - 6 },
     };
   }
@@ -193,13 +195,13 @@ export function appWindow(options: BrowserWindowConstructorOptions): BrowserWind
   });
   syncTitlebarInset(win);
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//.test(url)) void shell.openExternal(url);
+    if (opensOutside(url)) void shell.openExternal(url);
     return { action: "deny" };
   });
   win.webContents.on("will-navigate", (event, url) => {
     if (!url.startsWith(`${APP_ORIGIN}/`)) {
       event.preventDefault();
-      if (/^https?:\/\//.test(url)) void shell.openExternal(url);
+      if (opensOutside(url)) void shell.openExternal(url);
     }
   });
   return win;
@@ -212,12 +214,14 @@ export function createMainWindow({ demo = false, remember = true }: { demo?: boo
   const bounds = hidden() ? { ...DEFAULT_SIZE, width: 1440, height: 900 } : remember ? restoredBounds() : { ...DEFAULT_SIZE };
   const win = appWindow({ ...bounds, title: "Cua Spaces" });
 
+  // performance.now() counts from process start.
   win.once("ready-to-show", () => {
-    // performance.now() counts from process start.
     readyToShowMs = performance.now();
     if (process.env.CUA_SPACES_LOG_STARTUP) {
       console.log(`[cua-spaces] ready-to-show ${readyToShowMs.toFixed(0)}ms after process start`);
     }
+  });
+  showWhenReady(win, () => {
     if (hidden()) return;
     if (bounds.maximized) win.maximize();
     win.show();

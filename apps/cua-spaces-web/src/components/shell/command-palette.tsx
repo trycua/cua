@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
+import { setExpanded } from "@/components/getting-started";
 import { useNavigate, useRouter } from "@tanstack/react-router";
 import {
   CornerDownLeftIcon,
@@ -13,20 +14,22 @@ import {
   PanelLeftIcon,
   PlusIcon,
   SearchIcon,
+  SettingsIcon,
   SparklesIcon,
   SunIcon,
   type LucideIcon,
 } from "lucide-react";
 import { useState, type KeyboardEvent } from "react";
 
-import { useBridge, useChecklist, useKeyvault, useSession, useSpaces } from "@/bridge";
+import { useBridge, useChecklist, useKeyvault, useMachines, useSession, useSpaces } from "@/bridge";
 import { OsIcon } from "@/components/os-icon";
 import { Dialog, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { Kbd, Shortcut } from "@/components/ui/kbd";
 import { toast, toastError } from "@/components/ui/toast";
 import { filterCommands, type PaletteCommand } from "@/lib/commands";
-import { osLabel, realSpaces, spaceState } from "@/lib/spaces";
+import { machineName, osLabel, paletteKeywords, realSpaces, spaceState } from "@/lib/spaces";
 import { bindingFor } from "@/lib/keybindings";
+import { SETTINGS_TABS } from "@/lib/settings-tabs";
 import { useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 import { useNewSpace } from "@/hooks/use-new-space";
@@ -54,6 +57,7 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
   const router = useRouter();
   const navigate = useNavigate();
   const { data: spaces = [], startSpace, stopSpace } = useSpaces();
+  const { data: machines = [] } = useMachines();
   const newSpace = useNewSpace();
   const { data: keyvault, lockItems } = useKeyvault();
   const { data: session, signIn, signOut } = useSession();
@@ -133,6 +137,15 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
       icon: icon(n.icon),
       run: () => void navigate({ to: n.to }),
     })),
+    // Each Settings tab, so Cmd+K finds "Connected apps" or "Trusted devices" by name.
+    ...SETTINGS_TABS.filter((t) => t.to !== "/settings").map((t) => ({
+      id: `settings:${t.to}`,
+      group: "Go to",
+      label: `Settings: ${t.label}`,
+      keywords: "preferences options",
+      icon: icon(SettingsIcon),
+      run: () => void navigate({ to: t.to }),
+    })),
     { id: "nav:onboarding", group: "Go to", label: "Onboarding", keywords: "welcome setup", icon: icon(SparklesIcon), run: () => void navigate({ to: "/onboarding" }) },
     {
       id: "nav:checklist",
@@ -142,12 +155,12 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
       icon: icon(ListChecksIcon),
       run: () => {
         checklist.reopen();
-        void navigate({ to: "/spaces" });
+        setExpanded(true);
       },
     },
     ...realSpaces(spaces).flatMap((s): Command[] => {
       const state = spaceState(s);
-      const meta = { group: "Spaces", hint: osLabel(s), keywords: `${s.os} ${state}`, icon: <OsIcon os={s.os} className="size-3.5 text-muted-foreground" /> };
+      const meta = { group: "Spaces", hint: osLabel(s), keywords: paletteKeywords(s, state, machineName(machines, s)), icon: <OsIcon os={s.os} className="size-3.5 text-muted-foreground" /> };
       const out: Command[] = [{ ...meta, id: `space:open:${s.id}`, label: `Open ${s.name}`, run: () => openSpace(s.id) }];
       if (state === "stopped") {
         out.push({ ...meta, id: `space:start:${s.id}`, label: `Start ${s.name}`, run: () => void startSpace(s.id).catch(toastError(`Couldn't start ${s.name}`)) });

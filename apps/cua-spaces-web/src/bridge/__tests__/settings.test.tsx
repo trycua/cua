@@ -72,7 +72,7 @@ describe.skipIf(!wasmBuilt)("Settings and Notifications through the core", () =>
   it("draws About from the host's version and changes the update controls", async () => {
     const { hooks } = mount(await testCore());
     await waitFor(() => expect(hooks.about.data?.view?.versionLine).toBe("Version 0.6.0 (0.6.0.142)"));
-    expect(hooks.about.data?.view?.links.map((l) => l.id)).toEqual(["acknowledgements", "privacy", "terms", "issue"]);
+    expect(hooks.about.data?.view?.links.map((l) => l.id)).toEqual(["acknowledgements", "privacy", "terms", "status", "issue"]);
     await hooks.about.setAbout({ autoCheck: false });
     await waitFor(() => expect(hooks.about.data?.view?.updates?.autoInstallEnabled).toBe(false));
     await hooks.about.setAbout({ channel: "beta" });
@@ -96,7 +96,7 @@ describe.skipIf(!wasmBuilt)("Settings and Notifications through the core", () =>
     await waitFor(() => expect(hooks.login.data?.input.status).toBe("enabled"));
     await hooks.login.setLaunchAtLogin(false);
     await waitFor(() => expect(hooks.login.data?.input.status).toBe("notRegistered"));
-    expect(hooks.login.data?.rows?.[1]?.label).toBe("This machine runs persistent agents, which stop after a restart until you open Cua Spaces.");
+    expect(hooks.login.data?.rows?.[1]?.label).toBe("This computer runs persistent agents, which stop after a restart until you open Cua Spaces.");
   });
 
   it("lists the account's devices, approves the waiting one by code and revokes another", async () => {
@@ -156,7 +156,8 @@ describe.skipIf(!wasmBuilt)("Settings and Notifications through the core", () =>
     await expect(hooks.spaces.createSpace({ image: "macos-tahoe", name: "boom", os: "macos" })).rejects.toThrow(/exceeds the limit/);
     await waitFor(() => expect(hooks.notifications.data?.unread).toBe(4));
     const texts = hooks.notifications.data!.view!.rows.map((r) => r.text);
-    expect(texts).toContain("qa-gui-linux-local is ready");
+    // With what it is, in plain words (never "VM" or "container").
+    expect(texts.find((t) => t.startsWith("qa-gui-linux-local is ready"))).toMatch(/A fresh Linux computer inside this (Mac|PC|computer)\. Your agent can use it now\./);
     // The reason in the failed row's words (the core names the macOS limit).
     expect(texts.find((t) => t.startsWith("Couldn't create boom: "))).toMatch(/This Mac is already running/);
     await hooks.notifications.markAllRead();

@@ -14,12 +14,12 @@ tools below are missing, ask the user to run `cua agents setup` or
 | Tool | Use |
 |---|---|
 | `list_spaces` | See the Spaces you can use. Start here. |
-| `create_space` | A new Space: `on` = `local` (free, the user's machine), `cloud` (metered), or `host:<name>` (one of the user's machines set up with `cua host setup`); `reuse: true` returns a reachable one first. |
+| `create_space` | A new Space: `on` = `local` (free, the user's machine), `aws`, `gcp` or `modal` (the user's own cloud account, billed there), or `host:<name>` (one of the user's machines set up with `cua host setup`); `reuse: true` returns a reachable one first. |
 | `add_space` / `remove_space` | Register an existing machine by URL and token, or forget one without deleting it. |
-| `delete_space` | Delete a Space's sandbox and stop metering. |
+| `delete_space` | Delete a Space's sandbox and stop its cost. |
 | `stop_space` / `start_space` | Turn a local Space (or one your machines provide) off and back on: suspended or stopped, as `power` in `list_spaces` says. |
 
-Prefer an existing Space. A cloud Space costs money: delete the ones you
+Prefer an existing Space. A Space in the user's own cloud account costs money: delete the ones you
 created when the task ends.
 
 ## Work in it
@@ -85,3 +85,10 @@ running at that address (`add_space`) and cannot host new ones.
 - Only start a hotspot when the Space needs the host's network (VPN,
   intranet), and stop it afterwards.
 - Name the Space you used in your answer.
+
+## Links to things you ran
+
+Any link to something you ran (preview, dashboard, file): use `cua share`, never localhost; open it once to check it works before sending.
+
+The `share` tool (or `cua share 3000`, `cua share space:dev:3000`, `cua share ./report.html`) returns a link that opens on the user's other signed-in devices, phone included. It checks the link loads and reports `check.ok`; do not send a link whose check failed. Links are private by default; use `access: "public"` with a `ttl` only when the user wants anyone to open it. `share_list` and `share_stop` manage them.
+

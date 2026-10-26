@@ -384,7 +384,8 @@ describe("<StreamSurface> in the Electron shell", () => {
       await waitFor(() => expect(view.container.querySelector('[data-stream-state="failed"]')).toBeTruthy());
       expect(calls).toHaveLength(1);
       await waitFor(() => expect(toasts()).toBe(1));
-      expect(view.getByText("scripted provider failure")).toBeTruthy();
+      // In the toast, and on the cover under "Could not connect".
+      expect(view.getAllByText("scripted provider failure")).toHaveLength(2);
       // A poll (the page drawn again) does not try again.
       view.rerender(ui());
       await new Promise((r) => setTimeout(r, 20));
@@ -421,7 +422,7 @@ describe("<StreamSurface> in the Electron shell", () => {
   });
 
   // The SwiftUI app's DetailApprovalTests: the open detail follows this device's approval.
-  const NOTICE: MachineAccessNotice = { kind: "needs-enrollment", status: "Not enrolled", text: "Enroll this Mac to connect to your other machines.", actionLabel: "Enroll This Mac…" };
+  const NOTICE: MachineAccessNotice = { kind: "needs-enrollment", status: "Not enrolled", text: "Enroll this Mac to connect to your other computers.", actionLabel: "Enroll This Mac…" };
   const withAccess = () => {
     const adapter = createDemoAdapter({ latencyMs: 1 });
     const ui = (access: MachineAccessNotice | null) => (

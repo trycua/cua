@@ -351,7 +351,9 @@ impl Harness {
         );
         match (self.logins, self.cli) {
             (Some(l), Some(cli)) if !l.is_empty() => {
-                s.push_str(&format!(", or sign in by running `{cli}` inside the Space"));
+                s.push_str(&format!(
+                    ", or sign in by running `~/.cua/bin/{cli}` inside the Space"
+                ));
             }
             (None, _) => s.push_str(&format!(", or configure {} inside the Space", self.name)),
             _ => {}

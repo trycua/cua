@@ -25,8 +25,20 @@
 //! relay sees it connected. A device that matches no machine is listed on
 //! its own, marked `device_only`: it is not a host, so New Space's "Run
 //! on" never offers it.
+//!
+//! [`page_rows`] is the whole Machines page from what a shell has: this
+//! machine, the machines its Spaces list shows (a machine sharing its own
+//! desktop, `relay:<machine>`, and a machine that provides Spaces), what
+//! the relay says of each, and the account's devices, merged. Every UI
+//! (the SwiftUI app, the web UI in the Mac app and in Electron) lists
+//! these rows.
+
+use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
+
+use crate::host::THIS_MACHINE_ID;
+use crate::model::{Space, SpaceOs, SpaceProvider, SpaceStatus};
 
 /// A device whose last session is this recent counts as online.
 pub const DEVICE_ONLINE_SECS: u64 = 15 * 60;
@@ -290,6 +302,313 @@ pub fn run_on_ids(rows: &[MachineOut]) -> Vec<String> {
         .collect()
 }
 
+/// What [`page_rows`] reads: what a shell knows of its machines.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MachinesPageInput {
+    /// The system this app runs on (names the first row "This Mac").
+    #[serde(default = "this_host_os")]
+    pub host_os: SpaceOs,
+    /// The Spaces list as the shell has it (registry rows as Spaces).
+    #[serde(default)]
+    pub spaces: Vec<Space>,
+    /// The account's devices (none while signed out).
+    #[serde(default)]
+    pub devices: Vec<DeviceIn>,
+    /// The hostname each machine's cua-spacesd reported, by machine id.
+    #[serde(default)]
+    pub hostnames: std::collections::HashMap<String, String>,
+    /// Whether the relay sees each machine connected now, by machine id.
+    #[serde(default)]
+    pub presence: std::collections::HashMap<String, bool>,
+    /// Unix seconds.
+    #[serde(default)]
+    pub now: u64,
+}
+
+fn this_host_os() -> SpaceOs {
+    SpaceOs::Macos
+}
+
+impl Default for MachinesPageInput {
+    fn default() -> Self {
+        Self {
+            host_os: this_host_os(),
+            spaces: vec![],
+            devices: vec![],
+            hostnames: HashMap::new(),
+            presence: HashMap::new(),
+            now: 0,
+        }
+    }
+}
+
+/// One row of the Machines page.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MachinePageRow {
+    /// The machine's id (`this-mac`, a relay machine id), or the device's
+    /// id for a device of its own.
+    pub id: String,
+    /// What the page calls it.
+    pub name: String,
+    /// Reached, connected to the relay, or (a device of its own) in a
+    /// session in the last [`DEVICE_ONLINE_SECS`].
+    pub online: bool,
+    /// `macos`, `linux`, `windows`, or empty when unknown.
+    pub os: String,
+    /// `local` (this machine) or `relay`.
+    pub via: String,
+    /// The machine this app runs on.
+    pub current: bool,
+    /// The device listed in this row, if any.
+    pub device: Option<String>,
+    /// A device that is none of the machines: listed, never a "Run on"
+    /// choice, and it has no Spaces or desktop of its own here.
+    pub device_only: bool,
+    /// The Spaces list's row that is this machine's own desktop
+    /// (`this-mac`, `relay:<machine>`), when there is one: the classic
+    /// UI's detail for it.
+    pub space_id: Option<String>,
+    /// Online, but its owner stopped sharing it.
+    pub stopped_sharing: bool,
+    /// The device's last session (Unix seconds), when it has a device.
+    pub last_seen: Option<u64>,
+    /// The row's status word, the same in every UI ([`status_word`]):
+    /// "Online", "Not sharing" or "Offline".
+    #[serde(default)]
+    pub status: String,
+    /// The Spaces it runs that the Spaces list shows: this machine's local
+    /// Spaces, or the Spaces another machine provides (`host`).
+    #[serde(default)]
+    pub spaces: u32,
+    /// "1 Space", "3 Spaces", "No Spaces" ([`spaces_label`]); empty for a
+    /// device of its own, which runs no Spaces.
+    #[serde(default)]
+    pub spaces_label: String,
+}
+
+/// A machine that is reachable from here.
+pub const ONLINE: &str = "Online";
+/// A machine that is connected to the relay but whose owner stopped
+/// sharing it (the relay's own word for it, and New Space's "(not
+/// sharing)"): every call to it is refused.
+pub const NOT_SHARING: &str = "Not sharing";
+/// A machine the app did not reach and the relay does not see connected.
+pub const OFFLINE: &str = "Offline";
+
+/// A Machines row's status word. A machine is not a Space: it is never
+/// "Suspended" or "Not reachable", only online, online but not sharing,
+/// or offline.
+pub fn status_word(online: bool, stopped_sharing: bool) -> &'static str {
+    match (online, stopped_sharing) {
+        (false, _) => OFFLINE,
+        (true, true) => NOT_SHARING,
+        (true, false) => ONLINE,
+    }
+}
+
+/// "1 Space", "3 Spaces", "No Spaces".
+pub fn spaces_label(n: u32) -> String {
+    match n {
+        0 => "No Spaces".into(),
+        1 => "1 Space".into(),
+        n => format!("{n} Spaces"),
+    }
+}
+
+/// The Spaces on a machine: this machine's local Spaces, or those another
+/// machine provides (the classic UI's `hosted_rows`). A machine's own
+/// desktop is not one of them.
+fn spaces_on(spaces: &[Space], id: &str, current: bool) -> u32 {
+    let n = spaces
+        .iter()
+        .filter(|s| {
+            if current {
+                s.provider == Some(SpaceProvider::Local) && s.id != THIS_MACHINE_ID
+            } else {
+                s.host.as_deref() == Some(id)
+            }
+        })
+        .count();
+    u32::try_from(n).unwrap_or(u32::MAX)
+}
+
+/// A Space's error says its machine refused because its owner stopped
+/// sharing it (the web UI's `STOPPED_SHARING_ERROR`).
+fn says_stopped_sharing(space: &Space) -> bool {
+    space
+        .sdk
+        .as_ref()
+        .and_then(|s| s.error.as_deref())
+        .is_some_and(|e| e.to_lowercase().contains("stopped sharing"))
+}
+
+/// The machine whose own desktop `space` is (`relay:<machine>`, no host
+/// above it), if it is one.
+fn own_desktop(space: &Space) -> Option<&str> {
+    if space.provider != Some(SpaceProvider::Relay) || space.host.is_some() {
+        return None;
+    }
+    space
+        .id
+        .strip_prefix("relay:")
+        .filter(|own| !own.is_empty() && !own.contains('/') && !own.starts_with("space-"))
+}
+
+/// A Space's system as a machine's `os`: empty when unknown, so it never
+/// keeps a machine and its device apart.
+fn os_word(os: SpaceOs) -> String {
+    match os {
+        SpaceOs::Unknown => String::new(),
+        os => os.as_str().into(),
+    }
+}
+
+/// The Machines page: this machine first, then the machines the Spaces
+/// list shows (in its order), then the account's devices that are none
+/// of them; each computer once ([`merge`]).
+pub fn page_rows(input: &MachinesPageInput) -> Vec<MachinePageRow> {
+    struct Extra {
+        via: &'static str,
+        space_id: Option<String>,
+        stopped_sharing: bool,
+    }
+    let mut machines = vec![MachineIn {
+        id: THIS_MACHINE_ID.into(),
+        name: input.host_os.this_machine().into(),
+        online: true,
+        os: os_word(input.host_os),
+        current: true,
+        ..Default::default()
+    }];
+    let mut extra = vec![Extra {
+        via: "local",
+        space_id: input
+            .spaces
+            .iter()
+            .find(|s| s.id == THIS_MACHINE_ID)
+            .map(|s| s.id.clone()),
+        stopped_sharing: false,
+    }];
+    for space in &input.spaces {
+        if let Some(own) = own_desktop(space) {
+            // A machine that refused because its owner stopped sharing it
+            // is connected (that is how it refused), not offline.
+            let stopped = says_stopped_sharing(space);
+            let online =
+                matches!(space.status, SpaceStatus::Running | SpaceStatus::Local) || stopped;
+            let row = MachineIn {
+                id: own.into(),
+                name: space.name.clone(),
+                online,
+                os: os_word(space.os),
+                ..Default::default()
+            };
+            let e = Extra {
+                via: "relay",
+                space_id: Some(space.id.clone()),
+                stopped_sharing: stopped,
+            };
+            match machines.iter().position(|m| m.id == own) {
+                Some(i) if !machines[i].current => {
+                    machines[i] = row;
+                    extra[i] = e;
+                }
+                Some(_) => {}
+                None => {
+                    machines.push(row);
+                    extra.push(e);
+                }
+            }
+            continue;
+        }
+        let Some(host) = space.host.as_deref().filter(|h| !h.is_empty()) else {
+            continue;
+        };
+        if machines.iter().any(|m| m.id == host) {
+            continue;
+        }
+        machines.push(MachineIn {
+            id: host.into(),
+            name: space.host_name.clone().unwrap_or_else(|| host.into()),
+            online: true,
+            ..Default::default()
+        });
+        extra.push(Extra {
+            via: "relay",
+            space_id: None,
+            stopped_sharing: false,
+        });
+    }
+    for m in machines.iter_mut() {
+        if let Some(h) = input.hostnames.get(&m.id).filter(|h| !h.is_empty()) {
+            m.hostname = Some(h.clone());
+        }
+        if !m.current {
+            m.presence = input.presence.get(&m.id).copied();
+        }
+    }
+    let merged = merge(&MachinesInput {
+        machines: machines.clone(),
+        devices: input.devices.clone(),
+        now: input.now,
+    });
+    merged
+        .into_iter()
+        .map(|r| {
+            let device = r
+                .device
+                .as_deref()
+                .and_then(|d| input.devices.iter().find(|x| x.id == d));
+            let last_seen = device.and_then(|d| d.last_seen);
+            if r.device_only {
+                return MachinePageRow {
+                    os: device.map(|d| platform_os(&d.platform)).unwrap_or_default(),
+                    via: "relay".into(),
+                    space_id: None,
+                    stopped_sharing: false,
+                    last_seen,
+                    status: status_word(r.online, false).into(),
+                    spaces: 0,
+                    spaces_label: String::new(),
+                    id: r.id,
+                    name: r.name,
+                    online: r.online,
+                    current: false,
+                    device: r.device,
+                    device_only: true,
+                };
+            }
+            let i = machines.iter().position(|m| m.id == r.id).unwrap_or(0);
+            let m = &machines[i];
+            let os = if m.os.is_empty() {
+                device.map(|d| platform_os(&d.platform)).unwrap_or_default()
+            } else {
+                m.os.clone()
+            };
+            let stopped_sharing = extra[i].stopped_sharing && r.online;
+            let spaces = spaces_on(&input.spaces, &r.id, r.current);
+            MachinePageRow {
+                os,
+                via: extra[i].via.into(),
+                space_id: extra[i].space_id.clone(),
+                stopped_sharing,
+                last_seen,
+                status: status_word(r.online, stopped_sharing).into(),
+                spaces,
+                spaces_label: spaces_label(spaces),
+                id: r.id,
+                name: r.name,
+                online: r.online,
+                current: r.current,
+                device: r.device,
+                device_only: false,
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -469,6 +788,142 @@ mod tests {
         assert_eq!(run_on_ids(&rows), ["m1"]);
     }
 
+    fn space(v: serde_json::Value) -> Space {
+        let mut base = serde_json::json!({
+            "name": "", "os": "linux", "status": "running", "detail": "",
+            "lastUsedAt": 0, "scene": "linux-terminal"
+        });
+        for (k, val) in v.as_object().unwrap() {
+            base[k] = val.clone();
+        }
+        serde_json::from_value(base).unwrap()
+    }
+
+    #[test]
+    fn the_page_lists_this_machine_its_machines_and_devices_of_their_own() {
+        let mut current = device("dev_me", "juno-2.example.com");
+        current.current = true;
+        let rows = page_rows(&MachinesPageInput {
+            spaces: vec![
+                space(
+                    serde_json::json!({"id": "this-mac", "name": "This Mac", "os": "macos", "status": "local"}),
+                ),
+                space(
+                    serde_json::json!({"id": "local:fbd1", "name": "fbd1", "status": "suspended", "provider": "local"}),
+                ),
+                // A machine sharing its desktop; its system unknown.
+                space(serde_json::json!({
+                    "id": "relay:b695", "name": "studio.local", "os": "unknown",
+                    "status": "suspended", "provider": "relay",
+                    "sdk": {"features": [], "spacesdVersion": "", "reachable": false,
+                            "error": "unauthenticated: studio.local stopped sharing: ask its owner"}
+                })),
+                // A Space a machine provides, with no row of its own.
+                space(serde_json::json!({
+                    "id": "relay:m-mini/space-1", "name": "dev box", "status": "running",
+                    "provider": "relay", "host": "m-mini", "hostName": "Spare mini"
+                })),
+            ],
+            devices: vec![
+                current,
+                device("dev_s", "studio.local"),
+                device("dev_lap", "Laptop"),
+            ],
+            presence: [("m-mini".to_string(), false)].into(),
+            now: NOW,
+            ..Default::default()
+        });
+        let lines: Vec<String> = rows
+            .iter()
+            .map(|r| {
+                format!(
+                    "{} {} {} {} {:?} {:?} {}",
+                    r.name, r.via, r.os, r.online, r.device, r.space_id, r.device_only
+                )
+            })
+            .collect();
+        assert_eq!(
+            lines,
+            [
+                "This Mac local macos true Some(\"dev_me\") Some(\"this-mac\") false",
+                // Unknown system, same name: one computer; online, since it
+                // refused because its owner stopped sharing.
+                "studio.local relay macos true Some(\"dev_s\") Some(\"relay:b695\") false",
+                "Spare mini relay  true None None false",
+                "Laptop relay macos false Some(\"dev_lap\") None true",
+            ]
+        );
+        assert!(rows[1].stopped_sharing);
+        assert_eq!(rows[3].last_seen, Some(NOW - 3_600));
+        assert_eq!(run_on_ids(&merge_rows(&rows)), ["b695", "m-mini"]);
+        // One status word and Spaces count per row, for every UI.
+        let words: Vec<(&str, &str)> = rows
+            .iter()
+            .map(|r| (r.status.as_str(), r.spaces_label.as_str()))
+            .collect();
+        assert_eq!(
+            words,
+            [
+                ("Online", "1 Space"),
+                ("Not sharing", "No Spaces"),
+                ("Online", "1 Space"),
+                ("Offline", ""),
+            ]
+        );
+    }
+
+    /// CUA-1617: your other Mac stopped sharing; the relay lists its
+    /// desktop as unreachable (a Space would read "Suspended") and it
+    /// provides no Spaces. Every UI says "Not sharing" and "No Spaces",
+    /// never a Space's "Suspended" or "Not reachable".
+    #[test]
+    fn a_machine_that_stopped_sharing_reads_not_sharing_with_no_spaces() {
+        let rows = page_rows(&MachinesPageInput {
+            spaces: vec![space(serde_json::json!({
+                "id": "relay:b695", "name": "Dillons-MacBook-Pro-2.local", "os": "macos",
+                "status": "suspended", "provider": "relay",
+                "sdk": {"features": [], "spacesdVersion": "", "reachable": false,
+                        "error": "unauthenticated: Dillons-MacBook-Pro-2.local stopped sharing: ask its owner to Resume sharing (or run `cua host start` there)"}
+            }))],
+            presence: [("b695".to_string(), false)].into(),
+            now: NOW,
+            ..Default::default()
+        });
+        let r = &rows[1];
+        assert_eq!(
+            (
+                r.online,
+                r.status.as_str(),
+                r.spaces,
+                r.spaces_label.as_str()
+            ),
+            (true, NOT_SHARING, 0, "No Spaces")
+        );
+        // Unreachable without a refusal: offline, not "Suspended".
+        let rows = page_rows(&MachinesPageInput {
+            spaces: vec![space(serde_json::json!({
+                "id": "relay:b695", "name": "studio", "os": "macos",
+                "status": "suspended", "provider": "relay"
+            }))],
+            ..Default::default()
+        });
+        assert_eq!(rows[1].status, OFFLINE);
+        assert_eq!(spaces_label(3), "3 Spaces");
+    }
+
+    fn merge_rows(rows: &[MachinePageRow]) -> Vec<MachineOut> {
+        rows.iter()
+            .map(|r| MachineOut {
+                id: r.id.clone(),
+                name: r.name.clone(),
+                online: r.online,
+                device: r.device.clone(),
+                device_only: r.device_only,
+                current: r.current,
+            })
+            .collect()
+    }
+
     /// Every "Run on" choice the page makes from the merged rows is a
     /// machine `on="host:<id>"` resolves (a relay machine's id), never a
     /// device's.
@@ -502,10 +957,10 @@ mod tests {
                     online: r.online,
                     os: "macos".into(),
                     limits: vec![],
+                    load: None,
                 })
                 .collect(),
             default_location: Location::Local,
-            cloud_available: false,
             local_available: true,
             local_reason: None,
             local_backends: Some(vec!["docker".into()]),
@@ -515,10 +970,10 @@ mod tests {
             lume_source: None,
             linux_source: None,
             storage: None,
-            cloud_pricing: None,
             clouds: vec![],
             experiments: crate::experiments::Experiments::default(),
             gpus: None,
+            name_seed: None,
         };
         let state = wizard::initial(&env);
         let offered: Vec<String> = wizard::placement_options(&state, &env)

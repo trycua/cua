@@ -116,7 +116,9 @@ fn lines(report: &serde_json::Value) -> Vec<String> {
     }
     let keys = report["keys"].as_array().cloned().unwrap_or_default();
     if keys.is_empty() {
-        v.push("No agent keys saved. Add one with: pbpaste | cua agent keys set anthropic".into());
+        v.push(crate::util::hint(
+            "No agent keys saved. Add one with: pbpaste | cua agent keys set anthropic",
+        ));
     }
     for k in keys {
         let last4 = k["last4"].as_str().unwrap_or("");

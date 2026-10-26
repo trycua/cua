@@ -34,6 +34,9 @@ def test_driver_nightly_publishes_only_after_the_desktop_e2e_gate():
     # The builder's E2E gate jobs need actions: read from the nightly caller.
     assert "permissions:\n  # actions: read" in nightly
     assert "\n  actions: read\n" in nightly
+    # The builder's tag-only `staging-gate` job asks for statuses: read. The
+    # caller must grant it or the run ends as startup_failure (20 to 24 Oct).
+    assert "\n  statuses: read\n" in nightly
     # Nightly builds run the same suites as the stable tag push, against the
     # exact nightly source rather than the caller's workflow revision.
     build = nightly.split("\n  build:\n", 1)[1].split("\n\n", 1)[0]
@@ -123,9 +126,13 @@ def test_planner_requires_main_ancestry_and_preserves_immutable_evidence():
     assert "attribution_base_tag" in planner
     assert "attribution_issues" in planner
     assert "--attribution-config .github/release-attribution-config.json" in planner
-    assert "needs.plan.outputs.reason == 'held-attribution'" in planner
-    assert "gh issue create" in planner
-    assert "gh issue edit" in planner
+    assert "held-attribution" not in planner
+    assert "report-attribution-warning" in planner
+    assert "needs.plan.outputs.attribution_issues != '[]'" in planner
+    assert "GITHUB_STEP_SUMMARY" in planner
+    # One rolling issue; a failed report must never fail the reusable planner.
+    assert "name: Refresh the rolling unresolved-attribution issue\n        continue-on-error: true" in planner
+    assert "release_attribution.py report-unresolved" in planner
     assert "cancel-in-progress: false" in source("nightly-cua-driver.yml")
     assert "cancel-in-progress: false" in source("nightly-lume.yml")
 

@@ -1,6 +1,6 @@
 name: "CI: CLA"
 
-# Asks each pull request author to accept CLA.md once. Signatures are stored as
+# Asks each pull request author to accept legal/CLA.md once. Signatures are stored as
 # JSON on the `cla-signatures` branch of this repository, not on main.
 # pull_request_target is used so the check can comment on fork pull requests;
 # the job never checks out or runs pull request code.
@@ -31,12 +31,36 @@ jobs:
       (github.event.comment.body == 'recheck' ||
       github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA'))
     steps:
+      # The action stores signatures on the `cla-signatures` branch but cannot
+      # create that branch. Without it every run fails with "Branch
+      # cla-signatures not found", even when every author is on the allowlist
+      # (cua-staging never had the branch). Start it once, empty.
+      - name: Create the signatures branch if it is missing
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if gh api "repos/$REPO/branches/cla-signatures" --silent 2>/dev/null; then
+            exit 0
+          fi
+          blob=$(gh api "repos/$REPO/git/blobs" -f content='{"signedContributors": []}' -f encoding=utf-8 --jq .sha)
+          tree=$(gh api "repos/$REPO/git/trees" -f 'tree[][path]=signatures/version1/cla.json' \
+            -f 'tree[][mode]=100644' -f 'tree[][type]=blob' -f "tree[][sha]=$blob" --jq .sha)
+          commit=$(gh api "repos/$REPO/git/commits" -f message="Start the CLA signatures branch" -f "tree=$tree" --jq .sha)
+          gh api "repos/$REPO/git/refs" -f ref=refs/heads/cla-signatures -f "sha=$commit" --silent
+          echo "Created cla-signatures at $commit"
+
       - name: Check CLA signatures
         uses: contributor-assistant/github-action@ca4a40a7d1004f18d9960b404b97e5f30a505a08 # v2.6.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           path-to-signatures: "signatures/version1/cla.json"
-          path-to-document: "https://github.com/${{ github.repository }}/blob/main/CLA.md"
+          path-to-document: "https://github.com/${{ github.repository }}/blob/main/legal/CLA.md"
           branch: "cla-signatures"
-          allowlist: "f-trycua,francedot,injaneity,ddupont808,0xjohnnydev,JaiCode08,cuaclaw,dependabot[bot],github-actions[bot],release-please[bot],cua-release-bot[bot],trycua-release[bot]"
+          # The action locks every merged PR by default. A locked release PR
+          # (labelled `autorelease: pending`) makes release-please die when it
+          # comments on it, so it can never open the next release PR.
+          lock-pullrequest-aftermerge: false
+          allowlist: "f-trycua,francedot,injaneity,ddupont808,0xjohnnydev,cuaclaw,dependabot[bot],github-actions[bot],release-please[bot],cua-release-bot[bot],trycua-release[bot],cua-agents[bot]"

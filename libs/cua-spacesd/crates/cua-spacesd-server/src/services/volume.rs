@@ -23,6 +23,11 @@
 //!   letter (`V:` by default), found through a loopback portmapper; see
 //!   [`super::volume_windows`].
 //!
+//! Named volumes ride along: `AttachVolumeRequest.binds` names folders of
+//! the volume to make available at other paths once it is mounted (bind
+//! mounts on Linux, links on macOS; see [`super::volume_bind`]). They end
+//! before the mount does, and a failed one fails the mount.
+//!
 //! The mount goes away when the socket closes, on `DetachVolume`, on
 //! session revocation and at shutdown. A guest without the backend (no
 //! `/dev/fuse`, no `mount_nfs`, Windows without the preview) reports
@@ -57,12 +62,15 @@ use crate::auth::{caller, TicketScope};
 use crate::context::ServerContext;
 use crate::error::{session_not_found, status};
 use crate::services::tunnel::{refuse, ticket_path, with_protocol};
+use crate::services::volume_bind::{self, Bind};
 use crate::util::duration;
 
 /// Default ticket lifetime.
 pub const VOLUME_DEFAULT_TTL: Duration = Duration::from_secs(60);
 /// The capability feature.
 pub const FEATURE: &str = "volume.mount";
+/// The capability feature of `AttachVolumeRequest.binds`.
+pub const BINDS_FEATURE: &str = "volume.binds";
 /// How long a mount may take before it is reported as failed.
 const MOUNT_TIMEOUT: Duration = Duration::from_secs(20);
 
@@ -162,6 +170,10 @@ struct Session {
     via_helper: std::sync::atomic::AtomicBool,
     /// The Windows mount (its drive, folder link and portmapper).
     windows: Mutex<Option<super::volume_windows::WinMount>>,
+    /// Folders of the volume to bind once it is mounted.
+    binds: Vec<Bind>,
+    /// Targets of the binds in place.
+    bound: Mutex<Vec<PathBuf>>,
 }
 
 impl Session {
@@ -246,6 +258,8 @@ impl VolumeShared {
     /// (it exited without unmounting; nothing serves it, so every access
     /// hangs until the NFS client gives up). Never blocks start-up for long.
     pub async fn clear_stale_mount(&self) {
+        // Binds first: they hold the volume busy.
+        let _ = tokio::time::timeout(Duration::from_secs(30), volume_bind::clear_stale()).await;
         let _ = tokio::time::timeout(Duration::from_secs(30), clear_stale_mounts()).await;
         // Linux images ship an empty, writable /volume for the mount. In a
         // guest that cannot mount (a container on runc has no /dev/fuse) it
@@ -292,7 +306,7 @@ pub fn seal_unusable_dir(dir: &Path, why: &str) -> std::io::Result<bool> {
         "Cua Volume is not mounted in this Space: {why}.\n\
          Nothing can be saved here; this folder is read-only so nothing is lost\n\
          by writing to it. Use the Cua Volume through the volume tools of the\n\
-         machine that runs this Space, or create the Space with gVisor or as a VM.\n"
+         computer that runs this Space, or create the Space with gVisor or as a VM.\n"
     );
     let mode = std::fs::metadata(dir)?.permissions().mode() & 0o777;
     if mode & 0o222 == 0 && std::fs::read_to_string(&note).ok().as_deref() == Some(&body) {
@@ -563,6 +577,8 @@ async fn mount(session: &Arc<Session>) -> Result<(), String> {
 
 async fn unmount(session: &Arc<Session>, client_attached: bool) {
     let path = &session.mount_path;
+    let bound = std::mem::take(&mut *session.bound.lock().expect("bound"));
+    volume_bind::release(&bound).await;
     if cfg!(windows) {
         let m = session.windows.lock().expect("windows").take();
         match m {
@@ -619,6 +635,11 @@ pub const HELPER_SOCKET: &str = "/run/cua/volume.sock";
 
 /// One request to the root volume helper.
 async fn helper_request(op: &str, port: u16, path: &Path) -> Result<(), String> {
+    helper_call(serde_json::json!({ "op": op, "port": port, "path": path })).await
+}
+
+/// One JSON request to the root volume helper (see `HelperRequest`).
+pub(crate) async fn helper_call(request: serde_json::Value) -> Result<(), String> {
     #[cfg(unix)]
     {
         use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _};
@@ -626,10 +647,7 @@ async fn helper_request(op: &str, port: u16, path: &Path) -> Result<(), String> 
             .await
             .map_err(|e| format!("the volume helper ({HELPER_SOCKET}): {e}"))?;
         let (read, mut write) = stream.into_split();
-        let mut req = serde_json::to_vec(&serde_json::json!({
-            "op": op, "port": port, "path": path,
-        }))
-        .map_err(|e| e.to_string())?;
+        let mut req = serde_json::to_vec(&request).map_err(|e| e.to_string())?;
         req.push(b'\n');
         write.write_all(&req).await.map_err(|e| e.to_string())?;
         let mut line = String::new();
@@ -653,7 +671,7 @@ async fn helper_request(op: &str, port: u16, path: &Path) -> Result<(), String> 
     }
     #[cfg(not(unix))]
     {
-        let _ = (op, port, path);
+        let _ = request;
         Err("no volume helper on this platform".into())
     }
 }
@@ -699,6 +717,7 @@ impl VolumeService for VolumeServiceImpl {
         if !mount_path.is_absolute() {
             return Err(crate::error::invalid("mount_path must be absolute"));
         }
+        let binds = volume_bind::plan(&mount_path, &body.binds).map_err(crate::error::invalid)?;
         self.state.detach(None).await;
         // Windows: the NFS port where a client that skips the portmapper
         // looks, when it is free.
@@ -759,6 +778,8 @@ impl VolumeService for VolumeServiceImpl {
             helper: Mutex::new(None),
             via_helper: std::sync::atomic::AtomicBool::new(false),
             windows: Mutex::new(None),
+            binds,
+            bound: Mutex::new(vec![]),
         }));
         Ok(GrpcResponse::new(AttachVolumeResponse {
             volume_id: id,
@@ -795,6 +816,13 @@ impl VolumeService for VolumeServiceImpl {
         };
         let phase = s.phase.lock().expect("phase").clone();
         let stats = s.hub.stats();
+        let binds: Vec<String> = {
+            let bound = s.bound.lock().expect("bound");
+            bound
+                .iter()
+                .map(|p| p.to_string_lossy().into_owned())
+                .collect()
+        };
         Ok(GrpcResponse::new(GetVolumeStatusResponse {
             state: phase.state as i32,
             volume_id: s.id.clone(),
@@ -804,6 +832,7 @@ impl VolumeService for VolumeServiceImpl {
             active_streams: stats.active_connections.load(Ordering::SeqCst),
             bytes_out: stats.bytes_out.load(Ordering::Relaxed),
             bytes_in: stats.bytes_in.load(Ordering::Relaxed),
+            binds,
         }))
     }
 }
@@ -859,7 +888,11 @@ pub async fn volume_ws(
                         tokio::time::sleep(Duration::from_millis(20)).await;
                     }
                     s.set(VolumeState::Mounting, "");
-                    match mount(&s).await {
+                    let made = match mount(&s).await {
+                        Ok(()) => bind_folders(&s).await,
+                        Err(e) => Err(e),
+                    };
+                    match made {
                         Ok(()) => {
                             s.set(VolumeState::Mounted, "");
                             tracing::info!(volume = %s.id, path = %s.mount_path.display(), backend = s.backend, "volume mounted");
@@ -879,6 +912,25 @@ pub async fn volume_ws(
             // The client left: nothing serves the mount any more.
             state.detach(Some(&session.id)).await;
         })
+}
+
+/// Makes the named volumes' binds once the volume is mounted. A bind that
+/// fails takes the mount down with it, so the Space never half-has them.
+async fn bind_folders(session: &Arc<Session>) -> Result<(), String> {
+    if session.binds.is_empty() {
+        return Ok(());
+    }
+    match volume_bind::apply(&session.binds).await {
+        Ok(done) => {
+            *session.bound.lock().expect("bound") = done;
+            Ok(())
+        }
+        Err(e) => {
+            // Without its binds the mount is of no use: let go of it.
+            unmount(session, session.hub.is_connected()).await;
+            Err(e)
+        }
+    }
 }
 
 /// Whether this process runs as root (always false off Unix).

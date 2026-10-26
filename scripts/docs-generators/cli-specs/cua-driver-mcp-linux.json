@@ -437,7 +437,7 @@
    "read_only": false
   },
   {
-   "description": "Resolve an exact application-menu path one live native level at a time and invoke its final item through accessibility APIs. Missing, ambiguous, disabled, or structurally mismatched segments fail closed; this tool never falls back to pixels.",
+   "description": "Resolve an exact application-menu path one live native level at a time and invoke its final item through accessibility APIs. Missing, ambiguous, disabled, or structurally mismatched segments fail closed; this tool never falls back to pixels. Menu paths and refusals: `get_guide({topic:\"menus\"})`.",
    "destructive": true,
    "idempotent": false,
    "input_schema": {
@@ -746,7 +746,7 @@
    "read_only": false
   },
   {
-   "description": "Press-drag-release gesture from (from_x, from_y) to (to_x, to_y) in window-local screenshot pixels. Background delivery on X11 is one real held gesture on the session's virtual master pointer (path mpx_pointer: press, interpolated motion, release) — it lands on GTK/VCL/Qt/Chromium; a point covered by another application's window is refused (target_occluded), one covered by this app's own dialog is retargeted to it. Headless servers fall back to XSendEvent. duration_ms (default 500), steps (default 20). No focus steal.",
+   "description": "Press-drag-release gesture from (from_x, from_y) to (to_x, to_y) in window-local screenshot pixels. Background delivery on X11 is one real held gesture on the session's virtual master pointer (path mpx_pointer: press, interpolated motion, release) — it lands on GTK/VCL/Qt/Chromium; a point covered by another application's window is refused (target_occluded), one covered by this app's own dialog is retargeted to it. Headless servers fall back to XSendEvent. duration_ms (default 500), steps (default 20). No focus steal. Limits and fallbacks: `get_guide({topic:\"drag\"})`.",
    "destructive": true,
    "idempotent": false,
    "input_schema": {
@@ -2053,12 +2053,16 @@
    "read_only": false
   },
   {
-   "description": "Check required permissions for cua-driver-rs on Linux.",
+   "description": "Check required permissions for cua-driver-rs on Linux. How to get them granted: `get_guide({topic:\"permissions\"})`.",
    "destructive": false,
    "idempotent": true,
    "input_schema": {
     "additionalProperties": false,
     "properties": {
+     "prompt": {
+      "description": "Ignored: Linux has no permission prompts.",
+      "type": "boolean"
+     },
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
       "type": "string"
@@ -2070,7 +2074,7 @@
    "read_only": true
   },
   {
-   "description": "Single-call end-to-end driver diagnostics. Designed to let downstream consumers ship one stable call instead of stitching together check_permissions, doctor, version, bundle attribution, and platform capability status. On macOS, prompt-capable direct capture is deliberately skipped. For standalone CuaDriver, use `cua-driver permissions grant` to verify it explicitly. For an embedded or linked driver, use the host's permission flow for the app or executable macOS attributes this process's permission request to; the standalone command does not verify the host's capture readiness. cua-driver owns the health model; consumers stay thin.\n\nInput — all optional:\n  {\n    \"include\": [\"<check_name>\", ...],   // run only these\n    \"skip\":    [\"<check_name>\", ...]    // skip these\n  }\nIf both are given, `include` wins.\n\nCanonical check names:\n  macOS  : binary_version, platform_supported, session_active,\n           bundle_identity, tcc_accessibility, tcc_screen_recording,\n           ax_capability, screen_capture_capability\n  Windows: binary_version, platform_supported, session_active,\n           ax_capability (via UIA), screen_capture_capability (via DXGI)\n  Linux  : binary_version, platform_supported, session_active,\n           ax_capability (via AT-SPI), screen_capture_capability (via X11)\n\nOutput — stable contract, schema_version=\"1\":\n  {\n    \"schema_version\": \"1\",\n    \"platform\": \"darwin\" | \"win32\" | \"linux\",\n    \"driver_version\": \"<semver>\",\n    \"overall\": \"ok\" | \"degraded\" | \"failed\",\n    \"checks\": [\n      {\n        \"name\": \"<one of the canonical names above>\",\n        \"status\": \"pass\" | \"fail\" | \"skip\",\n        \"message\": \"<one-line summary, always present>\",\n        \"hint\": \"<remediation step, present when status=fail>\",\n        \"data\": { /* check-specific structured fields */ }\n      },\n      ...\n    ]\n  }\n\n`overall` rules:\n  - `ok`       — every non-skipped check passes\n  - `degraded` — at least one non-core check fails (binary is still usable)\n  - `failed`   — any core check fails (binary_version, platform_supported, session_active)\n\nStability: schema_version=\"1\" is the contract. Future breaking changes will be `\"2\"`. Adding new check names under the same schema_version is non-breaking; consumers must tolerate unknown check names.",
+   "description": "Single-call end-to-end driver diagnostics. Designed to let downstream consumers ship one stable call instead of stitching together check_permissions, doctor, version, bundle attribution, and platform capability status. On macOS, prompt-capable direct capture is deliberately skipped. For standalone CuaDriver, use `cua-driver permissions grant` to verify it explicitly. For an embedded or linked driver, use the host's permission flow for the app or executable macOS attributes this process's permission request to; the standalone command does not verify the host's capture readiness. cua-driver owns the health model; consumers stay thin.\n\nInput — all optional:\n  {\n    \"include\": [\"<check_name>\", ...],   // run only these\n    \"skip\":    [\"<check_name>\", ...]    // skip these\n  }\nIf both are given, `include` wins.\n\nCanonical check names:\n  macOS  : binary_version, platform_supported, session_active,\n           bundle_identity, tcc_accessibility, tcc_screen_recording,\n           ax_capability, screen_capture_capability, windowserver_connection\n  Windows: binary_version, platform_supported, session_active,\n           ax_capability (via UIA), screen_capture_capability (via DXGI)\n  Linux  : binary_version, platform_supported, session_active,\n           ax_capability (via AT-SPI), screen_capture_capability (via X11)\n\nOutput — stable contract, schema_version=\"1\":\n  {\n    \"schema_version\": \"1\",\n    \"platform\": \"darwin\" | \"win32\" | \"linux\",\n    \"driver_version\": \"<semver>\",\n    \"overall\": \"ok\" | \"degraded\" | \"failed\",\n    \"checks\": [\n      {\n        \"name\": \"<one of the canonical names above>\",\n        \"status\": \"pass\" | \"fail\" | \"skip\",\n        \"message\": \"<one-line summary, always present>\",\n        \"hint\": \"<remediation step, present when status=fail>\",\n        \"data\": { /* check-specific structured fields */ }\n      },\n      ...\n    ]\n  }\n\n`overall` rules:\n  - `ok`       — every non-skipped check passes\n  - `degraded` — at least one non-core check fails (binary is still usable)\n  - `failed`   — any core check fails (binary_version, platform_supported, session_active)\n\nStability: schema_version=\"1\" is the contract. Future breaking changes will be `\"2\"`. Adding new check names under the same schema_version is non-breaking; consumers must tolerate unknown check names.",
    "destructive": false,
    "idempotent": true,
    "input_schema": {
@@ -2118,7 +2122,7 @@
    "read_only": true
   },
   {
-   "description": "Update cua-driver-rs configuration. capture_mode / max_image_dimension take effect immediately.\n\nPass each setting as its own field: `{\"capture_mode\": \"som\", \"max_image_dimension\": 0}`.\n\nThe experimental_pip keys persist to ~/.cua-driver/config.json and apply on next daemon restart (the PiP backend is initialised once at startup; Linux ships only the trait stub today — see issue #1729).\n\n`cursor.motion.style`, `cursor.motion.timing` and `cursor.motion.effects.<name>` (`on`, `off`, or `default`) save the default cursor motion for sessions started afterwards. `cursor.motion: \"default\"` clears every saved cursor motion default.",
+   "description": "Update cua-driver-rs configuration. capture_mode / max_image_dimension take effect immediately.\n\nPass each setting as its own field: `{\"capture_mode\": \"som\", \"max_image_dimension\": 0}`.\n\nThe experimental_pip keys persist to ~/.cua-driver/config.json and apply on next daemon restart (the PiP backend is initialised once at startup; Linux ships only the trait stub today — see issue #1729).\n\n`cursor.motion.style`, `cursor.motion.timing` and `cursor.motion.effects.<name>` (`on`, `off`, or `default`) save the default cursor motion for sessions started afterwards. `cursor.motion: \"default\"` clears every saved cursor motion default.\n\n`cursor.badges` (`minimal` default, `verbose`, or `off`) sets the agent cursor badge for every cursor at once.",
    "destructive": false,
    "idempotent": true,
    "input_schema": {
@@ -2129,6 +2133,16 @@
       "enum": [
        "ax",
        "vision"
+      ],
+      "type": "string"
+     },
+     "cursor.badges": {
+      "description": "Agent cursor badge. minimal (default): no badge at rest; a brief chip for a foreground moment or a key combo, and the session name on hover or when two or more agent cursors are on screen. verbose: the earlier badge with the session name and delivery/target chips on every action. off: no badge. Applies immediately to every cursor.",
+      "enum": [
+       "minimal",
+       "verbose",
+       "off",
+       "default"
       ],
       "type": "string"
      },
@@ -2232,7 +2246,7 @@
    "read_only": false
   },
   {
-   "description": "Return a lightweight snapshot of the desktop: running processes and on-screen visible X11 windows with their bounds and owner pid.\n\nFor the full AT-SPI subtree of a single window (with interactive element indices you can click by), use get_window_state instead — this is a fast discovery read.",
+   "description": "Return a lightweight snapshot of the desktop: running processes and on-screen visible windows with their bounds and owner pid.\n\nFor the full AT-SPI subtree of a single window (with interactive element indices you can click by), use get_window_state instead — this is a fast discovery read.",
    "destructive": false,
    "idempotent": true,
    "input_schema": {
@@ -2379,7 +2393,7 @@
    "read_only": false
   },
   {
-   "description": "Read-only browser inspection. Mode 1 (bind): pass pid + window_id of a native browser window to classify it, correlate it to a CDP target (exact-or-refuse), and mint a session-scoped target id plus tab ids. Mode 2 (snapshot): pass target_id + tab_id. The dom_refs_v1 compatibility format returns composed DOM refs. semantic_v2 joins accessibility, DOM, layout, and viewport state; ranks visible content before retained/offscreen state; and returns a semantic outline, typed action refs, content refs, scoped reads, and opaque continuation. Never performs setup — a missing endpoint is a structured browser_requires_setup refusal pointing at browser_prepare.",
+   "description": "Read-only browser inspection. Mode 1 (bind): pass pid + window_id of a native browser window to classify it, correlate it to a CDP target (exact-or-refuse), and mint a session-scoped target id plus tab ids. Mode 2 (snapshot): pass target_id + tab_id. The dom_refs_v1 compatibility format returns composed DOM refs. semantic_v2 joins accessibility, DOM, layout, and viewport state; ranks visible content before retained/offscreen state; and returns a semantic outline, typed action refs, content refs, scoped reads, and opaque continuation. Never performs setup: a browser that is not attached yet refuses with browser_consent_required or browser_requires_setup, and detail.next_call names the browser_prepare call that attaches it. Use this route for any web page in Chrome, Edge or Brave; desktop pointer tools move the user's pointer. Setup and recovery: `get_guide({topic:\"browser\"})`.",
    "destructive": false,
    "idempotent": true,
    "input_schema": {
@@ -2437,7 +2451,7 @@
    "read_only": true
   },
   {
-   "description": "Explicitly prepare an owned DevTools endpoint for a browser. pid is required for an existing process or existing-profile attachment, and optional only for allow_launch=true with an isolated profile. Existing endpoints are detected without side effects. Acting setup for an isolated profile follows the runtime permission mode and optional capability manifest. It requires allow_launch=true, launches a separate browser, and never copies, modifies, or terminates the requested user profile. Without pid, only a platform-attested system Chrome/Edge installation (or a root-owned package payload on Linux) is eligible; redirects and user-controlled locations fail closed. Existing-profile attachment is explicit and follows the runtime's immutable permission mode: standard requires an explicit --grant existing-profile launch grant or an embedding authorization host, bounded requires a launch-approved exact resource manifest, and unrestricted requires explicit trusted startup risk acceptance. Ordinary MCP transport approval never proves profile authorization. On proven platforms, an authorized request also permits one bounded exact-window setup: open the recognized browser product's fixed remote-debugging page, toggle its uniquely matched per-instance checkbox, prove the PID-owned loopback endpoint, and close the temporary tab. Every visible effect is reported; ambiguity is refused. Where attaching would bring the browser in front of the user's app (macOS Chrome shows its own remote-debugging prompt in front for every new connection), existing-profile attachment refuses with background_unavailable unless delivery_mode is \"foreground\" (the app that was in front is brought back afterwards) or the browser window is on another Space than the user's, where it attaches in the background while the driver reverts the browser's own brief activations.",
+   "description": "Attach the browser tools to a browser. For a page in the user's running Chrome, Edge or Brave, call it once with pid, window_id, session and strategy {\"kind\":\"existing_profile\"} when get_browser_state refuses with browser_consent_required or browser_requires_setup; then call get_browser_state again and act with browser_click, browser_type or browser_pointer. It attaches, or refuses with nothing changed and says why. Explicitly prepare an owned DevTools endpoint for a browser. pid is required for an existing process or existing-profile attachment, and optional only for allow_launch=true with an isolated profile. Existing endpoints are detected without side effects. Acting setup for an isolated profile follows the runtime permission mode and optional capability manifest. It requires allow_launch=true, launches a separate browser, and never copies, modifies, or terminates the requested user profile. Without pid, only a platform-attested system Chrome/Edge installation (or a root-owned package payload on Linux) is eligible; redirects and user-controlled locations fail closed. Existing-profile attachment is explicit and follows the runtime's immutable permission mode: standard requires an explicit --grant existing-profile launch grant or an embedding authorization host, bounded requires a launch-approved exact resource manifest, and unrestricted requires explicit trusted startup risk acceptance. Ordinary MCP transport approval never proves profile authorization. On proven platforms, an authorized request also permits one bounded exact-window setup: open the recognized browser product's fixed remote-debugging page, toggle its uniquely matched per-instance checkbox, prove the PID-owned loopback endpoint, and close the temporary tab. Every visible effect is reported; ambiguity is refused. Where attaching would bring the browser in front of the user's app (macOS Chrome shows its own remote-debugging prompt in front whenever the driver opens a new browser connection; sessions for the same browser share one approved connection, kept for up to 30 minutes idle and 8 hours in total, so later sessions do not prompt again), existing-profile attachment refuses with background_unavailable unless delivery_mode is \"foreground\" (the app that was in front is brought back afterwards) or the browser window is on another Space than the user's, where it attaches in the background while the driver reverts the browser's own brief activations. A driver-owned isolated launch result carries an advisory lifecycle object: the browser process ends with the calling session after idle_expires_in_seconds without session activity, an isolated_named profile persists after the session and an isolated_new profile does not, and explicit end, disconnect, revocation or shutdown end it earlier. Setup and recovery: `get_guide({topic:\"browser\"})`.",
    "destructive": true,
    "idempotent": false,
    "input_schema": {
@@ -2487,7 +2501,7 @@
      },
      "strategy": {
       "additionalProperties": false,
-      "description": "Attach to an already-running browser instead of launching one. kind=existing_profile attaches to the user's running profile at pid/window_id and requires explicit profile authorization.",
+      "description": "Attach to an already-running browser instead of launching one. Pass an object, {\"kind\":\"existing_profile\"}, not a string. kind=existing_profile attaches to the user's running profile at pid/window_id under the runtime's profile authorization.",
       "properties": {
        "kind": {
         "enum": [
@@ -2547,7 +2561,7 @@
    "read_only": false
   },
   {
-   "description": "Click a page element (by ref) or viewport coordinates in an exactly-bound tab. Default route is trusted hardware-like input (Input.dispatchMouseEvent), and refuses where that route cannot preserve standalone-browser background posture unless delivery_mode=\"foreground\" accepts that the browser window may activate (including Linux Chromium and macOS Chromium configurations whose trusted route cannot stay in the background; for example a browser inside a sandbox). input_route=\"dom_event\" (synthetic el.click(), ref required) is used only when explicitly requested; it proves dispatch, not control activation, because trust-gated controls may ignore synthetic events. Refused for heuristic bindings.",
+   "description": "Click a page element (by ref) or viewport coordinates in an exactly-bound tab. Default route is trusted hardware-like input (Input.dispatchMouseEvent), and refuses where that route cannot preserve standalone-browser background posture unless delivery_mode=\"foreground\" accepts that the browser window may activate (including Linux Chromium configurations whose trusted route cannot stay in the background; for example a browser inside a sandbox). input_route=\"dom_event\" (synthetic pointer and mouse down/up/click sequence at the element's center, ref required) is used only when explicitly requested; it proves dispatch, not control activation, because trust-gated controls may ignore synthetic events. Refused for heuristic bindings.",
    "destructive": false,
    "idempotent": false,
    "input_schema": {
@@ -2653,6 +2667,48 @@
     "type": "object"
    },
    "name": "browser_type",
+   "read_only": false
+  },
+  {
+   "description": "Select one option of a native HTML <select> ref on an exactly-bound tab without opening its popup. Pass exactly one of label or value; exactly one option must equal it. Refuses non-native, multiple-selection, and disabled selects, disabled options, and zero or ambiguous matches before changing anything. A change dispatches bubbling input and change events; they are synthetic, so verify the page accepted the selection. Selecting the option that is already selected dispatches no events.",
+   "destructive": false,
+   "idempotent": false,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "label": {
+      "description": "Exact visible label of the option to select.",
+      "type": "string"
+     },
+     "ref": {
+      "description": "Page element ref in the p<snapshot>:<index> namespace from get_browser_state. Refs are invalidated by navigation and by newer snapshots of the same tab.",
+      "type": "string"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
+      "type": "string"
+     },
+     "tab_id": {
+      "description": "Opaque tab id from get_browser_state (session-scoped).",
+      "type": "string"
+     },
+     "target_id": {
+      "description": "Opaque browser target id minted by get_browser_state (session-scoped; never a CDP id).",
+      "type": "string"
+     },
+     "value": {
+      "description": "Exact value attribute of the option to select.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "target_id",
+     "tab_id",
+     "ref"
+    ],
+    "type": "object"
+   },
+   "name": "browser_select",
    "read_only": false
   },
   {
@@ -3303,7 +3359,28 @@
    "read_only": false
   },
   {
-   "description": "The default way to act: run one or more action tools in ONE call, in order, stop at the first failure, and (with `observe`) get what changed in the same response. Use it whenever you know the next action(s) and would otherwise re-read the window after them: fill three fields, click, and see the result in one call instead of five. Even a single step plus `observe:{}` replaces an action call followed by a get_window_state call. Each step is `{tool, args}` where `tool` is one of click, double_click, right_click, set_value, type_text, press_key, hotkey, scroll, drag, move_cursor and `args` are exactly that tool's arguments. `pid` and `window_id` (or `app`/`window`) on run_steps itself are the default window of every step that names none. Reads (get_window_state, zoom) do not run between steps: one there is skipped; a get_window_state last is the `observe`, a zoom last runs after it. Every step goes through the same session, permission and approval checks as a direct call; a batch grants nothing extra. All steps are validated before the first one runs, so a malformed step 4 changes nothing. Element tokens and element_index values come from a get_window_state read before the batch; a step that changes the UI can invalidate later element targets, so put element-targeted actions before the actions that reshuffle the window, or target later steps by role/name. A token that went stale is retried once on the element with the same role and label, if exactly one matches.\n\nReturns per-step status (`ok` or the error message) and, when `observe` is given, ONE bounded get_window_state read after the last executed step (after a failure caused by a dialog holding focus, that dialog is read, even without `observe`). A step refused because its app ignores background input says how to re-send it; `foreground_fallback:true` retries such steps in the foreground once (the window is activated). That read is a `since:\"latest\"` diff by default: only the rows that changed since your last read of the window, plus a new snapshot_id. Without `observe` nothing is read. The batch uses one session: steps may omit `session` or repeat the batch's. `delay_ms` pauses between steps (max 2000). At most 64 steps; `delivery_mode` on run_steps is the default for its steps.\n\nTARGET BY NAME (no earlier read needed, so one batch can cross screens): a step can be written `{\"click\": {...args}}` as well as `{tool, args}`, and its args may name the target instead of carrying a token: `role` (button, textfield, link, checkbox, menuitem, ...; AX/UIA/AT-SPI names also work), `name` (the element's label; exact match wins over substring, case-insensitive), `nth` (0-based, when several match), and `app` (app name or bundle id) and/or `window` (title substring) instead of pid/window_id. The batch reads the window fresh, waits up to 3 s (step `timeout_ms`, max 10000) for the element to appear, and acts on it; with only `app` it uses that app's frontmost window, so a dialog that opened on top is found. Later steps inherit the window, so name `app` once. The first lookup in a window also reads it once for `observe`, so the end diff shows what the batch changed even in a window you never read. Several matches fail with the candidates listed; add `nth` or a fuller name.\n\nWAITS AND CHECKS: a step may add `wait_for` (checked before its action) and `expect` (one check or up to 4, checked after it); a step may also be only a check. A check is {role?, name?, text?, gone?, value?, value_contains?, enabled?, selected?, app?, window?, timeout_ms?}: `text` matches any row of the tree, static text included; `gone:true` waits for it to disappear. Checks poll until they hold or time out (wait_for 5 s, expect 2 s, max 10 s), and a check that does not hold fails the step with what was found instead. The report says which step failed, in which phase (wait_for, find, action, expect) and why. Whole batch: at most 60 s.\n\nExample (fill a form, submit, confirm the dialog, check the result):\n{\"steps\":[{\"set_value\":{\"app\":\"Safari\",\"role\":\"textfield\",\"name\":\"Email\",\"value\":\"ada@example.com\"}},{\"click\":{\"role\":\"button\",\"name\":\"Submit\"},\"expect\":[{\"role\":\"button\",\"name\":\"Confirm\"}]},{\"click\":{\"role\":\"button\",\"name\":\"Confirm\"},\"expect\":[{\"name\":\"Confirm\",\"gone\":true},{\"text\":\"Thanks\"}]}],\"observe\":{}}",
+   "description": "Read Cua Driver guidance on demand, taken from the guide bundled with this driver (no skill install needed). Topics: overview, drag, browser, permissions, batching, menus. Call with no topic to list them. Read-only.",
+   "destructive": false,
+   "idempotent": true,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     },
+     "topic": {
+      "description": "One of: overview, drag, browser, permissions, batching, menus. Omit to list the topics.",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "get_guide",
+   "read_only": true
+  },
+  {
+   "description": "The default way to act: run one or more action tools in ONE call, in order, stop at the first failure, and (with `observe`) get what changed in the same response. Use it whenever you know the next action(s) and would otherwise re-read the window after them: fill three fields, click, and see the result in one call instead of five. Even a single step plus `observe:{}` replaces an action call followed by a get_window_state call. Each step is `{tool, args}` where `tool` is one of click, double_click, right_click, set_value, type_text, press_key, hotkey, scroll, drag, move_cursor and `args` are exactly that tool's arguments. `pid` and `window_id` (or `app`/`window`) on run_steps itself are the default window of every step that names none. Reads (get_window_state, zoom) do not run between steps: one there is skipped; a get_window_state last is the `observe`, a zoom last runs after it. Every step goes through the same session, permission and approval checks as a direct call; a batch grants nothing extra. All steps are validated before the first one runs, so a malformed step 4 changes nothing. Element tokens and element_index values come from a get_window_state read before the batch; a step that changes the UI can invalidate later element targets, so put element-targeted actions before the actions that reshuffle the window, or target later steps by role/name. A token that went stale is retried once on the element with the same role and label, if exactly one matches.\n\nReturns per-step status (`ok` or the error message) and, when `observe` is given, ONE bounded get_window_state read after the last executed step (after a failure caused by a dialog holding focus, that dialog is read, even without `observe`). A step refused because its app ignores background input says how to re-send it; `foreground_fallback:true` retries such steps in the foreground once (the window is activated). That read is a `since:\"latest\"` diff by default: only the rows that changed since your last read of the window, plus a new snapshot_id. Without `observe` nothing is read. The batch uses one session: steps may omit `session` or repeat the batch's. `delay_ms` pauses between steps (max 2000). At most 64 steps; `delivery_mode` on run_steps is the default for its steps.\n\nTARGET BY NAME (no earlier read needed, so one batch can cross screens): a step can be written `{\"click\": {...args}}` as well as `{tool, args}`, and its args may name the target instead of carrying a token: `role` (button, textfield, link, checkbox, menuitem, ...; AX/UIA/AT-SPI names also work), `name` (the element's label; exact match wins over substring, case-insensitive), `nth` (0-based, when several match), and `app` (app name or bundle id) and/or `window` (title substring) instead of pid/window_id. The batch reads the window fresh, waits up to 3 s (step `timeout_ms`, max 10000) for the element to appear, and acts on it; with only `app` it uses that app's frontmost window, so a dialog that opened on top is found. Later steps inherit the window, so name `app` once. The first lookup in a window also reads it once for `observe`, so the end diff shows what the batch changed even in a window you never read. Several matches fail with the candidates listed; add `nth` or a fuller name.\n\nWAITS AND CHECKS: a step may add `wait_for` (checked before its action) and `expect` (one check or up to 4, checked after it); a step may also be only a check. A check is {role?, name?, text?, gone?, value?, value_contains?, enabled?, selected?, app?, window?, timeout_ms?}: `text` matches any row of the tree, static text included; `gone:true` waits for it to disappear. Checks poll until they hold or time out (wait_for 5 s, expect 2 s, max 10 s), and a check that does not hold fails the step with what was found instead. The report says which step failed, in which phase (wait_for, find, action, expect) and why. Whole batch: at most 60 s.\n\nExample (fill a form, submit, confirm the dialog, check the result):\n{\"steps\":[{\"set_value\":{\"app\":\"Safari\",\"role\":\"textfield\",\"name\":\"Email\",\"value\":\"ada@example.com\"}},{\"click\":{\"role\":\"button\",\"name\":\"Submit\"},\"expect\":[{\"role\":\"button\",\"name\":\"Confirm\"}]},{\"click\":{\"role\":\"button\",\"name\":\"Confirm\"},\"expect\":[{\"name\":\"Confirm\",\"gone\":true},{\"text\":\"Thanks\"}]}],\"observe\":{}} Batching rules: `get_guide({topic:\"batching\"})`.",
    "destructive": true,
    "idempotent": false,
    "input_schema": {
@@ -3411,7 +3488,7 @@
    "read_only": false
   },
   {
-   "description": "Run a JavaScript program that drives apps through Cua Driver, in ONE call: loops, conditions, reads and checks between actions, and only the result comes back. Use it when the flow needs logic (a loop over rows, a branch on what the app shows, a retry); use run_steps for a fixed list of steps.\n\nThe script is the body of an async function: use `await`, and `return` a JSON value. It runs in a sandbox with no filesystem, network, process, timers or environment; the only API is `cua`:\n- `await cua.getApp(\"TextEdit\" | \"com.apple.TextEdit\" | {pid, windowId})` → app (follows the app's frontmost window unless a windowId is given)\n- `await cua.launch(nameOrBundleId)` → app; `cua.listApps()`, `cua.listWindows({pid?})`, `cua.sleep(ms)`, `cua.computer.target`\n- app.getState(opts?) → get_window_state result (`tree_markdown` or `tree_diff`, `snapshot_id`; pass get_window_state options such as {since:\"latest\"})\n- app.query({role?, name?, text?}) → matching elements across the app's windows {element_token, role, label, value, enabled, selected, frame}, then matching static-text rows {role, label, value, text, display_only} (read text such as a status line from their `value`)\n- app.waitFor({role?, name?, text?, gone?, value?, timeout_ms?}) and app.verify(predicate | predicates) (verify_state)\n- app.click(t), doubleClick(t), rightClick(t), typeText(text, t?), pressKey(\"return\" | \"cmd+s\", t?), hotkey([\"cmd\",\"s\"]), scroll(t, direction, amount?), setValue(t, value), drag([x,y], [x,y]), zoom([x1,y1,x2,y2])\nwhere a target `t` is {role, name, nth?} (found fresh, waits up to 3 s), an element_token string, a row number from this app's last getState(), or [x, y] window pixels.\n- `cua.call(tool, args)` for any other allowed tool: click, double_click, right_click, set_value, type_text, press_key, hotkey, scroll, drag, launch_app, list_apps, list_windows, get_window_state, verify_state, zoom.\nA failed driver call throws a CuaError (catch it to recover). Every call goes through the same session, permission and approval checks as a direct call.\n\nLimits: `timeout_ms` wall time (default 30000, max 120000), `max_calls` driver calls (default 100, max 500), 32 MiB heap. Returns the return value, console output, and a per-call log; an error names the script line, the call and the reason.\n\nExample:\nconst app = await cua.getApp(\"Calculator\");\nfor (const key of [\"7\", \"multiply\", \"6\", \"equals\"]) await app.click({role: \"button\", name: key});\nconst [display] = await app.query({role: \"statictext\"});\nreturn display.value;",
+   "description": "Run a JavaScript program that drives apps through Cua Driver, in ONE call: loops, conditions, reads and checks between actions, and only the result comes back. Use it when the flow needs logic (a loop over rows, a branch on what the app shows, a retry); use run_steps for a fixed list of steps.\n\nThe script is the body of an async function: use `await`, and `return` a JSON value. It runs in a sandbox with no filesystem, network, process, timers or environment; the only API is `cua`:\n- `await cua.getApp(\"TextEdit\" | \"com.apple.TextEdit\" | {pid, windowId})` → app (follows the app's frontmost window unless a windowId is given)\n- `await cua.launch(nameOrBundleId)` → app; `cua.listApps()`, `cua.listWindows({pid?})`, `cua.sleep(ms)`, `cua.computer.target`\n- app.getState(opts?) → get_window_state result (`tree_markdown` or `tree_diff`, `snapshot_id`; pass get_window_state options such as {since:\"latest\"})\n- app.query({role?, name?, text?}) → matching elements across the app's windows {element_token, role, label, value, enabled, selected, frame}, then matching static-text rows {role, label, value, text, display_only} (read text such as a status line from their `value`)\n- app.waitFor({role?, name?, text?, gone?, value?, timeout_ms?}) and app.verify(predicate | predicates) (verify_state)\n- app.click(t), doubleClick(t), rightClick(t), typeText(text, t?), pressKey(\"return\" | \"cmd+s\", t?), hotkey([\"cmd\",\"s\"]), scroll(t, direction, amount?), setValue(t, value), drag([x,y], [x,y]), zoom([x1,y1,x2,y2])\nwhere a target `t` is {role, name, nth?} (found fresh, waits up to 3 s), an element_token string, a row number from this app's last getState(), or [x, y] window pixels.\n- `cua.call(tool, args)` for any other allowed tool: click, double_click, right_click, set_value, type_text, press_key, hotkey, scroll, drag, launch_app, list_apps, list_windows, get_window_state, verify_state, zoom.\nA failed driver call throws a CuaError (catch it to recover). Every call goes through the same session, permission and approval checks as a direct call.\n\nLimits: `timeout_ms` wall time (default 30000, max 120000), `max_calls` driver calls (default 100, max 500), 32 MiB heap. Returns the return value, console output, and a per-call log; an error names the script line, the call and the reason.\n\nExample:\nconst app = await cua.getApp(\"Calculator\");\nfor (const key of [\"7\", \"multiply\", \"6\", \"equals\"]) await app.click({role: \"button\", name: key});\nconst [display] = await app.query({role: \"statictext\"});\nreturn display.value; Batching rules: `get_guide({topic:\"batching\"})`.",
    "destructive": true,
    "idempotent": false,
    "input_schema": {

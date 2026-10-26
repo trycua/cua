@@ -59,6 +59,11 @@ pub struct AssertionClaims {
     pub exp: u64,
     /// Unique id.
     pub jti: String,
+    /// Teams (or organizations) the account reached this machine through,
+    /// empty for the owner and for a direct share. Additive: verifiers that
+    /// predate it ignore the field, and an assertion without it parses.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub teams: Vec<String>,
 }
 
 /// Seconds since the Unix epoch.
@@ -106,6 +111,7 @@ impl RelayKey {
     /// Loads the key at `path`, creating it (0600) on first use, so a relay
     /// restart keeps the key machines pinned.
     pub fn load_or_create(path: &std::path::Path) -> std::io::Result<Self> {
+        remove_stale_temps(path)?;
         if let Ok(der) = std::fs::read(path) {
             return Self::from_pkcs8(&der)
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e));
@@ -144,6 +150,38 @@ impl RelayKey {
         let mut header = Header::new(Algorithm::EdDSA);
         header.kid = Some(self.kid.clone());
         jsonwebtoken::encode(&header, claims, &self.encoding).expect("EdDSA signing")
+    }
+
+    /// Signs `claims` as a relay-only token of type `typ` (the JWT `typ`
+    /// header). Machines never accept these: only [`RelayKey::verify_json`]
+    /// with the same `typ` does, so a browser session or a login code can
+    /// never stand in for a principal assertion, or the other way round.
+    pub fn sign_json<T: serde::Serialize>(&self, typ: &str, claims: &T) -> String {
+        let mut header = Header::new(Algorithm::EdDSA);
+        header.kid = Some(self.kid.clone());
+        header.typ = Some(typ.to_owned());
+        jsonwebtoken::encode(&header, claims, &self.encoding).expect("EdDSA signing")
+    }
+
+    /// Verifies a token made by [`RelayKey::sign_json`] with this key and
+    /// the same `typ`. Expiry is the caller's to check (`exp` in the
+    /// claims).
+    pub fn verify_json<T: serde::de::DeserializeOwned>(
+        &self,
+        typ: &str,
+        token: &str,
+    ) -> Result<T, String> {
+        let header = jsonwebtoken::decode_header(token).map_err(|_| "not a token".to_owned())?;
+        if header.alg != Algorithm::EdDSA || header.typ.as_deref() != Some(typ) {
+            return Err("wrong token type".into());
+        }
+        let mut validation = Validation::new(Algorithm::EdDSA);
+        validation.validate_exp = false;
+        validation.validate_aud = false;
+        validation.required_spec_claims.clear();
+        jsonwebtoken::decode::<T>(token, &DecodingKey::from_ed_der(&self.public), &validation)
+            .map(|d| d.claims)
+            .map_err(|e| format!("bad signature: {e}"))
     }
 }
 
@@ -190,6 +228,9 @@ pub fn write_private_with(
             let _ = std::fs::remove_file(&tmp);
             return Err(e);
         }
+        // The rename itself is durable only once the directory is synced.
+        #[cfg(unix)]
+        std::fs::File::open(dir).and_then(|d| d.sync_all())?;
         return Ok(());
     }
     Err(last.unwrap_or_else(|| std::io::Error::other("no free temp name")))
@@ -228,13 +269,23 @@ pub fn remove_stale_temps(path: &std::path::Path) -> std::io::Result<(usize, u64
         if !file_name.starts_with(&prefix) || !file_name.ends_with(".tmp") {
             continue;
         }
-        let meta = entry.metadata()?;
+        // Gone between the listing and here (its writer renamed it): fine.
+        let meta = match entry.metadata() {
+            Ok(m) => m,
+            Err(e) if crate::storage::temp_vanished(&e, &entry.path()) => continue,
+            Err(e) => return Err(e),
+        };
         if !meta.is_file() {
             continue;
         }
-        std::fs::remove_file(entry.path())?;
-        files += 1;
-        bytes += meta.len();
+        match std::fs::remove_file(entry.path()) {
+            Ok(()) => {
+                files += 1;
+                bytes += meta.len();
+            }
+            Err(e) if crate::storage::temp_vanished(&e, &entry.path()) => {}
+            Err(e) => return Err(e),
+        }
     }
     if files > 0 {
         tracing::warn!(
@@ -268,10 +319,12 @@ pub fn decode_jwks_header(value: &str) -> Result<String, String> {
     String::from_utf8(raw).map_err(|e| format!("relay JWKS header: {e}"))
 }
 
-/// The relay public keys a machine trusts.
+/// The relay public keys a machine trusts, plus the in-process key the
+/// machine's own mesh endpoint signs with (never leaves the process).
 #[derive(Default)]
 pub struct TrustedKeys {
     keys: RwLock<Vec<(Option<String>, DecodingKey)>>,
+    local: RwLock<Vec<(Option<String>, DecodingKey)>>,
 }
 
 impl std::fmt::Debug for TrustedKeys {
@@ -310,6 +363,21 @@ impl TrustedKeys {
         Ok(n)
     }
 
+    /// Also trusts `key`, an in-process key (the mesh endpoint's, which
+    /// vouches for peers the relay's network map identified). Replacing the
+    /// relay's keys never removes it.
+    pub fn trust_local(&self, key: &RelayKey) -> Result<(), String> {
+        let set: JwkSet =
+            serde_json::from_value(key.jwks()).map_err(|e| format!("local JWKS: {e}"))?;
+        let jwk = set.keys.first().ok_or("local JWKS has no key")?;
+        let decoding = DecodingKey::from_jwk(jwk).map_err(|e| format!("local key: {e}"))?;
+        self.local
+            .write()
+            .expect("local")
+            .push((jwk.common.key_id.clone(), decoding));
+        Ok(())
+    }
+
     /// Decodes a [`JWKS_HEADER`] value and installs it.
     pub fn set_from_header(&self, value: &str) -> Result<usize, String> {
         self.set_jwks_json(&decode_jwks_header(value)?)
@@ -338,11 +406,12 @@ impl TrustedKeys {
         validation.leeway = LEEWAY_SECS;
         validation.set_required_spec_claims(&["exp", "aud", "sub", "iat"]);
         let keys = self.keys.read().expect("keys");
-        if keys.is_empty() {
+        let local = self.local.read().expect("local");
+        if keys.is_empty() && local.is_empty() {
             return Err("no relay key is trusted".into());
         }
         let mut last = String::from("assertion: no matching relay key");
-        for (kid, key) in keys.iter() {
+        for (kid, key) in keys.iter().chain(local.iter()) {
             if header.kid.is_some() && kid.is_some() && header.kid != *kid {
                 continue;
             }
@@ -350,7 +419,7 @@ impl TrustedKeys {
                 Ok(data) => {
                     let c = data.claims;
                     if c.mid != machine_id {
-                        return Err("assertion: machine id mismatch".into());
+                        return Err("assertion: computer id mismatch".into());
                     }
                     if c.exp < c.iat || c.exp - c.iat > MAX_ASSERTION_TTL_SECS {
                         return Err("assertion: lifetime too long".into());
@@ -369,6 +438,47 @@ impl TrustedKeys {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn loading_the_signing_key_removes_an_interrupted_writes_temp() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("signing.key");
+        let stale = dir.path().join(".signing.key.0123abcd.tmp");
+        std::fs::write(&stale, "partial").unwrap();
+        let key = RelayKey::load_or_create(&path).unwrap();
+        assert!(!stale.exists());
+        assert_eq!(RelayKey::load_or_create(&path).unwrap().kid(), key.kid());
+    }
+
+    #[test]
+    fn removing_stale_temps_racing_their_removal_does_not_fail() {
+        use std::sync::{Arc, Barrier};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("devices.json");
+        let names: Vec<_> = (0..4000)
+            .map(|_| {
+                let id = uuid::Uuid::new_v4().simple();
+                dir.path().join(format!(".devices.json.{id}.tmp"))
+            })
+            .collect();
+        for name in &names {
+            std::fs::write(name, "partial").unwrap();
+        }
+        let barrier = Arc::new(Barrier::new(2));
+        let remover = {
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                for name in &names {
+                    let _ = std::fs::remove_file(name);
+                }
+            })
+        };
+        barrier.wait();
+        let removed = super::remove_stale_temps(&path);
+        remover.join().unwrap();
+        removed.unwrap();
+    }
 
     #[test]
     fn stale_temps_of_the_file_and_its_siblings_are_removed() {
@@ -455,7 +565,69 @@ mod tests {
             iat: now,
             exp: now + ttl,
             jti: "j".into(),
+            teams: Vec::new(),
         }
+    }
+
+    #[test]
+    fn teams_claim_is_additive() {
+        // An assertion from a relay that predates `teams` still parses...
+        let mut v = serde_json::to_value(claims("machine-01", 60)).unwrap();
+        assert!(v.get("teams").is_none(), "empty teams are not serialized");
+        let parsed: AssertionClaims = serde_json::from_value(v.clone()).unwrap();
+        assert!(parsed.teams.is_empty());
+        // ...and an older verifier (which has no such field) ignores it.
+        v["teams"] = serde_json::json!(["team-a", "team-b"]);
+        let with: AssertionClaims = serde_json::from_value(v).unwrap();
+        assert_eq!(with.teams, ["team-a", "team-b"]);
+        let key = RelayKey::generate();
+        let trusted = TrustedKeys::default();
+        trusted
+            .set_from_header(
+                &base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key.jwks().to_string()),
+            )
+            .unwrap();
+        let mut c = claims("machine-01", 60);
+        c.teams = vec!["team-a".into()];
+        assert_eq!(
+            trusted.verify(&key.sign(&c), "machine-01").unwrap().teams,
+            ["team-a"]
+        );
+    }
+
+    #[test]
+    fn relay_only_tokens_are_typed_and_never_assertions() {
+        #[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
+        struct C {
+            who: String,
+        }
+        let key = RelayKey::generate();
+        let c = C { who: "ada".into() };
+        let token = key.sign_json("share-session", &c);
+        assert_eq!(key.verify_json::<C>("share-session", &token).unwrap(), c);
+        // Another type, another relay key, a tampered body: refused.
+        assert!(key.verify_json::<C>("share-code", &token).is_err());
+        assert!(RelayKey::generate()
+            .verify_json::<C>("share-session", &token)
+            .is_err());
+        let mut parts: Vec<&str> = token.split('.').collect();
+        let forged = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(r#"{"who":"eve"}"#);
+        parts[1] = &forged;
+        assert!(key
+            .verify_json::<C>("share-session", &parts.join("."))
+            .is_err());
+        // A machine's verifier never takes one as an assertion, and the
+        // relay never takes an assertion as one.
+        let trusted = TrustedKeys::default();
+        trusted
+            .set_from_header(
+                &base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key.jwks().to_string()),
+            )
+            .unwrap();
+        assert!(trusted.verify(&token, "machine-01").is_err());
+        assert!(key
+            .verify_json::<C>("share-session", &key.sign(&claims("machine-01", 60)))
+            .is_err());
     }
 
     #[test]

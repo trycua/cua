@@ -1,6 +1,6 @@
 ---
-title: Control the desktop
-description: Take screenshots, click and type, call typed Cua Driver tools, open a shell or a browser view, and attach to any cua-spacesd.
+title: Control the desktop and the browser
+description: Take screenshots, click and type, call typed Cua Driver tools, open a shell or a browser view, give an agent a browser, read Space thumbnails, and attach to any cua-spacesd.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -17,9 +17,14 @@ the interfaces below raise `SpacesdNotAvailable`.
 | `sb.driver.connect()` | The full Cua Driver API: windows, accessibility, background input |
 | `cua mcp --sandbox NAME` | Coding agents and MCP clients |
 
+To drive a sandbox from your own agent loop or bot, with a complete program in
+Python, TypeScript and Rust, see [Use Cua in your own harness](/cua-sdk/guides/own-harness).
+
 ## Screenshots and input
 
 ![A terminal on a local Linux sandbox desktop, opened from the dock and typed into through the HTML5 viewer](/img/cua-sdk/viewer-terminal.png)
+
+The window manager can start after the sandbox is ready, so the example waits until the terminal really has focus before it types.
 
 <Tabs groupId="language" persist items={['Python', 'TypeScript', 'CLI']}>
   <Tab value="Python">
@@ -28,14 +33,23 @@ the interfaces below raise `SpacesdNotAvailable`.
 from pathlib import Path
 from cua_sandbox import Image, Sandbox
 
-FOCUS_TERMINAL = ("export DISPLAY=:1; setsid -f xfce4-terminal -T demo >/dev/null 2>&1; "
-                  "xdotool search --sync --onlyvisible --name demo windowactivate --sync")
+FOCUS_TERMINAL = (
+    "export DISPLAY=:1; setsid -f xfce4-terminal -T demo >/dev/null 2>&1; "
+    "end=$(($(date +%s) + 20)); "
+    "while [ $(date +%s) -lt $end ]; do "
+    "w=$(xdotool search --onlyvisible --limit 1 --name ^demo$) && "
+    "xprop -id $w WM_STATE | grep -q window.state && "
+    "timeout 5 xdotool windowactivate --sync $w && exit 0; "
+    "sleep 0.2; done; "
+    "echo demo terminal never got keyboard focus >&2; exit 1"
+)
 
 async with Sandbox.ephemeral(Image.linux()) as sb:
     width, height = await sb.get_dimensions()
     await sb.mouse.click(width // 2, height // 2)
     # Keys go to the focused window, so open one.
-    assert (await sb.shell.run(FOCUS_TERMINAL)).success
+    focus = await sb.shell.run(FOCUS_TERMINAL, timeout=40)
+    assert focus.success, f"terminal focus failed ({focus.returncode}): {focus.stderr}"
     await sb.keyboard.type("hello")
     await sb.keyboard.keypress(["ctrl", "a"])
     Path("desk.png").write_bytes(await sb.screenshot())
@@ -46,11 +60,17 @@ async with Sandbox.ephemeral(Image.linux()) as sb:
 
 ```ts test="container" id="desktop-typescript"
 import { writeFile } from 'node:fs/promises';
-import { embedded, SandboxCreateOptions, SpacesdCommand } from '@trycua/cua';
+import { embedded, SandboxCreateOptions } from '@trycua/cua';
 
 const FOCUS_TERMINAL =
   'export DISPLAY=:1; setsid -f xfce4-terminal -T demo >/dev/null 2>&1; ' +
-  'xdotool search --sync --onlyvisible --name demo windowactivate --sync';
+  'end=$(($(date +%s) + 20)); ' +
+  'while [ $(date +%s) -lt $end ]; do ' +
+  'w=$(xdotool search --onlyvisible --limit 1 --name ^demo$) && ' +
+  'xprop -id $w WM_STATE | grep -q window.state && ' +
+  'timeout 5 xdotool windowactivate --sync $w && exit 0; ' +
+  'sleep 0.2; done; ' +
+  'echo demo terminal never got keyboard focus >&2; exit 1';
 
 const sb = await embedded().sandboxes().create(
   SandboxCreateOptions.create({
@@ -62,7 +82,12 @@ try {
   const shot = await env.screenshot(undefined);
   await env.click(Math.floor(shot.width / 2), Math.floor(shot.height / 2));
   // Keys go to the focused window, so open one.
-  await env.run(SpacesdCommand.create({ program: 'sh', args: ['-c', FOCUS_TERMINAL] }));
+  const focus = await env.sh(FOCUS_TERMINAL, 40_000);
+  if (!focus.exit.success) {
+    throw new Error(
+      `terminal focus failed (${JSON.stringify(focus.exit)}): ${new TextDecoder().decode(focus.stderr)}`
+    );
+  }
   await env.typeText('hello');
   await env.hotkey(['ctrl', 'a']);
   await writeFile('desk.png', Buffer.from((await env.screenshot(undefined)).image));
@@ -87,7 +112,7 @@ cua sb rm -f desk
 ## Typed Cua Driver
 
 ```bash skip="host-install"
-pip install --extra-index-url https://wheels.cua.ai/simple 'cua-sandbox[driver]==0.9.0'
+pip install 'cua-sandbox[driver]==0.9.1'
 ```
 
 ```python test="container" id="typed-driver" prelude="image-desktop"
@@ -161,8 +186,7 @@ Kotlin) returns `{url, expires_at_unix}`; options are `ttl_seconds`,
 
 The link's fragment carries a viewer ticket that authorizes only the viewer's
 calls (never processes or tokens), expires (default 1 hour, at most 24) and is
-revoked when the root token rotates. In the cloud it is a signed `env` service
-URL.
+revoked when the root token rotates.
 
 The toolbar has full screen, scaling, a keys menu, two-way clipboard, file
 upload (to `~/Downloads`), folder sharing, microphone and stats.
@@ -186,13 +210,207 @@ Sharing stops when you close the page or click Stop.
 
 <Callout type="info">
   The viewer needs a secure context (https or localhost) for WebCodecs,
-  clipboard and folder access. Local sandboxes use a loopback port and the
-  cloud uses https. Over plain http to a LAN address it falls back to PNG
+  clipboard and folder access. Local sandboxes use a loopback port, which
+  counts as secure. Over plain http to a LAN address it falls back to PNG
   frames without clipboard or folders.
 </Callout>
 
 Images without cua-spacesd that serve their own web display page open with
 `cua sb view NAME --service <service>`.
+
+## Give an agent a browser
+
+A coding agent can browse the web with the `cua` MCP server and nothing else.
+The browser runs inside a sandbox, never on your machine: in a local container
+(gVisor when installed) or a VM. The agent drives it through the sandbox's own
+Cua Driver, and the `cua` MCP server reaches Cua Driver's typed browser tools
+with `call_tool`.
+
+### Set up your agent
+
+`cua agents setup` installs the Cua skills (the `cua-sandboxes` skill carries
+the browsing recipe) and adds the `cua` MCP server to every agent it finds.
+
+```bash test="cli-shape" id="browse-setup"
+cua agents setup --agents claude,codex,cursor -y
+```
+
+Restart the agent. The rest of this section is what the agent does with the
+`cua` MCP tools.
+
+### Pick an image
+
+`images_list` returns the image catalog that the
+[image catalog details](/cua-sdk/reference/os-image-catalog) page is generated
+from: each image's OS, container or VM form, runtimes, whether it ships
+cua-spacesd, and its browsers. `browser_tools: true` marks the images whose
+browser the Cua Driver browser tools drive.
+
+```python test="excerpt" id="browse-discover" source="tests/e2e/browse/e2e_browse.py#discover"
+cat = await agent.ok("images_list", {"browser": True})
+images = [i for i in cat["images"] if i["browser_tools"]]
+```
+
+The same list from a terminal:
+
+```bash test="cli-shape" id="browse-images"
+cua images ls --browser
+```
+
+### Create a sandbox with a browser
+
+`sandbox_create` with `browser: true` starts the canonical Linux image
+(`ghcr.io/trycua/linux:24.04`) on this machine, launches Chromium with a fresh
+throwaway profile, and binds the window for the browser tools. With `url` it
+also opens a first page. It returns the sandbox `id` and the `session`,
+`target_id` and `tab_id` that every browser call takes.
+
+```python test="excerpt" id="browse-create" source="tests/e2e/browse/e2e_browse.py#create"
+sb = await agent.ok("sandbox_create", create)
+space = sb["id"]
+ids = {
+    "session": sb["session"],
+    "target_id": sb["browser"]["target_id"],
+    "tab_id": sb["browser"]["tab_id"],
+}
+```
+
+From a terminal, create the same sandbox and watch it with `cua sb view`:
+
+```bash test="cli-shape" id="browse-create-cli"
+cua sb create --browser --open https://example.com --name web
+```
+
+### Read, click and type
+
+Every browser action is a `call_tool` on the sandbox with the ids above plus
+the tool's own arguments:
+
+| Tool | Arguments | Does |
+|---|---|---|
+| `get_browser_state` | `snapshot_format: "semantic_v2"`, `include_screenshot` | Reads the page: an outline and refs such as `p2:0`; optionally the tab as an image |
+| `browser_navigate` | `url` | Opens a URL |
+| `browser_click` | `ref`, `delivery_mode: "foreground"` | Clicks an element |
+| `browser_type` | `ref`, `text`, `replace` | Types; `replace: true` fills a field; text `"\n"` with `mode: "keystrokes"` presses Enter |
+| `browser_pointer` | `action`, `ref` | Hover, double-click, right-click, scroll, drag |
+
+A small helper keeps the calls short:
+
+```python test="excerpt" id="browse-helpers" source="tests/e2e/browse/e2e_browse.py#helpers"
+async def driver(tool: str, **args) -> dict:
+    return await agent.ok(
+        "call_tool", {"space": space, "tool": tool, "arguments": {**ids, **args}}
+    )
+
+async def read() -> dict:
+    return await driver("get_browser_state", snapshot_format="semantic_v2")
+
+async def click(ref: str) -> None:
+    # In a sandbox nobody else uses the browser window, so the
+    # trusted route may activate it (Linux Chromium needs that).
+    await driver("browser_click", ref=ref, delivery_mode="foreground")
+```
+
+Refs belong to the read that returned them and stay valid until the page
+changes. Read again after a navigation or a submit.
+
+The sandbox is a whole computer, so you can also serve your app in it
+(`space_write`, `space_bash`) and browse `http://127.0.0.1:<port>`. This fills
+and submits a form:
+
+```python test="excerpt" id="browse-fill" source="tests/e2e/browse/e2e_browse.py#fill"
+await driver("browser_navigate", url=f"http://127.0.0.1:{FORM_PORT}/")
+# One read; its refs stay valid until the page changes.
+page = await read()
+name_ref = find_ref(page, "textbox", "Name")
+agree_ref = find_ref(page, "checkbox", "I agree")
+submit_ref = find_ref(page, "button", "Submit")
+await driver("browser_type", ref=name_ref, text="Ada Lovelace", replace=True)
+await click(agree_ref)
+await click(submit_ref)
+```
+
+### Sign in with your own session
+
+To browse as you on a site where you are signed in, the agent can teleport
+that site's session from your browser (Firefox or Chrome) into the sandbox
+with `teleport_browser_session`. It names the exact sites. Nothing is selected
+by default, and there is no "all sessions" option. The first call moves
+nothing: it returns what would move and a consent requirement, which the agent
+shows you. Only your approval moves those sites' sessions into the sandbox.
+Delete the sandbox, or sign out there, to end them.
+
+### Clean up
+
+```python test="excerpt" id="browse-cleanup" source="tests/e2e/browse/e2e_browse.py#cleanup"
+await agent.call("sandbox_delete", {"name": space})
+```
+
+### What the browser tools cover
+
+Reading pages (outline, refs, text, a scoped `query`), navigation, clicks,
+typing and filling, Enter, hover, scroll, drag, uploads
+(`browser_set_input_files`), downloads (`browser_download`), page dialogs
+(`browser_dialog`) and tab screenshots. They drive Chromium-family browsers
+over the Chrome DevTools Protocol. Firefox ships in the image too: drive it
+with the desktop tools (`computer_screenshot`, `computer_click`). Waiting is a
+bounded loop of reads. There is no JavaScript `eval`, network interception or
+cookie editing tool.
+
+## Thumbnails
+
+For a small preview of a Space (a tile, a list row, a placeholder while a
+stream connects), use `Space.thumbnail` instead of `screenshot`. It returns a
+small JPEG of the primary display and when it was captured, from a cache that
+every client on the machine shares: the Spaces app, the CLI and your scripts.
+
+A cached image younger than `max_age_ms` comes back at once. Otherwise the SDK
+captures a fresh one through cua-spacesd and keeps it for the next caller. If
+that capture fails, you get the older image, and `captured_at_ms` says how old
+it is.
+
+<Tabs groupId="language" persist items={['Python', 'TypeScript', 'Swift']}>
+  <Tab value="Python">
+
+```python skip="no-runner"
+import cua
+
+space = await cua.connect().spaces().space("local:dev")
+thumb = await space.thumbnail(max_age_ms=120_000)  # None: any age
+print(thumb.width, thumb.height, thumb.captured_at_ms)
+```
+
+  </Tab>
+  <Tab value="TypeScript">
+
+```ts skip="no-runner"
+import { connect } from '@trycua/cua';
+
+const space = await connect().spaces().space('local:dev');
+const thumb = await space.thumbnail(120_000n); // undefined: any age
+console.log(thumb.width, thumb.height, thumb.capturedAtMs);
+```
+
+  </Tab>
+  <Tab value="Swift">
+
+```swift skip="no-runner"
+import Cua
+
+let space = try await Cua.connect(address: nil, token: nil).spaces().space(space: "local:dev")
+let thumb = try await space.thumbnail(maxAgeMs: 120_000)  // nil: any age
+print(thumb.width, thumb.height, thumb.capturedAtMs)
+```
+
+  </Tab>
+</Tabs>
+
+The cua daemon keeps the cache under `~/.cua/cache/thumbnails`: the latest
+image per Space, dropped when the Space is deleted, and capped at 32 MB (the
+oldest images go first). While any client has asked for a thumbnail in the last
+10 minutes, the daemon captures a new one for each running Space about every
+90 seconds. When nobody asks, it captures nothing and puts no load on the
+guests.
 
 ## Attach to or run spacesd
 

@@ -86,6 +86,7 @@ class FakeMacTools:
         adhoc_names: tuple[str, ...] = (),
         unsigned_names: tuple[str, ...] = (),
         team: str = TEAM,
+        requirement: str | None = None,
     ) -> None:
         self.signed = signed
         self.unsigned_names = unsigned_names
@@ -93,7 +94,9 @@ class FakeMacTools:
         self.stapled = stapled
         self.adhoc_names = adhoc_names
         self.team = team
+        self.requirement = requirement
         self.calls: list[list[str]] = []
+        self.unregistered: list[tuple[str, Path, bool]] = []
 
     def __call__(self, argv) -> CommandResult:
         argv = list(argv)
@@ -103,11 +106,20 @@ class FakeMacTools:
             with tarfile.open(argv[2]) as tar:
                 tar.extractall(argv[4])
             return CommandResult(0, "")
+        if tool == gate.LSREGISTER:
+            # The bundle must still be on disk when it is unregistered.
+            self.unregistered.append((argv[1], target, target.is_dir()))
+            return CommandResult(0, "")
         adhoc = not self.signed or target.name in self.adhoc_names
         if tool == "codesign" and "--verify" in argv:
             if not self.signed or target.name in self.unsigned_names:
                 return CommandResult(1, f"{target}: code object is not signed at all")
             return CommandResult(0, f"{target}: valid on disk")
+        if tool == "codesign" and "-r-" in argv:
+            if adhoc:
+                return CommandResult(0, f"Executable={target}\ndesignated => cdhash H\"{'ab' * 20}\"\n")
+            requirement = self.requirement or gate.expected_designated_requirement(self.team)
+            return CommandResult(0, f"Executable={target}\ndesignated => {requirement}\n")
         if tool == "codesign":
             details = ADHOC_DETAILS if adhoc else SIGNED_DETAILS.replace(TEAM, self.team)
             return CommandResult(0, details)
@@ -141,6 +153,42 @@ def test_notarized_release_passes(tmp_path: Path) -> None:
     ]
     for name in STANDALONE_MACHO:
         assert verified.count(name) == 4, name
+
+
+def test_extracted_apps_are_unregistered_from_launchservices_then_deleted(tmp_path: Path) -> None:
+    """Checking a release must not leave extra CuaDriver.app copies registered."""
+    tools = FakeMacTools()
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+
+    report = verify_macos(
+        make_darwin_artifacts(tmp_path / "a"), VERSION, run=tools, workdir=scratch
+    )
+
+    assert report.failures == []
+    # One extracted CuaDriver.app per full darwin archive, each unregistered with
+    # `lsregister -u` while it still exists, and nothing left behind.
+    assert [flag for flag, _, _ in tools.unregistered] == ["-u"] * 3
+    assert {path.name for _, path, _ in tools.unregistered} == {"CuaDriver.app"}
+    assert all(existed for _, _, existed in tools.unregistered)
+    assert list(scratch.iterdir()) == []
+    # The unregistering happens after the last check and before nothing else.
+    last_check = max(i for i, call in enumerate(tools.calls) if call[0] != gate.LSREGISTER)
+    first_unregister = min(i for i, call in enumerate(tools.calls) if call[0] == gate.LSREGISTER)
+    assert first_unregister > last_check
+
+
+def test_a_host_without_lsregister_still_verifies(tmp_path: Path) -> None:
+    tools = FakeMacTools()
+
+    def run(argv):
+        if argv[0] == gate.LSREGISTER:
+            raise FileNotFoundError(argv[0])
+        return tools(argv)
+
+    report = verify_macos(make_darwin_artifacts(tmp_path / "a"), VERSION, run=run)
+
+    assert report.failures == []
 
 
 def test_unsigned_node_runtime_fails_unless_checking_a_legacy_release(tmp_path: Path) -> None:
@@ -194,6 +242,62 @@ def test_each_macos_signature_requirement_is_enforced(
 ) -> None:
     report = verify_macos(make_darwin_artifacts(tmp_path / "a"), VERSION, run=tools)
     assert any(message in failure for failure in report.failures), report.failures
+
+
+# What `codesign -d -r- CuaDriver.app` printed for the shipped 0.36.0 app. macOS
+# keeps the user's Accessibility and Screen Recording approval against this
+# exact requirement, so changing it makes every user approve again.
+SHIPPED_0_36_0_REQUIREMENT = (
+    'identifier "com.trycua.driver" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6]'
+    " /* exists */ and certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */"
+    " and certificate leaf[subject.OU] = YCK386LBJ7"
+)
+
+
+def test_expected_designated_requirement_is_the_one_shipped_apps_carry() -> None:
+    assert gate.expected_designated_requirement() == SHIPPED_0_36_0_REQUIREMENT
+    assert "cdhash" not in SHIPPED_0_36_0_REQUIREMENT
+    assert "CFBundleShortVersionString" not in SHIPPED_0_36_0_REQUIREMENT
+
+
+def test_release_app_designated_requirement_is_checked_once_per_archive(tmp_path: Path) -> None:
+    tools = FakeMacTools()
+    report = verify_macos(make_darwin_artifacts(tmp_path / "a"), VERSION, run=tools)
+
+    assert report.failures == []
+    requirement_calls = [call for call in tools.calls if "-r-" in call]
+    assert len(requirement_calls) == 3
+    assert all(Path(call[-1]).name == "CuaDriver.app" for call in requirement_calls)
+
+
+@pytest.mark.parametrize(
+    "requirement",
+    [
+        'cdhash H"' + "ab" * 20 + '"',
+        SHIPPED_0_36_0_REQUIREMENT + ' and info[CFBundleShortVersionString] = "0.36.0"',
+        SHIPPED_0_36_0_REQUIREMENT.replace("com.trycua.driver", "com.trycua.driver.local"),
+        SHIPPED_0_36_0_REQUIREMENT.replace("YCK386LBJ7", "ZZZZZZZZZZ"),
+        "anchor apple generic",
+    ],
+)
+def test_a_requirement_that_pins_a_build_fails_the_release(tmp_path: Path, requirement: str) -> None:
+    report = verify_macos(
+        make_darwin_artifacts(tmp_path / "a"), VERSION, run=FakeMacTools(requirement=requirement)
+    )
+
+    assert any(
+        "CuaDriver.app: designated requirement is not the stable one" in failure
+        and "Accessibility and Screen Recording again" in failure
+        for failure in report.failures
+    ), report.failures
+
+
+def test_a_quoted_team_id_in_the_requirement_is_still_the_same_requirement(tmp_path: Path) -> None:
+    quoted = SHIPPED_0_36_0_REQUIREMENT.replace("= YCK386LBJ7", '= "YCK386LBJ7"')
+    report = verify_macos(
+        make_darwin_artifacts(tmp_path / "a"), VERSION, run=FakeMacTools(requirement=quoted)
+    )
+    assert report.failures == []
 
 
 @pytest.mark.parametrize(

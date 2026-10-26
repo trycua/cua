@@ -24,20 +24,31 @@ public protocol UpdaterDriving: AnyObject {
     var onChange: (() -> Void)? { get set }
     /// The Sparkle channels to install from besides the default one.
     var channels: [String] { get set }
-    /// Checks now, with Sparkle's own progress and result windows.
+    /// A check the user started is running (not a held update that waits
+    /// for a restart).
+    var checking: Bool { get }
+    /// The update the page shows (the bridge's `update.get`).
+    var state: UpdateState { get }
+    /// Checks now, with no Sparkle window: an update found downloads on its
+    /// own, and an error is shown only here.
     func checkNow()
-    /// Told each updater step: `found`, `not_found`, `installed` or `failed`
-    /// (usage telemetry; fixed words).
+    /// Restarts into the downloaded update (the page's "Restart to update");
+    /// does nothing while nothing is downloaded.
+    func installNow()
+    /// Told each updater step: `found`, `not_found`, `downloaded`,
+    /// `installed` or `failed` (usage telemetry; fixed words).
     var onUpdateEvent: ((String) -> Void)? { get set }
 }
 
-/// Sparkle, with its standard windows. Started only in an app bundle whose
-/// Info.plist names a feed and the EdDSA key (`SUFeedURL`,
-/// `SUPublicEDKey`).
+/// Sparkle with no windows of its own (`UpdateUserDriver`): a background
+/// update downloads quietly and the page offers "Restart to update".
+/// Signature checks are Sparkle's, whatever the user driver. Started only
+/// in an app bundle whose Info.plist names a feed and the EdDSA key
+/// (`SUFeedURL`, `SUPublicEDKey`).
 @MainActor
-public final class SparkleUpdater: NSObject, UpdaterDriving, SPUUpdaterDelegate, SPUStandardUserDriverDelegate,
-    SUVersionDisplay {
-    private var controller: SPUStandardUpdaterController!
+public final class SparkleUpdater: NSObject, UpdaterDriving, SPUUpdaterDelegate {
+    private var updater: SPUUpdater!
+    private let driver: UpdateUserDriver
     private var observations: [NSKeyValueObservation] = []
     public var onChange: (() -> Void)?
     public var channels: [String] = []
@@ -50,15 +61,13 @@ public final class SparkleUpdater: NSObject, UpdaterDriving, SPUUpdaterDelegate,
     /// The relaunch prompt is shown once per run.
     private var askedToRelaunch = false
 
-    private var updater: SPUUpdater { controller.updater }
-
     /// The updater for `bundle`, started; nil when the bundle has no feed
     /// (a development build) or Sparkle refused to start.
     public static func start(bundle: Bundle = .main, channels: [String]) -> SparkleUpdater? {
         guard bundle.bundleURL.pathExtension == "app",
               bundle.object(forInfoDictionaryKey: "SUFeedURL") is String,
               bundle.object(forInfoDictionaryKey: "SUPublicEDKey") is String else { return nil }
-        let updater = SparkleUpdater(channels: channels)
+        let updater = SparkleUpdater(channels: channels, bundle: bundle)
         do {
             try updater.updater.start()
         } catch {
@@ -68,11 +77,13 @@ public final class SparkleUpdater: NSObject, UpdaterDriving, SPUUpdaterDelegate,
         return updater
     }
 
-    private init(channels: [String]) {
+    private init(channels: [String], bundle: Bundle) {
         self.channels = channels
+        driver = UpdateUserDriver(currentVersion: AboutBundleInfo(bundle: bundle).version)
         super.init()
-        controller = SPUStandardUpdaterController(startingUpdater: false, updaterDelegate: self,
-                                                  userDriverDelegate: self)
+        updater = SPUUpdater(hostBundle: bundle, applicationBundle: bundle, userDriver: driver, delegate: self)
+        driver.onChange = { [weak self] in self?.onChange?() }
+        driver.onEvent = { [weak self] event in self?.onUpdateEvent?(event) }
         let changed: @Sendable () -> Void = { [weak self] in
             DispatchQueue.main.async { self?.onChange?() }
         }
@@ -96,6 +107,10 @@ public final class SparkleUpdater: NSObject, UpdaterDriving, SPUUpdaterDelegate,
 
     public var lastCheck: Date? { updater.lastUpdateCheckDate }
     public var canCheck: Bool { updater.canCheckForUpdates }
+    public var state: UpdateState { driver.state }
+    public var checking: Bool { driver.state.status == .checking }
+
+    public func installNow() { driver.installNow() }
 
     public func checkNow() {
         // A copy replaced under this process cannot install updates; say so
@@ -105,10 +120,14 @@ public final class SparkleUpdater: NSObject, UpdaterDriving, SPUUpdaterDelegate,
             Self.askToRelaunch(replaced, launched: launched)
             return
         }
+        // An update downloading or waiting for a restart is the answer; and
+        // Sparkle starts no check while a session runs.
+        guard updater.canCheckForUpdates, [.idle, .error].contains(driver.state.status) else { return }
+        driver.beginUserCheck()
         updater.checkForUpdates()
     }
 
-    /// Checks in the background (no window unless an update is found);
+    /// Checks in the background (no window);
     /// end-to-end runs use it through `CUA_SPACES_UPDATE_CHECK`.
     public func checkInBackground() { updater.checkForUpdatesInBackground() }
 
@@ -146,6 +165,22 @@ public final class SparkleUpdater: NSObject, UpdaterDriving, SPUUpdaterDelegate,
         tell("found")
     }
     public nonisolated func updaterDidNotFindUpdate(_ updater: SPUUpdater) { tell("not_found") }
+
+    /// The silent path (`automaticallyDownloadsUpdates`): Sparkle never asks
+    /// the user driver, and installs on quit. Taking the install here makes
+    /// that update "downloaded" too, with the immediate install as Restart.
+    public nonisolated func updater(_ updater: SPUUpdater, willInstallUpdateOnQuit item: SUAppcastItem,
+                                    immediateInstallationBlock immediateInstallHandler: @escaping () -> Void) -> Bool {
+        let version = item.displayVersionString
+        MainActor.assumeIsolated { driver.silentlyDownloaded(version: version, install: immediateInstallHandler) }
+        return true
+    }
+
+    /// A cycle that ended with nothing to show clears a pending "checking".
+    public nonisolated func updater(_ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck,
+                                    error: (any Error)?) {
+        MainActor.assumeIsolated { driver.cycleFinished() }
+    }
     public nonisolated func updater(_ updater: SPUUpdater, willInstallUpdate item: SUAppcastItem) { tell("installed") }
     public nonisolated func updater(_ updater: SPUUpdater, didAbortWithError error: any Error) {
         // "No update" also arrives here; only a real failure is one.
@@ -207,7 +242,7 @@ public final class SparkleUpdater: NSObject, UpdaterDriving, SPUUpdaterDelegate,
     }
 
     /// Opens `bundle` again once this process has exited, then quits.
-    private static func relaunch(_ bundle: URL) {
+    static func relaunch(_ bundle: URL) {
         let pid = ProcessInfo.processInfo.processIdentifier
         let waiter = Process()
         waiter.executableURL = URL(fileURLWithPath: "/bin/sh")
@@ -220,47 +255,6 @@ public final class SparkleUpdater: NSObject, UpdaterDriving, SPUUpdaterDelegate,
             return
         }
         NSApp.terminate(nil)
-    }
-
-    // MARK: - Versions in Sparkle's windows
-
-    /// This app's full version (`CuaVersion`: 0.2.0-staging.5), which
-    /// `CFBundleShortVersionString` (X.Y.Z only) leaves out.
-    private nonisolated static var fullVersion: String? {
-        Bundle.main.object(forInfoDictionaryKey: "CuaVersion") as? String
-    }
-
-    public nonisolated func standardUserDriverRequestsVersionDisplayer() -> (any SUVersionDisplay)? { self }
-
-    // MARK: - Sparkle's alerts in front
-
-    /// "You're up to date!" and the other alerts are modal: brought to the
-    /// front, so one never waits unseen behind the New UI's window (or
-    /// another app's) while the About pane says "Checking…".
-    public nonisolated func standardUserDriverWillShowModalAlert() {
-        MainActor.assumeIsolated { Self.bringAlertsForward() }
-    }
-
-    /// Activates the app: the modal alert that follows becomes the key
-    /// window, in front of every other.
-    static func bringAlertsForward() {
-        NSApp.activate()
-    }
-
-    /// "0.2.0-staging.6 is now available; you have 0.2.0-staging.5" (the
-    /// appcast item already carries the full version).
-    public nonisolated func formatUpdateVersion(
-        fromUpdate update: SUAppcastItem,
-        andBundleDisplayVersion inOutBundleDisplayVersion: AutoreleasingUnsafeMutablePointer<NSString>,
-        withBundleVersion bundleVersion: String
-    ) -> String {
-        if let full = Self.fullVersion { inOutBundleDisplayVersion.pointee = full as NSString }
-        return update.displayVersionString
-    }
-
-    public nonisolated func formatBundleDisplayVersion(_ bundleDisplayVersion: String, withBundleVersion bundleVersion: String,
-                                                       matchingUpdate: SUAppcastItem?) -> String {
-        Self.fullVersion ?? bundleDisplayVersion
     }
 }
 
@@ -328,6 +322,11 @@ public final class FixtureUpdater: UpdaterDriving {
     public var channels: [String] = []
     public var onUpdateEvent: ((String) -> Void)?
     public private(set) var checks = 0
+    /// What the page shows; scripted by tests through the `simulate` calls.
+    public var state = UpdateState.idle(currentVersion: "0.0.0") { didSet { onChange?() } }
+    public var checking: Bool { state.status == .checking }
+    /// Restarts asked for while an update was downloaded.
+    public private(set) var installs = 0
     /// What the next check finds (`not_found` by default).
     public var nextResult = "not_found"
 
@@ -338,6 +337,36 @@ public final class FixtureUpdater: UpdaterDriving {
         lastCheck = Date()
         onUpdateEvent?(nextResult)
         onChange?()
+    }
+
+    public func installNow() {
+        guard state.status == .downloaded else { return }
+        installs += 1
+        onUpdateEvent?("installed")
+        state = .idle(currentVersion: state.currentVersion)
+    }
+
+    /// A check found `version`; it begins downloading at once.
+    public func simulateFound(version: String) {
+        state = UpdateState(status: .available, currentVersion: state.currentVersion, version: version,
+                            notesUrl: UpdateState.notesURL(version: version))
+        onUpdateEvent?("found")
+    }
+
+    public func simulateProgress(percent: Int) {
+        state.status = .downloading
+        state.percent = percent
+    }
+
+    public func simulateDownloaded() {
+        state.status = .downloaded
+        state.percent = nil
+        onUpdateEvent?("downloaded")
+    }
+
+    public func simulateError(_ message: String) {
+        state = UpdateState(status: .error, currentVersion: state.currentVersion, message: message)
+        onUpdateEvent?("failed")
     }
 }
 
@@ -400,8 +429,19 @@ public final class UpdatesModel {
             autoInstall: updater?.automaticallyInstalls ?? false,
             channel: channel,
             lastCheck: updater?.lastCheck.map(Self.dateText),
-            checking: !(updater?.canCheck ?? true))
+            checking: updater?.checking ?? false)
     }
+
+    /// What the page shows about an update (`update.get`).
+    public var updateState: UpdateState {
+        _ = revision
+        var state = updater?.state ?? .idle(currentVersion: info.version)
+        state.currentVersion = info.version
+        return state
+    }
+
+    /// "Restart to update": installs the downloaded update and restarts.
+    public func installUpdate() { updater?.installNow() }
 
     static func dateText(_ date: Date) -> String {
         date.formatted(date: .abbreviated, time: .shortened)

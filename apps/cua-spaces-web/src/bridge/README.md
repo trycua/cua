@@ -33,9 +33,10 @@ import { BridgeProvider, useSpaces } from "@/bridge";
 | `useSpaces()` | `Space[]` with pending creates, power changes and deletes overlaid by the core. Actions: `createSpace(req)`, `cancelCreate(pendingId)`, `dismissCreate(pendingId)`, `startSpace(id)`, `stopSpace(id)`, `deleteSpace(id)`, `openSpace(id)`. |
 | `useMachines()` | `Machine[]`, this machine first, each with `spaceIds`, `connection` (`relay`, `direct`, or null before host setup), `detail`, `lastSeen` and, for this machine, `panel` (the core's `host.panel`). Also `setupGuide`: host setup in the core's words (`host.panel` choices, `host.formView`), for the Add a machine explainer. |
 | `usePairingCode({ open, enabled, team? })` | "Add a machine" by link or QR code: makes a code on opening (`devices.createPairingCode`), reads `devices.pairingCodes` every 3 s until it is `used`, `revoked` or `expired`, and `revoke()` / `renew()`. `phase` is `idle`, `minting`, `ready`, `used`, `revoked`, `expired` or `error` (`error.unsupported` when the host or relay can't make codes). |
+| `useJoinWithCode({ onJoined? })` | "Join with a code": `{ phase, error, join(codeOrLink, relay?), reset() }`. `join` reads the code the way `cua host setup --pair` does (`pairing-code.ts`), then asks the host to run the bundled `cua host setup --pair` (`host.joinWithCode`). Opening the app with a `cua://add/<code>` link lands on `/machines?join=<code>`, which fills the dialog and waits for Join. |
 | `useSettings()` | `{ values, telemetry, defaultLocation, page }`, where `page` is the core's Settings layout. Action: `updateSetting(key, value)` for `theme`, `menuBar`, `hotkey`, `telemetry`, `defaultLocation`, `launchAtLogin` or `updateChannel`. The last two are `null` when the host can't offer them, and the Settings page hides their rows. `globalShortcut` is the host's ⌘⇧Space (macOS) with whether the system gave it to the app; absent or `null` where the host has none. |
 | `useKeyvault()` | `{ overview, groups, views, vaultState }`. `views` holds the core's `page`, `sidebar` and `vault` (the list grouped by app, then site). Actions: `unlock(passphrase?)`, `lockItem(id)`, `lockItems(ids)`, `unlockItems(ids)`, `setDisabled`, `approve`, `deny`, `revokeGrant`, `vaultAction(action)` (search, select, open), and `pane(selection)`. |
-| `useSession()` | `{ fleet, onboarding, daemon, signedIn, identity, signIn }`, where `signIn` is the sign-in phase. Actions: `signIn()`, `signOut()`, `completeOnboarding(mode)`, `openExternal(url)`. |
+| `useSession()` | `{ account, onboarding, daemon, signedIn, identity, signIn }`, where `signIn` is the sign-in phase. Actions: `signIn()`, `signOut()`, `completeOnboarding(mode)`, `openExternal(url)`. |
 | `useAgents()` | `{ agents, runs, unread, canList }`: persistent agents (state `running`, `paused` or `idle`, the core's row line and action label, the run the detail opens) and the runs in every running Space, in the core's order. Actions: `pauseAgent(name)`, `resumeAgent(name)`, `agentSetup()`, `configureAgents(agents?)`. |
 | `useAgentDetail(agent)` | A persistent agent's Memory, Routines and Access to this computer (`agent-detail.ts`): `{ view, busy, error, unsupported, thisMachine, act(action) }`. The page runs the core's `agents.pageReduce` / `agents.pageView`, as `PersistentModel` does natively, and the host runs each command (`ops/agent-detail.ts`). |
 | `useAgentTimeline(run)` | One run's conversation while mounted: `{ items, status, phase, caughtUp, isLoading, error, unsupported, lastEventMs }`. It reads `agents.events` with a cursor (every 500 ms while a turn runs, 4 s otherwise) and folds the events like cua-agents' `Transcript` (`transcript.ts`). Items are immutable, so a row memoized by item re-renders only when its item changed. |
@@ -98,17 +99,19 @@ Each is an existing Tauri command under a host-neutral name:
 | `keyvault.unlock` `{passphrase?}` | `keyvault_unlock` / `keyvault_unlock_passphrase` |
 | `keyvault.setUnattended` `{itemIds, unattended}` | `keyvault_set_unattended` |
 | `keyvault.setDisabled`, `.approve`, `.deny`, `.revokeGrant` | `keyvault_set_disabled`, `keyvault_approve`, `keyvault_deny`, `keyvault_revoke_grant` |
-| `session.get` | `fleet_status` + `onboarding_state` + `daemon_status` |
+| `session.get` | `account_status` + `onboarding_state` + `daemon_status` |
 | `session.signIn` / `.signOut` / `.completeOnboarding` / `.openExternal` | `begin_sign_in` / `sign_out` / `complete_onboarding` / `open_external` |
 | `agents.list` | `agents_tool` `persistent_agent_list` (snake_case mapped to `PersistentAgent`) |
 | `agents.runs` `{spaceId}` | `list_space_agents` |
 | `agents.events` `{spaceId, runId, cursor, max?}` | none yet: unsupported (`TAURI_UNSUPPORTED`) |
+| `agents.start` `{spaceId, agent, prompt, repo?, branch?, model?, envFromHost?}`, `agents.message` `{spaceId, runId, text, force?}` | none yet: unsupported (`TAURI_UNSUPPORTED`) |
 | `agents.pause` / `.resume` `{name}` | `agents_tool` `agent_pause` / `agent_resume` |
 | `agents.setup` / `.configure` `{agents}` | `agent_setup_detect` / `agent_setup_configure` |
 | `agents.detail`, `.readFile`, `.restoreFile`, `.addRoutine`, `.setRoutine`, `.removeRoutine`, `.allowComputer`, `.revokeComputer` | `agents_tool` (the tools `PersistentModel` runs; see `ops/agent-detail.ts`) |
 
 Events (`HostEvent`): `spaces.changed`, `spaces.createProgress`,
-`machines.changed`, `settings.changed`, `keyvault.changed`,
+`machines.changed`, `settings.changed`, `update.changed` (the host's updater
+moved on: ask `update.get` again), `keyvault.changed`,
 `session.signedIn`, `session.signInFailed`, `session.signedOut` and
 `agents.changed` (no Tauri event yet; the store also refetches agents when a
 watched run starts or ends, and when Spaces change). They
@@ -137,6 +140,16 @@ participants' cursors over the video it draws, `ops/presence.ts`; events
 natively). Electron reads
 drag regions from the CSS, so the adapter sends none there.
 
+Both hosts take the page's Space tiles (`window.setDropTargets`, sent by
+the adapter whenever the layout changes; `window-drop.ts`) as targets for a
+real window dragged onto one, as the classic Mac sidebar's rows are. The
+host follows the drag with the notch's window-drag monitor (macOS with the
+Accessibility permission, the notch shown), hit-tests the tiles, names the
+tile under the window with `window.dropTarget` (`{ spaceId }`, null for
+none) for the page to highlight, and opens that Space's Teleport review on
+release. Windows and Linux can't follow other apps' window drags, so they
+never send `window.dropTarget`.
+
 ### SwiftUI WKWebView: `webkit-protocol.ts`
 
 The macOS app's `WebUIBridge.swift` defines this contract, and the adapter
@@ -152,12 +165,12 @@ speaks it as is:
   (camelCase records). `adapters/webkit.ts` maps each operation onto them and
   turns the results back into the wire shapes above, so the store derives
   the same way as for every other host. `AppSpace` becomes `SpaceRow`, the
-  Settings page rows (`notch`, `default-location`, `telemetry`) become
+  Settings page rows (`notch`, `telemetry`) become
   `SettingsValues`, and the Keyvault overview becomes snake_case.
 - Events arrive as `window` `cua:event` CustomEvents (`detail: { event }`):
   `spaces.changed` (it also refreshes machines), `machines.changed` (this
   Mac's host status or the account's devices), `keyvault.changed`,
-  `settings.changed`, `session.changed` and `agents.changed`.
+  `settings.changed`, `update.changed`, `session.changed` and `agents.changed`.
 - `spaces.cancelCreate {pendingId}`, `host.status`, `keyvault.approve
   {requestId, items}`, `keyvault.deny {requestId}`, `keyvault.revokeGrant
   {id}` and the seven `agents.*` methods keep the operation's own name and
@@ -168,7 +181,7 @@ speaks it as is:
 - New Space is the page's wizard: `spaces.createOptions` answers the env the
   native sheet opens with (`AppModel.newSpaceEnv`: this Mac's runtimes,
   storage and GPUs, your machines that provide Spaces, your clouds), carried
-  as `NewSpaceOptions.env` (with `local`, `gpus` and `cloudPricing` from it,
+  as `NewSpaceOptions.env` (with `local` and `gpus` from it,
   and `macosVmsRunning`: the macOS VMs Lume runs on this Mac, which Apple's
   limit of two counts). While the launch is still starting it answers at
   once with what it knows and `pending: true`; the page asks again on
@@ -177,10 +190,11 @@ speaks it as is:
   `spaces.createProgress` events until it answers with the Space (or
   `cancelled`). The app's own New Space items (⌘N, the menu bar, a machine's
   "New Space on…") send `spaces.newRequested {on}`, which opens the wizard;
-  the native sheet is the fallback while New UI is off. The app menu's
-  Settings command (⌘,) sends `settings.openRequested` while the New UI
-  window is in front, and the page goes to Settings (also with no focus in
-  its web view). While New UI is on, the notch and the menu bar item send
+  the native sheet is the fallback while New UI is off. The app's
+  Settings items (⌘,, the menu bar item, the notch; New UI on or off) send
+  `settings.openRequested` while the window is open, or open it at
+  `/settings`, and the page goes to Settings (also with no focus in its web
+  view). The Mac app has no native Settings window. While New UI is on, the notch and the menu bar item send
   `route.openRequested {path}` (a Space's tile `/spaces/<id>`, with
   `?dropped=[names]` for a drop on it; the list `/spaces`; Settings
   `/settings`), and the page goes there.
@@ -193,6 +207,10 @@ speaks it as is:
   change calls `window.setBackgroundColor`. The host registers ⌘⇧Space
   itself; `settings.get` carries `globalShortcut: {label, registered}`, and
   each read tries the registration again when the system refused it.
+- `settings.get` also carries `accountUrl`, the host's account app
+  (`app_account_app_url`: `CUA_ENV`, `CUA_ACCOUNT_APP_URL`). The page's wasm
+  core has no environment, so the relay notice's Upgrade falls back to that
+  app's billing page (`relayUsage.view {usage, accountApp}`).
 - Touch ID and the unlock prompt stay native.
 - Launch at login is the core's `launch-at-login` row. The adapter reads it
   from the page and sets it with `settings.choose {row: "launch-at-login"}`,
@@ -264,9 +282,12 @@ under a host-neutral name; nothing here is a new mechanism. Types are in
 | `agents.list` | `{}` | `PersistentAgent[]` | `persistent_agent_list` |
 | `agents.runs` | `{ spaceId }` | `SpaceAgentRun[]` | `agent_list` (`list_space_agents`) |
 | `agents.events` | `{ spaceId, runId, cursor, max? }` | `AgentEventsPage` (`{ run_id, status, phase, events, cursor, caught_up }`) | `agent_events` |
+| `agents.start` | `{ spaceId, agent, prompt, repo?, branch?, model?, envFromHost? }` | `AgentStarted` (`{ run_id, agent, ... }`) | unsupported (no Tauri command starts a run) |
+| `agents.message` | `{ spaceId, runId, text, force? }` | `AgentMessageSent` (`{ delivered, run_id, status, phase }`) | unsupported (no Tauri command sends to a run) |
 | `agents.pause` / `agents.resume` | `{ name }` | `null` | `agent_pause` / `agent_resume` |
 | `agents.setup` | `{}` | `AgentSetupRow[]` | `agent_setup_detect` (`cua agents status`) |
 | `agents.configure` | `{ agents: string[] \| null }` | `AgentSetupRow[]` | `agent_setup_configure` (`cua agents setup`) |
+| `agents.signIn` | `{ agent }` | `AgentSetupRow[]` | unsupported (no command starts an agent's own sign-in) |
 
 Event: `{ type: "agents.changed" }` when an agent is paused, resumed or saved,
 or a run starts or ends. The store refetches `agents.list` and the runs.
@@ -279,7 +300,7 @@ run whose conversation can't be read.
 | Host | Answers |
 |---|---|
 | demo | everything: four persistent agents (Claude Code, Codex, Hermes, OpenClaw) and five runs; `run-ada-7` writes its third turn live for about 25 s after start |
-| tauri | everything except `agents.events` (the Tauri shell has no `agent_events` command, and `agents_tool` doesn't allow it) |
+| tauri | everything except `agents.events`, `agents.start` and `agents.message` (the Tauri shell has no `agent_events`, `agent_start` or `agent_message` command, and `agents_tool` doesn't allow them) |
 | electron | the Swift host's methods (below), as they are ported (`apps/cua-spaces-desktop/test/not-yet.ts`) |
 | webkit | everything, from the SwiftUI app's own models (below); without the daemon the host answers `unsupported` |
 
@@ -294,8 +315,11 @@ which is the `agent_events` result as is):
 | `agents.list` | `{}` | `PersistentAgentInput[]` | `PersistentModel.loadAgents` (`persistent_agent_list`) |
 | `agents.runs` | `{ spaceId }` | `SpaceAgentRun[]` | `AgentRunsModel.refresh` |
 | `agents.events` | `{ spaceId, runId, cursor, max? }` | `agent_events` result | the `agent_events` tool (`AgentRun.events(cursor:)` in the SDK) |
+| `agents.start` | `{ spaceId, agent, prompt, repo?, branch?, model?, envFromHost? }` | `agent_start` result | the `agent_start` tool (`PersistentModel.startRun`); saved provider keys the harness reads go without being named |
+| `agents.message` | `{ spaceId, runId, text, force? }` | `agent_message` result | the `agent_message` tool (`PersistentModel.sendMessage`) |
 | `agents.pause` / `agents.resume` | `{ name }` | `null` | `PersistentModel.send(.pause/.resume)` |
 | `agents.setup` / `agents.configure` | `{}` / `{ agents }` | `AgentSettingsRow[]` | the Settings "AI agents" rows |
+| `agents.signIn` | `{ agent }` | `AgentSettingsRow[]` | the agent's own sign-in on this computer (`codex login`; `AgentSetupRunning.signIn`), returning once it runs |
 
 The host sends `agents.changed` when the persistent agents or the AI agents
 rows change. Without the daemon (`persistent_agent_list`, `agent_events`) or
@@ -409,6 +433,8 @@ mechanism. Types are in `contracts/settings.ts`, `contracts/devices.ts` and
 | `about.get` | `{}` | `AboutInput` | `plugin:app\|version`, `get_environment` (no updater) | `UpdatesModel.input` |
 | `about.set` | `{ autoCheck?, autoInstall?, channel? }` | `AboutInput` | unsupported | `UpdatesModel.setAutoCheck/setAutoInstall/choose(channel:)` |
 | `about.checkNow` | `{}` | `AboutInput` | unsupported | `UpdatesModel.checkNow` |
+| `update.get` | `{}` | `UpdateState` (`status`, `currentVersion`, `version`, `percent`, `notesUrl`, `message`) | unsupported | `UpdatesModel.updateState` (Sparkle driven by `InAppUpdateDriver`; Electron: `update-state.ts`) |
+| `update.install` | `{}` | `UpdateState` | unsupported | `UpdatesModel.installUpdate`: "Restart to update". Only a click calls it; with nothing downloaded it changes nothing |
 | `experiments.get` / `.set` | `{}` / `{ experiments }` | `Experiments` | UI storage `cua.settings.experiments` | `app.info`, `settings.choose {row: "experiment:…"}` (routed today) |
 | `loginItem.get` / `.set` | `{}` / `{ on }` | `{ status, providesSpaces, runsAgents }` | `login_item_status` / `login_item_set`, `host_status`, `agents_tool` | `LoginItem.status()`, `register/unregister`, `HostModel.provideSpaces`, `PersistentModel` |
 | `loginItem.openSettings` | `{}` | `null` | `host_open_settings` | `SMAppService.openSystemSettingsLoginItems()` |
@@ -419,10 +445,12 @@ mechanism. Types are in `contracts/settings.ts`, `contracts/devices.ts` and
 | `devices.createPairingCode` | `{ team? }` | `PairingCode` (camelCase: `id`, `code`, `url`, `installSh`, `installPowershell`, `state`, `team`, `createdAt`, `expiresAt`, `usedAt`, `machine`) | `devices_create_pairing_code` | `DevicesRunning.createPairingCode` (the SDK's `Devices.createPairingCode`) |
 | `devices.pairingCodes` | `{}` | `PairingCode[]`, newest first, without `code`, `url` and the commands | `devices_pairing_codes` | `DevicesRunning.pairingCodes` |
 | `devices.revokePairingCode` | `{ id }` | `null` | `devices_revoke_pairing_code` | `DevicesRunning.revokePairingCode` |
+| `teams.list` | `{}` | `TeamsList` (`teams`: `id`, `alias`, `name`, `role`, `plan`; `currentTeamId`) | `teams_list` | the app's Teams (Settings, Teams) |
 | `storage.get` | `{}` | `StorageInput` (`volume_storage`, `volume_mount_status`, `volume_cache_stats` as the tools answer) | `agents_tool` | `StorageModel.load` inputs |
 | `storage.run` | `{ request: StorageRequest }` | `DriveCheckInput` for test, save and adopt; else `null` | `agents_tool` (`volume_*`), `drive_reveal`, `host_open_settings` | `StorageModel`'s request runner |
 | `notifications.list` | `{}` | `NotificationInput[]` (camelCase) | `agents_tool` `notifications_list` | `PersistentModel.feed` |
 | `notifications.markAllRead` | `{}` | `null` | `agents_tool` `notifications_ack {ids: []}` | `PersistentModel.markAllRead` |
+| `notifications.markRead` | `{ ids }` | `null` | `agents_tool` `notifications_ack {ids}` (nothing for no ids) | `PersistentModel.markRead(ids:)` |
 
 **Electron.** The Swift host's methods, as they are ported
 (`apps/cua-spaces-desktop/test/not-yet.ts`).
@@ -445,6 +473,9 @@ something the native apps already do; nothing is a new mechanism.
 | Operation | Args | Result | Tauri | SwiftUI (`WebUIBridge+Pages.swift`) |
 |---|---|---|---|---|
 | `telemetry.track` | `{ signals }` | `null` | `telemetry_record_signals` | `model.telemetrySink?.record(signals)` (`appTelemetryRecord`), only while `status().enabled`; each signal checked again |
+| `telemetry.linkNotice` | `{}` | `{ due, title, body, okLabel, turnOffLabel, detailsLabel, docsUrl } \| null` | `telemetry_link_notice` | `model.telemetrySink?.linkNotice()` (`telemetryLinkNotice`, `telemetryLinkNoticeDue`); the one-time notice that usage data is now linked to the account (CUA-1881). The page shows it only while `due`. The demo host has none |
+| `telemetry.acknowledgeLinkNotice` | `{}` | `null` | `telemetry_acknowledge_link_notice` | `model.telemetrySink?.acknowledgeLinkNotice()` (`telemetryAcknowledgeLinkNotice`); either button. "Turn off usage data" first sets `telemetry` off through `updateSetting` |
+| `crashReporting.config` | `{}` | `{ allowed, dsn, release, environment, shell, crashTest? }` | none (unsupported) | the host's crash-reporting settings (CUA-2343): `allowed` only while usage data is on and its notice shown; `dsn` empty when the build has none; `crashTest: "ui"` only on a `local` build with `CUA_CRASH_TEST=ui`. Older hosts (`unimplemented`), the demo host and Tauri read as off. Electron: `src/bridge/telemetry.ts` |
 | `spaces.usage` | `{ spaceId }` | `SpaceUsage \| null` | `space_usage` | `backend.usage(id:)` |
 | `spaces.windows` | `{ spaceId }` | `{ windows, display, open }` (`open`: the rows whose picture in picture is open) | none (the viewer lists windows over its own stream) | `StreamRowsModel` over `backend.streamProvider(id:)` |
 | `stream.pip` | `{ spaceId, command: { type: "open" \| "close", row } }` | open row ids | none (its PiP is a viewer window) | a `StreamPiPSet` per Space, as the detail view keeps |
@@ -471,9 +502,10 @@ sends only while `settings.get`'s `telemetry` says on and the notice was
 shown, read before every batch; with the first-run switch off the core
 derives nothing. `sanitizeSignals` drops any signal that isn't a known type
 with exactly its fields as fixed lowercase words, flags or durations, so
-names, emails, paths and URLs can't leave the page. Tauri and the SwiftUI
-app record `app_launched` themselves (`HOST_RECORDS_LAUNCH`); the page
-records it in Electron and demo.
+names, emails, paths and URLs can't leave the page. Tauri, the SwiftUI
+app and Electron record `app_launched` themselves (`HOST_RECORDS_LAUNCH`);
+the page records it only in demo. Electron holds the page's signals until
+the first run leaves Welcome (its usage notice), then sends them in order.
 
 **Space detail.** `useSpaceDetail(space, hostArch)` gives the core's
 `sidebar.detail` (facts, sections, Delete's question) and

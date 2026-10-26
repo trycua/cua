@@ -48,6 +48,22 @@ function tauriHost(answers: Record<string, unknown> = {}, withEvents = true) {
   return { win, calls, listeners, invoke };
 }
 
+describe("tauri adapter: the one-time linking notice", () => {
+  it("reads the notice from telemetry_link_notice and acknowledges with telemetry_acknowledge_link_notice", async () => {
+    const notice = { due: true, title: "We've updated how usage data works", body: "b", okLabel: "Got it", turnOffLabel: "Turn off usage data", detailsLabel: "What is collected", docsUrl: "https://cua.ai/docs/cua-sdk/concepts/telemetry" };
+    const { win, calls } = tauriHost({ telemetry_link_notice: notice });
+    const a = createTauriAdapter(win);
+    expect(await a.call("telemetry.linkNotice", {})).toEqual(notice);
+    expect(await a.call("telemetry.acknowledgeLinkNotice", {})).toBeNull();
+    expect(calls.map(([c]) => c)).toEqual(["telemetry_link_notice", "telemetry_acknowledge_link_notice"]);
+  });
+
+  it("a command that answers nothing (an older shell) reads as no notice", async () => {
+    const { win } = tauriHost();
+    expect(await createTauriAdapter(win).call("telemetry.linkNotice", {})).toBeNull();
+  });
+});
+
 describe("tauri adapter", () => {
   it("maps operations onto the existing invoke commands", async () => {
     const { win, calls } = tauriHost({ list_spaces: [], keyvault_set_unattended: [], set_space_power: {} });
@@ -91,7 +107,7 @@ describe("tauri adapter", () => {
   it("answers every operation", async () => {
     const app = { id: "slack", name: "Slack", capability: "full", moves: ["app_only"] };
     const { win } = tauriHost({
-      fleet_status: { configured: false, authMode: "none" },
+      account_status: { configured: false, authMode: "none" },
       list_hosts: [],
       teleport_entry_for_path: app,
       teleport_plan: { app, space_id: "s", moves: "app_only", steps: [], consent: [], sensitive: false, total_bytes: 0, warnings: [] },
@@ -109,6 +125,7 @@ describe("tauri adapter", () => {
         spaceId: "s",
         agents: null,
         signals: [],
+        ids: ["n1"],
         // storage.run takes a StorageRequest; host.setUp the host form's request.
         request: op === "host.setUp" ? { mode: "relay" } : { kind: "clear-cache" },
         action: "stop-sharing",
@@ -170,7 +187,7 @@ describe("tauri adapter", () => {
   it("reads UI settings from the shell's storage and writes each key to its command", async () => {
     const { win, calls } = tauriHost({
       telemetry_status: { enabled: false, sourceKind: "config" },
-      get_default_location: { value: "cloud", source: "config", path: "x" },
+      get_default_location: { value: "host:m2", source: "config", path: "x" },
       login_item_status: "requiresApproval",
       login_item_set: "notRegistered",
     });
@@ -181,7 +198,7 @@ describe("tauri adapter", () => {
       menuBar: true,
       hotkey: "⌘⇧Space",
       telemetry: false,
-      defaultLocation: "cloud",
+      defaultLocation: "host:m2",
       launchAtLogin: true,
       updateChannel: null,
     });
@@ -258,7 +275,7 @@ describe("electron adapter", () => {
     const space = { id: "local:a", name: "A", os: "linux", status: "running", detail: "", lastUsedAt: 1 };
     const { win, invoke } = electronHost(bridged(() => ({ ok: true, result: { loaded: true, selectedId: null, spaces: [{ space, deleting: false }] } })));
     const rows = await createElectronAdapter(win).call("spaces.list", {});
-    expect(rows).toMatchObject([{ id: "local:a", name: "A", os: "linux", provider: "cloud" }]);
+    expect(rows).toMatchObject([{ id: "local:a", name: "A", os: "linux", provider: "direct" }]);
     expect(invoke).toHaveBeenCalledWith(ELECTRON_BRIDGE_CHANNEL, expect.objectContaining({ method: "spaces.list", args: {} }));
     expect(createElectronAdapter(win).mode).toBe("electron");
   });
@@ -313,6 +330,20 @@ describe("electron adapter", () => {
   it("rejects a reply without an envelope", async () => {
     const { win } = electronHost(() => [1, 2]);
     await expect(createElectronAdapter(win).call("spaces.list", {})).rejects.toMatchObject({ code: "protocol" });
+  });
+
+  it("reads update.get and update.install from the host, and turns update.changed into the page's event", async () => {
+    const state = { status: "downloaded", currentVersion: "0.9.2", version: "0.9.3", percent: 100, notesUrl: "https://github.com/trycua/cua/releases/tag/cua-spaces-v0.9.3", message: null };
+    const asked: string[] = [];
+    const { win, subs } = electronHost(bridged((method) => (asked.push(method), { ok: true, result: state })));
+    const a = createElectronAdapter(win);
+    expect(await a.call("update.get", {})).toEqual(state);
+    expect(await a.call("update.install", {})).toEqual(state);
+    expect(asked).toEqual(["update.get", "update.install"]);
+    const got: HostEvent[] = [];
+    a.subscribe((e) => got.push(e));
+    subs.get(ELECTRON_EVENT_CHANNEL)?.({ event: "update.changed" });
+    expect(got).toEqual([{ type: "update.changed" }]);
   });
 
   it("delivers the host's cua:event pushes", () => {
@@ -398,7 +429,6 @@ const settingsPage = {
         id: "general",
         rows: [
           { id: "notch", kind: "choice", label: "", enabled: true, options: [{ id: "show", label: "", active: false }, { id: "hide", label: "", active: true }] },
-          { id: "default-location", kind: "choice", label: "", enabled: false, help: "Set by CUA_ON", options: [{ id: "local", label: "", active: false }, { id: "cloud", label: "", active: true }] },
         ],
       },
       { id: "privacy", rows: [{ id: "telemetry", kind: "choice", label: "", enabled: true, options: [{ id: "on", label: "", active: false }, { id: "off", label: "", active: true }] }] },
@@ -500,8 +530,8 @@ describe("webkit adapter", () => {
   it("reads settings from the core's page", async () => {
     const { win } = webkitHost(() => ok(settingsPage));
     const snap = await createWebkitAdapter(win).call("settings.get", {});
-    expect(snap.values).toMatchObject({ menuBar: true, telemetry: false, defaultLocation: "cloud", launchAtLogin: null, updateChannel: null });
-    expect(snap.defaultLocation).toMatchObject({ source: "env", env: "CUA_ON" });
+    expect(snap.values).toMatchObject({ menuBar: true, telemetry: false, defaultLocation: "local", launchAtLogin: null, updateChannel: null });
+    expect(snap.defaultLocation).toBeNull();
   });
 
   it("reads the global shortcut the host registered, and none from a host without one", async () => {
@@ -528,7 +558,9 @@ describe("webkit adapter", () => {
     const { win } = webkitHost((req) =>
       req.method === "session.get"
         ? ok({ identity: "ada@example.com", signedIn: true, cloudConfigured: true, signIn: "idle" })
-        : ok({
+        : req.method === "onboarding.get"
+          ? ok({ completed: false, mode: "client" })
+          : ok({
             availability: "ready",
             busy: false,
             error: null,
@@ -542,9 +574,9 @@ describe("webkit adapter", () => {
           }),
     );
     const a = createWebkitAdapter(win);
-    expect((await a.call("session.get", {})).fleet).toMatchObject({ identity: "ada@example.com", authMode: "user" });
-    // The SwiftUI app's first run is its own window: the page never shows one there.
-    expect((await a.call("session.get", {})).onboarding).toEqual({ completed: true, mode: "client" });
+    expect((await a.call("session.get", {})).account).toMatchObject({ identity: "ada@example.com", authMode: "user" });
+    // The first run is this page's on the SwiftUI host too (`onboarding.get`).
+    expect((await a.call("session.get", {})).onboarding).toEqual({ completed: false, mode: "client" });
     const kv = await a.call("keyvault.overview", {});
     expect(kv.status).toMatchObject({ unlocked: true, os_protector_available: true });
     expect(kv.items[0]).toMatchObject({ provider_id: "chrome", app_display: "Google Chrome", policy: { unattended: true, ttl_secs: 0 }, updated_ms: 2 });
@@ -552,14 +584,14 @@ describe("webkit adapter", () => {
   });
 
   it("maps this Mac's own desktop (status local) to a local, running row", async () => {
-    const here = { id: "local", name: "This machine", os: "macos", status: "local", detail: "", lastUsedAt: 1, provider: null, sdk: null, power: null };
+    const here = { id: "local", name: "This computer", os: "macos", status: "local", detail: "", lastUsedAt: 1, provider: null, sdk: null, power: null };
     const { win } = webkitHost(() => ok({ loaded: true, selectedId: null, spaces: [{ space: here, deleting: false }] }));
     const [row] = await createWebkitAdapter(win).call("spaces.list", {});
     expect(row).toMatchObject({ provider: "local", reachable: true, powerState: "running" });
   });
 
   it("keeps this Mac local while it is not set up for access", async () => {
-    const mac = { id: "this-mac", name: "This machine", os: "macos", status: "suspended", detail: "Set up for access", lastUsedAt: 1, provider: null, sdk: null, power: null };
+    const mac = { id: "this-mac", name: "This computer", os: "macos", status: "suspended", detail: "Set up for access", lastUsedAt: 1, provider: null, sdk: null, power: null };
     const { win } = webkitHost(() => ok({ loaded: true, selectedId: null, spaces: [{ space: mac, deleting: false }] }));
     const [row] = await createWebkitAdapter(win).call("spaces.list", {});
     expect(row).toMatchObject({ provider: "local", reachable: false, powerState: "suspended" });
@@ -665,7 +697,7 @@ describe("webkit adapter", () => {
     const agent = { name: "ada", harness: "claude-code", space: "local:dev", paused: false, spaceState: "running", runId: "r1", savedMs: 0, lastError: null };
     const run = { runId: "r1", agent: "claude-code", status: "running", reason: "", summary: "Fix the tests", createdAt: 1, phase: "thinking", turn: 2 };
     const page = { run_id: "r1", status: "running", phase: "thinking", events: [], cursor: 4, caught_up: true };
-    const row = { agent: "codex", name: "Codex", installed: true, configured: true, detail: "", skillsInstalled: 3, skillsTotal: 3, mcpConfig: null, skillsDir: null };
+    const row = { agent: "codex", name: "Codex", installed: true, configured: true, detail: "", skillsInstalled: 3, skillsTotal: 3, mcpConfig: null, skillsDir: null, signIn: null, signedIn: false };
     const { win, sent } = webkitHost((req) => {
       switch (req.method) {
         case "agents.list":
@@ -764,6 +796,12 @@ describe("webkit adapter", () => {
       expect(hostFailure(e)).toEqual({ title: "Sign in to Cua", message: presented.message, details: presented.details, actionLabel: "Sign In" });
       // A plain error stays plain.
       expect(hostFailure(new HostError("nope", "failed"))).toEqual({ message: "nope" });
+      // A throttled host that only says the error: plain words, raw kept.
+      expect(hostFailure(new Error("http: Too many attempts right now. Wait 3 seconds, then try again."))).toEqual({
+        title: "Too many attempts right now",
+        message: "Trying again in 3 seconds.",
+        details: "http: Too many attempts right now. Wait 3 seconds, then try again.",
+      });
     } finally {
       vi.useRealTimers();
     }
@@ -789,6 +827,27 @@ describe("webkit adapter", () => {
       await vi.advanceTimersByTimeAsync(120_000);
       answer(ok(report));
       expect(await settled).toEqual({ ok: true, r: report });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("waits for a device approval while the host asks for Touch ID or the password", async () => {
+    vi.useFakeTimers();
+    try {
+      let answer!: (a: Answer) => void;
+      const { win } = webkitHost((req) => (req.method === "devices.approve" ? new Promise<Answer>((r) => (answer = r)) : ok(null)));
+      const call = createWebkitAdapter(win, { timeoutMs: 1_000 }).call("devices.approve", { code: "K7QX-M2RP", deviceId: null });
+      const settled = call.then(
+        (r) => ({ ok: true as const, r }),
+        (e: unknown) => ({ ok: false as const, e }),
+      );
+      // A person typing the login password: longer than the call timeout.
+      await vi.advanceTimersByTimeAsync(60_000);
+      answer({ ok: false, error: { code: "not_found", message: "no device is waiting with the code K7QX-M2RP" } });
+      const r = await settled;
+      expect(r.ok).toBe(false);
+      expect((r as { e: HostError }).e.message).toBe("no device is waiting with the code K7QX-M2RP");
     } finally {
       vi.useRealTimers();
     }
@@ -890,10 +949,26 @@ describe("webkit adapter", () => {
     expect(sent).toHaveLength(1);
   });
 
+  it("asks the host for the one-time linking notice and sends the acknowledgement; no answer reads as none", async () => {
+    const notice = { due: true, title: "We've updated how usage data works", body: "b", okLabel: "Got it", turnOffLabel: "Turn off usage data", detailsLabel: "What is collected", docsUrl: "https://cua.ai/docs/cua-sdk/concepts/telemetry" };
+    const { win, sent } = webkitHost((req) => (req.method === "telemetry.linkNotice" ? ok(notice) : ok(null)));
+    const a = createWebkitAdapter(win);
+    expect(await a.call("telemetry.linkNotice", {})).toEqual(notice);
+    expect(await a.call("telemetry.acknowledgeLinkNotice", {})).toBeNull();
+    expect(sent.map((r) => [r.method, r.args])).toEqual([
+      ["telemetry.linkNotice", {}],
+      ["telemetry.acknowledgeLinkNotice", {}],
+    ]);
+    const older = webkitHost(() => ({ ok: false, error: { code: "unimplemented", message: "telemetry.linkNotice is not available in this host" } }));
+    expect(await createWebkitAdapter(older.win).call("telemetry.linkNotice", {})).toBeNull();
+    const odd = webkitHost(() => ok({ due: true, title: "", body: 3 }));
+    expect(await createWebkitAdapter(odd.win).call("telemetry.linkNotice", {})).toBeNull();
+  });
+
   it("runs New Space on the app's env and create, with its progress", async () => {
     vi.useFakeTimers();
     try {
-      const env = { defaultLocation: "local", cloudAvailable: true, localAvailable: true, maxCpus: 8, hosts: [{ id: "m1", name: "gamma-4 Mac Studio", via: "relay", online: true, os: "macos", limits: [] }] };
+      const env = { defaultLocation: "local", localAvailable: true, maxCpus: 8, hosts: [{ id: "m1", name: "gamma-4 Mac Studio", via: "relay", online: true, os: "macos", limits: [] }] };
       const created = { ...wkSpace, id: "relay:m1/sandbox-1", name: "Sandbox 1", status: "running" };
       let finish: (a: Answer) => void = () => {};
       const { win, sent, emit } = webkitHost((req) => {

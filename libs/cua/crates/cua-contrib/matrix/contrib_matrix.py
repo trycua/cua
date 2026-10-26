@@ -42,7 +42,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 LEDGER = HERE / "ledger"
 REPO = HERE.parents[4]
-PAGE = REPO / "docs" / "content" / "docs" / "cua-sdk" / "guides" / "contrib-providers.mdx"
+PAGE = REPO / "docs" / "content" / "docs" / "cua-sdk" / "guides" / "local-runtimes.mdx"
 REGION = "contrib-matrix"
 
 #: Providers this cua implements, in display order, with the kinds each

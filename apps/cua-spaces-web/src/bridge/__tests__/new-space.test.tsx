@@ -62,12 +62,12 @@ describe.skipIf(!wasmBuilt)("New Space (wasm core)", () => {
       { id: "this-mac", name: "This Mac", via: "local", online: true, os: "macos", current: true, limits: [] },
       { id: "mac-mini", name: "Mac mini", via: "relay", online: true, os: "macos", current: false, limits: [] },
     ];
-    const env = wizardEnv(core, { options: DEMO_NEW_SPACE_OPTIONS, clouds: null, defaultLocation: "host:mac-mini", cloudAvailable: true, machines });
-    expect(env).toMatchObject({ defaultLocation: "host", cloudAvailable: true, localAvailable: true, localBackends: ["docker", "lume"], maxCpus: 10, hostArch: "arm64" });
+    const env = wizardEnv(core, { options: DEMO_NEW_SPACE_OPTIONS, clouds: null, defaultLocation: "host:mac-mini", machines });
+    expect(env).toMatchObject({ defaultLocation: "host", localAvailable: true, localBackends: ["docker", "lume"], maxCpus: 10, hostArch: "arm64" });
     expect(env.hosts!.map((h) => h.id)).toEqual(["mac-mini"]);
     expect(env.clouds).toEqual([]);
 
-    const none = wizardEnv(core, { options: { ...DEMO_NEW_SPACE_OPTIONS, local: { available: false, backends: [], error: "no runtime", macosImage: null } }, clouds: null, defaultLocation: "local", cloudAvailable: false, machines: [] });
+    const none = wizardEnv(core, { options: { ...DEMO_NEW_SPACE_OPTIONS, local: { available: false, backends: [], error: "no runtime", macosImage: null } }, clouds: null, defaultLocation: "local", machines: [] });
     expect(none).toMatchObject({ localAvailable: false, localReason: "no runtime" });
   });
 
@@ -79,7 +79,7 @@ describe.skipIf(!wasmBuilt)("New Space (wasm core)", () => {
     expect(connectedClouds(core, status).map((c) => [c.name, c.label])).toEqual([["aws", "AWS · us-west-2"]]);
     const settings = await adapter.call("settings.get", {});
     expect(settings.values.defaultLocation).toBe("aws");
-    const env = wizardEnv(core, { options: DEMO_NEW_SPACE_OPTIONS, clouds: status, defaultLocation: "aws", cloudAvailable: true, machines: [] });
+    const env = wizardEnv(core, { options: DEMO_NEW_SPACE_OPTIONS, clouds: status, defaultLocation: "aws", machines: [] });
     expect(env.defaultLocation).toBe("yours");
     adapter.dispose?.();
   });
@@ -89,7 +89,8 @@ describe.skipIf(!wasmBuilt)("New Space (wasm core)", () => {
     await waitFor(() => expect(hooks.spaces.data).toHaveLength(6));
     act(() => hooks.wizard.show());
     await waitFor(() => expect(hooks.wizard.view?.step).toBe(0));
-    expect(hooks.wizard.view!.placements[0]).toMatchObject({ id: "local", label: "This Mac", selected: true });
+    // With machines of yours, Auto comes first; This Mac stays the default.
+    expect(hooks.wizard.view!.placements.find((p) => p.id === "local")).toMatchObject({ label: "This Mac", selected: true });
     // Your machines follow This Mac; the offline one can't be chosen.
     await waitFor(() => expect(hooks.wizard.view!.placements.map((p) => [p.id, p.enabled])).toContainEqual(["host:studio-pc", false]));
 
@@ -138,7 +139,7 @@ describe.skipIf(!wasmBuilt)("New Space (wasm core)", () => {
     await waitFor(() => expect(hooks.settings.data).toBeDefined());
     act(() => hooks.wizard.show());
     act(() => hooks.connect.show());
-    await waitFor(() => expect(hooks.connect.view?.rows.map((r) => r.id)).toEqual(["aws", "gcp", "modal", "none"]));
+    await waitFor(() => expect(hooks.connect.view?.rows.map((r) => r.id)).toEqual(["aws", "gcp", "hetzner", "modal", "none"]));
     expect(hooks.connect.view!.rows.find((r) => r.id === "aws")).toMatchObject({ found: true, selected: true });
 
     await act(() => hooks.connect.send({ type: "set-value", text: "us-west-2" }));
@@ -155,6 +156,39 @@ describe.skipIf(!wasmBuilt)("New Space (wasm core)", () => {
     act(() => hooks.wizard.send({ type: "sync-default", location: hooks.wizard.env.defaultLocation }));
     const aws = hooks.wizard.view!.placements.find((p) => p.id === "aws");
     expect(aws).toMatchObject({ label: "AWS · us-west-2", group: "clouds", selected: true });
+  });
+
+  it("Hetzner takes a masked API token: sent on Test and Connect only, never kept", async () => {
+    const calls: { op: string; args: unknown }[] = [];
+    const { hooks } = mount(await testCore(), 4, {}, (base) => ({
+      ...base,
+      call: ((op: string, args: unknown) => {
+        if (op.startsWith("clouds.")) calls.push({ op, args });
+        return (base.call as (o: string, a: unknown) => unknown)(op, args);
+      }) as typeof base.call,
+    }));
+    act(() => hooks.connect.show());
+    await waitFor(() => expect(hooks.connect.view?.rows.map((r) => r.id)).toContain("hetzner"));
+    await act(() => hooks.connect.send({ type: "select", name: "hetzner" }));
+    const v = () => hooks.connect.view!;
+    expect(v().rows.find((r) => r.id === "hetzner")?.detail).toBe("Needs an API token");
+    await waitFor(() => expect(v().tokenField).toMatchObject({ id: "token", label: "API token", value: "" }));
+    expect(v().field).toMatchObject({ label: "Location", placeholder: "fsn1" });
+    expect(v().canTest).toBe(false);
+
+    const secret = "demo-token-0123456789";
+    act(() => hooks.connect.setToken(secret));
+    await waitFor(() => expect(v().canTest).toBe(true));
+    expect(JSON.stringify(v())).not.toContain(secret);
+    await act(() => hooks.connect.send({ type: "test" }));
+    await waitFor(() => expect(v().checks.every((c) => c.ok)).toBe(true));
+    expect(calls.find((c) => c.op === "clouds.test")?.args).toMatchObject({ target: { provider: "hetzner", token: secret } });
+    expect(JSON.stringify(calls.find((c) => c.op === "clouds.test")?.args)).not.toContain("uses_token");
+
+    await act(() => hooks.connect.send({ type: "connect" }));
+    await waitFor(() => expect(hooks.connect.open).toBe(false));
+    expect(calls.find((c) => c.op === "clouds.connect")?.args).toMatchObject({ target: { token: secret } });
+    expect(hooks.connect.token).toBe("");
   });
 
   it("No cloud closes the sheet without a request", async () => {
@@ -186,7 +220,7 @@ describe.skipIf(!wasmBuilt)("New Space (wasm core)", () => {
 
 describe.skipIf(!wasmBuilt)("First Space in one click (wasm core)", () => {
   const env = (core: CoreClient, options = DEMO_NEW_SPACE_OPTIONS) =>
-    wizardEnv(core, { options, clouds: null, defaultLocation: "cloud", cloudAvailable: true, machines: [] });
+    wizardEnv(core, { options, clouds: null, defaultLocation: "local", machines: [] });
 
   it("offers Linux first with its size and time, then macOS with its real download", async () => {
     const core = await testCore();
@@ -249,7 +283,7 @@ describe.skipIf(!wasmBuilt)("First Space in one click (wasm core)", () => {
 
 describe.skipIf(!wasmBuilt)("On the SwiftUI host's answer (wasm core)", () => {
   const env = (core: CoreClient, options = demoMacHostOptions("local", 2, false)) =>
-    wizardEnv(core, { options, clouds: null, defaultLocation: "cloud", cloudAvailable: true, machines: [] });
+    wizardEnv(core, { options, clouds: null, defaultLocation: "local", machines: [] });
 
   it("offers both first Spaces, and the Resources step says what is free", async () => {
     const core = await testCore();
@@ -415,7 +449,7 @@ describe.skipIf(!wasmBuilt)("A create on one of your machines (wasm core)", () =
       return r!;
     });
     expect(row).toMatchObject({ provider: "relay", hostName: "Mac mini" });
-    expect(row.detail.startsWith("Another machine")).toBe(true);
+    expect(row.detail.startsWith("Another computer")).toBe(true);
     let space: { id: string } | null = null;
     await act(async () => {
       space = await created;

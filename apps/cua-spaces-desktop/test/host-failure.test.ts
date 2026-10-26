@@ -40,6 +40,29 @@ describe("host setup failures", () => {
     expect(f.message).not.toContain("http");
   });
 
+  it("a throttled setup says how long to wait, in plain words", () => {
+    const raw = "http: Too many attempts right now. Wait 3 seconds, then try again.";
+    const f = presentHostFailure(raw);
+    expect(f.kind).toBe("throttled");
+    expect(f.title).toBe("Too many attempts right now");
+    expect(f.message).toBe("Trying again in 3 seconds.");
+    expect(f.details).toBe(raw);
+    expect(f.actionLabel).toBe("Retry");
+    expect(presentHostFailure("Too many attempts right now. Wait 1 second, then try again.").message).toBe("Trying again in 1 second.");
+  });
+
+  it("a raw HTTP 429 from an older host is the same, without a number and without the raw words", () => {
+    const f = presentHostFailure("http: relay: HTTP 429: Too Many Requests");
+    expect(f.kind).toBe("throttled");
+    expect(f.message).toBe("Wait a few seconds, then try again.");
+    expect(f.message).not.toMatch(/429|http|relay/i);
+  });
+
+  it.each(["http: relay: HTTP 429: computer limit for this token reached", "HTTP 429: at most 5 unused pairing codes", "You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams."])(
+    "a limit the relay explains is not a throttle: %s",
+    (raw) => expect(classify(raw)).toBe("other"),
+  );
+
   it.each(["launchctl bootstrap gui/501: Bootstrap failed: 125: Domain does not support specified action (no Aqua session)", "no GUI session: sign in at the console"])(
     "no one at the screen: %s",
     (raw) => {
@@ -89,6 +112,8 @@ describe("host setup failures", () => {
     const svc = presentHostFailure("schtasks /Create failed: access denied", "win32");
     expect(svc.kind).toBe("service");
     expect(svc.message).toContain("Windows didn’t start");
+    expect(svc.message).toContain("Run as administrator");
+    expect(svc.message).not.toContain("restart this PC");
     expect(presentHostFailure("systemctl --user start failed", "linux").message).toContain("restart this computer");
     expect(presentHostFailure("relay: HTTP 401", "linux").message).toBe("Your Cua account isn’t signed in on this computer. Sign in, then try again.");
   });

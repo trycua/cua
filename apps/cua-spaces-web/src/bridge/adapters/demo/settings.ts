@@ -11,7 +11,7 @@ import { HostError } from "../../adapter";
 import type { DeviceInput, DevicesInput, PairingCode } from "../../contracts/devices";
 import type { MachineRow } from "../../contracts/host";
 import type { NotificationInput } from "../../contracts/notifications";
-import type { AboutInput, DriveCheckInput, Experiments, LoginItemReport, StorageInput } from "../../contracts/settings";
+import type { AboutInput, DriveCheckInput, Experiments, LoginItemReport, StorageInput, UpdateState } from "../../contracts/settings";
 import { NO_EXPERIMENTS } from "../../contracts/volume";
 import { demoMachine, MAC_DEMO_PLATFORM, type DemoPlatform } from "./platform";
 import type { NotificationsOperations } from "../../ops/notifications";
@@ -36,6 +36,8 @@ export interface DemoSettingsContext {
   addMachine?: (machine: MachineRow) => void;
   /** This device is not on the relay until Enroll… signs in again. */
   unenrolled?: boolean;
+  /** Where the updater is at start (idle: up to date). */
+  update?: Partial<UpdateState>;
 }
 
 /** How many times "Add a machine" reads the codes before the demo's other
@@ -148,6 +150,16 @@ export function createDemoSettings(ctx: DemoSettingsContext): Handlers {
     cache: { size_bytes: Math.round(1.2 * GIB), capacity_bytes: 10 * GIB },
   };
 
+  let update: UpdateState = {
+    status: "idle",
+    currentVersion: "0.6.0",
+    version: null,
+    percent: null,
+    notesUrl: null,
+    message: null,
+    ...ctx.update,
+  };
+
   const about = (): AboutInput => ({
     platform: platform.os,
     version: "0.6.0",
@@ -194,6 +206,18 @@ export function createDemoSettings(ctx: DemoSettingsContext): Handlers {
         emit({ type: "settings.changed" });
       });
       return about();
+    },
+
+    "update.get": () => ({ ...update }),
+    "update.install": async () => {
+      // Nothing downloaded: nothing to install, and the state says so.
+      if (update.status !== "downloaded") return { ...update };
+      // Installing takes a moment before the relaunch.
+      await wait(stepMs);
+      // The real host relaunches into the new version.
+      update = { ...update, status: "idle", currentVersion: update.version ?? update.currentVersion, version: null, notesUrl: null };
+      emit({ type: "update.changed" });
+      return { ...update };
     },
 
     "experiments.get": () => ({ ...experiments }),
@@ -255,7 +279,7 @@ export function createDemoSettings(ctx: DemoSettingsContext): Handlers {
     // Works like the relay: one code per machine, 30 minutes, shown once.
     // The demo's other computer runs the command after a few reads.
     "devices.createPairingCode": async ({ team }) => {
-      if (!ctx.signedIn()) throw new HostError("Sign in to Cua to add a machine", "signed_out");
+      if (!ctx.signedIn()) throw new HostError("Sign in to Cua to add a computer", "signed_out");
       await wait(stepMs / 2);
       const t = Math.floor(now() / 1000);
       pairingSeq += 1;
@@ -263,7 +287,7 @@ export function createDemoSettings(ctx: DemoSettingsContext): Handlers {
       const made: PairingCode = {
         id: `pc_demo${pairingSeq}`,
         code,
-        url: `https://spaces.cua.ai/add/${code}`,
+        url: `https://cua.ai/add/${code}`,
         installSh: `curl -fsSL https://cua.ai/install.sh | sh -s -- --pair ${code}`,
         installPowershell: `& ([scriptblock]::Create((irm https://cua.ai/install.ps1))) -Pair ${code}`,
         state: "active",
@@ -290,6 +314,14 @@ export function createDemoSettings(ctx: DemoSettingsContext): Handlers {
       // Listed without the codes, as the relay lists them.
       return pairing.map(({ code: c }) => ({ ...c, code: null, url: null, installSh: null, installPowershell: null }));
     },
+    // The demo account owns a team on the Teams plan, and is a member of another.
+    "teams.list": () => ({
+      teams: [
+        { id: "0f1e2d3c-0000-4000-8000-0000000000a1", alias: "acme", name: "Acme", role: "owner", plan: "teams" },
+        { id: "0f1e2d3c-0000-4000-8000-0000000000b2", alias: "side", name: "", role: "member", plan: "teams" },
+      ],
+      currentTeamId: null,
+    }),
     "devices.revokePairingCode": ({ id }) => {
       const p = pairing.find((x) => x.code.id === id);
       if (!p) throw new HostError(`no pairing code ${id}`, "not_found");
@@ -334,6 +366,10 @@ export function createDemoSettings(ctx: DemoSettingsContext): Handlers {
     "notifications.list": () => feed.map((n) => ({ ...n })),
     "notifications.markAllRead": () => {
       feed = feed.map((n) => ({ ...n, read: true }));
+      return null;
+    },
+    "notifications.markRead": ({ ids }) => {
+      feed = feed.map((n) => (ids.includes(n.id) ? { ...n, read: true } : n));
       return null;
     },
   };

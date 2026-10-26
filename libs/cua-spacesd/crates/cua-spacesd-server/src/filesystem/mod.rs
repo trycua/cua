@@ -5,8 +5,10 @@
 //! reads and writes, resumable uploads and signed URLs.
 
 pub mod paths;
+pub mod runas;
 pub mod watch;
 pub mod write;
+pub mod xattr;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -39,8 +41,10 @@ use crate::context::ServerContext;
 use crate::error::{io_status, session_not_found, status, StatusBuilder};
 use crate::util::{duration, hex_digest, random_id, timestamp};
 
-use paths::entry_info;
+use paths::entry_info_with_metadata;
+use runas::{Acting, RunAs};
 use write::{AtomicWriter, WriteTarget};
+use xattr::Attributes;
 
 /// Default lifetime of a partial upload without progress.
 pub const UPLOAD_DEFAULT_TTL: Duration = Duration::from_secs(60 * 60);
@@ -80,6 +84,28 @@ impl PathResolver {
         crate::config::home_dir().unwrap_or_else(|| PathBuf::from("/"))
     }
 
+    /// Resolves a request path for a request that acts as `user`: `~` and
+    /// relative paths without an `Init` working directory resolve against
+    /// that user's home.
+    pub fn resolve_for(
+        &self,
+        user: &crate::process::spawn::UserInfo,
+        path: &str,
+    ) -> Result<PathBuf, Status> {
+        if path.is_empty() {
+            return Err(crate::error::invalid("path is required"));
+        }
+        if path.contains('\0') {
+            return Err(crate::error::invalid("path contains NUL"));
+        }
+        let init = self.ctx.init_state();
+        Ok(paths::expand(
+            path,
+            &user.home,
+            init.default_workdir.as_deref(),
+        ))
+    }
+
     /// Resolves a request path. Empty paths are rejected.
     pub fn resolve(&self, path: &str) -> Result<PathBuf, Status> {
         if path.is_empty() {
@@ -103,6 +129,7 @@ pub struct FsState {
     resolver: PathResolver,
     uploads: Mutex<HashMap<String, Arc<tokio::sync::Mutex<Upload>>>>,
     watchers: Mutex<HashMap<String, Arc<watch::BufferedWatcher>>>,
+    runas: RunAs,
 }
 
 impl FsState {
@@ -110,6 +137,7 @@ impl FsState {
     pub fn new(ctx: ServerContext) -> Arc<Self> {
         let state = Arc::new(Self {
             resolver: PathResolver::new(ctx.clone()),
+            runas: RunAs::new(ctx.clone()),
             ctx,
             uploads: Mutex::new(HashMap::new()),
             watchers: Mutex::new(HashMap::new()),
@@ -135,6 +163,11 @@ impl FsState {
         &self.resolver
     }
 
+    /// The helpers that act as other users (`run_as`).
+    pub fn runas(&self) -> &RunAs {
+        &self.runas
+    }
+
     async fn sweep(&self) {
         let uploads: Vec<(String, Arc<tokio::sync::Mutex<Upload>>)> = self
             .uploads
@@ -157,6 +190,7 @@ impl FsState {
             .lock()
             .expect("watchers lock")
             .retain(|_, w| w.idle() < WATCHER_IDLE_TTL);
+        self.runas.sweep().await;
     }
 
     fn upload(&self, id: &str) -> Result<Arc<tokio::sync::Mutex<Upload>>, Status> {
@@ -175,7 +209,68 @@ pub struct FilesystemServiceImpl {
     state: Arc<FsState>,
 }
 
+/// Reads `len` bytes out of bulk slot `slot - 1`.
+async fn bulk_fetch(slot: u32, len: u64) -> Result<(u64, crate::bulk::AlignedBuf), Status> {
+    let disk = crate::bulk::current().ok_or_else(no_bulk_lane)?;
+    if slot > disk.header().slots || len > disk.header().slot_bytes {
+        return Err(crate::error::invalid("bulk slot or length out of range"));
+    }
+    let buf = tokio::task::spawn_blocking(move || disk.fetch(slot - 1, len))
+        .await
+        .map_err(|e| crate::error::internal(e.to_string()))?
+        .map_err(|e| crate::error::internal(format!("bulk lane: {e}")))?;
+    Ok((len, buf))
+}
+
+fn no_bulk_lane() -> Status {
+    status(
+        Code::FailedPrecondition,
+        ErrorReason::FeatureUnsupported,
+        "this guest has no bulk lane",
+    )
+}
+
 impl FilesystemServiceImpl {
+    /// `ReadFile` through a bulk slot: stages the range, then the stream
+    /// holds the entry and the end (byte count and digest) but no chunks.
+    async fn read_file_bulk(
+        &self,
+        path: &Path,
+        meta: &std::fs::Metadata,
+        body: &ReadFileRequest,
+    ) -> Result<Response<<Self as FilesystemService>::ReadFileStream>, Status> {
+        let disk = crate::bulk::current().ok_or_else(no_bulk_lane)?;
+        let slot = body.bulk_slot;
+        if body.length == 0 || body.length > disk.header().slot_bytes || slot > disk.header().slots
+        {
+            return Err(crate::error::invalid(
+                "a bulk read needs a length within a slot and a slot of the lane",
+            ));
+        }
+        let file = std::fs::File::open(path).map_err(|e| io_status(&e, path))?;
+        let (offset, length) = (body.offset, body.length);
+        let (staged, sha) =
+            tokio::task::spawn_blocking(move || disk.stage(&file, offset, length, slot - 1))
+                .await
+                .map_err(|e| crate::error::internal(e.to_string()))?
+                .map_err(|e| crate::error::internal(format!("bulk lane: {e}")))?;
+        // Like the streamed read: the file's metadata in the namespace asked for.
+        let namespace = xattr::namespace(&body.xattr_namespace)?;
+        let entry = entry_info_with_metadata(path, meta, &namespace, true);
+        let messages = vec![
+            Ok(ReadFileResponse {
+                message: Some(ReadMessage::Entry(entry)),
+            }),
+            Ok(ReadFileResponse {
+                message: Some(ReadMessage::End(ReadFileEnd {
+                    bytes_read: staged,
+                    sha256: sha,
+                })),
+            }),
+        ];
+        Ok(Response::new(Box::pin(tokio_stream::iter(messages))))
+    }
+
     /// Creates the service.
     pub fn new(state: Arc<FsState>) -> Self {
         Self { state }
@@ -204,6 +299,32 @@ impl FilesystemServiceImpl {
             None => Ok(resolved),
             Some(grant) => confine(grant, resolved),
         }
+    }
+
+    /// Resolves who a request acts as and its path. A viewer ticket may not
+    /// use `run_as`.
+    async fn acting_path(
+        &self,
+        viewer: Option<&crate::auth::ViewerGrant>,
+        run_as: &str,
+        path: &str,
+    ) -> Result<(Acting, PathBuf), Status> {
+        if !run_as.is_empty() && viewer.is_some() {
+            return Err(StatusBuilder::new(
+                Code::PermissionDenied,
+                ErrorReason::PermissionDenied,
+                "viewer ticket: run_as is not allowed",
+            )
+            .build());
+        }
+        let acting = self.state.runas.acting(run_as).await?;
+        let path = match &acting {
+            Acting::Own(None) => self.resolve_as(viewer, path)?,
+            Acting::Own(Some(user)) | Acting::Other(user, _) => {
+                self.state.resolver.resolve_for(user, path)?
+            }
+        };
+        Ok((acting, path))
     }
 }
 
@@ -260,12 +381,14 @@ fn write_mode(value: i32) -> Result<WriteMode, Status> {
 }
 
 fn target_for(path: PathBuf, header: &WriteFileHeader) -> Result<WriteTarget, Status> {
-    Ok(WriteTarget {
-        dest: path,
-        mode: write_mode(header.mode)?,
-        permissions: remote_mode(header.permissions),
-        create_parents: header.create_parents,
-    })
+    let mut target = WriteTarget::new(
+        path,
+        write_mode(header.mode)?,
+        remote_mode(header.permissions),
+        header.create_parents,
+    );
+    target.attributes = Attributes::from_request(&header.xattr_namespace, &header.metadata)?;
+    Ok(target)
 }
 
 fn chunk_too_large(len: usize, max: u32) -> Option<Status> {
@@ -279,14 +402,17 @@ fn chunk_too_large(len: usize, max: u32) -> Option<Status> {
     })
 }
 
-async fn stat(path: &Path, follow: bool) -> Result<EntryInfo, Status> {
+async fn stat(path: &Path, follow: bool, namespace: &str) -> Result<EntryInfo, Status> {
     let meta = if follow {
         tokio::fs::metadata(path).await
     } else {
         tokio::fs::symlink_metadata(path).await
     }
     .map_err(|e| io_status(&e, path))?;
-    Ok(entry_info(path, &meta))
+    let (path, namespace) = (path.to_path_buf(), namespace.to_owned());
+    tokio::task::spawn_blocking(move || entry_info_with_metadata(&path, &meta, &namespace, follow))
+        .await
+        .map_err(|e| crate::error::internal(e.to_string()))
 }
 
 /// Depth-first listing, directories before their contents, sorted by name.
@@ -296,8 +422,10 @@ fn list_dir_blocking(
     include_hidden: bool,
     skip: usize,
     take: usize,
+    namespace: &str,
 ) -> std::io::Result<(Vec<EntryInfo>, bool)> {
-    struct Walk {
+    struct Walk<'a> {
+        namespace: &'a str,
         max_depth: u32,
         include_hidden: bool,
         skip: usize,
@@ -306,7 +434,7 @@ fn list_dir_blocking(
         out: Vec<EntryInfo>,
         more: bool,
     }
-    impl Walk {
+    impl Walk<'_> {
         fn visit(&mut self, dir: &Path, level: u32) -> std::io::Result<()> {
             let mut children: Vec<_> = std::fs::read_dir(dir)?.filter_map(Result::ok).collect();
             children.sort_by_key(|e| e.file_name());
@@ -326,7 +454,12 @@ fn list_dir_blocking(
                         self.more = true;
                         return Ok(());
                     }
-                    self.out.push(entry_info(&path, &meta));
+                    self.out.push(entry_info_with_metadata(
+                        &path,
+                        &meta,
+                        self.namespace,
+                        false,
+                    ));
                 }
                 self.seen += 1;
                 if meta.is_dir() && level < self.max_depth {
@@ -338,6 +471,7 @@ fn list_dir_blocking(
         }
     }
     let mut walk = Walk {
+        namespace,
         max_depth: depth.max(1),
         include_hidden,
         skip,
@@ -388,10 +522,18 @@ impl FilesystemService for FilesystemServiceImpl {
 
     async fn stat(&self, request: Request<StatRequest>) -> Result<Response<StatResponse>, Status> {
         let viewer = crate::auth::caller(&request).viewer;
-        let body = request.into_inner();
-        let path = self.resolve_as(viewer.as_deref(), &body.path)?;
+        let mut body = request.into_inner();
+        let (acting, path) = self
+            .acting_path(viewer.as_deref(), &body.run_as, &body.path)
+            .await?;
+        if let Acting::Other(_, mut client) = acting {
+            body.path = path.display().to_string();
+            body.run_as.clear();
+            return client.stat(body).await;
+        }
+        let namespace = xattr::namespace(&body.xattr_namespace)?;
         Ok(Response::new(StatResponse {
-            entry: Some(stat(&path, !body.no_follow_symlinks).await?),
+            entry: Some(stat(&path, !body.no_follow_symlinks, &namespace).await?),
         }))
     }
 
@@ -400,8 +542,16 @@ impl FilesystemService for FilesystemServiceImpl {
         request: Request<ListDirRequest>,
     ) -> Result<Response<ListDirResponse>, Status> {
         let viewer = crate::auth::caller(&request).viewer;
-        let body = request.into_inner();
-        let path = self.resolve_as(viewer.as_deref(), &body.path)?;
+        let mut body = request.into_inner();
+        let (acting, path) = self
+            .acting_path(viewer.as_deref(), &body.run_as, &body.path)
+            .await?;
+        if let Acting::Other(_, mut client) = acting {
+            body.path = path.display().to_string();
+            body.run_as.clear();
+            return client.list_dir(body).await;
+        }
+        let namespace = xattr::namespace(&body.xattr_namespace)?;
         let meta = tokio::fs::metadata(&path)
             .await
             .map_err(|e| io_status(&e, &path))?;
@@ -425,7 +575,14 @@ impl FilesystemService for FilesystemServiceImpl {
         };
         let root = path.clone();
         let (entries, more) = tokio::task::spawn_blocking(move || {
-            list_dir_blocking(&root, body.depth, body.include_hidden, skip, page_size)
+            list_dir_blocking(
+                &root,
+                body.depth,
+                body.include_hidden,
+                skip,
+                page_size,
+                &namespace,
+            )
         })
         .await
         .map_err(|e| crate::error::internal(e.to_string()))?
@@ -446,12 +603,24 @@ impl FilesystemService for FilesystemServiceImpl {
         request: Request<MakeDirRequest>,
     ) -> Result<Response<MakeDirResponse>, Status> {
         let viewer = crate::auth::caller(&request).viewer;
-        let body = request.into_inner();
-        let path = self.resolve_as(viewer.as_deref(), &body.path)?;
+        let mut body = request.into_inner();
+        let (acting, path) = self
+            .acting_path(viewer.as_deref(), &body.run_as, &body.path)
+            .await?;
+        if let Acting::Other(_, mut client) = acting {
+            body.path = path.display().to_string();
+            body.run_as.clear();
+            return client.make_dir(body).await;
+        }
         match tokio::fs::metadata(&path).await {
             Ok(meta) if meta.is_dir() => {
                 return Ok(Response::new(MakeDirResponse {
-                    entry: Some(entry_info(&path, &meta)),
+                    entry: Some(entry_info_with_metadata(
+                        &path,
+                        &meta,
+                        xattr::DEFAULT_NAMESPACE,
+                        true,
+                    )),
                     created: false,
                 }))
             }
@@ -479,7 +648,7 @@ impl FilesystemService for FilesystemServiceImpl {
         }
         builder.create(&path).map_err(|e| io_status(&e, &path))?;
         Ok(Response::new(MakeDirResponse {
-            entry: Some(stat(&path, true).await?),
+            entry: Some(stat(&path, true, xattr::DEFAULT_NAMESPACE).await?),
             created: true,
         }))
     }
@@ -489,9 +658,19 @@ impl FilesystemService for FilesystemServiceImpl {
         request: Request<MoveRequest>,
     ) -> Result<Response<MoveResponse>, Status> {
         let viewer = crate::auth::caller(&request).viewer;
-        let body = request.into_inner();
-        let source = self.resolve_as(viewer.as_deref(), &body.source)?;
-        let destination = self.resolve_as(viewer.as_deref(), &body.destination)?;
+        let mut body = request.into_inner();
+        let (acting, source) = self
+            .acting_path(viewer.as_deref(), &body.run_as, &body.source)
+            .await?;
+        let (_, destination) = self
+            .acting_path(viewer.as_deref(), &body.run_as, &body.destination)
+            .await?;
+        if let Acting::Other(_, mut client) = acting {
+            body.source = source.display().to_string();
+            body.destination = destination.display().to_string();
+            body.run_as.clear();
+            return client.r#move(body).await;
+        }
         tokio::fs::symlink_metadata(&source)
             .await
             .map_err(|e| io_status(&e, &source))?;
@@ -536,7 +715,7 @@ impl FilesystemService for FilesystemServiceImpl {
             .map_err(|e| io_status(&e, &destination))?;
         }
         Ok(Response::new(MoveResponse {
-            entry: Some(stat(&destination, false).await?),
+            entry: Some(stat(&destination, false, xattr::DEFAULT_NAMESPACE).await?),
         }))
     }
 
@@ -545,8 +724,15 @@ impl FilesystemService for FilesystemServiceImpl {
         request: Request<RemoveRequest>,
     ) -> Result<Response<RemoveResponse>, Status> {
         let viewer = crate::auth::caller(&request).viewer;
-        let body = request.into_inner();
-        let path = self.resolve_as(viewer.as_deref(), &body.path)?;
+        let mut body = request.into_inner();
+        let (acting, path) = self
+            .acting_path(viewer.as_deref(), &body.run_as, &body.path)
+            .await?;
+        if let Acting::Other(_, mut client) = acting {
+            body.path = path.display().to_string();
+            body.run_as.clear();
+            return client.remove(body).await;
+        }
         let meta = match tokio::fs::symlink_metadata(&path).await {
             Ok(meta) => meta,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound && body.missing_ok => {
@@ -572,8 +758,17 @@ impl FilesystemService for FilesystemServiceImpl {
         request: Request<WatchDirRequest>,
     ) -> Result<Response<Self::WatchDirStream>, Status> {
         let viewer = crate::auth::caller(&request).viewer;
-        let body = request.into_inner();
-        let path = self.resolve_as(viewer.as_deref(), &body.path)?;
+        let mut body = request.into_inner();
+        let (acting, path) = self
+            .acting_path(viewer.as_deref(), &body.run_as, &body.path)
+            .await?;
+        if let Acting::Other(_, mut client) = acting {
+            body.path = path.display().to_string();
+            body.run_as.clear();
+            let stream = client.watch_dir(body).await?.into_inner();
+            return Ok(Response::new(Box::pin(stream)));
+        }
+        let namespace = xattr::namespace(&body.xattr_namespace)?;
         let meta = tokio::fs::metadata(&path)
             .await
             .map_err(|e| io_status(&e, &path))?;
@@ -605,6 +800,7 @@ impl FilesystemService for FilesystemServiceImpl {
             &path,
             body.recursive,
             self.state.ctx.config().force_poll_watcher,
+            &namespace,
             sink,
         )
         .map_err(|e| {
@@ -655,8 +851,20 @@ impl FilesystemService for FilesystemServiceImpl {
         request: Request<CreateWatcherRequest>,
     ) -> Result<Response<CreateWatcherResponse>, Status> {
         let viewer = crate::auth::caller(&request).viewer;
-        let body = request.into_inner();
-        let path = self.resolve_as(viewer.as_deref(), &body.path)?;
+        let mut body = request.into_inner();
+        let (acting, path) = self
+            .acting_path(viewer.as_deref(), &body.run_as, &body.path)
+            .await?;
+        if let Acting::Other(user, mut client) = acting {
+            body.path = path.display().to_string();
+            body.run_as.clear();
+            let response = client.create_watcher(body).await?;
+            self.state
+                .runas
+                .add_route(&response.get_ref().watcher_id, &user);
+            return Ok(response);
+        }
+        let namespace = xattr::namespace(&body.xattr_namespace)?;
         let meta = tokio::fs::metadata(&path)
             .await
             .map_err(|e| io_status(&e, &path))?;
@@ -671,6 +879,7 @@ impl FilesystemService for FilesystemServiceImpl {
             &path,
             body.recursive,
             self.state.ctx.config().force_poll_watcher,
+            &namespace,
         )
         .map_err(|e| {
             crate::error::unsupported("fs_watch", format!("cannot watch {}: {e}", path.display()))
@@ -689,6 +898,15 @@ impl FilesystemService for FilesystemServiceImpl {
         request: Request<GetWatcherEventsRequest>,
     ) -> Result<Response<GetWatcherEventsResponse>, Status> {
         let body = request.into_inner();
+        if let Some((_, mut client)) = self.state.runas.routed(&body.watcher_id).await? {
+            let id = body.watcher_id.clone();
+            let result = client.get_watcher_events(body).await;
+            // The helper dropped an idle watcher: forget the route too.
+            if matches!(&result, Err(e) if e.code() == Code::NotFound) {
+                self.state.runas.remove_route(&id);
+            }
+            return result;
+        }
         let watcher = self
             .state
             .watchers
@@ -709,6 +927,12 @@ impl FilesystemService for FilesystemServiceImpl {
         request: Request<RemoveWatcherRequest>,
     ) -> Result<Response<RemoveWatcherResponse>, Status> {
         let body = request.into_inner();
+        if let Some((_, mut client)) = self.state.runas.routed(&body.watcher_id).await? {
+            let id = body.watcher_id.clone();
+            let result = client.remove_watcher(body).await;
+            self.state.runas.remove_route(&id);
+            return result;
+        }
         self.state
             .watchers
             .lock()
@@ -723,8 +947,17 @@ impl FilesystemService for FilesystemServiceImpl {
         request: Request<ReadFileRequest>,
     ) -> Result<Response<Self::ReadFileStream>, Status> {
         let viewer = crate::auth::caller(&request).viewer;
-        let body = request.into_inner();
-        let path = self.resolve_as(viewer.as_deref(), &body.path)?;
+        let mut body = request.into_inner();
+        let (acting, path) = self
+            .acting_path(viewer.as_deref(), &body.run_as, &body.path)
+            .await?;
+        if let Acting::Other(_, mut client) = acting {
+            body.path = path.display().to_string();
+            body.run_as.clear();
+            let stream = client.read_file(body).await?.into_inner();
+            return Ok(Response::new(Box::pin(stream)));
+        }
+        let namespace = xattr::namespace(&body.xattr_namespace)?;
         let meta = tokio::fs::metadata(&path)
             .await
             .map_err(|e| io_status(&e, &path))?;
@@ -734,6 +967,9 @@ impl FilesystemService for FilesystemServiceImpl {
                 ErrorReason::IsADirectory,
                 format!("{}: is a directory", path.display()),
             ));
+        }
+        if body.bulk_slot != 0 {
+            return self.read_file_bulk(&path, &meta, &body).await;
         }
         let mut file = tokio::fs::File::open(&path)
             .await
@@ -752,7 +988,15 @@ impl FilesystemService for FilesystemServiceImpl {
         } else {
             body.length
         };
-        let entry = entry_info(&path, &meta);
+        let entry = {
+            let (path, meta) = (path.clone(), meta.clone());
+            tokio::task::spawn_blocking(move || {
+                entry_info_with_metadata(&path, &meta, &namespace, true)
+            })
+            .await
+            .map_err(|e| crate::error::internal(e.to_string()))?
+        };
+        let file_len = meta.len();
         let (tx, rx) = mpsc::channel::<Result<ReadFileResponse, Status>>(4);
         tokio::spawn(async move {
             let wrap = |m| Ok(ReadFileResponse { message: Some(m) });
@@ -762,8 +1006,14 @@ impl FilesystemService for FilesystemServiceImpl {
             let mut hasher = body.compute_sha256.then(Sha256::new);
             let mut offset = body.offset;
             let mut sent = 0u64;
+            // The file's size when opened: a small file gets a small buffer
+            // even with large chunks (a file that grows is still read on).
+            let mut expected = file_len.saturating_sub(body.offset);
             while sent < limit {
-                let want = (limit - sent).min(chunk_size as u64) as usize;
+                let want = (limit - sent)
+                    .min(chunk_size as u64)
+                    .min(expected.max(64 * 1024)) as usize;
+                expected = expected.saturating_sub(want as u64);
                 let mut buf = vec![0u8; want];
                 let mut filled = 0;
                 while filled < want {
@@ -818,7 +1068,51 @@ impl FilesystemService for FilesystemServiceImpl {
                 "the first WriteFile message must be a header",
             ));
         };
-        let path = self.resolve_as(viewer.as_deref(), &header.path)?;
+        let (acting, path) = self
+            .acting_path(viewer.as_deref(), &header.run_as, &header.path)
+            .await?;
+        if let Acting::Other(_, mut client) = acting {
+            let mut header = header;
+            header.path = path.display().to_string();
+            header.run_as.clear();
+            let (tx, rx) = mpsc::channel::<WriteFileRequest>(8);
+            let (failed_tx, mut failed_rx) = tokio::sync::oneshot::channel::<Status>();
+            tx.send(WriteFileRequest {
+                message: Some(WriteMessage::Header(header)),
+            })
+            .await
+            .map_err(|_| crate::error::internal("file helper is gone"))?;
+            // Relay the client's stream. If it breaks, the call to the
+            // helper is dropped (cancelled) rather than ended, so the helper
+            // discards the partial file instead of publishing it.
+            let pump = tokio::spawn(async move {
+                loop {
+                    match stream.message().await {
+                        Ok(Some(message)) => {
+                            if tx.send(message).await.is_err() {
+                                return;
+                            }
+                        }
+                        Ok(None) => return,
+                        Err(status) => {
+                            let _ = failed_tx.send(status);
+                            return;
+                        }
+                    }
+                }
+            });
+            let call = client.write_file(ReceiverStream::new(rx));
+            tokio::pin!(call);
+            let result = tokio::select! {
+                result = &mut call => result,
+                Ok(status) = &mut failed_rx => {
+                    pump.abort();
+                    return Err(status);
+                }
+            };
+            pump.abort();
+            return result;
+        }
         let mut writer = AtomicWriter::create(target_for(path, &header)?).await?;
         loop {
             let message = match stream.message().await {
@@ -861,11 +1155,25 @@ impl FilesystemService for FilesystemServiceImpl {
         request: Request<BeginUploadRequest>,
     ) -> Result<Response<BeginUploadResponse>, Status> {
         let viewer = crate::auth::caller(&request).viewer;
-        let body = request.into_inner();
+        let mut body = request.into_inner();
         let header = body
             .header
+            .take()
             .ok_or_else(|| crate::error::invalid("header is required"))?;
-        let path = self.resolve_as(viewer.as_deref(), &header.path)?;
+        let (acting, path) = self
+            .acting_path(viewer.as_deref(), &header.run_as, &header.path)
+            .await?;
+        if let Acting::Other(user, mut client) = acting {
+            let mut header = header;
+            header.path = path.display().to_string();
+            header.run_as.clear();
+            body.header = Some(header);
+            let response = client.begin_upload(body).await?;
+            self.state
+                .runas
+                .add_route(&response.get_ref().upload_id, &user);
+            return Ok(response);
+        }
         let ttl = duration(body.ttl.as_ref())
             .filter(|d| !d.is_zero())
             .unwrap_or(UPLOAD_DEFAULT_TTL)
@@ -928,10 +1236,23 @@ impl FilesystemService for FilesystemServiceImpl {
         &self,
         request: Request<UploadChunkRequest>,
     ) -> Result<Response<UploadChunkResponse>, Status> {
-        let body = request.into_inner();
+        let mut body = request.into_inner();
         if let Some(error) = chunk_too_large(body.data.len(), MAX_CHUNK_BYTES) {
             return Err(error);
         }
+        if let Some((_, mut client)) = self.state.runas.routed(&body.upload_id).await? {
+            return client.upload_chunk(body).await;
+        }
+        // The bytes may sit in a bulk slot instead of the message.
+        let slot = if body.bulk_slot != 0 {
+            if !body.data.is_empty() {
+                return Err(crate::error::invalid("bulk_slot with data"));
+            }
+            Some(bulk_fetch(body.bulk_slot, body.bulk_len).await?)
+        } else {
+            None
+        };
+        let len = slot.as_ref().map_or(body.data.len(), |b| b.0 as usize);
         let upload = self.state.upload(&body.upload_id)?;
         let mut upload = upload.lock().await;
         let ttl = upload.ttl;
@@ -940,9 +1261,12 @@ impl FilesystemService for FilesystemServiceImpl {
             .as_mut()
             .ok_or_else(|| session_not_found("upload", &body.upload_id))?;
         let received = writer.written();
-        let end = body.offset + body.data.len() as u64;
+        let end = body.offset + len as u64;
         let duplicate = if body.offset == received {
-            writer.write(&body.data).await?;
+            match &slot {
+                Some((n, buf)) => writer.write(&buf.as_slice()[..*n as usize]).await?,
+                None => writer.write(&std::mem::take(&mut body.data)).await?,
+            }
             false
         } else if end <= received {
             true
@@ -969,6 +1293,13 @@ impl FilesystemService for FilesystemServiceImpl {
         request: Request<CommitUploadRequest>,
     ) -> Result<Response<CommitUploadResponse>, Status> {
         let body = request.into_inner();
+        if let Some((_, mut client)) = self.state.runas.routed(&body.upload_id).await? {
+            let id = body.upload_id.clone();
+            let result = client.commit_upload(body).await;
+            // A failed commit leaves no session behind in the helper either.
+            self.state.runas.remove_route(&id);
+            return result;
+        }
         let upload = self.state.upload(&body.upload_id)?;
         let mut upload = upload.lock().await;
         let writer = upload
@@ -999,6 +1330,12 @@ impl FilesystemService for FilesystemServiceImpl {
         request: Request<AbortUploadRequest>,
     ) -> Result<Response<AbortUploadResponse>, Status> {
         let body = request.into_inner();
+        if let Some((_, mut client)) = self.state.runas.routed(&body.upload_id).await? {
+            let id = body.upload_id.clone();
+            let result = client.abort_upload(body).await;
+            self.state.runas.remove_route(&id);
+            return result;
+        }
         let upload = self.state.upload(&body.upload_id)?;
         self.state
             .uploads
@@ -1017,7 +1354,22 @@ impl FilesystemService for FilesystemServiceImpl {
     ) -> Result<Response<CreateSignedUrlResponse>, Status> {
         let viewer = crate::auth::caller(&request).viewer;
         let body = request.into_inner();
-        let path = self.resolve_as(viewer.as_deref(), &body.path)?;
+        if !body.run_as.is_empty() && viewer.is_some() {
+            return Err(StatusBuilder::new(
+                Code::PermissionDenied,
+                ErrorReason::PermissionDenied,
+                "viewer ticket: run_as is not allowed",
+            )
+            .build());
+        }
+        // The user must exist and be reachable now: a URL for a user the
+        // agent cannot act as would only fail later, at the holder.
+        let path = if body.run_as.is_empty() {
+            self.resolve_as(viewer.as_deref(), &body.path)?
+        } else {
+            let user = self.state.runas.check(&body.run_as)?;
+            self.state.resolver.resolve_for(&user, &body.path)?
+        };
         let method = match SignedUrlMethod::try_from(body.method) {
             Ok(SignedUrlMethod::Get) => "GET",
             Ok(SignedUrlMethod::Put) => "PUT",
@@ -1036,6 +1388,8 @@ impl FilesystemService for FilesystemServiceImpl {
             SystemTime::now() + ttl,
             &body.content_type,
             &body.download_name,
+            &body.run_as,
+            body.create_parents,
         );
         Ok(Response::new(CreateSignedUrlResponse {
             url_path: signed.url_path,

@@ -14,10 +14,11 @@ use crate::model::*;
 use crate::spaces::{self, creating, roster, sidebar, stream};
 use crate::teleport::{drag, flow, grid, transfer, windows};
 use crate::{
-    CoreError, about, agent_keys, agents, checklist, cloud_connect, devices, drive_mount_preview,
-    drive_page, drive_settings, driver_preview, experiments, host, login_item, machines, notch,
-    notifications, onboarding, onboarding_preview, palette, paths, persistent, presence,
-    relay_usage, settings, share, telemetry, window, wizard,
+    CoreError, about, agent_keys, agents, checklist, cloud_connect, devices, diagnostics,
+    drive_mount_preview, drive_page, drive_settings, driver_preview, experiments, host,
+    local_network, login_item, machines, notch, notifications, nudges, onboarding,
+    onboarding_preview, palette, paths, persistent, presence, relay_usage, resources, settings,
+    share, sign_in, telemetry, upsell, window, wizard,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -31,25 +32,27 @@ pub const METHODS: &[&str] = &[
     "spaces.nameOf",
     "spaces.providerOfId",
     "spaces.normalizeProvider",
-    "spaces.cloudNamespaceOf",
     "spaces.sceneForOs",
     "spaces.hasFeature",
     "spaces.sharesDesktop",
-    "spaces.isSpacesPool",
     "spaces.sortByMru",
     "spaces.touchSpace",
     "spaces.countActive",
     "spaces.ambientDots",
     "spaces.statusLine",
+    "spaces.listView",
     "roster.initial",
     "roster.reduce",
     "creates.reduce",
+    "localNetwork.applies",
+    "localNetwork.step",
     "creates.compose",
     "creates.isPending",
     "creates.settle",
     "creates.isDeleting",
     "creates.isPowering",
     "sidebar.build",
+    "sidebar.matches",
     "sidebar.detail",
     "sidebar.detailCopy",
     "sidebar.deleteFailedText",
@@ -60,9 +63,12 @@ pub const METHODS: &[&str] = &[
     "stream.pipReduce",
     "stream.pipClick",
     "window.chrome",
+    "window.emptyLinuxDetail",
     "window.menuBar",
     "window.menu",
     "spaces.openableCount",
+    "spaces.onCount",
+    "spaces.onStatusLine",
     "wizard.initial",
     "wizard.reduce",
     "wizard.view",
@@ -81,6 +87,7 @@ pub const METHODS: &[&str] = &[
     "wizard.validateImageRef",
     "wizard.creatingText",
     "wizard.createFailedText",
+    "wizard.setExternalRuntimes",
     "windows.filterWindows",
     "windows.appsFromWindows",
     "windows.teleportButtonEnabled",
@@ -157,6 +164,11 @@ pub const METHODS: &[&str] = &[
     "onboarding.copy",
     "onboarding.signedInText",
     "onboarding.signInCodeText",
+    "signIn.footer",
+    "signIn.failed",
+    "signIn.failedFromError",
+    "signIn.failureOf",
+    "signIn.reasonText",
     "onboarding.replacesText",
     "onboarding.installedAtText",
     "onboarding.preview",
@@ -177,6 +189,9 @@ pub const METHODS: &[&str] = &[
     "agentKeys.removeConfirm",
     "agentKeys.nameProblem",
     "about.view",
+    "diagnostics.createReport",
+    "diagnostics.reportMailto",
+    "diagnostics.redact",
     "about.afterLaunch",
     "about.restartDaemon",
     "about.refreshNotice",
@@ -226,6 +241,8 @@ pub const METHODS: &[&str] = &[
     "paths.displayPaths",
     "devices.view",
     "machines.merge",
+    "machines.pageRows",
+    "machines.view",
     "devices.activityText",
     "devices.labels",
     "devices.platformName",
@@ -246,6 +263,9 @@ pub const METHODS: &[&str] = &[
     "share.initial",
     "share.reduce",
     "share.view",
+    "share.gate",
+    "share.errorWords",
+    "share.removalNote",
     "agents.pageInitial",
     "agents.pageReduce",
     "agents.pageView",
@@ -267,6 +287,7 @@ pub const METHODS: &[&str] = &[
     "telemetry.onboardingFinished",
     "telemetry.onboardingSkipped",
     "telemetry.signInFailed",
+    "telemetry.signInFailure",
     "telemetry.creates",
     "telemetry.storage",
     "telemetry.share",
@@ -274,6 +295,7 @@ pub const METHODS: &[&str] = &[
     "telemetry.checklist",
     "checklist.reduce",
     "checklist.view",
+    "checklist.observeFrom",
     "palette.keybindings",
     "palette.rank",
     "telemetry.experimentsChanged",
@@ -283,6 +305,24 @@ pub const METHODS: &[&str] = &[
     "experiments.choose",
     "wizard.placementOptions",
     "relayUsage.view",
+    "relayUsage.planLimit",
+    "resources.view",
+    "resources.thisMac",
+    "resources.space",
+    "resources.computer",
+    "resources.warning",
+    "upsell.prompt",
+    "upsell.allows",
+    "upsell.card",
+    "firstRun.view",
+    "firstRun.todos",
+    "firstRun.permissions",
+    "firstRun.agentUsed",
+    "firstRun.leadAgent",
+    "firstRun.cli",
+    "telemetry.upsell",
+    "nudge.secondAgent",
+    "nudge.riskyAction",
 ];
 
 struct Args(Value);
@@ -325,7 +365,6 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         )),
         "spaces.providerOfId" => out(spaces::provider_of_id(&a.get::<String>("id")?)),
         "spaces.normalizeProvider" => out(spaces::normalize_provider(&a.get::<String>("word")?)),
-        "spaces.cloudNamespaceOf" => out(spaces::cloud_namespace_of(&a.get::<String>("id")?)),
         "spaces.sceneForOs" => out(spaces::scene_for_os(a.get("os")?)),
         "spaces.hasFeature" => out(spaces::has_feature(
             &a.get("space")?,
@@ -335,7 +374,6 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         // or not one of your machines): when it does not, nothing asks its
         // desktop or its processes.
         "spaces.sharesDesktop" => out(sidebar::shares_desktop(&a.get("space")?)),
-        "spaces.isSpacesPool" => out(spaces::is_spaces_pool(&a.get("space")?)),
         "spaces.sortByMru" => out(spaces::sort_by_mru(&a.get::<Vec<Space>>("spaces")?)),
         "spaces.touchSpace" => out(spaces::touch_space(
             &a.get::<Vec<Space>>("spaces")?,
@@ -345,8 +383,15 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         "spaces.countActive" => out(spaces::count_active(&a.get::<Vec<Space>>("spaces")?)),
         "spaces.ambientDots" => out(spaces::ambient_dots(&a.get::<Vec<Space>>("spaces")?)),
         "spaces.statusLine" => out(spaces::status_line(a.get("count")?)),
+        "spaces.listView" => out(spaces::list_view(a.get("input")?)),
         "roster.initial" => out(roster::initial(&a.get::<Vec<Space>>("spaces")?)),
         "roster.reduce" => out(roster::reduce(&a.get("state")?, &a.get("action")?)),
+        "localNetwork.applies" => out(local_network::applies(
+            a.get("provider")?,
+            a.get("os")?,
+            a.get("hostIsMac")?,
+        )),
+        "localNetwork.step" => out(local_network::step(&a.get("input")?)),
         "creates.reduce" => out(creating::reduce(
             &a.get::<Option<creating::CreatesState>>("state")?
                 .unwrap_or_default(),
@@ -373,6 +418,13 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
                 .unwrap_or_default(),
             &a.get::<String>("id")?,
         )),
+        "sidebar.matches" => {
+            let fields = a.get::<Vec<String>>("fields")?;
+            out(sidebar::matches(
+                &a.get::<Option<String>>("query")?.unwrap_or_default(),
+                &fields.iter().map(String::as_str).collect::<Vec<_>>(),
+            ))
+        }
         "sidebar.build" => out(sidebar::sidebar(
             &a.get::<Vec<Space>>("spaces")?,
             &a.get::<Option<String>>("query")?.unwrap_or_default(),
@@ -429,8 +481,13 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get::<Option<window::ChromeInput>>("input")?
                 .unwrap_or_default(),
         )),
+        "window.emptyLinuxDetail" => {
+            out(window::empty_linux_detail_on(&a.get::<String>("hostArch")?))
+        }
         "window.menu" => out(window::menu(&a.get::<window::MenuInput>("input")?)),
         "spaces.openableCount" => out(spaces::openable_count(&a.get::<Vec<Space>>("spaces")?)),
+        "spaces.onCount" => out(spaces::on_count(&a.get::<Vec<Space>>("spaces")?)),
+        "spaces.onStatusLine" => out(spaces::on_status_line(a.get("count")?)),
         "window.menuBar" => out(window::menu_bar_with_keyvault(
             a.get("spaces")?,
             a.get::<Option<String>>("keyvault")?.as_deref(),
@@ -455,7 +512,84 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             a.get::<Option<SpaceOs>>("hostOs")?
                 .unwrap_or(SpaceOs::Macos),
         )),
-        "relayUsage.view" => out(relay_usage::view(&a.get("usage")?)),
+        // The page's core has no environment: the host names its account app
+        // (`settings.get`'s `accountUrl`), the Upgrade fallback's billing page.
+        "relayUsage.view" => {
+            let usage = a.get("usage")?;
+            out(match a.get::<Option<String>>("accountApp")? {
+                Some(app) if app.starts_with("https://") => relay_usage::view_for(&usage, &app),
+                _ => relay_usage::view(&usage),
+            })
+        }
+        // An error's text that is the relay refusing a new session over the
+        // plan's cap: the sentence and Upgrade (null for any other error).
+        "relayUsage.planLimit" => {
+            let error: String = a.get("error")?;
+            let app = a.get::<Option<String>>("accountApp")?.unwrap_or_default();
+            out(relay_usage::plan_limit_notice(&error, &app))
+        }
+        // Processor, memory and disk: the rows, bars and warning the apps
+        // draw from the runtime's snapshot (`Spaces.resources`).
+        // `nowMs` is the shell's clock: the core has none (wasm).
+        "resources.view" => out(resources::view(&a.get("snapshot")?, a.get("nowMs")?)),
+        "resources.thisMac" => out(resources::this_mac_view(&a.get("computer")?)),
+        "resources.space" => out(resources::space_view(&a.get("space")?)),
+        "resources.computer" => out(resources::computer_view(
+            &a.get("computer")?,
+            a.get("nowMs")?,
+        )),
+        "resources.warning" => out(resources::warning_view(&a.get("warning")?)),
+        // The Pro and Teams prompts: the rules and words are `upsell`'s.
+        "upsell.prompt" => {
+            let usage = a.get("usage")?;
+            let app = a
+                .get::<Option<String>>("accountApp")?
+                .filter(|u| u.starts_with("https://"))
+                .unwrap_or_else(cua_home::env::account_app_url);
+            out(upsell::prompt(
+                &a.get::<String>("surface")?,
+                &usage,
+                &app,
+                &a.get("state")?,
+            ))
+        }
+        "upsell.allows" => out(upsell::allows(&a.get("state")?)),
+        "upsell.card" => {
+            let app = a
+                .get::<Option<String>>("accountApp")?
+                .filter(|u| u.starts_with("https://"))
+                .unwrap_or_else(cua_home::env::account_app_url);
+            out(upsell::card(
+                &a.get::<String>("reason")?,
+                &a.get("usage")?,
+                &app,
+            ))
+        }
+        "firstRun.view" => out(crate::first_run::view(&a.get("input")?)),
+        "firstRun.cli" => out(crate::first_run::cli_view(&a.get("input")?)),
+        "firstRun.todos" => out(crate::first_run::todos(&a.get("input")?)),
+        "firstRun.permissions" => out(crate::first_run::permissions_view(&a.get("input")?)),
+        "firstRun.agentUsed" => out(crate::first_run::agent_used(
+            &a.get::<Vec<crate::first_run::AccessLine>>("lines")?,
+            a.get::<u64>("sinceMs")?,
+            &a.get::<String>("agentName")?,
+        )),
+        "firstRun.leadAgent" => out(crate::first_run::lead_agent(
+            &a.get::<Vec<crate::first_run::FirstRunAgent>>("agents")?,
+        )),
+        // The This Mac prompts: the moments, rules and words are `nudges`'.
+        "nudge.secondAgent" => out(nudges::second_agent(
+            &a.get::<Vec<host::HostAccess>>("recentAccess")?,
+            a.get("nowMs")?,
+            &a.get::<String>("today")?,
+            &a.get::<Option<nudges::NudgeMemory>>("memory")?
+                .unwrap_or_default(),
+        )),
+        "nudge.riskyAction" => out(nudges::risky_action(&a.get("request")?, a.get("nowMs")?)),
+        "telemetry.upsell" => out(telemetry::upsell(
+            &a.get::<String>("surface")?,
+            &a.get::<String>("action")?,
+        )),
         "wizard.pickerImages" => out(wizard::picker_images()),
         "wizard.pickerGroups" => out(wizard::picker_groups()),
         "wizard.findImage" => out(wizard::find_image(&a.get::<String>("ref")?)),
@@ -480,6 +614,11 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             a.get("provider")?,
             a.get::<Option<String>>("hostName")?.as_deref(),
         )),
+        "wizard.setExternalRuntimes" => {
+            let list = wizard::external_runtimes_from_doctor(&a.get::<String>("reportJson")?);
+            wizard::set_external_runtimes(list.clone());
+            out(list)
+        }
         "windows.filterWindows" => out(windows::filter_windows(
             &a.get::<Vec<_>>("windows")?,
             &a.get::<String>("query")?,
@@ -582,7 +721,13 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         "keyvault.pendingSummary" => out(kv::pending_summary(&a.get("pending")?)),
         "keyvault.pendingRows" => out(kv::pending_rows(&a.get("overview")?)),
         "keyvault.accessRows" => out(kv::access_rows(&a.get("overview")?, a.get("now")?)),
-        "keyvault.page" => out(kv::page(&a.get("overview")?, a.get("now")?)),
+        // `hostOs`: the shell's system, for its words (macOS when absent).
+        "keyvault.page" => out(kv::page_on(
+            &a.get("overview")?,
+            a.get("now")?,
+            a.get::<Option<SpaceOs>>("hostOs")?
+                .unwrap_or(SpaceOs::Macos),
+        )),
         "keyvault.sidebar" => out(browse::sidebar(&a.get("overview")?, a.get("now")?)),
         "keyvault.list" => out(browse::list(
             &a.get("overview")?,
@@ -594,10 +739,12 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get("state")?,
             &a.get("action")?,
         )),
-        "keyvault.vaultView" => out(vault::view(
+        "keyvault.vaultView" => out(vault::view_on(
             &a.get("overview")?,
             &a.get("state")?,
             a.get("now")?,
+            a.get::<Option<SpaceOs>>("hostOs")?
+                .unwrap_or(SpaceOs::Macos),
         )),
         "keyvault.vaultSource" => out(vault::vault_source(
             &a.get("overview")?,
@@ -627,10 +774,15 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         "keyvault.deleteConfirm" => {
             out(vault::delete_confirm(a.get("count")?, a.get("liveCopies")?))
         }
-        "keyvault.labels" => out(kv::labels()),
+        "keyvault.labels" => out(kv::labels_on(
+            a.get::<Option<SpaceOs>>("hostOs")?
+                .unwrap_or(SpaceOs::Macos),
+        )),
         "keyvault.recoveryKeyText" => out(kv::recovery_key_text(&a.get::<String>("key")?)),
-        "keyvault.credentialForm" => out(crate::keyvault::credential::credential_form(
+        "keyvault.credentialForm" => out(crate::keyvault::credential::credential_form_on(
             &a.get("overview")?,
+            a.get::<Option<SpaceOs>>("hostOs")?
+                .unwrap_or(SpaceOs::Macos),
         )),
         "keyvault.passphraseCheck" => out(crate::keyvault::credential::passphrase_check(
             a.get("mode")?,
@@ -655,10 +807,13 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         )),
         "onboarding.reduce" => out(onboarding::reduce(&a.get("state")?, &a.get("action")?)),
         // `hostOs`: the shell's system, for its words (macOS when absent).
-        "onboarding.view" => out(onboarding::view_on(
+        // `withoutCli`: a shell with no Command line page (the web UI):
+        // Done neither lists the Cua CLI nor waits for it.
+        "onboarding.view" => out(onboarding::view_for(
             &a.get("state")?,
             a.get::<Option<SpaceOs>>("hostOs")?
                 .unwrap_or(SpaceOs::Macos),
+            !a.get::<Option<bool>>("withoutCli")?.unwrap_or(false),
         )),
         "onboarding.copy" => out(onboarding::copy()),
         "onboarding.signedInText" => out(onboarding::signed_in_text(
@@ -667,6 +822,20 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         "onboarding.signInCodeText" => out(onboarding::sign_in_code_text(
             a.get::<Option<String>>("userCode")?.as_deref(),
         )),
+        "signIn.footer" => out(sign_in::footer(&a.get("input")?)),
+        "signIn.failed" => out(sign_in::failed(
+            a.get("reason")?,
+            a.get::<Option<String>>("detail")?.as_deref(),
+        )),
+        "signIn.failedFromError" => out(sign_in::failed_from_error(
+            &a.get::<Option<String>>("variant")?.unwrap_or_default(),
+            &a.get::<String>("message")?,
+        )),
+        "signIn.failureOf" => out(sign_in::failure_of(
+            &a.get::<Option<String>>("variant")?.unwrap_or_default(),
+            &a.get::<String>("message")?,
+        )),
+        "signIn.reasonText" => out(sign_in::reason_text(a.get("reason")?)),
         "onboarding.replacesText" => out(onboarding::replaces_text(
             a.get::<Option<String>>("installedVersion")?.as_deref(),
         )),
@@ -703,6 +872,12 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         )),
         "agentKeys.nameProblem" => out(agent_keys::name_problem(&a.get::<String>("name")?)),
         "about.view" => out(about::view(&a.get::<about::AboutInput>("input")?)),
+        "diagnostics.createReport" => out(diagnostics::create_report(&a.get("input")?)),
+        "diagnostics.reportMailto" => out(diagnostics::report_mailto(
+            &a.get("send")?,
+            &a.get::<Option<Vec<String>>>("names")?.unwrap_or_default(),
+        )),
+        "diagnostics.redact" => out(diagnostics::redact(&a.get::<String>("text")?)),
         "about.afterLaunch" => out(about::after_launch(&a.get::<about::LaunchInput>("input")?)),
         "about.restartDaemon" => out(about::restart_daemon(
             &a.get::<about::DaemonCheck>("check")?,
@@ -814,6 +989,14 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         "host.parseAllowList" => out(host::parse_allow_list(&a.get::<String>("value")?)),
         "machines.merge" => out(machines::merge(
             &a.get::<Option<machines::MachinesInput>>("input")?
+                .unwrap_or_default(),
+        )),
+        "machines.pageRows" => out(machines::page_rows(
+            &a.get::<Option<machines::MachinesPageInput>>("input")?
+                .unwrap_or_default(),
+        )),
+        "machines.view" => out(crate::machines_view::view(
+            &a.get::<Option<crate::machines_view::MachinesViewInput>>("input")?
                 .unwrap_or_default(),
         )),
         "devices.view" => out(devices::devices_view(
@@ -936,6 +1119,14 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get::<share::ShareInput>("input")?,
             &a.get::<share::ShareSheetState>("state")?,
         )),
+        "share.gate" => out(share::share_gate(a.get::<Option<bool>>("hasTeam")?)),
+        "share.errorWords" => out(share::share_error_words(
+            &a.get::<String>("error")?,
+            &a.get::<String>("who")?,
+        )),
+        "share.removalNote" => out(share::share_removal_note(
+            &a.get::<Vec<share::ShareRemovalInput>>("removals")?,
+        )),
         "host.clientLabel" => out(host::client_label(
             &a.get::<String>("id")?,
             a.get::<Option<String>>("email")?.as_deref(),
@@ -1008,6 +1199,7 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         "telemetry.signInFailed" => out(telemetry::sign_in_failed(
             a.get::<Option<String>>("message")?.as_deref(),
         )),
+        "telemetry.signInFailure" => out(telemetry::sign_in_failure(a.get("reason")?)),
         "telemetry.creates" => out(telemetry::creates(
             &a.get::<Option<creating::CreatesState>>("state")?
                 .unwrap_or_default(),
@@ -1032,6 +1224,10 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         )),
         "checklist.view" => out(checklist::view(
             &a.get::<checklist::ChecklistState>("state")?,
+        )),
+        "checklist.observeFrom" => out(checklist::observe_from(
+            &a.get::<Option<checklist::ChecklistSeen>>("seen")?
+                .unwrap_or_default(),
         )),
         "palette.keybindings" => out(palette::keybindings()),
         "palette.rank" => out(palette::rank(
@@ -1058,6 +1254,48 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn upsell_prompts_follow_the_rules_through_dispatch() {
+        let usage =
+            json!({"metered": true, "plan": "free", "liveSessionsLimit": 2, "hoursLimit": 20.0});
+        let state = |quiet: bool| json!({"nowMs": 1_000_000_000_000u64, "quiet": quiet});
+        let p = call_value(
+            "upsell.prompt",
+            json!({"surface": "share", "usage": usage, "accountApp": "https://app.cua.ai", "state": state(false)}),
+        )
+        .unwrap();
+        assert_eq!(
+            p["cta"]["url"],
+            "https://app.cua.ai/buy/teams?from=app_share"
+        );
+        let quiet = call_value(
+            "upsell.prompt",
+            json!({"surface": "share", "usage": usage, "state": state(true)}),
+        )
+        .unwrap();
+        assert!(quiet.is_null());
+        assert_eq!(
+            call_value("upsell.allows", json!({"state": state(true)})).unwrap(),
+            json!(false)
+        );
+        assert_eq!(
+            call_value(
+                "telemetry.upsell",
+                json!({"surface": "meter", "action": "shown"})
+            )
+            .unwrap(),
+            json!([{"type": "feature", "feature": "upsell_meter_shown"}])
+        );
+        assert_eq!(
+            call_value(
+                "telemetry.upsell",
+                json!({"surface": "plan_card", "action": "shown"})
+            )
+            .unwrap(),
+            json!([])
+        );
+    }
+
+    #[test]
     fn dispatch_covers_every_method() {
         for m in METHODS {
             let r = call_value(m, Value::Object(Default::default()));
@@ -1072,6 +1310,37 @@ mod tests {
             call("nope.nope", "{}"),
             Err(CoreError::Invalid(e)) if e.starts_with("unknown method")
         ));
+    }
+
+    /// The page's core has no environment: Upgrade's checkout is on the
+    /// account app the host names, else production's; only https is taken.
+    #[test]
+    fn relay_upgrade_opens_the_hosts_account_app() {
+        let usage = json!({
+            "metered": true, "plan": "free", "hoursUsed": 20.2, "hoursLimit": 20.0,
+            "softLimitReached": true, "reasons": ["hours"], "upgradeUrl": null,
+        });
+        let upgrade = |args: Value| {
+            call_value("relayUsage.view", args).unwrap()["notice"]["upgradeUrl"].clone()
+        };
+        assert_eq!(
+            upgrade(json!({"usage": usage, "accountApp": "https://app.staging.cua.ai"})),
+            json!("https://app.staging.cua.ai/buy/pro?from=app_meter")
+        );
+        assert_eq!(
+            upgrade(json!({"usage": usage, "accountApp": "javascript:alert(1)"})),
+            json!(format!(
+                "{}/buy/pro?from=app_meter",
+                cua_home::env::account_app_url()
+            ))
+        );
+        assert_eq!(
+            upgrade(json!({"usage": usage})),
+            json!(format!(
+                "{}/buy/pro?from=app_meter",
+                cua_home::env::account_app_url()
+            ))
+        );
     }
 
     /// The web asks the core whether a machine shares its desktop before it
@@ -1114,6 +1383,9 @@ mod tests {
         .unwrap();
         let mut done = state.clone();
         done["step"] = json!("done");
+        done["identity"] = json!("ada@example.com");
+        done["cliTarget"] = json!("/h/.local/bin/cua");
+        done["agents"] = json!(["Claude Code"]);
         let lede = |os: Value| {
             call_value("onboarding.view", json!({ "state": done, "hostOs": os })).unwrap()["lede"]
                 .as_str()
@@ -1123,6 +1395,23 @@ mod tests {
         assert_eq!(lede(Value::Null), "Cua Spaces is in your menu bar.");
         assert_eq!(lede(json!("linux")), "Cua Spaces is in your system tray.");
         assert_eq!(lede(json!("windows")), "Cua Spaces is in your system tray.");
+    }
+
+    /// `keyvault.labels` says what confirms in the shell's system's words
+    /// (`hostOs`), and in a Mac's when it names none.
+    #[test]
+    fn keyvault_words_follow_the_hosts_system() {
+        let note = |args: Value| {
+            call_value("keyvault.labels", args).unwrap()["confirmNote"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        assert_eq!(note(json!({})), "Touch ID confirms in the Cua daemon.");
+        assert_eq!(
+            note(json!({ "hostOs": "windows" })),
+            "Windows Hello or your password confirms in the Cua daemon."
+        );
     }
 
     /// `agentKeys.view` and `agentKeys.form` say where keys stay in the shell's

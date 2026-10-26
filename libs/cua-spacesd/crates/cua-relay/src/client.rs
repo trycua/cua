@@ -283,7 +283,7 @@ pub fn learn_account(link: &AccountLink, headers: &http::HeaderMap) -> Result<()
                 crate::assertion::ed25519_keys(&crate::assertion::decode_jwks_header(value)?)?
             }
             None => {
-                return Err("the relay presented no assertion key; this machine pins one".into())
+                return Err("the relay presented no assertion key; this computer pins one".into())
             }
         };
         if !presented.iter().any(|k| pinned.contains(k)) {
@@ -298,7 +298,7 @@ pub fn learn_account(link: &AccountLink, headers: &http::HeaderMap) -> Result<()
     if let Some(jwks) = jwks {
         match link.keys.set_from_header(jwks) {
             Ok(n) => {
-                tracing::info!(keys = n, owner = ?owner, "account mode: trusting the relay's assertion keys")
+                tracing::info!(keys = n, owner = ?owner.as_deref().map(crate::ident::tag), "account mode: trusting the relay's assertion keys")
             }
             Err(error) => tracing::warn!(%error, "ignoring the relay's key header"),
         }

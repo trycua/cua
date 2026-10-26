@@ -15,7 +15,7 @@
 import type {
   DaemonStatus,
   DefaultLocation,
-  FleetStatus,
+  AccountStatus,
   HostStatus,
   LoginItemStatus,
   MachineRow,
@@ -28,7 +28,7 @@ import type {
   CreateProgress,
   TelemetryView,
 } from "./contracts/host";
-import type { AgentEventsPage, AgentSetupRow, PersistentAgent, SpaceAgentRun } from "./contracts/agents";
+import type { AgentEventsPage, AgentMessageSent, AgentSetupRow, AgentStarted, AgentStartRequest, PersistentAgent, SpaceAgentRun } from "./contracts/agents";
 import type { KeyvaultOverview, KvGrant, KvItem } from "./contracts/keyvault";
 import type { SpaceOs, SpaceRow } from "./contracts/spaces";
 import { NEW_SPACE_OPERATIONS, type NewSpaceOperations } from "./ops/new-space";
@@ -45,8 +45,15 @@ import type { HostSetupOps } from "./ops/host-setup";
 import type { SpaceDetailOps } from "./ops/space-detail";
 import { STREAM_OPERATIONS, type StreamOps } from "./ops/stream";
 import { RELAY_USAGE_OPERATIONS, type RelayUsageOps } from "./ops/relay-usage";
+import { NUDGES_OPERATIONS, type NudgesOps } from "./ops/nudges";
+import { RESOURCES_OPERATIONS, type ResourcesOps } from "./ops/resources";
+import { MACHINES_OPERATIONS, type MachinesOps } from "./ops/machines";
+import { CHECKLIST_OPERATIONS, type ChecklistOps } from "./ops/checklist";
+import { LINKS_OPERATIONS, type LinksOps } from "./ops/links";
+import { CLI_OPERATIONS, type CliOps } from "./ops/cli";
 import { PRESENCE_OPERATIONS, type PresenceOps } from "./ops/presence";
-import type { TelemetryOps } from "./ops/telemetry";
+import { RUNTIME_FIX_OPERATIONS, type RuntimeFixOps } from "./ops/runtime-fix";
+import { TELEMETRY_OPERATIONS, type TelemetryOps } from "./ops/telemetry";
 import { STARTUP_EVENTS, STARTUP_OPERATIONS, type StartupHostEvent, type StartupOps } from "./ops/startup";
 
 /* ---- Settings the web UI reads and writes -------------------------------- */
@@ -61,9 +68,9 @@ export interface SettingsValues {
   menuBar: boolean;
   /** The global hotkey, as glyphs (`⌘⇧Space`). */
   hotkey: string;
-  /** Anonymous usage telemetry (`$CUA_HOME/config.toml`, same as `cua telemetry`). */
+  /** Usage telemetry (`$CUA_HOME/config.toml`, same as `cua telemetry`). */
   telemetry: boolean;
-  /** Where New Space starts: `local`, `cloud`, `host:<id>`, or a cloud word. */
+  /** Where New Space starts: `local`, `host:<id>`, or a cloud word. */
   defaultLocation: string;
   /** The app opens at login, as the system reports it (`login_item::LoginItemStatus`
    * is `enabled` or `requiresApproval`). Null: this host can't say. */
@@ -101,6 +108,22 @@ export interface SettingsSnapshot {
   /** The global shortcut that brings the app to the front, as the host
    * registered it with the system. Absent or null: this host has none. */
   globalShortcut?: GlobalShortcut | null;
+  /** The host's account app (`https://app.cua.ai`, or staging's), which the
+   * page's core cannot resolve itself. Absent or null: the production one. */
+  accountUrl?: string | null;
+  /** The CLI this app puts on PATH, for the pages' "run this in Terminal"
+   * hints: its name (`CuaChannel::cli_name`, from the host's CLI install
+   * plan) and whether it is on this computer. Absent or null: the host
+   * can't say, and the hints stay hidden. */
+  cli?: CliInfo | null;
+}
+
+/** `SettingsSnapshot.cli`. */
+export interface CliInfo {
+  /** The command to type (`cua` for the released app). */
+  name: string;
+  /** It is installed on this computer. */
+  installed: boolean;
 }
 
 /** A system-wide shortcut the host registered (macOS: ⌘⇧Space). */
@@ -149,18 +172,31 @@ export const UI_STORAGE_KEYS = {
 /* ---- Session ------------------------------------------------------------- */
 
 export interface SessionSnapshot {
-  fleet: FleetStatus;
+  account: AccountStatus;
   onboarding: OnboardingState;
   daemon: DaemonStatus | null;
   /** A native host's sign-in waiting for the browser (it runs the flow
    * itself): the code to confirm and the page it finishes on. */
   hostSignIn?: HostSignIn | null;
+  /** A native host's sign-in that failed (its reason, the core's line and
+   * the error's words for Details): the page shows it, never a wait that
+   * goes on. Absent from an older host. */
+  hostSignInFailure?: HostSignInFailure | null;
 }
 
 /** A sign-in the host waits on (`SessionSnapshot.hostSignIn`). */
 export interface HostSignIn {
   userCode: string | null;
   url: string | null;
+  /** A browser opened on the host (false: open the page by hand). */
+  opened?: boolean;
+}
+
+/** A host sign-in that failed (`SessionSnapshot.hostSignInFailure`). */
+export interface HostSignInFailure {
+  reason: string;
+  message: string;
+  detail: string | null;
 }
 
 /* ---- Operations ---------------------------------------------------------- */
@@ -181,10 +217,17 @@ export interface HostOperations
     StartupOps,
     StreamOps,
     RelayUsageOps,
-    PresenceOps {
+    NudgesOps,
+    ResourcesOps,
+    MachinesOps,
+    ChecklistOps,
+    LinksOps,
+    CliOps,
+    PresenceOps,
+    RuntimeFixOps {
   "spaces.list": { args: Record<string, never>; result: SpaceRow[] };
   /** `os`: the plan's OS, for a host that draws its own pending row (the SwiftUI app's notch). */
-  "spaces.create": { args: { config: SpaceCreateConfig; pendingId: string; os?: SpaceOs }; result: SpaceRow };
+  "spaces.create": { args: { config: SpaceCreateConfig; pendingId: string; os?: SpaceOs; notifyWhenReady?: boolean }; result: SpaceRow };
   "spaces.cancelCreate": { args: { pendingId: string }; result: CancelOutcome };
   "spaces.setPower": { args: { spaceId: string; on: boolean }; result: SpacePowerReport };
   /** Deletes the Space, or with `removeOnly` only forgets it here (a Space
@@ -195,7 +238,9 @@ export interface HostOperations
   "spaces.open": { args: { spaceId: string; name?: string; os?: SpaceOs }; result: null };
 
   "machines.list": { args: Record<string, never>; result: MachineRow[] };
-  "host.status": { args: Record<string, never>; result: HostStatus };
+  /** `localNetwork`: the permissions page is asking, so a Mac that runs macOS Spaces also lists its
+   * Local Network access ("local-network", granted or not) and checks it from the daemon. */
+  "host.status": { args: { localNetwork?: boolean }; result: HostStatus };
 
   "settings.get": { args: Record<string, never>; result: SettingsSnapshot };
   "settings.set": { args: { key: SettingKey; value: SettingsValues[SettingKey] }; result: SettingsSnapshot };
@@ -216,7 +261,7 @@ export interface HostOperations
   "keyvault.revokeGrant": { args: { id: string }; result: number };
 
   "session.get": { args: Record<string, never>; result: SessionSnapshot };
-  "session.signIn": { args: Record<string, never>; result: SignInStart };
+  "session.signIn": { args: { code?: boolean }; result: SignInStart };
   "session.signOut": { args: Record<string, never>; result: null };
   /** `launchAtLogin`: Done's checkbox, where the host draws it (Electron). */
   "session.completeOnboarding": { args: { mode: OnboardingMode; launchAtLogin?: boolean }; result: null };
@@ -228,6 +273,10 @@ export interface HostOperations
   "agents.runs": { args: { spaceId: string }; result: SpaceAgentRun[] };
   /** A run's events after `cursor` (`agent_events`; at most `max`, default 100). */
   "agents.events": { args: { spaceId: string; runId: string; cursor: number; max?: number }; result: AgentEventsPage };
+  /** Starts a coding agent in a Space (`agent_start`). */
+  "agents.start": { args: AgentStartRequest; result: AgentStarted };
+  /** Sends a reply to a run (`agent_message`; `force` interrupts the turn first). */
+  "agents.message": { args: { spaceId: string; runId: string; text: string; force?: boolean }; result: AgentMessageSent };
   /** Stops the run, saves the home, holds routines, suspends a local Space (`agent_pause`). */
   "agents.pause": { args: { name: string }; result: null };
   "agents.resume": { args: { name: string }; result: null };
@@ -235,6 +284,8 @@ export interface HostOperations
   "agents.setup": { args: Record<string, never>; result: AgentSetupRow[] };
   /** Adds the cua skills and MCP server to `agents`, or every installed one (`agent_setup_configure`). */
   "agents.configure": { args: { agents: string[] | null }; result: AgentSetupRow[] };
+  /** Starts `agent`'s own sign-in on this computer (`codex login` opens the browser); the rows after. */
+  "agents.signIn": { args: { agent: string }; result: AgentSetupRow[] };
 }
 
 export type OpName = keyof HostOperations;
@@ -269,10 +320,13 @@ export const OPERATIONS = [
   "agents.list",
   "agents.runs",
   "agents.events",
+  "agents.start",
+  "agents.message",
   "agents.pause",
   "agents.resume",
   "agents.setup",
   "agents.configure",
+  "agents.signIn",
   ...AGENT_DETAIL_OPERATIONS,
   ...NEW_SPACE_OPERATIONS,
   ...TELEPORT_OPERATIONS,
@@ -283,10 +337,17 @@ export const OPERATIONS = [
   ...VOLUME_OPERATIONS,
   ...STREAM_OPERATIONS,
   ...RELAY_USAGE_OPERATIONS,
+  ...NUDGES_OPERATIONS,
+  ...RESOURCES_OPERATIONS,
+  ...MACHINES_OPERATIONS,
+  ...CHECKLIST_OPERATIONS,
+  ...LINKS_OPERATIONS,
+  ...CLI_OPERATIONS,
   ...PRESENCE_OPERATIONS,
+  ...RUNTIME_FIX_OPERATIONS,
   ...SETTINGS_OPERATIONS,
   ...NOTIFICATIONS_OPERATIONS,
-  "telemetry.track",
+  ...TELEMETRY_OPERATIONS,
   "spaces.usage",
   "spaces.windows",
   "stream.pip",
@@ -295,6 +356,7 @@ export const OPERATIONS = [
   "spaces.droppedFiles",
   "spaces.sendFiles",
   "host.setUp",
+  "host.joinWithCode",
   "host.action",
   "host.openSettings",
   ...STARTUP_OPERATIONS,
@@ -309,6 +371,8 @@ export type HostEvent =
   | { type: "spaces.createProgress"; progress: CreateProgress }
   | { type: "machines.changed" }
   | { type: "settings.changed" }
+  /** The host's updater moved on (found, downloading, ready): ask `update.get` again. */
+  | { type: "update.changed" }
   | { type: "keyvault.changed" }
   /** Tauri `auth:signed-in`. */
   | { type: "session.signedIn"; identity?: string }
@@ -320,6 +384,8 @@ export type HostEvent =
   | { type: "session.changed" }
   /** A persistent agent or a run changed (paused, resumed, a turn ended): refetch. */
   | { type: "agents.changed" }
+  /** The host's copy of the getting-started checklist changed (`ops/checklist.ts`): refetch. */
+  | { type: "checklist.changed" }
   | TeleportHostEvent
   /** The native app moved on while starting (the startup screen; payload: the new state). */
   | StartupHostEvent;
@@ -331,12 +397,14 @@ export const HOST_EVENTS = [
   "spaces.createProgress",
   "machines.changed",
   "settings.changed",
+  "update.changed",
   "keyvault.changed",
   "session.signedIn",
   "session.signInFailed",
   "session.signedOut",
   "session.changed",
   "agents.changed",
+  "checklist.changed",
   ...TELEPORT_EVENTS,
   ...STARTUP_EVENTS,
 ] as const satisfies readonly HostEventType[];

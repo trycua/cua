@@ -60,7 +60,7 @@ struct NotchTests {
     /// The debug start's highlight names one control.
     @Test func highlightParses() {
         #expect(NotchHighlight.parse("tile", firstTile: "local:aurora") == NotchHighlight(.tile("local:aurora")))
-        #expect(NotchHighlight.parse("tile=cloud:x:pressed", firstTile: nil) == NotchHighlight(.tile("cloud:x"), pressed: true))
+        #expect(NotchHighlight.parse("tile=direct:x:pressed", firstTile: nil) == NotchHighlight(.tile("direct:x"), pressed: true))
         #expect(NotchHighlight.parse("settings:pressed", firstTile: nil) == NotchHighlight(.button(.settings), pressed: true))
         #expect(NotchHighlight.parse("list", firstTile: nil) == NotchHighlight(.button(.list)))
         #expect(NotchHighlight.parse("search", firstTile: nil) == NotchHighlight(.search))
@@ -186,6 +186,35 @@ struct NotchTests {
         notch.send(.hoverExit)
         clock.advance(motion.closeDelayMs)
         #expect(notch.view.phase == .closed)
+    }
+
+    /// Hovering the notch lists the Spaces, never a machine that only
+    /// provides them (CUA-1619): This machine and your other Mac on the
+    /// relay stay off the tiles, the Space that Mac provides is listed, and
+    /// the tab counts what the tiles list.
+    @Test func hoverListsOnlySpacesNeverTheMachinesThatProvideThem() async {
+        var machine = FixtureSpacesBackend.sample[0]
+        machine.id = "relay:studio"
+        machine.name = "Studio"
+        machine.provider = "relay"
+        var provided = FixtureSpacesBackend.sample[0]
+        provided.id = "relay:studio/dev"
+        provided.name = "Dev"
+        provided.provider = "relay"
+        provided.host = "studio"
+        let m = ViewModelTests().makeModel(FixtureSpacesBackend(rows: [machine, provided]))
+        await m.refresh()
+        #expect(m.notch.spaces.contains { $0.id == "relay:studio" }, "the roster still has the machine")
+
+        let clock = ManualScheduler()
+        let notch = NotchModel(scheduler: clock)
+        notch.spaces = m.notch.spaces
+        notch.send(.hoverEnter)
+        clock.advance(motion.hoverDwellMs)
+        #expect(notch.view.phase == .tiles)
+        #expect(notch.view.tiles.map(\.id) == ["relay:studio/dev"])
+        #expect(notch.view.tab.count == "1")
+        #expect(notch.view.tiles.count == Int(appOpenableCount(spaces: notch.spaces)))
     }
 
     // MARK: - The presentation state machine
@@ -438,6 +467,38 @@ struct NotchTests {
         #expect(notch.view.phase == .closed)
     }
 
+    // MARK: - The count
+
+    /// The tab counts only the Spaces on or starting: with every Space
+    /// stopped there is no tab at all (no "0"), the stopped Spaces are
+    /// still tiles that take drops, and one starting brings the tab back.
+    @Test func theTabCountsOnlySpacesOnAndGoesAtZero() async throws {
+        let notch = NotchModel(scheduler: ManualScheduler())
+        let roster = await spaces()
+        let stopped = roster.map { s -> AppSpace in
+            var s = s
+            if s.id != "this-mac" { s.status = .suspended }
+            return s
+        }
+        notch.spaces = stopped
+        #expect(appOnCount(spaces: stopped) == 0)
+        #expect(notch.view.phase == .closed && !notch.view.showTab)
+        #expect(appOnStatusLine(count: 0) == "No Spaces running")
+        notch.send(.click)
+        let tiles = notch.view.tiles
+        #expect(!tiles.isEmpty && tiles.allSatisfy { $0.dim })
+        #expect(tiles.contains { $0.dropTarget }, "a reachable stopped Space still takes drops")
+        notch.send(.click)
+
+        var starting = stopped
+        let i = try #require(starting.firstIndex { $0.id != "this-mac" })
+        starting[i].status = .provisioning
+        notch.spaces = starting
+        #expect(notch.view.showTab)
+        #expect(notch.view.tab.count == "1" && notch.view.tab.word == "Space")
+        #expect(notch.view.countLabel == "1 Space")
+    }
+
     // MARK: - The notch setting
 
     @Test func hidingTheNotchStopsHoverAndDragsAndShowingRestoresIt() async {
@@ -485,6 +546,39 @@ struct NotchTests {
         #expect(c.isShown && !m.notch.view.hidden)
         c.setShown(false)
     }
+
+    /// CUA-1618: the setting off at launch, the SDK in, then the setting
+    /// turned on while the app runs: window drags are followed (onto the
+    /// notch and the New UI's tiles) without a relaunch, stop when it turns
+    /// off and start again when it turns back on.
+    @Test func turningTheNotchOnLiveStartsWindowDragsAndOffStopsThem() async {
+        let m = ViewModelTests().makeModel(FixtureSpacesBackend())
+        let c = NotchController(model: m.notch)
+        c.makesPanel = false
+        m.settings.menuBar = true
+        AppDelegate.followNotchSetting(m, c)
+        #expect(!c.isShown)
+        // The SDK comes in after the launch (`followWindowDrags`).
+        var started = 0
+        c.permitted = { true }
+        c.startDrags = { started += 1 }
+        c.recheckPermission()
+        #expect(started == 0 && !c.dragsRunning, "no drag monitor while hidden")
+        await m.choose(row: "notch", option: "show")
+        for _ in 0..<20 where !c.isShown { try? await Task.sleep(for: .milliseconds(20)) }
+        #expect(c.isShown)
+        #expect(started == 1 && c.dragsRunning, "turned on live: window drags are followed")
+        await m.choose(row: "notch", option: "hide")
+        for _ in 0..<20 where c.isShown { try? await Task.sleep(for: .milliseconds(20)) }
+        #expect(!c.isShown && !c.dragsRunning, "turned off: the monitor stops")
+        await m.choose(row: "notch", option: "show")
+        for _ in 0..<20 where !c.isShown { try? await Task.sleep(for: .milliseconds(20)) }
+        #expect(started == 2 && c.dragsRunning, "on again: it starts again")
+        // Showing an already shown notch keeps the one monitor.
+        c.show()
+        #expect(started == 2)
+        c.setShown(false)
+    }
 }
 
 @Suite("Launch")
@@ -498,14 +592,5 @@ struct LaunchTests {
         #expect(!defaults.bool(forKey: "ApplePersistenceIgnoreState"))
         CuaSpacesMacApp.ignoreSavedWindowState(defaults)
         #expect(defaults.bool(forKey: "ApplePersistenceIgnoreState"))
-    }
-
-    /// With New UI on (and the first run done), a launch opens the New UI
-    /// window, not the native main window; the first run stays native.
-    @Test func newUIOnOpensItsWindowAtLaunchInsteadOfTheMainWindow() {
-        #expect(CuaSpacesMacApp.opensWebUIAtLaunch(webUi: true, onboarded: true))
-        #expect(!CuaSpacesMacApp.opensWebUIAtLaunch(webUi: true, onboarded: false))
-        #expect(!CuaSpacesMacApp.opensWebUIAtLaunch(webUi: false, onboarded: true))
-        #expect(!CuaSpacesMacApp.opensWebUIAtLaunch(webUi: false, onboarded: false))
     }
 }

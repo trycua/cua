@@ -64,8 +64,10 @@ describe.skipIf(!wasmBuilt)("as the SwiftUI app (real routes, wasm core)", () =>
     expect(status.getAttribute("data-this-device-status")).toBe("needs-enrollment");
     expect(document.querySelector("[data-this-device-name]")?.textContent).toBe("cua's Mac Studio");
     // One Enroll…: the row's. The line under it says what it is for.
-    expect(screen.getAllByRole("button", { name: /^Enroll/ })).toHaveLength(1);
-    expect(document.querySelector("[data-banner-text]")?.textContent).toMatch(/Enroll this device/);
+    expect(screen.getAllByRole("button", { name: /^Trust this computer/ })).toHaveLength(1);
+    expect(document.querySelector("[data-banner-text]")?.textContent).toMatch(/Trust this computer/);
+    // "Enrolled", "Revoke" and "Re-verify" are the core's words; the page says them plainly.
+    expect(document.body.textContent).not.toMatch(/enroll/i);
     // The relay's refusal is what "Needs enrollment" already says.
     expect(document.querySelector("[data-devices-read-error]")).toBeNull();
     expect(document.body.textContent).not.toContain("permission denied");
@@ -81,32 +83,48 @@ describe.skipIf(!wasmBuilt)("as the SwiftUI app (real routes, wasm core)", () =>
     await waitFor(() => expect(document.querySelector("[data-devices-read-error]")?.textContent).toBe("relay: timed out"));
   });
 
-  it("General is the core's page: Teams, Welcome, the notch's words and the privacy line with its link", async () => {
-    const { router, calls } = await mount("/settings");
-    const account = await waitFor(() => {
-      const r = document.querySelector<HTMLElement>('[data-setting-row="teams"]');
-      if (!r) throw new Error("no Teams row");
+  it("Account is the core's page: the plan, the team, and one button for the web account", async () => {
+    const { calls } = await mount("/settings");
+    const manage = await waitFor(() => {
+      const r = document.querySelector<HTMLElement>("[data-manage-account]");
+      if (!r) throw new Error("no Manage button");
       return r;
     });
-    expect(account.textContent).toContain("Coming soon");
-    expect(within(account).getByText("Join the waitlist")).toBeTruthy();
-    const note = document.querySelector<HTMLElement>('[data-setting-row="telemetry-note"]')!;
-    expect(note.textContent).toMatch(/^Features used, sandbox types, durations and error categories/);
-    expect(within(note).getByText("What is collected")).toBeTruthy();
+    // The real Teams section: no waitlist, and invites, roles and billing are the account app's.
+    expect(document.body.textContent).not.toContain("Coming soon");
+    expect(document.body.textContent).not.toContain("waitlist");
+    expect(manage.textContent).toBe("Manage account on the web");
+    fireEvent.click(manage);
+    await waitFor(() =>
+      expect(calls.some(([op, a]) => op === "session.openExternal" && (a as { url: string }).url === "https://app.cua.ai/team")).toBe(true),
+    );
+  });
+
+  it("General keeps the privacy line with its link; Welcome's Show again is in About", async () => {
+    const { router } = await mount("/settings/general");
+    const row = await waitFor(() => {
+      const r = document.querySelector<HTMLElement>('[data-setting-row="telemetry"]');
+      if (!r) throw new Error("no usage data row");
+      return r;
+    });
+    expect(row.textContent).toMatch(/Which features you use and when something goes wrong\./);
+    expect(within(document.querySelector<HTMLElement>("[data-telemetry-link]")!.parentElement!).getByText("What is collected")).toBeTruthy();
     expect(document.body.textContent).not.toContain("Crash reports and feature counts");
-    // The Teams waitlist opens the website.
-    fireEvent.click(within(account).getByText("Join the waitlist"));
-    await waitFor(() => expect(calls.some(([op, a]) => op === "session.openExternal" && String((a as { url: string }).url).includes("cua.ai"))).toBe(true));
-    // Welcome's Show again starts the first run over (this UI's, off the Mac).
-    const welcome = document.querySelector<HTMLElement>('[data-setting-row="welcome"]')!;
-    fireEvent.click(within(welcome).getByText("Show again"));
+    await router.navigate({ to: "/settings/about" });
+    const welcome = await waitFor(() => {
+      const w = document.querySelector<HTMLElement>("[data-about-welcome]");
+      if (!w) throw new Error("no welcome button");
+      return w;
+    });
+    // Show starts the first run over (this UI's, off the Mac).
+    fireEvent.click(welcome);
     await waitFor(() => expect(router.state.location.pathname).toBe("/onboarding"));
   });
 
-  it("the runtime choices never wrap", async () => {
-    await mount("/settings");
-    await waitFor(() => expect(document.querySelector('[data-setting-row="telemetry"]')).toBeTruthy());
-    const toggle = document.querySelector<HTMLElement>('[data-setting-row="telemetry"] button');
+  it("the choices never wrap", async () => {
+    await mount("/settings/general");
+    await waitFor(() => expect(document.querySelector('[aria-label="Appearance"]')).toBeTruthy());
+    const toggle = document.querySelector<HTMLElement>('[aria-label="Appearance"] button');
     expect(toggle?.className).toContain("whitespace-nowrap");
   });
 

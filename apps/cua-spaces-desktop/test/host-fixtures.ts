@@ -28,6 +28,8 @@ export class FixtureHost {
   script: Error[] = [];
   /** The next `configure` fails with this (once). */
   failConfigure: string | null = null;
+  /** The next resume for another account fails with this (once), after pausing the host as the real one does. */
+  failResume: string | null = null;
   owner = "user-1";
   ownerEmail = "ada@example.com";
 
@@ -103,10 +105,20 @@ export class FixtureHost {
 
   async resumeSignedIn(account: string) {
     this.calls.push(`resume:${account}`);
-    if (!this.current.pausedSignedOut) return this.current;
-    if (account !== this.owner && account.toLowerCase() !== this.ownerEmail.toLowerCase()) {
-      throw sdkError("InvalidArgument", "this machine is shared with another Cua account");
+    const isOwner = account === this.owner || account.toLowerCase() === this.ownerEmail.toLowerCase();
+    // Another account: the host registers again for it, paused or not.
+    if (!isOwner && this.failResume) {
+      const why = this.failResume;
+      this.failResume = null;
+      this.current = { ...this.current, pausedSignedOut: true, sharing: false, online: false, serviceRunning: false };
+      throw sdkError("InvalidArgument", why);
     }
+    if (!isOwner) {
+      this.owner = account;
+      this.ownerEmail = "";
+      this.current = { ...this.current, owner: account, ownerEmail: undefined };
+    }
+    if (!this.current.pausedSignedOut && isOwner) return this.current;
     this.current = { ...this.current, pausedSignedOut: false, sharing: true, online: true, serviceInstalled: true, serviceRunning: true };
     return this.current;
   }
@@ -222,6 +234,12 @@ export class FixtureDevices {
     return this.current.devices.find((d) => d.id === id)!;
   }
 
+  async renameMachine(id: string, name: string) {
+    this.calls.push(`rename-machine:${id}:${name}`);
+    this.current = { ...this.current, machines: this.current.machines.map((m) => (m.id === id ? { ...m, name } : m)) };
+    return this.current.machines.find((m) => m.id === id)!;
+  }
+
   async revoke(id: string) {
     this.calls.push(`revoke:${id}`);
     this.current = { ...this.current, devices: this.current.devices.map((d) => (d.id === id ? { ...d, state: "revoked" } : d)) };
@@ -245,7 +263,7 @@ export class FixtureDevices {
     const made: PairingCode = {
       id: `pc_fixture${n}`,
       code,
-      url: `https://spaces.cua.ai/add/${code}`,
+      url: `https://cua.ai/add/${code}`,
       installSh: `curl -fsSL https://cua.ai/install.sh | sh -s -- --pair ${code}`,
       installPowershell: `& ([scriptblock]::Create((irm https://cua.ai/install.ps1))) -Pair ${code}`,
       state: "active",
@@ -284,6 +302,14 @@ export class FixtureSystem implements SystemServices {
   globalShortcut() {
     return this.shortcut;
   }
+  /** Settings, General, Change: the keys asked for; "Command+K" is held by another app. */
+  readonly shortcutChanges: string[] = [];
+  setGlobalShortcut(accelerator: string) {
+    if (accelerator === "Command+K") throw new Error("Another app is using \u2318K. Pick other keys.");
+    this.shortcutChanges.push(accelerator);
+    this.shortcut = { label: accelerator, registered: true };
+    return this.shortcut;
+  }
   async openExternal(url: string) {
     this.opened.push(url);
   }
@@ -303,11 +329,11 @@ export class FixtureSystem implements SystemServices {
 export const HOST_METHODS = [
   "volume.overview", "volume.storage", "volume.storageSet", "volume.mount", "volume.unmount",
   "volume.approve", "volume.deny", "volume.revoke", "volume.resolve", "volume.reveal",
-  "about.get", "about.set", "about.checkNow", "loginItem.get", "loginItem.set", "loginItem.openSettings",
+  "about.get", "about.set", "about.checkNow", "update.get", "update.install", "loginItem.get", "loginItem.set", "loginItem.openSettings",
   "devices.get", "devices.enroll", "devices.checkEnrolled", "devices.approve", "devices.rename", "devices.revoke", "devices.confirmMachine",
-  "devices.createPairingCode", "devices.pairingCodes", "devices.revokePairingCode",
-  "storage.get", "storage.run", "notifications.list", "notifications.markAllRead",
-  "host.setUp", "host.action", "host.openSettings", "settings.get", "settings.choose",
+  "devices.createPairingCode", "devices.pairingCodes", "devices.revokePairingCode", "teams.list",
+  "storage.get", "storage.run", "notifications.list", "notifications.markAllRead", "notifications.markRead",
+  "host.setUp", "host.joinWithCode", "host.action", "host.openSettings", "settings.get", "settings.choose",
   "onboarding.get", "onboarding.complete",
 ];
 
@@ -315,9 +341,9 @@ export const HOST_METHODS = [
 export const HOST_OPS = [
   "volume.overview", "volume.storage", "volume.storageSet", "volume.mount", "volume.unmount",
   "volume.approve", "volume.deny", "volume.revoke", "volume.resolve", "volume.reveal",
-  "about.get", "about.set", "about.checkNow", "loginItem.get", "loginItem.set", "loginItem.openSettings",
+  "about.get", "about.set", "about.checkNow", "update.get", "update.install", "loginItem.get", "loginItem.set", "loginItem.openSettings",
   "devices.get", "devices.enroll", "devices.checkEnrolled", "devices.approve", "devices.rename", "devices.revoke", "devices.confirmMachine",
-  "devices.createPairingCode", "devices.pairingCodes", "devices.revokePairingCode",
-  "storage.get", "storage.run", "notifications.list", "notifications.markAllRead",
-  "host.setUp", "host.action", "host.openSettings", "settings.get", "settings.set", "settings.choose", "experiments.set", "session.completeOnboarding",
+  "devices.createPairingCode", "devices.pairingCodes", "devices.revokePairingCode", "teams.list",
+  "storage.get", "storage.run", "notifications.list", "notifications.markAllRead", "notifications.markRead",
+  "host.setUp", "host.joinWithCode", "host.action", "host.openSettings", "settings.get", "settings.set", "settings.choose", "experiments.set", "session.completeOnboarding",
 ];

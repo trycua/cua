@@ -21,9 +21,9 @@ import type {
   SpacePresenceLike,
   TeleportLike,
 } from "../src/native/generated/index";
-import type { LocalRuntimes, SpaceThumbnailData, SpacesBackend } from "../src/model/backend";
+import type { LocalRuntimes, MachineHealthReport, ShareLinkRow, SpaceThumbnailData, SpacesBackend } from "../src/model/backend";
 import type { StreamWindow } from "../src/model/streams";
-import type { AccountProfile, AccountRunning, SignInAttempt, TelemetryRunning } from "../src/model/services";
+import type { AccountProfile, AccountRunning, LinkNoticeView, SignInAttempt, TelemetryRunning } from "../src/model/services";
 
 export function sampleRows(n: Native): AppSpaceRow[] {
   const row = (r: Partial<AppSpaceRow> & Pick<AppSpaceRow, "id" | "name" | "provider">): AppSpaceRow => ({
@@ -64,7 +64,7 @@ export function sampleRows(n: Native): AppSpaceRow[] {
       power: "suspend",
       powerState: "running",
     }),
-    row({ id: "cloud:builder", name: "builder", provider: "cloud", features: ["desktop_stream"], addedAt: "2026-09-24T08:00:00Z", os: n.AppSpaceOs.Linux, osName: "Arch Linux", reachable: false, error: "timed out" }),
+    row({ id: "direct:builder", name: "builder", provider: "direct", features: ["desktop_stream"], addedAt: "2026-09-24T08:00:00Z", os: n.AppSpaceOs.Linux, osName: "Arch Linux", reachable: false, error: "timed out" }),
     row({ id: "direct:10.0.0.5:3211", name: "10.0.0.5:3211", provider: "direct", addedAt: "2026-09-23T08:00:00Z", os: n.AppSpaceOs.Windows, osName: "Windows" }),
   ];
 }
@@ -135,6 +135,20 @@ export class FixtureSpacesBackend implements SpacesBackend {
     this.removed.push({ id, removeOnly });
     this.rowsNow = this.rowsNow.filter((r) => r.id !== id);
   }
+  /** What `machineHealth` answers, by machine (`this` for this one); a string is the error it throws. */
+  health = new Map<string, MachineHealthReport | string>();
+  readonly healthAsked: (string | null)[] = [];
+  async machineHealth(machine: string | null): Promise<MachineHealthReport> {
+    this.healthAsked.push(machine);
+    const h = this.health.get(machine ?? "this");
+    if (typeof h === "string") throw new Error(h);
+    return h ?? { cuaVersion: "0.4.1", checks: [] };
+  }
+  readonly unregistered: string[] = [];
+  async relayUnregister(machineId: string) {
+    this.unregistered.push(machineId);
+    this.rowsNow = this.rowsNow.filter((r) => r.id !== `relay:${machineId}`);
+  }
   async setPower(id: string, on: boolean) {
     this.power.push({ id, on });
     this.rowsNow = this.rowsNow.map((r) => (r.id === id ? { ...r, powerState: on ? "running" : r.power === "stop" ? "stopped" : "suspended", reachable: on } : r));
@@ -153,14 +167,11 @@ export class FixtureSpacesBackend implements SpacesBackend {
   async localStorage() {
     return null;
   }
-  async cloudAvailable() {
+  async loggedIn() {
     return false;
   }
   async runningMacosVms() {
     return 1;
-  }
-  async cloudPricing() {
-    return null;
   }
   async usage() {
     return null;
@@ -206,6 +217,31 @@ export class FixtureSpacesBackend implements SpacesBackend {
     const rows = (this.sharesNow.get(id) ?? []).filter((r) => r.who !== who);
     this.sharesNow.set(id, [...rows, { who, role, connected: false }]);
     return this.shares(id);
+  }
+  linksNow: ShareLinkRow[] = [];
+  async links() {
+    return [...this.linksNow];
+  }
+  async createLink(target: string, access: string | null, ttlSeconds: number | null, name: string | null) {
+    const id = `share-${String(this.linksNow.length + 1).padStart(12, "0")}`;
+    const row: ShareLinkRow = {
+      id,
+      url: `https://s${id}.m.relay.example/`,
+      name,
+      access: access === "team" || access === "public" ? access : "private",
+      kind: target.startsWith("space:") ? "space_port" : /^\d+$/.test(target) ? "port" : "file",
+      target,
+      owner: "ada@example.com",
+      createdAtUnix: 1_000,
+      expiresAtUnix: ttlSeconds ? 1_000 + ttlSeconds : null,
+    };
+    this.linksNow = [row, ...this.linksNow];
+    return row;
+  }
+  async stopLink(id: string) {
+    const gone = this.linksNow.filter((l) => id === "all" || l.id === id).map((l) => l.id);
+    this.linksNow = this.linksNow.filter((l) => !gone.includes(l.id));
+    return gone;
   }
   async unshare(id: string, who: string) {
     this.sharesNow.set(id, (this.sharesNow.get(id) ?? []).filter((r) => r.who !== who));
@@ -291,6 +327,8 @@ export function unconfiguredHost(): HostStatus {
     pausedSignedOut: false,
     owner: undefined,
     ownerEmail: undefined,
+    helperAvailable: false,
+    legacyService: false,
   };
 }
 
@@ -342,6 +380,7 @@ export function fixtureDevices(now = BigInt(Math.floor(Date.now() / 1000))): Dev
 export class FixtureAccount implements AccountRunning {
   current: string | null;
   private finish: ((who: string) => void) | null = null;
+  private fail: ((e: Error) => void) | null = null;
   constructor(identity: string | null = null) {
     this.current = identity;
   }
@@ -352,7 +391,7 @@ export class FixtureAccount implements AccountRunning {
     return this.current ? { email: this.current } : null;
   }
   async beginSignIn(): Promise<SignInAttempt> {
-    const done = new Promise<string>((resolve) => (this.finish = resolve));
+    const done = new Promise<string>((resolve, reject) => ((this.finish = resolve), (this.fail = reject)));
     return {
       userCode: "ABCD-1234",
       url: "https://cua.ai/device",
@@ -364,6 +403,10 @@ export class FixtureAccount implements AccountRunning {
   }
   completeSignIn(who: string) {
     this.finish?.(who);
+  }
+  /** The sign-in fails (the network dropped, the code expired). */
+  failSignIn(error: Error) {
+    this.fail?.(error);
   }
   async signOut() {
     this.current = null;
@@ -385,5 +428,28 @@ export class FixtureTelemetry implements TelemetryRunning {
   }
   record(signals: AppTelemetrySignal[]) {
     if (this.current.enabled) this.recorded.push(...signals);
+  }
+  acknowledged = 0;
+  acknowledgeNotice() {
+    this.acknowledged += 1;
+    this.current = { ...this.current, noticeShown: true };
+  }
+  /** Whether the one-time linking notice is due (a machine that saw the older wording). */
+  linkNoticeDue = false;
+  linkNoticeAcknowledged = 0;
+  linkNotice(): LinkNoticeView {
+    return {
+      due: this.linkNoticeDue,
+      title: "We've updated how usage data works",
+      body: "Cua collects usage data, like which features you use and when something goes wrong.",
+      okLabel: "Got it",
+      turnOffLabel: "Turn off usage data",
+      detailsLabel: "What is collected",
+      docsUrl: "https://cua.ai/docs/cua-sdk/concepts/telemetry",
+    };
+  }
+  acknowledgeLinkNotice() {
+    this.linkNoticeAcknowledged += 1;
+    this.linkNoticeDue = false;
   }
 }

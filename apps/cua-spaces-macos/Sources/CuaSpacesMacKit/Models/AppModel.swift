@@ -91,6 +91,15 @@ public final class AppModel {
     /// Your other computers' rows are the last known ones (kept across a
     /// daemon restart), not yet confirmed.
     public private(set) var listStale = false
+    /// What your other computers are creating now (CUA-2349), as the last list read said.
+    public private(set) var listCreating: [SpaceCreatingElsewhere] = []
+    /// `listCreating` less what the list already has a row for (the same
+    /// name on that computer), like the Electron host.
+    public var creatingElsewhere: [SpaceCreatingElsewhere] {
+        listCreating.filter { c in
+            !spaces.contains { $0.name == c.name && $0.id.hasPrefix("relay:\(c.machineId)") }
+        }
+    }
     /// The Spaces page's empty state and "Reaching N computers…" line, as
     /// the core decides them: the first-run page only for a complete list.
     public var listView: AppListView {
@@ -913,6 +922,7 @@ public final class AppModel {
             listIncomplete = list.incomplete
             listReaching = list.reaching
             listStale = list.stale
+            listCreating = list.creating
             // Your other computers could not be read: their rows are the
             // last known ones (this Mac's are current).
             rosterError = list.notice.isEmpty ? nil

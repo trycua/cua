@@ -425,6 +425,27 @@ export interface ListStatus {
   stale: boolean;
 }
 
+/**
+ * A Space another of your computers is creating (`spaces.list`'s
+ * `creatingElsewhere`, the SDK's `SpaceList.creating`, CUA-2349). That
+ * computer publishes it through the relay while it creates it, so a few
+ * seconds late; once it is ready it is a Space like any other.
+ */
+export interface CreatingElsewhere {
+  /** The computer's relay machine id. */
+  machineId: string;
+  /** "Mac mini". */
+  machineName: string;
+  /** The Space's name. */
+  name: string;
+  /** `macos`, `linux`, `windows`, or empty when unknown. */
+  os: string;
+  /** `preparing`, `pulling`, `creating`, `booting`, `waiting_for_services`, `connecting`. */
+  phase: string;
+  /** How far along, 0 to 100. */
+  percent: number;
+}
+
 /** What the Spaces page shows besides the Spaces (`spaces::ListView`). */
 export interface ListView {
   /** "Create your first Space": a complete list with no Space only. */

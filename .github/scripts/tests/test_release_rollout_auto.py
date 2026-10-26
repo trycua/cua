@@ -1,6 +1,7 @@
 """Run: python3 .github/scripts/tests/test_release_rollout_auto.py"""
 
 import argparse
+import os
 import sys
 import tempfile
 import unittest
@@ -79,7 +80,7 @@ def sessions(**by_version):
 
 
 NOW = PUB + timedelta(hours=25)
-CFG = {"org": "trycua", "project": "cua-spaces-desktop"}
+CFG = {"org": "cua-ai", "project": "cua-spaces-desktop"}
 
 
 def crash(new, prev, token="t", **kw):
@@ -112,6 +113,31 @@ class CrashGate(unittest.TestCase):
             raise OSError("down")
         g = ra.gate_crash("t", "0.16.0", "0.15.0", PUB, NOW, args(), cfg=CFG, fetch=boom)
         self.assertEqual(g["status"], "wait")
+
+
+class SentryHostAndFailures(unittest.TestCase):
+    def test_host_defaults_to_the_eu_region_and_is_configurable(self):
+        os.environ.pop("SENTRY_API_HOST", None)
+        self.assertEqual(ra.sentry_base(), "https://de.sentry.io/api/0")
+        os.environ["SENTRY_API_HOST"] = "https://example.invalid/"
+        try:
+            self.assertEqual(ra.sentry_base(), "https://example.invalid/api/0")
+        finally:
+            os.environ.pop("SENTRY_API_HOST")
+
+    def test_unreadable_sentry_waits_with_a_clear_message(self):
+        import urllib.error
+        denied = urllib.error.HTTPError("https://de.sentry.io/api/0/projects/cua-ai/x/", 403, "Forbidden", {}, None)
+
+        def deny(v):
+            raise denied
+        g = ra.gate_crash("t", "0.16.0", "0.15.0", PUB, NOW, args(), cfg=CFG, fetch=deny)
+        self.assertEqual(g["status"], "wait")
+        self.assertIn("HTTP 403 from https://de.sentry.io", g["detail"])
+        self.assertIn("not advancing", g["detail"])
+        d = Decide().go(crash=g)
+        self.assertEqual(d["action"], "wait")
+        self.assertNotEqual(d["action"], "advance")
 
 
 class Decide(unittest.TestCase):

@@ -115,6 +115,18 @@ export interface ListRead {
   stale: boolean;
   /** Why your other computers could not be read, when they could not. */
   notice: string;
+  /** Spaces your other computers are creating now (the SDK's `SpaceList.creating`). */
+  creating?: CreatingElsewhereRow[];
+}
+
+/** A Space another of your computers is creating, as the page reads it (`spaces.list`'s `creatingElsewhere`). */
+export interface CreatingElsewhereRow {
+  machineId: string;
+  machineName: string;
+  name: string;
+  os: string;
+  phase: string;
+  percent: number;
 }
 
 export interface SpacesBackend {
@@ -369,7 +381,8 @@ export class LiveSpacesBackend implements SpacesBackend {
   /** This machine's Spaces at once, your other computers as far as they answered (`Spaces.list_known`). */
   async listRead(): Promise<ListRead> {
     const list = await this.cua.spaces().listKnown();
-    return { rows: await this.probe(list.spaces), incomplete: list.incomplete, reaching: list.reaching, stale: list.stale, notice: list.notice };
+    const creating = (list.creating ?? []).map((c) => ({ machineId: c.machineId, machineName: c.machineName, name: c.name, os: c.os, phase: c.phase, percent: c.percent }));
+    return { rows: await this.probe(list.spaces), incomplete: list.incomplete, reaching: list.reaching, stale: list.stale, notice: list.notice, creating };
   }
 
   /** The rows of `infos`, each with a bounded reachability probe. */

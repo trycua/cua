@@ -14,7 +14,7 @@ import type { MachineRow, OnboardingState } from "../contracts/host";
 import type { KvItem } from "../contracts/keyvault";
 import type { UpdateState } from "../contracts/settings";
 import type { BulkResult } from "../contracts/spaces-page";
-import type { SpaceOs, SpaceRow } from "../contracts/spaces";
+import type { CreatingElsewhere, SpaceOs, SpaceRow } from "../contracts/spaces";
 import {
   DEFAULT_SETTINGS,
   type HostEvent,
@@ -131,7 +131,15 @@ export interface DemoOptions {
   joinExpireMs?: number;
   /** Linus's OpenClaw asks to join (`?demo=thread-request`). */
   threadRequest?: boolean;
+  /** Another of your computers is creating a Space (`?demo=creating-elsewhere`):
+   * the Mac mini, a macOS Space 40% of the way (CUA-2349). */
+  creatingElsewhere?: boolean;
 }
+
+/** What the Mac mini is creating (`?demo=creating-elsewhere`). */
+export const DEMO_CREATING_ELSEWHERE: CreatingElsewhere[] = [
+  { machineId: "mac-mini", machineName: "Mac mini", name: "browser-qa", os: "macos", phase: "pulling", percent: 40 },
+];
 
 /** The SDK's words for the failures `failCreates` plays. */
 export const DEMO_CREATE_FAILURES = {
@@ -154,7 +162,8 @@ const DEMO_NOTES = "https://github.com/trycua/cua/releases/tag/cua-spaces-v0.9.3
  * AWS was disconnected on another device while machines still run),
  * `?demo=low-disk` / `?demo=disk-full` (This Mac almost out of space: New
  * Space and the first Space offers see it too), and `?demo=intel-mac` /
- * `?demo=linux-pc` (an Intel Mac, an x64 Linux PC with QEMU). */
+ * `?demo=linux-pc` (an Intel Mac, an x64 Linux PC with QEMU), and
+ * `?demo=creating-elsewhere` (the Mac mini is creating a Space). */
 export function demoOptionsFromSearch(search: string): DemoOptions {
   const flags = new Set((new URLSearchParams(search).get("demo") ?? "").split(",").filter(Boolean));
   return {
@@ -203,6 +212,7 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     nudge: (["second-agent", "risky"] as const).find((n) => flags.has(`nudge-${n}`)),
     disk: flags.has("disk-full") ? "full" : flags.has("low-disk") ? "low" : undefined,
     cli: flags.has("cli-local") ? "local" : flags.has("cli-missing") ? "missing" : undefined,
+    creatingElsewhere: flags.has("creating-elsewhere"),
     failCreates: flags.has("create-fail-runtime") ? "runtime-once" : flags.has("create-fail-disk") ? "disk" : undefined,
     ...(flags.has("intel-mac") ? { platform: { os: "macos" as const, arch: "amd64" as const } } : {}),
     ...(flags.has("linux-pc") ? { platform: { os: "linux" as const, arch: "amd64" as const } } : {}),
@@ -843,6 +853,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       return handler(args);
     },
     subscribe: (l) => events.subscribe(l),
+    ...(options.creatingElsewhere ? { creatingElsewhere: () => DEMO_CREATING_ELSEWHERE } : {}),
     dispose() {
       for (const t of timers) clearTimeout(t);
       timers.clear();

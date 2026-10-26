@@ -1,6 +1,6 @@
 ---
 title: "Sharing, leaving and bulk delete"
-description: "Who owns a Space and who else has it, leaving Spaces shared with you, and deleting several at once."
+description: "Give another person access to a Space, see who owns a Space and who else has it, leave Spaces shared with you, and delete several at once."
 ---
 
 {/*
@@ -12,7 +12,158 @@ description: "Who owns a Space and who else has it, leaving Spaces shared with y
 
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
-A Space on the relay carries `SpaceInfo.sharing`: its owner, your role (`owner`, `editor`, `viewer`), the team you reach it through and, for your own, who else has it. `leave_many` takes you off Spaces shared with you; `delete_many` deletes several of yours, three at a time, turning running ones off first. Both answer one `BulkResult` per id, in order.
+`Space.share` gives a person access to a Space, `Space.shares` lists who has it, and `Space.unshare` takes it back. A Space on the relay carries `SpaceInfo.sharing`: its owner, your role (`owner`, `editor`, `viewer`), the team you reach it through and, for your own, who else has it. `leave_many` takes you off Spaces shared with you; `delete_many` deletes several of yours, three at a time, turning running ones off first. Both answer one `BulkResult` per id, in order.
+
+## Sharing
+
+Methods of [`Space`](/cua-sdk/reference/spaces/space#space).
+
+### `Space.share`
+
+Lets `who` (a verified email or an account id) watch (`viewer`,
+the default) or use (`editor`) this Space through the relay. A Space
+that is not a host is attached to the relay on its first share.
+
+<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Python">
+
+```python
+async def share(self, who: str, role: Optional[str]) -> SpaceShares
+```
+
+</Tab>
+<Tab value="TypeScript">
+
+```ts
+share(who: string, role: string | undefined, asyncOpts_?: { signal: AbortSignal }): Promise<SpaceShares>
+```
+
+</Tab>
+<Tab value="Swift">
+
+```swift
+func share(who: String, role: String?) async throws -> SpaceShares
+```
+
+</Tab>
+<Tab value="Kotlin">
+
+```kotlin
+@Throws(CuaException::class)
+suspend fun share(who: String, role: String?): SpaceShares
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub async fn share(&self, who: String, role: Option<String>) -> Result<SpaceShares, CuaError>
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `who` | `String` | required |
+| `role` | `Option<String>` | required |
+
+**Returns** [`SpaceShares`](#spaceshares-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
+
+### `Space.shares`
+
+Who this Space is shared with, and who of them is connected now.
+
+<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Python">
+
+```python
+async def shares(self) -> SpaceShares
+```
+
+</Tab>
+<Tab value="TypeScript">
+
+```ts
+shares(asyncOpts_?: { signal: AbortSignal }): Promise<SpaceShares>
+```
+
+</Tab>
+<Tab value="Swift">
+
+```swift
+func shares() async throws -> SpaceShares
+```
+
+</Tab>
+<Tab value="Kotlin">
+
+```kotlin
+@Throws(CuaException::class)
+suspend fun shares(): SpaceShares
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub async fn shares(&self) -> Result<SpaceShares, CuaError>
+```
+
+</Tab>
+</Tabs>
+
+**Returns** [`SpaceShares`](#spaceshares-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
+
+### `Space.unshare`
+
+Stops sharing this Space with `who` at once, or with everyone when
+`who` is `None`.
+
+<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Python">
+
+```python
+async def unshare(self, who: Optional[str]) -> SpaceShares
+```
+
+</Tab>
+<Tab value="TypeScript">
+
+```ts
+unshare(who: string | undefined, asyncOpts_?: { signal: AbortSignal }): Promise<SpaceShares>
+```
+
+</Tab>
+<Tab value="Swift">
+
+```swift
+func unshare(who: String?) async throws -> SpaceShares
+```
+
+</Tab>
+<Tab value="Kotlin">
+
+```kotlin
+@Throws(CuaException::class)
+suspend fun unshare(who: String?): SpaceShares
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub async fn unshare(&self, who: Option<String>) -> Result<SpaceShares, CuaError>
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `who` | `Option<String>` | required |
+
+**Returns** [`SpaceShares`](#spaceshares-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
 
 ## Leave and bulk delete
 
@@ -122,112 +273,30 @@ pub async fn delete_many(&self, ids: Vec<String>) -> Result<Vec<BulkResult>, Cua
 
 **Returns** [`Vec<BulkResult>`](#bulkresult-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
 
-## On the relay
+## `SpaceShareEntry` record
 
-Methods of [`Spaces`](/cua-sdk/reference/spaces#spaces).
+One account a Space is shared with.
 
-### `Spaces.relay_register`
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `who` | `String` |  | The email or account id, as shared. |
+| `role` | `String` |  | `viewer` or `editor`. |
+| `connected` | `bool` |  | Connected through the relay right now. |
 
-Publishes `space` on the cua.ai relay as a machine of the signed-in
-account, the way `cua host setup` publishes this computer: the
-Space's own driver dials out, so the account's other devices (a
-phone off this network) reach it as `relay:<machine>`, and nobody
-else until it is shared. Idempotent.
+## `SpaceShares` record
 
-<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
-<Tab value="Python">
+Who a Space is shared with.
 
-```python
-async def relay_register(self, space: str) -> SpaceRelayRegistration
-```
+Returned by [`Space.share`](#spaceshare), [`Space.shares`](#spaceshares), [`Space.unshare`](#spaceunshare).
 
-</Tab>
-<Tab value="TypeScript">
-
-```ts
-relayRegister(space: string, asyncOpts_?: { signal: AbortSignal }): Promise<SpaceRelayRegistration>
-```
-
-</Tab>
-<Tab value="Swift">
-
-```swift
-func relayRegister(space: String) async throws -> SpaceRelayRegistration
-```
-
-</Tab>
-<Tab value="Kotlin">
-
-```kotlin
-@Throws(CuaException::class)
-suspend fun relayRegister(space: String): SpaceRelayRegistration
-```
-
-</Tab>
-<Tab value="Rust">
-
-```rust
-pub async fn relay_register(&self, space: String) -> Result<SpaceRelayRegistration, CuaError>
-```
-
-</Tab>
-</Tabs>
-
-| Parameter | Type | Default |
-| --- | --- | --- |
-| `space` | `String` | required |
-
-**Returns** [`SpaceRelayRegistration`](/cua-sdk/reference/spaces/space#spacerelayregistration-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
-
-### `Spaces.relay_unregister`
-
-Takes `space` off the relay (its driver leaves; every share goes).
-Returns false when it was not on the relay.
-
-<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
-<Tab value="Python">
-
-```python
-async def relay_unregister(self, space: str) -> bool
-```
-
-</Tab>
-<Tab value="TypeScript">
-
-```ts
-relayUnregister(space: string, asyncOpts_?: { signal: AbortSignal }): Promise<boolean>
-```
-
-</Tab>
-<Tab value="Swift">
-
-```swift
-func relayUnregister(space: String) async throws -> Bool
-```
-
-</Tab>
-<Tab value="Kotlin">
-
-```kotlin
-@Throws(CuaException::class)
-suspend fun relayUnregister(space: String): Boolean
-```
-
-</Tab>
-<Tab value="Rust">
-
-```rust
-pub async fn relay_unregister(&self, space: String) -> Result<bool, CuaError>
-```
-
-</Tab>
-</Tabs>
-
-| Parameter | Type | Default |
-| --- | --- | --- |
-| `space` | `String` | required |
-
-**Returns** `bool` · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `space` | `String` |  | The Space. |
+| `machine` | `String` |  | The relay machine it is shared as (empty when not shared). |
+| `invitee_space` / `inviteeSpace` | `String` |  | What the people it is shared with open (`relay:<machine>`). |
+| `url` | `String` |  | The relay URL of the machine. |
+| `online` | `bool` |  | The machine is on the relay now. |
+| `shares` | [`Vec<SpaceShareEntry>`](#spaceshareentry-record) |  | The accounts and their roles. |
 
 ## `SpaceSharing` record
 

@@ -2416,9 +2416,38 @@ impl Spaces {
             spaces: self.clone(),
             journal: Some(journal.clone()),
         };
-        cua_sandbox_core::progress::report(cua_sandbox_core::progress::Progress::phase(
-            cua_sandbox_core::progress::Phase::Preparing,
-        ));
+        // A Space made on this computer shows on your other computers while
+        // it is created ([`crate::resources::creates`]): it leaves the list
+        // when this returns, fails, is cancelled or is dropped.
+        let on_board = (kind == "local").then(|| {
+            let hub = self.inner.resources.clone();
+            let os = opts
+                .image
+                .as_deref()
+                .map(crate::elastic::guest_os)
+                .unwrap_or_default();
+            hub.creates.start(&key.id, &key.name, &os);
+            crate::resources::creates::OnBoard {
+                board: hub,
+                id: key.id.clone(),
+            }
+        });
+        let outer = cua_sandbox_core::progress::current();
+        let sink: Option<cua_sandbox_core::progress::Sink> = on_board.as_ref().map(|b| {
+            let (hub, id) = (b.board.clone(), b.id.clone());
+            Arc::new(move |p: &CreateProgress| {
+                hub.creates.report(&id, p);
+                if let Some(outer) = &outer {
+                    outer(p);
+                }
+            }) as cua_sandbox_core::progress::Sink
+        });
+        cua_sandbox_core::progress::carry(sink.clone(), async {
+            cua_sandbox_core::progress::report(cua_sandbox_core::progress::Progress::phase(
+                cua_sandbox_core::progress::Phase::Preparing,
+            ));
+        })
+        .await;
         let wants_volumes = !opts.volumes.is_empty();
         let volumes = opts.volumes.clone();
         let run = Box::pin(crate::creating::scope(
@@ -2462,6 +2491,7 @@ impl Spaces {
                 })
             }),
         ));
+        let run = cua_sandbox_core::progress::carry(sink, run);
         let result = tokio::select! {
             r = run => r,
             _ = flight.cancelled() => {

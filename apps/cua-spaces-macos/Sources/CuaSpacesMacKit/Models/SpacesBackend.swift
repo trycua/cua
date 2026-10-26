@@ -178,8 +178,12 @@ public struct AppListRead: Sendable {
     public var stale: Bool
     /// Why your other computers could not be read, when they could not.
     public var notice: String
+    /// Spaces your other computers are creating now (`SpaceList.creating`, CUA-2349).
+    public var creating: [SpaceCreatingElsewhere]
 
-    public init(rows: [AppSpaceRow], incomplete: Bool = false, reaching: UInt32 = 0, stale: Bool = false, notice: String = "") {
+    public init(rows: [AppSpaceRow], incomplete: Bool = false, reaching: UInt32 = 0, stale: Bool = false, notice: String = "",
+                creating: [SpaceCreatingElsewhere] = []) {
+        self.creating = creating
         self.rows = rows
         self.incomplete = incomplete
         self.reaching = reaching
@@ -326,7 +330,8 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
     public func listRead() async throws -> AppListRead {
         let list = try await cua.spaces().listKnown()
         return AppListRead(rows: await probe(list.spaces), incomplete: list.incomplete,
-                           reaching: list.reaching, stale: list.stale, notice: list.notice)
+                           reaching: list.reaching, stale: list.stale, notice: list.notice,
+                           creating: list.creating)
     }
 
     /// The rows of `infos`, each with a bounded reachability probe.
@@ -1006,10 +1011,13 @@ public final class FixtureSpacesBackend: SpacesBackend, @unchecked Sendable {
     /// Your other computers still answering, as a daemon reaching them says.
     public var fixtureIncomplete = false
     public var fixtureReaching: UInt32 = 0
+    /// Spaces another computer is creating, as its relay meta says.
+    public var fixtureCreating: [SpaceCreatingElsewhere] = []
     public func listRead() async throws -> AppListRead {
         await MainActor.run {
             fixtureListReads += 1
-            return AppListRead(rows: fixtureRows, incomplete: fixtureIncomplete, reaching: fixtureReaching, stale: fixtureIncomplete)
+            return AppListRead(rows: fixtureRows, incomplete: fixtureIncomplete, reaching: fixtureReaching, stale: fixtureIncomplete,
+                                creating: fixtureCreating)
         }
     }
 

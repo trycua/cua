@@ -5,6 +5,9 @@
 //! keys and the limits around them. Against the in-process spacesd mock and
 //! a temporary cua home; no keychain, no network, nothing on the host.
 
+// The relay HTTP clients' futures nest deep enough to pass rustc's default (128).
+#![recursion_limit = "256"]
+
 use std::sync::Arc;
 use std::time::Duration;
 

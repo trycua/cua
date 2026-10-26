@@ -51,6 +51,9 @@ pub(crate) struct Hub {
     sampler: tokio::sync::Mutex<Sampler>,
     /// What your other computers last said about your Spaces' disks there.
     pub(super) remote: super::remote::RemoteDisks,
+    /// The Spaces being created here, for the relay summary
+    /// ([`super::creates`]).
+    pub(crate) creates: super::creates::Board,
 }
 
 #[derive(Default)]
@@ -111,6 +114,7 @@ impl Hub {
             tx: watch::channel(None).0,
             sampler: tokio::sync::Mutex::new(Sampler::new()),
             remote: Default::default(),
+            creates: Default::default(),
         })
     }
 

@@ -85,6 +85,7 @@ Returned by [`Spaces.list_known`](/cua-sdk/reference/spaces#spaceslist_known).
 | `reaching` | `u32` |  | How many computers are still being reached (0 when unknown). |
 | `stale` | `bool` |  | The other computers' rows are the last known ones, not yet confirmed by the relay. |
 | `notice` | `String` |  | Why the account's computers could not be read, when they could not. |
+| `creating` | [`Vec<SpaceCreatingElsewhere>`](/cua-sdk/reference/spaces/space#spacecreatingelsewhere-record) |  | Spaces your other computers are creating now, from what each published through the relay (empty from a daemon that predates it). |
 
 ## `SpacesListListener`
 

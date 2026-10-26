@@ -37,11 +37,13 @@ previous stable (the most active non-prerelease version in the week before the s
                below the previous version's over the same window (needs --min-sessions on the
                new version). A previous version with fewer than --min-sessions sessions (it
                shipped before crash reporting) is no baseline: the new version must then be at
-               least --min-crash-free percent. Without SENTRY_AUTH_TOKEN the gate is reported as
-               skipped.
+               least --min-crash-free percent. Without SENTRY_READ_TOKEN the gate is reported as skipped;
+               if Sentry cannot be read (unreachable, 401/403, bad config) it waits and says why.
 
 Standard library only. Keys come from the environment: POSTHOG_API_KEY (query read),
-INCIDENT_IO_API_KEY (optional), SENTRY_AUTH_TOKEN (optional, org:read and project:read).
+INCIDENT_IO_API_KEY (optional), SENTRY_READ_TOKEN (optional, an Internal Integration token with
+Project, Issue & Event and Organization read; the SENTRY_AUTH_TOKEN org:ci token cannot read stats).
+SENTRY_API_HOST overrides the Sentry host (default https://de.sentry.io, the EU region of org cua-ai).
 """
 
 from __future__ import annotations
@@ -62,7 +64,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import release_rollout as rr  # noqa: E402
 
 POSTHOG = "https://eu.posthog.com/api/projects/56041/query/"
-SENTRY = "https://sentry.io/api/0"
+SENTRY_DEFAULT_HOST = "https://de.sentry.io"
 SENTRY_CONFIG = Path(__file__).resolve().parents[2] / "config" / "spaces-crash-reporting.json"
 NEXT = {"10": "50", "50": "100"}
 
@@ -224,8 +226,12 @@ def gate_incident(key: str | None, fetch=None) -> dict:
     return {"gate": "incident", "status": "pass", "detail": "no active incident naming Spaces"}
 
 
+def sentry_base() -> str:
+    return (os.environ.get("SENTRY_API_HOST") or SENTRY_DEFAULT_HOST).rstrip("/") + "/api/0"
+
+
 def sentry_get(path: str, token: str, params: list[tuple[str, str]] | None = None) -> dict:
-    url = SENTRY + path + ("?" + urllib.parse.urlencode(params) if params else "")
+    url = sentry_base() + path + ("?" + urllib.parse.urlencode(params) if params else "")
     req = urllib.request.Request(url, headers={"Authorization": "Bearer " + token})
     with urllib.request.urlopen(req, timeout=60) as r:
         return json.load(r)
@@ -233,13 +239,19 @@ def sentry_get(path: str, token: str, params: list[tuple[str, str]] | None = Non
 
 def sentry_sessions(token: str, cfg: dict, project_id: str, version: str, since: datetime, now: datetime) -> tuple[int, float | None]:
     """(sessions, crash-free fraction or None) of one release on the stable environment in a window."""
-    data = sentry_get(
-        "/organizations/%s/sessions/" % cfg["org"], token,
-        [("project", project_id), ("environment", "stable"),
-         ("field", "sum(session)"), ("field", "crash_free_rate(session)"),
-         ("query", 'release:"cua-spaces-desktop@%s"' % version),
-         ("start", since.strftime("%Y-%m-%dT%H:%M:%S")), ("end", now.strftime("%Y-%m-%dT%H:%M:%S")),
-         ("interval", "1d")])
+    try:
+        data = sentry_get(
+            "/organizations/%s/sessions/" % cfg["org"], token,
+            [("project", project_id), ("environment", "stable"),
+             ("field", "sum(session)"), ("field", "crash_free_rate(session)"),
+             ("query", 'release:"cua-spaces-desktop@%s"' % version),
+             ("start", since.strftime("%Y-%m-%dT%H:%M:%S")), ("end", now.strftime("%Y-%m-%dT%H:%M:%S")),
+             ("interval", "1d")])
+    except urllib.error.HTTPError as e:
+        # Sentry answers 400/404 "Unknown environments selected" until a stable session exists: no data yet.
+        if e.code in (400, 404):
+            return 0, None
+        raise
     total, rate = 0, None
     for g in data.get("groups", []):
         t = g.get("totals", {})
@@ -248,10 +260,16 @@ def sentry_sessions(token: str, cfg: dict, project_id: str, version: str, since:
     return total, rate
 
 
+def _why(e: Exception) -> str:
+    if isinstance(e, urllib.error.HTTPError):
+        return f"HTTP {e.code} from {(e.filename or '').split('/api/')[0]}"
+    return f"{type(e).__name__}: {e}"
+
+
 def gate_crash(token: str | None, new: str, prev: str | None, since: datetime, now: datetime, a, cfg: dict | None = None, fetch=None) -> dict:
     """Crash-free sessions of the new version against the previous one (Sentry release health)."""
     if not token:
-        return {"gate": "crash", "status": "skip", "detail": "SENTRY_AUTH_TOKEN not set, gate skipped"}
+        return {"gate": "crash", "status": "skip", "detail": "SENTRY_READ_TOKEN not set, gate skipped"}
     try:
         cfg = cfg or json.loads(SENTRY_CONFIG.read_text())
         if fetch is None:
@@ -260,7 +278,9 @@ def gate_crash(token: str | None, new: str, prev: str | None, since: datetime, n
         n_new, r_new = fetch(new)
         n_prev, r_prev = fetch(prev) if prev else (0, None)
     except (urllib.error.URLError, OSError, ValueError, KeyError) as e:
-        return {"gate": "crash", "status": "wait", "detail": f"Sentry unreachable or misconfigured ({e}); not advancing blind"}
+        return {"gate": "crash", "status": "wait",
+                "detail": f"cannot read crash stats from Sentry ({_why(e)}); keeping the stage, not advancing blind. "
+                          "Check SENTRY_READ_TOKEN and SENTRY_API_HOST"}
     if n_new < a.min_sessions or r_new is None:
         return {"gate": "crash", "status": "wait",
                 "detail": f"{n_new} sessions of {new} reported to Sentry since the stage began (need {a.min_sessions})"}
@@ -298,7 +318,7 @@ def decide(state: dict, now: datetime, a, q=None, incident=None, hold: str = "",
     d["previous"] = prev
     d["gates"] = [gate_adoption(q, new, since, now, a), gate_space_create(q, new, prev, since, now, a),
                   gate_update(q, prev, since, now, a), incident or gate_incident(os.environ.get("INCIDENT_IO_API_KEY")),
-                  crash or gate_crash(os.environ.get("SENTRY_AUTH_TOKEN"), new, prev, since, now, a)]
+                  crash or gate_crash(os.environ.get("SENTRY_READ_TOKEN"), new, prev, since, now, a)]
     failed = [g for g in d["gates"] if g["status"] == "fail"]
     waiting = [g for g in d["gates"] if g["status"] == "wait"]
     if failed:

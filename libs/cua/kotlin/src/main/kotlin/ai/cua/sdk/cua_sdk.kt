@@ -42852,6 +42852,93 @@ public object FfiConverterTypeSpaceCreateResult: FfiConverterRustBuffer<SpaceCre
 
 
 /**
+ * A Space another of your computers is creating ([`SpaceList::creating`]).
+ */
+data class SpaceCreatingElsewhere (
+    /**
+     * The computer's relay machine id.
+     */
+    var `machineId`: kotlin.String
+    ,
+    /**
+     * The computer's name.
+     */
+    var `machineName`: kotlin.String
+    ,
+    /**
+     * The Space's name.
+     */
+    var `name`: kotlin.String
+    ,
+    /**
+     * `macos`, `linux`, `windows`, or empty when unknown.
+     */
+    var `os`: kotlin.String
+    ,
+    /**
+     * The create's phase (`preparing`, `pulling`, `booting`, ...).
+     */
+    var `phase`: kotlin.String
+    ,
+    /**
+     * How far along the whole create is, 0 to 100.
+     */
+    var `percent`: kotlin.UInt
+    ,
+    /**
+     * When the computer published it, unix ms.
+     */
+    var `updatedAtMs`: kotlin.ULong
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSpaceCreatingElsewhere: FfiConverterRustBuffer<SpaceCreatingElsewhere> {
+    override fun read(buf: ByteBuffer): SpaceCreatingElsewhere {
+        return SpaceCreatingElsewhere(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterULong.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: SpaceCreatingElsewhere) = (
+            FfiConverterString.allocationSize(value.`machineId`) +
+            FfiConverterString.allocationSize(value.`machineName`) +
+            FfiConverterString.allocationSize(value.`name`) +
+            FfiConverterString.allocationSize(value.`os`) +
+            FfiConverterString.allocationSize(value.`phase`) +
+            FfiConverterUInt.allocationSize(value.`percent`) +
+            FfiConverterULong.allocationSize(value.`updatedAtMs`)
+    )
+
+    override fun write(value: SpaceCreatingElsewhere, buf: ByteBuffer) {
+            FfiConverterString.write(value.`machineId`, buf)
+            FfiConverterString.write(value.`machineName`, buf)
+            FfiConverterString.write(value.`name`, buf)
+            FfiConverterString.write(value.`os`, buf)
+            FfiConverterString.write(value.`phase`, buf)
+            FfiConverterUInt.write(value.`percent`, buf)
+            FfiConverterULong.write(value.`updatedAtMs`, buf)
+    }
+}
+
+
+
+/**
  * One of a Space's displays ([`Space::displays`]).
  */
 data class SpaceDisplay (
@@ -43373,6 +43460,12 @@ data class SpaceList (
      * Why the account's computers could not be read, when they could not.
      */
     var `notice`: kotlin.String
+    ,
+    /**
+     * Spaces your other computers are creating now, from what each
+     * published through the relay (empty from a daemon that predates it).
+     */
+    var `creating`: List<SpaceCreatingElsewhere>
 
 ){
 
@@ -43394,6 +43487,7 @@ public object FfiConverterTypeSpaceList: FfiConverterRustBuffer<SpaceList> {
             FfiConverterUInt.read(buf),
             FfiConverterBoolean.read(buf),
             FfiConverterString.read(buf),
+            FfiConverterSequenceTypeSpaceCreatingElsewhere.read(buf),
         )
     }
 
@@ -43402,7 +43496,8 @@ public object FfiConverterTypeSpaceList: FfiConverterRustBuffer<SpaceList> {
             FfiConverterBoolean.allocationSize(value.`incomplete`) +
             FfiConverterUInt.allocationSize(value.`reaching`) +
             FfiConverterBoolean.allocationSize(value.`stale`) +
-            FfiConverterString.allocationSize(value.`notice`)
+            FfiConverterString.allocationSize(value.`notice`) +
+            FfiConverterSequenceTypeSpaceCreatingElsewhere.allocationSize(value.`creating`)
     )
 
     override fun write(value: SpaceList, buf: ByteBuffer) {
@@ -43411,6 +43506,7 @@ public object FfiConverterTypeSpaceList: FfiConverterRustBuffer<SpaceList> {
             FfiConverterUInt.write(value.`reaching`, buf)
             FfiConverterBoolean.write(value.`stale`, buf)
             FfiConverterString.write(value.`notice`, buf)
+            FfiConverterSequenceTypeSpaceCreatingElsewhere.write(value.`creating`, buf)
     }
 }
 
@@ -53451,6 +53547,34 @@ public object FfiConverterSequenceTypeSpaceAppIconRequest: FfiConverterRustBuffe
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterTypeSpaceAppIconRequest.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeSpaceCreatingElsewhere: FfiConverterRustBuffer<List<SpaceCreatingElsewhere>> {
+    override fun read(buf: ByteBuffer): List<SpaceCreatingElsewhere> {
+        val len = buf.getInt()
+        return List<SpaceCreatingElsewhere>(len) {
+            FfiConverterTypeSpaceCreatingElsewhere.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<SpaceCreatingElsewhere>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeSpaceCreatingElsewhere.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<SpaceCreatingElsewhere>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeSpaceCreatingElsewhere.write(it, buf)
         }
     }
 }

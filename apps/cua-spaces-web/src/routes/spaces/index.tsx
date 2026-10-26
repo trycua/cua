@@ -16,6 +16,7 @@ import { SpaceList } from "@/components/spaces/space-list";
 import { SpaceContextMenu, SpaceMoreMenu, type MenuActions } from "@/components/spaces/space-menu";
 import { SelectAllBox, SelectBox, SelectionBar, stoppedDeletable, useSelection } from "@/components/spaces/selection";
 import { SpaceTile } from "@/components/spaces/space-tile";
+import { CreatingElsewhereTile } from "@/components/spaces/creating-elsewhere-tile";
 import { SpacesToolbar } from "@/components/spaces/spaces-toolbar";
 import { PageTip, useTipsLoaded } from "@/components/tips";
 import { useNewSpace } from "@/hooks/use-new-space";
@@ -26,7 +27,7 @@ import { thisComputerText } from "@/lib/host-labels";
 import { plural } from "@/lib/plural";
 import { cn } from "@/lib/utils";
 import { accessOf, isMine } from "@/lib/space-access";
-import { machineName, matchesQuery, realSpaces, spaceState } from "@/lib/spaces";
+import { creatingElsewhereLine, machineName, matchesQuery, realSpaces, spaceState } from "@/lib/spaces";
 import { computerChoices, gridArea, nextSearch, shownSpaces, spaceMachineId, validateSpacesSearch, type SpacesSearch } from "@/lib/spaces-page";
 import { useFlag } from "@/bridge/flags";
 import { LegacySpacesPage } from "@/legacy/routes/spaces/index";
@@ -43,7 +44,7 @@ function SpacesPage() {
   const navigate = Route.useNavigate();
   const setSearch = (next: Partial<Record<keyof SpacesSearch, string | undefined>>) =>
     void navigate({ search: (prev: SpacesSearch) => nextSearch(prev, next), replace: true });
-  const { data: all = [], isLoading, error, listNotice, listStatus, startSpace, stopSpace } = useSpaces();
+  const { data: all = [], isLoading, error, listNotice, listStatus, startSpace, stopSpace, creatingElsewhere } = useSpaces();
   // Machines' own desktops are on Machines, not here.
   const spaces = realSpaces(all);
   const { data: machines = [] } = useMachines();
@@ -77,6 +78,16 @@ function SpacesPage() {
     matches: (s) => matchesQuery(core, s, item(s).machine, query),
   }).map(item);
   const filter = search.state ?? "all";
+  // Spaces your other computers are creating (CUA-2349): first in the grid, until they are ready.
+  const elsewhere =
+    filter === "all" || filter === "creating"
+      ? creatingElsewhere.filter((c) => matchesQuery(core, { id: `${c.machineId}/${c.name}`, name: c.name, detail: creatingElsewhereLine(c) }, c.machineName, query))
+      : [];
+  const elsewhereTiles = elsewhere.map((c) => (
+    <li key={`elsewhere:${c.machineId}/${c.name}`}>
+      <CreatingElsewhereTile creating={c} />
+    </li>
+  ));
   const keyvault = useSpaceAccess(spaces);
   const running = spaces.filter((s) => spaceState(s) === "running").length;
   // No Spaces yet (or the list could not be read): the SwiftUI app's empty home, as the first-run guide.
@@ -85,7 +96,7 @@ function SpacesPage() {
   const listed = listView(core, listStatus, spaces.length);
   // Never read, and the host says why: "Spaces could not be loaded" (the empty home's unread title).
   const unread = !listStatus.loaded && Boolean(listNotice);
-  const empty = !error && !isLoading && (listed.empty || unread);
+  const empty = !error && !isLoading && (listed.empty || unread) && creatingElsewhere.length === 0;
   const guide = empty && home && home.tiles.length > 0 ? home : null;
   const reachingLine = error || unread ? null : listed.reachingLine;
   useFirstSpaceMilestones(spaces);
@@ -137,7 +148,7 @@ function SpacesPage() {
       {/* Then the toolbar, and under it the grid's place: the Spaces, or what stands in for them. */}
       {picked.length || bulk.progress ? (
         <SelectionBar picked={picked} progress={bulk.progress} onClear={selection.clear} onPower={(on) => (power(picked, on), selection.clear())} onRemove={() => bulk.ask(picked)} />
-      ) : spaces.length === 0 ? null : (
+      ) : spaces.length + creatingElsewhere.length === 0 ? null : (
         // No Spaces yet: nothing to filter, sort or switch, so no toolbar (it comes with the first Space).
         <SpacesToolbar
           state={filter}
@@ -169,7 +180,7 @@ function SpacesPage() {
       )}
       {guide ? <EmptyHome home={guide} unread={Boolean(listNotice)} /> : null}
       {(() => {
-        switch (gridArea({ error: Boolean(error), loading: isLoading, guide: Boolean(guide), total: spaces.length, shown: shown.length, query })) {
+        switch (gridArea({ error: Boolean(error), loading: isLoading, guide: Boolean(guide), total: spaces.length + creatingElsewhere.length, shown: shown.length + elsewhere.length, query })) {
           case "error":
             return (
               <EmptyState icon={<MonitorIcon />} title="Couldn't load Spaces">
@@ -210,6 +221,8 @@ function SpacesPage() {
             );
           case "spaces":
             return view === "list" ? (
+              <>
+              {elsewhereTiles.length ? <ul className="mb-6 grid grid-cols-[repeat(auto-fill,minmax(232px,1fr))] gap-x-5 gap-y-7">{elsewhereTiles}</ul> : null}
               <SpaceList
                 items={shown}
                 sort={sort}
@@ -229,8 +242,10 @@ function SpacesPage() {
                 )}
                 more={(it) => <SpaceMoreMenu item={it} actions={actions} />}
               />
+              </>
             ) : (
               <ul className="grid grid-cols-[repeat(auto-fill,minmax(232px,1fr))] gap-x-5 gap-y-7">
+                {elsewhereTiles}
                 {shown.map((it) => (
                   // Off-screen tiles skip layout and paint until they scroll in.
                   <li key={it.space.id} className="[content-visibility:auto] [contain-intrinsic-size:auto_232px]">

@@ -83,8 +83,8 @@ Returned by [`Cua.spaces`](/cua-sdk/reference/cua#cua).
 | [`persistent_agents`](/cua-sdk/reference/spaces/persistent-agents#spacespersistent_agents) | Every persistent agent. |
 | [`prewarm`](/cua-sdk/reference/spaces/elastic#spacesprewarm) | Keeps Spaces of `image` ready where the elastic pool puts them (the same solve as `on` `auto`, under the budget and pins), so the next creates of that shape start in a fraction of a second. |
 | [`prewarms`](/cua-sdk/reference/spaces/elastic#spacesprewarms) | The prewarms, with how many each keeps ready now. |
-| [`relay_register`](/cua-sdk/reference/spaces/sharing#spacesrelay_register) | Publishes `space` on the cua.ai relay as a machine of the signed-in account, the way `cua host setup` publishes this computer: the Space's own driver dials out, so the account's other devices (a phone off this network) reach it as `relay:<machine>`, and nobody else until it is shared. |
-| [`relay_unregister`](/cua-sdk/reference/spaces/sharing#spacesrelay_unregister) | Takes `space` off the relay (its driver leaves; every share goes). |
+| [`relay_register`](/cua-sdk/reference/spaces/relay-registration#spacesrelay_register) | Publishes `space` on the cua.ai relay as a machine of the signed-in account, the way `cua host setup` publishes this computer: the Space's own driver dials out, so the account's other devices (a phone off this network) reach it as `relay:<machine>`, and nobody else until it is shared. |
+| [`relay_unregister`](/cua-sdk/reference/spaces/relay-registration#spacesrelay_unregister) | Takes `space` off the relay (its driver leaves; every share goes). |
 | [`remove_prewarm`](/cua-sdk/reference/spaces/elastic#spacesremove_prewarm) | Ends prewarm `id` (its ready Spaces go). |
 | [`resize`](/cua-sdk/reference/spaces/resize#spacesresize) | Gives a local VM Space another shape: `cpus` vCPUs, `memory_mb` MiB of memory, a disk grown to `disk_gb` GiB (each `None` keeps it). |
 | [`resources`](/cua-sdk/reference/spaces/resources#spacesresources) | What this Mac, its extra Spaces and your other computers use now: processor, memory and disk, as one snapshot (a few seconds old at most). |

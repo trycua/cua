@@ -540,14 +540,23 @@ export const PAGES: PageSpec[] = [
   {
     slug: 'spaces/sharing',
     title: 'Sharing, leaving and bulk delete',
-    description: 'Who owns a Space and who else has it, leaving Spaces shared with you, and deleting several at once.',
+    description: 'Give another person access to a Space, see who owns a Space and who else has it, leave Spaces shared with you, and delete several at once.',
     intro:
-      'A Space on the relay carries `SpaceInfo.sharing`: its owner, your role (`owner`, `editor`, `viewer`), the team you reach it through and, for your own, who else has it. `leave_many` takes you off Spaces shared with you; `delete_many` deletes several of yours, three at a time, turning running ones off first. Both answer one `BulkResult` per id, in order.',
+      '`Space.share` gives a person access to a Space, `Space.shares` lists who has it, and `Space.unshare` takes it back. A Space on the relay carries `SpaceInfo.sharing`: its owner, your role (`owner`, `editor`, `viewer`), the team you reach it through and, for your own, who else has it. `leave_many` takes you off Spaces shared with you; `delete_many` deletes several of yours, three at a time, turning running ones off first. Both answer one `BulkResult` per id, in order.',
     members: [
+      { object: 'Space', title: 'Sharing', methods: ['share', 'shares', 'unshare'] },
       { object: 'Spaces', title: 'Leave and bulk delete', methods: ['leave_many', 'delete_many'] },
-      { object: 'Spaces', title: 'On the relay', methods: ['relay_register', 'relay_unregister'] },
     ],
-    items: ['SpaceSharing', 'SpaceTeamShare', 'BulkResult'],
+    items: ['SpaceShareEntry', 'SpaceShares', 'SpaceSharing', 'SpaceTeamShare', 'BulkResult'],
+  },
+  {
+    slug: 'spaces/relay-registration',
+    title: 'Relay registration',
+    description: 'Register a Space with the relay so other devices reach it, and unregister it.',
+    intro:
+      '`Spaces.relay_register` makes a Space reachable from your other devices through the relay; `Spaces.relay_unregister` stops that.',
+    items: ['SpaceRelayRegistration'],
+    members: [{ object: 'Spaces', title: 'Relay registration', methods: ['relay_register', 'relay_unregister'] }],
   },
   {
     slug: 'spaces/elastic',

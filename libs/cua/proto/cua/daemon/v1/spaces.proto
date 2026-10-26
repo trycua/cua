@@ -354,6 +354,27 @@ message ListSpacesResponse {
   // `known_now` only: why the account's computers could not be read, when
   // they could not.
   string notice = 5;
+  // `known_now` only: Spaces your other computers are creating now, from
+  // what each published in its relay machine record (CUA-2349).
+  repeated CreatingSpace creating = 6;
+}
+
+// A Space another of your computers is creating.
+message CreatingSpace {
+  // The computer's relay machine id.
+  string machine_id = 1;
+  // The computer's name.
+  string machine_name = 2;
+  // The Space's name.
+  string name = 3;
+  // `macos`, `linux`, `windows`, or empty when unknown.
+  string os = 4;
+  // The create's phase (`preparing`, `pulling`, `booting`, ...).
+  string phase = 5;
+  // How far along the whole create is, 0 to 100.
+  uint32 percent = 6;
+  // When the computer published it, unix ms.
+  uint64 updated_at_ms = 7;
 }
 
 // A named volume: the folder `volumes/<name>/` of Cua Volume.

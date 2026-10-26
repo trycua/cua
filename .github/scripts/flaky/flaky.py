@@ -436,6 +436,10 @@ def cmd_file_issues(args: argparse.Namespace) -> int:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    # Windows runners default stdout to cp1252; test output can contain other characters.
+    for stream_ in (sys.stdout, sys.stderr):
+        if hasattr(stream_, "reconfigure"):
+            stream_.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="cmd", required=True)
     run = sub.add_parser("run")

@@ -514,6 +514,18 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             "reaching": Int(model.listReaching),
             // Your other computers' rows are the last known ones, not yet confirmed.
             "stale": model.listStale,
+            // Spaces your other computers are creating now (relay meta `cua.new`,
+            // CUA-2349): the page shows "Creating macOS on Mac mini… 40%".
+            "creatingElsewhere": model.creatingElsewhere.map { c in
+                [
+                    "machineId": c.machineId,
+                    "machineName": c.machineName,
+                    "name": c.name,
+                    "os": c.os,
+                    "phase": c.phase,
+                    "percent": Int(c.percent),
+                ] as [String: Any]
+            },
         ]
     }
 

@@ -144,7 +144,9 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
         case let .surfaces(update, remove):
             CATransaction.begin()
             CATransaction.setDisableActions(true)
-            for id in remove { self.remove(id) }
+            // A viewer the page moves (the Space page's call and thread layouts)
+            // comes back to the same live session (`slotGrace`).
+            for id in remove { self.remove(id, grace: true) }
             for u in update { place(u) }
             CATransaction.commit()
         case let .focus(id):
@@ -157,6 +159,12 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
     /// Tears every surface and session down (window closed, page replaced).
     func removeAll() {
         for id in Array(surfaces.keys) { remove(id) }
+        // A viewer still in its `slotGrace` has no page to come back to:
+        // stop it now (a picture-in-picture hold keeps its own).
+        for (key, stream) in streams where stream.holds == 0 {
+            stream.users = 1
+            letGo(stream, key: key)
+        }
     }
 
     // MARK: - Surfaces
@@ -321,7 +329,7 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
         surface.view.isHidden = surface.layout.hidden || surface.phase != .live
     }
 
-    private func remove(_ surfaceId: String) {
+    private func remove(_ surfaceId: String, grace: Bool = false) {
         guard let surface = surfaces.removeValue(forKey: surfaceId) else { return }
         if focusedId == surfaceId { focus(nil) }
         surface.view.input.keyboardReturn.forget()
@@ -335,8 +343,21 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
         surface.view.removeFromSuperview()
         if surfaces.isEmpty { unwatchWindow() }
         guard let stream = streams[surface.key] else { return }
-        letGo(stream, key: surface.key)
+        guard grace, surface.key.tier == .full, stream.session != nil, slotGrace > .zero else {
+            return letGo(stream, key: surface.key)
+        }
+        let key = surface.key
+        Task { @MainActor [weak self, weak stream] in
+            try? await Task.sleep(for: self?.slotGrace ?? .zero)
+            guard let self, let stream else { return }
+            self.letGo(stream, key: key)
+        }
     }
+
+    /// How long a viewer's session outlives its slot: the page that moves
+    /// the viewer (call view to thread view and back) mounts its new slot
+    /// in that time, and it binds to the same live session.
+    var slotGrace: Duration = .milliseconds(1500)
 
     /// One user fewer; the last one stops the session.
     private func letGo(_ stream: Stream, key: StreamKey) {

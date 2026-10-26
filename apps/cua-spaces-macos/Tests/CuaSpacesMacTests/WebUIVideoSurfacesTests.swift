@@ -486,6 +486,8 @@ struct WebUIVideoSurfacesTests {
         let host = Host()
         let units = AccessUnit.split(Self.tinyH264)
         let s = surfaces(host) { _, _ in SyntheticStreamProvider(units: units, size: CGSize(width: 64, height: 48), fps: 30) }
+        // Only the panel's hold keeps the session here (no slot grace).
+        s.slotGrace = .zero
         s.handle(message([entry("v1", space: "a")]))
         await settle { host.phases("v1").contains("live") }
         let first = try #require(s.surfaces["v1"])
@@ -538,6 +540,67 @@ struct WebUIVideoSurfacesTests {
         let host = Host()
         let s = surfaces(host) { _, _ in throw StreamError.noStream("no stream for this Space") }
         await #expect(throws: (any Error).self) { try await s.holdViewer(spaceId: "a") }
+        #expect(s.stats().isEmpty)
+    }
+
+    // MARK: - Moving the viewer (call view and thread view)
+
+    /// The Space page moves its viewer between the call view's stage and
+    /// thread view's mini-player: the old slot goes and a new one comes.
+    /// The new slot binds to the same live session (no second open, no
+    /// "Connecting…"), as long as it comes within `slotGrace`.
+    @Test func aViewerMovedToANewSlotKeepsItsLiveSession() async throws {
+        let host = Host()
+        let units = AccessUnit.split(Self.tinyH264)
+        let s = surfaces(host) { _, _ in SyntheticStreamProvider(units: units, size: CGSize(width: 64, height: 48), fps: 30) }
+        s.handle(message([entry("call", space: "a")]))
+        await settle { host.phases("call").contains("live") }
+        let callSlot = try #require(s.surfaces["call"])
+        let session = try #require(s.sessionFor(callSlot))
+
+        // One message: the stage's slot goes, the mini-player's comes.
+        var mini = entry("mini", space: "a", interactive: false)
+        mini["rect"] = ["x": 500, "y": 400, "width": 320, "height": 200]
+        s.handle(message([mini], remove: ["call"]))
+        await settle(tries: 5) { !host.phases("mini").isEmpty }
+        #expect(host.phases("mini") == ["live"])
+        let miniSlot = try #require(s.surfaces["mini"])
+        #expect(s.sessionFor(miniSlot) === session)
+        // And back again, after the grace has passed for the first move.
+        try? await Task.sleep(for: s.slotGrace + .milliseconds(200))
+        s.handle(message([entry("call2", space: "a")], remove: ["mini"]))
+        await settle(tries: 5) { !host.phases("call2").isEmpty }
+        #expect(host.phases("call2") == ["live"])
+        let back = try #require(s.surfaces["call2"])
+        #expect(s.sessionFor(back) === session)
+        #expect(host.opened.count == 1)
+        #expect(session.status == .streaming)
+        s.removeAll()
+    }
+
+    @Test func aViewerSlotThatDoesNotComeBackStopsItsSessionAfterTheGrace() async throws {
+        let host = Host()
+        let units = AccessUnit.split(Self.tinyH264)
+        let s = surfaces(host) { _, _ in SyntheticStreamProvider(units: units, size: CGSize(width: 64, height: 48), fps: 30) }
+        s.slotGrace = .milliseconds(150)
+        s.handle(message([entry("v", space: "a")]))
+        await settle { host.phases("v").contains("live") }
+        let slot = try #require(s.surfaces["v"])
+        let session = try #require(s.sessionFor(slot))
+        s.handle(message([], remove: ["v"]))
+        // Still there during the grace...
+        #expect(s.stats().count == 1)
+        // ...then gone, and the session stopped.
+        await settle { s.stats().isEmpty }
+        #expect(s.stats().isEmpty)
+        await settle { session.status == .idle }
+        #expect(session.status == .idle)
+        // A page that goes away (removeAll) stops at once, and tiles never wait.
+        s.handle(message([entry("t", space: "b", tier: "tile", interactive: false), entry("w", space: "c")]))
+        await settle { host.opened.count == 3 }
+        s.handle(message([], remove: ["t"]))
+        #expect(s.stats().count == 1)
+        s.removeAll()
         #expect(s.stats().isEmpty)
     }
 

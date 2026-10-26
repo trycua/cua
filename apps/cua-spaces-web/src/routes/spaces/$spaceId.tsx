@@ -28,6 +28,7 @@ import { cn } from "@/lib/utils";
 import { volumeUnavailableNote } from "@/lib/volume-notes";
 import { canDelete, canPower, createError, createProgress, machineName, powerLabel, powerPending, spacePlace, spaceState } from "@/lib/spaces";
 import { useFlag } from "@/bridge/flags";
+import { useSpaceLayout } from "@/components/space-thread/layout-mode";
 import { LegacySpacePage } from "@/legacy/routes/spaces/$spaceId";
 
 export const Route = createFileRoute("/spaces/$spaceId")({
@@ -96,6 +97,8 @@ function SpaceDetailPage() {
   const access = thisMachine?.accessNotice ?? null;
   const devices = useDevices();
   const { detail, stream, windowsUnsupported, pip, query, setQuery, agents, copy } = useSpaceDetail(space, hostArch, { experiments, access });
+  // Call view or thread view, remembered per Space.
+  const [layout, setLayout] = useSpaceLayout(space?.id ?? "");
   const volumeError = useSpaceVolumeError(space, space ? spaceState(space) === "running" : false);
   // The Space's thread (CUA-2155). A daemon without it answers unsupported,
   // and the page keeps its classic layout; a create still in progress has none yet.
@@ -289,8 +292,9 @@ function SpaceDetailPage() {
       <OsIcon os={space.os} className="size-4.5 text-muted-foreground" />
     </div>
   );
-  const surface = (className: string, windowId?: string | null, windowName?: string | null) => (
+  const surface = (className: string, windowId?: string | null, windowName?: string | null, interactive = true) => (
     <StreamSurface
+      interactive={interactive}
       spaceId={space.id}
       windowId={windowId}
       windowName={windowName}
@@ -442,6 +446,11 @@ function SpaceDetailPage() {
             </>
           }
           stage={surface("h-full", shownRow?.id ?? null, shownView?.app ?? null)}
+          layout={layout}
+          onLayout={setLayout}
+          smallStage={surface("h-full", shownRow?.id ?? null, shownView?.app ?? null, false)}
+          aspect={aspect}
+          stageLabel={shownRow?.label ?? "Desktop"}
           thread={thread}
           facts={detail.facts}
           more={sections}

@@ -31,11 +31,17 @@ previous stable (the most active non-prerelease version in the week before the s
                (needs --min-update-events)
   incident     no active incident.io incident with "spaces" in its name (needs
                INCIDENT_IO_API_KEY; without it the gate is reported as skipped)
-Sentry is not wired into the Spaces app, so there is no crash-free gate: the app sends
-no crash event. Add one here when it does.
+  crash        Sentry release health (org and project from config/spaces-crash-reporting.json,
+               release cua-spaces-desktop@<version>, environment stable): crash-free sessions of
+               the new version since the stage began are at most --max-crash-free-drop points
+               below the previous version's over the same window (needs --min-sessions on the
+               new version). A previous version with fewer than --min-sessions sessions (it
+               shipped before crash reporting) is no baseline: the new version must then be at
+               least --min-crash-free percent. Without SENTRY_AUTH_TOKEN the gate is reported as
+               skipped.
 
 Standard library only. Keys come from the environment: POSTHOG_API_KEY (query read),
-INCIDENT_IO_API_KEY (optional).
+INCIDENT_IO_API_KEY (optional), SENTRY_AUTH_TOKEN (optional, org:read and project:read).
 """
 
 from __future__ import annotations
@@ -46,6 +52,7 @@ import os
 import re
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
@@ -55,6 +62,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import release_rollout as rr  # noqa: E402
 
 POSTHOG = "https://eu.posthog.com/api/projects/56041/query/"
+SENTRY = "https://sentry.io/api/0"
+SENTRY_CONFIG = Path(__file__).resolve().parents[2] / "config" / "spaces-crash-reporting.json"
 NEXT = {"10": "50", "50": "100"}
 
 
@@ -215,7 +224,60 @@ def gate_incident(key: str | None, fetch=None) -> dict:
     return {"gate": "incident", "status": "pass", "detail": "no active incident naming Spaces"}
 
 
-def decide(state: dict, now: datetime, a, q=None, incident=None, hold: str = "") -> dict:
+def sentry_get(path: str, token: str, params: list[tuple[str, str]] | None = None) -> dict:
+    url = SENTRY + path + ("?" + urllib.parse.urlencode(params) if params else "")
+    req = urllib.request.Request(url, headers={"Authorization": "Bearer " + token})
+    with urllib.request.urlopen(req, timeout=60) as r:
+        return json.load(r)
+
+
+def sentry_sessions(token: str, cfg: dict, project_id: str, version: str, since: datetime, now: datetime) -> tuple[int, float | None]:
+    """(sessions, crash-free fraction or None) of one release on the stable environment in a window."""
+    data = sentry_get(
+        "/organizations/%s/sessions/" % cfg["org"], token,
+        [("project", project_id), ("environment", "stable"),
+         ("field", "sum(session)"), ("field", "crash_free_rate(session)"),
+         ("query", 'release:"cua-spaces-desktop@%s"' % version),
+         ("start", since.strftime("%Y-%m-%dT%H:%M:%S")), ("end", now.strftime("%Y-%m-%dT%H:%M:%S")),
+         ("interval", "1d")])
+    total, rate = 0, None
+    for g in data.get("groups", []):
+        t = g.get("totals", {})
+        total += int(t.get("sum(session)") or 0)
+        rate = t.get("crash_free_rate(session)")
+    return total, rate
+
+
+def gate_crash(token: str | None, new: str, prev: str | None, since: datetime, now: datetime, a, cfg: dict | None = None, fetch=None) -> dict:
+    """Crash-free sessions of the new version against the previous one (Sentry release health)."""
+    if not token:
+        return {"gate": "crash", "status": "skip", "detail": "SENTRY_AUTH_TOKEN not set, gate skipped"}
+    try:
+        cfg = cfg or json.loads(SENTRY_CONFIG.read_text())
+        if fetch is None:
+            project_id = str(sentry_get("/projects/%s/%s/" % (cfg["org"], cfg["project"]), token)["id"])
+            fetch = lambda v: sentry_sessions(token, cfg, project_id, v, since, now)  # noqa: E731
+        n_new, r_new = fetch(new)
+        n_prev, r_prev = fetch(prev) if prev else (0, None)
+    except (urllib.error.URLError, OSError, ValueError, KeyError) as e:
+        return {"gate": "crash", "status": "wait", "detail": f"Sentry unreachable or misconfigured ({e}); not advancing blind"}
+    if n_new < a.min_sessions or r_new is None:
+        return {"gate": "crash", "status": "wait",
+                "detail": f"{n_new} sessions of {new} reported to Sentry since the stage began (need {a.min_sessions})"}
+    new_pct = 100.0 * r_new
+    if n_prev < a.min_sessions or r_prev is None:
+        ok = new_pct >= a.min_crash_free
+        return {"gate": "crash", "status": "pass" if ok else "fail",
+                "detail": f"crash-free sessions {new_pct:.2f}% on {new} ({n_new} sessions); no baseline ({n_prev} sessions on {prev}), "
+                          f"floor {a.min_crash_free}%"}
+    prev_pct = 100.0 * r_prev
+    drop = prev_pct - new_pct
+    return {"gate": "crash", "status": "fail" if drop > a.max_crash_free_drop else "pass",
+            "detail": f"crash-free sessions {new_pct:.2f}% on {new} ({n_new}) vs {prev_pct:.2f}% on {prev} ({n_prev}), "
+                      f"drop {drop:+.2f} points (limit {a.max_crash_free_drop})"}
+
+
+def decide(state: dict, now: datetime, a, q=None, incident=None, hold: str = "", crash=None) -> dict:
     d: dict = {"version": state["version"], "stage": state["stage"],
                "since": state["since"].isoformat() if state["since"] else None,
                "action": "none", "next": None, "gates": [], "why": ""}
@@ -235,7 +297,8 @@ def decide(state: dict, now: datetime, a, q=None, incident=None, hold: str = "")
     prev = previous_version(q, new, since)
     d["previous"] = prev
     d["gates"] = [gate_adoption(q, new, since, now, a), gate_space_create(q, new, prev, since, now, a),
-                  gate_update(q, prev, since, now, a), incident or gate_incident(os.environ.get("INCIDENT_IO_API_KEY"))]
+                  gate_update(q, prev, since, now, a), incident or gate_incident(os.environ.get("INCIDENT_IO_API_KEY")),
+                  crash or gate_crash(os.environ.get("SENTRY_AUTH_TOKEN"), new, prev, since, now, a)]
     failed = [g for g in d["gates"] if g["status"] == "fail"]
     waiting = [g for g in d["gates"] if g["status"] == "wait"]
     if failed:
@@ -268,6 +331,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--max-create-error-delta", type=float, default=10.0)
     ap.add_argument("--min-update-events", type=int, default=20)
     ap.add_argument("--max-update-failure-delta", type=float, default=15.0)
+    ap.add_argument("--min-sessions", type=int, default=100)
+    ap.add_argument("--max-crash-free-drop", type=float, default=0.5)
+    ap.add_argument("--min-crash-free", type=float, default=99.0)
     a = ap.parse_args(argv)
     now = datetime.fromisoformat(a.now) if a.now else datetime.now(timezone.utc)
     key = os.environ.get("POSTHOG_API_KEY", "")

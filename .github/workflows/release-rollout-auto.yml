@@ -46,13 +46,16 @@ jobs:
       TAG: cua-spaces-latest
       POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
       INCIDENT_IO_API_KEY: ${{ secrets.INCIDENT_IO_API_KEY }}
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
       ALERTMANAGER_INTAKE_TOKEN: ${{ secrets.ALERTMANAGER_INTAKE_TOKEN }}
       HOLD_VAR: ${{ vars.SPACES_ROLLOUT_HOLD }}
       DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
     steps:
       - uses: actions/checkout@v4
         with:
-          sparse-checkout: .github
+          sparse-checkout: |
+            .github
+            config
           persist-credentials: false
       - name: Check the scripts
         run: |

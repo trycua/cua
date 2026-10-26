@@ -71,6 +71,8 @@ members = [
     "crates/cua-logging",
     # Anonymous product telemetry.
     "crates/cua-telemetry",
+    # Opt-in crash reporting (Sentry panic handler, consent and scrubbing).
+    "crates/cua-crash",
     # A failed create's cause as a fixed telemetry word (no dependencies).
     "crates/cua-create-failure",
     "crates/cua-viewer",
@@ -204,6 +206,7 @@ cua-spaces-app-core = { path = "crates/cua-spaces-app-core", version = "0.9.0" }
 cua-spaces-ext = { path = "crates/cua-spaces-ext", version = "0.9.0" } # x-release-please-version
 cua-byoc = { path = "crates/cua-byoc", version = "0.9.0", default-features = false } # x-release-please-version
 cua-telemetry = { path = "crates/cua-telemetry", version = "0.9.0" } # x-release-please-version
+cua-crash = { path = "crates/cua-crash", version = "0.9.0" } # x-release-please-version
 cua-create-failure = { path = "crates/cua-create-failure", version = "0.9.0" } # x-release-please-version
 cua-spaces = { path = "crates/cua-spaces", version = "0.9.0" } # x-release-please-version
 cua-spaces-contract = { path = "crates/cua-spaces-contract", version = "0.9.0" } # x-release-please-version

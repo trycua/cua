@@ -14,6 +14,7 @@ import type { AppModel } from "../model/app-model";
 import { words } from "../model/errors";
 import { bounded } from "../model/time";
 import { string } from "./args";
+import { consentMayHaveChanged } from "../crash-reporting";
 import type { BridgeContext } from "./context";
 import { Failure, type Handlers } from "./host";
 import { hostParts, type HostParts } from "./host-parts";
@@ -182,6 +183,8 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
         return;
       case "telemetry":
         model.telemetry?.setEnabled(option === "on");
+        // Off also stops crash reports (crash-reporting.ts).
+        consentMayHaveChanged();
         // The switch sits beside the usage note (Welcome, Settings): the
         // notice was seen.
         model.telemetry?.acknowledgeNotice();

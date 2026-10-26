@@ -1909,6 +1909,10 @@ public final class AppModel {
                 // The switch sits beside the usage note (the first run's
                 // Welcome, Settings): the notice was seen.
                 telemetry?.acknowledgeNotice()
+                // Crash reports follow the switch: off closes the reporter now.
+                if let input = telemetryInput {
+                    CrashReporting.switchChanged(enabled: input.enabled, noticeShown: true)
+                }
             } catch {
                 show(error: LiveSpacesBackend.words(error))
             }

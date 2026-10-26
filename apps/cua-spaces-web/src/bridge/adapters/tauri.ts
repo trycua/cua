@@ -106,6 +106,7 @@ export const TAURI_UNSUPPORTED: readonly OpName[] = [
   ...CHECKLIST_OPERATIONS,
   ...LINKS_OPERATIONS,
   ...CLI_OPERATIONS,
+  "crashReporting.config",
   ...PRESENCE_OPERATIONS,
   ...RUNTIME_FIX_OPERATIONS,
 ];

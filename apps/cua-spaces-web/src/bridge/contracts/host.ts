@@ -597,6 +597,27 @@ export interface TelemetryView {
   docsUrl: string;
 }
 
+/**
+ * `crashReporting.config`: whether the page may report its own errors, and
+ * the settings to do it with. The host decides: `allowed` is true only while
+ * usage data is on and its first-run notice was shown, and the DSN, release
+ * and channel are the app's (config/spaces-crash-reporting.json). A host
+ * with no answer (`unsupported`, `unimplemented`, an error) means off.
+ */
+export interface CrashReportingConfig {
+  allowed: boolean;
+  /** The public ingest key; empty means crash reporting is not configured in this build. */
+  dsn: string;
+  /** `cua-spaces-desktop@<app version>`. */
+  release: string;
+  /** The channel: `stable`, `beta` or `local`. */
+  environment: string;
+  /** Which app hosts the page: `electron` or `swift`. */
+  shell: string;
+  /** A local build's forced-crash request (CUA_CRASH_TEST=ui): throw once after start. Never set on `stable` or `beta`. */
+  crashTest?: "ui";
+}
+
 /* ---- Settings page (app core `settings::page`) --------------------------- */
 
 /** Why a sign-in did not finish (`sign_in::SignInFailure`). */

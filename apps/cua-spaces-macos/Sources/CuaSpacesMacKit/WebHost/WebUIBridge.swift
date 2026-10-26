@@ -44,8 +44,8 @@ public struct WebUIActions {
 /// shows. `spaces.createProgress` carries a create's progress (the page's
 /// pending id), and `spaces.newRequested` (`{on}`) asks the page to open
 /// its New Space wizard (the app's New Space menu items, the notch).
-/// `settings.openRequested` asks the page to open its Settings (the app
-/// menu's Settings command, ⌘,, while the New UI window is in front).
+/// `settings.openRequested` asks the page to open its Settings (⌘, and every
+/// other Settings item, while the window is open; there is no native one).
 /// `window.dropTarget` (`{spaceId}`, null for none) names the Space tile a
 /// real window is being dragged over (`window.setDropTargets` said where the
 /// tiles are; the notch's drag monitor follows the drag).
@@ -553,7 +553,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         host?.emit("spaces.newRequested", payload: ["on": on.map { $0 as Any } ?? NSNull()])
     }
 
-    // MARK: - Settings (the app menu's command while this window is in front)
+    // MARK: - Settings (⌘, and the other Settings items while this window is open)
 
     /// Asks the page to go to its Settings; queued until the page listens.
     func requestSettings() {

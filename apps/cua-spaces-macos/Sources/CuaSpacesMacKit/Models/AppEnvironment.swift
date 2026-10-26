@@ -415,9 +415,7 @@ public enum AppEnvironment {
 
     /// `CUA_SPACES_START_VIEW`: `new-space`, `new-space-picker`, `new-space-resources`, `keyvault`, `keyvault-waiting`,
     /// `approval`, `onboarding` (the first run, in the New UI window), `this-machine`, `host-setup`,
-    /// `host-configured`, `settings`, `settings-devices` (Settings on its
-    /// Devices tab), `settings-about` (on its About tab), `settings-experiments`
-    /// (on its Experiments tab), `device-approval` (the approval sheet for the first
+    /// `host-configured`, `settings` (the app menu's ⌘, item), `device-approval` (the approval sheet for the first
     /// device asking; `CUA_SPACES_APPROVE_CODE` types its code),
     /// `device-enroll` (the enroll sheet), `device-enroll-code` (it, having
     /// chosen Approve from another device), `space`, `space-window` (the selected
@@ -496,16 +494,9 @@ public enum AppEnvironment {
                 // The Volume page shows with Cua Volume on (this run only).
                 model.settings.experiments.cuaVolume = true
                 model.selection = .drive
-            case "settings", "settings-devices", "settings-storage", "settings-about", "settings-experiments":
-                if env["CUA_SPACES_START_VIEW"] == "settings-devices" { model.settingsTab = .devices }
-                if env["CUA_SPACES_START_VIEW"] == "settings-about" { model.settingsTab = .about }
-                if env["CUA_SPACES_START_VIEW"] == "settings-experiments" { model.settingsTab = .experiments }
-                if env["CUA_SPACES_START_VIEW"] == "settings-storage" {
-                    // Storage shows with the Cua Volume experiment on (this
-                    // run only; the settings file is not written).
-                    model.settings.experiments.cuaVolume = true
-                    model.settingsSection = "storage"
-                }
+            case "settings":
+                // The app menu's ⌘, item, as a person presses it: the
+                // page's Settings in the New UI window.
                 try? await Task.sleep(for: .seconds(2))
                 NSApp.activate()
                 if let item = NSApp.mainMenu?.items.first?.submenu?.items.first(where: { $0.keyEquivalent == "," }),

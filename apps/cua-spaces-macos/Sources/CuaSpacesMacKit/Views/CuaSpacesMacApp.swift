@@ -8,8 +8,9 @@ import Observation
 import CuaSpacesStreaming
 import SwiftUI
 
-/// Cua Spaces for macOS: the main window, Settings, the menu bar extra and
-/// the notch panel, all over one `AppModel`.
+/// Cua Spaces for macOS: the main window, the menu bar extra and the notch
+/// panel, all over one `AppModel`. Settings is a page of the New UI window
+/// (`WebUIWindowController.openSettings`); there is no Settings window.
 public struct CuaSpacesMacApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @State private var model: AppModel
@@ -44,9 +45,12 @@ public struct CuaSpacesMacApp: App {
                 Button(model.chrome.newSpaceLabel) { Task { await model.openNewSpace() } }
                     .keyboardShortcut("n")
             }
-            // No `.appSettings` group here: the `Settings` scene's item is the
-            // app menu's one "Settings…". The New UI window answers its
-            // action itself (`WebUIAppWindow`), so ⌘, opens its Settings.
+            // The app menu's "Settings…" (⌘,): the page's Settings, the one
+            // Settings there is (no `Settings` scene).
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") { MainUIRouter(model: model).openSettings() }
+                    .keyboardShortcut(",")
+            }
             CommandGroup(before: .sidebar) {
                 NavigationCommands(model: model)
                 Divider()
@@ -66,10 +70,6 @@ public struct CuaSpacesMacApp: App {
         }
         .defaultLaunchBehavior(.suppressed)
         .restorationBehavior(.disabled)
-
-        Settings {
-            SettingsScene(model: model)
-        }
 
         // Not inserted in an offscreen run (`OffscreenRun`).
         MenuBarExtra(isInserted: .constant(!OffscreenRun.isOn)) {
@@ -186,7 +186,6 @@ struct MenuBarContent: View {
     let model: AppModel
     var disk: LowDiskMonitor = .shared
     @Environment(\.openWindow) private var openWindow
-    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         // This Mac is short of space: the warning, with the Cua key, first.
@@ -232,7 +231,7 @@ struct MenuBarContent: View {
             // The native sheet needs the main window; New UI opens its own.
             if !model.settings.experiments.webUi { openWindow(id: "main") }
             Task { await model.openNewSpace() }
-        case .settings: router.open(.settings) { activate(); openSettings() }
+        case .settings: router.openSettings()
         case .volumeConflicts:
             router.open(.drive) {
                 activate(); openWindow(id: "main")
@@ -369,9 +368,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.onOpenList = { [weak controller] in
             router.open(.home) { controller?.showMain?() }
         }
-        controller.onOpenSettings = { [weak controller] in
-            router.open(.settings) { controller?.showSettings?() }
-        }
+        controller.onOpenSettings = { router.openSettings() }
         controller.onOpenAccess = { [weak controller] in
             router.open(.access) {
                 model.selection = .keyvault(.category(category: .access))

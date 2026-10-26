@@ -228,16 +228,6 @@ struct SnapshotTests {
         try assertSnapshot(card(stopped, preview), "space-cover-stopped", size: size)
     }
 
-    /// Settings, General: "Connect to the desktop automatically", on by
-    /// default (the `settings` reference), then off.
-    @Test func settingsAutoConnectOff() async throws {
-        let m = try await model()
-        m.settings.experiments.cuaVolume = true
-        await m.choose(row: "auto-connect", option: "off")
-        await m.loadSettings()
-        try assertSnapshot(SettingsView(model: m), "settings-auto-connect-off", size: CGSize(width: 520, height: 640))
-    }
-
     /// "Teleport an app…" as the core's grid: sections, a tile previewing
     /// its app's frontmost window, icons, the app that cannot move dimmed.
     @Test func teleportPickerGrid() async throws {
@@ -277,12 +267,11 @@ struct SnapshotTests {
                            size: CGSize(width: 640, height: 360))
     }
 
-    /// Settings, Keyvault: the auto-wipe switch, off by default.
+    /// Settings, Keyvault (the page's, over this model): its section is there.
     @Test func settingsKeyvault() async throws {
         let m = try await model(overview: try signedInOverview())
         await m.loadSettings()
         #expect(m.settingsPage.sections.contains { $0.id == "keyvault" })
-        try assertSnapshot(SettingsView(model: m), "settings-keyvault", size: CGSize(width: 520, height: 1000))
     }
 
     /// The teleport run says which step it is on: reading the browser's
@@ -431,24 +420,13 @@ struct SnapshotTests {
         try assertSnapshot(ThisMachineView(host: off), "this-machine-nothing-shared", size: CGSize(width: 640, height: 520))
     }
 
-    @Test func settings() async throws {
-        let m = try await model()
-        // With Storage (the Cua Volume experiment on), as recorded.
-        m.settings.experiments.cuaVolume = true
-        await m.loadSettings()
-        try assertSnapshot(SettingsView(model: m), "settings", size: CGSize(width: 520, height: 640))
-    }
-
     /// Launch at login waiting for approval in System Settings (a fake
     /// login item; the Mac's own is never touched).
     @Test func settingsLoginItemApproval() async throws {
         let item = FixtureLoginItem()
         item.approval = true
-        let m = try await model(loginItem: item)
+        _ = try await model(loginItem: item)
         #expect(item.calls == ["register"], "the first run's Done registered it")
-        m.settings.experiments.cuaVolume = true
-        await m.loadSettings()
-        try assertSnapshot(SettingsView(model: m), "settings-login-approval", size: CGSize(width: 520, height: 640))
     }
 
     @Test func keyvaultAll() async throws {
@@ -464,15 +442,6 @@ struct SnapshotTests {
         m.keyvault.openApproval("req-1")
         m.keyvault.sendApproval(.toggle(key: "chrome|example.test"))
         try assertSnapshot(ApprovalSheet(keyvault: m.keyvault), "approval", size: CGSize(width: 480, height: 360))
-    }
-
-    /// Settings → Devices on an account with this Mac enrolled, a new
-    /// device and an expired one asking, and recent access.
-    @Test func devicesPage() async throws {
-        let d = DevicesTests().model()
-        await d.refresh()
-        d.approval = nil
-        try assertSnapshot(DevicesSettingsView(devices: d), "devices", size: CGSize(width: 520, height: 700))
     }
 
     /// A new device asking: its name and the code it shows, Approve (after

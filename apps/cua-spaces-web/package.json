@@ -23,6 +23,7 @@
   "dependencies": {
     "@base-ui/react": "^1.8.0",
     "@legendapp/list": "^3.6.0",
+    "@sentry/browser": "11.8.0",
     "@tanstack/react-router": "^1.170.41",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

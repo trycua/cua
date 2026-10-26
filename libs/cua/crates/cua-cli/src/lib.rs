@@ -2801,6 +2801,17 @@ pub fn main() {
     telemetry.set_notice_mode(notice_mode(
         std::env::var("CUA_DAEMON_STARTED_BY").ok().as_deref(),
     ));
+    // Crash reports (opt-in, only when the Spaces shell passed a DSN) come
+    // from the daemon process itself, not the `cua daemon start` launcher.
+    let crash_guard = matches!(
+        cli.command,
+        Command::Daemon(DaemonCmd::Start {
+            foreground: true,
+            ..
+        })
+    )
+    .then(|| cua_crash::init_from_env("daemon"))
+    .flatten();
     // The first-run notice goes to stderr before anything could be sent
     // (not for `cua telemetry` / `cua config`, which are how you answer it).
     if record && !matches!(cli.command, Command::Config(_)) {
@@ -2895,6 +2906,8 @@ pub fn main() {
         }
     });
     let _ = std::io::stdout().flush();
+    // `process::exit` skips destructors: flush crash reports explicitly.
+    drop(crash_guard);
     // Telemetry never holds the exit up for more than this; what is left
     // goes to the offline spool, which the cua daemon (or the next command)
     // sends. A round trip to the collector often takes longer than this, and

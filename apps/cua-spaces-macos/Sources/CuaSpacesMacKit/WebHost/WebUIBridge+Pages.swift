@@ -225,6 +225,13 @@ extension WebUIBridge {
         case "telemetry.acknowledgeLinkNotice":
             model.telemetrySink?.acknowledgeLinkNotice()
             return NSNull()
+        // The page's crash reporter (CUA-2343): its consent and build config.
+        case "crashReporting.config":
+            let status = model.telemetrySink?.status()
+            return CrashReporting.bridgeConfig(
+                info: Bundle.main.infoDictionary ?? [:],
+                allowed: status.map { CrashReporting.isAllowed(enabled: $0.enabled, noticeShown: $0.noticeShown) } ?? false,
+                env: ProcessInfo.processInfo.environment)
 
         // A Space's detail
         case "spaces.usage":

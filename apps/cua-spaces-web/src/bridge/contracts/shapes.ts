@@ -35,6 +35,7 @@ import type {
   SignInStart,
   SpacePowerReport,
   TelemetryView,
+  CrashReportingConfig,
 } from "./host";
 import type { KeyvaultOverview, KvGrant } from "./keyvault";
 import type {
@@ -479,6 +480,18 @@ const LinkNoticeShape = ref(
     turnOffLabel: str,
     detailsLabel: str,
     docsUrl: str,
+  }),
+);
+
+const CrashReportingConfigShape = ref(
+  "CrashReportingConfig",
+  obj<CrashReportingConfig>()({
+    allowed: bool,
+    dsn: str,
+    release: str,
+    environment: str,
+    shell: str,
+    crashTest: opt(oneOf("ui")),
   }),
 );
 
@@ -1108,6 +1121,7 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "telemetry.track": nul,
   "telemetry.linkNotice": nullable(LinkNoticeShape),
   "telemetry.acknowledgeLinkNotice": nul,
+  "crashReporting.config": CrashReportingConfigShape,
   "spaces.usage": nullable(
     obj<SpaceUsage>()({ memoryUsed: num, memoryTotal: num, memoryLimited: bool, diskUsed: num, diskTotal: num, diskLimited: bool }),
   ),
@@ -1434,6 +1448,7 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "telemetry.track": nul,
   "telemetry.linkNotice": nullable(LinkNoticeShape),
   "telemetry.acknowledgeLinkNotice": nul,
+  "crashReporting.config": CrashReportingConfigShape,
   "spaces.usage": OP_SHAPES["spaces.usage"],
   "spaces.windows": OP_SHAPES["spaces.windows"],
   "stream.pip": strings,

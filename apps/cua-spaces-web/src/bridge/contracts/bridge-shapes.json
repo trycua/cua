@@ -717,6 +717,38 @@
         "warning"
       ]
     },
+    "CrashReportingConfig": {
+      "type": "object",
+      "properties": {
+        "allowed": {
+          "type": "boolean"
+        },
+        "dsn": {
+          "type": "string"
+        },
+        "release": {
+          "type": "string"
+        },
+        "environment": {
+          "type": "string"
+        },
+        "shell": {
+          "type": "string"
+        },
+        "crashTest": {
+          "enum": [
+            "ui"
+          ]
+        }
+      },
+      "required": [
+        "allowed",
+        "dsn",
+        "release",
+        "environment",
+        "shell"
+      ]
+    },
     "CreateFix": {
       "type": "object",
       "properties": {
@@ -5461,6 +5493,9 @@
         "checks"
       ]
     },
+    "crashReporting.config": {
+      "$ref": "#/$defs/CrashReportingConfig"
+    },
     "devices.approve": {
       "type": "null"
     },
@@ -7263,6 +7298,9 @@
         "ok",
         "checks"
       ]
+    },
+    "crashReporting.config": {
+      "$ref": "#/$defs/CrashReportingConfig"
     },
     "devices.approve": {
       "type": "null"

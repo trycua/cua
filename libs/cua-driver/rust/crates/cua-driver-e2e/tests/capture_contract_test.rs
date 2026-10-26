@@ -19,6 +19,8 @@
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+#[cfg(target_os = "macos")]
+use cua_driver_testkit::ax::element_index_by_id;
 use cua_driver_testkit::e2e::{
     execute_case, native_readonly_case, recording_evidence, DriverRoute, Evidence, Observation,
     OracleKind, Targeting,
@@ -29,8 +31,6 @@ use cua_driver_testkit::e2e::{CaseSpec, Delivery, Scope};
 use cua_driver_testkit::observer::TargetWindow;
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 use cua_driver_testkit::sentinel::ForegroundSentinel;
-#[cfg(target_os = "macos")]
-use cua_driver_testkit::ax::element_index_by_id;
 use cua_driver_testkit::{harness_app, Driver, McpDriver, ToolResponse};
 
 /// The aid every harness exposes on its increment button — the tree marker
@@ -838,7 +838,10 @@ fn jpeg_screenshot_keeps_pixel_mapping_and_mints_no_capture_id() {
             use base64::Engine as _;
             let session = jpeg_session("pixel-mapping");
             let png = snapshot_with(driver, pid, wid, &session, serde_json::json!({}));
-            assert!(marker_element(&png).is_some(), "PNG read lacks {TREE_MARKER}");
+            assert!(
+                marker_element(&png).is_some(),
+                "PNG read lacks {TREE_MARKER}"
+            );
             assert!(!png.is_error(), "PNG read errored: {}", png.text());
             let p = png.structured();
             assert_eq!(p["screenshot_mime_type"], "image/png");

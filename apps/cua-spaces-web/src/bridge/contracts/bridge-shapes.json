@@ -5179,6 +5179,35 @@
         ]
       }
     },
+    "agents.message": {
+      "type": "object",
+      "properties": {
+        "delivered": {
+          "type": "boolean"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "running",
+            "idle",
+            "failed",
+            "crashed",
+            "unknown"
+          ]
+        },
+        "phase": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "delivered",
+        "run_id",
+        "status",
+        "phase"
+      ]
+    },
     "agents.pause": {
       "type": "null"
     },
@@ -5313,6 +5342,21 @@
       "items": {
         "$ref": "#/$defs/AgentSetupRow"
       }
+    },
+    "agents.start": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "type": "string"
+        },
+        "agent": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "agent"
+      ]
     },
     "checklist.get": {
       "type": "object",
@@ -6953,6 +6997,35 @@
         ]
       }
     },
+    "agents.message": {
+      "type": "object",
+      "properties": {
+        "delivered": {
+          "type": "boolean"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "running",
+            "idle",
+            "failed",
+            "crashed",
+            "unknown"
+          ]
+        },
+        "phase": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "delivered",
+        "run_id",
+        "status",
+        "phase"
+      ]
+    },
     "agents.pause": {},
     "agents.readFile": {
       "$ref": "#/$defs/AgentOpenFile"
@@ -7083,6 +7156,21 @@
       "items": {
         "$ref": "#/$defs/AgentSetupRow"
       }
+    },
+    "agents.start": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "type": "string"
+        },
+        "agent": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "agent"
+      ]
     },
     "app.info": {
       "type": "object",

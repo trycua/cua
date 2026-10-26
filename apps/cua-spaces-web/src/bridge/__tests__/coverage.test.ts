@@ -56,6 +56,8 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "agents.list": {},
   "agents.runs": { spaceId: "s1" },
   "agents.events": { spaceId: "s1", runId: "r1", cursor: 0 },
+  "agents.start": { spaceId: "s1", agent: "claude-code", prompt: "Run the tests" },
+  "agents.message": { spaceId: "s1", runId: "r1", text: "Use Python 3.13" },
   "agents.pause": { name: "ada" },
   "agents.resume": { name: "ada" },
   "agents.setup": {},

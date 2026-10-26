@@ -43,6 +43,8 @@ export const DEMO_ARGS: { [K in OpName]: OpArgs<K> } = {
   "agents.list": {},
   "agents.runs": { spaceId: SPACE },
   "agents.events": { spaceId: SPACE, runId: "run-ada-7", cursor: 0 },
+  "agents.start": { spaceId: SPACE, agent: "claude-code", prompt: "Run the tests" },
+  "agents.message": { spaceId: SPACE, runId: "run-ada-7", text: "Use Python 3.13" },
   "agents.pause": { name: "ada" },
   "agents.resume": { name: "ada" },
   "agents.setup": {},

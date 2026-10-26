@@ -89,6 +89,16 @@ class Script {
   private tools = 0;
   constructor(private t: number) {}
 
+  /** Writes after `events` (a reply to a run that already has turns). */
+  static after(events: AgentEvent[], t: number): Script {
+    const s = new Script(t);
+    const last = events[events.length - 1];
+    s.seq = last?.seq ?? 0;
+    s.turn = events.reduce((n, e) => Math.max(n, e.turn), 0);
+    s.tools = events.filter((e) => e.kind === "tool_call").length;
+    return s;
+  }
+
   private push(e: Omit<AgentEvent, "seq" | "ts_ms" | "turn">, gapMs: number): this {
     this.t += gapMs;
     this.events.push({ seq: ++this.seq, ts_ms: this.t, turn: this.turn, ...e });
@@ -161,6 +171,8 @@ export interface DemoRunRecord {
   live: boolean;
   /** Set when a pause cut the run short. */
   stoppedAt?: number;
+  /** Shown as `needsYou` once every event is written, until a reply. */
+  asks?: { title: string; detail: string };
 }
 
 const ONBOARDING_DIFF = `## Onboarding copy
@@ -312,6 +324,59 @@ export function demoRunRecords(t0: number): DemoRunRecord[] {
   ];
 }
 
+/** A run started from the app (`agents.start`): it reads the task, gets the
+ * code, runs the tests and answers, then asks to sign in to GitHub before it
+ * posts anything, so the conversation shows every step. Written over about
+ * twenty seconds from `t0`. */
+export function demoStartedRun(space: string, runId: string, agent: string, prompt: string, t0: number, repo?: string): DemoRunRecord {
+  const where = repo ?? "the project";
+  const s = new Script(t0)
+    .prompt(prompt)
+    .thought("Get the code first, then find out how its tests run.", 1400)
+    .tool("execute", `git clone ${where}`, "completed", "Cloned into ./project", 2600)
+    .tool("read", "Read pyproject.toml", "completed", undefined, 900)
+    .tool("execute", "python -m pip install -e '.[dev]'", "completed", "Installed 31 packages", 3400)
+    .tool("execute", "python -m pytest -q", "completed", "70 passed in 41.2s", 4200)
+    .say(
+      "All **70 tests pass** on this clean computer (Python 3.12, 41 seconds). Nothing was skipped.\n\nTo post the result on your pull request I need to be signed in to GitHub here. Can you sign in, or should I skip posting?",
+      90,
+    )
+    .end();
+  return {
+    space,
+    live: true,
+    events: s.events,
+    asks: { title: "Sign in to GitHub", detail: "The agent needs a GitHub sign-in on this computer to post the result." },
+    run: {
+      runId,
+      agent,
+      status: "running",
+      reason: "a turn is running",
+      summary: prompt.split("\n")[0]!.slice(0, 120),
+      createdAt: Math.floor(t0 / 1000),
+      phase: "thinking",
+      turn: 1,
+    },
+  };
+}
+
+/** `agents.message` on a demo run: the reply is a new turn, answered in a few seconds. */
+export function demoReply(rec: DemoRunRecord, text: string, t: number): void {
+  const written = writtenEvents(rec, t);
+  const s = Script.after(written, t).prompt(text);
+  if (/sign|signed|logged|done|go ahead|yes/i.test(text)) {
+    s.tool("execute", "gh pr comment --body-file result.md", "completed", "Posted a comment", 2200)
+      .say("Posted the result on your pull request. You can keep this computer for the next check, or throw it away.", 80);
+  } else {
+    s.thought("Read the reply and carry on.", 800).say("Got it. I'll go on with that.", 80);
+  }
+  s.end();
+  rec.events = [...written, ...s.events];
+  rec.live = true;
+  rec.stoppedAt = undefined;
+  rec.asks = undefined;
+}
+
 /** The events written by `now`. */
 export function writtenEvents(rec: DemoRunRecord, now: number): AgentEvent[] {
   const until = rec.stoppedAt ?? now;
@@ -327,6 +392,8 @@ export function runAt(rec: DemoRunRecord, now: number): SpaceAgentRun {
   const status: AgentRunStatus = done ? "idle" : "running";
   return {
     ...rec.run,
+    turn: last?.turn ?? rec.run.turn,
+    needsYou: done && rec.asks ? rec.asks : null,
     status,
     reason: done ? "waiting for a follow-up" : "a turn is running",
     phase: done ? "waiting" : last?.kind === "message" ? "responding" : "tool",

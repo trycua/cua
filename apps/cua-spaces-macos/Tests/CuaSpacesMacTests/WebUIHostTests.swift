@@ -176,7 +176,7 @@ struct WebUIHostTests {
     @Test func theContractsOperationsAreRouted() {
         for m in ["spaces.cancelCreate", "host.status", "keyvault.approve", "keyvault.deny", "keyvault.revokeGrant",
                   "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
-                  "agents.setup", "agents.configure", "agents.signIn"] {
+                  "agents.setup", "agents.configure", "agents.signIn", "agents.start", "agents.message"] {
             #expect(WebUIBridge.methods.contains(m), "\(m)")
         }
     }
@@ -294,6 +294,10 @@ struct WebUIHostTests {
         #expect(await failure(bridge, "agents.setup", [:]) == "unsupported")
         #expect(await failure(bridge, "agents.runs", [:]) == "bad_args")
         #expect(await failure(bridge, "agents.pause", [:]) == "bad_args")
+        #expect(await failure(bridge, "agents.start", ["spaceId": "s", "agent": "claude-code", "prompt": "hi"]) == "unsupported")
+        #expect(await failure(bridge, "agents.start", ["spaceId": "s"]) == "bad_args")
+        #expect(await failure(bridge, "agents.message", ["spaceId": "s", "runId": "r", "text": "hi"]) == "unsupported")
+        #expect(await failure(bridge, "agents.message", ["spaceId": "s", "runId": "r"]) == "bad_args")
     }
 
     @Test func agentRunsAndSetupRowsAreTheCoresRecords() async throws {

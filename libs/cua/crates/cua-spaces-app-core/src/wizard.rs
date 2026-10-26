@@ -1155,7 +1155,11 @@ pub fn microvm_capable(image: &SandboxImage) -> bool {
 /// ready rows), in the order `auto` picks them: on a Mac cua's own monitor
 /// before Apple's Containerization. `None` while not checked.
 pub fn local_microvm_runtimes(env: &WizardEnv) -> Option<Vec<Runtime>> {
-    let ready = env.local_backends.as_ref()?;
+    microvm_runtimes_of(env.local_backends.as_deref())
+}
+
+fn microvm_runtimes_of(ready: Option<&[String]>) -> Option<Vec<Runtime>> {
+    let ready = ready?;
     Some(
         [Runtime::Vz, Runtime::Containerization, Runtime::Firecracker]
             .into_iter()
@@ -1213,18 +1217,39 @@ impl MicrovmBlock {
 /// monitor), Linux needs KVM and passt (Firecracker installs on first
 /// use), Windows has no microVMs.
 fn local_microvm_block(env: &WizardEnv, os: SpaceOs) -> MicrovmBlock {
-    if env.local_backends.is_none() {
+    let probe = LocalProbe {
+        backends: env.local_backends.as_deref(),
+        details: env.local_details.as_ref(),
+        host_arch: env.host_arch.as_deref(),
+    };
+    microvm_block_of(&probe, os)
+}
+
+/// What this machine's runtime doctor said: its ready backends, why the
+/// others are not, and its architecture.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct LocalProbe<'a> {
+    /// Ready backends (none: not read yet).
+    pub backends: Option<&'a [String]>,
+    /// Why each other backend is not ready.
+    pub details: Option<&'a std::collections::HashMap<String, String>>,
+    /// `arm64`, `amd64`.
+    pub host_arch: Option<&'a str>,
+}
+
+fn microvm_block_of(probe: &LocalProbe<'_>, os: SpaceOs) -> MicrovmBlock {
+    if probe.backends.is_none() {
         return MicrovmBlock::Checking;
     }
     let detail = |b: &str| {
-        env.local_details
-            .as_ref()
+        probe
+            .details
             .and_then(|d| d.get(b))
             .cloned()
             .unwrap_or_default()
     };
     MicrovmBlock::Why(match os {
-        SpaceOs::Macos if arch_word(env.host_arch.as_deref()) == Some("amd64") => {
+        SpaceOs::Macos if arch_word(probe.host_arch) == Some("amd64") => {
             "needs a Mac with Apple silicon".into()
         }
         SpaceOs::Macos if detail("containerization").contains("another install") => {
@@ -1320,14 +1345,39 @@ fn microvm_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> bool {
         && microvm_support(state, env, os).is_ok()
 }
 
-/// The kind's one plain line under Kind.
-fn kind_help(kind: SpaceKind, microvm_runtime: Option<&Runtime>) -> String {
-    match kind {
-        SpaceKind::Container => "A sandboxed Linux container. Starts fastest.".into(),
-        SpaceKind::Vm => "A full computer with its own kernel and disk.".into(),
-        SpaceKind::Microvm => match microvm_runtime {
-            Some(r) => format!("The container image with its own kernel, on {}.", r.label()),
-            None => "The container image with its own kernel.".into(),
+/// Whether this machine runs microVMs, for Settings, Advanced, Runtimes:
+/// New Space only greys MicroVM out, and the reason (or the runtime it
+/// uses) is told here, where the runtimes are.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MicrovmStatus {
+    /// This machine's runtimes are not read yet.
+    Checking,
+    /// Ready, on these runtimes (in the order `auto` picks them).
+    Ready(Vec<Runtime>),
+    /// Why not, as a sentence ("Needs macOS 26.").
+    Blocked(String),
+}
+
+/// [`MicrovmStatus`] of this machine (`os` is its system), from its
+/// runtime doctor.
+pub fn local_microvm_status(env: &WizardEnv, os: SpaceOs) -> MicrovmStatus {
+    microvm_status_of(
+        &LocalProbe {
+            backends: env.local_backends.as_deref(),
+            details: env.local_details.as_ref(),
+            host_arch: env.host_arch.as_deref(),
+        },
+        os,
+    )
+}
+
+/// [`local_microvm_status`] from the doctor's own answer.
+pub fn microvm_status_of(probe: &LocalProbe<'_>, os: SpaceOs) -> MicrovmStatus {
+    match microvm_runtimes_of(probe.backends) {
+        Some(r) if !r.is_empty() => MicrovmStatus::Ready(r),
+        _ => match microvm_block_of(probe, os) {
+            MicrovmBlock::Checking => MicrovmStatus::Checking,
+            b => MicrovmStatus::Blocked(b.detail()),
         },
     }
 }
@@ -2831,10 +2881,6 @@ pub struct WizardView {
     pub advanced: bool,
     /// Kind tiles: Container, Virtual machine, MicroVM.
     pub kind_tiles: Vec<Tile>,
-    /// One plain line under Kind: what the chosen kind is (and why MicroVM
-    /// is greyed out, when it is).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub kind_help: Option<String>,
     /// Runtime menu.
     pub runtimes: Vec<MenuOption>,
     /// Effective runtime.
@@ -3752,15 +3798,12 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
             }
         })
         .collect();
-    // MicroVM where the machine can boot one, else greyed out with why.
+    // MicroVM where the machine can boot one, else greyed out. Why not is
+    // Settings' (Advanced, Runtimes: `local_microvm_status`), not New Space's.
     kind_tiles.push(Tile {
         id: SpaceKind::Microvm.as_str().into(),
         title: SpaceKind::Microvm.label().into(),
-        detail: micro
-            .as_ref()
-            .err()
-            .map(MicrovmBlock::detail)
-            .unwrap_or_default(),
+        detail: String::new(),
         pressed: microvm,
         enabled: micro.is_ok(),
     });
@@ -3772,16 +3815,6 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
         Location::Local => engines.get(1).cloned(),
         Location::Host => host.and_then(host_microvm_runtime),
         _ => None,
-    };
-    let kind_help = {
-        let line = kind_help(kind, microvm_runtime.as_ref());
-        // Why MicroVM is greyed out, when the image could be one.
-        match &micro {
-            Err(MicrovmBlock::Why(why)) if microvm_capable(&container_of(state)) => {
-                Some(format!("{line} MicroVM {why}."))
-            }
-            _ => Some(line),
-        }
     };
     let engine_text = match placement {
         Location::Local => match &image.local {
@@ -4034,7 +4067,6 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
         runtime_switch,
         advanced: state.advanced,
         kind_tiles,
-        kind_help,
         runtimes: engines
             .iter()
             .map(|r| MenuOption {
@@ -6040,10 +6072,6 @@ mod tests {
             (t.title.as_str(), t.enabled, t.pressed),
             ("MicroVM", true, false)
         );
-        assert_eq!(
-            v.kind_help.as_deref(),
-            Some("A sandboxed Linux container. Starts fastest.")
-        );
 
         let s = reduce(
             &s,
@@ -6059,10 +6087,6 @@ mod tests {
             v.image.variant,
             SpaceKind::Container,
             "it boots the container image"
-        );
-        assert_eq!(
-            v.kind_help.as_deref(),
-            Some("The container image with its own kernel, on Apple Containerization.")
         );
         let args = create_args(&v.plan);
         assert_eq!(args.kind, SpaceKind::Microvm);
@@ -6127,9 +6151,10 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["auto", "vz", "containerization"]
         );
+        // Settings, Advanced, Runtimes says which runtimes run them.
         assert_eq!(
-            v.kind_help.as_deref(),
-            Some("The container image with its own kernel, on Virtualization.framework.")
+            local_microvm_status(&e, SpaceOs::Macos),
+            MicrovmStatus::Ready(vec![Runtime::Vz, Runtime::Containerization])
         );
         let s = reduce(
             &s,
@@ -6154,16 +6179,17 @@ mod tests {
         );
         let v = view_on(&s, &linux, SpaceOs::Linux);
         assert_eq!(
-            v.kind_help.as_deref(),
-            Some("The container image with its own kernel, on Firecracker.")
+            local_microvm_status(&linux, SpaceOs::Linux),
+            MicrovmStatus::Ready(vec![Runtime::Firecracker])
         );
         assert_eq!(create_args(&v.plan).kind, SpaceKind::Microvm);
     }
 
-    /// Where no microVM runtime is ready, MicroVM is greyed out with why in
-    /// one line, and choosing it does nothing.
+    /// Where no microVM runtime is ready, MicroVM is greyed out with no
+    /// words in New Space (Settings, Advanced, Runtimes says why), and
+    /// choosing it does nothing.
     #[test]
-    fn microvm_is_greyed_out_with_why() {
+    fn microvm_is_greyed_out_and_settings_says_why() {
         let cases: [(WizardEnv, SpaceOs, &str); 7] = [
             // A Mac before macOS 26 without cua's monitor.
             (
@@ -6238,7 +6264,16 @@ mod tests {
             let v = view_on(&s, &e, os);
             let t = microvm_tile(&v);
             assert!(!t.enabled, "{why}");
-            assert_eq!(t.detail, why);
+            // New Space only greys it out; Settings, Advanced, Runtimes says why.
+            assert_eq!(t.detail, "", "{why}");
+            assert_eq!(
+                local_microvm_status(&e, os),
+                if why == OFFER_NOT_CHECKED {
+                    MicrovmStatus::Checking
+                } else {
+                    MicrovmStatus::Blocked(why.to_string())
+                },
+            );
             let chosen = reduce(
                 &s,
                 &WizardAction::ChooseKind {
@@ -6252,12 +6287,6 @@ mod tests {
                 SpaceKind::Container
             );
         }
-        // The line under Kind says why, once.
-        let e = mac_env(&["docker", "lume"], &[]);
-        assert_eq!(
-            view(&initial(&e), &e).kind_help.as_deref(),
-            Some("A sandboxed Linux container. Starts fastest. MicroVM needs macOS 26.")
-        );
         // A macOS image is never a microVM.
         let e = mac_env(&["docker", "lume", "vz"], &[]);
         let s = reduce(
@@ -6266,11 +6295,8 @@ mod tests {
             &e,
         );
         let v = view(&s, &e);
-        assert_eq!(microvm_tile(&v).detail, "Runs Linux images only.");
-        assert_eq!(
-            v.kind_help.as_deref(),
-            Some("A full computer with its own kernel and disk.")
-        );
+        assert!(!microvm_tile(&v).enabled);
+        assert_eq!(microvm_tile(&v).detail, "");
     }
 
     /// On one of your machines, MicroVM follows the kinds it reports.
@@ -6316,12 +6342,9 @@ mod tests {
             (args.on.as_str(), args.kind),
             ("host:box", SpaceKind::Microvm)
         );
-        assert_eq!(
-            v.kind_help.as_deref(),
-            Some("The container image with its own kernel, on Firecracker.")
-        );
         let v = view(&on("mini"), &e);
-        assert_eq!(microvm_tile(&v).detail, "Needs macOS 26 on Mac mini.");
+        assert!(!microvm_tile(&v).enabled);
+        assert_eq!(microvm_tile(&v).detail, "");
         // Moving to a machine without microVMs makes it a container.
         let moved = reduce(
             &s,

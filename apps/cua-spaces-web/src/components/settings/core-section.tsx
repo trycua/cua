@@ -167,7 +167,7 @@ export function CoreSettingsRow({
     default:
       return (
         <Line {...attrs} title={row.help ?? undefined} className={cn(!row.enabled && !row.button && "opacity-50")}>
-          <Label label={row.label} />
+          <Label label={row.label} description={description} />
           <div className="flex min-w-0 items-center gap-2">
             {row.value ? (
               <span data-row-value className="truncate text-[13px] text-muted-foreground">

@@ -15,6 +15,24 @@ pub struct RetainedElement {
     pub read_while_minimized: bool,
 }
 
+#[cfg(test)]
+impl RetainedElement {
+    pub(crate) fn detached(
+        kind: SnapshotKind,
+        center: (i32, i32),
+        read_while_minimized: bool,
+    ) -> Self {
+        Self {
+            ptr: 0,
+            kind,
+            center,
+            rect: None,
+            msaa_role: None,
+            read_while_minimized,
+        }
+    }
+}
+
 impl RetainedElement {
     pub fn as_ptr(&self) -> usize {
         self.ptr

@@ -9,6 +9,8 @@ import { BridgeContext } from "./BridgeProvider";
 import type { CoreClient } from "./core";
 import type { CloudConnectWire, CloudSheetAction, CloudSheetView, CloudTarget, RuntimeFix, RuntimeSwitch, WizardAction, WizardEnv, WizardView } from "./contracts/new-space";
 import type { Space, SpaceOs } from "./contracts/spaces";
+import type { SettingsPage, SettingsRow } from "./contracts/host";
+import { hostOs } from "./host-os";
 import { useMachines, useSettings, useSpaces } from "./hooks";
 import { newPendingId } from "./store";
 import {
@@ -428,4 +430,25 @@ export function useRuntimeFix(): RuntimeFixHook {
       }
     },
   };
+}
+
+/**
+ * Settings, Advanced, Runtimes' MicroVM row (`settings::microvm_rows`):
+ * whether this computer runs microVMs and on what, or why not, from the
+ * same runtime doctor New Space's MicroVM tile follows. New Space only
+ * greys MicroVM out; the reason is told here. Empty until the host's
+ * options are in (asked for here when not yet).
+ */
+export function useMicrovmRows(): SettingsRow[] {
+  const ctx = useContext(BridgeContext)!;
+  const { core, env, s } = useNewSpaceEnv();
+  const needsOptions = optionsPending(s.options);
+  useEffect(() => {
+    if (needsOptions && core.status === "ready") void ctx.ready.then(loadHostData);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [needsOptions, core.status, ctx.ready]);
+  if (!s.options || core.status !== "ready") return [];
+  const microvm = { os: hostOs(), localBackends: env.localBackends ?? null, localDetails: env.localDetails ?? null, hostArch: env.hostArch ?? null };
+  const page = core.tryCall<SettingsPage>("settings.page", { input: { microvm } });
+  return page?.sections.find((x) => x.id === "runtimes")?.rows.filter((r) => r.id.startsWith("microvm-")) ?? [];
 }

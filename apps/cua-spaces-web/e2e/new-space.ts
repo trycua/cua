@@ -116,10 +116,8 @@ async function checkWizard(page: Page, state: WizardState, v: WizardView, menuCh
     if (field("os")) await expectTiles(root, "os", v.osTiles);
     if (field("kind")) {
       await expectTiles(root, "kind", v.kindTiles);
-      // What the chosen kind is (and why MicroVM is greyed out), in one line.
-      const help = root.locator("[data-kind-help]");
-      if (v.kindHelp) await expect(help).toHaveText(v.kindHelp);
-      else await expect(help).toHaveCount(0);
+      // No line under Kind: why MicroVM is greyed out is Settings, Advanced's.
+      await expect(root.locator("[data-kind-help]")).toHaveCount(0);
     }
     if (field("image")) {
       const input = root.locator("[data-image-input]");

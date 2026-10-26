@@ -1808,7 +1808,11 @@ public final class AppModel {
             keyvaultUnlockPrompt: keyvault.unlockPromptShows,
             keyvaultSiteIcons: settings.keyvaultSiteIcons, keyvaultProtection: keyvault.page.protection,
             autoConnect: settings.autoConnect, lumeSource: lumeSource, linuxSource: linuxSource,
-            overflow: placementOverflow, showTips: !settings.tips.off))
+            overflow: placementOverflow,
+            // Runtimes' MicroVM row: the runtime doctor New Space's MicroVM tile follows.
+            microvm: AppMicrovmInput(os: .macos, localBackends: wizard.env.localBackends,
+                                     localDetails: wizard.env.localDetails, hostArch: wizard.env.hostArch),
+            showTips: !settings.tips.off))
     }
 
     /// Teams for Settings: the account's organizations with their people

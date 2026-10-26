@@ -13,7 +13,7 @@
 #
 # How it is satisfied: the tag run sends a cua-release-candidate dispatch to
 # trycua/cloud (request_staging_smoke.sh), which runs the staging smoke and
-# posts the status; this gate waits for it (WAIT_MINUTES, 30 in the CD jobs).
+# posts the status; this gate waits for it (WAIT_MINUTES: 30 in most CD jobs, 120 in cd-cua-spaces).
 # By hand, for a rerun or when the dispatch could not be sent:
 #   gh workflow run spaces-staging-smoke.yml -R trycua/cloud -f component=<c> -f sha=<tag sha>
 # or, after the release PR merges and the tag exists:

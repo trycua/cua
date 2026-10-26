@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { setFlagOverride, useAbout, useBridge, useExperiments, useFlag, useMachines, useSession, useSettings, useThisMachine, type SettingsOption, type SettingsRow as CoreRow } from "@/bridge";
+import { setFlagOverride, useAbout, useBridge, useExperiments, useFlag, useMachines, useMicrovmRows, useSession, useSettings, useThisMachine, type SettingsOption, type SettingsRow as CoreRow } from "@/bridge";
 import { aboutView } from "@/bridge/settings-derive";
 import { SettingsGroup } from "@/components/settings-group";
 import { SettingRow } from "@/components/ui/grouped";
@@ -41,15 +41,24 @@ export function AdvancedTab() {
   const runtimes = page?.sections.find((s) => s.id === "runtimes");
   const autoConnect = general?.rows.find((r) => r.id === "auto-connect");
   const overflow = general?.rows.find((r) => r.id === "placement-overflow");
+  // Whether this computer runs microVMs, and why not (New Space only greys MicroVM out).
+  const microvm = useMicrovmRows();
+  const microvmStatus = microvm.find((r) => r.id === "microvm-runtime");
+  const microvmNote = microvm.find((r) => r.id === "microvm-runtime-note");
   const choose = (row: CoreRow, option: string) => void chooseSetting(row.id, option).catch(toastError(`Couldn't change ${row.label}`));
 
   return (
     <div data-settings-tab="advanced">
       <EarlyReleases />
       <Labs />
-      {runtimes || autoConnect || overflow ? (
+      {runtimes || autoConnect || overflow || microvmStatus ? (
         <SettingsGroup title="Which software runs Spaces on this Mac">
           {runtimes?.rows.filter((r) => r.kind === "choice").map((r) => <CoreSettingsRow key={r.id} row={runtimeRow(r)} asSelect onChoose={choose} />)}
+          {microvmStatus ? (
+            <div data-microvm-runtime="" data-microvm-problem={microvmNote?.kind === "error" || undefined}>
+              <CoreSettingsRow row={{ ...microvmStatus, label: "MicroVMs" }} description={microvmNote?.label} />
+            </div>
+          ) : null}
           {autoConnect ? <CoreSettingsRow row={{ ...autoConnect, label: "Open a Space’s screen right away" }} onChoose={choose} /> : null}
           {overflow ? (
             <CoreSettingsRow

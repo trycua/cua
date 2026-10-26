@@ -586,6 +586,7 @@ const WizardEnvShape = ref(
     localAvailable: bool,
     localReason: optNull(str),
     localBackends: optNull(strings),
+    localDetails: optNull(dict(str)),
     maxCpus: num,
     hostArch: optNull(str),
     storage: optNull(LocalStorageShape),

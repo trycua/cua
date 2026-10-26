@@ -383,16 +383,7 @@ function SystemRow({ field: f, v }: { field: WizardField; v: WizardView }) {
         <Row
           id="kind"
           label={f.label}
-          below={
-            <>
-              {error}
-              {v.kindHelp ? (
-                <p data-kind-help="" className="mt-1 text-xs text-muted-foreground">
-                  {v.kindHelp}
-                </p>
-              ) : null}
-            </>
-          }
+          below={error}
         >
           <Tiles id="kind" label={f.label} tiles={v.kindTiles} onPick={(kind) => send({ type: "choose-kind", kind })} />
         </Row>

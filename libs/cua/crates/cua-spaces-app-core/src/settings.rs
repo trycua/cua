@@ -30,6 +30,11 @@ pub enum SwitcherTheme {
     Glass,
 }
 
+fn location_or_local<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Location, D::Error> {
+    let word = String::deserialize(d)?;
+    Ok(serde_json::from_value(serde_json::Value::String(word)).unwrap_or(Location::Local))
+}
+
 /// Settings.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -40,7 +45,10 @@ pub struct AppSettings {
     pub menu_bar: bool,
     /// Switcher theme.
     pub theme: SwitcherTheme,
-    /// Where New Space starts.
+    /// Where New Space starts. A word this build does not know (the
+    /// retired `cloud`) reads as this Mac, so an old file keeps its other
+    /// settings.
+    #[serde(deserialize_with = "location_or_local")]
     pub default_location: Location,
     /// Hide the notch over full-screen apps.
     pub hide_in_full_screen: bool,
@@ -137,9 +145,15 @@ fn migrations_path(path: &Path) -> std::path::PathBuf {
     path.with_file_name("settings-migrations.json")
 }
 
-/// Defaults that turned on after releases saved them as off. Each one has a
-/// key in the migration marker.
-const MIGRATIONS: [&str; 2] = ["sharingDefaultOn", "yourCloudDefaultOn"];
+/// Defaults that turned on after releases saved them as off, and switches
+/// that were retired (Settings, Advanced no longer has a Sharing or a Your
+/// cloud switch). Each one has a key in the migration marker.
+const MIGRATIONS: [&str; 4] = [
+    "sharingDefaultOn",
+    "yourCloudDefaultOn",
+    "sharingSwitchRetired",
+    "yourCloudSwitchRetired",
+];
 
 /// Sharing became on by default in 0.9.1 (CUA-1668) and Your cloud later
 /// (a linked cloud showed under Run on only after digging into Settings).
@@ -160,8 +174,13 @@ fn migrate_defaults(path: &Path, s: &mut AppSettings) {
     if !MIGRATIONS.iter().any(|k| pending(k)) {
         return;
     }
-    let turn_sharing_on = pending(MIGRATIONS[0]) && !s.experiments.sharing;
-    let turn_cloud_on = pending(MIGRATIONS[1]) && !s.experiments.your_cloud;
+    // The retired switches: with no switch to turn them back on, a stored
+    // `false` (a choice nobody can make or undo any more) reads as on, once.
+    // The plan decides who can share or use a cloud, on the server.
+    let turn_sharing_on =
+        (pending(MIGRATIONS[0]) || pending(MIGRATIONS[2])) && !s.experiments.sharing;
+    let turn_cloud_on =
+        (pending(MIGRATIONS[1]) || pending(MIGRATIONS[3])) && !s.experiments.your_cloud;
     if turn_sharing_on || turn_cloud_on {
         s.experiments.sharing |= turn_sharing_on;
         s.experiments.your_cloud |= turn_cloud_on;
@@ -360,7 +379,7 @@ pub struct TelemetryInput {
 pub struct SettingsInput {
     /// The signed-in account.
     pub identity: Option<String>,
-    /// Cua Cloud through client credentials (an API key): its client id.
+    /// The Cua account through client credentials (an API key): its client id.
     pub api_key_client: Option<String>,
     /// The sign-in in progress.
     pub sign_in: SignInPhase,
@@ -369,10 +388,6 @@ pub struct SettingsInput {
     /// The Spaces tab is hidden from the notch (the menu bar item is the
     /// entry point).
     pub menu_bar: bool,
-    /// Where New Space starts.
-    pub default_location: Location,
-    /// The environment sets the default location: which variable.
-    pub location_locked_by: Option<String>,
     /// The telemetry switch (none until read).
     pub telemetry: Option<TelemetryInput>,
     /// Coding agents (none while detecting).
@@ -386,8 +401,6 @@ pub struct SettingsInput {
     /// app's links only.
     #[serde(default)]
     pub teams: Option<crate::teams::TeamsInput>,
-    /// The account's Cua Cloud billing, once read (signed in).
-    pub billing: Option<crate::billing::BillingStatus>,
     /// Launch at login, once the system was asked (none: no rows).
     pub login_item: Option<crate::login_item::LoginItemInput>,
     /// Settings, Experiments (what the page mentions follows them).
@@ -431,14 +444,11 @@ impl Default for SettingsInput {
             sign_in: SignInPhase::Idle,
             can_sign_out: false,
             menu_bar: false,
-            default_location: Location::Local,
-            location_locked_by: None,
             telemetry: None,
             agents: None,
             agents_busy: false,
             agents_pending: vec![],
             teams: None,
-            billing: None,
             login_item: None,
             experiments: Experiments::default(),
             keyvault_auto_wipe: None,
@@ -718,21 +728,6 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
             r.button = Some("Sign out".into());
         }
         account.push(r);
-        // Billing: the credit left, and the website's billing page (the
-        // apps take no payment details). Row id `billing`; the button
-        // opens `link_url`. Not shown while the apps do not offer Cua Cloud.
-        if let Some(b) = input
-            .billing
-            .as_ref()
-            .filter(|b| b.billing_enabled && crate::billing::BILLING_SHOWN)
-        {
-            let mut r = row("billing", Text, "Billing");
-            r.value = Some(crate::billing::billing_line(b));
-            r.button = Some(crate::billing::MANAGE_BILLING.into());
-            r.link_url = Some(crate::billing::BILLING_URL.into());
-            r.enabled = true;
-            account.push(r);
-        }
     } else if let SignInPhase::Waiting { user_code, .. } = &input.sign_in {
         let mut r = row(
             "sign-in-code",
@@ -784,27 +779,6 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
     }
     if let Some(on) = input.overflow {
         general.push(overflow_row(on));
-    }
-    // Where New Space starts: only a choice while the apps offer Cua Cloud.
-    if crate::model::CLOUD_SPACES_OFFERED {
-        let mut location = row("default-location", Choice, "New Spaces run on");
-        location.options = vec![
-            opt(
-                "local",
-                Location::Local.label(),
-                input.default_location == Location::Local,
-            ),
-            opt(
-                "cloud",
-                Location::Cloud.label(),
-                input.default_location == Location::Cloud,
-            ),
-        ];
-        if let Some(var) = input.location_locked_by.clone().filter(|v| !v.is_empty()) {
-            location.enabled = false;
-            location.help = Some(format!("Set by {var}"));
-        }
-        general.push(location);
     }
     let mut welcome = row("welcome", Text, "Welcome");
     welcome.button = Some("Show again".into());
@@ -1101,7 +1075,7 @@ mod tests {
         let path = dir.join("settings.json");
         let s = AppSettings {
             menu_bar: true,
-            default_location: Location::Cloud,
+            default_location: Location::Yours,
             last_seen_version: Some("0.2.0 (0.2.0.1)".into()),
             update_channel: UpdateChannel::Beta,
             launch_at_login: Some(false),
@@ -1116,6 +1090,11 @@ mod tests {
         assert_eq!(old.last_seen_version, None);
         assert_eq!(old.update_channel, UpdateChannel::Stable);
         assert_eq!(old.launch_at_login, None, "never chosen");
+        // The retired `cloud` default reads as this Mac; the rest is kept.
+        std::fs::write(&path, r#"{"menuBar":true,"defaultLocation":"cloud"}"#).unwrap();
+        let retired = load(&path);
+        assert!(retired.menu_bar);
+        assert_eq!(retired.default_location, Location::Local);
         std::fs::write(&path, "{nope").unwrap();
         assert_eq!(load(&path), AppSettings::default());
         let _ = std::fs::remove_dir_all(dir);
@@ -1560,7 +1539,7 @@ mod tests {
         std::fs::write(&path, r#"{"experiments":{"cuaVolume":true}}"#).unwrap();
         std::fs::write(
             path.with_file_name("settings-migrations.json"),
-            r#"{"sharingDefaultOn":true}"#,
+            r#"{"sharingDefaultOn":true,"sharingSwitchRetired":true}"#,
         )
         .unwrap();
         assert!(load(&path).experiments.your_cloud, "never set reads as on");
@@ -1572,7 +1551,7 @@ mod tests {
         std::fs::remove_file(path.with_file_name("settings-migrations.json")).unwrap();
         std::fs::write(
             path.with_file_name("settings-migrations.json"),
-            r#"{"sharingDefaultOn":true}"#,
+            r#"{"sharingDefaultOn":true,"sharingSwitchRetired":true}"#,
         )
         .unwrap();
         let s = load(&path);
@@ -1587,6 +1566,41 @@ mod tests {
         )
         .unwrap();
         assert!(!load(&path).experiments.your_cloud);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_retired_sharing_and_cloud_switches_turn_a_stored_off_on_once() {
+        // Both default-on migrations already ran; the switches were still
+        // there, and someone turned both off.
+        let (dir, path) = temp_settings("retired");
+        std::fs::write(
+            &path,
+            r#"{"experiments":{"cuaVolume":true,"sharing":false,"yourCloud":false},"menuBar":true}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            path.with_file_name("settings-migrations.json"),
+            r#"{"sharingDefaultOn":true,"yourCloudDefaultOn":true}"#,
+        )
+        .unwrap();
+        let s = load(&path);
+        assert!(s.experiments.sharing && s.experiments.your_cloud);
+        // Everything else the person set is kept.
+        assert!(s.experiments.cua_volume && s.menu_bar);
+        let raw: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(raw["experiments"]["sharing"], true);
+        assert_eq!(raw["menuBar"], true);
+        // It runs once: the markers say so, and a later load changes nothing.
+        let marks: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(path.with_file_name("settings-migrations.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(marks["sharingSwitchRetired"], true);
+        assert_eq!(marks["yourCloudSwitchRetired"], true);
+        let again = load(&path);
+        assert_eq!(again.experiments, s.experiments);
         let _ = std::fs::remove_dir_all(dir);
     }
 }

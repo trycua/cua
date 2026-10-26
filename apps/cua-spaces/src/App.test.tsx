@@ -141,7 +141,6 @@ describe("New Space opens a window, never a notch panel", () => {
     await user.click(screen.getByRole("button", { name: /2 Spaces/ }));
     await user.keyboard("{Control>}n{/Control}");
     expect(spacesList.openNewSpace).toHaveBeenCalledTimes(1);
-    expect(screen.queryByRole("heading", { name: "New Fleet" })).toBeNull();
     expect(screen.queryByRole("dialog", { name: "New Space" })).toBeNull();
     expect(await screen.findByRole("button", { name: /2 Spaces/ })).toBeInTheDocument();
   });

@@ -179,36 +179,22 @@ struct SpaceDetailView: View {
     }
 
     @ViewBuilder private func preview(_ detail: AppSpaceDetail) -> some View {
-        if let notice = detail.creditNotice, !detail.canStream {
+        StreamPhaseReader(session: detail.canStream ? session : nil) { phase in
+            let cover = model.cover(detail, requested: connectRequested, stream: session == nil ? providerPhase : phase)
             ZStack {
-                Rectangle().fill(.quaternary)
-                // Out of Cua Cloud credit: one line and Add credit (the
-                // website billing page). Local Spaces never see this.
-                HStack(spacing: 12) {
-                    Text(notice.text).foregroundStyle(.secondary)
-                    Button(notice.button) { model.openBillingPage(notice.url) }
-                        .buttonStyle(.borderedProminent)
-                        .accessibilityIdentifier("add-credit")
+                if let session, detail.canStream {
+                    SpaceScreenView(session: session, isInteractive: true, showsControls: false)
+                }
+                if cover.kind != .stream {
+                    DesktopCoverView(cover: cover, image: model.thumbnails[space.id],
+                                     progress: detail.progress, progressText: detail.progressText,
+                                     onAction: { model.devices.startEnroll(in: .main) }) {
+                        press(cover)
+                    }
+                    .transition(.opacity)
                 }
             }
-        } else {
-            StreamPhaseReader(session: detail.canStream ? session : nil) { phase in
-                let cover = model.cover(detail, requested: connectRequested, stream: session == nil ? providerPhase : phase)
-                ZStack {
-                    if let session, detail.canStream {
-                        SpaceScreenView(session: session, isInteractive: true, showsControls: false)
-                    }
-                    if cover.kind != .stream {
-                        DesktopCoverView(cover: cover, image: model.thumbnails[space.id],
-                                         progress: detail.progress, progressText: detail.progressText,
-                                         onAction: { model.devices.startEnroll(in: .main) }) {
-                            press(cover)
-                        }
-                        .transition(.opacity)
-                    }
-                }
-                .animation(.easeOut(duration: 0.25), value: cover.kind)
-            }
+            .animation(.easeOut(duration: 0.25), value: cover.kind)
         }
     }
 

@@ -20,7 +20,7 @@ import type {
 import { NO_EXPERIMENTS, type Experiments } from "./contracts/volume";
 import type { KvGrant, KvListView, KvSelection, VaultAction } from "./contracts/keyvault";
 import type { KvAccessCommand } from "./ops/keyvault-manage";
-import type { Space } from "./contracts/spaces";
+import { LIST_COMPLETE, type ListStatus, type Space } from "./contracts/spaces";
 import { hostSetupGuide, type HostSetupGuide, type Machine } from "./derive";
 import {
   firstSpaceImages,
@@ -145,13 +145,24 @@ export interface SpacesHook extends Resource<Space[]> {
   /** The host's last registry read failed: why the rows may be out of date
    * (the SwiftUI app's `rosterError`). Null when it worked. */
   listNotice: string | null;
+  /** How far the list got: while some of the account's computers have not
+   * answered (or nothing was read yet) it is not "no Spaces" (`listView`). */
+  listStatus: ListStatus;
   /** The host's standing notice (another app keeps its own daemon). Null when none. */
   hostNotice: string | null;
 }
 
+/** Nothing read yet (no store). */
+const NOT_LOADED: ListStatus = { ...LIST_COMPLETE, loaded: false };
+
 export function useSpaces(): SpacesHook {
   const ctx = useBridgeContext();
   const r = useResource<Space[]>("spaces");
+  // Read through the store's subscription, not off `ctx.store` in render: the compiler keeps a property read
+  // of an unchanged object from an earlier render, and the page would keep "not read yet" forever.
+  const store = ctx.store;
+  const listStatus = useSyncExternalStore(store ? store.subscribe : noopSubscribe, () => store?.listStatus ?? NOT_LOADED, () => NOT_LOADED);
+  const listNotice = useSyncExternalStore(store ? store.subscribe : noopSubscribe, () => store?.listNotice ?? null, () => null);
   const run = useAction();
   return {
     ...r,
@@ -167,7 +178,8 @@ export function useSpaces(): SpacesHook {
     deleteSpace: (id, removeOnly) => run((s) => s.deleteSpace(id, removeOnly)),
     openSpace: (id) => run((s) => s.openSpace(id)),
     createdId: (id) => ctx.store?.createdId(id),
-    listNotice: ctx.store?.listNotice ?? null,
+    listNotice,
+    listStatus,
     hostNotice: ctx.store?.hostNotice ?? null,
   };
 }
@@ -451,7 +463,7 @@ export function useOnboarding(): OnboardingHook {
   const saved = useSavedOnboarding();
   const [hints, setHints] = useState<{ permissions: PermissionHint[]; configured: boolean } | null>(null);
 
-  const identity = session?.signedIn ? (session.fleet.identity ?? null) : null;
+  const identity = session?.signedIn ? (session.account.identity ?? null) : null;
   const ctx = { menuBar: settings?.values.menuBar ?? false, observe: store ? store.trackOnboarding.bind(store) : undefined };
   const state = saved.state;
 

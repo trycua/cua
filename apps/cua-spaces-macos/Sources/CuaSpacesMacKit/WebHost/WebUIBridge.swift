@@ -44,8 +44,8 @@ public struct WebUIActions {
 /// shows. `spaces.createProgress` carries a create's progress (the page's
 /// pending id), and `spaces.newRequested` (`{on}`) asks the page to open
 /// its New Space wizard (the app's New Space menu items, the notch).
-/// `settings.openRequested` asks the page to open its Settings (the app
-/// menu's Settings command, ⌘,, while the New UI window is in front).
+/// `settings.openRequested` asks the page to open its Settings (⌘, and every
+/// other Settings item, while the window is open; there is no native one).
 /// `window.dropTarget` (`{spaceId}`, null for none) names the Space tile a
 /// real window is being dragged over (`window.setDropTargets` said where the
 /// tiles are; the notch's drag monitor follows the drag).
@@ -481,6 +481,13 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             "rosterError": model.rosterError ?? NSNull(),
             // Another app keeps its own daemon and this app uses it (null otherwise).
             "daemonNotice": model.daemonNotice ?? NSNull(),
+            // Some of your computers have not answered yet (`Spaces.list_known`):
+            // the page shows what is known and "Reaching N computers…", never
+            // "Create your first Space".
+            "incomplete": model.listIncomplete,
+            "reaching": Int(model.listReaching),
+            // Your other computers' rows are the last known ones, not yet confirmed.
+            "stale": model.listStale,
         ]
     }
 
@@ -546,7 +553,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         host?.emit("spaces.newRequested", payload: ["on": on.map { $0 as Any } ?? NSNull()])
     }
 
-    // MARK: - Settings (the app menu's command while this window is in front)
+    // MARK: - Settings (⌘, and the other Settings items while this window is open)
 
     /// Asks the page to go to its Settings; queued until the page listens.
     func requestSettings() {
@@ -571,9 +578,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
 
     /// `spaces.createOptions`: the env the native New Space sheet opens
     /// with (`AppModel.newSpaceEnv`: this Mac's runtimes, storage and GPUs,
-    /// your machines that provide Spaces, your clouds, pricing), which the
+    /// your machines that provide Spaces, your clouds), which the
     /// page's wizard runs on as it is, in the shape of the web bridge's
-    /// `NewSpaceOptions` (`local`, `gpus` and `cloudPricing` from the same
+    /// `NewSpaceOptions` (`local` and `gpus` from the same
     /// env, for readers that don't take `env`), and the macOS VMs running
     /// on this Mac (`macosVmsRunning`: Apple's limit of two counts every
     /// one, Spaces or not).
@@ -601,7 +608,6 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
                 "storage": BridgeValue.encode(env.storage),
             ] as [String: Any],
             "gpus": BridgeValue.encode(env.gpus),
-            "cloudPricing": BridgeValue.encode(env.cloudPricing),
             "experiments": BridgeValue.encode(env.experiments),
             "maxCpus": NSNumber(value: env.maxCpus),
             "env": BridgeValue.encode(env),
@@ -675,8 +681,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         case "runc": runtime = .runc
         case "qemu": runtime = .qemu
         case "lume": runtime = .lume
-        case "kubevirt": runtime = .kubevirt
-        default: throw Failure.badArgs("config.runtime: auto | gvisor | runc | qemu | lume | kubevirt")
+        default: throw Failure.badArgs("config.runtime: auto | gvisor | runc | qemu | lume")
         }
         func count(_ key: String) -> UInt32? { (c[key] as? NSNumber).map { $0.uint32Value } }
         let text = { (key: String) in (c[key] as? String).flatMap { $0.isEmpty ? nil : $0 } }
@@ -1044,7 +1049,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
     func startEvents() {
         followStartup()
         follow("spaces.changed") { [weak self, model] in
-            _ = (model.spaces, model.selectedSpaceId, model.loaded, model.rosterError, model.daemonNotice)
+            _ = (model.spaces, model.selectedSpaceId, model.loaded, model.rosterError, model.daemonNotice,
+                 model.listIncomplete, model.listReaching, model.listStale)
             self?.pruneStreams()
         }
         follow("keyvault.changed") { [model] in _ = (model.keyvault.overview, model.keyvault.busy, model.keyvault.dismissed) }

@@ -111,7 +111,6 @@ public enum AppEnvironment {
         let model = AppModel(backend: backend, keyvault: keyvault, onboarding: onboarding,
                              settingsPath: settingsPath,
                              host: host, account: account, telemetry: telemetry, agentSetup: agents,
-                             billing: fixtures ? FixtureBilling() : PendingBilling(gate: gate),
                              devices: devices,
                              presence: fixtures ? FixturePresence() : LivePresence(),
                              loginItem: fixtures ? fixtureLoginItem(env["CUA_SPACES_LOGIN_ITEM"]) : MainAppLoginItem(),
@@ -193,7 +192,7 @@ public enum AppEnvironment {
             return LiveServices(
                 backend: live, live: live, account: LiveAccount(auth: auth),
                 agentSetup: LiveAgentSetup(inner: live.cua.agentSetup(), cuaBinary: bundledCuaPath),
-                billing: LiveBilling(cua: live.cua), devices: LiveDevices.make(auth: auth),
+                devices: LiveDevices.make(auth: auth),
                 host: CuaSDK.Host(cuaHome: nil), daemonError: daemonError)
         } catch {
             // Say so: an empty list (and an empty notch) would look like
@@ -416,9 +415,7 @@ public enum AppEnvironment {
 
     /// `CUA_SPACES_START_VIEW`: `new-space`, `new-space-picker`, `new-space-resources`, `keyvault`, `keyvault-waiting`,
     /// `approval`, `onboarding` (the first run, in the New UI window), `this-machine`, `host-setup`,
-    /// `host-configured`, `settings`, `settings-devices` (Settings on its
-    /// Devices tab), `settings-about` (on its About tab), `settings-experiments`
-    /// (on its Experiments tab), `device-approval` (the approval sheet for the first
+    /// `host-configured`, `settings` (the app menu's ⌘, item), `device-approval` (the approval sheet for the first
     /// device asking; `CUA_SPACES_APPROVE_CODE` types its code),
     /// `device-enroll` (the enroll sheet), `device-enroll-code` (it, having
     /// chosen Approve from another device), `space`, `space-window` (the selected
@@ -477,8 +474,7 @@ public enum AppEnvironment {
                 await model.openNativeNewSpace()
                 let w = model.wizard
                 if let image = env["CUA_SPACES_WIZARD_IMAGE"] { w.send(.chooseImage(imageRef: image)) }
-                w.send(.setPlacement(placement: env["CUA_SPACES_WIZARD_ON"] == "cloud" ? .cloud
-                                   : env["CUA_SPACES_WIZARD_ON"] == "yours" ? .yours : .local))
+                w.send(.setPlacement(placement: env["CUA_SPACES_WIZARD_ON"] == "yours" ? .yours : .local))
                 w.send(.next)
                 if let disk = env["CUA_SPACES_WIZARD_DISK"].flatMap(UInt32.init) { w.send(.setDisk(diskGb: disk)) }
                 if let cpus = env["CUA_SPACES_WIZARD_CPUS"].flatMap(UInt32.init) { w.send(.setCpus(cpus: cpus)) }
@@ -498,16 +494,9 @@ public enum AppEnvironment {
                 // The Volume page shows with Cua Volume on (this run only).
                 model.settings.experiments.cuaVolume = true
                 model.selection = .drive
-            case "settings", "settings-devices", "settings-storage", "settings-about", "settings-experiments":
-                if env["CUA_SPACES_START_VIEW"] == "settings-devices" { model.settingsTab = .devices }
-                if env["CUA_SPACES_START_VIEW"] == "settings-about" { model.settingsTab = .about }
-                if env["CUA_SPACES_START_VIEW"] == "settings-experiments" { model.settingsTab = .experiments }
-                if env["CUA_SPACES_START_VIEW"] == "settings-storage" {
-                    // Storage shows with the Cua Volume experiment on (this
-                    // run only; the settings file is not written).
-                    model.settings.experiments.cuaVolume = true
-                    model.settingsSection = "storage"
-                }
+            case "settings":
+                // The app menu's ⌘, item, as a person presses it: the
+                // page's Settings in the New UI window.
                 try? await Task.sleep(for: .seconds(2))
                 NSApp.activate()
                 if let item = NSApp.mainMenu?.items.first?.submenu?.items.first(where: { $0.keyEquivalent == "," }),
@@ -578,7 +567,7 @@ public enum AppEnvironment {
                 model.notch.setActivity(hotspot: false, transfer: AppNotchTransfer(sent: 600, total: 1000))
             case "notch-activity-provisioning":
                 if var s = model.notch.spaces.first(where: { $0.id != "this-mac" }) {
-                    s.id = "cloud:starter"
+                    s.id = "direct:starter"
                     s.name = "Starter"
                     s.status = .provisioning
                     s.startedAt = Int64(Date().timeIntervalSince1970 * 1000) - 40_000

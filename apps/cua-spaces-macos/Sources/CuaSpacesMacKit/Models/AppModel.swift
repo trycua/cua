@@ -14,15 +14,6 @@ public struct PendingTeleport: Equatable {
     public var files: [String]
 }
 
-/// The Settings window's tabs.
-public enum SettingsTab: Hashable, Sendable {
-    case general
-    case agents
-    case devices
-    case experiments
-    case about
-}
-
 /// What the main window shows.
 public enum MainSelection: Hashable {
     case space(String)
@@ -79,6 +70,20 @@ public final class AppModel {
     /// A teleport the notch started: the Space and the dropped app.
     public var pendingTeleport: PendingTeleport?
     public private(set) var loaded = false
+    /// Some of your computers have not answered the last list read yet
+    /// (`Spaces.list_known`): the list is not "no Spaces" meanwhile.
+    public private(set) var listIncomplete = false
+    /// How many computers are still being reached (0 when unknown).
+    public private(set) var listReaching: UInt32 = 0
+    /// Your other computers' rows are the last known ones (kept across a
+    /// daemon restart), not yet confirmed.
+    public private(set) var listStale = false
+    /// The Spaces page's empty state and "Reaching N computers…" line, as
+    /// the core decides them: the first-run page only for a complete list.
+    public var listView: AppListView {
+        appSpacesListView(input: AppListViewInput(loaded: loaded, incomplete: listIncomplete,
+                                                  reaching: listReaching, count: UInt32(spaces.count)))
+    }
 
     public let wizard: WizardModel
     public let keyvault: KeyvaultModel
@@ -100,17 +105,14 @@ public final class AppModel {
     public let cloud: CloudModel
     /// The cloud hosts the elastic pool added (Machines), read-only.
     public let elastic: ElasticModel
-    /// The Settings tab showing.
-    public var settingsTab: SettingsTab = .general
-    /// A Settings section to scroll to when Settings opens (captures).
-    public var settingsSection: String?
     /// The Cua account, the telemetry switch and the coding agents.
     let account: AccountRunning?
     let telemetry: TelemetryRunning?
     let agentSetup: AgentSetupRunning?
     /// The signed-in account.
     public private(set) var identity: String?
-    /// Cua Cloud can be used.
+    /// The session's `cloudConfigured` field: nothing probes it any more
+    /// (Cua Cloud has ended), so it stays false.
     public private(set) var cloudConfigured = false
     /// The Settings sign-in in progress.
     public private(set) var signIn: AppSignInPhase = .idle
@@ -126,10 +128,6 @@ public final class AppModel {
     /// The attempt in progress asked for a code instead of the browser's way back.
     private var signInByCode = false
     public private(set) var telemetryInput: AppTelemetryInput?
-    /// The account's Cua Cloud billing (Settings, Billing), once read.
-    public private(set) var billingStatus: AppBillingStatus?
-    /// Cua Cloud billing (nil: no Billing row).
-    let billing: BillingRunning?
     /// Reads the account's Teams from the Spaces API (nil: Settings shows
     /// the account app's links only). Set by `AppEnvironment`.
     public var teamsReader: TeamsReading?
@@ -175,7 +173,7 @@ public final class AppModel {
                 onboarding: OnboardingModel, settingsPath: String,
                 host: HostRunning? = nil, account: AccountRunning? = nil,
                 telemetry: TelemetryRunning? = nil, agentSetup: AgentSetupRunning? = nil,
-                billing: BillingRunning? = nil, devices: DevicesRunning? = nil,
+                devices: DevicesRunning? = nil,
                 presence: PresenceChecking = LivePresence(), loginItem: LoginItemControlling? = nil,
                 startup: StartupModel? = nil, appVersion: String? = nil) {
         self.backend = backend
@@ -191,7 +189,6 @@ public final class AppModel {
         let fixtures = backend as? FixtureSpacesBackend
         self.elastic = ElasticModel(tools: backend as? CloudToolRunning,
                                     ledger: fixtures.map { fx in { fx.fixtureElastic ? FixtureSpacesBackend.fixtureLedger() : nil } })
-        self.billing = billing
         self.loginItem = loginItem
         self.host = HostModel(host: host)
         self.account = account
@@ -206,10 +203,10 @@ public final class AppModel {
         if let appVersion { settings = appSettingsResolveNewUi(settings: settings, version: appVersion) }
         self.settings = settings
         self.wizard = WizardModel(env: AppWizardEnv(
-            defaultLocation: settings.defaultLocation, cloudAvailable: false,
+            defaultLocation: settings.defaultLocation,
             localAvailable: true, localReason: nil, localBackends: nil, localDetails: nil,
             maxCpus: UInt32(max(2, min(16, ProcessInfo.processInfo.activeProcessorCount))),
-            hostArch: Self.hostArch, lumeSource: nil, linuxSource: nil, storage: nil, cloudPricing: nil, clouds: [], hosts: [],
+            hostArch: Self.hostArch, lumeSource: nil, linuxSource: nil, storage: nil, clouds: [], hosts: [],
             experiments: settings.experiments, gpus: nil, nameSeed: nil))
         self.notch = NotchModel()
         // The notch tiles and the preview cover read one thumbnail store,
@@ -717,7 +714,7 @@ public final class AppModel {
     public private(set) var reconnects = 0
     /// The registry read in flight: refreshes share it, so a read that
     /// never returns is asked once, not once a poll.
-    private var rowsInFlight: Task<[AppSpaceRow], Error>?
+    private var rowsInFlight: Task<AppListRead, Error>?
     /// Registry reads started so far, the one in flight and the newest
     /// one shown: an older read that answers late is not shown over it.
     private var rowsReads = 0
@@ -736,6 +733,43 @@ public final class AppModel {
                 await self.checkListHealth()
                 try? await Task.sleep(for: interval)
             }
+        }
+    }
+
+    /// The daemon's push of list changes (`watchList`), while it is kept.
+    private var listWatch: AnyObject?
+    /// The read a push started, and whether another push came meanwhile.
+    private var listPushRead: Task<Void, Never>?
+    private var listPushedAgain = false
+    /// How long a push waits for the next one before the list is read (a
+    /// computer coming up moves several of its Spaces at once).
+    static let listPushSettleMs = 100
+
+    /// Push: the daemon says when the list changed (a Space started or
+    /// stopped on another computer, one came up or went away), and the list
+    /// is read again then, within a second or two, instead of at the next
+    /// poll. The poll stays as the fallback. Started again after a
+    /// reconnect.
+    public func startListWatch() async {
+        listWatch = await backend.watchList { [weak self] in
+            Task { @MainActor in self?.listPushed() }
+        }
+    }
+
+    /// One read per burst of pushes; a push during a read reads once more.
+    func listPushed() {
+        guard listPushRead == nil else {
+            listPushedAgain = true
+            return
+        }
+        listPushRead = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(Self.listPushSettleMs))
+            while let self {
+                self.listPushedAgain = false
+                await self.refresh(fresh: true)
+                if !self.listPushedAgain { break }
+            }
+            self?.listPushRead = nil
         }
     }
 
@@ -761,6 +795,8 @@ public final class AppModel {
         let ok = await reconnect()
         listWatchedSince = listClock()
         reconnecting = false
+        // The push came over the old connection: watch on the new one.
+        if ok, listWatch != nil { await startListWatch() }
         if !ok { NSLog("Cua Spaces: the reconnect did not make a new connection; trying again later") }
         await refresh()
     }
@@ -798,11 +834,11 @@ public final class AppModel {
     /// with the number of the read that answered. `fresh`: a new read, not
     /// one already in flight, which started before the change just made
     /// and may answer without it.
-    private func readRows(fresh: Bool = false) async throws -> (rows: [AppSpaceRow], read: Int) {
+    private func readRows(fresh: Bool = false) async throws -> (list: AppListRead, read: Int) {
         if fresh || rowsInFlight == nil {
             rowsReads += 1
             rowsInFlightRead = rowsReads
-            rowsInFlight = Task { [backend] in try await backend.rows() }
+            rowsInFlight = Task { [backend] in try await backend.listRead() }
         }
         guard let task = rowsInFlight else { throw CancellationError() }
         let read = rowsInFlightRead
@@ -820,21 +856,34 @@ public final class AppModel {
     /// `fresh` after a change this app made (a create, a delete): the list
     /// is read again from now, so it shows the change.
     public func refresh(fresh: Bool = false) async {
-        await refreshHost()
-        cloudConfigured = await backend.cloudAvailable()
+        // The host's reads run beside the list, never ahead of it: this
+        // Mac's Spaces show as soon as the daemon lists them, and "This
+        // machine" joins them once the host answered (it recomposes then).
+        async let hostRead: Void = refreshHostThenRecompose()
+        defer { followIncompleteList() }
         do {
-            let (rows, read) = try await readRows(fresh: fresh)
+            let (list, read) = try await readRows(fresh: fresh)
             lastListOk = listClock()
             lastListAnswer = lastListOk
             // A read from before a newer one already shown is out of date.
-            guard read >= rowsShownRead else { return }
+            guard read >= rowsShownRead else {
+                await hostRead
+                return
+            }
             rowsShownRead = read
             let now = Int64(Date().timeIntervalSince1970 * 1000)
-            registrySpaces = appRowsToSpaces(rows: rows, nowMs: now)
+            registrySpaces = appRowsToSpaces(rows: list.rows, nowMs: now)
             creates = appCreatesSettle(state: creates, spaces: registrySpaces)
             recompose()
             loaded = true
-            rosterError = nil
+            listIncomplete = list.incomplete
+            listReaching = list.reaching
+            listStale = list.stale
+            // Your other computers could not be read: their rows are the
+            // last known ones (this Mac's are current).
+            rosterError = list.notice.isEmpty ? nil
+                : "Could not reach your other computers. Their Spaces may be out of date."
+            await hostRead
             // Your machines' load for their sidebar lines, every so often
             // (each machine is asked; never holds up the list).
             if registrySpaces.contains(where: { $0.id.hasPrefix("relay:") }),
@@ -859,14 +908,40 @@ public final class AppModel {
         } catch TimeoutError.timedOut {
             // The daemon is slow or gone: the list stays as it was, and the
             // poll reconnects when it stays stale (`checkListHealth`).
+            await hostRead
         } catch {
             if Self.daemonAnswered(error) { lastListAnswer = listClock() }
             // Errors may contain server bodies or credential-bearing URLs.
             rosterError = loaded
                 ? "Could not refresh Spaces. Previously loaded rows may be out of date."
                 : "Could not load Spaces. Try refreshing again."
+            await hostRead
         }
     }
+
+    /// The host's reads, then the list composed again with what they said
+    /// ("This machine").
+    private func refreshHostThenRecompose() async {
+        await refreshHost()
+        if loaded { recompose() }
+    }
+
+    /// While some of your computers have not answered, the list is read
+    /// again soon (each read waits a moment for them in the daemon), not at
+    /// the next poll.
+    private var incompleteFollow: Task<Void, Never>?
+
+    private func followIncompleteList() {
+        guard listIncomplete, incompleteFollow == nil else { return }
+        incompleteFollow = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(Self.incompleteFollowMs))
+            guard let self, !Task.isCancelled else { return }
+            self.incompleteFollow = nil
+            await self.refresh()
+        }
+    }
+
+    static let incompleteFollowMs = 500
 
     public func select(_ id: String) {
         selection = .space(id)
@@ -933,27 +1008,25 @@ public final class AppModel {
     public func newSpaceEnv() async -> AppWizardEnv {
         async let runtimesProbe = backend.localRuntimes()
         async let storageProbe = backend.localStorage()
-        async let pricingProbe = backend.cloudPricing()
         async let gpusProbe = backend.gpuChoices()
         async let hostsProbe = backend.hosts()
-        async let cloudProbe = backend.cloudAvailable()
         async let lumeProbe = backend.lumeSource()
         async let linuxProbe = backend.linuxSource()
         async let macosVmsProbe = backend.runningMacosVms()
         await self.cloud.refresh()
-        let (runtimes, storage, pricing, gpus, cloud) = await (runtimesProbe, storageProbe, pricingProbe, gpusProbe, cloudProbe)
+        let (runtimes, storage, gpus) = await (runtimesProbe, storageProbe, gpusProbe)
         (lumeSource, linuxSource) = await (lumeProbe, linuxProbe)
         hosts = await hostsProbe
         // Lume did not answer this time: keep what it said last (a VM that
         // stopped since shows on the next read that answers).
         runningMacosVms = await macosVmsProbe ?? runningMacosVms
-        return wizardEnv(cloud: cloud, runtimes: runtimes, storage: storage, pricing: pricing, gpus: gpus)
+        return wizardEnv(runtimes: runtimes, storage: storage, gpus: gpus)
     }
 
     /// What New Space knows without asking anything (no probe, no wait):
     /// the env New UI gets while the live services are still starting.
     public func knownNewSpaceEnv() -> AppWizardEnv {
-        wizardEnv(cloud: false, runtimes: nil, storage: nil, pricing: nil, gpus: nil)
+        wizardEnv(runtimes: nil, storage: nil, gpus: nil)
     }
 
     /// The live services are in (the launch's stand-ins have them): until
@@ -1044,18 +1117,18 @@ public final class AppModel {
         return e
     }
 
-    private func wizardEnv(cloud available: Bool, runtimes: (ready: [String], details: [String: String])?,
-                           storage: LocalStorage?, pricing: AppCloudPricing?,
+    private func wizardEnv(runtimes: (ready: [String], details: [String: String])?,
+                           storage: LocalStorage?,
                            gpus: [AppGpuChoice]?) -> AppWizardEnv {
         let backends = runtimes?.ready
         return wizardEnv(from: AppWizardEnv(
-            defaultLocation: settings.defaultLocation, cloudAvailable: available,
+            defaultLocation: settings.defaultLocation,
             localAvailable: backends.map { !$0.isEmpty } ?? true,
             localReason: backends?.isEmpty == true ? "No local runtime found (Docker or Lume)." : nil,
             localBackends: backends, localDetails: runtimes?.details, maxCpus: wizard.env.maxCpus,
             hostArch: Self.hostArch, lumeSource: lumeSource, linuxSource: linuxSource,
             storage: storage.map(Self.wizardStorage),
-            cloudPricing: available ? pricing : nil, clouds: [], hosts: [],
+            clouds: [], hosts: [],
             experiments: settings.experiments, gpus: gpus, nameSeed: nil))
     }
 
@@ -1136,7 +1209,7 @@ public final class AppModel {
         // second row next to this one, and a failure names the machine.
         let machine = args.on.hasPrefix("host:") ? String(args.on.dropFirst("host:".count)) : nil
         sendCreate(.start(id: pendingId, name: args.name ?? "", os: os,
-                          provider: args.on == "cloud" ? .cloud : args.on == "local" ? .local : .relay,
+                          provider: args.on == "local" ? .local : .relay,
                           now: Self.nowMs(),
                           image: args.image, kind: args.kind, hostArch: Self.hostArch, gpu: args.gpu != nil,
                           host: machine, hostName: machine.flatMap(machineName(of:))))
@@ -1549,10 +1622,10 @@ public final class AppModel {
     public var settingsPage: AppSettingsPage {
         appSettingsPage(input: AppSettingsInput(
             identity: identity, apiKeyClient: nil, signIn: signIn, canSignOut: account != nil && identity != nil,
-            menuBar: settings.menuBar, defaultLocation: settings.defaultLocation, locationLockedBy: nil,
+            menuBar: settings.menuBar,
             telemetry: telemetryInput, agents: agentRows, agentsBusy: agentsBusy, agentsPending: agentsPending,
             teams: teamsSettingsInput,
-            billing: identity == nil ? nil : billingStatus, loginItem: loginItemInput,
+            loginItem: loginItemInput,
             experiments: settings.experiments, keyvaultAutoWipe: keyvault.autoWipe,
             keyvaultUnlockPrompt: keyvault.unlockPromptShows,
             keyvaultSiteIcons: settings.keyvaultSiteIcons, keyvaultProtection: keyvault.page.protection,
@@ -1719,8 +1792,8 @@ public final class AppModel {
 
     /// Reads the usage-data switch alone. The web page gets it with its
     /// Settings snapshot (`settings.get`) and drops every usage signal while
-    /// that has none, so it cannot wait for the native Settings view's
-    /// `loadSettings` (the page runs signed out, before any Settings view).
+    /// that has none, so it cannot wait for `loadSettings` (the page runs
+    /// signed out, before Settings opens).
     public func refreshTelemetry() {
         telemetryInput = telemetry?.status()
     }
@@ -1733,21 +1806,12 @@ public final class AppModel {
         telemetryInput = telemetry?.status()
         readLoginItem()
         await storage.load()
-        await reloadBilling()
         await reloadTeams()
         await reloadAgents()
         await keyvault.refresh()
     }
 
-    func reloadBilling() async {
-        guard identity != nil, let billing else {
-            billingStatus = nil
-            return
-        }
-        billingStatus = try? await billing.status()
-    }
-
-    /// Opens a website page (Manage billing, Add credit, the account app's Teams page).
+    /// Opens a website page (the account app's Teams page and billing).
     public func openBillingPage(_ raw: String) {
         guard let url = URL(string: raw), url.scheme == "https" || url.scheme == "http" else { return }
         BillingBrowser.open(url)
@@ -1799,9 +1863,6 @@ public final class AppModel {
             } catch {
                 show(error: LiveSpacesBackend.words(error))
             }
-        case "default-location":
-            settings.defaultLocation = .local  // Cua Cloud has ended: only This Mac is a default
-            saveSettings()
         case "auto-connect":
             settings.autoConnect = option == "on"
             saveSettings()
@@ -1844,7 +1905,7 @@ public final class AppModel {
             openOnboarding?()
         case "launch-at-login-approve":
             loginItem?.openSystemSettings()
-        case "billing", "teams-manage", "teams-billing":
+        case "teams-manage", "teams-billing":
             // The account app (app.cua.ai): invites, roles and plans for
             // teams, billing.
             if let url = settingsPage.sections.flatMap(\.rows).first(where: { $0.id == row })?.linkUrl {

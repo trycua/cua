@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon, CopyIcon, LoaderCircleIcon, TriangleAlertIcon } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import {
   useSession,
@@ -13,6 +13,7 @@ import {
   type HostPanelView,
   type HostSetupFormView,
 } from "@/bridge";
+import { throttleSeconds } from "@/bridge/friendly-errors";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogPopup, DialogTitle } from "@/components/ui/dialog";
@@ -326,6 +327,30 @@ export function FailureView({ failure, retrying, onRetry }: { failure: HostFailu
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const details = failure.details && failure.details !== failure.message ? failure.details : null;
+  // One automatic retry per setup: a second throttle waits for the user.
+  const autoRetried = useRef(false);
+  const wait = autoRetried.current ? null : throttleSeconds(failure.details ?? failure.message);
+  const [left, setLeft] = useState<number | null>(wait);
+  // A throttled setup counts down live, then tries again once.
+  useEffect(() => {
+    if (wait === null) return setLeft(null);
+    let n = wait;
+    setLeft(n);
+    const timer = setInterval(() => {
+      n -= 1;
+      if (n > 0) return setLeft(n);
+      clearInterval(timer);
+      setLeft(null);
+      if (!retrying) {
+        autoRetried.current = true;
+        onRetry();
+      }
+    }, 1000);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [failure]);
+  const manual = autoRetried.current ? throttleSeconds(failure.details ?? failure.message) : null;
+  const message = manual ? `Wait ${manual} ${manual === 1 ? "second" : "seconds"}, then try again.` : left === null ? failure.message : `Trying again in ${left} ${left === 1 ? "second" : "seconds"}.`;
   return (
     <div data-host-failure className="text-[13px]">
       <div className="flex items-center gap-2">
@@ -339,7 +364,7 @@ export function FailureView({ failure, retrying, onRetry }: { failure: HostFailu
       </div>
       {failure.title ? (
         <p data-host-failure-message className="mt-1 text-xs text-muted-foreground">
-          {failure.message}
+          {message}
         </p>
       ) : null}
       {details ? (

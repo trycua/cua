@@ -3,7 +3,6 @@
   "about": "Your cloud (with its experiment on): no cloud in the Run on menu while nothing is connected, the Connect a cloud sheet (the found provider, what each provider touches, a region and profile, Hetzner's masked API token field, Test that creates nothing, a failed then a passed test, Make default, Connect, and No cloud leaving an already-connected cloud as is), then the wizard with AWS connected (its label in the Run on menu, systems and kinds it cannot run greyed out with why, the machine, cost and lifetime on Resources, the create on aws) and a second cloud as its own entry.",
   "env": {
     "defaultLocation": "local",
-    "cloudAvailable": false,
     "localAvailable": true,
     "localReason": null,
     "localBackends": ["docker"],
@@ -11,7 +10,6 @@
     "maxCpus": 8,
     "hostArch": "arm64",
     "storage": null,
-    "cloudPricing": null,
     "clouds": [],
     "experiments": { "yourCloud": true }
   },

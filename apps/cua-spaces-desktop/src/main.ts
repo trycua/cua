@@ -351,10 +351,14 @@ if (!app.requestSingleInstanceLock()) {
     // ⌘⇧Space from any app: the main window, in front (never under the e2e switch).
     const shortcut = E2E_DEMO
       ? null
-      : installGlobalShortcut(process.platform, () => {
-          app.focus({ steal: true });
-          showMain();
-        });
+      : installGlobalShortcut(
+          process.platform,
+          () => {
+            app.focus({ steal: true });
+            showMain();
+          },
+          { read: () => readSettings().globalShortcut, write: (accelerator) => writeSettings({ globalShortcut: accelerator }) },
+        );
     let host: Awaited<ReturnType<typeof startNativeHost>> | null = null;
     if (!E2E_DEMO) {
       try {

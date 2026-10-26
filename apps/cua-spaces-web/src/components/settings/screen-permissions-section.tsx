@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { toastError } from "@/components/ui/toast";
 
 /**
- * Settings, Permissions: the first run's "Share this Mac's screen" rows
+ * Settings, Trusted devices, "Let others use this computer": the first run's "Share this Mac's screen" rows
  * (Screen Recording, Accessibility), for whoever chose "Not now" there.
  * Only on a Mac that is set up and shares its screen. Allow opens the app's
  * guide to the System Settings pane; a check shows once it is granted.
@@ -18,12 +18,13 @@ export function ScreenPermissionsSection() {
   const perms = useScreenPermissions();
   if (!perms) return null;
   const { view } = perms;
+  const place = view.rows.map((r) => /^See (.+)\u2019?'?s screen$/.exec(r.title)?.[1]).find(Boolean) ?? "this computer";
   return (
-    <SettingsGroup title="Permissions">
+    <SettingsGroup title="Let others use this computer">
       {view.rows.map((r) => (
         <SettingsRow
           key={r.id}
-          label={r.title}
+          label={r.id === "accessibility" ? `Let others click and type on ${place}` : r.title.replace(/^See /, "Let others see ")}
           description={r.note}
           control={
             r.state === "ok" ? (

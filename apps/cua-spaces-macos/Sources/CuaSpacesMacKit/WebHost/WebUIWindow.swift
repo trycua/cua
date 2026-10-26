@@ -155,7 +155,7 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
             videoSurfaces = nil
         }
 
-        let window = WebUIAppWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 780),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 780),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                               backing: .buffered, defer: true)
         window.title = "Cua Spaces"
@@ -490,86 +490,16 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
     }
 }
 
-// MARK: - Settings: ⌘, goes where the user is
-
-/// Which window is in front, as far as the Settings command goes.
-enum SettingsFrontWindow: Equatable {
-    /// The New UI window, or a sheet on it.
-    case webUI
-    /// Any other window of the app.
-    case other
-    /// None (the app is in the background, or only a utility panel is key).
-    case none
-}
-
-/// Where the Settings command (⌘, in the app menu) goes.
-enum SettingsRoute: Equatable {
-    /// The New UI page's own Settings.
-    case web
-    /// The SwiftUI Settings scene (the classic UI).
-    case native
-}
+// MARK: - Settings
 
 extension WebUIWindowController {
-    /// The New UI window's Settings when it is the key window, whether or
-    /// not its web view has focus; the native scene when another window is
-    /// key. With no key window (the app is in the background, a dialog of
-    /// another app has focus) the frontmost window of the app decides.
-    static func settingsRoute(key: SettingsFrontWindow, frontmost: SettingsFrontWindow) -> SettingsRoute {
-        switch key {
-        case .webUI: return .web
-        case .other: return .native
-        case .none: return frontmost == .webUI ? .web : .native
-        }
-    }
-
-    /// `window` as the Settings command sees it: this window (or a sheet on
-    /// it), another window of the app, or none when it is a utility panel
-    /// that can't be the main window (the notch).
-    static func settingsFront(_ window: NSWindow?, webUI: NSWindow?) -> SettingsFrontWindow {
-        guard let window else { return .none }
-        if let parent = window.sheetParent { return parent === webUI ? .webUI : .other }
-        if window === webUI { return .webUI }
-        return window.canBecomeMain ? .other : .none
-    }
-
-    /// The decision over real windows: `key` is the key window (nil: none),
-    /// `frontmost` the frontmost one (`frontmostWindow`).
-    static func settingsRoute(webUI: NSWindow?, key: NSWindow?, frontmost: NSWindow?) -> SettingsRoute {
-        guard let webUI else { return .native }
-        return settingsRoute(key: settingsFront(key, webUI: webUI), frontmost: settingsFront(frontmost, webUI: webUI))
-    }
-
-    /// The frontmost visible window that can be the main one, from the app's
-    /// windows ordered front to back.
-    static func frontmostWindow(in ordered: [NSWindow], webUI: NSWindow?, visible: (NSWindow) -> Bool = { $0.isVisible }) -> NSWindow? {
-        ordered.first { visible($0) && ($0 === webUI || $0.canBecomeMain) }
-    }
-
-    /// The Settings command: the page's Settings when the New UI window is
-    /// in front, else `native` (the classic UI's Settings scene).
-    static func openSettings(native: () -> Void) {
-        guard let c = shared, let window = c.window, window.isVisible,
-              settingsRoute(webUI: window, key: NSApp.keyWindow,
-                            frontmost: frontmostWindow(in: NSApp.orderedWindows, webUI: window)) == .web
-        else { return native() }
-        c.bridge.requestSettings()
-    }
-}
-
-/// The New UI window. The app menu's "Settings…" (⌘,) is the `Settings`
-/// scene's own item, which sends `showSettingsWindow:` down the responder
-/// chain; while this window is key it answers first and opens the page's
-/// Settings, else the native scene gets it. One menu item, no
-/// `CommandGroup(replacing: .appSettings)` (that left the scene's item next
-/// to its own: two "Settings…").
-final class WebUIAppWindow: NSWindow {
-    static let settingsAction = Selector(("showSettingsWindow:"))
-
-    @objc func showSettingsWindow(_ sender: Any?) {
-        WebUIWindowController.openSettings(native: {
-            _ = NSApp.tryToPerform(Self.settingsAction, with: sender)
-        })
+    /// The page's Settings: an open window goes there (`settings.openRequested`),
+    /// else the window opens at `route` (`/settings`, or one tab).
+    static func openSettings(model: AppModel, at route: MainUIRoute = .settings) {
+        NSApp.activate()
+        guard route == .settings, shared != nil else { return show(model: model, at: route) }
+        show(model: model)
+        shared?.bridge.requestSettings()
     }
 }
 

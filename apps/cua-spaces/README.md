@@ -66,10 +66,8 @@ is a step-by-step sheet:
 
 1. **System**: Linux, Windows or macOS, the image (a dropdown of the published
    entries of `libs/images/sandbox-images.json`, the same list the docs show),
-   and where it runs: This Mac. Cua Cloud has ended and is not offered (the
-   core's `CLOUD_SPACES_OFFERED` is off); `cloud:` Spaces registered before
-   still list, answer that it has ended on any action, and can be removed from
-   the list. **Advanced** picks the kind (container or virtual
+   and where it runs: This Mac, one of your own computers, or your own cloud
+   account. Cua no longer rents cloud machines. **Advanced** picks the kind (container or virtual
    machine, when the image comes in both) and the runtime, offering only what
    the image runs there: containers `auto`, `gvisor`, `runc`; VMs `auto` and
    the image's `qemu` or `lume`.
@@ -148,9 +146,8 @@ The app signs in with the device grant (Settings → Sign in to Cua); the sessio
 is the credential store shared with the CLI and the daemon, and it drives the
 relay account and this device's enrollment. Cua Cloud has ended, so the app
 builds no Cua Cloud client and reads no Cua Cloud credentials from the
-environment. The default location is `default.on` in `$CUA_HOME/config.toml`
-(Settings → Default location); `CUA_DEFAULT_ON` overrides it and Settings shows
-that read-only. `./run-live.sh` starts the daemon.
+environment. The default location is `default.on` in `$CUA_HOME/config.toml`;
+`CUA_DEFAULT_ON` overrides it. `./run-live.sh` starts the daemon.
 
 The Tauri command contract is listed in `TELEPORT.md`.
 

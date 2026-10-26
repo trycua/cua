@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import type { MachinesView } from "./contracts/host";
+import type { ListStatus } from "./contracts/spaces";
 import type { HostEvent, OpArgs, OpName, OpResult } from "./protocol";
 
 export type BridgeMode = "tauri" | "electron" | "webkit" | "demo";
@@ -33,6 +34,13 @@ export interface DataAdapter {
    * the host says nothing beyond the list (a failed read rejects instead).
    */
   listNotice?(): string | null;
+  /**
+   * How far the host's last `spaces.list` got (the SDK's
+   * `Spaces.list_known`): whether it was read at all, and whether some of
+   * the account's computers have not answered yet. Undefined: the host
+   * lists complete lists only.
+   */
+  listStatus?(): ListStatus;
   /**
    * The host's standing notice, read with `spaces.list`: null, or a line to
    * show above every page while it lasts (another app keeps its own daemon

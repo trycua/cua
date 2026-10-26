@@ -1681,7 +1681,9 @@ fn tool_budget(tool: &str, arguments: &Value, env: Option<&str>) -> Duration {
     }
     let base = match tool {
         // A macOS image pull is ~25 GB before readiness starts counting.
-        "create_space" | "start_space" | "sandbox_create" | "sandbox_start" => 2 * 3600,
+        "create_space" | "start_space" | "resize_space" | "sandbox_create" | "sandbox_start" => {
+            2 * 3600
+        }
         "upload"
         | "send_file"
         | "download"

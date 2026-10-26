@@ -81,9 +81,9 @@ function nativeHost() {
       // What the host says now; it answers after `getDelay`.
       const failure = host.failure;
       if (host.getDelay) await new Promise((r) => setTimeout(r, host.getDelay));
-      const fleet = out.fleet as Record<string, unknown>;
+      const account = out.account as Record<string, unknown>;
       return host.identity
-        ? { ...out, fleet: { ...fleet, configured: true, authMode: "user", identity: host.identity }, hostSignIn: null }
+        ? { ...out, account: { ...account, configured: true, authMode: "user", identity: host.identity }, hostSignIn: null }
         : failure
           ? { ...out, hostSignIn: null, hostSignInFailure: failure }
           : { ...out, hostSignIn: { userCode: null, url: `http://127.0.0.1:${50000 + host.attempts}/callback` } };

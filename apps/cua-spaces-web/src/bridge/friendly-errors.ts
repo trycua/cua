@@ -21,10 +21,31 @@ function rawText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+/**
+ * The plain line for the server telling us to slow down: the host's own
+ * sentence ("Too many attempts right now. Wait 3 seconds, then try again.")
+ * or a bare HTTP 429 "Too Many Requests" from an older host. A 429 that says
+ * why (a limit, a quota) is not this; null for anything else.
+ */
+export function plainThrottleError(raw: string): string | null {
+  const own = /too many attempts right now\. wait (\d+) seconds?/i.exec(raw);
+  if (own) return `Too many attempts right now. Wait ${own[1]} ${own[1] === "1" ? "second" : "seconds"}, then try again.`;
+  if (/\bhttp 429\b[:\s]*too many requests\s*$/i.test(raw.trim())) return "Too many attempts right now. Wait a few seconds, then try again.";
+  return null;
+}
+
+/** Seconds a throttled host asked to wait (its own sentence), else null. */
+export function throttleSeconds(raw: string): number | null {
+  const own = /too many attempts right now\. wait (\d+) seconds?/i.exec(raw);
+  return own ? Number(own[1]) : null;
+}
+
 /** What "Join with a code" says for a failure. */
 export function plainJoinError(e: unknown): string {
   const raw = rawText(e);
   console.warn("[Cua Spaces] join with a code failed:", raw);
+  const throttled = plainThrottleError(raw);
+  if (throttled) return throttled;
   if (/pairing code|unauthenticated|not valid|expired|revoked|already used|invalid code/i.test(raw)) {
     return "That code didn't work. It may be used, expired or mistyped. Make a new one in Add a computer.";
   }
@@ -38,6 +59,8 @@ export function plainJoinError(e: unknown): string {
 export function plainPairingError(e: unknown): string {
   const raw = rawText(e);
   console.warn("[Cua Spaces] making a pairing link failed:", raw);
+  const throttled = plainThrottleError(raw);
+  if (throttled) return throttled;
   if (/no such device|not enrolled|not registered|unknown device/i.test(raw)) {
     return "This computer isn't set up for access yet. Set it up first, then add computers.";
   }

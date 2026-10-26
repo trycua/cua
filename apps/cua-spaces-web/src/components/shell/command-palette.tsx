@@ -14,6 +14,7 @@ import {
   PanelLeftIcon,
   PlusIcon,
   SearchIcon,
+  SettingsIcon,
   SparklesIcon,
   SunIcon,
   type LucideIcon,
@@ -28,6 +29,7 @@ import { toast, toastError } from "@/components/ui/toast";
 import { filterCommands, type PaletteCommand } from "@/lib/commands";
 import { machineName, osLabel, paletteKeywords, realSpaces, spaceState } from "@/lib/spaces";
 import { bindingFor } from "@/lib/keybindings";
+import { SETTINGS_TABS } from "@/lib/settings-tabs";
 import { useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 import { useNewSpace } from "@/hooks/use-new-space";
@@ -134,6 +136,15 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
       shortcut: n.command ? bindingFor(n.command) : undefined,
       icon: icon(n.icon),
       run: () => void navigate({ to: n.to }),
+    })),
+    // Each Settings tab, so Cmd+K finds "Connected apps" or "Trusted devices" by name.
+    ...SETTINGS_TABS.filter((t) => t.to !== "/settings").map((t) => ({
+      id: `settings:${t.to}`,
+      group: "Go to",
+      label: `Settings: ${t.label}`,
+      keywords: "preferences options",
+      icon: icon(SettingsIcon),
+      run: () => void navigate({ to: t.to }),
     })),
     { id: "nav:onboarding", group: "Go to", label: "Onboarding", keywords: "welcome setup", icon: icon(SparklesIcon), run: () => void navigate({ to: "/onboarding" }) },
     {

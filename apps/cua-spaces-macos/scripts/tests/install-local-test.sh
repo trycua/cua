@@ -20,6 +20,8 @@
 #     checked first, in one message;
 #   - on a fresh Keychain (a certificate codesign cannot use yet) it says so and
 #     sets it up only when asked (--setup-signing), or prints the exact steps;
+#   - on a locked Keychain (SSH session, VM) it says the Keychain is locked and
+#     how to unlock it, not that it is new, and never sets up a locked one;
 #   - uninstall-local.sh removes the Local pieces and only those, and first
 #     takes this Mac off the relay when Local is signed in, as Local and with
 #     nothing of the caller's Stable environment;
@@ -285,12 +287,16 @@ if [ "${SHIM_FRESH_KEYCHAIN:-0}" = 1 ]; then
     add-trusted-cert)
       if [ "${SHIM_TRUST_FAILS:-0}" = 1 ]; then echo "SecTrustSettingsSetTrustSettings: no user interaction was possible" >&2; exit 1; fi
       : > "$SHIM_STATE/trusted"; exit 0 ;;
+    unlock-keychain)
+      : > "$SHIM_STATE/unlocked"; exit 0 ;;
     set-key-partition-list)
       # SHIM_PARTITION_FAILS=1: no key matched the filter (the tool says so and changes nothing).
       if [ "${SHIM_PARTITION_FAILS:-0}" = 1 ]; then echo "security: SecItemCopyMatching: The specified item could not be found in the keychain." >&2; exit 1; fi
       : > "$SHIM_STATE/partition"; exit 0 ;;
   esac
 fi
+# No certificate in the Keychain (what the real tool says: not found).
+if [ "$1" = find-certificate ]; then exit 44; fi
 exit 0'
 # codesign: the real one, except that it can be made to fail verifying one
 # path, to stall (exit like a killed-by-alarm process, no output) on its first
@@ -305,6 +311,11 @@ write_shim codesign 'if [ "${SHIM_FRESH_KEYCHAIN:-0}" = 1 ]; then
     prev="$a"
   done
   if [ "$fake" = 1 ]; then
+    # A locked Keychain (SHIM_LOCKED_KEYCHAIN=1) in a session that cannot ask
+    # for its password, until `security unlock-keychain` ran.
+    if [ "${SHIM_LOCKED_KEYCHAIN:-0}" = 1 ] && [ ! -e "$SHIM_STATE/unlocked" ]; then
+      echo "probe: errSecInternalComponent" >&2; exit 1
+    fi
     if [ ! -e "$SHIM_STATE/trusted" ] || { [ "${SHIM_NEED_PARTITION:-0}" = 1 ] && [ ! -e "$SHIM_STATE/partition" ]; }; then
       echo "no identity found" >&2; exit 1
     fi
@@ -1112,6 +1123,49 @@ check "when no key matches the label it does not widen the filter: one call, the
 fresh_fixture
 tty_install
 check "with the key already usable after the trust it asks for no password and calls no set-key-partition-list" '! grep >/dev/null "set-key-partition-list" "$SHIM_LOG" && ! printf "%s" "$OUT" | grep -F >/dev/null "Password of the Keychain"'
+
+# A locked Keychain (an SSH session, or a VM that logged in on its own): codesign
+# fails with errSecInternalComponent, because nothing can ask for the password.
+# The message says the Keychain is locked and how to unlock it, and not that it
+# is new; the new-Keychain setup is not attempted on a locked one.
+echo "== a locked Keychain =="
+tty_unlock_install() { run env PTY_ANSWER=y PTY_PROMPT="Unlock it now" /usr/bin/python3 -I "$WORK/pty-run.py" env SHIM_FRESH_KEYCHAIN=1 "$@" "$FAKE_SCRIPTS/install-local.sh" --no-launch --setup-signing; }
+UNLOCK_CMD='security unlock-keychain "$FAKE_KEYCHAIN"'
+
+fresh_fixture
+FRESH_ARGS="--setup-signing"
+fresh_install SHIM_LOCKED_KEYCHAIN=1
+check "it says the Keychain is locked and prints the unlock command" \
+    'printf "%s" "$OUT" | grep -F >/dev/null "its Keychain ($FAKE_KEYCHAIN) is locked" && printf "%s" "$OUT" | grep -F >/dev/null "security unlock-keychain \"$FAKE_KEYCHAIN\""'
+check "it does not call a locked Keychain new, and prints the one-time setup once, as the step after unlocking" \
+    '! printf "%s" "$OUT" | grep -F >/dev/null "a new Keychain: it is not trusted" && printf "%s" "$OUT" | grep -F >/dev/null "If codesign still cannot sign after that" && [ "$(printf "%s\n" "$OUT" | grep -c "one-time setup")" = 1 ]'
+check "--setup-signing without a terminal does not set up a locked Keychain (no trust, no search list, no key access)" \
+    '! security_calls | grep >/dev/null -e "add-trusted-cert" -e "list-keychains .*-s " -e "set-key-partition-list"'
+check "the install is ad hoc, reported, as before (status $RC)" '[ "$RC" = 0 ] && printf "%s" "$OUT" | grep -F >/dev/null "signed ad hoc"'
+
+fresh_fixture
+FRESH_ARGS="--require-stable-signing"
+fresh_install SHIM_LOCKED_KEYCHAIN=1
+check "--require-stable-signing on a locked Keychain stops, installs nothing, and says it is locked" \
+    '[ "$RC" != 0 ] && [ ! -e "$LOCAL_APP" ] && printf "%s" "$OUT" | grep -F >/dev/null "is locked" && printf "%s" "$OUT" | grep -F >/dev/null "stable signing is required"'
+
+fresh_fixture
+tty_unlock_install SHIM_LOCKED_KEYCHAIN=1
+check "at a terminal it offers to unlock, runs security unlock-keychain, and goes on to the setup that a new Keychain still needs" \
+    'grep -F >/dev/null "security unlock-keychain $FAKE_KEYCHAIN" "$SHIM_LOG" && grep -n -e "^security unlock-keychain" -e "^security add-trusted-cert" "$SHIM_LOG" | sed -n 1p | grep >/dev/null unlock-keychain'
+check "and then signs with the certificate (status $RC)" '[ "$RC" = 0 ] && printf "%s" "$OUT" | grep -F >/dev/null "codesign can use the stable local certificate"'
+
+# The certificate could not be created at all: the Keychain exists, holds none,
+# and (the usual reason) refused the import.
+fresh_fixture
+install --require-stable-signing
+check "no certificate in the Keychain: it says it could not create one and that the Keychain is probably locked, with the unlock command" \
+    '[ "$RC" != 0 ] && [ ! -e "$LOCAL_APP" ] && printf "%s" "$OUT" | grep -F >/dev/null "could not create the stable local certificate in $FAKE_KEYCHAIN: the Keychain is probably locked" && printf "%s" "$OUT" | grep -F >/dev/null "security unlock-keychain \"$FAKE_KEYCHAIN\""'
+check "and it does not print steps that need the certificate (find-certificate, add-trusted-cert)" '! printf "%s" "$OUT" | grep -F >/dev/null -e "security find-certificate" -e "add-trusted-cert"'
+fresh_fixture
+rm -f "$FAKE_KEYCHAIN"
+install --require-stable-signing
+check "no Keychain at all is not called locked" '! printf "%s" "$OUT" | grep -F >/dev/null -e "locked" -e "could not create the stable local certificate"'
 
 # The real `security`, on a throwaway Keychain (not in the search list, no trust
 # change): the function the script runs matches the Local certificate's key and

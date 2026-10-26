@@ -39,16 +39,12 @@ export function settingsPage(model: AppModel, parts: HostParts) {
     signIn: model.signIn,
     canSignOut: model.account !== null && model.identity !== null,
     menuBar: model.settings.menuBar,
-    defaultLocation: model.settings.defaultLocation,
-    locationLockedBy: undefined,
     telemetry: telemetryInput(model),
     agents: coding.rows ?? undefined,
     agentsBusy: coding.busy,
     agentsPending: coding.pending,
     // Teams from the Spaces API (read by `settings.get`).
     teams: model.teams.input(),
-    // No Cua Cloud billing in the apps (the row stays hidden).
-    billing: undefined,
     loginItem:
       login.status === null
         ? undefined
@@ -149,12 +145,21 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
         model.linuxSource = (await model.backend.linuxSource()) ?? option;
         model.changed("settings");
         return;
-      case "default-location":
-        save({ defaultLocation: model.native.AppLocation.Local }); // Cua Cloud has ended
-        return;
       case "auto-connect":
         save({ autoConnect: option === "on" });
         return;
+      case "global-shortcut": {
+        // The keys that bring the app forward from any app (Mac). The option is the accelerator.
+        const system = parts().system;
+        if (!system?.setGlobalShortcut) throw Failure.failed("This computer has no shortcut to change.");
+        try {
+          system.setGlobalShortcut(option);
+        } catch (e) {
+          throw Failure.failed(e instanceof Error ? e.message : String(e));
+        }
+        model.changed("settings");
+        return;
+      }
       case "launch-at-login": {
         const login = parts().loginItem;
         login.set(option === "on");

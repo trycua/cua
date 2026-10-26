@@ -22,7 +22,7 @@ import type {
   CreateProgress,
   DaemonStatus,
   DefaultLocation,
-  FleetStatus,
+  AccountStatus,
   HostStatus,
   LoginItemStatus,
   MachineRow,
@@ -253,12 +253,12 @@ export function createTauriAdapter(win: HostWindow = globalThis.window as HostWi
     "keyvault.revokeGrant": ({ id }) => invoke("keyvault_revoke_grant", { id }),
 
     "session.get": async () => {
-      const [fleet, onboarding, daemon] = await Promise.all([
-        invoke<FleetStatus>("fleet_status", { probe: false }),
+      const [account, onboarding, daemon] = await Promise.all([
+        invoke<AccountStatus>("account_status", { probe: false }),
         invoke<OnboardingState>("onboarding_state").catch((): OnboardingState => ({ completed: true })),
         invoke<DaemonStatus>("daemon_status").catch(() => null),
       ]);
-      return { fleet, onboarding, daemon };
+      return { account, onboarding, daemon };
     },
     "session.signIn": () => invoke("begin_sign_in"),
     "session.signOut": async () => {

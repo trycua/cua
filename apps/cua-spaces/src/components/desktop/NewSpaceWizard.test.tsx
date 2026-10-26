@@ -18,7 +18,6 @@ import {
 
 function renderWizard(overrides: Partial<NewSpaceWizardProps> = {}) {
   const props: NewSpaceWizardProps = {
-    cloudAvailable: true,
     localAvailable: true,
     onCreate: vi.fn(),
     onAddByAddress: vi.fn(async () => {}),
@@ -319,7 +318,7 @@ describe("the Resources step", () => {
     next();
     const p = size("ghcr.io/trycua/linux:24.04", "arm64");
     const gb = (b: number) => (b / GB < 10 ? (b / GB).toFixed(1) : Math.round(b / GB)) + " GB";
-    expect(facts()).toEqual(["Container", "ARM", `${gb(p.unpacked)}–${gb(p.unpacked + p.disk + p.download)} initially; grows with use (download ${gb(p.download)})`, "40 GB on Colima"]);
+    expect(facts()).toEqual(["Container", "ARM", `${gb(p.unpacked).replace(" GB", "")}–${gb(p.unpacked + p.disk + p.download)} initially; grows with use (download ${gb(p.download)})`, "40 GB on Colima"]);
     expect(screen.queryByRole("slider", { name: "Disk" })).toBeNull();
     expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
   });
@@ -338,7 +337,7 @@ describe("the Resources step", () => {
     expect(screen.getByText(/includes 455 MB one-time Linux runtime download/)).toBeInTheDocument();
     expect(screen.queryByText("Linux runtime")).toBeNull();
     expect(screen.getAllByText("Disk")).toHaveLength(1);
-    expect(screen.getByText(/GB–.*GB initially; grows with use/)).toBeInTheDocument();
+    expect(screen.getByText(/GB initially; grows with use/)).toBeInTheDocument();
   });
 
   it("blocks Continue in one line when the Space does not fit", () => {
@@ -494,7 +493,6 @@ describe("QEMU VMs", () => {
 describe("default placement", () => {
   it("starts on This Mac when not signed in but a local runtime is ready, even if that is known late", () => {
     const props: NewSpaceWizardProps = {
-      cloudAvailable: false,
       localAvailable: false,
       onCreate: vi.fn(),
       onAddByAddress: vi.fn(async () => {}),

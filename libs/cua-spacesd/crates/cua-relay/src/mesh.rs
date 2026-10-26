@@ -96,6 +96,22 @@ const DENY_FOR: Duration = Duration::from_secs(30);
 /// relay: the node's own backoff keeps well under this).
 const MAX_CONNECTS_PER_WINDOW: usize = 10;
 const CONNECT_WINDOW: Duration = Duration::from_secs(60);
+/// A node that keeps being refused is logged on its first refusal, then once
+/// per this interval with the count since (a client stuck in a reconnect loop
+/// would otherwise flood the logs).
+const LIMITED_LOG_INTERVAL: Duration = Duration::from_secs(300);
+
+/// What to log for a refused connect (see [`MeshState::limited_log`]).
+#[derive(Debug, PartialEq, Eq)]
+enum LimitedLog {
+    /// First refusal in an interval: log the refusal itself.
+    First,
+    /// A refusal that ends an interval with more refusals: log this many
+    /// refused since the last line.
+    Summary(u64),
+    /// Already logged this interval.
+    Quiet,
+}
 
 const ATTRIBUTE_EVERY: Duration = Duration::from_secs(5);
 /// Relayed packets of a pair are noted at most this often.
@@ -271,6 +287,8 @@ pub struct MeshState {
     connects: Mutex<HashMap<PublicKey, VecDeque<Instant>>>,
     /// Connects turned away for coming too often since start.
     reconnects_limited: AtomicU64,
+    /// Per node: when its refusals were last logged, and how many came since.
+    limited_logs: Mutex<HashMap<PublicKey, (Instant, u64)>>,
     /// Where write failures are counted and reported.
     storage: Arc<Storage>,
     /// Saves asked for (a counter) ...
@@ -341,6 +359,7 @@ impl MeshState {
             sessions_refused: AtomicU64::new(0),
             connects: Mutex::default(),
             reconnects_limited: AtomicU64::new(0),
+            limited_logs: Mutex::default(),
             storage,
             save_asked: AtomicU64::new(0),
             saved: tokio::sync::watch::channel((0, true)).0,
@@ -537,6 +556,45 @@ impl MeshState {
     /// Nodes connected right now.
     pub fn connected(&self) -> usize {
         self.conns.lock().expect("conns").len()
+    }
+
+    /// Decides whether a refusal of `node` at `now` is logged: the first
+    /// one, then a summary every [`LIMITED_LOG_INTERVAL`].
+    fn limited_log(&self, node: &PublicKey, now: Instant) -> LimitedLog {
+        let mut logs = self.limited_logs.lock().expect("limited_logs");
+        if logs.len() > 4096 {
+            logs.retain(|_, (at, _)| now.saturating_duration_since(*at) < LIMITED_LOG_INTERVAL);
+        }
+        match logs.get_mut(node) {
+            None => {
+                logs.insert(*node, (now, 0));
+                LimitedLog::First
+            }
+            Some((at, n)) if now.saturating_duration_since(*at) >= LIMITED_LOG_INTERVAL => {
+                let seen = std::mem::take(n);
+                *at = now;
+                if seen == 0 {
+                    LimitedLog::First
+                } else {
+                    LimitedLog::Summary(seen)
+                }
+            }
+            Some((_, n)) => {
+                *n += 1;
+                LimitedLog::Quiet
+            }
+        }
+    }
+
+    /// `cua_relay_reconnect_rejected_total` in Prometheus text format (no
+    /// per-node labels).
+    pub(crate) fn metrics(&self) -> String {
+        format!(
+            "# HELP cua_relay_reconnect_rejected_total Mesh connects refused because the node connected too often.\n\
+             # TYPE cua_relay_reconnect_rejected_total counter\n\
+             cua_relay_reconnect_rejected_total {}\n",
+            self.reconnects_limited.load(Ordering::Relaxed)
+        )
     }
 
     /// Notes a connect by `node` at `now`, or says how many seconds it must
@@ -1162,7 +1220,19 @@ async fn session(relay: Relay, owner: Owner, socket: WebSocket) {
     let mesh = &relay.mesh;
     // The key is proven, so this counts one node, not whoever claims it.
     if let Err(wait) = mesh.admit(&node_key, Instant::now()) {
-        tracing::warn!(node = %node_key.short(), ?kind, retry_after_s = wait, "mesh node connects too often");
+        match mesh.limited_log(&node_key, Instant::now()) {
+            LimitedLog::First => {
+                tracing::warn!(node = %node_key.short(), ?kind, retry_after_s = wait, "mesh node connects too often");
+            }
+            LimitedLog::Summary(refused) => {
+                tracing::warn!(
+                    node = %node_key.short(), ?kind, refused,
+                    interval_s = LIMITED_LOG_INTERVAL.as_secs(),
+                    "mesh node still connects too often"
+                );
+            }
+            LimitedLog::Quiet => {}
+        }
         let _ = sink
             .send(close(
                 proto::CLOSE_RATE_LIMITED,
@@ -1711,6 +1781,47 @@ pub(crate) fn info(relay: &Relay) -> Option<proto::MeshInfo> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn refusals_log_once_then_a_summary_per_interval() {
+        let mesh = MeshState::open(None).unwrap();
+        let node = SecretKey::generate().public();
+        let other = SecretKey::generate().public();
+        let t0 = Instant::now();
+        assert_eq!(mesh.limited_log(&node, t0), LimitedLog::First);
+        for i in 1..=50 {
+            let t = t0 + Duration::from_secs(i);
+            assert_eq!(mesh.limited_log(&node, t), LimitedLog::Quiet);
+        }
+        // Another node has its own first line.
+        assert_eq!(mesh.limited_log(&other, t0), LimitedLog::First);
+        let t1 = t0 + LIMITED_LOG_INTERVAL;
+        assert_eq!(mesh.limited_log(&node, t1), LimitedLog::Summary(50));
+        assert_eq!(
+            mesh.limited_log(&node, t1 + Duration::from_secs(1)),
+            LimitedLog::Quiet
+        );
+        // A node refused once, then quiet for an interval, gets a first line.
+        let t2 = t1 + LIMITED_LOG_INTERVAL * 2;
+        assert_eq!(mesh.limited_log(&other, t2), LimitedLog::First);
+    }
+
+    #[test]
+    fn rejections_are_counted_without_node_labels() {
+        let mesh = MeshState::open(None).unwrap();
+        let node = SecretKey::generate().public();
+        let t0 = Instant::now();
+        for _ in 0..MAX_CONNECTS_PER_WINDOW {
+            mesh.admit(&node, t0).unwrap();
+        }
+        for _ in 0..3 {
+            assert!(mesh.admit(&node, t0).is_err());
+        }
+        let text = mesh.metrics();
+        assert!(text.contains("# TYPE cua_relay_reconnect_rejected_total counter"));
+        assert!(text.contains("\ncua_relay_reconnect_rejected_total 3\n"));
+        assert!(!text.contains('{'));
+    }
 
     #[test]
     fn a_node_connecting_too_often_is_told_when_to_retry() {

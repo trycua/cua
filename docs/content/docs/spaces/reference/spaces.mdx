@@ -21,7 +21,8 @@ Register, provision, list and release Spaces.
 | [`list_spaces`](#list_spaces) | List the Spaces this connection can see. |
 | [`create_space`](#create_space) | Create a Space: a new sandbox on this computer, on one of your computers, or in the cloud. |
 | [`delete_space`](#delete_space) | Delete a Space's sandbox and forget it. |
-| [`stop_space`](#stop_space) | Turn a Space off: suspend it (memory kept) or stop it (disk kept). |
+| [`stop_space`](#stop_space) | Turn a Space off: stop it (disk kept, memory freed) or, with suspend, suspend it (memory kept). |
+| [`resize_space`](#resize_space) | Change a Space's vCPUs, memory or disk size. |
 | [`start_space`](#start_space) | Turn a Space back on: resume or boot it. |
 
 ### add_space
@@ -194,9 +195,9 @@ Text: what was deleted (`Deleted <id> (...)`), or `Removed <id> (...)` for a Spa
 
 ### stop_space
 
-Turn a Space off: suspend it (memory kept) or stop it (disk kept).
+Turn a Space off: stop it (disk kept, memory freed) or, with suspend, suspend it (memory kept).
 
-Turns a Space off the way its provider can: a local container or QEMU VM is suspended (its memory is kept and it resumes where it was), a local Lume VM is stopped (its disk is kept and it boots again), a Space one of your computers provides is stopped by that computer, which frees its memory, and a Space in your own cloud (on="aws", "gcp") is stopped there: compute billing stops, its disk stays (storage is still billed); a Hetzner server (on="hetzner") is stopped too, but Hetzner keeps billing a stopped server, so delete it to stop the charge. Anything streaming from the Space and any hotspot on it end first. A Modal sandbox, a Space added by address and your own computers on the relay cannot be turned off (wrong_provider); delete_space deletes a Space instead. start_space turns it on again.
+Turns a Space off the way its provider can. By default it stops: a local VM (QEMU or Lume) shuts down with its disk kept and gives its memory back to the machine, a local container stops or is suspended as its runtime can, a Space one of your computers provides is stopped by that computer, and a Space in your own cloud (on="aws", "gcp") is stopped there: compute billing stops, its disk stays (storage is still billed); a Hetzner server (on="hetzner") is stopped too, but Hetzner keeps billing a stopped server, so delete it to stop the charge. suspend=true suspends a local container or QEMU VM instead: its memory is kept (so it still uses it) and it resumes where it was. Anything streaming from the Space and any hotspot on it end first. A Modal sandbox, a Space added by address and your own computers on the relay cannot be turned off (wrong_provider); delete_space deletes a Space instead. start_space turns it on again.
 
 | | |
 | --- | --- |
@@ -212,6 +213,7 @@ Turns a Space off the way its provider can: a local container or QEMU VM is susp
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | `space` | `string` | required | Space id or name. |
+| `suspend` | `boolean` | `false` | Suspend it instead: keep its memory so it resumes where it was (a local container or QEMU VM). Default false: stop it, keeping its disk and giving its memory back to the machine. |
 
 #### Result
 
@@ -224,6 +226,38 @@ JSON: `space`, `state` (`suspended` or `stopped`), `power` (`suspend` or `stop`)
 #### Notes
 
 - list_spaces says which Spaces turn off (`power`: `suspend` or `stop`; absent when it cannot) and how they were left (`power_state`).
+
+### resize_space
+
+Change a Space's vCPUs, memory or disk size.
+
+Gives a local VM Space (QEMU) another shape: `cpus` vCPUs, `memory_mb` MiB of memory, a disk grown to `disk_gb` GiB; what you leave out stays. The VM shuts down and boots again from its own disk, so its files stay but its memory and running processes do not; a stopped one boots. A disk never shrinks. Returns once it is ready again. Containers, Lume VMs and Spaces on other computers are refused (wrong_provider).
+
+| | |
+| --- | --- |
+| Providers | all (cloud, local, direct, relay) |
+| Platforms | all (macos, windows, linux) |
+| Metering | free |
+| Approval | permission `spaces:resize_space`; mutating, idempotent |
+| Swift SDK | `Spaces.resize(space, cpus, memory_mb, disk_gb)` |
+| Rust | `Spaces::resize` |
+
+#### Parameters
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `cpus` | `integer` | none | vCPUs. At least 0. |
+| `disk_gb` | `integer` | none | Grow the disk to this many GiB (a disk never shrinks). At least 0. |
+| `memory_mb` | `integer` | none | Memory in MiB. At least 0. |
+| `space` | `string` | required | Space id or name. |
+
+#### Result
+
+JSON: `space`, `cpus`, `memory_mb`, `disk_gb` (what it has now) and `message`.
+
+#### Errors
+
+[`invalid_argument`](/spaces/reference#invalid_argument), [`not_found`](/spaces/reference#not_found), [`ambiguous_sandbox`](/spaces/reference#ambiguous_sandbox), [`wrong_provider`](/spaces/reference#wrong_provider), [`sandbox`](/spaces/reference#sandbox), [`timeout`](/spaces/reference#timeout)
 
 ### start_space
 

@@ -613,7 +613,7 @@ const AGENT_EVENTS_INSTRUCTIONS: &str = "Normalized events (install, session, tu
 
 const PERSISTENT_INSTRUCTIONS: &str = "A persistent agent is a harness with a name, a Space and a home in the Cua Volume (agents/<name>/). Its harness keeps its memory in the home (Claude Code auto memory, Codex memories, Hermes MEMORY.md, the OpenClaw workspace), which is restored into the Space before each run and saved after each turn, so the agent remembers across runs, Space releases and computers. One run writes a home at a time. Start it with persistent_agent_send (or agent_start with home=<name>); the daemon notifies the user when a turn ends. Inside the Space the agent gets the `cua` bridge: notify_user, the drive, and the user's computers it was granted.";
 
-const POWER_INSTRUCTIONS: &str = "Turns a Space off the way its provider can: a local container or QEMU VM is suspended (its memory is kept and it resumes where it was), a local Lume VM is stopped (its disk is kept and it boots again), a Space one of your computers provides is stopped by that computer, which frees its memory, and a Space in your own cloud (on=\"aws\", \"gcp\") is stopped there: compute billing stops, its disk stays (storage is still billed); a Hetzner server (on=\"hetzner\") is stopped too, but Hetzner keeps billing a stopped server, so delete it to stop the charge. Anything streaming from the Space and any hotspot on it end first. A Modal sandbox, a Space added by address and your own computers on the relay cannot be turned off (wrong_provider); delete_space deletes a Space instead. start_space turns it on again.";
+const POWER_INSTRUCTIONS: &str = "Turns a Space off the way its provider can. By default it stops: a local VM (QEMU or Lume) shuts down with its disk kept and gives its memory back to the machine, a local container stops or is suspended as its runtime can, a Space one of your computers provides is stopped by that computer, and a Space in your own cloud (on=\"aws\", \"gcp\") is stopped there: compute billing stops, its disk stays (storage is still billed); a Hetzner server (on=\"hetzner\") is stopped too, but Hetzner keeps billing a stopped server, so delete it to stop the charge. suspend=true suspends a local container or QEMU VM instead: its memory is kept (so it still uses it) and it resumes where it was. Anything streaming from the Space and any hotspot on it end first. A Modal sandbox, a Space added by address and your own computers on the relay cannot be turned off (wrong_provider); delete_space deletes a Space instead. start_space turns it on again.";
 
 const PAUSE_INSTRUCTIONS: &str = "One call: stops the run, saves the home, releases the home's lease, keeps the agent's routines from firing, and suspends its Space when it is local. A cloud Space cannot be suspended, so pausing releases it after the home is saved; agent_resume creates it again from the same image and restores the home. Apps open in a released cloud Space do not come back. The user's own computers are never suspended.";
 
@@ -711,9 +711,21 @@ pub fn tools() -> Vec<Tool> {
             sdk_symbol: "Spaces.stop(space)",
             rust_symbol: "Spaces::stop",
             notes: &["list_spaces says which Spaces turn off (`power`: `suspend` or `stop`; absent when it cannot) and how they were left (`power_state`)."],
-            ..Spec::new("stop_space", "Turn a Space off: suspend it (memory kept) or stop it (disk kept).")
+            ..Spec::new("stop_space", "Turn a Space off: stop it (disk kept, memory freed) or, with suspend, suspend it (memory kept).")
         }
-        .with::<i::SpaceOnly>(),
+        .with::<i::StopSpace>(),
+        Spec {
+            category: Category::Lifecycle,
+            result: "JSON: `space`, `cpus`, `memory_mb`, `disk_gb` (what it has now) and `message`.",
+            errors: &["wrong_provider", "sandbox", "invalid_argument", "timeout"],
+            instructions: "Gives a local VM Space (QEMU) another shape: `cpus` vCPUs, `memory_mb` MiB of memory, a disk grown to `disk_gb` GiB; what you leave out stays. The VM shuts down and boots again from its own disk, so its files stay but its memory and running processes do not; a stopped one boots. A disk never shrinks. Returns once it is ready again. Containers, Lume VMs and Spaces on other computers are refused (wrong_provider).",
+            capabilities: &["space.power"],
+            annotations: Annotations::mutating_idempotent(),
+            sdk_symbol: "Spaces.resize(space, cpus, memory_mb, disk_gb)",
+            rust_symbol: "Spaces::resize",
+            ..Spec::new("resize_space", "Change a Space's vCPUs, memory or disk size.")
+        }
+        .with::<i::ResizeSpace>(),
         Spec {
             category: Category::Lifecycle,
             result: "JSON: `space`, `state` (`running`), `power` (`suspend` or `stop`) and `message`.",
@@ -1897,7 +1909,7 @@ mod tests {
 
     #[test]
     fn advertises_every_tool() {
-        assert_eq!(tools().len(), 96);
+        assert_eq!(tools().len(), 97);
     }
 
     #[test]
@@ -1984,6 +1996,7 @@ mod tests {
             "delete_space",
             "stop_space",
             "start_space",
+            "resize_space",
             "add_space",
             "remove_space",
             "list_spaces",

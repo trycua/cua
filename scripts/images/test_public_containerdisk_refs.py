@@ -2,7 +2,7 @@ import subprocess
 import unittest
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 PRIVATE_REGISTRY = "296062593712.dkr.ecr.us-west-2.amazonaws.com"
 PRIVATE_REPOSITORIES = (
     f"{PRIVATE_REGISTRY}/desktop-workspace-duo",

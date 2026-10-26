@@ -122,7 +122,7 @@ fi
 
 if phase playwright; then
     step "Playwright Chromium"
-    pw="${CUA_E2E_PLAYWRIGHT_DIR:-$REPO/tests/e2e/cua-sdk/.playwright}"
+    pw="${CUA_E2E_PLAYWRIGHT_DIR:-$REPO/libs/cua/tests/e2e/cua-sdk/.playwright}"
     mkdir -p "$pw" && cd "$pw"
     [ -f package.json ] || echo '{"type":"module"}' >package.json
     npm i -s playwright@1
@@ -132,8 +132,8 @@ fi
 
 if phase rust-tests; then
     step "Rust test binaries"
-    cd "$REPO/tests/e2e/cua-sdk/rust"
-    out="$REPO/tests/e2e/cua-sdk/rust/prebuilt"
+    cd "$REPO/libs/cua/tests/e2e/cua-sdk/rust"
+    out="$REPO/libs/cua/tests/e2e/cua-sdk/rust/prebuilt"
     rm -rf "$out" && mkdir -p "$out"
     # The same build `cargo test` does, minus running it: every test target of
     # the crate, copied next to a manifest that run.py --rust-prebuilt reads.

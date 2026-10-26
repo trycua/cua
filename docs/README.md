@@ -56,7 +56,7 @@ Run the Python and container lanes with
 each other; `prelude="..."` adds hidden setup (see
 `libs/cua/tests/e2e/cua-sdk/docs/preludes/README.md`). Blocks that predate the
 rule are listed in `docs/code-block-baseline.json`, which may only shrink: after
-deciding a baselined block, run `python3 ../tests/e2e/cua-sdk/docs/extract.py --update-baseline`.
+deciding a baselined block, run `python3 ../libs/cua/tests/e2e/cua-sdk/docs/extract.py --update-baseline`.
 A new or edited block must be decided before it merges.
 
 For generated reference changes, also run the owning component check:

@@ -48,7 +48,7 @@ async fn rig() -> Option<Rig> {
     .unwrap();
     let script = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../../../tests/e2e/cua-sdk/fixtures/share_relay.py"
+        "/../../tests/e2e/cua-sdk/fixtures/share_relay.py"
     );
     let mut relay = Command::new("python3")
         .arg(script)

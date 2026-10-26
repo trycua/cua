@@ -26,7 +26,7 @@ https://github.com/trycua/cua/(tree|blob)/main/examples/agents-in-sandboxes
 https://github.com/trycua/cua/tree/main/examples/streaming/
 https://github.com/trycua/cua/tree/main/libs/cua/bench/streaming
 https://github.com/trycua/cua/blob/main/libs/cua/proto/MEDIA\.md
-https://github.com/trycua/cua/blob/main/tests/e2e/browse/e2e_browse\.py
+https://github.com/trycua/cua/blob/main/libs/cua/tests/e2e/browse/e2e_browse\.py
 
 # TypeSafe console returns 403 to automated checkers but resolves fine in-browser
 https://console.typesafe.ai/*

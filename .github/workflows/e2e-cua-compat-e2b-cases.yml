@@ -71,7 +71,7 @@ jobs:
           # e2b-code-interpreter against the code-interpreter-v1 template, after the cases
           python -m venv "$RUNNER_TEMP/ci-venv" && "$RUNNER_TEMP/ci-venv/bin/pip" install -q e2b-code-interpreter
           # ... and 16 sandboxes at once (asyncio.gather of create + command + file)
-          export CASES_AFTER="$RUNNER_TEMP/ci-venv/bin/python $PWD/tests/compat/e2b/code_interpreter_check.py $PWD/tests/compat/e2b/fixtures/code-interpreter.json && $RUNNER_TEMP/ci-venv/bin/python $PWD/tests/compat/e2b/parallel_check.py 16"
+          export CASES_AFTER="$RUNNER_TEMP/ci-venv/bin/python $PWD/libs/cua/tests/compat/e2b/code_interpreter_check.py $PWD/libs/cua/tests/compat/e2b/fixtures/code-interpreter.json && $RUNNER_TEMP/ci-venv/bin/python $PWD/libs/cua/tests/compat/e2b/parallel_check.py 16"
           libs/cua/tests/compat/run_cases_space.sh --rules libs/cua/tests/compat/e2b/rules-space.json -- --on local --kind vm --image "vm:$LINUX_DISK"
       - name: Overhead guard (gateway against the direct Cua SDK)
         env:

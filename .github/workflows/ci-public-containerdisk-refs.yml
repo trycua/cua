@@ -16,4 +16,4 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Reject private containerDisk references
-        run: python3 -m unittest tests.test_public_containerdisk_refs
+        run: python3 -m unittest discover -s scripts/images -p test_public_containerdisk_refs.py

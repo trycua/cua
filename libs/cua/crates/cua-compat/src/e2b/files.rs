@@ -528,7 +528,7 @@ mod tests {
     #[test]
     fn signatures_match_the_sdk_vectors() {
         let v: Value = serde_json::from_str(include_str!(
-            "../../../../../../tests/compat/e2b/fixtures/signature-vectors.json"
+            "../../../../tests/compat/e2b/fixtures/signature-vectors.json"
         ))
         .unwrap();
         let list = v["vectors"].as_array().unwrap();

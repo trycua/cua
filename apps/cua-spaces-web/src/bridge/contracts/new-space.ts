@@ -117,6 +117,8 @@ export interface WizardEnv {
   localAvailable: boolean;
   localReason?: string | null;
   localBackends?: string[] | null;
+  /** Why each local backend that is not ready is not (the runtime doctor's detail). */
+  localDetails?: Record<string, string> | null;
   maxCpus: number;
   hostArch?: string | null;
   storage?: LocalStorage | null;
@@ -295,8 +297,6 @@ export interface WizardView {
   runtimeSwitch?: RuntimeSwitch | null;
   advanced: boolean;
   kindTiles: WizardTile[];
-  /** One plain line under Kind: what the chosen kind is (and why MicroVM is greyed out). */
-  kindHelp?: string | null;
   runtimes: { value: Runtime; label: string }[];
   runtime: Runtime;
   runtimeEnabled: boolean;

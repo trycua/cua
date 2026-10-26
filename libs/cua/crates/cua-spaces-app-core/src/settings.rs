@@ -370,6 +370,21 @@ pub struct TelemetryInput {
     pub notice_shown: bool,
 }
 
+/// This machine's runtime doctor, for Settings, Advanced, Runtimes'
+/// MicroVM row (the same facts New Space's MicroVM tile follows).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct MicrovmInput {
+    /// This machine's system (`macos`, `linux`, `windows`).
+    pub os: Option<crate::model::SpaceOs>,
+    /// Ready backends (none: not read yet).
+    pub local_backends: Option<Vec<String>>,
+    /// Why each other backend is not ready, by backend name.
+    pub local_details: Option<std::collections::HashMap<String, String>>,
+    /// This machine's architecture (`arm64`, `amd64`).
+    pub host_arch: Option<String>,
+}
+
 /// What the Settings page shows.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -431,6 +446,10 @@ pub struct SettingsInput {
     /// (`placement.overflow`); none: no row.
     #[serde(default)]
     pub overflow: Option<bool>,
+    /// What this machine's runtime doctor said, for Runtimes' MicroVM row
+    /// (whether microVMs run here, and why not); none: no MicroVM row.
+    #[serde(default)]
+    pub microvm: Option<MicrovmInput>,
     /// Settings, General's Show tips switch: tips are on
     /// (`!AppSettings.tips.off`). A shell that does not say reads as on.
     #[serde(default = "default_true")]
@@ -460,6 +479,7 @@ impl Default for SettingsInput {
             lume_source: None,
             linux_source: None,
             overflow: None,
+            microvm: None,
             show_tips: true,
         }
     }
@@ -854,11 +874,13 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
         },
     ];
 
-    if input.lume_source.is_some() || input.linux_source.is_some() {
-        sections.push(runtimes_section(
-            input.lume_source.as_deref(),
-            input.linux_source.as_deref(),
-        ));
+    if input.lume_source.is_some() || input.linux_source.is_some() || input.microvm.is_some() {
+        let mut runtimes =
+            runtimes_section(input.lume_source.as_deref(), input.linux_source.as_deref());
+        if let Some(m) = &input.microvm {
+            runtimes.rows.extend(microvm_rows(m));
+        }
+        sections.push(runtimes);
     }
 
     if let Some(t) = &input.telemetry {
@@ -988,6 +1010,61 @@ pub fn runtimes_section(lume_source: Option<&str>, linux_source: Option<&str>) -
     }
 }
 
+/// Runtimes' MicroVM row: whether this machine runs microVMs and on what,
+/// or why not (New Space only greys MicroVM out; the reason is told here).
+pub fn microvm_rows(m: &MicrovmInput) -> Vec<SettingsRow> {
+    use crate::wizard::{LocalProbe, MicrovmStatus, microvm_status_of};
+    use SettingsRowKind::*;
+    let probe = LocalProbe {
+        backends: m.local_backends.as_deref(),
+        details: m.local_details.as_ref(),
+        host_arch: m.host_arch.as_deref(),
+    };
+    let os = m.os.unwrap_or(crate::model::SpaceOs::Macos);
+    let mut status = row("microvm-runtime", Text, "MicroVM");
+    let note = match microvm_status_of(&probe, os) {
+        MicrovmStatus::Checking => {
+            status.value = Some("Checking\u{2026}".into());
+            None
+        }
+        MicrovmStatus::Ready(runtimes) => {
+            status.value = Some("Ready".into());
+            let names: Vec<String> = runtimes.iter().map(|r| r.label()).collect();
+            Some(row(
+                "microvm-runtime-note",
+                Note,
+                &format!("MicroVM Spaces run on {}.", join_or(&names)),
+            ))
+        }
+        MicrovmStatus::Blocked(why) => {
+            status.value = Some("Not available".into());
+            Some(row(
+                "microvm-runtime-note",
+                Error,
+                &format!("MicroVM {}", lower_first(&why)),
+            ))
+        }
+    };
+    std::iter::once(status).chain(note).collect()
+}
+
+/// "A", "A or B", "A, B or C".
+fn join_or(names: &[String]) -> String {
+    match names {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} or {last}", rest.join(", ")),
+    }
+}
+
+fn lower_first(s: &str) -> String {
+    let mut c = s.chars();
+    match c.next() {
+        Some(f) => format!("{}{}", f.to_lowercase(), c.as_str()),
+        None => String::new(),
+    }
+}
+
 /// The Settings page with Settings, Storage (the Cua Volume's store,
 /// Finder volume and cache, [`crate::drive_settings::storage_section`])
 /// after General, while the Cua Volume experiment is on. Off, Storage is
@@ -1046,6 +1123,66 @@ mod tests {
         assert_eq!(active, ["system"]);
         let ids: Vec<_> = r.options.iter().map(|o| o.label.as_str()).collect();
         assert_eq!(ids, ["Automatic", "Built-in", "System"]);
+    }
+
+    #[test]
+    fn runtimes_say_whether_microvms_run_here_and_why_not() {
+        use crate::model::SpaceOs;
+        let page_for = |m: MicrovmInput| {
+            let p = page(&SettingsInput {
+                microvm: Some(m),
+                ..Default::default()
+            });
+            let s = p.sections.into_iter().find(|s| s.id == "runtimes").unwrap();
+            s.rows
+                .into_iter()
+                .map(|r| (r.id, r.value.or(Some(r.label)).unwrap_or_default()))
+                .collect::<Vec<_>>()
+        };
+        let mac = |ready: &[&str]| MicrovmInput {
+            os: Some(SpaceOs::Macos),
+            local_backends: Some(ready.iter().map(|b| b.to_string()).collect()),
+            local_details: None,
+            host_arch: Some("arm64".into()),
+        };
+        assert_eq!(
+            page_for(mac(&["docker", "vz", "containerization"])),
+            [
+                ("microvm-runtime".to_string(), "Ready".to_string()),
+                (
+                    "microvm-runtime-note".to_string(),
+                    "MicroVM Spaces run on Virtualization.framework or Apple Containerization."
+                        .to_string()
+                ),
+            ]
+        );
+        assert_eq!(
+            page_for(mac(&["docker"])),
+            [
+                ("microvm-runtime".to_string(), "Not available".to_string()),
+                (
+                    "microvm-runtime-note".to_string(),
+                    "MicroVM needs macOS 26.".to_string()
+                ),
+            ]
+        );
+        assert_eq!(
+            page_for(MicrovmInput {
+                local_backends: None,
+                ..mac(&[])
+            }),
+            [(
+                "microvm-runtime".to_string(),
+                "Checking\u{2026}".to_string()
+            )]
+        );
+        // Without the doctor's answer, no MicroVM row (and no section).
+        assert!(
+            page(&SettingsInput::default())
+                .sections
+                .iter()
+                .all(|s| s.id != "runtimes")
+        );
     }
 
     #[test]

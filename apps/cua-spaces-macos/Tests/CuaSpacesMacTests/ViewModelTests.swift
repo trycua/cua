@@ -667,7 +667,6 @@ struct ViewModelTests {
         let v = model.wizard.view
         #expect(v.kindTiles.map(\.id) == ["container", "vm", "microvm"])
         #expect(v.runtimes.map(\.value) == ["auto", "vz", "containerization"])
-        #expect(v.kindHelp == "The container image with its own kernel, on Virtualization.framework.")
         model.wizard.send(.setRuntime(runtime: .containerization))
         model.create(model.wizard.view.plan)
         for _ in 0..<50 where backend.created.isEmpty { try? await Task.sleep(for: .milliseconds(20)) }
@@ -683,7 +682,12 @@ struct ViewModelTests {
         await mac.openNewSpace()
         mac.wizard.send(.chooseKind(kind: .microvm))
         #expect(mac.wizard.view.kindTiles.first { $0.id == "microvm" }?.enabled == false)
-        #expect(mac.wizard.view.kindTiles.first { $0.id == "microvm" }?.detail == "Needs macOS 26.")
+        // No words in New Space; Settings, Advanced, Runtimes says why.
+        #expect(mac.wizard.view.kindTiles.first { $0.id == "microvm" }?.detail == "")
+        let microvm = mac.settingsPage.sections.first { $0.id == "runtimes" }?.rows.filter { $0.id.hasPrefix("microvm-") }
+        #expect(microvm?.map(\.id) == ["microvm-runtime", "microvm-runtime-note"])
+        #expect(microvm?.first?.value == "Not available")
+        #expect(microvm?.last?.label == "MicroVM needs macOS 26.")
         #expect(appWizardCreateArgs(plan: mac.wizard.view.plan).kind == .container)
     }
 

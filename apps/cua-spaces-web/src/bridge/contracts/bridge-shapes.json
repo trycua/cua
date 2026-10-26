@@ -5505,6 +5505,15 @@
             "type": "string"
           }
         },
+        "localDetails": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
         "maxCpus": {
           "type": "number"
         },

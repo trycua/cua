@@ -20,7 +20,7 @@ pub fn parse_on(s: &str) -> Result<On, String> {
     On::parse(s).map_err(|e| e.message)
 }
 
-/// `--kind`: `auto`, `container` or `vm`.
+/// `--kind`: `auto`, `container`, `vm` or `microvm`.
 pub fn parse_kind(s: &str) -> Result<Kind, String> {
     Kind::parse(s).map_err(|e| e.message)
 }
@@ -51,6 +51,11 @@ pub struct Narrow {
 }
 
 impl Narrow {
+    /// Whether a flag narrows the name (`--local`, or the ended `--cloud`).
+    pub fn is_narrowed(&self) -> bool {
+        self.local || self.cloud
+    }
+
     /// NAME, qualified when the flag narrows it.
     pub fn apply(self, name: &str) -> Result<String, CuaError> {
         if self.cloud {
@@ -277,7 +282,7 @@ pub struct LaunchArgs {
     /// Deprecated: use `--kind vm`.
     #[arg(long, hide = true, conflicts_with = "kind")]
     vm: bool,
-    /// What kind of computer: auto, container or vm.
+    /// What kind of computer: auto, container, vm or microvm.
     #[arg(long, value_parser = parse_kind)]
     kind: Option<Kind>,
     /// Which engine (see `sb create --runtime`).
@@ -350,7 +355,7 @@ impl LaunchArgs {
 #[derive(Subcommand, Debug)]
 pub enum SandboxCmd {
     /// Create a sandbox: `cua sb create IMAGE [--on local|direct:<addr>]
-    /// [--kind auto|container|vm] [--runtime auto|gvisor|runc|qemu|lume]`.
+    /// [--kind auto|container|vm|microvm] [--runtime auto|gvisor|runc|qemu|lume|firecracker|vz|containerization]`.
     #[command(after_help = "Examples:
   # A Linux desktop on this computer (a gVisor container)
   cua sb create linux --name dev

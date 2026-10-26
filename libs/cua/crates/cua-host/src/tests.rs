@@ -1816,7 +1816,7 @@ async fn signing_in_as_another_account_registers_the_host_again() {
     let f = fixture();
     let host = f.host();
     let mut opts = f.relay_opts(&relay.url);
-    opts.provide_spaces = true;
+    opts.provide_spaces = Some(true);
     let before = host.setup(opts, &StaticToken(jwt("user-1"))).await.unwrap();
     let old_id = before.machine_id.clone().unwrap();
     let old_token = std::fs::read_to_string(host.paths().machine_token()).unwrap();
@@ -2412,4 +2412,118 @@ async fn a_rename_on_the_relay_is_adopted_only_by_that_machine() {
     // Not set up: nothing to take the name.
     let other = fixture();
     assert!(!other.host().adopt_name(&id, "x").unwrap());
+}
+
+/// "Provide Spaces" is on by default for a new setup, and setting up again
+/// never flips what the machine already has: an explicit off, or an
+/// earlier version's default (off), stays off.
+#[tokio::test]
+async fn a_new_setup_provides_spaces_and_a_set_up_machine_keeps_its_setting() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct-token", "user-1", Some("ada@example.com"));
+    let token = StaticToken("acct-token".into());
+
+    // New setup, default (desktop) profile: shares the desktop and
+    // provides Spaces, and says so to the relay.
+    let f = fixture();
+    let host = f.host();
+    let opts = f.relay_opts(&relay.url).profile(HostProfile::Desktop);
+    assert_eq!(opts.provide_spaces, None);
+    let status = host.setup(opts, &token).await.unwrap();
+    assert!(status.share_desktop && status.provide_spaces);
+    assert!(host.policy().unwrap().unwrap().provide_spaces);
+    assert!(host.config().unwrap().unwrap().provide_spaces);
+    let id = status.machine_id.clone().unwrap();
+    assert_eq!(relay.machine(&id).unwrap().meta[META_PROVIDES_SPACES], "on");
+
+    // Turned off in its settings, then set up again with the defaults:
+    // still off.
+    let status = host
+        .configure(HostSettingsChange {
+            provide_spaces: Some(false),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert!(!status.provide_spaces);
+    let status = host
+        .setup(
+            f.relay_opts(&relay.url).profile(HostProfile::Desktop),
+            &token,
+        )
+        .await
+        .unwrap();
+    assert!(status.share_desktop && !status.provide_spaces);
+    assert!(!host.policy().unwrap().unwrap().provide_spaces);
+    assert_eq!(
+        relay.machine(&id).unwrap().meta[META_PROVIDES_SPACES],
+        "off"
+    );
+
+    // An explicit choice on a new setup wins over the default.
+    let g = fixture();
+    let mut opts = g.relay_opts(&relay.url);
+    opts.provide_spaces = Some(false);
+    let status = g.host().setup(opts, &token).await.unwrap();
+    assert!(status.share_desktop && !status.provide_spaces);
+
+    // A new direct setup does not provide Spaces unless asked (its
+    // listener is plaintext).
+    let d = fixture();
+    let mut opts = SetupOptions::direct("10.1.2.3:3211".parse().unwrap());
+    opts.driver_bin = Some(d.driver.clone());
+    let status = d.host().setup(opts, &NoAccount).await.unwrap();
+    assert!(status.share_desktop && !status.provide_spaces);
+}
+
+/// An upgrade from a version that wrote no `provide_spaces` (or wrote it
+/// off, its default) sets up again with Spaces still off: no migration
+/// turns them on.
+#[tokio::test]
+async fn an_upgrade_from_an_older_version_does_not_turn_spaces_on() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct-token", "user-1", Some("ada@example.com"));
+    let token = StaticToken("acct-token".into());
+    let f = fixture();
+    let host = f.host();
+    host.setup(f.relay_opts(&relay.url), &token).await.unwrap();
+    // What an older version left: the same files without the setting.
+    for path in [host.paths().config(), host.paths().policy()] {
+        let mut v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        v.as_object_mut().unwrap().remove("provide_spaces");
+        std::fs::write(&path, serde_json::to_string(&v).unwrap()).unwrap();
+    }
+    assert!(!host.config().unwrap().unwrap().provide_spaces);
+    assert!(!host.status().await.unwrap().provide_spaces);
+    let status = host.setup(f.relay_opts(&relay.url), &token).await.unwrap();
+    assert!(status.share_desktop && !status.provide_spaces);
+    assert!(!host.policy().unwrap().unwrap().provide_spaces);
+
+    // Only the policy left (no config.json): its setting is kept too, and
+    // one that cannot be read counts as off.
+    std::fs::remove_file(host.paths().config()).unwrap();
+    assert!(!host.resolve_provide_spaces(&f.relay_opts(&relay.url)));
+    std::fs::write(host.paths().policy(), b"{not json").unwrap();
+    assert!(!host.resolve_provide_spaces(&f.relay_opts(&relay.url)));
+    std::fs::remove_file(host.paths().policy()).unwrap();
+    assert!(host.resolve_provide_spaces(&f.relay_opts(&relay.url)));
+}
+
+#[test]
+fn the_default_for_providing_spaces() {
+    let relay = HostMode::Relay {
+        url: "https://relay.example".into(),
+    };
+    let direct = HostMode::Direct {
+        listen: "10.1.2.3:3211".parse().unwrap(),
+    };
+    assert!(default_provide_spaces(&relay, None));
+    assert!(!default_provide_spaces(&direct, None));
+    assert!(!default_provide_spaces(&relay, Some(Ok(false))));
+    assert!(default_provide_spaces(&direct, Some(Ok(true))));
+    assert!(!default_provide_spaces(
+        &relay,
+        Some(Err(Error::NotFound("x".into())))
+    ));
 }

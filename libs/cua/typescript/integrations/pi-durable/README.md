@@ -9,7 +9,7 @@ Cua Spaces as the execution environment of [Pi Durable](https://github.com/earen
   restores instead of guessing. Forked conversations get a Space forked from the parent's checkpoint at the fork entry.
 
 The guarantees and their limits are described in the
-[Durable agents with Pi Durable](https://cua.ai/docs/spaces/guides/pi-durable) guide.
+[Build a durable agent in code](https://cua.ai/docs/cua-sdk/guides/build-a-durable-agent) guide.
 
 ```ts
 import { embedded, SandboxCreateOptions } from "@trycua/cua"

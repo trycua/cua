@@ -26,11 +26,12 @@ export interface ToastAction {
   onClick: () => void;
 }
 
-let errorAction: ((text: string) => ToastAction | null) | null = null;
+let errorAction: ((text: string, group?: string) => ToastAction | null) | null = null;
 
 /** Offers an action on a failed action's toast, from the error's text (the
- * plan-limit refusal's Upgrade). Set by the shell, which has the core. */
-export function setErrorAction(fn: ((text: string) => ToastAction | null) | null) {
+ * plan-limit refusal's Upgrade) and the toast's group (`create` for a
+ * Space create). Set by the shell, which has the core. */
+export function setErrorAction(fn: ((text: string, group?: string) => ToastAction | null) | null) {
   errorAction = fn;
 }
 
@@ -64,7 +65,7 @@ export function toast(title: string, options: { description?: string; type?: Toa
 /** A failed action: `title` says what didn't happen, the error says why. */
 export const toastError = (title: string, group?: string) => (e: unknown) => {
   const description = e instanceof Error ? e.message : String(e);
-  toast(title, { description, type: "error", group, action: errorAction?.(description) ?? undefined });
+  toast(title, { description, type: "error", group, action: errorAction?.(description, group) ?? undefined });
 };
 
 const ICONS = { info: InfoIcon, success: CircleCheckIcon, error: CircleAlertIcon } as const;
@@ -91,7 +92,7 @@ function ToastList() {
         key={t.id}
         toast={t}
         data-video-occluder=""
-        className="glass flex items-start gap-2.5 rounded-xl border p-3 pr-2 shadow-float transition-[opacity,translate] duration-200 ease-out-soft data-ending-style:translate-y-2 data-ending-style:opacity-0 data-starting-style:translate-y-2 data-starting-style:opacity-0"
+        className="glass flex items-start gap-2.5 rounded-lg border p-3 pr-2 shadow-float transition-[opacity,translate] duration-200 ease-out-soft data-ending-style:translate-y-2 data-ending-style:opacity-0 data-starting-style:translate-y-2 data-starting-style:opacity-0"
       >
         {(t.data as { fromCua?: boolean } | undefined)?.fromCua && t.type !== "error" ? (
           <CuaKey size={20} className="-my-0.5" />
@@ -105,14 +106,14 @@ function ToastList() {
             <button
               type="button"
               data-toast-action=""
-              className="mt-2 rounded-md border px-2 py-1 text-xs font-medium hover:bg-accent"
+              className="mt-2 rounded-lg border px-2 py-1 text-xs font-medium hover:bg-accent"
               onClick={() => (t.data as { action: ToastAction }).action.onClick()}
             >
               {(t.data as { action: ToastAction }).action.label}
             </button>
           ) : null}
         </Toast.Content>
-        <Toast.Close aria-label="Dismiss" className="rounded-md p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground">
+        <Toast.Close aria-label="Dismiss" className="rounded-lg p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground">
           <XIcon className="size-3.5" />
         </Toast.Close>
       </Toast.Root>

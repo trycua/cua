@@ -1810,6 +1810,7 @@ mod tests {
         let row = SpaceRow {
             id: "direct:127.0.0.1:34752".into(),
             name: "studio".into(),
+            display_name: None,
             provider: "direct".into(),
             spacesd_version: "0.4.0".into(),
             features: vec![],
@@ -1831,6 +1832,7 @@ mod tests {
             cloud_place: None,
             cloud_delete: None,
             stop_reason: None,
+            sharing: None,
         };
         let d = detail(&super::super::row_to_space(&row, 0));
         // Added by address: no image row, so only the identifier copies.
@@ -1859,6 +1861,7 @@ mod tests {
         let row = SpaceRow {
             id: "local:demo".into(),
             name: "demo".into(),
+            display_name: None,
             provider: "local".into(),
             spacesd_version: "0.4.0".into(),
             features: vec!["desktop_stream".into()],
@@ -1880,6 +1883,7 @@ mod tests {
             cloud_place: None,
             cloud_delete: None,
             stop_reason: None,
+            sharing: None,
         };
         let space = super::super::creating::deleting_space(&super::super::row_to_space(&row, 0));
         let d = detail(&space);

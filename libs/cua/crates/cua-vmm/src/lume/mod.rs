@@ -1034,6 +1034,19 @@ impl LumeRuntime {
         base_name: &str,
         creds: Option<&RegistryCredentials>,
     ) -> Result<CheckpointInfo> {
+        self.ensure_base_sized(image, base_name, creds, None).await
+    }
+
+    /// [`Self::ensure_base_with`], checking the disk for `pull_bytes` (what
+    /// the pull writes, when known) before a pull instead of
+    /// [`crate::disk::LUME_PULL_ESTIMATE`].
+    pub async fn ensure_base_sized(
+        &self,
+        image: &ImageSource,
+        base_name: &str,
+        creds: Option<&RegistryCredentials>,
+        pull_bytes: Option<u64>,
+    ) -> Result<CheckpointInfo> {
         self.ensure_serving().await?;
         let ImageSource::Oci { reference } = image else {
             return Err(VmmError::invalid(
@@ -1059,7 +1072,7 @@ impl LumeRuntime {
         }
         crate::disk::ensure_space(
             &self.vm_dir(),
-            crate::disk::LUME_PULL_ESTIMATE,
+            lume_pull_need(pull_bytes),
             &format!("pull {reference}"),
         )?;
         tracing::info!(
@@ -1564,6 +1577,14 @@ fn gpu_offered(spec: &StartSpec) -> &'static [&'static str] {
     }
 }
 
+/// What a base pull is checked for: the caller's size when it knows it,
+/// else [`crate::disk::LUME_PULL_ESTIMATE`].
+fn lume_pull_need(pull_bytes: Option<u64>) -> u64 {
+    pull_bytes
+        .filter(|b| *b > 0)
+        .unwrap_or(crate::disk::LUME_PULL_ESTIMATE)
+}
+
 impl LumeRuntime {
     /// Starts `spec`; sets `created` once a new VM exists in Lume (a clone
     /// or a Linux VM shell), so a failure after that deletes it.
@@ -1642,8 +1663,13 @@ impl LumeRuntime {
             (None, ImageSource::Existing) => return Err(VmmError::NotFound(spec.name.clone())),
             (None, ImageSource::Oci { reference }) => {
                 let base = base_vm_name(reference);
-                self.ensure_base_with(&spec.image, &base, spec.registry_auth.as_ref())
-                    .await?;
+                self.ensure_base_sized(
+                    &spec.image,
+                    &base,
+                    spec.registry_auth.as_ref(),
+                    spec.pull_bytes,
+                )
+                .await?;
                 crate::disk::ensure_space(
                     &self.vm_dir(),
                     crate::disk::VM_CREATE_ESTIMATE,
@@ -1892,8 +1918,13 @@ impl LumeRuntime {
         }
         self.ensure_serving().await?;
         let base = base_vm_name(reference);
-        self.ensure_base_with(&spec.image, &base, spec.registry_auth.as_ref())
-            .await?;
+        self.ensure_base_sized(
+            &spec.image,
+            &base,
+            spec.registry_auth.as_ref(),
+            spec.pull_bytes,
+        )
+        .await?;
         let mut made = Vec::new();
         for warm in warm_vm_names(&base) {
             self.prepare_one_warm(spec, reference, &base, &warm, settle)
@@ -2367,6 +2398,20 @@ impl Runtime for LumeRuntime {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_base_pull_checks_the_disk_for_the_images_real_size() {
+        let gib = 1u64 << 30;
+        // The catalog's macOS 26: 24.2 GB download + 34.9 GB unpacked.
+        assert_eq!(super::lume_pull_need(Some(59_142_929_031)), 59_142_929_031);
+        assert!(super::lume_pull_need(Some(59_142_929_031)) > 50 * gib);
+        // Unknown (or a zero size): the estimate.
+        assert_eq!(super::lume_pull_need(None), crate::disk::LUME_PULL_ESTIMATE);
+        assert_eq!(
+            super::lume_pull_need(Some(0)),
+            crate::disk::LUME_PULL_ESTIMATE
+        );
+    }
+
     use super::*;
 
     fn runtime_for(channel: CuaChannel, url: &str) -> LumeRuntime {

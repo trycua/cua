@@ -35,6 +35,7 @@ import { AGENT_DETAIL_WEBKIT_METHODS } from "./ops/agent-detail";
 import { AGENT_KEYS_WEBKIT_METHODS } from "./ops/agent-keys";
 import { KEYVAULT_MANAGE_WEBKIT_METHODS } from "./ops/keyvault-manage";
 import { KEYVAULT_SETUP_WEBKIT_METHODS } from "./ops/keyvault-setup";
+import { THREAD_WEBKIT_METHODS } from "./ops/thread";
 
 export const WEBKIT_HANDLER_NAME = "cua";
 /** The window event the host dispatches. */
@@ -58,6 +59,9 @@ export const WEBKIT_METHODS = [
   "spaces.create",
   "spaces.setPower",
   "spaces.delete",
+  "spaces.deleteMany",
+  "spaces.leave",
+  "spaces.rename",
   "spaces.cancelCreate",
   "machines.list",
   "host.status",
@@ -71,6 +75,9 @@ export const WEBKIT_METHODS = [
   "agents.setup",
   "agents.configure",
   "agents.signIn",
+  "agents.status",
+  "agents.connect",
+  "agents.disconnect",
   ...AGENT_DETAIL_WEBKIT_METHODS,
   ...AGENT_KEYS_WEBKIT_METHODS,
   ...KEYVAULT_SETUP_WEBKIT_METHODS,
@@ -80,6 +87,8 @@ export const WEBKIT_METHODS = [
   "clouds.status",
   "clouds.test",
   "clouds.connect",
+  "clouds.disconnect",
+  "clouds.approve",
   "teleport.catalog",
   "teleport.entryForPath",
   "teleport.windows",
@@ -148,6 +157,7 @@ export const WEBKIT_METHODS = [
   "host.openSettings",
   "settings.get",
   "settings.choose",
+  "settings.update",
   "keyvault.get",
   "keyvault.lock",
   "keyvault.unlock",
@@ -175,6 +185,7 @@ export const WEBKIT_METHODS = [
   "links.stop",
   "cli.plan",
   "cli.install",
+  ...THREAD_WEBKIT_METHODS,
 ] as const;
 
 export type WebkitMethod = (typeof WEBKIT_METHODS)[number];
@@ -252,7 +263,7 @@ export interface WkSpace {
   osPrettyName?: string | null;
   image?: string | null;
   imageDigest?: string | null;
-  kind?: "container" | "vm" | null;
+  kind?: "container" | "vm" | "microvm" | null;
   arch?: string | null;
   host?: string | null;
   hostName?: string | null;
@@ -260,6 +271,8 @@ export interface WkSpace {
   cloud?: string | null;
   cloudPlace?: string | null;
   cloudDelete?: string | null;
+  /** Whose it is and what you may do with it (`model::SpaceAccess`). */
+  access?: import("./contracts/spaces").SpaceAccess | null;
   /** A create the app runs (its own pending row): its progress, or why it failed. */
   progress?: import("./contracts/spaces").SpaceProgress | null;
 }
@@ -357,6 +370,8 @@ export interface WkSettings {
   /** The CLI the app installs (its install plan's file name) and whether it
    * is on this computer; absent or null: not known. */
   cli?: { name: string; installed: boolean } | null;
+  /** `AppSettings.tips`; absent: an older host that keeps none. Saved with `settings.update`. */
+  tips?: { off: boolean; done: string[] };
 }
 
 /** `keyvault.*`: the core's page views, plus the overview (camelCase records). */

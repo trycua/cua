@@ -508,7 +508,14 @@ pub async fn run_with(
                     "not revoked (pass --yes to revoke without a prompt)".into(),
                 ));
             }
+            let this = auth.device_id().ok().flatten();
             let d = auth.revoke(&id).await.map_err(err)?;
+            // The agents that computer connected to Spaces stop at once.
+            if this.as_deref() == Some(id.as_str()) {
+                crate::member_cmd::forget_this_computer().await;
+            } else {
+                crate::member_cmd::revoke_device_members(&id).await;
+            }
             if json {
                 line(out, view_json(&d).to_string());
             } else {

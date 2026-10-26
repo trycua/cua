@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * Settings → Agents: `useAgentKeys()` over `ops/agent-keys.ts`, with every
+ * Settings → Connectors: `useAgentKeys()` over `ops/agent-keys.ts`, with every
  * word and rule from the app core's `agentKeys.*` (`agent_keys.rs`): the
  * rows, the add or replace sheet, which variable names can hold a key and
  * the question before removing one.
@@ -249,7 +249,7 @@ export class AgentKeysStore {
 
 const stores = new WeakMap<DataAdapter, AgentKeysStore>();
 
-/** The adapter's one Settings → Agents store. */
+/** The adapter's one Settings → Connectors store. */
 export function agentKeysStore(adapter: DataAdapter): AgentKeysStore {
   let s = stores.get(adapter);
   if (!s) stores.set(adapter, (s = new AgentKeysStore(adapter)));

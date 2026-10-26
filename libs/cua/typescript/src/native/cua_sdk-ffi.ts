@@ -933,6 +933,11 @@ const DEFINITIONS = {
       ret: FfiType.Void,
       hasRustCallStatus: true,
     },
+    "uniffi_cua_sdk_fn_func_thread_view_of": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
     "uniffi_cua_sdk_fn_method_agentrun_artifacts": {
       args: [FfiType.Handle],
       ret: FfiType.Handle,
@@ -993,10 +998,25 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_fn_method_agentsetup_connect_json": {
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer, FfiType.Int8, FfiType.Int8, FfiType.Int8],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_fn_method_agentsetup_connection_status_json": {
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.Int8],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
     "uniffi_cua_sdk_fn_method_agentsetup_detect": {
       args: [FfiType.Handle],
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
+    },
+    "uniffi_cua_sdk_fn_method_agentsetup_disconnect_json": {
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.Int8],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
     },
     "uniffi_cua_sdk_fn_method_agentsetup_install_skills": {
       args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer, FfiType.Int8],
@@ -2353,6 +2373,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_fn_method_spaces_cloud_approve": {
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.Int8],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_fn_method_spaces_cloud_audit": {
       args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
@@ -2364,7 +2389,12 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_sdk_fn_method_spaces_cloud_connect": {
-      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.Int8, FfiType.RustBuffer],
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.Int8, FfiType.RustBuffer, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_fn_method_spaces_cloud_cost": {
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer, FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
@@ -2448,6 +2478,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_fn_method_spaces_delete_many": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_fn_method_spaces_delete_volume": {
       args: [FfiType.Handle, FfiType.RustBuffer, FfiType.Int8],
       ret: FfiType.Handle,
@@ -2465,6 +2500,11 @@ const DEFINITIONS = {
     },
     "uniffi_cua_sdk_fn_method_spaces_hosts": {
       args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_fn_method_spaces_leave_many": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
@@ -2555,6 +2595,11 @@ const DEFINITIONS = {
     },
     "uniffi_cua_sdk_fn_method_spaces_remove_prewarm": {
       args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_fn_method_spaces_rename": {
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
@@ -3358,6 +3403,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_checksum_func_thread_view_of": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_checksum_method_agentrun_artifacts": {
       args: [],
       ret: FfiType.UInt16,
@@ -3418,7 +3468,22 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_checksum_method_agentsetup_connect_json": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_checksum_method_agentsetup_connection_status_json": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_checksum_method_agentsetup_detect": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_checksum_method_agentsetup_disconnect_json": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -4778,6 +4843,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_checksum_method_spaces_cloud_approve": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_checksum_method_spaces_cloud_audit": {
       args: [],
       ret: FfiType.UInt16,
@@ -4789,6 +4859,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_sdk_checksum_method_spaces_cloud_connect": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_checksum_method_spaces_cloud_cost": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -4873,6 +4948,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_checksum_method_spaces_delete_many": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_checksum_method_spaces_delete_volume": {
       args: [],
       ret: FfiType.UInt16,
@@ -4889,6 +4969,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_sdk_checksum_method_spaces_hosts": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_checksum_method_spaces_leave_many": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -4979,6 +5064,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_sdk_checksum_method_spaces_remove_prewarm": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_checksum_method_spaces_rename": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -5871,6 +5961,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_func_telemetry_status(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_sdk_fn_func_telemetry_sync_account(): bigint;
     uniffi_cua_sdk_fn_func_telemetry_use_app_notice(uniffi_out_err: UniffiRustCallStatus): void;
+    uniffi_cua_sdk_fn_func_thread_view_of(entryJson: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_sdk_fn_method_agentrun_artifacts(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_agentrun_events(uniffiSelf: bigint, cursor: bigint, max: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_agentrun_harness(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
@@ -5883,7 +5974,10 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_method_agentrun_stop(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_agentrun_wait(uniffiSelf: bigint, timeoutMs: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_agentsetup_configure_mcp(uniffiSelf: bigint, agents: Uint8Array, server: Uint8Array): bigint;
+    uniffi_cua_sdk_fn_method_agentsetup_connect_json(uniffiSelf: bigint, agents: Uint8Array, server: Uint8Array, skills: number, mcp: number, signIn: number): bigint;
+    uniffi_cua_sdk_fn_method_agentsetup_connection_status_json(uniffiSelf: bigint, expected: Uint8Array, refresh: number, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_sdk_fn_method_agentsetup_detect(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_sdk_fn_method_agentsetup_disconnect_json(uniffiSelf: bigint, agents: Uint8Array, signIn: number): bigint;
     uniffi_cua_sdk_fn_method_agentsetup_install_skills(uniffiSelf: bigint, agents: Uint8Array, skills: Uint8Array, force: number): bigint;
     uniffi_cua_sdk_fn_method_agentsetup_onboarding_declined(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): number;
     uniffi_cua_sdk_fn_method_agentsetup_remove(uniffiSelf: bigint, agents: Uint8Array, skills: number, mcp: number): bigint;
@@ -6155,9 +6249,11 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_method_spaces_call_tool_json(uniffiSelf: bigint, tool: Uint8Array, argumentsJson: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_cancel_create(uniffiSelf: bigint, space: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_cloud_add_host(uniffiSelf: bigint, provider: Uint8Array, instanceType: Uint8Array, region: Uint8Array, count: Uint8Array, ttlHours: Uint8Array): bigint;
+    uniffi_cua_sdk_fn_method_spaces_cloud_approve(uniffiSelf: bigint, provider: Uint8Array, deny: number): bigint;
     uniffi_cua_sdk_fn_method_spaces_cloud_audit(uniffiSelf: bigint, limit: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_cloud_budget(uniffiSelf: bigint, update: Uint8Array): bigint;
-    uniffi_cua_sdk_fn_method_spaces_cloud_connect(uniffiSelf: bigint, target: Uint8Array, makeDefault: number, ttlHours: Uint8Array): bigint;
+    uniffi_cua_sdk_fn_method_spaces_cloud_connect(uniffiSelf: bigint, target: Uint8Array, makeDefault: number, ttlHours: Uint8Array, options: Uint8Array): bigint;
+    uniffi_cua_sdk_fn_method_spaces_cloud_cost(uniffiSelf: bigint, by: Uint8Array, since: Uint8Array, provider: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_cloud_disconnect(uniffiSelf: bigint, provider: Uint8Array, deleteResources: number): bigint;
     uniffi_cua_sdk_fn_method_spaces_cloud_hosts(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_spaces_cloud_plan(uniffiSelf: bigint, request: Uint8Array): bigint;
@@ -6174,10 +6270,12 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_method_spaces_create_with_progress(uniffiSelf: bigint, options: Uint8Array, listener: bigint): bigint;
     uniffi_cua_sdk_fn_method_spaces_delete(uniffiSelf: bigint, space: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_delete_build(uniffiSelf: bigint, build: Uint8Array): bigint;
+    uniffi_cua_sdk_fn_method_spaces_delete_many(uniffiSelf: bigint, ids: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_delete_volume(uniffiSelf: bigint, name: Uint8Array, force: number): bigint;
     uniffi_cua_sdk_fn_method_spaces_fork(uniffiSelf: bigint, source: Uint8Array, name: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_gpu_support(uniffiSelf: bigint, on: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_hosts(uniffiSelf: bigint): bigint;
+    uniffi_cua_sdk_fn_method_spaces_leave_many(uniffiSelf: bigint, ids: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_list(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_spaces_list_known(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_spaces_list_tools_json(uniffiSelf: bigint): bigint;
@@ -6196,6 +6294,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_method_spaces_relay_unregister(uniffiSelf: bigint, space: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_remove(uniffiSelf: bigint, space: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_remove_prewarm(uniffiSelf: bigint, id: Uint8Array): bigint;
+    uniffi_cua_sdk_fn_method_spaces_rename(uniffiSelf: bigint, space: Uint8Array, name: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_resize(uniffiSelf: bigint, space: Uint8Array, cpus: Uint8Array, memoryMb: Uint8Array, diskGb: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_resolve(uniffiSelf: bigint, space: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_resources(uniffiSelf: bigint, visible: number): bigint;
@@ -6356,6 +6455,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_func_telemetry_status(): number;
     uniffi_cua_sdk_checksum_func_telemetry_sync_account(): number;
     uniffi_cua_sdk_checksum_func_telemetry_use_app_notice(): number;
+    uniffi_cua_sdk_checksum_func_thread_view_of(): number;
     uniffi_cua_sdk_checksum_method_agentrun_artifacts(): number;
     uniffi_cua_sdk_checksum_method_agentrun_events(): number;
     uniffi_cua_sdk_checksum_method_agentrun_harness(): number;
@@ -6368,7 +6468,10 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_method_agentrun_stop(): number;
     uniffi_cua_sdk_checksum_method_agentrun_wait(): number;
     uniffi_cua_sdk_checksum_method_agentsetup_configure_mcp(): number;
+    uniffi_cua_sdk_checksum_method_agentsetup_connect_json(): number;
+    uniffi_cua_sdk_checksum_method_agentsetup_connection_status_json(): number;
     uniffi_cua_sdk_checksum_method_agentsetup_detect(): number;
+    uniffi_cua_sdk_checksum_method_agentsetup_disconnect_json(): number;
     uniffi_cua_sdk_checksum_method_agentsetup_install_skills(): number;
     uniffi_cua_sdk_checksum_method_agentsetup_onboarding_declined(): number;
     uniffi_cua_sdk_checksum_method_agentsetup_remove(): number;
@@ -6640,9 +6743,11 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_method_spaces_call_tool_json(): number;
     uniffi_cua_sdk_checksum_method_spaces_cancel_create(): number;
     uniffi_cua_sdk_checksum_method_spaces_cloud_add_host(): number;
+    uniffi_cua_sdk_checksum_method_spaces_cloud_approve(): number;
     uniffi_cua_sdk_checksum_method_spaces_cloud_audit(): number;
     uniffi_cua_sdk_checksum_method_spaces_cloud_budget(): number;
     uniffi_cua_sdk_checksum_method_spaces_cloud_connect(): number;
+    uniffi_cua_sdk_checksum_method_spaces_cloud_cost(): number;
     uniffi_cua_sdk_checksum_method_spaces_cloud_disconnect(): number;
     uniffi_cua_sdk_checksum_method_spaces_cloud_hosts(): number;
     uniffi_cua_sdk_checksum_method_spaces_cloud_plan(): number;
@@ -6659,10 +6764,12 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_method_spaces_create_with_progress(): number;
     uniffi_cua_sdk_checksum_method_spaces_delete(): number;
     uniffi_cua_sdk_checksum_method_spaces_delete_build(): number;
+    uniffi_cua_sdk_checksum_method_spaces_delete_many(): number;
     uniffi_cua_sdk_checksum_method_spaces_delete_volume(): number;
     uniffi_cua_sdk_checksum_method_spaces_fork(): number;
     uniffi_cua_sdk_checksum_method_spaces_gpu_support(): number;
     uniffi_cua_sdk_checksum_method_spaces_hosts(): number;
+    uniffi_cua_sdk_checksum_method_spaces_leave_many(): number;
     uniffi_cua_sdk_checksum_method_spaces_list(): number;
     uniffi_cua_sdk_checksum_method_spaces_list_known(): number;
     uniffi_cua_sdk_checksum_method_spaces_list_tools_json(): number;
@@ -6681,6 +6788,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_method_spaces_relay_unregister(): number;
     uniffi_cua_sdk_checksum_method_spaces_remove(): number;
     uniffi_cua_sdk_checksum_method_spaces_remove_prewarm(): number;
+    uniffi_cua_sdk_checksum_method_spaces_rename(): number;
     uniffi_cua_sdk_checksum_method_spaces_resize(): number;
     uniffi_cua_sdk_checksum_method_spaces_resolve(): number;
     uniffi_cua_sdk_checksum_method_spaces_resources(): number;

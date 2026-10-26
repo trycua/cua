@@ -297,6 +297,10 @@ pub struct CloudConnectView {
     /// auto-stop work, and the command to remove everything. Empty when
     /// no real provider is chosen (including "No cloud").
     pub touches: Vec<String>,
+    /// The line to give an agent that connects the cloud (Copy): one line,
+    /// one link, naming the chosen cloud and its region.
+    #[serde(default)]
+    pub agent_prompt: String,
     /// "Make default".
     pub make_default_label: String,
     /// Its value.
@@ -390,6 +394,9 @@ pub fn connect_input_from_status(status: &serde_json::Value) -> CloudConnectInpu
         providers: status_of(status)
             .providers
             .into_iter()
+            // Azure links through Cua's issuer only (`cua cloud connect
+            // azure`), which this sign-in sheet does not run.
+            .filter(|p| p.name != "azure")
             .map(|p| CloudProviderInput {
                 name: p.name,
                 title: p.title,
@@ -442,7 +449,7 @@ pub fn connected_clouds_from_status(
 
 /// Whether `on` (a `default.on` value) names one of the user's clouds.
 pub fn is_cloud_word(on: &str) -> bool {
-    matches!(on, "aws" | "gcp" | "hetzner" | "modal")
+    matches!(on, "aws" | "azure" | "gcp" | "hetzner" | "modal")
 }
 
 /// The sheet's first state.
@@ -779,6 +786,13 @@ pub fn cloud_connect_view(
         checks,
         result,
         touches: chosen.map(|p| touches_of(&p.name)).unwrap_or_default(),
+        agent_prompt: crate::agent_prompts::connect_cloud_prompt(
+            chosen.map(|p| p.title.as_str()),
+            chosen
+                .filter(|p| field_of(p).0 == "region")
+                .map(|_| state.value.as_str()),
+            None,
+        ),
         make_default_label: "Make default".into(),
         make_default: state.make_default,
         test_label: if state.phase == CloudConnectPhase::Testing {
@@ -947,6 +961,18 @@ mod tests {
         assert_eq!(clouds[0].offers[0].machine_type, "t4g.medium");
         assert!(connected_clouds_from_status(&serde_json::json!("nope")).is_empty());
         assert!(is_cloud_word("modal") && !is_cloud_word("cloud"));
+        assert!(is_cloud_word("azure"));
+        // Azure is linked through Cua's issuer, not this sign-in sheet.
+        let with_azure = serde_json::json!({"providers": [
+            {"name": "aws", "title": "AWS", "credentials": {"found": true}},
+            {"name": "azure", "title": "Azure", "credentials": {"found": true}}
+        ]});
+        let names: Vec<String> = connect_input_from_status(&with_azure)
+            .providers
+            .into_iter()
+            .map(|p| p.name)
+            .collect();
+        assert_eq!(names, vec!["aws".to_string()]);
     }
 
     #[test]
@@ -1024,6 +1050,32 @@ mod tests {
         // Picking No cloud never issues a connect or a disconnect request,
         // so an already-connected cloud is never silently dropped.
         assert!(v.request.is_none());
+    }
+
+    #[test]
+    fn the_agent_prompt_names_the_cloud_and_its_region_in_one_line() {
+        let i = input();
+        let v = cloud_connect_view(&i, &cloud_connect_initial());
+        assert!(
+            v.agent_prompt.starts_with("Connect ") && !v.agent_prompt.contains('\n'),
+            "{}",
+            v.agent_prompt
+        );
+        assert!(
+            v.agent_prompt
+                .ends_with("https://cua.ai/docs/agents/connect-a-cloud")
+        );
+        let s = cloud_connect_reduce(
+            &i,
+            &cloud_connect_initial(),
+            &CloudConnectAction::Select {
+                name: NONE_PROVIDER.into(),
+            },
+        );
+        assert_eq!(
+            cloud_connect_view(&i, &s).agent_prompt,
+            "Connect a cloud to my Cua Spaces: https://cua.ai/docs/agents/connect-a-cloud"
+        );
     }
 
     #[test]

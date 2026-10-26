@@ -30,6 +30,7 @@ import { onboardingMethods } from "./onboarding";
 import { presenceMethods } from "./presence";
 import { linksMethods } from "./links";
 import { cliMethods } from "./cli";
+import { threadMethods } from "./thread";
 import { relayUsageMethods } from "./relay-usage";
 import { resourcesMethods } from "./resources";
 import { sessionMethods, sessionState } from "./session";
@@ -78,6 +79,7 @@ export const AREAS = [
   checklistMethods,
   linksMethods,
   cliMethods,
+  threadMethods,
   presenceMethods,
 ];
 

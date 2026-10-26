@@ -38,7 +38,7 @@ export { createAdapter, createDemoAdapter, createElectronAdapter, createTauriAda
 export { detectMode } from "./detect";
 export { loadCore, type CoreClient, type CoreParity, type CoreStatus, type ParityFlow } from "./core";
 export type { Machine, HostSetupGuide, KeyvaultAppGroup, KeyvaultViews } from "./derive";
-export { listView, machineIdOf } from "./derive";
+export { harnessName, listView, machineIdOf } from "./derive";
 export type {
   AgentRunSummary,
   AgentState,
@@ -68,6 +68,7 @@ export {
   type AgentKeysView,
 } from "./agent-keys";
 export type { AgentKeyInfo, AgentKeyProvider, AgentKeysReport } from "./ops/agent-keys";
+export { connectionRows, useConnections, type ConnectionsHook, type ConnectionReport, type ConnectionRow, type ConnectionRowView, type ConnectResult } from "./connections";
 export {
   DEFAULT_SETTINGS,
   OPERATIONS,
@@ -100,11 +101,14 @@ export * from "./settings-hooks";
 export { hasNotch, passedSteps, signInCodeText, type SavedOnboarding } from "./onboarding";
 export { signInFailedFromError, signInFailedPhase, signInFooter, type FailedPhase, type SignInFooterInput } from "./sign-in";
 export {
+  useCloudActions,
   useConnectCloud,
   useFirstSpaceOffers,
+  useMicrovmRows,
   useNewSpaceRequests,
   useNewSpaceWizard,
   useRuntimeFix,
+  type CloudActionsHook,
   type ConnectCloudHook,
   type FirstSpaceHook,
   type NewSpaceWizardHook,
@@ -130,6 +134,7 @@ export { joinFailureText, useJoinWithCode, type JoinHook, type JoinPhase } from 
 export { displayPairingCode, normalizePairingCode, pairingLinkRelay } from "./pairing-code";
 export { BUY_PRO_URL, BUY_TEAMS_URL, expiresInText, FINISHING_SETUP, PAIRING_POLL_MS, pairingUnsupported, planFailure, usePairingCode, type PairingHook, type PairingPhase } from "./pairing";
 export { READY_STARTUP, type StartupAction, type StartupPhase, type StartupState } from "./ops/startup";
+export { NO_TIPS, sendTipsEvent, tipsState, useTips, type TipsHook } from "./tips";
 export {
   CHECKLIST_STEPS,
   useChecklist,
@@ -153,10 +158,38 @@ export {
 } from "./relay-usage";
 
 export { linkEnds, needsRelaySetup, useLinks, type LinksHook } from "./links";
+export { chatKey, mergeChats, useAgentChats, useAgentDm, type AgentChat, type AgentChats, type AgentChatSpace, type AgentDm, type ChatNeed, type ChatTone, type DmItem } from "./agents-dm";
+export { foldThread, readSeqFrom, useSpaceThread, type SpaceThread, type SpaceThreadStatus, type ThreadAnswer, type ThreadItem } from "./thread";
+export {
+  DEFAULT_AGENT_RIGHTS,
+  isMissingThreadTool,
+  threadOpAvailable,
+  type AgentMember,
+  type JoinCode,
+  type JoinCodeRow,
+  type JoinCodeState,
+  type JoinRequest,
+  type JoinMethod,
+  type MemberEvent,
+  type MemberIdentity,
+  type MemberRef,
+  type NeedsYou,
+  type AgentRight,
+  type AgentRights,
+  type RightHolders,
+  type TaskState,
+  type ThreadAttachment,
+  type ThreadAuthor,
+  type ThreadEntry,
+  type ThreadView,
+  type ThreadPage,
+  type ThreadRole,
+} from "./ops/thread";
 export type { LinkAccess, LinkCreate, ShareLink } from "./ops/links";
 export {
   useResources,
   hostResources,
+  spaceDiskBytes,
   spaceResources,
   RESOURCES_HIDDEN_MS,
   RESOURCES_VISIBLE_MS,
@@ -169,12 +202,17 @@ export {
 } from "./resources";
 export {
   resetUpsellMemory,
+  upgradeLink,
+  usePlanLimitTelemetry,
   useQuiet,
   useTrackPlanClick,
   useUpsellCard,
   useUpsellCardAvailable,
   useUpsellGate,
   useUpsellPrompt,
+  type PlanFacts,
+  type PlanLimitSurface,
+  type PlanLimitTelemetry,
   type UpsellCard,
   type UpsellCardReason,
   type UpsellCardState,
@@ -210,3 +248,17 @@ export {
   type FirstRunSaved,
 } from "./first-run";
 export type * from "./contracts/first-run";
+// The new Spaces page's decisions (CUA-2204): menus, bulk delete and leave,
+// tips, the Pro banner and the account menu.
+export {
+  accountMenu,
+  bulkConfirm,
+  bulkDone,
+  bulkProgress,
+  chooseSettings,
+  proBanner,
+  spaceMenu,
+  tipsReduce,
+  tipsView,
+} from "./spaces-page";
+export type * from "./contracts/spaces-page";

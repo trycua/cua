@@ -294,6 +294,16 @@ impl ServerBuilder {
             );
             manifest.stubbed_services.insert(HOST_SNAPSHOTS.to_owned());
         }
+        const HOST_THREAD: &str = "cua.env.v1.HostThreadService";
+        if !manifest.grpc_services.contains(HOST_THREAD) {
+            crate::provider::register_stub_with(
+                &mut routes,
+                HOST_THREAD,
+                crate::host_spaces::HOST_THREAD_FEATURE,
+                crate::provider::NOT_A_SPACES_HOST,
+            );
+            manifest.stubbed_services.insert(HOST_THREAD.to_owned());
+        }
 
         let grpc = routes.prepare().into_axum_router();
         let grpc = tonic_web::GrpcWebLayer::new()

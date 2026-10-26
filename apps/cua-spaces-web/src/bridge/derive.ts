@@ -19,6 +19,7 @@ import type {
   HostStatus,
   MachinePageRow,
   MachineRow,
+  CloudsInput,
   MachinesView,
   SettingsInput,
   SettingsPage,
@@ -394,7 +395,15 @@ function pageRowOf(m: Machine, spaces: readonly Space[]): MachinePageRow {
  */
 export function machinesView(
   core: CoreClient | undefined,
-  input: { hostView: MachinesView | null; machines: readonly Machine[]; spaces: readonly Space[]; host: object | null; nowSecs?: number },
+  input: {
+    hostView: MachinesView | null;
+    machines: readonly Machine[];
+    spaces: readonly Space[];
+    host: object | null;
+    nowSecs?: number;
+    /** The clouds (`cloud_status`, read by `cloudsInput`): the Clouds group. */
+    clouds?: CloudsInput | null;
+  },
 ): MachinesView | null {
   if (input.hostView) return input.hostView;
   const current = input.machines.find((m) => m.current);
@@ -405,6 +414,7 @@ export function machinesView(
         page: { hostOs, spaces: input.spaces, now: input.nowSecs ?? Math.floor(Date.now() / 1000) },
         rows: input.machines.map((m) => pageRowOf(m, input.spaces)),
         host: input.host,
+        clouds: input.clouds ?? null,
       },
     }) ?? null
   );
@@ -685,6 +695,8 @@ export function settingsPage(
     agents: agents?.agents ?? null,
     agentsBusy: agents?.agentsBusy ?? false,
     agentsPending: agents?.agentsPending ?? [],
+    // General's Show tips (`AppSettings.tips.off`; on by default).
+    showTips: !(settings.values.tips?.off ?? false),
   };
   return core.tryCall<SettingsPage>("settings.page", { input }) ?? null;
 }

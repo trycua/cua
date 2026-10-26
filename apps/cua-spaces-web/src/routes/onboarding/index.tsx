@@ -5,7 +5,7 @@ import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import { ArrowLeftIcon, CheckIcon, CopyIcon, ExternalLinkIcon } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
-import { useBridge, useFirstRun, type FirstRunArt, type FirstRunExtraView, type FirstRunHook, type FirstRunRow, type FirstRunView } from "@/bridge";
+import { useAgentKeys, useBridge, useFirstRun, type FirstRunArt, type FirstRunCredential, type FirstRunExtraView, type FirstRunHook, type FirstRunRow, type FirstRunView } from "@/bridge";
 import { readSavedOnboarding } from "@/bridge/onboarding";
 import { APP_MARKS, AppMarkImage } from "@/components/agents/harness-mark";
 import { CuaLogo } from "@/components/cua-logo";
@@ -16,7 +16,7 @@ import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/toast";
 import { RuntimeFixRow } from "@/components/new-space/runtime-fix";
 import { Snippet } from "@/components/settings/snippet";
-import { listNames } from "@/components/space-ready-card";
+import { KeySheet } from "@/components/agents/key-sheet";
 import { setConnectedAppsState, useConnectedAppsState } from "@/hooks/use-connected-apps";
 import { BY_HAND, failureText, getItUrl } from "@/lib/connected-apps";
 import { cn } from "@/lib/utils";
@@ -110,6 +110,10 @@ function OnboardingPage() {
   );
 }
 
+/** "Skip for now": a ghost pill, readable on the starfield, quieter than Continue. */
+const SKIP_PILL =
+  "rounded-full border border-foreground/30 px-4 py-1.5 text-[13px] text-foreground/90 outline-none transition-colors hover:border-foreground/50 hover:bg-foreground/10 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60";
+
 function CuaWordmark() {
   return (
     <span className="flex items-center gap-1.5">
@@ -167,9 +171,6 @@ function Secondary({ label, onClick, describedBy, ...rest }: { label: string; on
   );
 }
 
-/** "Skip for now": a ghost pill, readable on the starfield, quieter than Continue. */
-const SKIP_PILL =
-  "rounded-full border border-foreground/30 px-4 py-1.5 text-[13px] text-foreground/90 outline-none transition-colors hover:border-foreground/50 hover:bg-foreground/10 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60";
 const QUIET_LINK = "-mx-1.5 rounded-md px-1.5 py-0.5 text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60";
 
 /**
@@ -238,6 +239,9 @@ function AgentMark({ agent, name, className }: { agent: string; name?: string; c
 
 /** The prompt "done" hands over: a real job where a fresh computer matters. */
 /** First letter up: "your 5 coding apps can use Cua." as a sentence. */
+/** "Codex", "Codex and Cursor", "Hermes, Codex and Cursor". */
+const listNames = (names: string[]): string => (names.length < 2 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`);
+
 const sentence = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
 const FIRST_PROMPT = "Reproduce the crash from issue #4821 on a fresh Windows 11 Space and show me a recording.";
@@ -253,7 +257,7 @@ const HEADLINE_APPS = [
  * 2 · Let your coding apps use Cua: one question, asked once. It names the
  * coding apps found on this computer; Set up adds Cua to all of them, Not now
  * moves on. Later installs are set up the same way, with a notice and Undo
- * (Settings, Connected apps). Which apps there are, and what Connect does for
+ * (Settings, Connectors). Which apps there are, and what Connect does for
  * each, is still the app core's (`firstRun.view`).
  */
 function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
@@ -274,6 +278,8 @@ function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
   const why = (agent: string, name: string) =>
     failureText(name, fr.agents.find((r) => r.agent === agent)?.detail || (c.error ?? "").replace(/^Couldn't connect Cua:\s*/, ""));
   const ids = rows.map((a) => a.agent);
+  // Advanced (the core's mode: its link then offers Simple) shows each app on its own row.
+  const advanced = c.mode?.id === "simple";
 
   const setUp = async () => {
     setTried(true);
@@ -316,6 +322,8 @@ function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
       </span>
     </label>
   ) : null;
+
+  if (advanced) return <AdvancedConnect fr={fr} view={view} />;
 
   if (looking) {
     return (
@@ -425,6 +433,16 @@ function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
               <Secondary label="Not now" onClick={notNow} />
             </>
           )}
+          {c.mode ? (
+            <button
+              type="button"
+              className="ml-auto text-[13px] text-muted-foreground outline-none hover:text-foreground focus-visible:underline"
+              onClick={() => void fr.act(c.mode!.id)}
+              data-first-run-mode={c.mode.id}
+            >
+              {c.mode.label}
+            </button>
+          ) : null}
         </div>
         {byHand && failed.length ? (
           <div className="mt-4 space-y-3" data-first-run-by-hand="">
@@ -450,6 +468,169 @@ function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
     </Step>
   );
 }
+
+/**
+ * 2 · Advanced: each coding app on its own row with the file Connect changes,
+ * Connect (Cua's tools, and the sign-in copied to Keyvault) or Disconnect for
+ * one whose files are gone, and the sign-ins agents in your Spaces use.
+ * Simple is the one question above (`Connect`).
+ */
+function AdvancedConnect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
+  const c = view.connect!;
+  const keys = useAgentKeys();
+  const [copied, setCopied] = useState(false);
+  return (
+    <Step id="connect" onBack={fr.back}>
+      <Heading>{c.title}</Heading>
+      <Lede>{c.lede}</Lede>
+      {c.agents.length ? (
+        <Rows className="mt-8" data-first-run-agents="">
+          {c.agents.map((a) => (
+            <div key={a.agent} className="flex min-h-12 items-center gap-3 py-2" data-first-run-agent={a.agent} data-connected={String(a.connected)}>
+              <AgentMark agent={a.agent} name={a.name} />
+              <div className="min-w-0 flex-1">
+                <span className="text-[14px]">{a.name}</span>
+                {a.file ? <span className="ml-2 font-mono text-[12px] text-muted-foreground">{a.file}</span> : null}
+                {/* A problem's line goes under the name; it is too long for the right. */}
+                {a.note && !a.connected && a.action ? <span className="block text-[12px] text-muted-foreground" data-first-run-agent-note="">{a.note}</span> : null}
+              </div>
+              {a.note && (a.connected || !a.action) ? (
+                <span className={cn("shrink-0 text-[13px]", a.connected ? "text-[#1f9d55]" : "text-muted-foreground")}>{a.note}</span>
+              ) : null}
+              {a.action ? (
+                <Button
+                  variant="outline"
+                  className="h-9 shrink-0 rounded-full border-foreground/25 px-4 text-[13px] font-medium"
+                  onClick={() => void (a.action!.id === "disconnect" ? fr.disconnect(a.agent) : fr.connect(a.agent))}
+                  data-first-run-connect={a.agent}
+                  data-first-run-action-id={a.action.id}
+                >
+                  {a.action.label}
+                </Button>
+              ) : null}
+            </div>
+          ))}
+        </Rows>
+      ) : null}
+      {c.alternatives.length ? (
+        <Rows className="mt-6" data-first-run-alternatives="">
+          {c.alternatives.map((alt) => (
+            <div key={alt.id} className="flex min-h-16 items-center gap-3 py-2" data-first-run-alternative={alt.id}>
+              <div className="min-w-0 flex-1">
+                <div className="text-[14px]">{alt.title}</div>
+                <div className="text-[13px] text-muted-foreground">{alt.note}</div>
+                {alt.command ? <code className="mt-1 block font-mono text-[12.5px]">{alt.command}</code> : null}
+              </div>
+              {alt.url ? (
+                <Button variant="outline" className="h-9 shrink-0 rounded-full border-foreground/25 px-4 text-[13px] font-medium" onClick={() => void fr.openUrl(alt.url!)}>
+                  Open
+                </Button>
+              ) : alt.command ? (
+                <Button
+                  variant="outline"
+                  className="h-9 shrink-0 gap-1.5 rounded-full border-foreground/25 px-4 text-[13px] font-medium"
+                  onClick={() => {
+                    void navigator.clipboard?.writeText(alt.command!).catch(() => {});
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 1500);
+                  }}
+                >
+                  {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
+                  {copied ? "Copied" : "Copy"}
+                </Button>
+              ) : null}
+            </div>
+          ))}
+        </Rows>
+      ) : null}
+      {c.credentials.length ? (
+        <>
+          <Rows className="mt-6" data-first-run-credentials="">
+            {c.credentials.map((r) => (
+              <CredentialRowView
+                key={r.id}
+                row={r}
+                onAct={() => {
+                  if (r.action?.id === "agent-sign-in" && r.agent) void fr.signIn(r.agent);
+                  else if (r.action?.id === "add-key" && (r.provider === "anthropic" || r.provider === "openai")) keys.openSheet(r.provider);
+                }}
+              />
+            ))}
+          </Rows>
+          <p className="mt-3 text-xs text-muted-foreground" data-first-run-credentials-note="">
+            {c.credentialsNote}
+          </p>
+        </>
+      ) : null}
+      {c.error ? (
+        <p role="alert" className="mt-3 text-[13px] text-destructive">
+          {c.error}
+        </p>
+      ) : null}
+      {c.consent ? (
+        <p className="mt-3 text-xs text-muted-foreground" data-first-run-consent="">
+          {c.consent}
+        </p>
+      ) : null}
+      <div className="mt-8 flex flex-wrap items-center gap-3">
+        <Primary label={c.primary.label} onClick={() => void fr.act(c.primary.id)} />
+        {c.secondary ? <Secondary label={c.secondary.label} onClick={() => void fr.act(c.secondary!.id)} /> : null}
+        {c.mode ? (
+          <button
+            type="button"
+            className="ml-auto text-[13px] text-muted-foreground outline-none hover:text-foreground focus-visible:underline"
+            onClick={() => void fr.act(c.mode!.id)}
+            data-first-run-mode={c.mode.id}
+          >
+            {c.mode.label}
+          </button>
+        ) : null}
+      </div>
+      {fr.usage ? (
+        <label className="mt-5 flex items-center gap-2.5 text-[13px] text-muted-foreground" data-first-run-usage="">
+          <Switch checked={fr.usage.on} disabled={!fr.usage.enabled} onCheckedChange={(on) => void fr.setUsage(on).catch(() => {})} aria-label={fr.usage.label} />
+          <span>
+            {fr.usage.label}.{" "}
+            <button type="button" className="underline hover:text-foreground" onClick={fr.openUsageLink}>
+              {fr.usage.linkLabel}
+            </button>
+          </span>
+        </label>
+      ) : null}
+      {keys.sheet ? <KeySheet key={keys.sheet.provider} keys={keys} provider={keys.sheet.provider} env={keys.sheet.env} /> : null}
+    </Step>
+  );
+}
+
+
+function CredentialRowView({ row: r, onAct }: { row: FirstRunCredential; onAct: () => void }) {
+  return (
+    <div className="flex min-h-16 items-center gap-3 py-2" data-first-run-credential={r.id}>
+      <div className="min-w-0 flex-1">
+        <div className="text-[14px]">{r.title}</div>
+        <div className="text-xs text-muted-foreground">{r.note}</div>
+        {r.error ? (
+          <div role="alert" className="mt-0.5 text-xs text-destructive">
+            {r.error}
+          </div>
+        ) : null}
+      </div>
+      {r.status ? (
+        <span className={cn("shrink-0 text-[13px]", r.ok ? "text-[#1f9d55]" : "text-muted-foreground")} data-first-run-credential-status="">
+          {r.status}
+        </span>
+      ) : null}
+      {r.action ? (
+        <Button variant="outline" className="h-9 shrink-0 rounded-full border-foreground/25 px-4 text-[13px] font-medium" onClick={onAct} data-first-run-credential-action={r.action.id}>
+          {r.action.label}
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
+/* ---- 3 · Add your other computers -------------------------------------------------- */
+
 
 /* ---- 3 · Add your other computers -------------------------------------------------- */
 

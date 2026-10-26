@@ -61,6 +61,11 @@ async fn world() -> World {
 /// When the cloud "boots" a host, it redeems the pairing code in its user
 /// data and comes online (what `cua host setup --pair` does on it).
 fn hosts_join(w: &World) {
+    hosts_join_after(w, Duration::ZERO);
+}
+
+/// As [`hosts_join`], `delay` after the cloud boots it.
+fn hosts_join_after(w: &World, delay: Duration) {
     let relay = w.relay.clone();
     w.fake.on_boot(Arc::new(move |spec, _r| {
         let code = spec
@@ -77,6 +82,7 @@ fn hosts_join(w: &World) {
             .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
             .collect();
         tokio::spawn(async move {
+            tokio::time::sleep(delay).await;
             let client = cua_host::RelayClient::new(&relay.url).unwrap();
             client
                 .register(
@@ -304,10 +310,130 @@ async fn a_host_its_cloud_terminated_is_listed_gone() {
             Arc::new(cua_host::relay::StaticToken("acct-token".into())),
         )),
     );
+    // Just created: its cloud may not list it yet, so not lost.
+    assert_eq!(fresh.list().await.unwrap()[0].state, "offline");
+    let fresh = fresh.with_not_found_grace(Duration::ZERO);
     assert_eq!(fresh.list().await.unwrap()[0].state, "gone");
     // Recorded: every view says gone now, with no cloud call.
     assert_eq!(w.hosts.list().await.unwrap()[0].state, "gone");
     fresh.remove("fake-1").await.unwrap();
     assert!(w.relay.machine(&machine).is_none());
     assert!(w.hosts.list().await.unwrap().is_empty());
+}
+
+/// CUA-2082 burst: EC2 answers NotFound for an instance it started a
+/// moment ago. A host its cloud does not list yet, seconds after its
+/// create, is still booting: never "lost", never removed (which ended
+/// every host of the cold burst before it could join).
+#[tokio::test]
+async fn a_host_its_cloud_does_not_list_yet_is_still_booting() {
+    let w = world().await;
+    w.hosts
+        .add(&req("fake.large"), &HostOptions::default())
+        .await
+        .unwrap();
+    // The cloud's list lags its create.
+    w.fake.account.lock().unwrap().resources.clear();
+    for _ in 0..3 {
+        assert_eq!(w.hosts.list().await.unwrap()[0].state, "booting");
+    }
+    let lagging = Hosts::new(
+        vec![w.fake.clone() as Arc<dyn CloudApi>],
+        w.store.clone(),
+        Some(access(&w)),
+    );
+    assert_eq!(lagging.list().await.unwrap()[0].state, "booting");
+    // Still not listed long after its create: lost.
+    let later = lagging.with_not_found_grace(Duration::ZERO);
+    assert_eq!(later.list().await.unwrap()[0].state, "gone");
+}
+
+fn access(w: &World) -> RelayAccess {
+    RelayAccess::new(
+        w.relay.url.clone(),
+        Arc::new(cua_host::relay::StaticToken("acct-token".into())),
+    )
+}
+
+/// A cold burst: sixteen launches at once against a relay that holds only
+/// a few unused pairing codes per account. Launches past the cap wait for
+/// codes to be used (hosts joining) and then go; none fails.
+#[tokio::test]
+async fn a_burst_of_launches_waits_for_pairing_codes_instead_of_failing() {
+    let w = world().await;
+    w.relay.cap_unused_codes(4);
+    hosts_join_after(&w, Duration::from_millis(300));
+    let hosts = Arc::new(
+        Hosts::new(
+            vec![w.fake.clone() as Arc<dyn CloudApi>],
+            w.store.clone(),
+            Some(access(&w)),
+        )
+        .with_code_wait(Duration::from_secs(60)),
+    );
+    let mut tasks = vec![];
+    for _ in 0..16 {
+        let hosts = hosts.clone();
+        tasks.push(tokio::spawn(async move {
+            hosts.add(&req("fake.small"), &HostOptions::default()).await
+        }));
+    }
+    for t in tasks {
+        t.await.unwrap().expect("a launch of the burst");
+    }
+    assert_eq!(hosts.list().await.unwrap().len(), 16);
+}
+
+/// When the relay stays full the launch says so, as a retry, not a
+/// provider failure; the code of a launch whose cloud call failed is revoked.
+#[tokio::test]
+async fn a_failed_launch_revokes_its_pairing_code() {
+    let w = world().await;
+    w.fake.account.lock().unwrap().fail_provision = true;
+    w.hosts
+        .add(&req("fake.small"), &HostOptions::default())
+        .await
+        .unwrap_err();
+    assert_eq!(w.relay.unused_codes("user-1"), 0);
+}
+
+/// A host that ended before it joined (its cloud terminated it) leaves no
+/// unused code: listing it revokes the code, freeing room under the cap.
+#[tokio::test]
+async fn a_host_that_ended_before_it_joined_frees_its_pairing_code() {
+    let w = world().await;
+    w.hosts
+        .add(&req("fake.small"), &HostOptions::default())
+        .await
+        .unwrap();
+    assert_eq!(w.relay.unused_codes("user-1"), 1);
+    // Its cloud ended it: it says so ("terminated").
+    for r in w.fake.account.lock().unwrap().resources.values_mut() {
+        r.state = "terminated".into();
+    }
+    assert_eq!(w.hosts.list().await.unwrap()[0].state, "gone");
+    assert_eq!(w.relay.unused_codes("user-1"), 0);
+}
+
+/// A relay that stays full for longer than the wait is a clear retry.
+#[tokio::test]
+async fn a_relay_that_stays_full_asks_for_a_retry() {
+    let w = world().await;
+    w.relay.cap_unused_codes(1);
+    let hosts = Hosts::new(
+        vec![w.fake.clone() as Arc<dyn CloudApi>],
+        w.store.clone(),
+        Some(access(&w)),
+    )
+    .with_code_wait(Duration::from_millis(800));
+    hosts
+        .add(&req("fake.small"), &HostOptions::default())
+        .await
+        .unwrap();
+    let e = hosts
+        .add(&req("fake.small"), &HostOptions::default())
+        .await
+        .unwrap_err();
+    assert!(e.to_string().contains("try again"), "{e}");
+    assert!(!e.to_string().contains("429"), "{e}");
 }

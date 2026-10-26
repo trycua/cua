@@ -451,8 +451,8 @@ async fn internal_record(
 }
 
 /// `GET /internal/v1/devices/{id}`: one client device, read-only, for the
-/// in-cluster services that must know whether a device is enrolled and
-/// not revoked. 200 `{id, account,
+/// Cua OIDC issuer (`cua-oidc`), which mints cloud tokens only for an
+/// enrolled, non-revoked device of the caller's account. 200 `{id, account,
 /// public_jwk: {kty: "EC", crv: "P-256", x, y}, state:
 /// pending|enrolled|expired|revoked, enrolled, revoked}`; 404
 /// `device_not_found`. Needs the internal token, like every

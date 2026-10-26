@@ -361,9 +361,9 @@ pub const ONBOARDING_STEPS: &[&str] = &[
     "first_stream",
     "first_space_ready",
     "first_agent_run",
-    // The Spaces app's getting-started checklist (`cua-spaces-app-core`
-    // `telemetry::checklist`): shown, a step done, every step done,
-    // dismissed, reopened from the menu.
+    // The Spaces app's old getting-started checklist (removed; tips took its
+    // place): kept only so older apps' events are still accepted. Remove
+    // once they stop arriving (CUA-2218).
     "checklist_shown",
     "checklist_add_machine",
     "checklist_create_space",
@@ -587,6 +587,48 @@ pub const UPDATE_CHANNELS: &[&str] = &["stable", "beta"];
 pub const UPDATE_TRIGGERS: &[&str] = &["user", "background"];
 /// How a device enrolled with the relay.
 pub const ENROLL_METHODS: &[&str] = &["sign_in", "approval", "rekey"];
+/// What a person or agent did to a linked cloud (`cua_cloud_link`).
+pub const CLOUD_LINK_ACTIONS: &[&str] = &["connect", "disconnect", "approve", "deny"];
+/// Which cloud (`cua_cloud_link`); `other` for a cloud this build does not
+/// name.
+pub const CLOUD_LINK_CLOUDS: &[&str] = &["aws", "gcp", "azure", "hetzner", "modal", "other"];
+/// How the cloud is linked: the cloud CLI's sign-in, Cua's OIDC issuer, a
+/// sealed API token, or none (not linked).
+pub const CLOUD_LINK_AUTHS: &[&str] = &["cli", "oidc", "sealed", "none"];
+/// Where a link stands after the action (`cloud_connect`'s `status`, with
+/// `_` for `-`), or `error` when the action failed outright.
+pub const CLOUD_LINK_STATUSES: &[&str] = &[
+    "connected",
+    "needs_trust",
+    "checking",
+    "waiting_for_approval",
+    "failed",
+    "not_connected",
+    "error",
+];
+/// Where a plan limit was shown or an upgrade link was opened: the Spaces
+/// app's surfaces (`app_*`) and the CLI's (`cli_*`). The same words are the
+/// `?from=` the account app reads, so the purchase funnel knows the entry.
+pub const PLAN_SURFACES: &[&str] = &[
+    "app_create",
+    "app_connect",
+    "app_meter",
+    "app_machine",
+    "app_share",
+    "app_team",
+    "app_plan_card",
+    "app_account_menu",
+    "app_onboarding",
+    "cli_limit",
+    "cli_usage",
+    "other",
+];
+/// Which plan cap: live sessions at once, remote hours this month, team
+/// computers, team seats, another; `none`: an upgrade link not opened from a
+/// limit (an upsell, the plan card).
+pub const LIMIT_KINDS: &[&str] = &["sessions", "hours", "machines", "seats", "other", "none"];
+/// The plan the account was on, as the client knew it.
+pub const PLANS: &[&str] = &["free", "pro", "teams", "unknown"];
 /// The Spaces app's experiments (Settings, Experiments;
 /// `cua-spaces-app-core` `experiments::Experiment::id`).
 pub const EXPERIMENTS: &[&str] = &["cua_volume", "your_cloud", "sharing"];
@@ -622,6 +664,9 @@ pub const HARNESSES: &[&str] = &[
     "openclaw",
     "other",
 ];
+/// Agents whose sign-in Connect copies into Keyvault on This Mac
+/// (`cua-agent-setup` ids), or `other`.
+pub const SIGNIN_HARNESSES: &[&str] = &["hermes", "claude-code", "codex", "other"];
 /// Where an agent run was started from: a Spaces tool call (the MCP
 /// `agent_start`, the SDKs' `Space.agent_start`, the Spaces app), the
 /// `cua agent` CLI, the SDKs' sandbox `Agents.run`, a persistent agent's
@@ -794,6 +839,22 @@ const TELEPORT_PATH: Prop = p(
     "broker: recorded by the Keyvault broker; sdk: recorded by the calling SDK.",
 );
 
+const PLAN_SURFACE: Prop = p(
+    "surface",
+    Kind::Enum(PLAN_SURFACES),
+    "Where: the Spaces app's create or connect error, relay meter, machine, share or team prompt, plan card, account menu or first-run card; the CLI's plan-limit error or cua usage.",
+);
+const LIMIT_KIND: Prop = p(
+    "kind",
+    Kind::Enum(LIMIT_KINDS),
+    "Which cap: live sessions, remote hours, team computers, team seats, other; none when the link was not opened from a limit.",
+);
+const PLAN: Prop = p(
+    "plan",
+    Kind::Enum(PLANS),
+    "The plan the account was on (free, pro, teams), unknown when the client did not know.",
+);
+
 // ---------------------------------------------------------------------------
 // Events
 // ---------------------------------------------------------------------------
@@ -835,9 +896,13 @@ pub mod event {
     pub const PRESENCE_SESSION: &str = "cua_presence_session";
     pub const APP_UPDATE: &str = "cua_app_update";
     pub const DEVICE_ENROLL: &str = "cua_device_enroll";
+    pub const CLOUD_LINK: &str = "cua_cloud_link";
     pub const EXPERIMENT: &str = "cua_experiment";
     pub const INSTALLER_STEP: &str = "cua_installer_step";
     pub const AGENT_USED_SPACE: &str = "cua_agent_used_space";
+    pub const AGENT_SIGNIN_IMPORTED: &str = "cua_agent_signin_imported";
+    pub const PLAN_LIMIT_SHOWN: &str = "cua_plan_limit_shown";
+    pub const UPGRADE_LINK_OPENED: &str = "cua_upgrade_link_opened";
 }
 
 /// Every event.
@@ -1129,6 +1194,19 @@ pub const EVENTS: &[EventSpec] = &[
             "The kind of tool the call used: shell, files, computer, services, agents or other.",
         )],
         purpose: "First success and agent retention: an AI agent's tool call reached a Space and worked. At most one per install per UTC day.",
+    },
+    EventSpec {
+        name: event::AGENT_SIGNIN_IMPORTED,
+        version: 1,
+        tier: Tier::Usage,
+        sample_rate: 1.0,
+        products: ALL,
+        props: &[p(
+            "harness",
+            Kind::Enum(SIGNIN_HARNESSES),
+            "The agent whose sign-in Connect copied into Keyvault on This Mac. Never the sign-in, the account or the provider.",
+        )],
+        purpose: "One-click Connect: how often an agent's sign-in is copied, per agent.",
     },
     EventSpec {
         name: event::AGENT_RUN_STARTED,
@@ -1650,6 +1728,37 @@ pub const EVENTS: &[EventSpec] = &[
         purpose: "Device enrollment: how devices join the relay and how often it fails.",
     },
     EventSpec {
+        name: event::CLOUD_LINK,
+        version: 1,
+        tier: Tier::Usage,
+        sample_rate: 1.0,
+        products: &["cli"],
+        props: &[
+            p(
+                "action",
+                Kind::Enum(CLOUD_LINK_ACTIONS),
+                "Connect (or change the limits of), disconnect, approve or deny a cloud link.",
+            ),
+            p(
+                "cloud",
+                Kind::Enum(CLOUD_LINK_CLOUDS),
+                "Which cloud: aws, gcp, azure, hetzner, modal or other.",
+            ),
+            p(
+                "auth",
+                Kind::Enum(CLOUD_LINK_AUTHS),
+                "How it is linked: the cloud CLI's sign-in, Cua's OIDC issuer, a sealed token, or none.",
+            ),
+            p(
+                "status",
+                Kind::Enum(CLOUD_LINK_STATUSES),
+                "Where the link stands after it, or error.",
+            ),
+            OUTCOME,
+        ],
+        purpose: "Linking your own clouds: which clouds and ways people use, how many move from a CLI sign-in to OIDC, and where the steps stop. Never an account, id, region or token.",
+    },
+    EventSpec {
         name: event::EXPERIMENT,
         version: 1,
         tier: Tier::Usage,
@@ -1668,6 +1777,24 @@ pub const EVENTS: &[EventSpec] = &[
             ),
         ],
         purpose: "Which experiments people try, and which they turn off again.",
+    },
+    EventSpec {
+        name: event::PLAN_LIMIT_SHOWN,
+        version: 1,
+        tier: Tier::Usage,
+        sample_rate: 1.0,
+        products: CLIENTS,
+        props: &[PLAN_SURFACE, LIMIT_KIND, PLAN],
+        purpose: "How often people reach a plan limit, which one, on which plan, and where they see it.",
+    },
+    EventSpec {
+        name: event::UPGRADE_LINK_OPENED,
+        version: 1,
+        tier: Tier::Usage,
+        sample_rate: 1.0,
+        products: CLIENTS,
+        props: &[PLAN_SURFACE, LIMIT_KIND, PLAN],
+        purpose: "Which limit notices and upgrade prompts people act on: the start of the purchase funnel.",
     },
 ];
 

@@ -12,7 +12,7 @@ import { ToastProvider } from "@/components/ui/toast";
 import { canStreamTile } from "@/components/video/tile-video";
 import { resetVideoSlotLoader } from "@/components/video/use-video-slot";
 import { nativeVideoHandler, type StreamSurfaceMessage, type SurfaceState } from "@/lib/stream-surface";
-import { intersect, isOccluded, resetVideoSlots, roundRect, sameSurface, visiblePart, VideoSlotReporter, type SlotStatus } from "@/lib/video-slots";
+import { intersect, isOccluded, resetVideoSlots, roundRect, sameSurface, videoHoles, visiblePart, VideoSlotReporter, type SlotStatus } from "@/lib/video-slots";
 
 type Win = typeof window & { webkit?: unknown };
 
@@ -57,6 +57,9 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   resetVideoSlots();
+  // jsdom has neither: tests stub them per case.
+  delete (document as { elementsFromPoint?: unknown }).elementsFromPoint;
+  delete (document as { elementFromPoint?: unknown }).elementFromPoint;
   document.body.innerHTML = "";
   delete (document as { elementFromPoint?: unknown }).elementFromPoint;
 });
@@ -103,7 +106,7 @@ describe("stream surface helpers", () => {
     expect(visiblePart(slot, { x: 0, y: 650, width: 100, height: 100 })).toEqual({ x: 0, y: 650, width: 100, height: 50 });
   });
 
-  it("calls a slot occluded when a dialog, menu or toast overlaps it", () => {
+  it("calls a slot occluded when a dialog overlaps it, and cuts holes for menus, popovers and toasts", () => {
     const slot = document.createElement("div");
     const dialog = document.createElement("div");
     dialog.setAttribute("role", "dialog");
@@ -113,11 +116,56 @@ describe("stream surface helpers", () => {
     expect(isOccluded(slot, clip)).toBe(false);
     box(dialog, { x: 350, y: 250, width: 100, height: 100 });
     expect(isOccluded(slot, clip)).toBe(true);
-    // A toast (marked `data-video-occluder`) too.
-    dialog.removeAttribute("role");
+    expect(videoHoles(slot, clip)).toEqual([]);
+    // A menu (or a toast, marked `data-video-occluder`) over it: a hole, clipped to the slot; the video stays.
+    for (const mark of [["role", "menu"], ["data-video-occluder", ""]] as const) {
+      dialog.removeAttribute("role");
+      dialog.removeAttribute("data-video-occluder");
+      dialog.setAttribute(mark[0], mark[1]);
+      expect(isOccluded(slot, clip)).toBe(false);
+      expect(videoHoles(slot, clip)).toEqual([{ x: 350, y: 250, width: 50, height: 50 }]);
+    }
+  });
+
+  // Regression: the Space header's "⋯" menu turned the desktop black. Base
+  // UI puts a transparent full-page click catcher (`data-base-ui-inert`)
+  // under an open menu; it hit every sample point, so the whole video hid.
+  it("looks through transparent click catchers: an open menu never blacks out the video", () => {
+    const slot = document.createElement("div");
+    const inner = document.createElement("span");
+    slot.append(inner);
+    const catcher = document.createElement("div");
+    catcher.setAttribute("data-base-ui-inert", "");
+    const menu = document.createElement("div");
+    menu.setAttribute("role", "menu");
+    document.body.append(slot, catcher, menu);
+    box(menu, { x: 300, y: -40, width: 160, height: 60 });
+    const clip = { x: 0, y: 0, width: 400, height: 300 };
+    document.elementsFromPoint = (x, y) => (x > 300 && y < 20 ? [menu, catcher, inner, slot] : [catcher, inner, slot]);
     expect(isOccluded(slot, clip)).toBe(false);
-    dialog.setAttribute("data-video-occluder", "");
+    expect(videoHoles(slot, clip)).toEqual([{ x: 300, y: 0, width: 100, height: 20 }]);
+    // The modal menu made the page `inert`: hit-testing skips the slot and
+    // reaches its ancestors, which paint nothing over it.
+    document.elementsFromPoint = () => [catcher, document.body, document.documentElement];
+    expect(isOccluded(slot, clip)).toBe(false);
+    // Something that paints over it still hides it.
+    const sheet = document.createElement("div");
+    document.body.append(sheet);
+    document.elementsFromPoint = () => [sheet, catcher, inner, slot];
     expect(isOccluded(slot, clip)).toBe(true);
+  });
+
+  it("cuts a hole for the viewer's own key bar, but not for other UI inside the slot", () => {
+    const slot = document.createElement("div");
+    const bar = document.createElement("div");
+    bar.setAttribute("data-video-hole", "");
+    const tip = document.createElement("div");
+    tip.setAttribute("role", "tooltip");
+    slot.append(bar, tip);
+    document.body.append(slot);
+    box(bar, { x: 100, y: 260, width: 200, height: 30 });
+    box(tip, { x: 10, y: 10, width: 50, height: 20 });
+    expect(videoHoles(slot, { x: 0, y: 0, width: 400, height: 300 })).toEqual([{ x: 100, y: 260, width: 200, height: 30 }]);
   });
 
   it("calls a slot occluded when something else is on top of it (a backdrop)", () => {
@@ -155,6 +203,7 @@ describe("VideoSlotReporter", () => {
     const viewer = document.createElement("div");
     document.body.append(tile, viewer);
     document.elementFromPoint = () => null;
+    document.elementsFromPoint = () => [];
     box(tile, { x: 10, y: 20, width: 232, height: 145 });
     box(viewer, { x: 10, y: 200, width: 640, height: 400 });
     const tileStatus: SlotStatus[] = [];
@@ -177,6 +226,7 @@ describe("VideoSlotReporter", () => {
         clip: { x: 11, y: 201, width: 638, height: 398 },
         radius: 11,
         occluded: false,
+        holes: [],
         visible: true,
       },
     ]);
@@ -249,18 +299,60 @@ describe("<StreamSurface> native video", () => {
     await waitFor(() => expect(updates()).not.toHaveLength(0));
     const first = updates()[0];
     if (!first) throw new Error("no surface update");
-    expect(first).toMatchObject({ spaceId: "sp-1", tier: "full", interactive: true, radius: 11 });
+    expect(first).toMatchObject({ spaceId: "sp-1", tier: "full", interactive: true, radius: 8 });
 
     act(() => hostEvent("video.surface", { surfaceId: first.surfaceId, state: "live" }));
     expect(container.querySelector('[data-stream-state="live"]')).toBeTruthy();
-    expect(getByText("Click the desktop to control it.")).toBeTruthy();
+    // Nothing under the stream: no hint line, no Open in window (the header's PiP button replaces both).
+    expect(queryByText("Click the desktop to control it.")).toBeNull();
+    expect(queryByText("Open in window")).toBeNull();
+    expect(container.querySelector("[data-video-focus]")).toBeNull();
+    // With the keyboard: a bar over the video's bottom edge (a hole in the video) says how to stop.
     act(() => hostEvent("video.focus", { surfaceId: first.surfaceId }));
-    expect(container.querySelector('[data-video-focus="space"]')?.textContent).toContain("Press and release ⌃⌥ to stop.");
+    const bar = container.querySelector('[data-stream-surface="sp-1"] [data-video-focus="space"]');
+    expect(bar?.textContent).toContain("Press and release ⌃⌥ to stop.");
+    expect(bar?.hasAttribute("data-video-hole")).toBe(true);
     act(() => getByText("Stop controlling").click());
     expect(posted.at(-1)).toEqual({ type: "focus", surfaceId: null });
 
     act(() => unmount());
     expect(posted.at(-1)).toEqual({ type: "surfaces", update: [], remove: [first.surfaceId] });
+  });
+
+  // Regression: closing picture in picture showed "Could not connect to the
+  // desktop" before the inline desktop came back. The slot that comes back
+  // must start at connecting: no failure or timeout left from the slot (or
+  // the wait) before it.
+  it("comes back from picture in picture without the old slot's failure or timeout", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    hostDrawsVideo();
+    const tree = (children?: React.ReactNode) => (
+      <BridgeProvider adapter={createDemoAdapter({ latencyMs: 1 })} core={noCore}>
+        <StreamSurface spaceId="sp-1" os="linux" canStream previewText="Not reachable">
+          {children}
+        </StreamSurface>
+      </BridgeProvider>
+    );
+    const { container, rerender, queryByText } = render(tree());
+    await waitFor(() => expect(updates()).not.toHaveLength(0));
+    // The first picture was slow: the wait ran out once.
+    act(() => void vi.advanceTimersByTime(CONNECT_TIMEOUT_MS));
+    expect(container.querySelector('[data-stream-state="failed"]')).toBeTruthy();
+    const first = updates()[0]!;
+    act(() => hostEvent("video.surface", { surfaceId: first.surfaceId, state: "live" }));
+    expect(container.querySelector('[data-stream-state="live"]')).toBeTruthy();
+    // Popped out: the page's "Playing in a floating window" replaces the stream.
+    rerender(tree(<p>Playing in a floating window</p>));
+    expect(posted.some((m) => m.type === "surfaces" && m.remove.includes(first.surfaceId))).toBe(true);
+    // Popped back in: connecting at once, never the old failure.
+    rerender(tree());
+    expect(container.querySelector('[data-stream-state="failed"]')).toBeNull();
+    expect(queryByText("Could not connect to the desktop")).toBeNull();
+    await waitFor(() => expect(updates().some((u) => u.surfaceId !== first.surfaceId)).toBe(true));
+    const back = updates().at(-1)!;
+    expect(container.querySelector('[data-stream-state="connecting"]')).toBeTruthy();
+    act(() => hostEvent("video.surface", { surfaceId: back.surfaceId, state: "live" }));
+    expect(container.querySelector('[data-stream-state="live"]')).toBeTruthy();
   });
 
   it("says it could not connect, with Try again (which opens it again) and Open window", async () => {

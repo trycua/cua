@@ -3,15 +3,18 @@
 
 //! Who may read and write what.
 //!
-//! | Principal in a session | `public/` | `agents/<self>/` | `agents/<other>/` | `spaces/<this>/` | `spaces/<other>/` |
-//! |---|---|---|---|---|---|
-//! | user (app, CLI, host agents) | rw | rw | rw | rw | rw |
-//! | agent A in Space S | r | rw | none | rw | none |
-//! | Space S, no agent | r | none | none | rw | none |
+//! | Principal in a session | `public/` | `agents/<self>/` | `agents/<other>/` | `spaces/<this>/` | `spaces/<this>/thread/`, `spaces/<this>/sessions/` | `spaces/<other>/` |
+//! |---|---|---|---|---|---|---|
+//! | user (app, CLI, host agents) | rw | rw | rw | rw | rw | rw |
+//! | agent A in Space S | r | rw | none | rw | r | none |
+//! | Space S, no agent | r | none | none | rw | r | none |
 //!
 //! Everything past this table is a [`Grant`]: `{principal, prefix, mode,
 //! expires}`, made only by the user and only with presence, revocable, and
-//! audited.
+//! audited. A Space's `thread/` and `sessions/` stay read-only for everyone
+//! but the user whatever the grants say: only the owner daemon (as the user)
+//! writes the thread's mirror and the session journals, so nothing inside the
+//! Space can forge an entry through its mount.
 
 use serde::{Deserialize, Serialize};
 
@@ -159,8 +162,38 @@ impl Context {
     }
 }
 
+/// The folders of a Space's folder only the user writes.
+pub const DAEMON_ONLY: [&str; 2] = ["thread", "sessions"];
+
+/// Whether `key` is inside a Space's `thread/` or `sessions/` (or is one of
+/// those folders).
+pub fn is_daemon_only(key: &str) -> bool {
+    let Some(rest) = key.strip_prefix(path::SPACES) else {
+        return false;
+    };
+    let Some((_, inner)) = rest.split_once('/') else {
+        return false;
+    };
+    let first = inner.split('/').next().unwrap_or("");
+    DAEMON_ONLY.contains(&first)
+}
+
 /// The access the defaults give `ctx` on a normalized key.
 pub fn default_mode(ctx: &Context, key: &str) -> Option<Mode> {
+    let mode = default_mode_inner(ctx, key);
+    cap_daemon_only(ctx, key, mode)
+}
+
+/// Read at most on a daemon-only folder for anyone but the user.
+fn cap_daemon_only(ctx: &Context, key: &str, mode: Option<Mode>) -> Option<Mode> {
+    if ctx.principal != Principal::User && is_daemon_only(key) {
+        mode.map(|m| m.min(Mode::Read))
+    } else {
+        mode
+    }
+}
+
+fn default_mode_inner(ctx: &Context, key: &str) -> Option<Mode> {
     if ctx.principal == Principal::User {
         return Some(Mode::ReadWrite);
     }
@@ -238,7 +271,7 @@ pub fn effective_mode(ctx: &Context, key: &str, grants: &[Grant], now_ms: u64) -
             best = best.max(Some(g.mode));
         }
     }
-    best
+    cap_daemon_only(ctx, key, best)
 }
 
 /// Whether `ctx` can see into folder `prefix` at all (to list it): it has
@@ -277,6 +310,11 @@ pub fn validate_grant(principal: &str, prefix: &str, mode: Mode) -> Result<(Prin
         return Err(Error::Invalid("the user already has full access".into()));
     }
     let key = path::normalize(prefix)?;
+    if mode == Mode::ReadWrite && is_daemon_only(&key) {
+        return Err(Error::Invalid(format!(
+            "{key}: a Space's thread/ and sessions/ are written only by the Cua daemon"
+        )));
+    }
     let ctx = match &who {
         Principal::Agent(a) => Context::agent(a, None),
         Principal::Space(s) => Context::space(s),
@@ -352,6 +390,42 @@ mod tests {
         let lone = Context::agent("ada", None);
         assert_eq!(default_mode(&lone, "spaces/local-work/x"), None);
         assert_eq!(default_mode(&lone, "agents/ada/x"), Some(Mode::ReadWrite));
+    }
+
+    #[test]
+    fn a_spaces_thread_and_sessions_are_read_only_inside_it() {
+        let ada = Context::agent("ada", Some("local:work"));
+        let shell = Context::space("local:work");
+        let user = Context::user();
+        for key in [
+            "spaces/local-work/thread/entries/000000000001.json",
+            "spaces/local-work/thread/members.json",
+            "spaces/local-work/thread",
+            "spaces/local-work/sessions/s1/000001/00000001.jsonl",
+        ] {
+            assert_eq!(default_mode(&ada, key), Some(Mode::Read), "agent {key}");
+            assert_eq!(default_mode(&shell, key), Some(Mode::Read), "space {key}");
+            assert_eq!(
+                default_mode(&user, key),
+                Some(Mode::ReadWrite),
+                "user {key}"
+            );
+        }
+        // The rest of the Space's folder stays read-write, and a file that
+        // only starts with the word is not the folder.
+        for key in ["spaces/local-work/out.txt", "spaces/local-work/threads.md"] {
+            assert_eq!(default_mode(&ada, key), Some(Mode::ReadWrite), "{key}");
+        }
+        // Another Space's thread: nothing.
+        assert_eq!(default_mode(&ada, "spaces/cloud-x/thread/a.json"), None);
+        // No grant widens it.
+        let grants = vec![g("agent:ada", "spaces/local-work/", Mode::ReadWrite)];
+        assert_eq!(
+            effective_mode(&ada, "spaces/local-work/thread/x.json", &grants, 0),
+            Some(Mode::Read)
+        );
+        assert!(validate_grant("agent:ada", "spaces/local-work/thread/", Mode::ReadWrite).is_err());
+        assert!(validate_grant("agent:bob", "spaces/local-work/thread/", Mode::Read).is_ok());
     }
 
     #[test]

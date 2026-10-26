@@ -228,11 +228,11 @@ with `call_tool`.
 
 ### Set up your agent
 
-`cua agents setup` installs the Cua skills (the `cua-sandboxes` skill carries
+`cua connect setup` installs the Cua skills (the `cua-sandboxes` skill carries
 the browsing recipe) and adds the `cua` MCP server to every agent it finds.
 
 ```bash test="cli-shape" id="browse-setup"
-cua agents setup --agents claude,codex,cursor -y
+cua connect setup --agents claude,codex,cursor -y
 ```
 
 Restart the agent. The rest of this section is what the agent does with the

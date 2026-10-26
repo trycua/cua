@@ -152,6 +152,7 @@ pub const JSON_UNARY_METHODS: &[&str] = &[
     "/cua.env.v1.HostSnapshotsService/CreateHostSnapshot",
     "/cua.env.v1.HostSnapshotsService/DeleteHostSnapshot",
     "/cua.env.v1.HostSpacesService/DiagnoseHost",
+    "/cua.env.v1.HostThreadService/CallThreadTool",
     "/cua.env.v1.VolumeService/AttachVolume",
     "/cua.env.v1.VolumeService/DetachVolume",
     "/cua.env.v1.VolumeService/GetVolumeStatus",
@@ -509,6 +510,14 @@ pub(crate) async fn call_unary<C: Channel>(ch: C, path: &str, json: &str) -> Res
             unary::<C, pb::CreateSignedUrlRequest, pb::CreateSignedUrlResponse>(
                 ch,
                 "/cua.env.v1.FilesystemService/CreateSignedUrl",
+                json,
+            )
+            .await
+        }
+        "/cua.env.v1.HostThreadService/CallThreadTool" => {
+            unary::<C, pb::CallThreadToolRequest, pb::CallThreadToolResponse>(
+                ch,
+                "/cua.env.v1.HostThreadService/CallThreadTool",
                 json,
             )
             .await

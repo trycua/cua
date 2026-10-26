@@ -10,6 +10,7 @@
 //! through one `list_spaces` roster; the SDK owns lifecycle and the spacesd
 //! handshake, this module only turns its rows into what the shells draw.
 
+pub mod access;
 pub mod cover;
 pub mod creating;
 pub mod roster;
@@ -218,9 +219,11 @@ pub fn row_to_space(row: &SpaceRow, now: i64) -> Space {
         }
         _ => None,
     };
+    let access = access::access_of(row, power.is_some());
     Space {
         id: row.id.clone(),
-        name: display_name(&name_of(&row.id, &row.name)),
+        // Renamed: the name it was given, as given.
+        name: text(&row.display_name).unwrap_or_else(|| display_name(&name_of(&row.id, &row.name))),
         os,
         status,
         detail: detail_for(row, status),
@@ -256,6 +259,7 @@ pub fn row_to_space(row: &SpaceRow, now: i64) -> Space {
         cloud: text(&row.cloud),
         cloud_place: cloud_place_of(row).map(str::to_string),
         cloud_delete: text(&row.cloud).and(text(&row.cloud_delete)),
+        access: Some(access),
     }
 }
 
@@ -588,6 +592,7 @@ mod tests {
         SpaceRow {
             id: "space://direct/10.0.0.5:3211".into(),
             name: "brave-otter".into(),
+            display_name: None,
             provider: "direct".into(),
             spacesd_version: "0.4.0".into(),
             features: vec!["desktop_stream".into(), "window_stream".into()],
@@ -609,6 +614,31 @@ mod tests {
             cloud_place: None,
             cloud_delete: None,
             stop_reason: None,
+            sharing: None,
+        }
+    }
+
+    #[test]
+    fn a_renamed_space_shows_its_new_name_and_keeps_its_id() {
+        let renamed = row_to_space(
+            &SpaceRow {
+                display_name: Some("design-review".into()),
+                ..row()
+            },
+            0,
+        );
+        assert_eq!(renamed.name, "design-review");
+        assert_eq!(renamed.id, row().id);
+        // No rename (or an empty one): the name it was created with.
+        for none in [None, Some("  ".to_string())] {
+            let space = row_to_space(
+                &SpaceRow {
+                    display_name: none,
+                    ..row()
+                },
+                0,
+            );
+            assert_eq!(space.name, "brave-otter");
         }
     }
 
@@ -766,6 +796,7 @@ mod tests {
             cloud: None,
             cloud_place: None,
             cloud_delete: None,
+            access: None,
         };
         let sorted = sort_by_mru(&[mk("a", 10), mk("c", 1), mk("b", 20)]);
         let ids: Vec<_> = sorted.iter().map(|s| s.id.as_str()).collect();

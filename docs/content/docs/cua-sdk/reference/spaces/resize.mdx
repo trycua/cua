@@ -1,6 +1,6 @@
 ---
-title: "Resize a Space"
-description: "Change a local VM's CPU, memory or disk while keeping its files."
+title: "Power and resize"
+description: "Stop, suspend and start a Space, and change a local VM's CPU, memory or disk while keeping its files."
 ---
 
 {/*
@@ -12,7 +12,7 @@ description: "Change a local VM's CPU, memory or disk while keeping its files."
 
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
-`Spaces.resize` boots a stopped local VM from its own disk after changing its shape. The disk can grow; its files stay in place.
+`Spaces.stop`, `suspend` and `start` answer a `SpacePowerReport`. `Spaces.resize` boots a stopped local VM from its own disk after changing its shape. The disk can grow; its files stay in place.
 
 ## Resize
 
@@ -73,6 +73,19 @@ pub async fn resize(&self, space: String, cpus: Option<u32>, memory_mb: Option<u
 | `disk_gb` | `Option<u32>` | required |
 
 **Returns** [`SpaceResizeReport`](#spaceresizereport-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
+
+## `SpacePowerReport` record
+
+What `Spaces.stop` or `Spaces.start` did.
+
+Returned by [`Spaces.start`](/cua-sdk/reference/spaces#spacesstart), [`Spaces.stop`](/cua-sdk/reference/spaces#spacesstop), [`Spaces.suspend`](/cua-sdk/reference/spaces#spacessuspend).
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `space` | `String` |  | The Space. |
+| `state` | `String` |  | `running`, `suspended` or `stopped`: the state it is in now. |
+| `power` | `String` |  | How it was turned off: `suspend` (its memory is kept, and still in use) or `stop` (its disk is kept; its memory is freed). |
+| `message` | `String` |  | What happened, for people. |
 
 ## `SpaceResizeReport` record
 

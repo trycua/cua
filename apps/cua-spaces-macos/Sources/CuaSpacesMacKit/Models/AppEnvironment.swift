@@ -119,8 +119,10 @@ public enum AppEnvironment {
         if fixtures { model.teamsReader = FixtureTeams() }
         if !fixtures {
             // Local Network access is asked for before the first macOS
-            // Space on this Mac, after the core's explanation (not at
-            // launch, where the prompt came without a reason).
+            // Space on this Mac, and when this Mac starts providing Spaces
+            // (macOS Spaces your other devices create here need it), after
+            // the core's explanation (not at launch, where the prompt came
+            // without a reason).
             model.localNetworkGate = LocalNetworkGate(probe: LiveLocalNetworkProbe())
             // Signed out is nil (setup signs in first); anything else (no
             // network, the credential vault) is the error itself, never a

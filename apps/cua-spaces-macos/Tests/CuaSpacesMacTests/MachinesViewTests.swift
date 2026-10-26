@@ -75,7 +75,36 @@ extension ParityTests {
             }
             return lines
         }
-        return ["view": name, "summary": v.summary, "groups": groups, "pages": pages]
+        var frame: [String: Any] = ["view": name, "summary": v.summary, "groups": groups, "pages": pages]
+        if !v.clouds.group.rows.isEmpty { frame["clouds"] = cloudsFrame(v.clouds, order: v.order) }
+        return frame
+    }
+
+    /// The Clouds group and each cloud's page in words (`parity.rs`'s `view_frame`).
+    static func cloudsFrame(_ c: AppCloudsView, order: [String]) -> [String: Any] {
+        let dot = { (h: String) in h == "ok" ? "\u{25cf}" : h == "warn" ? "\u{25d0}" : "\u{25cb}" }
+        let rows = c.group.rows.map { "\(dot($0.health)) \($0.name) \u{2014} \($0.line) (\($0.logo))" }
+        let pages: [[String]] = c.pages.map { p in
+            var lines = ["\(p.name) \u{2014} \(p.status)"]
+            for i in p.issues {
+                lines.append("issue \(i.level): \(i.text)\(i.action.map { " [\($0.label)]" } ?? "")")
+            }
+            if let s = p.spend { lines.append("spend \(s.amount) \(s.ofBudget) (\(s.resets)) \(s.note)") }
+            if let r = p.running {
+                let ms = r.machines.map { "\($0.name) \($0.by) \($0.cost)".trimmingCharacters(in: .whitespaces) }
+                lines.append("\(r.title): \(ms.joined(separator: "; "))")
+            }
+            if let t = p.token { lines.append("token: \(t.lock); \(t.holdersLabel) \(t.holders)") }
+            for s in p.settings { lines.append("\(s.label): \(s.value)") }
+            if let a = p.switchAuth { lines.append("[\(a.label)]") }
+            if let a = p.approval {
+                let rows = a.rows.map { "\($0.label) \($0.value)" }.joined(separator: "; ")
+                lines.append("approval: \(a.title) \(a.intro) (\(rows)) [\(a.approveLabel) / \(a.denyLabel)]")
+            }
+            if let d = p.disconnect { lines.append("\(d.label) -> \(d.confirm.confirmLabel)") }
+            return lines
+        }
+        return ["order": order, "title": c.group.title, "rows": rows, "connect": c.group.connectLabel, "pages": pages]
     }
 }
 
@@ -122,6 +151,44 @@ struct MachinesViewTests {
         #expect(answer?["summary"] as? String == view.summary)
         let ids = (answer?["machines"] as? [[String: Any]])?.map { $0["id"] as? String }
         #expect(ids == view.machines.map(\.id))
+    }
+
+    /// A connected cloud is a row in the Clouds group, with its page; Disconnect forgets it.
+    @Test func aConnectedCloudIsInTheCloudsGroup() async throws {
+        let backend = FixtureSpacesBackend()
+        let m = await signedInModel(backend: backend)
+        await m.cloud.refresh()
+        #expect(m.machinesView.clouds.group.rows.isEmpty, "nothing connected: no group, only the sheet's own entry")
+        backend.fixtureCloudConnected = true
+        await m.cloud.refresh()
+        let clouds = m.machinesView.clouds
+        #expect(clouds.group.title == "Clouds" && clouds.group.connectLabel == "Connect a cloud")
+        #expect(m.machinesView.order.first == "clouds", "the clouds come first in the list")
+        #expect(clouds.group.rows.map(\.name) == ["AWS"])
+        #expect(clouds.pages.first?.status == "Connected")
+        #expect(clouds.pages.first?.disconnect?.label == "Disconnect AWS\u{2026}")
+        try await m.disconnectCloud("aws", deleteResources: false)
+        #expect(backend.fixtureCloudCalls.contains("cloud_disconnect"))
+        #expect(m.machinesView.clouds.group.rows.isEmpty)
+    }
+
+    /// An agent's link waits; the cloud says this person may approve, so its
+    /// page offers the review, and `clouds.approve` reaches `cloud_approve`.
+    @Test func aPersonApprovesAnAgentsLink() async throws {
+        let backend = FixtureSpacesBackend()
+        let m = await signedInModel(backend: backend)
+        backend.fixtureCloudConnected = true
+        backend.fixtureCloudWaiting = true
+        await m.cloud.refresh()
+        let page = try #require(m.machinesView.clouds.pages.first)
+        #expect(page.status == "Waiting for approval")
+        #expect(page.approval?.intro.hasPrefix("eval-runner set up AWS") == true)
+        #expect(page.issues.first?.action?.id == "review")
+        #expect(WebUIBridge.methods.contains("clouds.approve"))
+        let bridge = WebUIBridge(model: m, allowedOrigins: [])
+        _ = try await bridge.handle("clouds.approve", ["provider": "aws", "approve": true])
+        #expect(backend.fixtureCloudCalls.contains("cloud_approve"))
+        #expect(m.machinesView.clouds.pages.first?.status == "Connected")
     }
 
     /// `machines.rename` renames the relay machine from this enrolled

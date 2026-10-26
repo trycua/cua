@@ -44,6 +44,9 @@ describe("without the core", () => {
       ["qa-windows", "running"],
       ["ubuntu-build", "running"],
       ["windows-legacy", "suspended"],
+      ["qa-shared", "running"],
+      ["checkout-flow", "suspended"],
+      ["qa-regression", "running"],
     ]);
     expect(settingsPage(noCore, { values: DEFAULT_SETTINGS, defaultLocation: null, telemetry: null }, undefined, undefined)).toBeNull();
   });

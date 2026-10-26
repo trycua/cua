@@ -4,7 +4,10 @@
 import { useNavigate } from "@tanstack/react-router";
 
 import { newPendingId, useAgents, useBridge, useFeatureRecorder, useFirstSpaceOffers, useSpaces, type HostStatus } from "@/bridge";
-import { addAskTask, askTask, HOST_NOT_SHARED, hostSpaceId, retryTarget, taskTarget, updateAskTask, whereOs, type AskTask, type TaskTarget, type TaskWhere } from "@/lib/ask-first";
+import { addAskTask, askTask, HOST_NOT_SHARED, hostSpaceId, postToSpaceThread, retryTarget, taskTarget, updateAskTask, whereOs, type AskTask, type TaskTarget, type TaskWhere } from "@/lib/ask-first";
+
+/** Task and Space pairs whose thread already has the task's job. */
+const posted = new Set<string>();
 
 /**
  * Starts a task: records it, opens its conversation at once, makes the
@@ -45,6 +48,12 @@ export function useStartTask(): {
           updateAskTask(id, { spaceId, pendingId: null });
         }
         const prompt = askTask(id)?.prompt ?? "";
+        // The job is the first line of the Space's thread, so the conversation lives with the Space
+        // (once per Space: Try again on the same Space does not post it twice).
+        if (!posted.has(`${id}\u0000${spaceId}`)) {
+          posted.add(`${id}\u0000${spaceId}`);
+          await postToSpaceThread(host, spaceId, prompt);
+        }
         const started = await startRun({ spaceId, agent: askTask(id)?.agent ?? "", prompt });
         updateAskTask(id, { runId: started.run_id });
       } catch (e) {

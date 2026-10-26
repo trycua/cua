@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-// Settings, Connected apps: each coding app on this computer with one
-// switch (`agents.setup`, `agents.configure` and the host's own row press),
+// Settings, Connectors: each coding app on this computer with one
+// switch (`agents.setup`, `agents.connect` and `agents.disconnect`),
 // "Set up new apps automatically", and the sync that sets up a newly
 // installed app with a notice and Undo.
 
@@ -56,9 +56,9 @@ describe("configured agents without binary evidence", () => {
 const app = (id: string) => document.querySelector<HTMLElement>(`[data-connected-app="${id}"]`);
 const switchOf = (id: string) => within(app(id)!).getByRole("switch");
 
-describe.skipIf(!wasmBuilt)("Settings, Connected apps", () => {
+describe.skipIf(!wasmBuilt)("Settings, Connectors", () => {
   it("lists the coding apps on this computer with one switch each, file paths only under Advanced", { timeout: 20_000 }, async () => {
-    await mountApp("/settings/connected-apps", { failsCreates: false, listsGhost: false });
+    await mountApp("/settings/connectors", { failsCreates: false, listsGhost: false });
     await waitFor(() => expect(app("hermes")).not.toBeNull(), { timeout: 8000 });
     expect(within(app("claude-code")!).getByText("Claude Code")).toBeTruthy();
     expect(switchOf("claude-code").getAttribute("aria-checked")).toBe("true");
@@ -77,7 +77,7 @@ describe.skipIf(!wasmBuilt)("Settings, Connected apps", () => {
   });
 
   it("switches one app on and off, remembers an app turned off, and offers Undo", { timeout: 20_000 }, async () => {
-    await mountApp("/settings/connected-apps", { failsCreates: false, listsGhost: false });
+    await mountApp("/settings/connectors", { failsCreates: false, listsGhost: false });
     await waitFor(() => expect(app("hermes")).not.toBeNull(), { timeout: 8000 });
     fireEvent.click(switchOf("hermes"));
     await waitFor(() => expect(switchOf("hermes").getAttribute("aria-checked")).toBe("true"));
@@ -94,7 +94,7 @@ describe.skipIf(!wasmBuilt)("Settings, Connected apps", () => {
   });
 
   it("says why a setup failed in plain words, and offers Try again and the file to edit by hand", { timeout: 20_000 }, async () => {
-    await mountApp("/settings/connected-apps", { failsCreates: false, listsGhost: false, demo: { agentsReadOnly: ["hermes"] } });
+    await mountApp("/settings/connectors", { failsCreates: false, listsGhost: false, demo: { agentsReadOnly: ["hermes"] } });
     await waitFor(() => expect(app("hermes")).not.toBeNull(), { timeout: 8000 });
     fireEvent.click(switchOf("hermes"));
     const failure = await waitFor(() => {
@@ -112,7 +112,7 @@ describe.skipIf(!wasmBuilt)("Settings, Connected apps", () => {
   });
 
   it("keeps Set up new apps automatically in the saved state", { timeout: 20_000 }, async () => {
-    await mountApp("/settings/connected-apps", { failsCreates: false, listsGhost: false });
+    await mountApp("/settings/connectors", { failsCreates: false, listsGhost: false });
     await waitFor(() => expect(document.querySelector("[data-connected-auto]")).not.toBeNull(), { timeout: 8000 });
     expect(connectedAppsState().auto).toBeNull();
     fireEvent.click(document.querySelector("[data-connected-auto]")!);
@@ -138,7 +138,7 @@ describe.skipIf(!wasmBuilt)("a newly installed coding app", () => {
     for (const state of [{ known: seen, off: [], auto: null }, { known: seen, off: ["hermes"], auto: true }]) {
       cleanup();
       setConnectedAppsState(state);
-      const { router } = await mountApp("/settings/connected-apps", { failsCreates: false, listsGhost: false });
+      const { router } = await mountApp("/settings/connectors", { failsCreates: false, listsGhost: false });
       await waitFor(() => expect(app("hermes")).not.toBeNull(), { timeout: 8000 });
       await router.load();
       expect(switchOf("hermes").getAttribute("aria-checked")).toBe("false");

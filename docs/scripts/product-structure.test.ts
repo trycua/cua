@@ -95,7 +95,12 @@ test('the root lists every product in order, with no group headings', () => {
   const dirs = readdirSync(content).filter((name) =>
     statSync(path.join(content, name)).isDirectory()
   );
-  assert.deepEqual(dirs.sort(), PRODUCTS.map(([dir]) => dir).sort());
+  // `agents` holds the pages an AI agent reads from a one-line prompt
+  // (cua.ai/docs/agents/*). It is not a product: no sidebar entry, no sections.
+  assert.deepEqual(
+    dirs.sort(),
+    [...PRODUCTS.map(([dir]) => dir), 'agents'].sort()
+  );
 });
 
 test('the docs home features its examples with real pages and media', () => {

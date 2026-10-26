@@ -81,6 +81,132 @@ impl CuaSpacesDaemon {
 /// tool call).
 pub const ENV_DAEMON_DRIVE: &str = "CUA_DAEMON_DRIVE";
 
+/// Set to `0` to keep this machine's user as `owner` ("Owner") in Space
+/// threads instead of the signed-in account.
+pub const ENV_DAEMON_OWNER_IDENTITY: &str = "CUA_DAEMON_OWNER_IDENTITY";
+
+/// How often the signed-in account is read again (a sign-in or sign-out
+/// shows in the thread within this).
+const OWNER_REFRESH: std::time::Duration = std::time::Duration::from_secs(600);
+
+fn owner_identity_enabled() -> bool {
+    std::env::var(ENV_DAEMON_OWNER_IDENTITY).as_deref() != Ok("0")
+        // A test process never reads the OS credential store here.
+        && !cua_home::is_test_process()
+        && !keyvault::test_identity_active()
+}
+
+/// The signed-in account as a thread author: `Ok(None)` when nobody is
+/// signed in, `Err` when the store can't be read now (keep what we had).
+fn signed_in_owner() -> Result<Option<crate::thread::Author>, String> {
+    let creds = cua_auth::Store::from_env()
+        .load()
+        .map_err(|e| e.to_string())?;
+    Ok(creds.and_then(|c| owner_author(&c.identity())))
+}
+
+/// `identity` as a thread author (its `sub` is the relay account id).
+pub fn owner_author(identity: &cua_auth::Identity) -> Option<crate::thread::Author> {
+    let id = identity.subject.clone().filter(|s| !s.trim().is_empty())?;
+    let name = identity
+        .name
+        .clone()
+        .or_else(|| identity.username.clone())
+        .or_else(|| {
+            identity
+                .email
+                .as_deref()
+                .and_then(|e| e.split('@').next())
+                .map(str::to_string)
+        })
+        .filter(|n| !n.trim().is_empty())
+        .unwrap_or_else(|| "Owner".into());
+    Some(crate::thread::Author {
+        kind: crate::thread::AuthorKind::Person,
+        id,
+        name,
+        identity: None,
+    })
+}
+
+/// The accounts that are owners or admins of a team the signed-in account
+/// is in. `None` when they can't be read now (keep what we had); empty when
+/// nobody is signed in.
+async fn team_admins(spaces: &Spaces) -> Option<std::collections::HashSet<String>> {
+    let Some(account) = spaces.relay_account() else {
+        return Some(Default::default());
+    };
+    if !account.tokens.signed_in().await {
+        return Some(Default::default());
+    }
+    let token = account.tokens.access_token().await.ok()?;
+    let api = account.spaces_api().ok()?;
+    match api.teams(&token).await {
+        Ok(snapshot) => Some(admins_of(&snapshot)),
+        Err(e) => {
+            tracing::debug!(error = %e, "threads: team admins could not be read");
+            None
+        }
+    }
+}
+
+/// Owners and admins of every team in `snapshot`.
+pub fn admins_of(
+    snapshot: &cua_host::spaces_api::TeamsSnapshot,
+) -> std::collections::HashSet<String> {
+    snapshot
+        .teams
+        .iter()
+        .flat_map(|t| t.members.iter())
+        .filter(|m| matches!(m.role.as_str(), "owner" | "admin") && !m.sub.is_empty())
+        .map(|m| m.sub.clone())
+        .collect()
+}
+
+async fn refresh_team_admins(spaces: Spaces) {
+    use crate::SpacesPersistent as _;
+    loop {
+        if let Some(admins) = team_admins(&spaces).await {
+            spaces.persistent().set_team_admins(admins);
+        }
+        tokio::time::sleep(OWNER_REFRESH).await;
+    }
+}
+
+async fn refresh_owner(owner: Arc<std::sync::RwLock<crate::thread::Author>>, spaces: Spaces) {
+    use crate::SpacesPersistent as _;
+    loop {
+        match tokio::task::spawn_blocking(signed_in_owner).await {
+            Ok(Ok(found)) => {
+                let next = found.unwrap_or_else(crate::thread::Author::owner);
+                let mut before = None;
+                if let Ok(mut o) = owner.write()
+                    && *o != next
+                {
+                    tracing::info!(account = %next.id, "threads: this machine's user posts as {}", next.name);
+                    before = Some(std::mem::replace(&mut *o, next));
+                }
+                // Signed out (or another account signed in): the agents the
+                // last account connected from here stop at once.
+                if let Some(prev) = before.filter(|p| p.id != crate::thread::Author::owner().id) {
+                    match spaces.persistent().drop_members_of(&prev).await {
+                        Ok(gone) if !gone.is_empty() => {
+                            tracing::info!(removed = ?gone, "threads: removed the agents {} connected", prev.name)
+                        }
+                        Ok(_) => {}
+                        Err(e) => {
+                            tracing::warn!(error = %e, "threads: connected agents not removed")
+                        }
+                    }
+                }
+            }
+            Ok(Err(e)) => tracing::debug!(error = %e, "threads: the sign-in could not be read"),
+            Err(_) => {}
+        }
+        tokio::time::sleep(OWNER_REFRESH).await;
+    }
+}
+
 /// Registers the Cua Spaces daemon extension for every runtime this process
 /// builds (the Cua Spaces `cua`, the Spaces apps' embedded runtimes).
 pub fn register() {
@@ -92,6 +218,11 @@ pub fn register() {
 impl DaemonExtension for CuaSpacesDaemon {
     fn name(&self) -> &str {
         "cua-spaces"
+    }
+
+    fn features(&self) -> Vec<String> {
+        // Space threads and agent members (`thread_*`, `agent_add`, ...).
+        vec![crate::thread::FEATURE.into()]
     }
 
     fn configure(&self, builder: SpacesBuilder, cx: &ExtensionContext<'_>) -> SpacesBuilder {
@@ -219,6 +350,19 @@ impl AttachedExtension for Attached {
         }
         #[cfg(not(any(unix, windows)))]
         let _ = socket_dir;
+        // This machine's user posts in Space threads as the signed-in
+        // account (its relay account id and display name), like everyone
+        // who reaches this daemon through the relay.
+        if let Some(owner) = runtime
+            .spaces()
+            .extension::<crate::DriveExtension>()
+            .map(crate::DriveExtension::owner)
+            .filter(|_| owner_identity_enabled())
+        {
+            tasks.push(tokio::spawn(refresh_owner(owner, runtime.spaces().clone())));
+            // Admins of the owner's teams count as admins for agent rights.
+            tasks.push(tokio::spawn(refresh_team_admins(runtime.spaces().clone())));
+        }
         // The drive's change feed, and this machine's mount when the user
         // turned it on.
         if std::env::var(ENV_DAEMON_DRIVE).as_deref() != Ok("0") {

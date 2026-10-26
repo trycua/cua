@@ -15,6 +15,8 @@
 import { useSyncExternalStore } from "react";
 
 import type { AgentRunStatus, HostStatus, Space, SpaceOs, TranscriptItem } from "@/bridge";
+import type { DataAdapter } from "@/bridge/adapter";
+import { threadOpAvailable } from "@/bridge/ops/thread";
 
 import { isMachineDesktop, spaceState } from "./spaces";
 
@@ -78,6 +80,17 @@ function save(next: AskTask[]): void {
 }
 
 /** Every task, newest first. */
+/**
+ * Records a line of the task's conversation in its Space's thread, in core:
+ * the Space keeps it, on every device and for the CLI, SDK and MCP, while
+ * this device only remembers which Space and run a task is. Best effort: a
+ * host without the thread still runs the task.
+ */
+export async function postToSpaceThread(data: Pick<DataAdapter, "call" | "mode"> | null | undefined, spaceId: string | null | undefined, text: string): Promise<void> {
+  if (!data || !spaceId || !text.trim() || !threadOpAvailable(data.mode, "thread.post")) return;
+  await data.call("thread.post", { spaceId, text: text.trim() }).catch(() => {});
+}
+
 export function askTasks(): AskTask[] {
   return load();
 }

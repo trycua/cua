@@ -24,6 +24,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use cua_proto::env::v1::host_spaces_service_server::{HostSpacesService, HostSpacesServiceServer};
+use cua_proto::env::v1::host_thread_service_server::{HostThreadService, HostThreadServiceServer};
 use cua_proto::env::v1::*;
 use cua_relay::oidc::testing::FakeIssuer;
 use cua_relay::oidc::{OidcConfig, OidcValidator};
@@ -37,10 +38,33 @@ use common::*;
 const ISSUER: &str = "https://auth.test/realms/cua";
 const HOST_TOKEN: &str = "host-env-token";
 
-/// The fake daemon: records who each forwarded call was for.
+/// The fake daemon: records who each forwarded call was for
+/// (`HostThreadService` calls apart, with the tool).
 #[derive(Clone, Default)]
 struct FakeDaemon {
     callers: Arc<Mutex<Vec<String>>>,
+    thread_callers: Arc<Mutex<Vec<(String, String)>>>,
+}
+
+#[tonic::async_trait]
+impl HostThreadService for FakeDaemon {
+    async fn call_thread_tool(
+        &self,
+        req: tonic::Request<CallThreadToolRequest>,
+    ) -> Result<tonic::Response<CallThreadToolResponse>, tonic::Status> {
+        let who = req
+            .metadata()
+            .get(CALLER_METADATA)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        let r = req.into_inner();
+        self.thread_callers.lock().unwrap().push((who, r.name));
+        Ok(tonic::Response::new(CallThreadToolResponse {
+            content_json: r#"[{"type":"text","text":"{\"entries\":[]}"}]"#.into(),
+            ..Default::default()
+        }))
+    }
 }
 
 #[tonic::async_trait]
@@ -158,8 +182,9 @@ impl HostSpacesService for FakeDaemon {
 
 async fn serve_daemon(socket: &Path, daemon: FakeDaemon) {
     let listener = tokio::net::UnixListener::bind(socket).unwrap();
-    let router =
-        tonic::service::Routes::new(HostSpacesServiceServer::new(daemon)).into_axum_router();
+    let router = tonic::service::Routes::new(HostSpacesServiceServer::new(daemon.clone()))
+        .add_service(HostThreadServiceServer::new(daemon))
+        .into_axum_router();
     tokio::spawn(async move {
         let _ = axum::serve(listener, router).await;
     });
@@ -211,6 +236,42 @@ async fn client(url: &str, token: &str) -> SpacesdClient {
     .unwrap()
 }
 
+/// A client of `url` as `token`'s account asking for the thread of
+/// `space` (a Space the machine provides that is shared with it).
+async fn client_for_thread(url: &str, token: &str, space: &str) -> SpacesdClient {
+    SpacesdClient::connect(
+        ConnectOptions::parse(url)
+            .unwrap()
+            .transport(TransportPreference::Native)
+            .probe(false)
+            .token(token.to_string())
+            .header(cua_relay::server::THREAD_SPACE_HEADER, space),
+    )
+    .await
+    .unwrap()
+}
+
+/// The header the relay reads (the cua client sends the same name; its
+/// own test pins it there).
+#[test]
+fn the_thread_space_header_is_pinned() {
+    assert_eq!(cua_relay::server::THREAD_SPACE_HEADER, "x-cua-thread-space");
+}
+
+/// A refusal's code, message and typed kind (`ErrorInfo.metadata["kind"]`).
+async fn typed_refusal<T>(
+    r: Result<tonic::Response<T>, tonic::Status>,
+) -> (tonic::Code, String, Option<String>) {
+    match r {
+        Ok(_) => (tonic::Code::Ok, String::new(), None),
+        Err(s) => (
+            s.code(),
+            s.message().to_string(),
+            cua_spacesd_server::error::error_info(&s).and_then(|i| i.metadata.get("kind").cloned()),
+        ),
+    }
+}
+
 async fn code_of<T>(r: Result<tonic::Response<T>, tonic::Status>) -> (tonic::Code, String) {
     match r {
         Ok(_) => (tonic::Code::Ok, String::new()),
@@ -247,6 +308,7 @@ async fn a_host_provides_spaces_through_the_relay_and_keeps_its_desktop_private(
     });
     let ada = issuer.token("ada", Some("ada@example.com"), "cua-relay", 600);
     let bob = issuer.token("bob", Some("bob@example.com"), "cua-relay", 600);
+    let dave = issuer.token("dave", Some("dave@example.com"), "cua-relay", 600);
 
     // The owner registers the host (what `cua host setup` does).
     let machine_id = format!("host{}", uuid::Uuid::new_v4().simple());
@@ -349,7 +411,7 @@ async fn a_host_provides_spaces_through_the_relay_and_keeps_its_desktop_private(
         .all(|f| f.limitation != cua_spacesd_server::services::system::DESKTOP_NOT_SHARED));
     let got = owner
         .host_spaces()
-        .get_host_spaces(GetHostSpacesRequest {})
+        .get_host_spaces(GetHostSpacesRequest::default())
         .await
         .unwrap()
         .into_inner();
@@ -359,6 +421,200 @@ async fn a_host_provides_spaces_through_the_relay_and_keeps_its_desktop_private(
     assert_eq!(who["role"], "owner");
     assert_eq!(who["via"], "relay");
     assert_eq!(who["email"], "ada@example.com");
+    // The Space threads, to the owner: the verified caller, never one the
+    // client sent.
+    assert!(caps
+        .features
+        .iter()
+        .any(|f| f.name == "host_thread" && f.supported));
+    let thread_call = || {
+        let mut req = tonic::Request::new(CallThreadToolRequest {
+            space: "relay:space-ada00001".into(),
+            name: "thread_read".into(),
+            arguments_json: "{}".into(),
+        });
+        req.metadata_mut().insert(
+            CALLER_METADATA,
+            r#"{"account":"mallory","role":"owner","via":"relay"}"#
+                .parse()
+                .unwrap(),
+        );
+        req
+    };
+    let r = owner
+        .host_thread()
+        .call_thread_tool(thread_call())
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(
+        r.content_json,
+        r#"[{"type":"text","text":"{\"entries\":[]}"}]"#
+    );
+    let (who, tool) = daemon.thread_callers.lock().unwrap()[0].clone();
+    let who: serde_json::Value = serde_json::from_str(&who).unwrap();
+    assert_eq!(
+        (who["account"].as_str(), who["role"].as_str(), tool.as_str()),
+        (Some("ada"), Some("owner"), "thread_read")
+    );
+
+    // A Space this host provides, shared with dave (the host is not): its
+    // thread and nothing else, as that Space's role, while it is shared.
+    let room = format!("space{}", uuid::Uuid::new_v4().simple());
+    let elsewhere = format!("space{}", uuid::Uuid::new_v4().simple());
+    api(
+        relay_addr,
+        "POST",
+        "/v1/machines",
+        &ada,
+        serde_json::json!({"id": room, "name": "room", "host": machine_id,
+                           "allow": ["dave@example.com"]}),
+    )
+    .await;
+    api(
+        relay_addr,
+        "POST",
+        "/v1/machines",
+        &ada,
+        serde_json::json!({"id": elsewhere, "name": "elsewhere",
+                           "allow": ["dave@example.com"]}),
+    )
+    .await;
+    let as_dave = |space: &String| {
+        let (url, dave, space) = (url.clone(), dave.clone(), space.clone());
+        async move { client_for_thread(&url, &dave, &space).await }
+    };
+    let thread_req = |space: &str| CallThreadToolRequest {
+        space: format!("relay:{space}"),
+        name: "thread_read".into(),
+        arguments_json: "{}".into(),
+    };
+    // Without asking for a Space: not shared.
+    let (code, message) = code_of(
+        client(&url, &dave)
+            .await
+            .host_thread()
+            .call_thread_tool(thread_req(&room))
+            .await,
+    )
+    .await;
+    assert_eq!(code, tonic::Code::PermissionDenied, "{message}");
+    assert!(
+        message.contains("this computer is not shared with your account"),
+        "{message}"
+    );
+    // Asking for it: the thread, as an editor of that Space only.
+    let granted = as_dave(&room).await;
+    granted
+        .system()
+        .get_capabilities(GetCapabilitiesRequest {})
+        .await
+        .unwrap();
+    granted
+        .host_thread()
+        .call_thread_tool(thread_req(&room))
+        .await
+        .unwrap();
+    let (who, _) = daemon
+        .thread_callers
+        .lock()
+        .unwrap()
+        .last()
+        .unwrap()
+        .clone();
+    let who: serde_json::Value = serde_json::from_str(&who).unwrap();
+    assert_eq!(
+        (
+            who["account"].as_str(),
+            who["role"].as_str(),
+            who["space"].as_str()
+        ),
+        (Some("dave"), Some("shared"), Some(room.as_str()))
+    );
+    // Nothing else of the host.
+    let (code, message, kind) = typed_refusal(
+        granted
+            .host_spaces()
+            .get_host_spaces(GetHostSpacesRequest::default())
+            .await,
+    )
+    .await;
+    assert_eq!(code, tonic::Code::PermissionDenied, "{message}");
+    assert_eq!(kind.as_deref(), Some("thread_grant_refused"), "{message}");
+    assert!(
+        message.contains(
+            "reaches only its thread here, not /cua.env.v1.HostSpacesService/GetHostSpaces"
+        ),
+        "{message}"
+    );
+    // Not a Space this host provides.
+    let (code, message, kind) = typed_refusal(
+        as_dave(&elsewhere)
+            .await
+            .host_thread()
+            .call_thread_tool(thread_req(&elsewhere))
+            .await,
+    )
+    .await;
+    assert_eq!(code, tonic::Code::PermissionDenied, "{message}");
+    assert_eq!(kind.as_deref(), Some("thread_grant_refused"), "{message}");
+    assert!(
+        message.contains(&format!(
+            "relay:{elsewhere} is not a Space this computer provides"
+        )),
+        "{message}"
+    );
+    // Shared to view: the thread as a viewer.
+    api(
+        relay_addr,
+        "PATCH",
+        &format!("/v1/machines/{room}"),
+        &ada,
+        serde_json::json!({"allow": [], "viewers": ["dave@example.com"]}),
+    )
+    .await;
+    as_dave(&room)
+        .await
+        .host_thread()
+        .call_thread_tool(thread_req(&room))
+        .await
+        .unwrap();
+    let (who, _) = daemon
+        .thread_callers
+        .lock()
+        .unwrap()
+        .last()
+        .unwrap()
+        .clone();
+    let who: serde_json::Value = serde_json::from_str(&who).unwrap();
+    assert_eq!(who["role"], "viewer");
+    // Revoked: refused at once.
+    let threads = daemon.thread_callers.lock().unwrap().len();
+    api(
+        relay_addr,
+        "PATCH",
+        &format!("/v1/machines/{room}"),
+        &ada,
+        serde_json::json!({"viewers": []}),
+    )
+    .await;
+    let (code, message, kind) = typed_refusal(
+        as_dave(&room)
+            .await
+            .host_thread()
+            .call_thread_tool(thread_req(&room))
+            .await,
+    )
+    .await;
+    assert_eq!(code, tonic::Code::PermissionDenied, "{message}");
+    assert_eq!(kind.as_deref(), Some("thread_grant_refused"), "{message}");
+    assert!(
+        message.contains(&format!(
+            "relay:{room} is not shared with your account, so its thread is not either"
+        )),
+        "{message}"
+    );
+    assert_eq!(daemon.thread_callers.lock().unwrap().len(), threads);
     // The daemon's own errors come back as they are.
     let (code, message) = code_of(
         owner
@@ -433,7 +689,7 @@ async fn a_host_provides_spaces_through_the_relay_and_keeps_its_desktop_private(
     assert_eq!(code, tonic::Code::Ok);
     local
         .host_spaces()
-        .get_host_spaces(GetHostSpacesRequest {})
+        .get_host_spaces(GetHostSpacesRequest::default())
         .await
         .unwrap();
     let who: serde_json::Value =
@@ -449,7 +705,7 @@ async fn a_host_provides_spaces_through_the_relay_and_keeps_its_desktop_private(
     let (code, _) = code_of(
         stranger
             .host_spaces()
-            .get_host_spaces(GetHostSpacesRequest {})
+            .get_host_spaces(GetHostSpacesRequest::default())
             .await,
     )
     .await;
@@ -466,7 +722,7 @@ async fn a_host_provides_spaces_through_the_relay_and_keeps_its_desktop_private(
     let (code, message) = code_of(
         viewer
             .host_spaces()
-            .get_host_spaces(GetHostSpacesRequest {})
+            .get_host_spaces(GetHostSpacesRequest::default())
             .await,
     )
     .await;
@@ -475,18 +731,46 @@ async fn a_host_provides_spaces_through_the_relay_and_keeps_its_desktop_private(
     let calls = daemon.callers.lock().unwrap().len();
     // Ada's get, then her cancel.
     assert_eq!(calls, 3, "nothing forwarded for bob");
+    // ... but the threads are, as a viewer (the daemon lets a viewer read
+    // only), whatever caller the client names.
+    viewer
+        .host_thread()
+        .call_thread_tool(thread_call())
+        .await
+        .unwrap();
+    let (who, _) = daemon
+        .thread_callers
+        .lock()
+        .unwrap()
+        .last()
+        .unwrap()
+        .clone();
+    let who: serde_json::Value = serde_json::from_str(&who).unwrap();
+    assert_eq!(
+        (
+            who["account"].as_str(),
+            who["role"].as_str(),
+            who["via"].as_str()
+        ),
+        (Some("bob"), Some("viewer"), Some("relay"))
+    );
 
     // Not providing Spaces: refused with how to turn it on.
     write_policy(&policy, "ada", false, false, &socket);
     let (code, message) = code_of(
         owner
             .host_spaces()
-            .get_host_spaces(GetHostSpacesRequest {})
+            .get_host_spaces(GetHostSpacesRequest::default())
             .await,
     )
     .await;
     assert_eq!(code, tonic::Code::FailedPrecondition, "{message}");
     assert!(message.contains("--provide-spaces on"), "{message}");
+    let threads = daemon.thread_callers.lock().unwrap().len();
+    let (code, message) = code_of(owner.host_thread().call_thread_tool(thread_call()).await).await;
+    assert_eq!(code, tonic::Code::FailedPrecondition, "{message}");
+    assert!(message.contains("--provide-spaces on"), "{message}");
+    assert_eq!(daemon.thread_callers.lock().unwrap().len(), threads);
     // A Space in the owner's own cloud that this machine created is
     // deleted here whether or not it provides Spaces, with the verified
     // caller (the daemon checks it is the owner).
@@ -589,7 +873,7 @@ async fn a_direct_host_serves_host_spaces_to_its_token_holder() {
         .any(|f| f.name == "host_spaces" && f.supported));
     let got = local
         .host_spaces()
-        .get_host_spaces(GetHostSpacesRequest {})
+        .get_host_spaces(GetHostSpacesRequest::default())
         .await
         .unwrap()
         .into_inner();
@@ -609,7 +893,7 @@ async fn a_direct_host_serves_host_spaces_to_its_token_holder() {
     let (code, _) = code_of(
         stranger
             .host_spaces()
-            .get_host_spaces(GetHostSpacesRequest {})
+            .get_host_spaces(GetHostSpacesRequest::default())
             .await,
     )
     .await;

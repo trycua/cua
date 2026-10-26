@@ -400,7 +400,7 @@ impl NodeLink for GrpcLink {
     async fn host(&self) -> Result<pb::GetHostSpacesResponse, LinkError> {
         self.call(Duration::from_secs(15), |c| async move {
             spaces(&c)
-                .get_host_spaces(pb::GetHostSpacesRequest {})
+                .get_host_spaces(pb::GetHostSpacesRequest::default())
                 .await
         })
         .await

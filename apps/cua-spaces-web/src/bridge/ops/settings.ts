@@ -74,7 +74,7 @@ export interface SettingsOperations {
   /** Revokes an unused pairing code (`pc_…`). */
   "devices.revokePairingCode": { args: { id: string }; result: null };
   /** The account's Teams (organizations of `GET /v1/me`) and the current one:
-   * "Add a machine" and "Share" offer them. */
+   * "Add a computer" and "Share" offer them. */
   "teams.list": { args: Empty; result: TeamsList };
 
   /** The Cua Volume's storage, mount and cache (`volume_storage`, `volume_mount_status`, `volume_cache_stats`). */

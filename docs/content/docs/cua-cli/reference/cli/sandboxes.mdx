@@ -13,7 +13,7 @@ description: "Create, reach and delete sandboxes; local runtimes, disk cleanup a
 | Command | Description |
 | --- | --- |
 | [`cua sandbox`](#cua-sandbox) | Sandboxes: local or an existing computer (direct). |
-| [`cua sandbox create`](#cua-sandbox-create) | Create a sandbox: `cua sb create IMAGE [--on local\|direct:<addr>] [--kind auto\|container\|vm] [--runtime auto\|gvisor\|runc\|qemu\|lume]`. |
+| [`cua sandbox create`](#cua-sandbox-create) | Create a sandbox: `cua sb create IMAGE [--on local\|direct:<addr>] [--kind auto\|container\|vm\|microvm] [--runtime auto\|gvisor\|runc\|qemu\|lume\|firecracker\|vz\|containerization]`. |
 | [`cua sandbox launch`](#cua-sandbox-launch) | Deprecated alias of `create`. |
 | [`cua sandbox connect`](#cua-sandbox-connect) | Reattach to a sandbox (NAME or a ref such as `local:NAME`) and print it. |
 | [`cua sandbox ls`](#cua-sandbox-ls) | List sandboxes: local and direct, each with its `location`; `--local` filters. |
@@ -82,7 +82,7 @@ Alias: `cua sb`.
 
 ### `cua sandbox create`
 
-Create a sandbox: `cua sb create IMAGE [--on local|direct:<addr>] [--kind auto|container|vm] [--runtime auto|gvisor|runc|qemu|lume]`.
+Create a sandbox: `cua sb create IMAGE [--on local|direct:<addr>] [--kind auto|container|vm|microvm] [--runtime auto|gvisor|runc|qemu|lume|firecracker|vz|containerization]`.
 
 ```text output
 cua sandbox create [OPTIONS] [IMAGE] [-- <COMMAND>...]

@@ -19,14 +19,21 @@ pub enum HostCmd {
     /// Set this computer up for unattended access: install cua-spacesd as
     /// a service that joins the cua.ai relay as your account (default) or
     /// serves on a direct ip:port. By default (the `desktop` profile) it
-    /// shares this computer's desktop, also with `--provide-spaces`;
-    /// `--profile spare` or `--no-desktop --provide-spaces` provides Spaces
-    /// only, so it is a host in your pool (`cua run` jobs run in Spaces
-    /// there) whose own desktop stays private. Running it again with
-    /// the same options changes nothing (a stopped service starts again).
+    /// shares this computer's desktop and, on a computer set up for the
+    /// first time through the relay, provides Spaces to your devices (a
+    /// host in your pool: `cua run` jobs and `--on auto` Spaces can run
+    /// here, within its limits); `--no-provide-spaces` leaves that off, and
+    /// `cua host config --provide-spaces off` turns it off later. A
+    /// computer set up before keeps what it provides. `--profile spare` or
+    /// `--no-desktop` provides Spaces only, so its own desktop stays
+    /// private. Running it again with the same options changes nothing (a
+    /// stopped service starts again).
     #[command(after_help = "Examples:
-  # Join the cua.ai relay as your account (shares this desktop)
+  # Join the cua.ai relay as your account (shares this desktop and
+  # provides Spaces to your devices)
   cua host setup
+  # Share this desktop only
+  cua host setup --no-provide-spaces
   # A spare computer: do not share its desktop, run Spaces for your devices
   cua host setup --profile spare --name \"Mac mini (spare)\"
   cua host setup --no-desktop --provide-spaces
@@ -68,9 +75,9 @@ pub enum HostCmd {
         /// service runs as the app's own login item ("Cua Spaces").
         #[arg(long, default_value = "auto")]
         runner: String,
-        /// What this computer is for: `desktop` (share this desktop; the
-        /// default, also with `--provide-spaces`) or `spare` (do not share
-        /// the desktop; provide Spaces).
+        /// What this computer is for: `desktop` (share this desktop, and
+        /// provide Spaces on a new relay setup; the default) or `spare` (do
+        /// not share the desktop; provide Spaces).
         #[arg(long, value_parser = ["desktop", "spare"])]
         profile: Option<String>,
         /// Share this computer's own desktop as a Space.
@@ -81,13 +88,15 @@ pub enum HostCmd {
         #[arg(long)]
         no_desktop: bool,
         /// Create Spaces for your enrolled devices on this computer's
-        /// runtimes (Lume macOS VMs, Docker Linux containers). On its own
-        /// it keeps the default `desktop` profile, so this computer's
+        /// runtimes (Lume macOS VMs, Docker Linux containers). The default
+        /// for a new relay setup; a computer set up before keeps its
+        /// setting unless this (or `--no-provide-spaces`) is given. On its
+        /// own it keeps the default `desktop` profile, so this computer's
         /// desktop is shared too; add `--no-desktop` (or use `--profile
         /// spare`) to provide Spaces only.
         #[arg(long, overrides_with = "no_provide_spaces")]
         provide_spaces: bool,
-        /// Do not create Spaces for other devices.
+        /// Do not create Spaces for other devices (only share this desktop).
         #[arg(long)]
         no_provide_spaces: bool,
         /// Provided Spaces at once (default 4; 0: no limit).
@@ -348,7 +357,7 @@ Examples:
         /// Name (with --count, `-2`, `-3`, ... are appended).
         #[arg(long)]
         name: Option<String>,
-        /// auto | container | vm.
+        /// auto | container | vm | microvm.
         #[arg(long)]
         kind: Option<String>,
         /// auto, or an engine the location offers (lume, runc, gvisor, qemu).
@@ -587,6 +596,20 @@ Examples:
         /// Space id, address or display name (as `cua spaces ls` shows).
         space: String,
     },
+    /// Give a Space a new name; its id stays the same. Lowercase letters,
+    /// digits and dashes, as at create. A Space you shared, or one of your
+    /// computers provides, is renamed on the relay too, so your other
+    /// devices and the people it is shared with see the new name. Only its
+    /// owner can rename a Space.
+    #[command(after_help = "Examples:
+  cua spaces rename local:studio design-review
+  cua spaces rename relay:space-0123456789abcdef ci-runner")]
+    Rename {
+        /// Space id or name (as `cua spaces ls` shows).
+        space: String,
+        /// The new name.
+        name: String,
+    },
     /// Let someone in your team watch (viewer) or use (editor) a Space,
     /// through the relay. They open it as `relay:<computer>`. Sharing is for
     /// teams: you need a team, and they must be in it (or share with the
@@ -798,6 +821,7 @@ fn space_json(s: &cua_sdk::SpaceInfo) -> serde_json::Value {
     serde_json::json!({
         "id": s.id,
         "name": s.name,
+        "display_name": s.display_name,
         "provider": s.provider,
         "spacesd_version": s.spacesd_version,
         "features": s.features,
@@ -817,6 +841,15 @@ fn space_json(s: &cua_sdk::SpaceInfo) -> serde_json::Value {
         "egress_enforced": s.egress_enforced.map(|_| "host"),
         "stop_reason": s.stop_reason,
     })
+}
+
+/// The name people see: the one it was renamed to, else its name.
+fn shown_name(s: &cua_sdk::SpaceInfo) -> &str {
+    if s.display_name.is_empty() {
+        &s.name
+    } else {
+        &s.display_name
+    }
 }
 
 /// `--label key=value` words as the labels they set.
@@ -940,6 +973,17 @@ pub async fn run_spaces_sdk(
                 );
             } else {
                 line(out, format!("Removed {} ({})", info.id, info.name));
+            }
+        }
+        SpacesCmd::Rename { space, name } => {
+            let info = spaces.rename(space.clone(), name.clone()).await?;
+            if json {
+                line(
+                    out,
+                    serde_json::json!({ "renamed": space_json(&info) }).to_string(),
+                );
+            } else {
+                line(out, format!("Renamed {} to {}", info.id, shown_name(&info)));
             }
         }
         SpacesCmd::Share {
@@ -1571,10 +1615,10 @@ fn host_error(e: cua_host::Error, m: String) -> CuaError {
         E::PermissionDenied(_) => CuaError::PermissionDenied(m),
         E::NotFound(_) => CuaError::NotFound(m),
         E::Relay(_) | E::Download(_) | E::Throttled { .. } => CuaError::Http(m),
-        // The plain sentence, then where to upgrade.
+        // The plain sentence, then where to upgrade (`?from=cli_limit`).
         E::PlanLimit(_) => {
             let url = cua_home::plan_limit::PlanLimit::parse(&m)
-                .map(|l| l.upgrade_url(&cua_home::env::account_app_url()));
+                .map(|l| l.upgrade_url_from(&cua_home::env::account_app_url(), "cli_limit"));
             CuaError::Http(match url {
                 Some(url) => format!("{m} Upgrade: {url}"),
                 None => m,
@@ -1934,15 +1978,15 @@ pub async fn run_host(
                 opts.share_desktop = false;
             }
             if provide_spaces {
-                opts.provide_spaces = true;
+                opts.provide_spaces = Some(true);
             }
             if no_provide_spaces {
-                opts.provide_spaces = false;
+                opts.provide_spaces = Some(false);
             }
             opts.max_spaces = max_spaces;
             opts.allow_any_address = allow_any_address;
             opts.dedicated = dedicated;
-            let spaces_only = opts.provide_spaces && !opts.share_desktop;
+            let spaces_only = !opts.share_desktop && host.resolve_provide_spaces(&opts);
             // Running it again changes nothing when this machine already
             // is that host; a host whose service stopped is started again
             // (no sign-in, the code is not spent).
@@ -1958,8 +2002,9 @@ pub async fn run_host(
                     relay: url.clone(),
                     share_desktop: (profile.is_some() || desktop || no_desktop)
                         .then_some(opts.share_desktop),
-                    provide_spaces: (profile.is_some() || provide_spaces || no_provide_spaces)
-                        .then_some(opts.provide_spaces),
+                    // Providing Spaces: what the flags or a spare profile
+                    // say; the desktop profile keeps the machine's own.
+                    provide_spaces: opts.provide_spaces,
                     dedicated,
                     name: opts.name.clone(),
                     runner: (runner != "auto").then(|| runner.clone()),
@@ -2724,12 +2769,17 @@ pub fn load_text(h: &cua_spaces::host_spaces::HostOffer) -> String {
     )
 }
 
-/// A Space's name as the apps show it: the name typed at create
-/// (`local:<name>`, `cloud:<name>`), not the container hostname (12 hex
+/// A Space's name as the apps show it: the name it was renamed to, else
+/// the name typed at create (`local:<name>`, `cloud:<name>`), not the
+/// container hostname (12 hex
 /// digits) its cua-spacesd reported. The same rule as the app core's
 /// `spaces::name_of`, kept here because this crate is MIT and the app core
 /// is not.
 fn display_name(s: &cua_spaces::SpaceInfo) -> String {
+    // Renamed (`cua spaces rename`): the name it was given.
+    if !s.display_name.is_empty() {
+        return s.display_name.clone();
+    }
     let container_hostname = s.name.len() == 12
         && s.name
             .bytes()
@@ -3427,6 +3477,7 @@ mod tests {
         let space = |id: &str, labels: &[(&str, &str)]| cua_spaces::SpaceInfo {
             id: id.into(),
             name: id.into(),
+            display_name: String::new(),
             provider: cua_spaces::Provider::Local,
             spacesd_version: String::new(),
             stop_reason: String::new(),
@@ -3459,6 +3510,7 @@ mod tests {
             created_at_unix: 0,
             egress: Default::default(),
             egress_enforced: None,
+            sharing: None,
         };
         let mut list = vec![
             space("local:a", &[("team", "research"), ("run", "7")]),
@@ -3491,6 +3543,7 @@ mod tests {
         let space = |id: &str, power: &str| cua_spaces::SpaceInfo {
             id: id.into(),
             name: id.into(),
+            display_name: String::new(),
             provider: cua_spaces::Provider::Local,
             spacesd_version: String::new(),
             features: vec![],
@@ -3519,6 +3572,7 @@ mod tests {
             created_at_unix: 0,
             egress: Default::default(),
             egress_enforced: None,
+            sharing: None,
             stop_reason: String::new(),
         };
         let mut list = vec![
@@ -3553,6 +3607,7 @@ mod tests {
         let space = |id: &str, host: &str| cua_spaces::SpaceInfo {
             id: id.into(),
             name: id.into(),
+            display_name: String::new(),
             provider: cua_spaces::Provider::Relay,
             spacesd_version: String::new(),
             features: vec![],
@@ -3585,6 +3640,7 @@ mod tests {
             created_at_unix: 0,
             egress: Default::default(),
             egress_enforced: None,
+            sharing: None,
             stop_reason: String::new(),
         };
         let none = std::collections::HashMap::new();
@@ -3692,6 +3748,7 @@ mod tests {
         let mut s = cua_spaces::SpaceInfo {
             id: "local:e2e-1005-cli".into(),
             name: "327b8dc70418".into(),
+            display_name: String::new(),
             provider: cua_spaces::Provider::Local,
             spacesd_version: "0.5.3".into(),
             features: vec![],
@@ -3720,6 +3777,7 @@ mod tests {
             created_at_unix: 0,
             egress: Default::default(),
             egress_enforced: None,
+            sharing: None,
             stop_reason: String::new(),
         };
         let lines = grouped_lines(std::slice::from_ref(&s), &Default::default());
@@ -3763,6 +3821,27 @@ mod tests {
         s.id = "local:dev".into();
         s.name = "Design review".into();
         assert_eq!(display_name(&s), "Design review");
+        // Renamed: the name it was given, in the list and its JSON.
+        s.display_name = "design-review".into();
+        assert_eq!(display_name(&s), "design-review");
+        assert_eq!(
+            ls_json(std::slice::from_ref(&s))[0]["display_name"],
+            "design-review"
+        );
+    }
+
+    #[test]
+    fn spaces_rename_takes_the_space_and_its_new_name() {
+        match parse_spaces(&["rename", "local:studio", "design-review"]).unwrap() {
+            SpacesCmd::Rename { space, name } => {
+                assert_eq!(
+                    (space.as_str(), name.as_str()),
+                    ("local:studio", "design-review")
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(parse_spaces(&["rename", "local:studio"]).is_err());
     }
 
     #[test]

@@ -167,7 +167,7 @@ export function AskBox({
               <ChevronDownIcon className="size-4 text-muted-foreground" />
             </button>
           }
-          footer="It works on the new computer, signed in with the key you saved in Settings → Connected apps."
+          footer="It works on the new computer, signed in with the key you saved in Settings → Connectors."
         >
           {TASK_AGENTS.map((a) => (
             <PickerRow key={a.id} icon={<AppMark agent={a.id} size={28} />} title={a.name} note={agentNote(a.id)} selected={a.id === agent} onSelect={() => onAgent(a.id)} />

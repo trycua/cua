@@ -107,6 +107,7 @@ Each is an existing Tauri command under a host-neutral name:
 | `agents.start` `{spaceId, agent, prompt, repo?, branch?, model?, envFromHost?}`, `agents.message` `{spaceId, runId, text, force?}` | none yet: unsupported (`TAURI_UNSUPPORTED`) |
 | `agents.pause` / `.resume` `{name}` | `agents_tool` `agent_pause` / `agent_resume` |
 | `agents.setup` / `.configure` `{agents}` | `agent_setup_detect` / `agent_setup_configure` |
+| `agents.status`, `.connect`, `.disconnect` | none: unsupported (`TAURI_UNSUPPORTED`) |
 | `agents.detail`, `.readFile`, `.restoreFile`, `.addRoutine`, `.setRoutine`, `.removeRoutine`, `.allowComputer`, `.revokeComputer` | `agents_tool` (the tools `PersistentModel` runs; see `ops/agent-detail.ts`) |
 
 Events (`HostEvent`): `spaces.changed`, `spaces.createProgress`,
@@ -288,6 +289,9 @@ under a host-neutral name; nothing here is a new mechanism. Types are in
 | `agents.setup` | `{}` | `AgentSetupRow[]` | `agent_setup_detect` (`cua agents status`) |
 | `agents.configure` | `{ agents: string[] \| null }` | `AgentSetupRow[]` | `agent_setup_configure` (`cua agents setup`) |
 | `agents.signIn` | `{ agent }` | `AgentSetupRow[]` | unsupported (no command starts an agent's own sign-in) |
+| `agents.status` | `{ refresh? }` | `ConnectionReport` (CONTRACT §4, snake_case) | `cua connect status --json` |
+| `agents.connect` | `{ agents, signIn, skills?, mcp? }` | `ConnectResult[]` | `cua connect setup --sign-in` |
+| `agents.disconnect` | `{ agents, signIn }` | `{ removed_sign_ins }` | `cua connect remove --sign-in` |
 
 Event: `{ type: "agents.changed" }` when an agent is paused, resumed or saved,
 or a run starts or ends. The store refetches `agents.list` and the runs.
@@ -320,6 +324,9 @@ which is the `agent_events` result as is):
 | `agents.pause` / `agents.resume` | `{ name }` | `null` | `PersistentModel.send(.pause/.resume)` |
 | `agents.setup` / `agents.configure` | `{}` / `{ agents }` | `AgentSettingsRow[]` | the Settings "AI agents" rows |
 | `agents.signIn` | `{ agent }` | `AgentSettingsRow[]` | the agent's own sign-in on this computer (`codex login`; `AgentSetupRunning.signIn`), returning once it runs |
+| `agents.status` | `{ refresh? }` | the SDK's JSON as is | `AgentSetupRunning.connectionStatusJson(refresh:)` (`AgentSetup.connectionStatusJson`; the same rows as `cua connect status --json` and the `connect_status` MCP tool) |
+| `agents.connect` | `{ agents, signIn, skills?, mcp? }` | the SDK's JSON as is | `AgentSetupRunning.connectJson`: Cua's tools and the sign-in copied to Keyvault (no timeout: Claude Code waits for its browser approval) |
+| `agents.disconnect` | `{ agents, signIn }` | the SDK's JSON as is | `AgentSetupRunning.disconnectJson`: both undone |
 
 The host sends `agents.changed` when the persistent agents or the AI agents
 rows change. Without the daemon (`persistent_agent_list`, `agent_events`) or

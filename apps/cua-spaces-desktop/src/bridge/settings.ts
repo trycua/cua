@@ -65,6 +65,8 @@ export function settingsPage(model: AppModel, parts: HostParts) {
     lumeSource: model.lumeSource ?? undefined,
     // The built-in Linux runtime is a gVisor VM on a Mac; Docker is the runtime elsewhere, so no row.
     linuxSource: process.platform === "darwin" ? (model.linuxSource ?? undefined) : undefined,
+    // Settings, General's Show tips (the tips themselves live in `AppSettings.tips`).
+    showTips: !model.settings.tips.off,
   };
   const page = model.native.appSettingsPage(input);
   return model.native.appSettingsWithStorage(page, parts.storage.section, model.settings.experiments);
@@ -91,7 +93,23 @@ export function settingsState(model: AppModel, parts: HostParts) {
     accountUrl: model.native.appAccountAppUrl(),
     // The CLI this app installs and whether it is here (`cli.ts`).
     cli: cliSetting(model),
+    // The app core's own settings the page changes (`settings.update`).
+    tips: { off: model.settings.tips.off, done: [...model.settings.tips.done] },
   };
+}
+
+/** `settings.update`'s fields, as the page sends them (each optional). */
+export function settingsUpdate(args: Record<string, unknown>): Partial<AppModel["settings"]> {
+  const patch: Partial<AppModel["settings"]> = {};
+  if ("tips" in args) {
+    const t = args.tips;
+    if (!t || typeof t !== "object" || Array.isArray(t)) throw Failure.badArgs("tips: {off, done}");
+    const { off, done } = t as { off?: unknown; done?: unknown };
+    if (typeof off !== "boolean" || !Array.isArray(done) || !done.every((d) => typeof d === "string")) throw Failure.badArgs("tips: {off: boolean, done: string[]}");
+    patch.tips = { off, done: done as string[] };
+  }
+  if (!Object.keys(patch).length) throw Failure.badArgs("tips");
+  return patch;
 }
 
 /** A switch in Settings, Experiments: saved and recorded. Off hides; nothing is undone. */
@@ -181,6 +199,12 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
       case "keyvault-site-icons":
         save({ keyvaultSiteIcons: option === "on" });
         return;
+      // General's Show tips and Reset tips: the core's (`settings::choose`).
+      case "tips":
+      case "reset-tips":
+        model.settings = model.native.appSettingsChoose(model.settings, row, option);
+        model.saveSettings();
+        return;
       case "telemetry":
         model.telemetry?.setEnabled(option === "on");
         // Off also stops crash reports (crash-reporting.ts).
@@ -236,6 +260,11 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
           throw Failure.failed(words(error));
         }
       }
+      return settingsState(model, parts());
+    },
+    // The page's tips (`AppSettings.tips`), saved as given.
+    "settings.update": (args) => {
+      save(settingsUpdate(args));
       return settingsState(model, parts());
     },
   };

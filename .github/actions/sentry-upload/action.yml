@@ -69,6 +69,9 @@ runs:
           sourcemaps)
             if [ "$INJECT" = true ]; then sentry sourcemaps inject "$target" || echo "::warning::sourcemaps inject failed"; fi
             sentry sourcemaps upload --release "$release" --url-prefix "$URL_PREFIX" "$target" || echo "::warning::sourcemaps upload failed for $release"
-            [ "$DELETE_MAPS" = true ] && find "$target" -name '*.map' -delete ;;
+            # An `if`, not `[ ] && find`: with delete-maps off that test is the
+            # step's last command and its status 1 failed the step.
+            if [ "$DELETE_MAPS" = true ]; then find "$target" -name '*.map' -delete; fi ;;
           *) echo "::error::unknown kind $KIND"; exit 1 ;;
         esac
+        exit 0

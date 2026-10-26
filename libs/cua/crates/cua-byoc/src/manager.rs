@@ -11,8 +11,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use cua_sandbox_core::Error;
 use cua_sandbox_core::byoc::{
-    AddHost, CloudAuditEntry, CloudConnected, CloudDisconnected, CloudHost, CloudManager,
-    CloudProvider, CloudStatusReport, CloudSweepItem, CloudSweepReport, CloudTarget,
+    AddHost, CloudAuditEntry, CloudConnected, CloudCostReport, CloudDisconnected, CloudHost,
+    CloudManager, CloudProvider, CloudStatusReport, CloudSweepItem, CloudSweepReport, CloudTarget,
     CloudTestReport, HostTypeOffer,
 };
 
@@ -31,18 +31,98 @@ pub struct Clouds {
     home: PathBuf,
     relay: Option<RelayAccess>,
     hosts: Arc<crate::hosts::Hosts>,
+    /// Cua's issuer for OIDC links (`None`: from the environment on first
+    /// use).
+    #[cfg(feature = "federation")]
+    pub(crate) issuer: crate::sealed::IssuerSlot,
+    /// Who calls, when the host knows better than this process's
+    /// environment: `Some(None)` a person, `Some(Some(agent))` an agent.
+    pub(crate) caller: Option<Option<String>>,
+    /// The account-wide spend of linked clouds ([`crate::spend`]).
+    #[cfg(feature = "federation")]
+    pub(crate) spend: Arc<crate::spend::IssuerSpend>,
+    /// The tokens of sealed connections (Hetzner, Modal).
+    #[cfg(feature = "federation")]
+    pub(crate) sealed: Arc<crate::sealed::SealedTokens>,
 }
 
 impl Clouds {
     /// `apis` with their state under `home`.
     pub fn new(home: &Path, apis: Vec<Arc<dyn CloudApi>>, store: Arc<Store>) -> Self {
+        // One issuer slot for links, spend and sealed tokens.
+        #[cfg(feature = "federation")]
+        let issuer: crate::sealed::IssuerSlot = Arc::default();
+        #[cfg(feature = "federation")]
+        let spend = Arc::new(crate::spend::IssuerSpend::new(issuer.clone()));
+        #[cfg(feature = "federation")]
+        store.set_account_spend(spend.clone());
+        #[cfg(feature = "federation")]
+        let sealed = Arc::new(crate::sealed::SealedTokens::new(
+            store.clone(),
+            issuer.clone(),
+        ));
+        #[cfg(feature = "federation")]
+        for a in &apis {
+            a.attach_secrets(sealed.clone());
+        }
         Clouds {
             hosts: Arc::new(crate::hosts::Hosts::new(apis.clone(), store.clone(), None)),
             apis,
             store,
             home: home.to_path_buf(),
             relay: None,
+            #[cfg(feature = "federation")]
+            issuer,
+            #[cfg(feature = "federation")]
+            spend,
+            #[cfg(feature = "federation")]
+            sealed,
+            caller: None,
         }
+    }
+
+    /// Says who calls instead of reading this process's environment
+    /// (`None`: a person; `Some(name)`: that agent). Only a person may
+    /// approve what an agent asked for.
+    pub fn with_caller(mut self, agent: Option<&str>) -> Self {
+        self.caller = Some(agent.map(String::from));
+        self
+    }
+
+    /// The agent that calls, `None` for a person.
+    pub(crate) fn caller_agent(&self) -> Option<String> {
+        match &self.caller {
+            Some(c) => c.clone(),
+            None => cua_sandbox_core::byoc::caller_agent(),
+        }
+    }
+
+    /// Seals and opens tokens with `sealer` instead of this process's pool
+    /// keys ([`crate::sealed::set_pool_sealer`]; tests).
+    #[cfg(feature = "federation")]
+    pub fn with_sealer(self, sealer: Arc<dyn crate::sealed::PoolSealer>) -> Self {
+        self.sealed.set_sealer(sealer);
+        self
+    }
+
+    /// The tokens of this home's sealed connections.
+    #[cfg(feature = "federation")]
+    pub fn sealed_tokens(&self) -> &Arc<crate::sealed::SealedTokens> {
+        &self.sealed
+    }
+
+    /// Links clouds through `issuer` instead of the one the environment
+    /// names (tests, self-hosted issuers).
+    #[cfg(feature = "federation")]
+    pub fn with_issuer(self, issuer: Arc<dyn crate::federation::IssuerClient>) -> Self {
+        *self.issuer.lock().expect("issuer") = Some(issuer);
+        self
+    }
+
+    /// [`Clouds::with_issuer`] on a shared manager (tests, embedders).
+    #[cfg(feature = "federation")]
+    pub fn set_issuer(&self, issuer: Arc<dyn crate::federation::IssuerClient>) {
+        *self.issuer.lock().expect("issuer") = Some(issuer);
     }
 
     /// Lets the sweeper remove relay machines a failed create left behind,
@@ -288,7 +368,7 @@ impl Clouds {
         &self.store
     }
 
-    fn api(&self, name: &str) -> Result<&Arc<dyn CloudApi>> {
+    pub(crate) fn api(&self, name: &str) -> Result<&Arc<dyn CloudApi>> {
         let name = name.trim().to_ascii_lowercase();
         self.apis.iter().find(|p| p.name() == name).ok_or_else(|| {
             Error::InvalidArgument(format!(
@@ -309,14 +389,31 @@ impl Clouds {
         .ok()
     }
 
-    fn default_on(&self) -> String {
+    /// Makes `provider` the default location (`default.on`).
+    pub(crate) fn make_default(&self, provider: &str) -> Result<()> {
+        let key = cua_sandbox_core::settings::key("default.on")
+            .map_err(|e| Error::InvalidArgument(e.to_string()))?;
+        let mut s = self.settings().ok_or_else(|| {
+            Error::InvalidArgument("the cua config file could not be read".into())
+        })?;
+        s.set(key, provider)
+            .map(|_| ())
+            .map_err(|e| Error::InvalidArgument(e.to_string()))
+    }
+
+    pub(crate) fn default_on(&self) -> String {
         self.settings()
             .and_then(|s| s.default_on().ok())
             .map(|(on, _)| on.to_string())
             .unwrap_or_default()
     }
 
-    fn row(&self, p: &dyn CloudApi, conn: Option<&Connection>, default_on: &str) -> CloudProvider {
+    pub(crate) fn row(
+        &self,
+        p: &dyn CloudApi,
+        conn: Option<&Connection>,
+        default_on: &str,
+    ) -> CloudProvider {
         let resolved = conn.cloned().or_else(|| {
             p.resolve(&CloudTarget {
                 provider: p.name().into(),
@@ -343,6 +440,53 @@ impl Clouds {
                 .map(|c| c.ttl_hours)
                 .unwrap_or(model::DEFAULT_TTL_HOURS),
             kinds: resolved.map(|c| p.kinds(&c)).unwrap_or_default(),
+            auth: conn
+                .map(|c| c.auth.as_str().to_string())
+                .unwrap_or_default(),
+            status: if conn.is_some() {
+                cua_sandbox_core::byoc::status::CONNECTED
+            } else {
+                cua_sandbox_core::byoc::status::NOT_CONNECTED
+            }
+            .into(),
+            budget_usd_month: conn.and_then(|c| c.budget_usd_month),
+            max_size: conn
+                .and_then(|c| c.max_size)
+                .map(|m| m.to_string())
+                .unwrap_or_default(),
+            spent_month: (conn.map_or_else(
+                || {
+                    self.store
+                        .spent_month(p.name(), model::now())
+                        .unwrap_or(0.0)
+                },
+                |c| self.store.spent_for_status(c, model::now()),
+            ) * 100.0)
+                .round()
+                / 100.0,
+            running: self
+                .store
+                .resources()
+                .unwrap_or_default()
+                .iter()
+                .filter(|r| {
+                    r.provider == p.name()
+                        && matches!(r.resource_type.as_str(), "instance" | "sandbox")
+                        && !matches!(r.state.as_str(), "gone" | "terminated" | "stopped")
+                })
+                .count() as u32,
+            approval: String::new(),
+            // An AWS link through the CLI sign-in on this device could link
+            // without any key instead (it keeps working until switched).
+            suggest_auth: if cfg!(feature = "federation")
+                && conn.is_some_and(|c| c.auth.is_cli() && c.provider == "aws")
+            {
+                "oidc".into()
+            } else {
+                String::new()
+            },
+            holders: vec![],
+            ..Default::default()
         }
     }
 }
@@ -420,6 +564,8 @@ impl CloudManager for Clouds {
                 }
             }
         }
+        crate::connect::merge_server_status(self, &mut providers, &conns).await;
+        crate::alerts::check_all(&self.store, t);
         Ok(CloudStatusReport {
             default_on,
             providers,
@@ -481,19 +627,22 @@ impl CloudManager for Clouds {
         a.detail = format!("{} ttl {}h", conn.label(p.title()), conn.ttl_hours);
         self.store.audit(a);
         if make_default {
-            let key = cua_sandbox_core::settings::key("default.on")
-                .map_err(|e| Error::InvalidArgument(e.to_string()))?;
-            let mut s = self.settings().ok_or_else(|| {
-                Error::InvalidArgument("the cua config file could not be read".into())
-            })?;
-            s.set(key, p.name())
-                .map_err(|e| Error::InvalidArgument(e.to_string()))?;
+            self.make_default(p.name())?;
         }
         let default_on = self.default_on();
         Ok(CloudConnected {
             provider: self.row(p.as_ref(), Some(&conn), &default_on),
             checks: tested.checks,
+            next: None,
+            verify: format!("cua cloud status {}", p.name()),
         })
+    }
+
+    async fn connect_with(
+        &self,
+        req: &cua_sandbox_core::byoc::ConnectRequest,
+    ) -> Result<CloudConnected> {
+        crate::connect::connect_with(self, req).await
     }
 
     async fn disconnect(&self, provider: &str, delete: bool) -> Result<CloudDisconnected> {
@@ -556,6 +705,9 @@ impl CloudManager for Clouds {
                 }
             }
         }
+        if let Some(conn) = self.store.connection(p.name()).map_err(Error::Io)? {
+            crate::connect::revoke_on_issuer(self, &conn).await?;
+        }
         let disconnected = self.store.disconnect(p.name()).map_err(Error::Io)?;
         p.forget_secret();
         if disconnected {
@@ -587,6 +739,10 @@ impl CloudManager for Clouds {
                 .collect(),
             deleted,
         })
+    }
+
+    async fn approve(&self, provider: &str, deny: bool) -> Result<CloudProvider> {
+        crate::connect::approve_with(self, provider, deny).await
     }
 
     async fn sweep(
@@ -629,11 +785,84 @@ impl CloudManager for Clouds {
 
     async fn auto_sweep(&self) -> Result<CloudSweepReport> {
         let rows = self.sweep_as(None, false, false, sweep::AUTO_ACTOR).await?;
+        // The daemon's regular pass is also when budgets are checked.
+        crate::alerts::check_all(&self.store, model::now());
         Ok(sweep::report(false, rows))
     }
 
     async fn audit(&self, limit: usize) -> Result<Vec<CloudAuditEntry>> {
         self.store.audit_entries(limit).map_err(Error::Io)
+    }
+
+    async fn audit_for(
+        &self,
+        provider: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<CloudAuditEntry>> {
+        if let Some(n) = provider {
+            self.api(n)?;
+        }
+        // This device's log is read whole when narrowed, so the limit
+        // counts that cloud's entries.
+        let mut v: Vec<CloudAuditEntry> = self
+            .store
+            .audit_entries(if provider.is_some() {
+                usize::MAX
+            } else {
+                limit
+            })
+            .map_err(Error::Io)?
+            .into_iter()
+            .filter(|e| provider.is_none_or(|p| e.provider.eq_ignore_ascii_case(p)))
+            .map(|mut e| {
+                e.source = "device".into();
+                e
+            })
+            .collect();
+        let conns = self.store.connections().map_err(Error::Io)?;
+        v.extend(crate::connect::account_audit(self, &conns, provider, limit).await);
+        // Oldest first (RFC 3339 UTC sorts as text), newest last.
+        v.sort_by(|a, b| a.ts.cmp(&b.ts));
+        let skip = v.len().saturating_sub(limit);
+        Ok(v.split_off(skip))
+    }
+
+    async fn cost(
+        &self,
+        provider: Option<&str>,
+        by: &str,
+        since: Option<&str>,
+    ) -> Result<CloudCostReport> {
+        use cua_sandbox_core::byoc::cost_by;
+        if let Some(n) = provider {
+            self.api(n)?;
+        }
+        let by = by.trim().to_ascii_lowercase();
+        let by = if by.is_empty() {
+            cost_by::SPACE.to_string()
+        } else {
+            by
+        };
+        if !cost_by::ALL.contains(&by.as_str()) {
+            return Err(Error::InvalidArgument(format!(
+                "by {by:?} is not one of {}",
+                cost_by::ALL.join(", ")
+            )));
+        }
+        let now = model::now();
+        let since = match since.map(str::trim).filter(|s| !s.is_empty()) {
+            Some(s) => crate::usage::parse_day(s).ok_or_else(|| {
+                Error::InvalidArgument(format!("since {s:?} is not a day (YYYY-MM-DD)"))
+            })?,
+            None => crate::limits::month_start(now),
+        };
+        if since > now {
+            return Err(Error::InvalidArgument(
+                "since is in the future: give a day up to today".into(),
+            ));
+        }
+        let runs = self.store.runs(now).map_err(Error::Io)?;
+        Ok(crate::usage::report(&runs, provider, &by, since, now))
     }
 }
 

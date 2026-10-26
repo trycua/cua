@@ -10,7 +10,8 @@
 //!   created with mode 0600 (and re-chmodded on every write). The spacesd
 //!   token lives only here.
 //! - `space-meta.json`: what a Space was created with that no handshake
-//!   reports ([`SpaceMeta`]: its labels, when it was created and its egress policy), kept for relay-listed Spaces too
+//!   reports ([`SpaceMeta`]: its labels, when it was created, its egress
+//!   policy and the name it was renamed to), kept for relay-listed Spaces too
 //!   and dropped with the Space ([`Registry::remove`]).
 //! - `direct-hosts.json`: the machines added with `cua spaces add <addr>
 //!   --host` ([`DirectHost`]), which provide Spaces over their direct
@@ -58,6 +59,10 @@ pub struct SpaceMeta {
     /// The egress policy last set on the Space ([`crate::egress`]).
     #[serde(default, skip_serializing_if = "crate::egress::EgressPolicy::is_empty")]
     pub egress: crate::egress::EgressPolicy,
+    /// The name it was given with [`crate::Spaces::rename`]; empty when it
+    /// keeps the one it was created with. Its id never changes.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub display_name: String,
 }
 
 fn is_zero(n: &u64) -> bool {

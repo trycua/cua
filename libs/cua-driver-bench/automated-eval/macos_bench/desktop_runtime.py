@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 from __future__ import annotations
 
 import json
@@ -72,6 +75,10 @@ def desktop_env(home: Path, extra: Mapping[str, str] | None = None) -> dict[str,
     }
     if linux:
         env.update({key: os.environ[key] for key in SESSION_KEYS if key in os.environ})
+        # HOME is private per trial; keep the session's default X authority reachable.
+        authority = Path(os.path.expanduser("~")) / ".Xauthority"
+        if "XAUTHORITY" not in env and authority.is_file():
+            env["XAUTHORITY"] = str(authority)
     env.update(extra or {})
     return env
 

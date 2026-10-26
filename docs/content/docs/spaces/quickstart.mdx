@@ -22,7 +22,8 @@ this computer your first Space and ask your agent to use it while you watch.
 - A Mac (macOS 26 or later), a Windows PC (preview) or a Linux PC (Ubuntu 24.04).
 - An AI coding agent, such as Claude Code, Codex or Cursor. See the
   [supported agents](/cua-cli/guides/mcp-server#supported-agents).
-- A free Cua account. The app asks you to sign in during setup.
+- A free Cua account, only to reach this computer from your other computers.
+  Everything on this computer works without one.
 
 Your computer is your first Space, so there is nothing big to download. An extra
 Space is optional: a Linux Space needs a container engine such as Docker, and a
@@ -37,9 +38,19 @@ macOS Space needs an Apple silicon Mac and about 50 GB of free disk.
     ```
   </Tab>
   <Tab value="Windows (preview)">
+    Recommended: run this in PowerShell.
+
     ```powershell skip="host-install"
     irm https://cua.ai/install.ps1 | iex
     ```
+
+    If you download and run the installer from the [download page](https://cua.ai/download)
+    instead, Windows may show a SmartScreen prompt the first time: choose **More info**,
+    then **Run anyway**. The publisher shows as **Cua AI, Inc.**
+
+    Windows 11 Home is supported; Hyper-V is not required. Local Spaces use
+    Docker Desktop on WSL 2 (the app can install it for you) or QEMU with WHPX,
+    which needs the **Windows Hypervisor Platform** feature turned on.
   </Tab>
 </Tabs>
 
@@ -47,55 +58,52 @@ The command installs the `cua` command and the app. You can also download the
 app from the [download page](https://cua.ai/download). [Install](/spaces/guides/install)
 has the details for each system.
 
-## 2. Connect your agent
+## 2. Pick your agent
 
-Open Cua Spaces. The first screen says "A shared Space for every agent."
+Open Cua Spaces. The first screen says "Your computers, shared by your team and its agents."
+Press **Get started**.
 
-Press **Connect Claude Code**. If you use another agent, pick it instead:
-Codex, Hermes, OpenClaw or **Other**. The app adds Cua to that agent's settings.
+**Pick your agent** lists the agents found on this computer, such as Hermes,
+Claude Code, Codex, Cursor or OpenClaw, each with the settings file Cua adds
+itself to. Press **Connect** on each one you want to use. Nothing is connected
+until you press it, and you can connect more later. Codex also shows its
+**ChatGPT sign-in**, and Claude Code and Codex show the provider key they use
+in a Space; these stay on this computer.
 
-If your agent was already open, close it and open it again so it loads the new
-tools. To connect more agents later, see [Connect your agent](/spaces/guides/connect-your-agent).
+No agent found? The screen offers to install one, or to use the `cua` command
+in a terminal instead. If your agent was already open, close it and open it
+again so it loads the new tools. See [Connect your agent](/spaces/guides/connect-your-agent).
 
-## 3. Make this computer your first Space
+## 3. Connect your other devices (optional)
 
-The app checks your setup and shows what's left. These steps use the Mac
-wording; on Windows and Linux the app says "this PC" or "this computer". Press the button on each row:
+**Sign in to connect** lets your other computers and your cloud reach this
+computer's Spaces, after you sign in on them too. The app then adds this
+computer to your account by itself. **Not now** skips it: this computer works
+without an account, and **Sign in** at the bottom of the sidebar does it later.
 
-1. **Sign in**, then finish signing in to Cua in your browser. The app then
-   adds this Mac to your account by itself.
-2. **Let Cua control this Mac**, so your agent can click and type.
-3. **Let Cua see this screen**, so your agent can see what's on it.
+## 4. Try it in your agent
 
-Each of the last two opens System Settings. Turn Cua on there; macOS asks you
-only once. When every row is done, the app says "Your agent can use this Mac."
-This Mac is now your first Space.
+The app names the agent you connected and gives you a request to paste into it:
 
-## 4. Try your first request
+> Make a Linux Space on this Mac and stream the desktop in a new window.
 
-Under **Try this in Claude Code**, press **Copy** and paste the request into
-your agent:
+Press **Copy**, paste it into your agent, and the agent makes the Space itself.
+The line under it turns green when your agent has used Cua. On Windows and
+Linux the request says "this PC" or "this computer".
 
-> List my computers and tell me what's on this Mac
-
-It works right away, on this Mac. Open Cua Spaces to watch your agent work, and
-use the desktop yourself whenever you want to take over.
-
-## 5. Add a Linux Space (optional)
-
-**Give your agent its own Space** offers a fresh computer inside this Mac, away
-from your files and your mouse. Choose **Linux** for the quickest one (a Mac can
-also make a macOS Space), or choose **No extra Space for now**. The card shows
-how long it takes and how much it downloads.
-
-Press **Done** whenever you like. The new Space keeps getting made after the
-window closes, shows its progress in the sidebar, and you get a notice when it's
+With no agent connected, the screen offers a first Space instead: choose
+**Linux** for the quickest one (a Mac with Apple silicon can also make a macOS
+Space). The card shows how long it takes and how much it downloads. The Space
+keeps getting made after the window closes, and you get a notice when it's
 ready.
 
+Press **Done** whenever you like. To let your agent control this Mac itself,
+open **Computers, This Mac**: it lists the two settings macOS asks for once.
+
 <Callout type="info">
-  If a step is still open, the button says **Finish later**. Home then keeps a
-  **Finish setting up** list with the same steps. A Space that fails to create
-  shows the reason and a **Try again** button. See
+  Home's sidebar keeps a **Get started** list (for example "Get started 2/5").
+  Open it to see what's left, **Skip** what you don't need, or **Hide** it. A
+  Space that fails to create shows the reason and a **Try again** button. See
   [Troubleshoot](/spaces/guides/troubleshoot).
 </Callout>
 

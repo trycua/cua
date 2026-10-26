@@ -14,8 +14,17 @@ import Foundation
 public struct InstallCuaPrompt: Equatable, Sendable {
     /// Where people install Cua (the CLI and the Cua app).
     public static let installURL = URL(string: "https://cua.ai/install")!
-    /// Opens the Keyvault page of an installed Cua app.
-    public static let openURL = URL(string: "cua://keyvault")!
+    /// Opens the Keyvault page of an installed Cua app: `cua://keyvault`, or
+    /// `cua-local://keyvault` from Cua Spaces Local, whose bundle stamps its
+    /// scheme as `CuaUrlScheme` (the two apps answer to different schemes).
+    public static var openURL: URL { openURL(info: Bundle.main.infoDictionary) }
+
+    /// [`openURL`] for the Info.plist `info`: its `CuaUrlScheme`, else `cua`.
+    public static func openURL(info: [String: Any]?) -> URL {
+        let scheme = ((info?["CuaUrlScheme"] as? String) ?? "")
+            .trimmingCharacters(in: .whitespaces).lowercased()
+        return URL(string: "\(scheme.isEmpty ? "cua" : scheme)://keyvault") ?? URL(string: "cua://keyvault")!
+    }
 
     /// Cua is installed but not running (open it instead of installing).
     public let installed: Bool

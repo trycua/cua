@@ -32,6 +32,7 @@ concurrency:
 
 jobs:
   linux:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     # The readiness checks run inside a real desktop sandbox (the canonical
     # ghcr.io/trycua/linux:24.04, locally on the runner) against the
     # cua-driver built from this commit, injected over whatever the image
@@ -72,6 +73,7 @@ jobs:
               bash /tmp/preflight-rust-e2e.sh"
 
   windows:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: "Windows / lightweight desktop readiness"
     runs-on: windows-latest
     timeout-minutes: 15

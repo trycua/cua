@@ -27,8 +27,12 @@ server (`cua mcp`) in their MCP configs. Used by `cua agents ...`,
 - **State**: `~/.cua/agent-setup.json` (or `$CUA_HOME`) records each entry and
   skill folder cua wrote. `remove` deletes only entries that still hold the
   value cua wrote (restoring a pre-existing non-cua entry of the same name)
-  and only skill folders nobody edited. `update` refreshes skill folders cua
-  owns and re-points managed MCP entries.
+  and only skill folders nobody edited. It removes Cua Spaces' entries only
+  (the `cua` server, `cua-local` for Local, and the Cua Spaces skills): Cua
+  Driver's `cua-driver` server and skill (`cua-driver-local` for Local) stay
+  unless `remove_with` is given `include_cua_driver`, and `dry_run` returns
+  the rows a real run would produce without writing. `update` refreshes skill
+  folders cua owns and re-points managed MCP entries.
 - **Host safety**: everything resolves from a `HostEnv` (HOME, XDG and agent
   override variables, PATH, app folders). `HostEnv::isolated(home)` is fully
   hermetic; all tests use it with a temporary home.

@@ -240,6 +240,7 @@ describe.skipIf(!built)("agents", () => {
     expect(await code(bridge, "agents.setup")).toBe("unsupported");
     expect(await code(bridge, "agents.configure", {})).toBe("unsupported");
     expect(await code(bridge, "agents.setupDriver", { agents: ["codex"] })).toBe("unsupported");
+    expect(await code(bridge, "agents.signIn", { agent: "codex" })).toBe("unsupported");
     expect(await code(bridge, "agents.runs", {})).toBe("bad_args");
     expect(await code(bridge, "agents.pause", {})).toBe("bad_args");
   });
@@ -257,6 +258,18 @@ describe.skipIf(!built)("agents", () => {
     expect(configured.find((r) => r.agent === "claude-code")?.configured).toBe(true);
     expect(shapeProblems("agents.configure", configured)).toEqual([]);
     expect(await code(bridge, "agents.configure", { agents: "codex" })).toBe("bad_args");
+  });
+
+  it("starts an agent's own sign-in on this computer, and the rows say when it is done", async () => {
+    const { bridge } = makeBridge();
+    const rows = (await call(bridge, "agents.setup")) as { agent: string; signIn: string | null; signedIn: boolean }[];
+    expect(rows.find((r) => r.agent === "codex")).toMatchObject({ signIn: "ChatGPT", signedIn: false });
+    expect(rows.find((r) => r.agent === "claude-code")).toMatchObject({ signIn: null, signedIn: false });
+    const after = (await call(bridge, "agents.signIn", { agent: "codex" })) as typeof rows;
+    expect(setup.calls).toEqual(["sign-in:codex"]);
+    expect(after.find((r) => r.agent === "codex")?.signedIn).toBe(true);
+    expect(shapeProblems("agents.signIn", after)).toEqual([]);
+    expect(await code(bridge, "agents.signIn", {})).toBe("bad_args");
   });
 
   it("configures every detected agent when none are named", async () => {
@@ -347,7 +360,7 @@ describe.skipIf(!built)("agents", () => {
     await live.remove(["codex"]);
     expect(seen).toEqual([
       ["skills", ["codex"], [], false],
-      ["mcp", ["codex"], { name: "cua", command: "/Applications/Cua Spaces.app/Contents/MacOS/cua", args: ["mcp"], env: new Map() }],
+      ["mcp", ["codex"], { name: "", command: "/Applications/Cua Spaces.app/Contents/MacOS/cua", args: ["mcp"], env: new Map() }],
       ["driver", ["codex"], undefined, true, true],
       ["remove", ["codex"], true, true],
     ]);

@@ -3,35 +3,58 @@
 
 /**
  * The main window with no Spaces yet, as the SwiftUI app draws it: a
- * monitor, "No Spaces yet", one tile per system this machine runs (Linux,
+ * monitor, "Create your first Space" with the three steps ahead (the guided
+ * first run, CUA-2062; counted once as `first_run_guide_shown`), one tile per system this machine runs (Linux,
  * and macOS on Apple silicon Macs) with its time and size from the core,
  * under the Spaces header (its New Space opens the wizard with nothing
  * chosen). A tile opens New Space with that system chosen, on this machine
- * (the wizard says when it can't run here).
+ * (the wizard says when it can't run here). Below them, the same creates
+ * as terminal commands, when the app's CLI is installed.
  */
 
 import { useNewSpaceWizard, type EmptyHome as EmptyHomeView, type EmptyTile } from "@/bridge";
+import { useEffect } from "react";
+
+import { CliHintLine, useCliName } from "@/components/cli-hint";
+import { useFirstRunStep } from "@/components/first-run-guide";
 import { OsIcon } from "@/components/os-icon";
+import { createAliasCommand } from "@/lib/cli-commands";
 
 /** `unread`: the host could not read the Spaces list (`listNotice`): the
  * title says so and no system is offered, as the SwiftUI app's does. */
 export function EmptyHome({ home, unread = false }: { home: EmptyHomeView; unread?: boolean }) {
   const wizard = useNewSpaceWizard();
   const start = (tile: EmptyTile) => wizard.show(null, tile.os);
+  const step = useFirstRunStep();
+  // The same creates in a terminal, when the app's CLI is on this computer.
+  const cli = useCliName();
+  const commands = cli ? home.tiles.map((tile) => createAliasCommand(cli, tile.os)) : [];
+  useEffect(() => {
+    if (!unread) step("guide_shown");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [unread]);
   return (
     <section data-empty-home="" aria-labelledby="empty-home-title" className="flex flex-col items-center px-8 pt-8 pb-10 text-center">
       <MonitorGlyph />
-      <h2 id="empty-home-title" className="mt-4 text-[22px] font-bold tracking-[-0.01em] text-muted-foreground">
-        {unread ? "Spaces could not be loaded" : home.title}
+      <h2 id="empty-home-title" className="mt-4 text-[22px] font-bold tracking-[-0.01em] text-foreground">
+        {unread ? "Spaces could not be loaded" : "Create your first Space"}
       </h2>
       {unread ? null : (
         <>
-          <p className="mt-2.5 text-[13px] text-muted-foreground">{home.detail}</p>
+          <p className="mt-2.5 max-w-md text-[13px] text-muted-foreground">
+            A Space is a fresh computer for you and your agents. {home.detail}
+          </p>
+          <ol data-first-run-steps="" className="mt-3 flex flex-wrap justify-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+            <li>1. Pick a system</li>
+            <li>2. Wait while it sets up</li>
+            <li>3. Try a task with an agent</li>
+          </ol>
           <div className="mt-5 flex flex-wrap justify-center gap-3">
             {home.tiles.map((tile) => (
               <Tile key={tile.os} tile={tile} onStart={start} />
             ))}
           </div>
+          <CliHintLine commands={commands} className="mt-4" />
         </>
       )}
     </section>

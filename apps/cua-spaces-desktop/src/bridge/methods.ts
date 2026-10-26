@@ -16,7 +16,7 @@ export const METHODS = [
   "spaces.setPower", "spaces.delete", "spaces.cancelCreate",
   "machines.list", "host.status",
   "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
-  "agents.setup", "agents.configure",
+  "agents.setup", "agents.configure", "agents.signIn",
   "agents.detail", "agents.readFile", "agents.restoreFile", "agents.addRoutine", "agents.setRoutine",
   "agents.removeRoutine", "agents.allowComputer", "agents.revokeComputer",
   "agentKeys.list", "agentKeys.set", "agentKeys.remove",
@@ -49,6 +49,8 @@ export const METHODS = [
   "resources.get",
   "machines.rename", "machines.remove", "machines.checkHealth",
   "checklist.get", "checklist.send",
+  "links.list", "links.create", "links.stop",
+  "cli.plan", "cli.install",
 ] as const;
 
 /** A live desktop's media ticket for the page's WebCodecs player,

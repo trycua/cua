@@ -17,6 +17,48 @@ task has a `PROVENANCE.md` in `probes/<ID>/`.
 | IR-03 | `interruptions` | BenchLab `--mode irunsaved` | 360 | 45 |
 | IR-04 | `interruptions` | BenchLab `--mode irconsent` | 360 | 45 |
 
+## Amendment 24.3: separately selectable web tasks
+
+WEB-01 and WEB-02 belong to `web_forms` (Web apps & forms), with 360 seconds,
+45 turns, no coding tools and `browser: true`. They are exposed as
+`run_bench.WEB_TASKS`, not added to `bench_v2.V2_TASKS`. Default selection and
+the registered v2 list stay unchanged; joining v2 requires a dated amendment.
+Use `--tasks WEB-01 WEB-02`, including with the browser-only arm
+`cc-codex-cu-1007-browser`.
+
+| Task | Pack tree | What the final-state checker reads |
+| --- | --- | --- |
+| WEB-01 | `shared/web-01` | `/__state`: exactly one complete accepted account, exact seeded name/email/password/plan/invite, task/seed/variant identity |
+| WEB-02 | `shared/web-02` | `/__state`: exactly one confirmed order, exact SKU quantities/address/card last4, no checkout draft, task/seed/variant identity |
+
+Both checkers read authoritative in-memory server records, never UI or localStorage.
+Invalid attempts create no partial account or order; repeated accepted submissions
+remain observable and fail cardinality. Only confirmation creates an order; it
+stores no full card or CVV. GET `/__state` is read-only. Signup has no order routes.
+Expected values come from each pinned scenario catalog and oracle, not workspace
+answers. Python selects `seed % len(variants)` once at setup, records it in
+`trial.json` and renders the brief; the server reads that selection. The evaluator
+reports its observed seed and the runner compares it with the trusted row seed,
+including under `CDB_EVAL_SUDO`. Evaluator helpers are generated into each task
+so a hidden installation needs only that individual task directory.
+
+Descriptors start a dependency-free Node service on loopback ports 4191 and 4192
+(distinct from CDB-G04's 4184), wait for bounded `ready.http`, and launch the
+bench Google Chrome with a fresh dedicated profile and the task start URL. Reset
+verification rehashes every manifest input, including shared sibling files.
+
+For `browser: true` only, the system prompt's network sentence becomes exactly:
+“Do not use the internet; the task's localhost site is allowed.” CDB-G04's selector
+now has `browser: true`; this changes its system-prompt hash without changing its
+pack tree. Non-browser prompt bytes remain unchanged. Rows hash the actual prompt;
+manifests record both `system_prompt_sha256_by_arm` (non-browser) and
+`system_prompt_sha256_by_arm_browser`. `example_argv_task` identifies the task used
+for manifest example argv; dry-run prints task-aware argv for every selected task.
+
+The existing evaluator-peek detector also flags `/__state`, retaining oracle and
+pack patterns. This is a policy/detection boundary, not endpoint authorization.
+All web content is self-written, FSL-1.1-MIT; provenance lives in each pack task.
+
 ## Conventions for every task
 
 **Prompts.** Each prompt is tool-neutral and identical for every setup. It

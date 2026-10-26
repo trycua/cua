@@ -5,18 +5,22 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import signal
 import subprocess
+import tomllib
 import sys
 import time
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
+
 
 import arms  # noqa: E402
 import codex_events  # noqa: E402
@@ -91,6 +95,23 @@ class DesktopRuntimeTest(unittest.TestCase):
             self.assertEqual(env["DISPLAY"], ":92")
             self.assertEqual(env["DBUS_SESSION_BUS_ADDRESS"], "unix:path=/tmp/bus")
             self.assertNotIn("SECRET_TOKEN", env)
+
+    def test_linux_environment_keeps_default_xauthority_after_home_swap(self) -> None:
+        import desktop_runtime as desktop
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            orig = Path(tmp) / "orig"
+            orig.mkdir()
+            (orig / ".Xauthority").write_text("x")
+            environ = {"HOME": str(orig), "DISPLAY": ":92"}
+            with (
+                patch.object(desktop, "detect_platform", return_value="linux"),
+                patch.dict(os.environ, environ, clear=True),
+            ):
+                env = desktop.desktop_env(Path(tmp) / "private")
+            self.assertEqual(env["XAUTHORITY"], str(orig / ".Xauthority"))
+            self.assertEqual(env["HOME"], str(Path(tmp) / "private"))
 
     def test_macos_environment_uses_closed_path_and_locale(self) -> None:
         import desktop_runtime as desktop
@@ -206,7 +227,7 @@ class DesktopRuntimeTest(unittest.TestCase):
                 )
             )
 
-    @unittest.skipUnless(_x11_ready(), "headless X11 session required")
+    @unittest.skipUnless(_x11_ready() and _has_gi(), "headless X11 session with GTK required")
     def test_task_helpers_emit_evaluator_compatible_initial_state_and_evidence(self) -> None:
         import desktop_runtime as desktop
         import run_bench as runner
@@ -270,6 +291,66 @@ class DesktopRuntimeTest(unittest.TestCase):
             }
             for name in ("display", "at-spi", "ffmpeg"):
                 self.assertEqual(checks[name].status, "pass", checks[name].detail)
+
+    @unittest.skipUnless(_x11_ready() and _has_gi(), "headless X11 session with GTK required")
+    def test_consent_dialog_survives_window_close(self) -> None:
+        script = r"""
+import argparse, json, sys, tempfile
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import gi
+gi.require_version("Gtk", "3.0")
+from gi.repository import Gtk
+import benchlab
+
+def pump(n=60):
+    for _ in range(n):
+        while Gtk.events_pending():
+            Gtk.main_iteration_do(False)
+        import time; time.sleep(0.01)
+
+def dlg():
+    for w in Gtk.Window.list_toplevels():
+        if w.get_title() == "Cookie preferences" and w.get_visible():
+            return w
+    return None
+
+with tempfile.TemporaryDirectory() as tmp:
+    lab = benchlab.Lab(argparse.Namespace(
+        mode="irconsent", seed=7, state=Path(tmp) / "s.json", events=Path(tmp) / "e.jsonl"))
+    lab.fields["email"].set_text("a@example.com")
+    for _ in range(100):
+        pump(5)
+        if dlg():
+            break
+    d = dlg()
+    out = {"opened": d is not None}
+    d.close(); pump()
+    out["after_close"] = [dlg() is not None, lab.state["consent_shown"], list(lab.state["consent_answers"])]
+    d.response(-1); d.response(99); pump()
+    out["after_invalid"] = [dlg() is not None, list(lab.state["consent_answers"])]
+    d.response(0); pump()
+    out["after_button"] = [dlg() is not None, list(lab.state["consent_answers"])]
+    lab.signup(); pump()
+    out["submit"] = [lab.state["submit_count"], lab.state["submits_blocked"]]
+    print(json.dumps(out))
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            proc = subprocess.run(
+                [sys.executable, "-c", script, str(HERE.parent / "linux")],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                cwd=tmp,
+            )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        out = json.loads(proc.stdout.strip().splitlines()[-1])
+        self.assertTrue(out["opened"])
+        self.assertEqual(out["after_close"], [True, True, []])
+        self.assertEqual(out["after_invalid"], [True, []])
+        self.assertFalse(out["after_button"][0])
+        self.assertEqual([a["answer"] for a in out["after_button"][1]], ["reject"])
+        self.assertEqual(out["submit"], [1, 0])
 
     @unittest.skipUnless(_x11_ready() and _has_gi(), "headless X11 session with GTK required")
     def test_real_gtk_interactions_are_accepted_by_unchanged_evaluators(self) -> None:
@@ -419,7 +500,7 @@ class DesktopRuntimeTest(unittest.TestCase):
                         proc.wait(timeout=5)
 
     @unittest.skipUnless(
-        sys.platform == "linux" and os.environ.get("DISPLAY") and os.environ.get("CUA_DRIVER_BIN"),
+        _x11_ready() and os.environ.get("CUA_DRIVER_BIN"),
         "CUA_DRIVER_BIN required for driver smoke",
     )
     def test_real_driver_health_and_recording(self) -> None:
@@ -514,6 +595,25 @@ class DesktopRuntimeTest(unittest.TestCase):
                 if other:
                     desktop.stop_group(other.pid)
                     other.wait(timeout=5)
+
+
+class SentinelVisibilityTest(unittest.TestCase):
+    @unittest.skipUnless(_has_gi(), "GTK required")
+    def test_only_visible_current_workspace_windows_count(self) -> None:
+        from unittest import mock
+
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "linux"))
+        import sentinel
+
+        props = {
+            1: {"_NET_WM_DESKTOP": "0", "_NET_WM_STATE": "_NET_WM_STATE_ABOVE"},
+            2: {"_NET_WM_DESKTOP": "1", "_NET_WM_STATE": ""},
+            3: {"_NET_WM_DESKTOP": "4294967295", "_NET_WM_STATE": ""},
+            4: {"_NET_WM_DESKTOP": "0", "_NET_WM_STATE": "_NET_WM_STATE_HIDDEN"},
+        }
+        with mock.patch.object(sentinel, "xprop", lambda _i, w, *_a: props[int(w, 16)]):
+            seen = [w for w in props if sentinel.visible_here(w, "0")]
+        self.assertEqual(seen, [1, 3])
 
 
 class CodexEventsTest(unittest.TestCase):
@@ -646,30 +746,148 @@ class CodexEventsTest(unittest.TestCase):
             self.assertIsNone(codex_events.rollout_usage(Path(tmp) / "missing"))
 
 
-_CODEX_NODE_REPL_DOC = Path(
-    "/Applications/ChatGPT.app/Contents/Resources/plugins/openai-bundled/plugins/computer-use/.codex-plugin/computer-use-node-repl.md"
-)
+class RecorderTest(unittest.TestCase):
+    def setUp(self) -> None:
+        import recorder
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.video = Path(self.tmp.name) / "v.mp4"
+        self.video.write_bytes(b"x")
+        self.rec = recorder.CuaRecorder(Path("/nonexistent"), "sock", {})
+        self.rec.active_dir = Path(self.tmp.name)
+        self.outcomes: list = []
+        self.calls: dict[str, int] = {}
+        self.closed = 0
+        test = self
+
+        class Fake:
+            def call_tool(self, name, args, timeout=0):
+                test.calls[name] = test.calls.get(name, 0) + 1
+                if name == "get_recording_state":
+                    raise TimeoutError("state")
+                outcome = test.outcomes.pop(0)
+                if isinstance(outcome, type):
+                    raise outcome("boom")
+                return outcome
+
+            def close(self):
+                test.closed += 1
+
+        def connect():
+            self.rec.client = Fake()
+            return self.rec.client
+
+        self.rec._connect = connect
+
+    def test_stop_retries_after_transient_failure(self) -> None:
+        self.outcomes = [TimeoutError, {"last_video_path": str(self.video)}]
+        self.assertIsNone(self.rec.stop())
+        self.assertIsNotNone(self.rec.active_dir)
+        self.assertTrue(self.rec.last_error.startswith("TimeoutError"))
+        self.assertEqual(self.rec.stop(), self.video)
+        self.assertIsNone(self.rec.active_dir)
+        self.rec.close()
+        self.assertEqual(self.calls["stop_recording"], 2)
+        self.assertEqual(self.closed, 1)
+
+    def test_close_retries_unconfirmed_stop(self) -> None:
+        self.outcomes = [TimeoutError, TimeoutError, {"last_video_path": str(self.video)}]
+        self.rec.stop()
+        self.rec.stop()
+        self.rec.close()
+        self.assertEqual(self.calls["stop_recording"], 3)
+        self.assertEqual(self.rec.last_video, self.video)
+        self.assertIsNone(self.rec.active_dir)
+        self.assertEqual(self.closed, 1)
+
+    def test_state_lookup_failure_after_confirmed_stop_clears_state(self) -> None:
+        self.outcomes = [{}]
+        self.assertIsNone(self.rec.stop())
+        self.assertIsNone(self.rec.active_dir)
+        self.rec.close()
+        self.assertEqual(self.calls["stop_recording"], 1)
 
 
 class ArmsTest(unittest.TestCase):
-    @unittest.skipUnless(
-        _CODEX_NODE_REPL_DOC.exists(), "needs the ChatGPT app's bundled computer-use plugin"
-    )
+    def test_gateway_common_config_matches_original_text(self) -> None:
+        with mock.patch.dict(os.environ, {"CDB_CODEX_AUTH": "gateway"}):
+            self.assertEqual(
+                arms.common_config("m", "high"),
+                """model = "m"
+model_provider = "litellm"
+model_reasoning_effort = "high"
+approval_policy = "never"
+sandbox_mode = "workspace-write"
+mcp_optional_startup_grace_ms = 30000
+
+""",
+            )
+
     def test_arm_homes_differ_only_in_tool_layer(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            cua = Path(tmp) / "cua"
-            native = Path(tmp) / "native"
-            arms.render_home("cua-driver-mcp", cua, "m", "high")
-            arms.render_home("codex-native-cu", native, "m", "high")
-            common = arms.common_config("m", "high")
-            for home in (cua, native):
-                text = (home / ".codex" / "config.toml").read_text("utf-8")
-                self.assertTrue(text.startswith(common))
-                self.assertIn('default_tools_approval_mode = "approve"', text)
-            self.assertIn("[mcp_servers.cua]", (cua / ".codex/config.toml").read_text("utf-8"))
-            self.assertIn(
-                "[mcp_servers.node_repl]", (native / ".codex/config.toml").read_text("utf-8")
-            )
+            root = Path(tmp)
+            for name in ("skills/computer-use/SKILL.md", ".codex-plugin/computer-use-node-repl.md"):
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("fixture")
+            source = root / ".codex/auth.json"
+            source.parent.mkdir()
+            source.write_bytes(b"private")
+            source.chmod(0o000)
+            before = source.stat().st_mtime_ns
+            with mock.patch.multiple(
+                arms,
+                CODEX_APP_RESOURCES=root,
+                CODEX_CU_PLUGIN=root,
+                CUA_DRIVER_SKILL=root / "skills/computer-use",
+            ):
+                for arm in arms.ARMS:
+                    configs = {}
+                    for mode in ("gateway", "chatgpt"):
+                        home = root / f"{arm}-{mode}"
+                        with mock.patch.dict(
+                            os.environ,
+                            {
+                                "CDB_CODEX_AUTH": mode,
+                                "CDB_CODEX_AUTH_FILE": str(source),
+                                "LITELLM_MASTER_KEY": "secret",
+                                "CDB_PILOT_PASS_GATEWAY_KEY": "1",
+                            },
+                        ):
+                            env = arms.render_home(arm, home, "m", "high")
+                            text = (home / ".codex/config.toml").read_text()
+                            self.assertTrue(text.startswith(arms.common_config("m", "high")))
+                            self.assertEqual("LITELLM_MASTER_KEY" in env, mode == "gateway")
+                            link = home / ".codex/auth.json"
+                            self.assertEqual(link.is_symlink(), mode == "chatgpt")
+                            if mode == "chatgpt":
+                                self.assertEqual(os.readlink(link), str(source))
+                            configs[mode] = tomllib.loads(text)
+                    gateway = configs["gateway"]
+                    self.assertEqual(gateway.pop("model_provider"), "litellm")
+                    gateway.pop("model_providers")
+                    self.assertNotIn("cli_auth_credentials_store", gateway)
+                    self.assertEqual(configs["chatgpt"].pop("cli_auth_credentials_store"), "file")
+                    self.assertEqual(gateway, configs["chatgpt"])
+                    if arm == "codex-native-cu":
+                        self.assertIn("notify", gateway)
+                with mock.patch.dict(
+                    os.environ, {"CDB_CODEX_AUTH": "chatgpt", "HOME": tmp}, clear=True
+                ):
+                    env = arms.render_home("cua-driver-mcp", root / "default", "m", "high")
+                    link = Path(env["CODEX_HOME"]) / "auth.json"
+                    self.assertTrue(link.is_symlink())
+                    self.assertEqual(os.readlink(link), str(source))
+                self.assertEqual(source.stat().st_mtime_ns, before)
+                source.chmod(0o600)
+                self.assertEqual(source.read_bytes(), b"private")
+                source.unlink()
+                with mock.patch.dict(
+                    os.environ, {"CDB_CODEX_AUTH": "chatgpt", "CDB_CODEX_AUTH_FILE": str(source)}
+                ):
+                    with self.assertRaises(FileNotFoundError):
+                        arms.render_home("cua-driver-mcp", root / "missing", "m", "high")
 
     def test_exec_flags_are_identical_across_arms(self) -> None:
         argv = arms.codex_argv(Path("/w"), "m")
@@ -681,6 +899,57 @@ class ArmsTest(unittest.TestCase):
 
 
 class ScheduleTest(unittest.TestCase):
+    def test_pilot_rows_and_manifest_record_auth_mode(self) -> None:
+        import run_pilot
+
+        args = argparse.Namespace(
+            model="m", effort="high", idle_min=0, max_idle_wait_h=1, no_sentinel=True
+        )
+        task = argparse.Namespace(id="T", group="bench", tags=[], timeout_s=60)
+        for mode, replaced in (("gateway", False), ("chatgpt", False), ("chatgpt", True)):
+
+            def fail_setup(compare, task, trial_dir, workspace):
+                home = trial_dir / "home/.codex"
+                home.mkdir(parents=True)
+                arms.link_chatgpt_auth(home)
+                if replaced:
+                    (home / "auth.json").unlink()
+                    (home / "auth.json").write_text("FAKE_TOKEN")
+                raise RuntimeError("unavailable fixture")
+
+            with (
+                tempfile.TemporaryDirectory() as tmp,
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        "CDB_CODEX_AUTH": mode,
+                        "CDB_CODEX_AUTH_FILE": str(Path(tmp) / "shared-auth.json"),
+                    },
+                ),
+                mock.patch.object(run_pilot, "wait_for_idle", return_value=1000),
+                mock.patch.object(run_pilot, "Sentinel") as sentinel,
+                mock.patch.object(run_pilot, "prepare_bench", side_effect=fail_setup),
+                mock.patch.object(run_pilot, "sweep_processes"),
+                mock.patch.object(run_pilot.subprocess, "run") as command,
+            ):
+                source = Path(tmp) / "shared-auth.json"
+                source.write_text("FAKE_TOKEN")
+                sentinel.return_value.enabled = False
+                sentinel.return_value.summary.return_value = {}
+                command.return_value.stdout = "version"
+                row = run_pilot.run_trial(
+                    args, None, task, "codex-native-cu", 1, 0, Path(tmp), None
+                )
+                manifest = run_pilot.environment_manifest(args)
+                self.assertEqual(row["codex_auth"], mode)
+                self.assertEqual(manifest["codex_auth"], mode)
+                saved = json.loads(next((Path(tmp) / "trials").glob("*/trial.json")).read_text())
+                self.assertEqual(saved["codex_auth"], mode)
+                if replaced:
+                    self.assertIn("symlink replaced", row["notes"])
+                for secret in (str(source), "FAKE_TOKEN", "http://127.0.0.1:4000/v1"):
+                    self.assertNotIn(secret, json.dumps([row, manifest, saved]))
+
     def test_schedule_is_deterministic_and_balanced(self) -> None:
         sys.path.insert(0, str(HERE.parent))
         import run_pilot

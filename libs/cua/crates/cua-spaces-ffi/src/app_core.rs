@@ -1150,7 +1150,33 @@ pub fn app_space_host(host: cua_sdk::SpacesHost) -> AppSpaceHost {
                 reason: l.reason,
             })
             .collect(),
+        load: host.load.map(|l| core::wizard::HostLoad {
+            millicpus_total: l.millicpus_total,
+            millicpus_free: l.millicpus_free,
+            memory_total_mb: l.memory_total_mb,
+            memory_free_mb: l.memory_free_mb,
+            spaces: l.spaces,
+            problem: l.problem,
+        }),
     }
+}
+
+/// The one short line under a machine of yours in the sidebar ("3 running
+/// · 40% CPU", "Paused"); `None` while it is offline or reports no load.
+#[uniffi::export]
+pub fn app_host_load_text(host: AppSpaceHost) -> Option<String> {
+    core::wizard::host_load_text(&host)
+}
+
+/// Registers the external runtime providers in a `cua runtime doctor`
+/// JSON report (`LocalDoctorReport.report_json`) for the New Space wizard,
+/// and returns them: their images join the catalog and run only on this
+/// Mac. A report with none removes any registered before.
+#[uniffi::export]
+pub fn app_wizard_use_doctor_report(report_json: String) -> Vec<AppExternalRuntime> {
+    let list = core::wizard::external_runtimes_from_doctor(&report_json);
+    core::wizard::set_external_runtimes(list.clone());
+    list
 }
 
 /// The presets matching the image field's text, grouped.
@@ -1798,18 +1824,23 @@ fn default_cua_home(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> PathBuf
     if let Some(h) = set("CUA_HOME") {
         return PathBuf::from(h);
     }
+    // The channel and environment come from the lookup too (`CUA_CHANNEL`,
+    // `CUA_ENV`): each has its own home, where its daemon serves the
+    // Keyvault (`~/.cua/envs/staging`, `~/.cua-local`,
+    // `~/.cua-local/envs/prod`).
+    let channel = cua_home::channel::CuaChannel::from_env_value(
+        var("CUA_CHANNEL")
+            .and_then(|v| v.into_string().ok())
+            .as_deref(),
+    );
+    let env_value = var("CUA_ENV").and_then(|v| v.into_string().ok());
+    let env = channel.env_or_fallback(env_value.as_deref());
     let base = set("HOME")
         .or_else(|| set("USERPROFILE"))
         .map(PathBuf::from)
         .unwrap_or_default()
-        .join(".cua");
-    // A non-production `CUA_ENV` has its own home, where its daemon serves
-    // the Keyvault (`~/.cua/envs/staging`).
-    let env = var("CUA_ENV").and_then(|v| v.into_string().ok());
-    match cua_home::env::CuaEnv::try_from_value(env.as_deref())
-        .unwrap_or_default()
-        .home_subdir()
-    {
+        .join(channel.home_dir_name());
+    match channel.home_subdir(env) {
         Some(sub) => base.join(sub),
         None => base,
     }
@@ -2170,6 +2201,25 @@ pub fn app_experiments_from_json(json: String) -> Result<AppExperiments> {
     from_json("experiments", &json)
 }
 
+// ---- Local Network (macOS Spaces on this Mac) -----------------------------
+
+/// Whether a create needs the Local Network check (`local_network::applies`).
+#[uniffi::export]
+pub fn app_local_network_applies(
+    provider: AppSpaceProvider,
+    os: AppSpaceOs,
+    host_is_mac: bool,
+) -> bool {
+    core::local_network::applies(provider, os, host_is_mac)
+}
+
+/// What to do before a macOS Space is created on this Mac
+/// (`local_network::step`): go ahead, explain then ask, or fail.
+#[uniffi::export]
+pub fn app_local_network_step(input: AppLocalNetworkInput) -> AppLocalNetworkStep {
+    core::local_network::step(&input)
+}
+
 /// What the app does about launch at login at launch (the user's choice,
 /// whether the first run finished, whether this machine provides Spaces or
 /// runs persistent agents, and what the system reports).
@@ -2284,10 +2334,24 @@ pub fn app_menu(input: AppMenuInput) -> Vec<AppMenuItem> {
     core::window::menu(&input)
 }
 
-/// The Spaces the user can open (the notch tab and the menu bar item).
+/// The Spaces the user can open (the open notch's tiles), on or not.
 #[uniffi::export]
 pub fn app_openable_count(spaces: Vec<AppSpace>) -> u32 {
     core::spaces::openable_count(&spaces)
+}
+
+/// The Spaces on or starting (the notch tab and the menu bar item); never
+/// This machine, a stopped Space or a failed one.
+#[uniffi::export]
+pub fn app_on_count(spaces: Vec<AppSpace>) -> u32 {
+    core::spaces::on_count(&spaces)
+}
+
+/// The menu bar item's status line for `count` Spaces on ("No Spaces
+/// running", "3 Spaces running").
+#[uniffi::export]
+pub fn app_on_status_line(count: u32) -> String {
+    core::spaces::on_status_line(count)
 }
 
 /// `volume_sync_status`'s JSON as the core takes it.
@@ -2375,6 +2439,8 @@ pub fn app_agent_setup_status(info: cua_sdk::AgentInfo) -> AppAgentSetupStatus {
         skills_installed: info.skills_installed,
         skills_outdated: info.skills_outdated,
         error: info.error,
+        sign_in: info.sign_in,
+        signed_in: info.signed_in,
     }
 }
 
@@ -2497,6 +2563,7 @@ impl AppCliInstaller {
     ) -> Arc<Self> {
         Arc::new(Self {
             inner: core::installer::CliInstaller {
+                channel: cua_home::channel::CuaChannel::Stable,
                 bundled: bundled.map(PathBuf::from),
                 bin_dir: bin_dir.into(),
                 path_env,
@@ -2987,6 +3054,41 @@ mod keyvault_home_tests {
             PathBuf::from("/srv/cua")
         );
     }
+
+    /// The Local channel's daemon (and so its Keyvault) lives in
+    /// `~/.cua-local` on staging and `~/.cua-local/envs/prod` on prod
+    /// (CUA-1776); `CUA_HOME` still wins.
+    #[test]
+    fn the_keyvault_follows_the_local_channel() {
+        let local = |vars: &[(&str, &str)]| {
+            let mut all = vec![("HOME", "/home/ada"), ("CUA_CHANNEL", "local")];
+            all.extend_from_slice(vars);
+            home(&all)
+        };
+        assert_eq!(local(&[]), PathBuf::from("/home/ada/.cua-local"));
+        assert_eq!(
+            local(&[("CUA_ENV", "staging")]),
+            PathBuf::from("/home/ada/.cua-local")
+        );
+        assert_eq!(
+            local(&[("CUA_ENV", "prod")]),
+            PathBuf::from("/home/ada/.cua-local/envs/prod")
+        );
+        // A mistyped environment is staging on Local, never production.
+        assert_eq!(
+            local(&[("CUA_ENV", "prd")]),
+            PathBuf::from("/home/ada/.cua-local")
+        );
+        assert_eq!(
+            local(&[("CUA_HOME", "/srv/cua"), ("CUA_ENV", "prod")]),
+            PathBuf::from("/srv/cua")
+        );
+        // Stable is untouched by a Local variable elsewhere.
+        assert_eq!(
+            home(&[("HOME", "/home/ada"), ("CUA_CHANNEL", "stable")]),
+            PathBuf::from("/home/ada/.cua")
+        );
+    }
 }
 
 #[cfg(test)]
@@ -3095,6 +3197,8 @@ mod agent_detection_tests {
             skills_outdated: vec![],
             error: None,
             unverified: None,
+            sign_in: None,
+            signed_in: false,
         }
     }
 

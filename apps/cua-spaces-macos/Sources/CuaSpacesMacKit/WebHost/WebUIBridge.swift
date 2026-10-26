@@ -74,7 +74,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "spaces.setPower", "spaces.delete", "spaces.cancelCreate",
         "machines.list", "host.status",
         "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
-        "agents.setup", "agents.configure",
+        "agents.setup", "agents.configure", "agents.signIn",
         // A persistent agent's Memory, Routines and Access (`PersistentModel`).
         "agents.detail", "agents.readFile", "agents.restoreFile", "agents.addRoutine", "agents.setRoutine",
         "agents.removeRoutine", "agents.allowComputer", "agents.revokeComputer",
@@ -121,10 +121,21 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "machines.rename", "machines.remove", "machines.checkHealth",
         // The getting-started checklist: the app's one copy (`ChecklistModel`).
         "checklist.get", "checklist.send",
+        // Links to things you run (WebUIBridge+Pages.swift).
+        "links.list", "links.create", "links.stop",
+        // The bundled CLI on PATH (WebUIBridge+Cli.swift).
+        "cli.plan", "cli.install",
     ]
 
     let model: AppModel
     var actions: WebUIActions?
+    /// The app core's CLI installer for this app (tests give their own paths).
+    var makeCliInstaller: () -> AppCliInstaller = {
+        AppCliInstaller.forExecutable(executable: Bundle.main.executablePath ?? "")
+    }
+    /// The CLI's install plan as last read (`settings.get`'s `cli`).
+    var cliPlan: AppCliInstallPlan?
+    var cliPlanRequested = false
     weak var host: WebUIWindowController?
     /// What each `followChanges` event last saw.
     private var signatures: [String: String] = [:]
@@ -254,7 +265,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             // The browser flow can take minutes: answer now (already
             // "starting", so an earlier failure never reads as this one's),
             // and `session.changed` follows each step until it ends.
-            if let current = model.startSignIn() {
+            // `code`: the page's "Get a code instead" (the browser never got back to the app).
+            if let current = model.startSignIn(code: (args["code"] as? Bool) == true) {
                 Task { @MainActor in await model.runSignIn(current) }
             }
             return session()
@@ -298,7 +310,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             return hostStatus()
 
         case "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
-             "agents.setup", "agents.configure":
+             "agents.setup", "agents.configure", "agents.signIn":
             return try await agents(method, args)
 
         case "checklist.get": return ["state": model.checklist.stored]
@@ -309,7 +321,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
              "agents.removeRoutine", "agents.allowComputer", "agents.revokeComputer":
             return try await agentDetail(method, args)
 
-        case "settings.get": return settings()
+        case "settings.get":
+            model.refreshTelemetry()
+            return settings()
         case "settings.choose":
             let row = try string(args, "row"), option = try string(args, "option")
             if row == "update-channel" {
@@ -400,6 +414,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             if let result = try await routeFiles(method, args) { return result }
             if let result = try await routePage(method, args) { return result }
             if let result = try routeNudges(method, args) { return result }
+            if let result = try await routeCli(method, args) { return result }
             throw Failure.unimplemented(method)
         }
     }
@@ -514,6 +529,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             // The account app (CUA_ENV, CUA_ACCOUNT_APP_URL): the page's core
             // has no environment, so Upgrade's billing fallback names this one.
             "accountUrl": appAccountAppUrl(),
+            // The CLI this app installs and whether it is here (WebUIBridge+Cli.swift).
+            "cli": cliSetting(),
         ]
     }
 
@@ -613,9 +630,15 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         let os = (args["os"] as? String).flatMap(AppSpaceOs.init(word:)) ?? .unknown
         let id: String
         do {
-            id = try await model.runCreate(createArgs, os: os, pendingId: pendingId) { [weak self] p in
+            id = try await model.runCreate(createArgs, os: os, pendingId: pendingId, progress: { [weak self] p in
                 self?.host?.emit("spaces.createProgress", payload: Self.progress(p, pendingId: pendingId))
-            }
+            }, retrying: { [weak self] error, variant in
+                // The model runs it once more: the page shows "Retrying…".
+                self?.host?.emit("spaces.createProgress", payload: [
+                    "pendingId": pendingId, "phase": "preparing", "detail": "",
+                    "retry": ["error": error, "errorVariant": variant],
+                ] as [String: Any])
+            })
         } catch where isCancelled(error) {
             throw Failure(code: "cancelled", message: "cancelled")
         }
@@ -707,6 +730,12 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             } else {
                 await model.agentAction(try strings(args, "agents"), remove: false)
             }
+            return BridgeValue.encode(model.agentRows ?? [])
+        case "agents.signIn":
+            guard model.agentSetup != nil else { throw Failure.unsupported("Agent setup is not available in this build") }
+            do { try await model.agentSignIn(try string(args, "agent")) }
+            catch let f as Failure { throw f }
+            catch { throw Failure(code: "failed", message: LiveSpacesBackend.words(error)) }
             return BridgeValue.encode(model.agentRows ?? [])
         default:
             throw Failure.unimplemented(method)
@@ -812,6 +841,10 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         guard let state = model.host.state, var out = BridgeValue.encode(state) as? [String: Any] else { return NSNull() }
         out["machineId"] = model.host.machineId ?? NSNull()
         out["progress"] = model.host.progress ?? NSNull()
+        // The name System Settings lists this app under ("Cua Spaces Local"),
+        // for the permissions screen's words.
+        out["appName"] = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
+            ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? NSNull()
         // Before setup the host has no name yet: the web UI's setup form
         // starts with what the system calls this Mac, as the native one does.
         if !state.configured, (out["name"] as? String)?.isEmpty ?? true, let name = model.host.computerName() {
@@ -973,7 +1006,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
 
     // MARK: - The checklist
 
-    /// A page's checklist action: a step done, shown, closed, opened again,
+    /// A page's checklist action: a step done or skipped, shown, closed, opened again,
     /// or progress the page kept itself before (merged once). What the app
     /// shows ticks steps off here, not in the page (`AppModel.followChecklist`).
     func checklistAction(_ raw: Any?) throws -> AppChecklistAction {
@@ -986,16 +1019,22 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
                   let step = ChecklistModel.words.first(where: { $0.1 == word })?.0
             else { throw Failure.badArgs("step: one of the checklist's steps") }
             return .done(step: step)
+        case "skip":
+            guard let word = a["step"] as? String,
+                  let step = ChecklistModel.words.first(where: { $0.1 == word })?.0
+            else { throw Failure.badArgs("step: one of the checklist's steps") }
+            return .skip(step: step)
         case "shown": return .shown
         case "dismiss": return .dismiss
         case "reopen": return .reopen
         case "merge":
-            guard let s = a["state"] as? [String: Any] else { throw Failure.badArgs("state: {done, dismissed, shown}") }
+            guard let s = a["state"] as? [String: Any] else { throw Failure.badArgs("state: {done, dismissed, shown, skipped}") }
             return .merge(state: ChecklistModel.state(done: s["done"] as? [String] ?? [],
                                                       dismissed: s["dismissed"] as? Bool ?? false,
-                                                      shown: s["shown"] as? Bool ?? false))
+                                                      shown: s["shown"] as? Bool ?? false,
+                                                      skipped: s["skipped"] as? [String] ?? []))
         default:
-            throw Failure.badArgs("action: done, shown, dismiss, reopen or merge")
+            throw Failure.badArgs("action: done, skip, shown, dismiss, reopen or merge")
         }
     }
 

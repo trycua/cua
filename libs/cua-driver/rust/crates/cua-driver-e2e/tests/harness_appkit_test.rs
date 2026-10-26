@@ -1097,19 +1097,21 @@ fn harness_appkit_invoke_menu_live_path() {
                 invoked.text()
             );
             assert_eq!(invoked.action_effect(), Some("unverifiable"));
-            let deadline = std::time::Instant::now() + Duration::from_secs(5);
-            let mut post = snapshot_elements(driver, pid, wid);
-            while !post.tree_text().contains("menu_action=window_arrange_left")
-                && std::time::Instant::now() < deadline
-            {
-                std::thread::sleep(Duration::from_millis(50));
-                post = snapshot_elements(driver, pid, wid);
+            // Poll for the fixture's menu_action instead of sleeping a fixed
+            // 300 ms: a loaded runner delivers the action later.
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            loop {
+                let post = snapshot_elements(driver, pid, wid);
+                if post.tree_text().contains("menu_action=window_arrange_left") {
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "menu action did not reach fixture: {}",
+                    post.tree_text()
+                );
+                std::thread::sleep(Duration::from_millis(100));
             }
-            assert!(
-                post.tree_text().contains("menu_action=window_arrange_left"),
-                "menu action did not reach fixture: {}",
-                post.tree_text()
-            );
             Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
         },
     );

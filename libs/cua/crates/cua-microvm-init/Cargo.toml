@@ -1,0 +1,28 @@
+[package]
+name = "cua-microvm-init"
+description = "PID 1 of a Cua microVM Space (Firecracker on Linux, Virtualization.framework on macOS): mounts the image over a writable overlay, runs the workload, and answers the host over vsock (identity after a snapshot restore, exec, port checks)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+documentation = "https://docs.rs/cua-microvm-init"
+homepage = "https://cua.ai/docs/cua-sdk"
+keywords = ["cua","microvm","firecracker","init","vsock"]
+categories = ["virtualization","os"]
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "cua-microvm-init"
+path = "src/main.rs"
+
+[dependencies]
+base64.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"

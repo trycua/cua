@@ -65,8 +65,10 @@ pub struct SpaceWorkload {
     #[serde(default)]
     pub services: Option<BTreeMap<String, u16>>,
     /// Whether the image runs cua-spacesd. Default: true for the canonical
-    /// images (and no image), false for any other image. A Space without it
-    /// has an empty capability set: only its services work.
+    /// images (and no image) and, on this machine's containers and microVMs,
+    /// for any other image (a static cua-spacesd is put into it); false
+    /// elsewhere. false runs the image as it is. A Space without it has an
+    /// empty capability set: only its services work.
     #[serde(default)]
     pub spacesd: Option<bool>,
 }
@@ -79,9 +81,14 @@ pub struct RemoveSpace {
     pub space: SpaceArg,
 }
 
-/// `list_spaces`: takes no arguments.
+/// `list_spaces`: every registered Space and relay machine.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
-pub struct ListSpaces {}
+pub struct ListSpaces {
+    /// Only the Spaces that carry every one of these labels (set by
+    /// `create_space`).
+    #[serde(default)]
+    pub labels: Option<std::collections::BTreeMap<String, String>>,
+}
 
 /// The cloud runtime a cloud Space's pool is named after (internal; the
 /// tools take `runtime` as a string).
@@ -137,13 +144,17 @@ pub struct CreateSpace {
     /// (`ghcr.io/trycua/linux:24.04`), whose variant follows the kind.
     #[serde(default)]
     pub image: Option<String>,
-    /// Where it runs: `local` (this computer, free), `aws`, `gcp` or `modal` (your own
-    /// cloud account, billed there), or `host:<computer>`: one of the user's own computers that
+    /// Where it runs: `local` (this computer, free), `auto` (the
+    /// least-loaded of the user's computers that can take it: this one and
+    /// the ones signed in to the user's account that provide Spaces, Modal
+    /// only when connected and no computer has room), `aws`, `gcp` or
+    /// `modal` (your own cloud account, billed there), or `host:<computer>`:
+    /// one of the user's own computers that
     /// provides Spaces (`cua host setup --provide-spaces` on it), named by
     /// id or by words from its name ("host:spare mac mini" matches "Mac
     /// mini (spare)" or `dillons-mac-mini`). Default: the user's default
     /// location (`cua config set default.on`, `CUA_DEFAULT_ON`), else
-    /// `local`. Not `direct:<addr>`: that is one already-running Space at a
+    /// `local`; never `auto` unless asked. Not `direct:<addr>`: that is one already-running Space at a
     /// fixed address, attached with `add_space`, not a host this can create
     /// on. An existing computer is added with `add_space`, not created.
     #[serde(default)]
@@ -177,6 +188,26 @@ pub struct CreateSpace {
     /// the result is an array.
     #[serde(default)]
     pub count: Option<u32>,
+    /// Keep it on the user's machines (with `on` `auto`): when its machine
+    /// goes away it is created again on another one, with the same name
+    /// (its disk starts fresh); `list_spaces` shows it with `durable` (its
+    /// name), and `delete_space` deletes it for good. Default false.
+    #[serde(default)]
+    pub durable: Option<bool>,
+    /// With `on` a linked cloud (`aws`, `hetzner`, ...): the machine type its
+    /// host must be (`c7g.xlarge`, `cax41`). Default: the elastic pool picks
+    /// the cheapest that fits (cloud_plan shows it).
+    #[serde(default)]
+    pub instance_type: Option<String>,
+    /// With `on` a linked cloud: the region (Hetzner location) its host must
+    /// be in. Default: any the cloud offers.
+    #[serde(default)]
+    pub region: Option<String>,
+    /// Labels kept with the Space and shown by `list_spaces` (`labels`): up
+    /// to 64 pairs; keys and values are not empty; keys up to 63 bytes,
+    /// values up to 256. Not with `durable` or `reuse`.
+    #[serde(default)]
+    pub labels: Option<std::collections::BTreeMap<String, String>>,
     /// Command, environment and services (see [`SpaceWorkload`]).
     #[serde(flatten)]
     pub workload: SpaceWorkload,
@@ -1143,32 +1174,154 @@ fn drop_null_option(schema: &mut serde_json::Value) {
     }
 }
 
-/// Which cloud a `cloud_*` tool acts on: `aws`, `gcp` or `modal`.
+/// Which cloud a `cloud_*` tool acts on: `aws`, `gcp`, `hetzner` or `modal`.
 pub type CloudArg = String;
 
 /// `cloud_status`: the clouds Spaces can be created in, and what Cua
 /// created in them.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct CloudStatus {
-    /// Only this cloud (`aws`, `gcp`, `modal`). Default: every one.
+    /// Only this cloud (`aws`, `gcp`, `hetzner`, `modal`). Default: every one.
     #[serde(default)]
     pub provider: Option<CloudArg>,
 }
 
-/// Where in a cloud account Spaces go (`cloud_connect`, `cloud_test`).
-/// Credentials are never arguments: each cloud uses its own CLI's
-/// sign-in (the AWS profile, the gcloud account, the Modal profile) and
-/// Cua stores only these names.
+/// `cloud_plan`: what the elastic pool would do for some Spaces (where
+/// each goes, which machines it adds, what they cost), without doing it;
+/// with `apply`, it adds the machines.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct CloudPlan {
+    /// How many Spaces. Default 1.
+    #[serde(default)]
+    pub count: Option<u32>,
+    /// Image (`linux`, `windows`, an OCI reference). Default: linux.
+    #[serde(default)]
+    pub image: Option<String>,
+    /// `container`, `vm` or `microvm`. Default: from the image.
+    #[serde(default)]
+    pub kind: Option<String>,
+    /// vCPUs each. Default: what Spaces of this image used before, else
+    /// the image's size.
+    #[serde(default)]
+    pub cpus: Option<u32>,
+    /// Memory each, MiB.
+    #[serde(default)]
+    pub memory_mb: Option<u64>,
+    /// Keep them on one machine (forks of one checkpoint).
+    #[serde(default)]
+    pub together: Option<bool>,
+    /// Who asks: `interactive` (one Space someone waits on), `batch`,
+    /// `compat` or `persistent_agent`. Default: interactive for one Space,
+    /// batch for more.
+    #[serde(default)]
+    pub caller: Option<String>,
+    /// Expected lifetime, seconds.
+    #[serde(default)]
+    pub duration_secs: Option<u64>,
+    /// Only this cloud.
+    #[serde(default)]
+    pub provider: Option<CloudArg>,
+    /// Only this region.
+    #[serde(default)]
+    pub region: Option<String>,
+    /// Only this machine type.
+    #[serde(default)]
+    pub instance_type: Option<String>,
+    /// Exactly this many new machines.
+    #[serde(default)]
+    pub hosts: Option<u32>,
+    /// Add no machines (place on what runs).
+    #[serde(default)]
+    pub no_scale: Option<bool>,
+    /// Only the user's own devices.
+    #[serde(default)]
+    pub devices_only: Option<bool>,
+    /// A $/hour cap for this plan (default: the budget's).
+    #[serde(default)]
+    pub max_usd_per_hour: Option<f64>,
+    /// Add the machines the plan needs (they join the pool; create the
+    /// Spaces with on="auto"). Default false: plan only.
+    #[serde(default)]
+    pub apply: Option<bool>,
+}
+
+/// `cloud_hosts`: the hosts the elastic pool added in your clouds.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct CloudHosts {}
+
+/// `cloud_add_host`: adds hosts to your pool in a linked cloud by hand
+/// (the scaler never removes them).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct CloudAddHost {
+    /// `aws`, `gcp` or `hetzner`.
+    pub provider: CloudArg,
+    /// Machine type (`cloud_plan` and `cloud_status` list them).
+    pub instance_type: String,
+    /// Region. Default: the connection's.
+    #[serde(default)]
+    pub region: Option<String>,
+    /// How many, 1 to 10. Default 1.
+    #[serde(default)]
+    pub count: Option<u32>,
+    /// Hours until each ends on its own, 1 to 168. Default 24.
+    #[serde(default)]
+    pub ttl_hours: Option<u32>,
+}
+
+/// `cloud_remove_host`: removes hosts this home added.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct CloudRemoveHost {
+    /// Their names (`hetzner-1`).
+    pub names: Vec<String>,
+}
+
+/// `cloud_budget`: the elastic pool's caps and switches; reads them, and
+/// sets those given.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct CloudBudget {
+    /// Most USD per hour your clouds may cost at once.
+    #[serde(default)]
+    pub max_usd_per_hour: Option<f64>,
+    /// Most USD per calendar month on elastic hosts.
+    #[serde(default)]
+    pub monthly_usd: Option<f64>,
+    /// Add and remove cloud hosts by itself.
+    #[serde(default)]
+    pub autoscale: Option<bool>,
+    /// Most hosts one placement adds.
+    #[serde(default)]
+    pub max_new_hosts: Option<u32>,
+    /// Keep an idle host warm when demand predicts a Space soon.
+    #[serde(default)]
+    pub warm: Option<bool>,
+    /// Let one small VM Space buy a KVM metal host (dollars an hour). Off:
+    /// such a request is refused with the reason; batches of forks may
+    /// still buy one.
+    #[serde(default)]
+    pub allow_metal: Option<bool>,
+}
+
+/// `cloud_reconcile`: one scale-in pass now.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct CloudReconcile {}
+
+/// Where in a cloud account Spaces go (`cloud_connect`, `cloud_test`).
+/// AWS, Google Cloud and Modal use their own CLI's sign-in (the AWS
+/// profile, the gcloud account, the Modal profile) and Cua stores only
+/// these names. Hetzner has only an API token: `token` (or `HCLOUD_TOKEN`
+/// in the environment) is used for the checks and saved in the Cua
+/// credential store when they pass.
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct CloudTarget {
-    /// `aws`, `gcp` or `modal`.
+    /// `aws`, `gcp`, `hetzner` or `modal`.
     pub provider: CloudArg,
     /// AWS: the profile in `~/.aws/config` (default: `default`, or
     /// `AWS_PROFILE`). Modal: the profile in `~/.modal.toml` (default: the
     /// active one).
     #[serde(default)]
     pub profile: Option<String>,
-    /// AWS region (default: the profile's, else `us-west-2`) or GCP region
+    /// AWS region (default: the profile's, else `us-west-2`), Hetzner location
+    /// (default `fsn1`) or GCP region
     /// (default `us-central1`).
     #[serde(default)]
     pub region: Option<String>,
@@ -1181,6 +1334,25 @@ pub struct CloudTarget {
     /// Modal environment (default: the profile's).
     #[serde(default)]
     pub environment: Option<String>,
+    /// Hetzner only: the project's Read & Write API token (default:
+    /// `HCLOUD_TOKEN`, the saved token, or the `hcloud` CLI's context).
+    /// Secret: never logged; saved in the Cua credential store on connect.
+    #[serde(default)]
+    pub token: Option<String>,
+}
+
+impl std::fmt::Debug for CloudTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CloudTarget")
+            .field("provider", &self.provider)
+            .field("profile", &self.profile)
+            .field("region", &self.region)
+            .field("zone", &self.zone)
+            .field("project", &self.project)
+            .field("environment", &self.environment)
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
 }
 
 /// `cloud_connect`: remember where Spaces go in a cloud account, after
@@ -1210,8 +1382,21 @@ pub struct CloudTest {
 /// `cloud_disconnect`: forget a connected cloud.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct CloudDisconnect {
-    /// `aws`, `gcp` or `modal`.
+    /// `aws`, `gcp`, `hetzner` or `modal`.
     pub provider: CloudArg,
+    /// Delete everything Cua created in that cloud first, and disconnect
+    /// only once the cloud confirms nothing is left. Default false: the
+    /// call is refused (listing them) while Cua resources still run there.
+    #[serde(default)]
+    pub delete: Option<bool>,
+}
+
+/// `cloud_audit`: what Cua did in your clouds.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct CloudAudit {
+    /// How many of the newest entries (default 50, at most 1000).
+    #[serde(default)]
+    pub limit: Option<u32>,
 }
 
 /// `cloud_sweep`: find (and with `dry_run: false`, delete) what Cua
@@ -1229,4 +1414,48 @@ pub struct CloudSweep {
     /// Space refers to any more.
     #[serde(default)]
     pub all: Option<bool>,
+}
+
+/// `prewarm`: keep Spaces of one shape ready where the elastic pool puts
+/// them, so the next creates of that shape start in a fraction of a second.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct Prewarm {
+    /// Image (`linux`, an OCI reference).
+    pub image: String,
+    /// How many to keep ready, 1 to 256. Default 1.
+    #[serde(default)]
+    pub count: Option<u32>,
+    /// Where: `auto` (default: your devices first, then hosts with room,
+    /// then new cloud machines), `local`, a linked cloud or `host:<machine>`.
+    #[serde(default)]
+    pub on: Option<String>,
+    /// `container`, `vm` or `microvm`. Default: the image's.
+    #[serde(default)]
+    pub kind: Option<String>,
+    /// vCPUs each. Default: the size Spaces of this image use.
+    #[serde(default)]
+    pub cpus: Option<u32>,
+    /// Memory each, MiB.
+    #[serde(default)]
+    pub memory_mb: Option<u64>,
+    /// Seconds to keep them (default 3600, at most 604800).
+    #[serde(default)]
+    pub ttl_secs: Option<u64>,
+    /// Only this cloud machine type.
+    #[serde(default)]
+    pub instance_type: Option<String>,
+    /// Only this cloud region.
+    #[serde(default)]
+    pub region: Option<String>,
+}
+
+/// `prewarm_list`: the prewarms of this home, with how many are ready.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct PrewarmList {}
+
+/// `prewarm_remove`: end a prewarm (its ready Spaces go).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct PrewarmRemove {
+    /// The prewarm (`pw-xxxxxx`).
+    pub id: String,
 }

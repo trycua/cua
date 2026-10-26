@@ -53,6 +53,7 @@ const entries = () =>
     .getAllByRole("option")
     .map((o) => `${o.textContent}${(o as HTMLOptionElement).disabled ? " (disabled)" : ""}`);
 const YOUR_CLOUD = { cuaVolume: false, yourCloud: true, sharing: false };
+const NO_CLOUD = { cuaVolume: false, yourCloud: false, sharing: false };
 const MINI: SpaceHost = { id: "m-mini", name: "Mac mini", via: "relay", online: true, os: "macos", limits: [] };
 const STUDIO: SpaceHost = { id: "m-studio", name: "Studio", via: "relay", online: false, os: "", limits: [] };
 const suggestionRefs = () =>
@@ -189,16 +190,16 @@ describe("New Space wizard", () => {
     );
   });
 
-  it("lists This Mac and your machines; your clouds and Connect a cloud only with Your cloud", () => {
+  it("lists This Mac and your machines; your clouds and Connect a cloud unless Your cloud is off", () => {
     const onConnectCloud = vi.fn();
-    renderWizard({ clouds: [AWS], hosts: [MINI, STUDIO], onConnectCloud });
-    expect(entries()).toEqual(["This Mac", "Mac mini", "Studio (offline) (disabled)"]);
+    renderWizard({ clouds: [AWS], hosts: [MINI, STUDIO], onConnectCloud, experiments: NO_CLOUD });
+    expect(entries()).toEqual(["Auto", "This Mac", "Mac mini", "Studio (offline) (disabled)"]);
     expect(runOnMenu()).toHaveValue("local");
     expect(screen.queryByText(/Cua Cloud/)).toBeNull();
     expect(screen.queryByRole("button", { name: /Connect a cloud/ })).toBeNull();
     cleanup();
     renderWizard({ clouds: [AWS], hosts: [MINI, STUDIO], onConnectCloud, experiments: YOUR_CLOUD });
-    expect(entries()).toEqual(["This Mac", "Mac mini", "Studio (offline) (disabled)", "AWS \u00b7 us-west-2"]);
+    expect(entries()).toEqual(["Auto", "This Mac", "Mac mini", "Studio (offline) (disabled)", "AWS \u00b7 us-west-2"]);
     fireEvent.click(screen.getByRole("button", { name: /Connect a cloud/ }));
     expect(onConnectCloud).toHaveBeenCalled();
   });

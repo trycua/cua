@@ -49,6 +49,8 @@ import { NUDGES_OPERATIONS, type NudgesOps } from "./ops/nudges";
 import { RESOURCES_OPERATIONS, type ResourcesOps } from "./ops/resources";
 import { MACHINES_OPERATIONS, type MachinesOps } from "./ops/machines";
 import { CHECKLIST_OPERATIONS, type ChecklistOps } from "./ops/checklist";
+import { LINKS_OPERATIONS, type LinksOps } from "./ops/links";
+import { CLI_OPERATIONS, type CliOps } from "./ops/cli";
 import { PRESENCE_OPERATIONS, type PresenceOps } from "./ops/presence";
 import { RUNTIME_FIX_OPERATIONS, type RuntimeFixOps } from "./ops/runtime-fix";
 import { TELEMETRY_OPERATIONS, type TelemetryOps } from "./ops/telemetry";
@@ -109,6 +111,19 @@ export interface SettingsSnapshot {
   /** The host's account app (`https://app.cua.ai`, or staging's), which the
    * page's core cannot resolve itself. Absent or null: the production one. */
   accountUrl?: string | null;
+  /** The CLI this app puts on PATH, for the pages' "run this in Terminal"
+   * hints: its name (`CuaChannel::cli_name`, from the host's CLI install
+   * plan) and whether it is on this computer. Absent or null: the host
+   * can't say, and the hints stay hidden. */
+  cli?: CliInfo | null;
+}
+
+/** `SettingsSnapshot.cli`. */
+export interface CliInfo {
+  /** The command to type (`cua` for the released app). */
+  name: string;
+  /** It is installed on this computer. */
+  installed: boolean;
 }
 
 /** A system-wide shortcut the host registered (macOS: ⌘⇧Space). */
@@ -206,6 +221,8 @@ export interface HostOperations
     ResourcesOps,
     MachinesOps,
     ChecklistOps,
+    LinksOps,
+    CliOps,
     PresenceOps,
     RuntimeFixOps {
   "spaces.list": { args: Record<string, never>; result: SpaceRow[] };
@@ -242,7 +259,7 @@ export interface HostOperations
   "keyvault.revokeGrant": { args: { id: string }; result: number };
 
   "session.get": { args: Record<string, never>; result: SessionSnapshot };
-  "session.signIn": { args: Record<string, never>; result: SignInStart };
+  "session.signIn": { args: { code?: boolean }; result: SignInStart };
   "session.signOut": { args: Record<string, never>; result: null };
   /** `launchAtLogin`: Done's checkbox, where the host draws it (Electron). */
   "session.completeOnboarding": { args: { mode: OnboardingMode; launchAtLogin?: boolean }; result: null };
@@ -261,6 +278,8 @@ export interface HostOperations
   "agents.setup": { args: Record<string, never>; result: AgentSetupRow[] };
   /** Adds the cua skills and MCP server to `agents`, or every installed one (`agent_setup_configure`). */
   "agents.configure": { args: { agents: string[] | null }; result: AgentSetupRow[] };
+  /** Starts `agent`'s own sign-in on this computer (`codex login` opens the browser); the rows after. */
+  "agents.signIn": { args: { agent: string }; result: AgentSetupRow[] };
 }
 
 export type OpName = keyof HostOperations;
@@ -299,6 +318,7 @@ export const OPERATIONS = [
   "agents.resume",
   "agents.setup",
   "agents.configure",
+  "agents.signIn",
   ...AGENT_DETAIL_OPERATIONS,
   ...NEW_SPACE_OPERATIONS,
   ...TELEPORT_OPERATIONS,
@@ -313,6 +333,8 @@ export const OPERATIONS = [
   ...RESOURCES_OPERATIONS,
   ...MACHINES_OPERATIONS,
   ...CHECKLIST_OPERATIONS,
+  ...LINKS_OPERATIONS,
+  ...CLI_OPERATIONS,
   ...PRESENCE_OPERATIONS,
   ...RUNTIME_FIX_OPERATIONS,
   ...SETTINGS_OPERATIONS,

@@ -2,368 +2,712 @@
   "flow": "first-run",
   "frames": [
     {
-      "art": "claude-code on none",
-      "case": "01 connect",
+      "art": "hermes on none",
+      "case": "01 welcome",
+      "step": "welcome",
+      "welcome": {
+        "lede": "Run agents in Spaces on this Mac, or on any computer your team connects.",
+        "primary": "start:Get started",
+        "title": "Your computers, shared by your team and its agents."
+      }
+    },
+    {
+      "art": "hermes on outline",
+      "case": "02 pick your agent, nothing connected",
       "connect": {
-        "lede": "Connect your agents and give them computers to work on: macOS, Linux or Windows, right here on this Mac.",
-        "note": "Your agent will use this Mac. You can add a separate Space later.",
-        "others": "Codex, Hermes, OpenClaw",
-        "primary": "connect:Connect Claude Code",
-        "title": "A shared Space for every agent."
+        "agents": [
+          "Hermes (~/.hermes/config.yaml) connect:Connect",
+          "Claude Code (~/.claude.json) connect:Connect",
+          "OpenAI Codex (~/.codex/config.toml) connect:Connect"
+        ],
+        "alternatives": [],
+        "credentials": null,
+        "error": null,
+        "lede": "Found on this Mac. You can add more later.",
+        "primary": "continue:Continue",
+        "secondary": "skip:Skip",
+        "title": "Pick your agent."
       },
       "step": "connect"
     },
     {
-      "art": "codex on none",
-      "case": "01 connect, only Codex installed",
+      "art": "hermes on outline",
+      "case": "03 pick your agent, connecting Hermes",
       "connect": {
-        "lede": "Connect your agents and give them computers to work on: macOS, Linux or Windows, right here on this Mac.",
-        "note": "Your agent will use this Mac. You can add a separate Space later.",
-        "others": "Claude Code, Hermes, OpenClaw",
-        "primary": "connect:Connect Codex",
-        "title": "A shared Space for every agent."
+        "agents": [
+          "Hermes (~/.hermes/config.yaml) [Adding Cua…]",
+          "Claude Code (~/.claude.json) connect:Connect",
+          "OpenAI Codex (~/.codex/config.toml) connect:Connect"
+        ],
+        "alternatives": [],
+        "credentials": null,
+        "error": null,
+        "lede": "Found on this Mac. You can add more later.",
+        "primary": "continue:Continue",
+        "secondary": "skip:Skip",
+        "title": "Pick your agent."
       },
       "step": "connect"
     },
     {
-      "art": "claude-code faded outline",
-      "case": "02 checking",
-      "setup": {
-        "extra": {
-          "action": "not-now:Not now",
-          "choices": [
-            "macOS: 22 GB download · 10 to 30 min the first time",
-            "Linux: Ready in about 2 min"
-          ],
-          "footnote": null,
-          "note": "A fresh computer inside this Mac, so your agent can't touch your files or your mouse.",
-          "phase": "choose",
-          "title": "Give your agent its own Space"
-        },
-        "primary": "done:Done (off)",
-        "prompt": "Try this in Claude Code: List my computers and tell me what's on this Mac / This works now, on this Mac.",
-        "rows": [
-          "[checking] Claude Code — Checking that it can use Cua…",
-          "[checking] This Mac — Checking that your agent can use it…"
+      "art": "codex on outline",
+      "case": "04 pick your agent, Codex only, connected, signing in",
+      "connect": {
+        "agents": [
+          "OpenAI Codex (~/.codex/config.toml) [Connected]"
         ],
-        "title": "Checking your setup.",
-        "upsell": null
+        "alternatives": [],
+        "credentials": "They stay on this Mac.: ChatGPT sign-in — OpenAI Codex uses it on this Mac [Finish in your browser…] / OpenAI key — For OpenAI Codex in your Spaces (add-key:Add key)",
+        "error": null,
+        "lede": "Found on this Mac. You can add more later.",
+        "primary": "continue:Continue",
+        "secondary": "",
+        "title": "Pick your agent."
       },
-      "step": "setup"
+      "step": "connect"
     },
     {
-      "art": "claude-code on outline",
-      "case": "03 ready, choose",
+      "art": "hermes on outline",
+      "case": "05 pick your agent, Claude Code and Hermes connected",
+      "connect": {
+        "agents": [
+          "Hermes (~/.hermes/config.yaml) [Connected]",
+          "Claude Code (~/.claude.json) [Connected]",
+          "OpenAI Codex (~/.codex/config.toml) connect:Connect"
+        ],
+        "alternatives": [],
+        "credentials": "They stay on this Mac.: Anthropic key — For Claude Code in your Spaces [Saved]",
+        "error": null,
+        "lede": "Found on this Mac. You can add more later.",
+        "primary": "continue:Continue",
+        "secondary": "",
+        "title": "Pick your agent."
+      },
+      "step": "connect"
+    },
+    {
+      "art": "other on outline",
+      "case": "06 pick your agent, none found",
+      "connect": {
+        "agents": [],
+        "alternatives": [
+          "install: Install an agent — Hermes, Claude Code, OpenAI Codex or Cursor, then come back here. <https://cua.ai/docs/spaces/guides/connect-your-agent>",
+          "cli: Use the CLI — Make a Space on this Mac from a terminal. `cua spaces create linux --on local`"
+        ],
+        "credentials": null,
+        "error": null,
+        "lede": "No agents found on this Mac.",
+        "primary": "continue:Continue",
+        "secondary": "skip:Skip",
+        "title": "Connect an agent."
+      },
+      "step": "connect"
+    },
+    {
+      "art": "other on outline",
+      "case": "07 pick your agent, still looking",
+      "connect": {
+        "agents": [],
+        "alternatives": [],
+        "credentials": null,
+        "error": null,
+        "lede": "Looking for agents on this Mac…",
+        "primary": "continue:Continue",
+        "secondary": "skip:Skip",
+        "title": "Pick your agent."
+      },
+      "step": "connect"
+    },
+    {
+      "art": "hermes on outline",
+      "case": "08 connect your other devices",
+      "devices": {
+        "lede": "Sign in once, and your other computers reach this Mac's Spaces.",
+        "note": "This Mac works without it.",
+        "primary": "sign-in:Sign in to connect",
+        "rows": [
+          "Your other computers — Sign in with the same account",
+          "Your cloud — Hetzner, AWS, Google Cloud or Modal"
+        ],
+        "secondary": "not-now:Not now",
+        "status": null,
+        "title": "Connect your other devices."
+      },
+      "step": "devices"
+    },
+    {
+      "art": "hermes on outline",
+      "case": "09 connect your other devices, signing in",
+      "devices": {
+        "lede": "Sign in once, and your other computers reach this Mac's Spaces.",
+        "note": "This Mac works without it.",
+        "primary": "sign-in:Sign in to connect",
+        "rows": [
+          "Your other computers — Sign in with the same account",
+          "Your cloud — Hetzner, AWS, Google Cloud or Modal"
+        ],
+        "secondary": "not-now:Not now",
+        "status": "[checking] Signing in — Finish signing in to Cua in your browser.",
+        "title": "Connect your other devices."
+      },
+      "step": "devices"
+    },
+    {
+      "art": "hermes on outline",
+      "case": "10 this Mac being added to the account",
+      "devices": {
+        "lede": "Sign in on your other computers to use its Spaces.",
+        "note": null,
+        "primary": "continue:Continue",
+        "rows": [
+          "Your other computers — Sign in with the same account",
+          "Your cloud — Hetzner, AWS, Google Cloud or Modal"
+        ],
+        "secondary": "",
+        "status": "[checking] Adding this Mac — It takes a few seconds.",
+        "title": "Adding this Mac to your account."
+      },
+      "step": "devices"
+    },
+    {
+      "art": "hermes on outline",
+      "case": "11 this Mac in the account",
+      "devices": {
+        "lede": "Sign in on your other computers to use its Spaces.",
+        "note": null,
+        "primary": "continue:Continue",
+        "rows": [
+          "Your other computers — Sign in with the same account",
+          "Your cloud — Hetzner, AWS, Google Cloud or Modal"
+        ],
+        "secondary": "",
+        "status": "[ok] Ready to share — Its Spaces appear on every computer signed in to your account.",
+        "title": "This Mac is in your account."
+      },
+      "step": "devices"
+    },
+    {
+      "art": "hermes on outline",
+      "case": "12 try it in Hermes, waiting",
       "setup": {
-        "extra": {
-          "action": "not-now:Not now",
-          "choices": [
-            "macOS: 22 GB download · 10 to 30 min the first time",
-            "Linux: Ready in about 2 min"
-          ],
-          "footnote": null,
-          "note": "A fresh computer inside this Mac, so your agent can't touch your files or your mouse.",
-          "phase": "choose",
-          "title": "Give your agent its own Space"
-        },
+        "extra": null,
+        "lede": "Paste this. Hermes makes the Space itself.",
         "primary": "done:Done",
-        "prompt": "Try this in Claude Code: List my computers and tell me what's on this Mac / This works now, on this Mac.",
-        "rows": [
-          "[ok] Claude Code can use Cua — We added Cua to Claude Code's settings. If Claude Code was already open, restart it.",
-          "[ok] This Mac is your first Space — Ready now. Your agent can see the screen, click and type."
-        ],
-        "title": "Your agent can use this Mac.",
-        "upsell": null
+        "prompt": "Paste this in Hermes: Make a Linux Space on this Mac and stream the desktop in a new window. / It runs on this Mac.",
+        "status": "[checking] Waiting for Hermes… — If Hermes was already open, restart it.",
+        "title": "Try it in Hermes."
       },
       "step": "setup"
     },
     {
-      "art": "claude-code on filling",
-      "case": "04 ready, creating macOS",
+      "art": "hermes on on",
+      "case": "13 try it in Hermes, used",
       "setup": {
-        "extra": {
-          "action": "cancel:Cancel",
-          "choices": [],
-          "footnote": "You can press Done now. We'll let you know when it's ready.",
-          "note": "Downloading macOS · 4.2 of 22.3 GB · 85 MB/s · about 4 min",
-          "phase": "creating",
-          "title": "Making macOS 1 in the background"
-        },
+        "extra": null,
+        "lede": "Paste this. Hermes makes the Space itself.",
         "primary": "done:Done",
-        "prompt": "Try this in Claude Code: List my computers and tell me what's on this Mac / This works now, on this Mac.",
-        "rows": [
-          "[ok] Claude Code can use Cua — We added Cua to Claude Code's settings. If Claude Code was already open, restart it.",
-          "[ok] This Mac is your first Space — Ready now. Your agent can see the screen, click and type."
-        ],
-        "title": "Your agent can use this Mac.",
-        "upsell": null
-      },
-      "step": "setup"
-    },
-    {
-      "art": "claude-code on filling",
-      "case": "05 restart the agent",
-      "setup": {
-        "extra": {
-          "action": "cancel:Cancel",
-          "choices": [],
-          "footnote": "You can press Done now. We'll let you know when it's ready.",
-          "note": "Downloading macOS · 4.2 of 22.3 GB · 85 MB/s · about 4 min",
-          "phase": "creating",
-          "title": "Making macOS 1 in the background"
-        },
-        "primary": "finish-later:Finish later",
-        "prompt": "Try this in Claude Code: List my computers and tell me what's on this Mac / This works now, on this Mac.",
-        "rows": [
-          "[fix] Restart Claude Code — It was open when we added Cua. Close it, then open it again. (restart-check:Check again)",
-          "[ok] This Mac is your first Space — Ready now. Your agent can see the screen, click and type."
-        ],
-        "title": "One step left.",
-        "upsell": null
+        "prompt": "Paste this in Hermes: Make a Linux Space on this Mac and stream the desktop in a new window. / It runs on this Mac.",
+        "status": "[ok] Hermes used Cua at 18:12. — Ask it anything else.",
+        "title": "Try it in Hermes."
       },
       "step": "setup",
       "todos": {
         "complete": false,
         "items": [
-          "[ ] Restart Claude Code — It was open when we added Cua. Close it, then open it again. (restart-check:Check again)",
-          "[x] Make this Mac your first Space — Ready now. Your agent can see the screen, click and type.",
-          "[ ] Try your first request — Ask Claude Code: “List my computers and tell me what's on this Mac” (copy:Copy)",
-          "[x] Give your agent its own Space (optional) — A fresh computer inside this Mac, away from your files and your mouse.",
-          "[x] Sign in — Signed in to Cua."
-        ],
-        "lede": "A couple of things are left.",
-        "progress": "3 of 5 done"
-      }
-    },
-    {
-      "art": "claude-code faded outline",
-      "case": "06 let Cua control this Mac",
-      "setup": {
-        "extra": {
-          "action": "not-now:Not now",
-          "choices": [
-            "macOS: 22 GB download · 10 to 30 min the first time",
-            "Linux: Ready in about 2 min"
-          ],
-          "footnote": null,
-          "note": "A fresh computer inside this Mac, so your agent can't touch your files or your mouse.",
-          "phase": "choose",
-          "title": "Give your agent its own Space"
-        },
-        "primary": "finish-later:Finish later",
-        "prompt": "Try this in Claude Code: List my computers and tell me what's on this Mac / This works now, on this Mac.",
-        "rows": [
-          "[ok] Claude Code can use Cua — We added Cua to Claude Code's settings. If Claude Code was already open, restart it.",
-          "[fix] Let Cua control this Mac — So your agent can click and type. macOS asks you once. (open-settings:Open Settings)"
-        ],
-        "title": "One step left.",
-        "upsell": null
-      },
-      "step": "setup",
-      "todos": {
-        "complete": false,
-        "items": [
-          "[x] Connect Claude Code — Claude Code can use Cua.",
-          "[ ] Let Cua control this Mac — So your agent can click and type. macOS asks you once. (open-settings:Open Settings)",
-          "[ ] Try your first request — Ask Claude Code: “List my computers and tell me what's on this Mac” (copy:Copy)",
-          "[ ] Give your agent its own Space (optional) — A fresh computer inside this Mac, away from your files and your mouse. (add:Add a Space)",
-          "[x] Sign in — Signed in to Cua."
-        ],
-        "lede": "Claude Code is connected. A couple of things are left.",
-        "progress": "2 of 5 done"
-      }
-    },
-    {
-      "art": "claude-code faded outline",
-      "case": "07 sign in",
-      "setup": {
-        "extra": {
-          "action": "not-now:Not now",
-          "choices": [
-            "macOS: 22 GB download · 10 to 30 min the first time",
-            "Linux: Ready in about 2 min"
-          ],
-          "footnote": null,
-          "note": "A fresh computer inside this Mac, so your agent can't touch your files or your mouse.",
-          "phase": "choose",
-          "title": "Give your agent its own Space"
-        },
-        "primary": "finish-later:Finish later",
-        "prompt": "Try this in Claude Code: List my computers and tell me what's on this Mac / This works now, on this Mac.",
-        "rows": [
-          "[ok] Claude Code can use Cua — We added Cua to Claude Code's settings. If Claude Code was already open, restart it.",
-          "[fix] Sign in to Cua — So your agent can find this Mac and your other computers. (sign-in:Sign in)"
-        ],
-        "title": "One step left.",
-        "upsell": null
-      },
-      "step": "setup",
-      "todos": {
-        "complete": false,
-        "items": [
-          "[x] Connect Claude Code — Claude Code can use Cua.",
+          "[ ] Connect Hermes and Claude Code — Cua isn't in Hermes and Claude Code's settings yet. (connect:Connect)",
           "[ ] Make this Mac your first Space — After you sign in.",
-          "[ ] Try your first request — Ask Claude Code: “List my computers and tell me what's on this Mac” (copy:Copy)",
+          "[x] Try your first request — Ask Hermes or Claude Code: “Make a Linux Space on this Mac and stream the desktop in a new window.”",
           "[ ] Give your agent its own Space (optional) — A fresh computer inside this Mac, away from your files and your mouse. (add:Add a Space)",
-          "[ ] Sign in — So your agent can find this Mac and your other computers. (sign-in:Sign in)"
+          "[ ] Connect your other devices (optional) — Sign in, and your other computers reach this Mac's Spaces. (sign-in:Sign in)"
         ],
-        "lede": "Claude Code is connected. A couple of things are left.",
+        "lede": "One thing is left.",
         "progress": "1 of 5 done"
       }
     },
     {
-      "art": "claude-code on none",
-      "case": "08 first success, not now",
+      "art": "codex on outline",
+      "case": "14 try it in Codex on a Windows PC",
       "setup": {
-        "extra": {
-          "action": "add:Add a Space",
-          "choices": [],
-          "footnote": null,
-          "note": "Add one from Home whenever you like.",
-          "phase": "not-now",
-          "title": "No extra Space for now"
-        },
+        "extra": null,
+        "lede": "Paste this. OpenAI Codex makes the Space itself.",
         "primary": "done:Done",
-        "prompt": "You asked Claude Code: List my computers and tell me what's on this Mac / It answered in Claude Code. Ask it anything else.",
-        "rows": [
-          "[ok] Claude Code can use Cua — It used Cua at 18:12.",
-          "[ok] This Mac is your first Space — Ready now. Your agent can see the screen, click and type."
-        ],
-        "title": "Your agent can use this Mac.",
-        "upsell": null
+        "prompt": "Paste this in OpenAI Codex: Make a Linux Space on this PC and stream the desktop in a new window. / It runs on this PC.",
+        "status": "[checking] Waiting for OpenAI Codex… — If OpenAI Codex was already open, restart it.",
+        "title": "Try it in OpenAI Codex."
       },
       "step": "setup"
     },
     {
-      "art": "claude-code on none",
-      "case": "16 first success, Pro card",
+      "art": "other on outline",
+      "case": "15 no agent: a first Space",
       "setup": {
         "extra": {
-          "action": "add:Add a Space",
-          "choices": [],
+          "action": "not-now:Not now",
+          "choices": [
+            "linux Linux: Ready in about 2 min",
+            "macos macOS: 22 GB download · 10 to 30 min the first time"
+          ],
           "footnote": null,
-          "note": "Add one from Home whenever you like.",
-          "phase": "not-now",
-          "title": "No extra Space for now"
+          "note": "A fresh computer inside this Mac. One click starts it.",
+          "phase": "choose",
+          "title": "Make a first Space"
         },
+        "lede": "Spaces run on this Mac, away from your files and your mouse.",
         "primary": "done:Done",
-        "prompt": "You asked Claude Code: List my computers and tell me what's on this Mac / It answered in Claude Code. Ask it anything else.",
-        "rows": [
-          "[ok] Claude Code can use Cua — It used Cua at 18:12.",
-          "[ok] This Mac is your first Space — Ready now. Your agent can see the screen, click and type."
-        ],
-        "title": "Your agent can use this Mac.",
-        "upsell": "pro | More remote hours with Pro | Free: 20 remote hours a month · 2 connections at once / Pro: 200 remote hours a month · 5 connections at once | $18 a month | upsell:Try Pro"
-      },
-      "step": "setup"
-    },
-    {
-      "art": "claude-code on none",
-      "case": "17 first success, Teams card",
-      "setup": {
-        "extra": {
-          "action": "add:Add a Space",
-          "choices": [],
-          "footnote": null,
-          "note": "Add one from Home whenever you like.",
-          "phase": "not-now",
-          "title": "No extra Space for now"
-        },
-        "primary": "done:Done",
-        "prompt": "You asked Claude Code: List my computers and tell me what's on this Mac / It answered in Claude Code. Ask it anything else.",
-        "rows": [
-          "[ok] Claude Code can use Cua — It used Cua at 18:12.",
-          "[ok] This Mac is your first Space — Ready now. Your agent can see the screen, click and type."
-        ],
-        "title": "Your agent can use this Mac.",
-        "upsell": "teams | Working with others? | Teams gives your team computers you share, with roles and device approval. | $30 per person a month, starting at 1 | upsell:Start Teams"
-      },
-      "step": "setup"
-    },
-    {
-      "art": "claude-code on on",
-      "case": "macOS made, ready",
-      "setup": {
-        "extra": {
-          "action": "",
-          "choices": [],
-          "footnote": null,
-          "note": "A fresh macOS computer inside this Mac. Your agent can use it now.",
-          "phase": "ready",
-          "title": "macOS 1 is ready"
-        },
-        "primary": "done:Done",
-        "prompt": "You asked Claude Code: List my computers and tell me what's on this Mac / It answered in Claude Code. Ask it anything else.",
-        "rows": [
-          "[ok] Claude Code can use Cua — It used Cua at 18:12.",
-          "[ok] This Mac is your first Space — Ready now. Your agent can see the screen, click and type."
-        ],
-        "title": "Your agent can use this Mac.",
-        "upsell": null
+        "prompt": null,
+        "status": null,
+        "title": "Try a first Space."
       },
       "step": "setup",
       "todos": {
         "complete": true,
         "items": [
-          "[x] Connect Claude Code — Claude Code can use Cua.",
-          "[x] Make this Mac your first Space — Ready now. Your agent can see the screen, click and type.",
-          "[x] Try your first request — Ask Claude Code: “List my computers and tell me what's on this Mac”",
-          "[x] Give your agent its own Space (optional) — A fresh computer inside this Mac, away from your files and your mouse.",
-          "[x] Sign in — Signed in to Cua."
+          "[ ] Make this Mac your first Space — After you sign in.",
+          "[ ] Give your agent its own Space (optional) — A fresh computer inside this Mac, away from your files and your mouse. (add:Add a Space)",
+          "[ ] Connect your other devices (optional) — Sign in, and your other computers reach this Mac's Spaces. (sign-in:Sign in)"
         ],
-        "lede": "Claude Code is connected. You're all set.",
-        "progress": "5 of 5 done"
+        "lede": "You're all set.",
+        "progress": "0 of 3 done"
       }
     },
     {
-      "art": "claude-code on outline",
-      "case": "an Intel Mac: Linux only",
+      "art": "other on filling",
+      "case": "16 no agent: making macOS",
+      "setup": {
+        "extra": {
+          "action": "cancel:Cancel",
+          "choices": [],
+          "footnote": "You can press Done now. We'll let you know when it's ready.",
+          "note": "Downloading macOS · 4.2 of 22.3 GB · 85 MB/s · about 4 min",
+          "phase": "creating",
+          "title": "Making macOS 1 in the background"
+        },
+        "lede": "Spaces run on this Mac, away from your files and your mouse.",
+        "primary": "done:Done",
+        "prompt": null,
+        "status": null,
+        "title": "Try a first Space."
+      },
+      "step": "setup"
+    },
+    {
+      "art": "other on outline",
+      "case": "17 no agent: an Intel Mac, Linux only",
       "setup": {
         "extra": {
           "action": "not-now:Not now",
           "choices": [
-            "Linux: Ready in about 2 min"
+            "linux Linux: Ready in about 2 min"
           ],
           "footnote": null,
-          "note": "A fresh computer inside this Mac, so your agent can't touch your files or your mouse.",
+          "note": "A fresh computer inside this Mac. One click starts it.",
           "phase": "choose",
-          "title": "Give your agent its own Space"
+          "title": "Make a first Space"
         },
+        "lede": "Spaces run on this Mac, away from your files and your mouse.",
         "primary": "done:Done",
-        "prompt": "Try this in Claude Code: List my computers and tell me what's on this Mac / This works now, on this Mac.",
-        "rows": [
-          "[ok] Claude Code can use Cua — We added Cua to Claude Code's settings. If Claude Code was already open, restart it.",
-          "[ok] This Mac is your first Space — Ready now. Your agent can see the screen, click and type."
-        ],
-        "title": "Your agent can use this Mac.",
-        "upsell": null
+        "prompt": null,
+        "status": null,
+        "title": "Try a first Space."
       },
       "step": "setup"
     },
     {
       "art": "claude-code on outline",
-      "case": "a Windows PC",
+      "case": "18 to-do list, signed in, a permission missing",
       "setup": {
-        "extra": {
-          "action": "not-now:Not now",
-          "choices": [
-            "Linux: Ready in about 2 min"
-          ],
-          "footnote": null,
-          "note": "A fresh computer inside this PC, so your agent can't touch your files or your mouse.",
-          "phase": "choose",
-          "title": "Give your agent its own Space"
-        },
+        "extra": null,
+        "lede": "Paste this. Claude Code makes the Space itself.",
         "primary": "done:Done",
-        "prompt": "Try this in Claude Code: List my computers and tell me what's on this PC / This works now, on this PC.",
-        "rows": [
-          "[ok] Claude Code can use Cua — We added Cua to Claude Code's settings. If Claude Code was already open, restart it.",
-          "[ok] This PC is your first Space — Ready now. Your agent can see the screen, click and type."
-        ],
-        "title": "Your agent can use this PC.",
-        "upsell": null
+        "prompt": "Paste this in Claude Code: Make a Linux Space on this Mac and stream the desktop in a new window. / It runs on this Mac.",
+        "status": "[checking] Waiting for Claude Code… — If Claude Code was already open, restart it.",
+        "title": "Try it in Claude Code."
       },
-      "step": "setup"
+      "step": "setup",
+      "todos": {
+        "complete": false,
+        "items": [
+          "[ ] Connect Claude Code — Cua isn't in Claude Code's settings yet. (connect:Connect)",
+          "[ ] Let Cua control this Mac — So your agent can click and type. macOS asks you once. (open-settings:Open Settings)",
+          "[ ] Try your first request — Ask Claude Code: “Make a Linux Space on this Mac and stream the desktop in a new window.” (copy:Copy)",
+          "[ ] Give your agent its own Space (optional) — A fresh computer inside this Mac, away from your files and your mouse. (add:Add a Space)",
+          "[x] Connect your other devices (optional) — Signed in to Cua."
+        ],
+        "lede": "A couple of things are left.",
+        "progress": "1 of 5 done"
+      }
+    },
+    {
+      "art": "hermes on outline",
+      "case": "cli 01 a disk-image install offers the CLI screen",
+      "connect": {
+        "agents": [
+          "Hermes (~/.hermes/config.yaml) connect:Connect",
+          "Claude Code (~/.claude.json) connect:Connect",
+          "OpenAI Codex (~/.codex/config.toml) connect:Connect"
+        ],
+        "alternatives": [],
+        "credentials": null,
+        "error": null,
+        "lede": "Found on this Mac. You can add more later.",
+        "primary": "continue:Continue",
+        "secondary": "skip:Skip",
+        "title": "Pick your agent."
+      },
+      "step": "connect",
+      "steps": [
+        "welcome",
+        "connect",
+        "cli",
+        "devices",
+        "setup"
+      ]
+    },
+    {
+      "art": "hermes on outline",
+      "case": "cli 02 install the Cua CLI",
+      "cli": {
+        "error": null,
+        "facts": [
+          "Installs: ~/.local/bin/cua",
+          "Adds to PATH: ~/.local/bin, in ~/.zshrc"
+        ],
+        "lede": "Type cua in Terminal to make and use Spaces, for you and your agents.",
+        "primary": "install:Install",
+        "secondary": "not-now:Not now",
+        "status": "Not installed. Install puts it at ~/.local/bin/cua.",
+        "title": "Use Cua from the Terminal.",
+        "try": null
+      },
+      "step": "cli",
+      "steps": [
+        "welcome",
+        "connect",
+        "cli",
+        "devices",
+        "setup"
+      ]
+    },
+    {
+      "art": "hermes on outline",
+      "case": "cli 03 installing",
+      "cli": {
+        "error": null,
+        "facts": [
+          "Installs: ~/.local/bin/cua",
+          "Adds to PATH: ~/.local/bin, in ~/.zshrc"
+        ],
+        "lede": "Type cua in Terminal to make and use Spaces, for you and your agents.",
+        "primary": "install:Installing…",
+        "secondary": "not-now:Not now",
+        "status": "Installing…",
+        "title": "Use Cua from the Terminal.",
+        "try": null
+      },
+      "step": "cli"
+    },
+    {
+      "art": "hermes on outline",
+      "case": "cli 04 install failed",
+      "cli": {
+        "error": "Couldn't install it: permission denied",
+        "facts": [
+          "Installs: ~/.local/bin/cua",
+          "Adds to PATH: ~/.local/bin, in ~/.zshrc"
+        ],
+        "lede": "Type cua in Terminal to make and use Spaces, for you and your agents.",
+        "primary": "install:Try again",
+        "secondary": "not-now:Not now",
+        "status": "Not installed. Install puts it at ~/.local/bin/cua.",
+        "title": "Use Cua from the Terminal.",
+        "try": null
+      },
+      "step": "cli"
+    },
+    {
+      "art": "hermes on outline",
+      "case": "cli 05 installed",
+      "cli": {
+        "error": null,
+        "facts": [
+          "Installed at: ~/.local/bin/cua"
+        ],
+        "lede": "Type cua in Terminal to make and use Spaces, for you and your agents.",
+        "primary": "continue:Continue",
+        "secondary": "",
+        "status": "Installed at ~/.local/bin/cua.",
+        "title": "Cua is ready in Terminal.",
+        "try": "cua spaces ls"
+      },
+      "step": "cli",
+      "steps": [
+        "welcome",
+        "connect",
+        "cli",
+        "devices",
+        "setup"
+      ]
+    },
+    {
+      "art": "hermes on outline",
+      "case": "cli 06 already installed: no CLI screen",
+      "connect": {
+        "agents": [
+          "Hermes (~/.hermes/config.yaml) connect:Connect",
+          "Claude Code (~/.claude.json) connect:Connect",
+          "OpenAI Codex (~/.codex/config.toml) connect:Connect"
+        ],
+        "alternatives": [],
+        "credentials": null,
+        "error": null,
+        "lede": "Found on this Mac. You can add more later.",
+        "primary": "continue:Continue",
+        "secondary": "skip:Skip",
+        "title": "Pick your agent."
+      },
+      "step": "connect",
+      "steps": [
+        "welcome",
+        "connect",
+        "devices",
+        "setup"
+      ]
+    },
+    {
+      "art": "hermes on outline",
+      "case": "cli 07 Cua Spaces Local installs cua-local",
+      "cli": {
+        "error": null,
+        "facts": [
+          "Installs: ~/.local/bin/cua-local"
+        ],
+        "lede": "Type cua-local in Terminal to make and use Spaces, for you and your agents.",
+        "primary": "install:Install",
+        "secondary": "not-now:Not now",
+        "status": "Not installed. Install puts it at ~/.local/bin/cua-local.",
+        "title": "Use Cua from the Terminal.",
+        "try": null
+      },
+      "step": "cli"
+    },
+    {
+      "art": "other on outline",
+      "case": "cli 08 Local's no-agent CLI line names cua-local",
+      "connect": {
+        "agents": [],
+        "alternatives": [
+          "install: Install an agent — Hermes, Claude Code, Codex or Cursor, then come back here. <https://cua.ai/docs/spaces/guides/connect-your-agent>",
+          "cli: Use the CLI — Make a Space on this Mac from a terminal. `cua-local spaces create linux --on local`"
+        ],
+        "credentials": null,
+        "error": null,
+        "lede": "No agents found on this Mac.",
+        "primary": "continue:Continue",
+        "secondary": "skip:Skip",
+        "title": "Connect an agent."
+      },
+      "step": "connect"
+    },
+    {
+      "art": "hermes on outline",
+      "case": "19 this Mac in the account, Continue goes to permissions",
+      "devices": {
+        "lede": "Sign in on your other computers to use its Spaces.",
+        "note": null,
+        "primary": "continue:Continue",
+        "rows": [
+          "Your other computers — Sign in with the same account",
+          "Your cloud — Hetzner, AWS, Google Cloud or Modal"
+        ],
+        "secondary": "",
+        "status": "[ok] Ready to share — Its Spaces appear on every computer signed in to your account.",
+        "title": "This Mac is in your account."
+      },
+      "step": "devices",
+      "steps": [
+        "welcome",
+        "connect",
+        "devices",
+        "permissions",
+        "setup"
+      ]
+    },
+    {
+      "art": "hermes on outline",
+      "case": "20 permissions, this Mac still being added",
+      "permissions": {
+        "lede": "To let your team and agents see and use this Mac, allow two permissions.",
+        "note": "Allow opens System Settings and shows you where to turn on Cua Spaces.",
+        "primary": "",
+        "rows": [
+          "[checking] See this Mac's screen — Adding this Mac to your account first…",
+          "[checking] Use the mouse and keyboard — Adding this Mac to your account first…"
+        ],
+        "secondary": "not-now:Not now",
+        "title": "Share this Mac's screen."
+      },
+      "step": "permissions",
+      "steps": [
+        "welcome",
+        "connect",
+        "devices",
+        "permissions",
+        "setup"
+      ]
+    },
+    {
+      "art": "hermes on outline",
+      "case": "21 permissions, both missing (Cua Spaces Local)",
+      "permissions": {
+        "lede": "To let your team and agents see and use this Mac, allow two permissions.",
+        "note": "Allow opens System Settings and shows you where to turn on Cua Spaces Local.",
+        "primary": "",
+        "rows": [
+          "[fix] See this Mac's screen — So your team and agents can see what's on it. (allow:Allow) <x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture>",
+          "[fix] Use the mouse and keyboard — So they can click and type on this Mac. (allow:Allow) <x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility>"
+        ],
+        "secondary": "not-now:Not now",
+        "title": "Share this Mac's screen."
+      },
+      "step": "permissions",
+      "steps": [
+        "welcome",
+        "connect",
+        "devices",
+        "permissions",
+        "setup"
+      ]
+    },
+    {
+      "art": "hermes on outline",
+      "case": "22 permissions, Screen Recording allowed",
+      "permissions": {
+        "lede": "To let your team and agents see and use this Mac, allow two permissions.",
+        "note": "Allow opens System Settings and shows you where to turn on Cua Spaces.",
+        "primary": "",
+        "rows": [
+          "[ok] See this Mac's screen — Allowed",
+          "[fix] Use the mouse and keyboard — So they can click and type on this Mac. (allow:Allow) <x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility>"
+        ],
+        "secondary": "not-now:Not now",
+        "title": "Share this Mac's screen."
+      },
+      "step": "permissions",
+      "steps": [
+        "welcome",
+        "connect",
+        "devices",
+        "permissions",
+        "setup"
+      ]
+    },
+    {
+      "art": "hermes on outline",
+      "case": "23 permissions, both allowed",
+      "permissions": {
+        "lede": "To let your team and agents see and use this Mac, allow two permissions.",
+        "note": "Allow opens System Settings and shows you where to turn on Cua Spaces.",
+        "primary": "continue:Continue",
+        "rows": [
+          "[ok] See this Mac's screen — Allowed",
+          "[ok] Use the mouse and keyboard — Allowed"
+        ],
+        "secondary": "",
+        "title": "Share this Mac's screen."
+      },
+      "step": "permissions",
+      "steps": [
+        "welcome",
+        "connect",
+        "devices",
+        "permissions",
+        "setup"
+      ]
+    },
+    {
+      "art": "hermes on outline",
+      "case": "24 try it after permissions, Back goes to permissions",
+      "setup": {
+        "extra": null,
+        "lede": "Paste this. Hermes makes the Space itself.",
+        "primary": "done:Done",
+        "prompt": "Paste this in Hermes: Make a Linux Space on this Mac and stream the desktop in a new window. / It runs on this Mac.",
+        "status": "[checking] Waiting for Hermes… — If Hermes was already open, restart it.",
+        "title": "Try it in Hermes."
+      },
+      "step": "setup",
+      "steps": [
+        "welcome",
+        "connect",
+        "devices",
+        "permissions",
+        "setup"
+      ]
+    },
+    {
+      "art": "hermes on outline",
+      "case": "25 not signed in: Not now skips permissions",
+      "devices": {
+        "lede": "Sign in once, and your other computers reach this Mac's Spaces.",
+        "note": "This Mac works without it.",
+        "primary": "sign-in:Sign in to connect",
+        "rows": [
+          "Your other computers — Sign in with the same account",
+          "Your cloud — Hetzner, AWS, Google Cloud or Modal"
+        ],
+        "secondary": "not-now:Not now",
+        "status": null,
+        "title": "Connect your other devices."
+      },
+      "step": "devices",
+      "steps": [
+        "welcome",
+        "connect",
+        "devices",
+        "setup"
+      ]
+    },
+    {
+      "art": "hermes on outline",
+      "case": "26 a Mac kept for Spaces only: no permissions screen",
+      "setup": {
+        "extra": null,
+        "lede": "Paste this. Hermes makes the Space itself.",
+        "primary": "done:Done",
+        "prompt": "Paste this in Hermes: Make a Linux Space on this Mac and stream the desktop in a new window. / It runs on this Mac.",
+        "status": "[checking] Waiting for Hermes… — If Hermes was already open, restart it.",
+        "title": "Try it in Hermes."
+      },
+      "step": "setup",
+      "steps": [
+        "welcome",
+        "connect",
+        "devices",
+        "setup"
+      ]
+    },
+    {
+      "art": "hermes on outline",
+      "case": "27 a Windows PC: no permissions screen",
+      "devices": {
+        "lede": "Sign in on your other computers to use its Spaces.",
+        "note": null,
+        "primary": "continue:Continue",
+        "rows": [
+          "Your other computers — Sign in with the same account",
+          "Your cloud — Hetzner, AWS, Google Cloud or Modal"
+        ],
+        "secondary": "",
+        "status": "[ok] Ready to share — Its Spaces appear on every computer signed in to your account.",
+        "title": "This PC is in your account."
+      },
+      "step": "devices",
+      "steps": [
+        "welcome",
+        "connect",
+        "devices",
+        "setup"
+      ]
     }
   ]
 }

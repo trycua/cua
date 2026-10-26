@@ -1,0 +1,1102 @@
+{
+ "cases": {
+  "api.auth_bad_key": {
+   "source": "DAYTONA_API",
+   "status_code": 401,
+   "type": "DaytonaAuthenticationError"
+  },
+  "api.create_defaults": {
+   "autoArchive": 10080,
+   "autoDelete": -1,
+   "autoStop": 15,
+   "env": {},
+   "labels": [
+    "code-toolbox-language"
+   ],
+   "nameIsId": true,
+   "public": false
+  },
+  "api.create_from_image_disk": {
+   "diskAppliedOrExplained": true
+  },
+  "api.create_from_image_resources": {
+   "cpu": 2,
+   "memory": 3
+  },
+  "api.create_name_conflict": {
+   "source": "DAYTONA_API",
+   "status_code": 409,
+   "type": "DaytonaConflictError"
+  },
+  "api.create_params": {
+   "autoArchive": 30,
+   "autoDelete": -1,
+   "autoStop": 7,
+   "hasCpu": true,
+   "networkBlockAll": false,
+   "started": true,
+   "user": "daytona"
+  },
+  "api.create_validation_is_client_side": {
+   "badQueueTimeout": true,
+   "negativeStop": true,
+   "negativeTtl": true,
+   "pauseEphemeral": true,
+   "stopAndPause": true
+  },
+  "api.delete": {
+   "getAfterDelete": {
+    "source": "DAYTONA_API",
+    "status_code": 404,
+    "type": "DaytonaNotFoundError"
+   }
+  },
+  "api.delete_wait": {
+   "state": "destroyed"
+  },
+  "api.ephemeral": {
+   "afterStop": "deleted",
+   "autoDelete": 0
+  },
+  "api.fork": {
+   "forked": true
+  },
+  "api.get_missing": {
+   "source": "DAYTONA_API",
+   "status_code": 404,
+   "type": "DaytonaNotFoundError"
+  },
+  "api.intervals": {
+   "autoArchive": 120,
+   "autoDelete": 10,
+   "autoStop": 45,
+   "hasDestroyAt": true,
+   "refused": {
+    "archive": true,
+    "autostop": true,
+    "ttl": true
+   }
+  },
+  "api.labels_set": {
+   "after": [
+    "b"
+   ],
+   "returned": [
+    "b"
+   ]
+  },
+  "api.lifecycle_archive_rules": {
+   "archived": "archived",
+   "restarted": true,
+   "startedArchive": {
+    "source": "DAYTONA_API",
+    "status_code": 400,
+    "type": "DaytonaBadRequestError"
+   }
+  },
+  "api.lifecycle_pause": {
+   "pauseStopped": {
+    "source": "DAYTONA_API",
+    "status_code": 400,
+    "type": "DaytonaBadRequestError"
+   },
+   "paused": "paused"
+  },
+  "api.lifecycle_recover_only_in_error": {
+   "recoverStarted": {
+    "source": "DAYTONA_API",
+    "status_code": 400,
+    "type": "DaytonaBadRequestError"
+   }
+  },
+  "api.lifecycle_stop_start": {
+   "afterStart": "started",
+   "afterStop": "stopped"
+  },
+  "api.list_filters": {
+   "ascFirstIsAlpha": true,
+   "byName": 1,
+   "minCpu": 0,
+   "public": 1,
+   "started": 2,
+   "stopped": 0
+  },
+  "api.list_labels_and_pages": {
+   "all": 3,
+   "none": 0,
+   "one": 1,
+   "paged": 3
+  },
+  "api.list_rejects_bad_limit": {
+   "mentionsLimit": true,
+   "rejected": true
+  },
+  "api.public_flag": {
+   "toggled": true
+  },
+  "api.refresh": {
+   "labelsRefreshed": true
+  },
+  "api.resize_applies_on_a_real_guest": {
+   "cpuGrew": true,
+   "filesKept": true,
+   "stoppedStayedStopped": true
+  },
+  "api.resize_rules": {
+   "diskWhileRunningRefused": true,
+   "gpuRefused": true,
+   "growIsAppliedOrExplained": true
+  },
+  "computer.accessibility": {
+   "badRegex": {
+    "source": "DAYTONA_DAEMON",
+    "status_code": 400,
+    "type": "DaytonaBadRequestError"
+   },
+   "treeRoot": true,
+   "unknownNode": 404
+  },
+  "computer.display_and_windows": {
+   "active": true,
+   "display": [
+    1280,
+    800
+   ],
+   "windows": true
+  },
+  "computer.keyboard": {
+   "badKey": {
+    "source": "DAYTONA_DAEMON",
+    "status_code": 400,
+    "type": "DaytonaBadRequestError"
+   },
+   "emptyHotkey": {
+    "source": "DAYTONA_DAEMON",
+    "status_code": 400,
+    "type": "DaytonaBadRequestError"
+   },
+   "typed": true
+  },
+  "computer.mouse": {
+   "badButton": {
+    "source": "DAYTONA_DAEMON",
+    "status_code": 400,
+    "type": "DaytonaBadRequestError"
+   },
+   "badDirection": {
+    "source": "DAYTONA_DAEMON",
+    "status_code": 400,
+    "type": "DaytonaBadRequestError"
+   },
+   "clicked": [
+    200,
+    150
+   ],
+   "dragEnd": [
+    300,
+    200
+   ],
+   "moved": [
+    120,
+    80
+   ],
+   "up": [
+    7,
+    8
+   ]
+  },
+  "computer.real_desktop": {
+   "jpeg": true,
+   "pointerMoved": true,
+   "screenshotMatchesDisplay": true
+  },
+  "computer.recording": {
+   "skipped": "no ffmpeg on the gateway host"
+  },
+  "computer.screenshots": {
+   "badFormat": {
+    "source": "DAYTONA_DAEMON",
+    "status_code": 400,
+    "type": "DaytonaBadRequestError"
+   },
+   "compressed": true,
+   "png": true,
+   "region": true
+  },
+  "computer.start_status_and_processes": {
+   "processes": [
+    "novnc",
+    "x11vnc",
+    "xfce4",
+    "xvfb"
+   ],
+   "status": "active",
+   "stopKeepsRunning": true,
+   "unknown": {
+    "code": "PROCESS_NOT_FOUND",
+    "source": "DAYTONA_DAEMON",
+    "status_code": 404,
+    "type": "DaytonaProcessNotFoundError"
+   }
+  },
+  "fs.bulk_upload_download": {
+   "missingHasError": true,
+   "missingStructured": "FILE_NOT_FOUND",
+   "ok": 30
+  },
+  "fs.concurrent_transfers": {
+   "files": 16
+  },
+  "fs.download_to_local_path_and_stream": {
+   "bytes": 3145745,
+   "missing": {
+    "code": "FILE_NOT_FOUND",
+    "source": "DAYTONA_DAEMON",
+    "status_code": 404,
+    "type": "DaytonaFileNotFoundError"
+   },
+   "multipleChunks": true,
+   "progressTotal": true
+  },
+  "fs.errors_carry_file_codes": {
+   "delete": {
+    "code": "FILE_NOT_FOUND",
+    "source": "DAYTONA_DAEMON",
+    "status_code": 404,
+    "type": "DaytonaFileNotFoundError"
+   },
+   "download": {
+    "code": "FILE_NOT_FOUND",
+    "source": "DAYTONA_DAEMON",
+    "status_code": 404,
+    "type": "DaytonaFileNotFoundError"
+   },
+   "info": {
+    "code": "FILE_NOT_FOUND",
+    "source": "DAYTONA_DAEMON",
+    "status_code": 404,
+    "type": "DaytonaFileNotFoundError"
+   },
+   "move": {
+    "code": "FILE_NOT_FOUND",
+    "source": "DAYTONA_DAEMON",
+    "status_code": 404,
+    "type": "DaytonaFileNotFoundError"
+   }
+  },
+  "fs.find_search_replace": {
+   "found": [
+    [
+     "a.txt",
+     2,
+     "needle one"
+    ],
+    [
+     "b.txt",
+     2,
+     "needle two"
+    ]
+   ],
+   "replaced": {
+    "a.txt": true,
+    "b.txt": true,
+    "nope.txt": false
+   },
+   "search": [
+    "a.txt",
+    "b.txt"
+   ]
+  },
+  "fs.large_file_integrity": {
+   "mib": 96,
+   "sha256Matches": true
+  },
+  "fs.list_info_folder_move_delete": {
+   "afterDelete": {
+    "code": "FILE_NOT_FOUND",
+    "source": "DAYTONA_DAEMON",
+    "status_code": 404,
+    "type": "DaytonaFileNotFoundError"
+   },
+   "movedFrom": {
+    "code": "FILE_NOT_FOUND",
+    "source": "DAYTONA_DAEMON",
+    "status_code": 404,
+    "type": "DaytonaFileNotFoundError"
+   },
+   "size": 7
+  },
+  "fs.permissions_and_owner": {
+   "dir": "700",
+   "file": "640",
+   "owner": "daytona"
+  },
+  "fs.roundtrip_binary_and_empty": {
+   "binary": 263936,
+   "empty": 0,
+   "sha": "79b17f976d2d15d2",
+   "unicode": 17
+  },
+  "fs.signed_urls": {
+   "download": true,
+   "rotated": 403,
+   "tampered": 403,
+   "upload": true
+  },
+  "fs.unicode_and_space_names": {
+   "names": 4
+  },
+  "fs.upload_creates_parents_and_overwrites": {
+   "overwritten": true
+  },
+  "fs.upload_stream": {
+   "bytes": 2097157,
+   "progress": true
+  },
+  "git.branch_lifecycle": {
+   "exists": {
+    "code": "GIT_BRANCH_EXISTS",
+    "source": "DAYTONA_DAEMON",
+    "status_code": 409,
+    "type": "DaytonaGitBranchExistsError"
+   },
+   "final": [
+    "main"
+   ],
+   "gone": {
+    "code": "GIT_BRANCH_NOT_FOUND",
+    "source": "DAYTONA_DAEMON",
+    "status_code": 404,
+    "type": "DaytonaGitBranchNotFoundError"
+   },
+   "missing": {
+    "code": "GIT_BRANCH_NOT_FOUND",
+    "source": "DAYTONA_DAEMON",
+    "status_code": 404,
+    "type": "DaytonaGitBranchNotFoundError"
+   },
+   "on_dev": "dev"
+  },
+  "git.clone_depth_commit": {
+   "bad_commit": {
+    "source": "DAYTONA_DAEMON",
+    "status_code": 400,
+    "type": "DaytonaBadRequestError"
+   },
+   "bad_commit_left": "no",
+   "detached": true,
+   "pinned": "one\n",
+   "shallow_commits": "1"
+  },
+  "git.commit_status_flow": {
+   "empty_len": 40,
+   "log": [
+    "Ann Author|ann@example.test|Ann Author|empty",
+    "Ann Author|ann@example.test|Ann Author|first"
+   ],
+   "modified": {
+    "ahead": 0,
+    "behind": 0,
+    "branch": "main",
+    "detached": false,
+    "files": [
+     [
+      "a.txt",
+      "Unmodified",
+      "Modified",
+      ""
+     ]
+    ],
+    "published": false,
+    "upstream": ""
+   },
+   "nothing_to_commit": {
+    "source": "DAYTONA_DAEMON",
+    "status_code": 400,
+    "type": "DaytonaBadRequestError"
+   },
+   "sha_is_head": true,
+   "staged": {
+    "ahead": 0,
+    "behind": 0,
+    "branch": "main",
+    "detached": false,
+    "files": [
+     [
+      "a.txt",
+      "Added",
+      "Unmodified",
+      ""
+     ],
+     [
+      "b b.txt",
+      "Untracked",
+      "Untracked",
+      ""
+     ]
+    ],
+    "published": false,
+    "upstream": ""
+   },
+   "untracked": {
+    "ahead": 0,
+    "behind": 0,
+    "branch": "main",
+    "detached": false,
+    "files": [
+     [
+      "a.txt",
+      "Untracked",
+      "Untracked",
+      ""
+     ],
+     [
+      "b b.txt",
+      "Untracked",
+      "Untracked",
+      ""
+     ]
+    ],
+    "published": false,
+    "upstream": ""
+   }
+  },
+  "git.config": {
+   "bad_scope": {
+    "source": "DAYTONA_DAEMON",
+    "status_code": 400,
+    "type": "DaytonaBadRequestError"
+   },
+   "global": "global-value",
+   "local": "local-value",
+   "missing": null,
+   "no_path": {
+    "source": "DAYTONA_DAEMON",
+    "status_code": 400,
+    "type": "DaytonaBadRequestError"
+   },
+   "user": [
+    "Zed",
+    "zed@example.test"
+   ]
+  },
+  "git.dirty_checkout": {
+   "dirty": {
+    "code": "GIT_DIRTY_WORKTREE",
+    "source": "DAYTONA_DAEMON",
+    "status_code": 409,
+    "type": "DaytonaGitDirtyWorktreeError"
+   },
+   "restored": "one\n"
+  },
+  "git.history_route": {
+   "count": 1,
+   "first": [
+    "Ann Author",
+    "ann@example.test",
+    "first"
+   ],
+   "hash_len": 40,
+   "keys": [
+    "author",
+    "email",
+    "hash",
+    "message",
+    "timestamp"
+   ]
+  },
+  "git.http_auth": {
+   "config_has_password": "",
+   "helper": "store",
+   "no_creds": {
+    "code": "GIT_AUTH_FAILED",
+    "source": "DAYTONA_DAEMON",
+    "status_code": 401,
+    "type": "DaytonaGitAuthFailedError"
+   },
+   "push_no_creds": {
+    "code": "GIT_AUTH_FAILED",
+    "source": "DAYTONA_DAEMON",
+    "status_code": 401,
+    "type": "DaytonaGitAuthFailedError"
+   },
+   "wrong_leaked": false,
+   "wrong_password": {
+    "code": "GIT_AUTH_FAILED",
+    "source": "DAYTONA_DAEMON",
+    "status_code": 401,
+    "type": "DaytonaGitAuthFailedError"
+   }
+  },
+  "git.init_branches": {
+   "after": [
+    [
+     "feature/x",
+     "trunk"
+    ],
+    "trunk"
+   ],
+   "bare": "true",
+   "empty": [
+    [],
+    "trunk"
+   ]
+  },
+  "git.push_pull_roundtrip": {
+   "after_pull": {
+    "ahead": 0,
+    "behind": 0,
+    "branch": "main",
+    "detached": false,
+    "files": [],
+    "published": true,
+    "upstream": "origin/main"
+   },
+   "ahead": {
+    "ahead": 1,
+    "behind": 0,
+    "branch": "main",
+    "detached": false,
+    "files": [],
+    "published": true,
+    "upstream": "origin/main"
+   },
+   "behind": {
+    "ahead": 0,
+    "behind": 1,
+    "branch": "main",
+    "detached": false,
+    "files": [],
+    "published": true,
+    "upstream": "origin/main"
+   },
+   "clone": {
+    "ahead": 0,
+    "behind": 0,
+    "branch": "main",
+    "detached": false,
+    "files": [],
+    "published": true,
+    "upstream": "origin/main"
+   },
+   "published": {
+    "ahead": 0,
+    "behind": 0,
+    "branch": "topic",
+    "detached": false,
+    "files": [],
+    "published": true,
+    "upstream": "origin/topic"
+   },
+   "pulled": "g\n",
+   "pushed": {
+    "ahead": 0,
+    "behind": 0,
+    "branch": "main",
+    "detached": false,
+    "files": [],
+    "published": true,
+    "upstream": "origin/main"
+   },
+   "unpublished": {
+    "ahead": 0,
+    "behind": 0,
+    "branch": "topic",
+    "detached": false,
+    "files": [],
+    "published": false,
+    "upstream": ""
+   }
+  },
+  "git.push_rejected_and_conflict": {
+   "conflict": {
+    "source": "DAYTONA_DAEMON",
+    "status_code": 400,
+    "type": "DaytonaBadRequestError"
+   },
+   "conflicted": [
+    [
+     "f.txt",
+     "Updated but unmerged",
+     "Updated but unmerged",
+     ""
+    ]
+   ],
+   "rejected": {
+    "code": "GIT_PUSH_REJECTED",
+    "source": "DAYTONA_DAEMON",
+    "status_code": 409,
+    "type": "DaytonaGitPushRejectedError"
+   }
+  },
+  "git.remotes": {
+   "dup": {
+    "source": "DAYTONA_DAEMON",
+    "status_code": 400,
+    "type": "DaytonaBadRequestError"
+   },
+   "first": [
+    [
+     "origin",
+     true
+    ]
+   ],
+   "missing": null,
+   "names": [
+    "backup",
+    "fetched",
+    "origin"
+   ],
+   "overwritten": true
+  },
+  "git.repo_errors": {
+   "add_nothing_matches": {
+    "source": "DAYTONA_DAEMON",
+    "status_code": 400,
+    "type": "DaytonaBadRequestError"
+   },
+   "branches_not_repo": {
+    "code": "GIT_REPO_NOT_FOUND",
+    "source": "DAYTONA_DAEMON",
+    "status_code": 404,
+    "type": "DaytonaGitRepoNotFoundError"
+   },
+   "clone_missing_branch": {
+    "code": "GIT_BRANCH_NOT_FOUND",
+    "source": "DAYTONA_DAEMON",
+    "status_code": 404,
+    "type": "DaytonaGitBranchNotFoundError"
+   },
+   "clone_missing_repo": {
+    "code": "GIT_REPO_NOT_FOUND",
+    "source": "DAYTONA_DAEMON",
+    "status_code": 404,
+    "type": "DaytonaGitRepoNotFoundError"
+   },
+   "clone_ok_branch": true,
+   "reset_bad_mode": true,
+   "status_not_repo": {
+    "code": "GIT_REPO_NOT_FOUND",
+    "source": "DAYTONA_DAEMON",
+    "status_code": 404,
+    "type": "DaytonaGitRepoNotFoundError"
+   },
+   "unreachable": {
+    "code": "GIT_TRANSPORT_FAILED",
+    "source": "DAYTONA_DAEMON",
+    "status_code": 502,
+    "type": "DaytonaGitTransportFailedError"
+   }
+  },
+  "git.reset_restore": {
+   "from_old": "one\n",
+   "hard": "two\n",
+   "mixed": [
+    [
+     "f.txt",
+     "Unmodified",
+     "Modified",
+     ""
+    ]
+   ],
+   "soft_head": "first",
+   "staged": [
+    [
+     "f.txt",
+     "Modified",
+     "Unmodified",
+     ""
+    ]
+   ],
+   "unstaged": [
+    [
+     "f.txt",
+     "Unmodified",
+     "Modified",
+     ""
+    ]
+   ]
+  },
+  "image.context_upload": {
+   "uploadedAndReused": true
+  },
+  "image.create_with_layers": {
+   "started": true
+  },
+  "image.unbuildable_dockerfile_is_refused": {
+   "refused": {
+    "source": "DAYTONA_API",
+    "status_code": 400,
+    "type": "DaytonaBadRequestError"
+   }
+  },
+  "interpreter.contexts_are_isolated": {
+   "cwd": "/tmp",
+   "defaultNotListed": true,
+   "deleteTwice": {
+    "source": "DAYTONA_DAEMON",
+    "status_code": 404,
+    "type": "DaytonaNotFoundError"
+   },
+   "isolated": true
+  },
+  "interpreter.default_context_keeps_state": {
+   "stdout": "42 2\n"
+  },
+  "interpreter.envs_and_exit": {
+   "child": "from-child\n",
+   "env": "v1",
+   "restored": "None",
+   "survivesExit": true
+  },
+  "interpreter.streams_stdout_stderr_and_errors": {
+   "error": [
+    "ValueError",
+    "boom"
+   ],
+   "stderr": "warn\n",
+   "stdout": "o0\no1\no2\n",
+   "streamedInChunks": true,
+   "syntax": "SyntaxError"
+  },
+  "interpreter.timeout": {
+   "timeout": {
+    "type": "DaytonaTimeoutError"
+   },
+   "usableAfter": true
+  },
+  "lsp.errors": {
+   "notStarted": {
+    "code": "LSP_SERVER_NOT_INITIALIZED",
+    "source": "DAYTONA_DAEMON",
+    "status_code": 400,
+    "type": "DaytonaLspServerNotInitializedError"
+   },
+   "unsupportedLanguage": 400
+  },
+  "lsp.python_session": {
+   "completionHasPath": true,
+   "greetLine": 3,
+   "symbols": [
+    "Greeter",
+    "greet"
+   ],
+   "workspaceFindsClass": true
+  },
+  "preview.port_not_open": {
+   "closedPort": 502
+  },
+  "preview.private_link_needs_its_token": {
+   "withApiKey": 200,
+   "withToken": 200,
+   "without": 401,
+   "wrong": 401
+  },
+  "preview.public_link_needs_nothing": {
+   "afterPrivate": 401,
+   "public": 200
+  },
+  "preview.signed_url": {
+   "afterExpire": "refused",
+   "afterTimeout": "refused",
+   "defaultValid": true,
+   "works": 200
+  },
+  "process.background_server_and_port": {
+   "served": "up"
+  },
+  "process.code_run_charts": {
+   "bars": [
+    [
+     "a",
+     "3"
+    ],
+    [
+     "b",
+     "5"
+    ]
+   ],
+   "boxMedian": 3,
+   "line": [
+    [
+     1,
+     4
+    ],
+    [
+     2,
+     5
+    ],
+    [
+     3,
+     6
+    ]
+   ],
+   "outliers": [
+    100
+   ],
+   "types": [
+    "line",
+    "scatter",
+    "bar",
+    "pie",
+    "box_and_whisker"
+   ]
+  },
+  "process.code_run_python": {
+   "argv": "42 ['a']",
+   "env": "v",
+   "exit": 4,
+   "traceback": true
+  },
+  "process.code_run_timeout": {
+   "status_code": 408,
+   "timedOut": true
+  },
+  "process.exec_cwd_env_user": {
+   "cwd": "/tmp",
+   "env": "bar:two words",
+   "relativeCwdFailsOrResolves": true,
+   "user": "daytona"
+  },
+  "process.exec_large_output": {
+   "bytes": 3000000
+  },
+  "process.exec_result_and_exit_code": {
+   "echo": "hi there\n",
+   "fail": 3
+  },
+  "process.exec_shell_semantics": {
+   "background": true,
+   "exit": 5,
+   "heredoc": true
+  },
+  "process.exec_timeout_error": {
+   "code": "PROCESS_EXECUTION_TIMEOUT",
+   "source": "DAYTONA_DAEMON",
+   "status_code": 408,
+   "type": "DaytonaProcessExecutionTimeoutError"
+  },
+  "process.pty_resize_list_kill": {
+   "killed": {
+    "code": "PROCESS_NOT_FOUND",
+    "source": "DAYTONA_DAEMON",
+    "status_code": 404,
+    "type": "DaytonaProcessNotFoundError"
+   },
+   "resized": [
+    120,
+    40
+   ]
+  },
+  "process.pty_roundtrip": {
+   "echo": "pty-42",
+   "exit": 0
+  },
+  "process.session_async_command_and_logs": {
+   "asyncPending": true,
+   "exit": 0,
+   "stderr": "bad",
+   "stdout": "late"
+  },
+  "process.session_command_ordering": {
+   "order": [
+    "0",
+    "1",
+    "2",
+    "3",
+    "4"
+   ]
+  },
+  "process.session_errors": {
+   "duplicate": {
+    "source": "DAYTONA_DAEMON",
+    "status_code": 409,
+    "type": "DaytonaConflictError"
+   },
+   "missing": {
+    "delete": {
+     "code": "PROCESS_NOT_FOUND",
+     "source": "DAYTONA_DAEMON",
+     "status_code": 404,
+     "type": "DaytonaProcessNotFoundError"
+    },
+    "get": {
+     "code": "PROCESS_NOT_FOUND",
+     "source": "DAYTONA_DAEMON",
+     "status_code": 404,
+     "type": "DaytonaProcessNotFoundError"
+    },
+    "logs": {
+     "code": "PROCESS_NOT_FOUND",
+     "source": "DAYTONA_DAEMON",
+     "status_code": 404,
+     "type": "DaytonaProcessNotFoundError"
+    }
+   }
+  },
+  "process.session_follow_logs": {
+   "stderr": "e",
+   "stdout": [
+    "o1",
+    "o2",
+    "o3"
+   ]
+  },
+  "process.session_input_to_running_command": {
+   "afterCompletion": {
+    "code": "COMMAND_ALREADY_COMPLETED",
+    "source": "DAYTONA_DAEMON",
+    "status_code": 410,
+    "type": "DaytonaCommandAlreadyCompletedError"
+   },
+   "got": "hello"
+  },
+  "process.session_state_carries_over": {
+   "deleted": {
+    "code": "PROCESS_NOT_FOUND",
+    "source": "DAYTONA_DAEMON",
+    "status_code": 404,
+    "type": "DaytonaProcessNotFoundError"
+   },
+   "exitCodes": [
+    0,
+    0,
+    3
+   ],
+   "state": "/tmp:7"
+  },
+  "sandbox.home_and_work_dirs": {
+   "absolute": true
+  },
+  "sandbox.metrics": {
+   "hasCpu": true,
+   "hasMemory": true
+  },
+  "secret.crud": {
+   "afterDelete": 404,
+   "badHost": 400,
+   "badName": 400,
+   "duplicate": 409,
+   "hosts": [
+    "*.example.com"
+   ],
+   "valueNotReturned": true
+  },
+  "secret.mount_is_opt_in": {
+   "injected": true,
+   "missing": {
+    "source": "DAYTONA_API",
+    "status_code": 404,
+    "type": "DaytonaNotFoundError"
+   },
+   "refusedWithoutLabel": {
+    "source": "DAYTONA_API",
+    "status_code": 400,
+    "type": "DaytonaBadRequestError"
+   }
+  },
+  "snapshot.activate_deactivate": {
+   "activateActive": 400
+  },
+  "snapshot.build_failure_is_reported": {
+   "failed": true,
+   "type": "DaytonaError"
+  },
+  "snapshot.build_from_image_object": {
+   "dockerfile": true,
+   "logged": true,
+   "state": "active"
+  },
+  "snapshot.create_list_get_delete": {
+   "afterDelete": {
+    "source": "DAYTONA_API",
+    "status_code": 404,
+    "type": "DaytonaNotFoundError"
+   },
+   "imageName": "python:3.12",
+   "sandboxSnapshot": true,
+   "state": "active"
+  },
+  "snapshot.duplicate_and_missing": {
+   "duplicate": {
+    "source": "DAYTONA_API",
+    "status_code": 409,
+    "type": "DaytonaConflictError"
+   },
+   "missing": {
+    "source": "DAYTONA_API",
+    "status_code": 404,
+    "type": "DaytonaNotFoundError"
+   },
+   "sandboxFromMissing": {
+    "source": "DAYTONA_API",
+    "status_code": 404,
+    "type": "DaytonaNotFoundError"
+   }
+  },
+  "snapshot.from_sandbox": {
+   "duplicate": {
+    "source": "DAYTONA_API",
+    "status_code": 409,
+    "type": "DaytonaConflictError"
+   },
+   "registered": true,
+   "sandboxFrom": true
+  },
+  "snapshot.pagination": {
+   "pageSize": 1,
+   "pageZeroRefused": true,
+   "totalAtLeast3": true
+  },
+  "ssh.access_token_lifecycle": {
+   "afterRevoke": false,
+   "valid": true
+  },
+  "volume.crud": {
+   "afterDelete": {
+    "source": "DAYTONA_API",
+    "status_code": 404,
+    "type": "DaytonaNotFoundError"
+   },
+   "duplicate": {
+    "source": "DAYTONA_API",
+    "status_code": 409,
+    "type": "DaytonaConflictError"
+   },
+   "invalidName": {
+    "source": "DAYTONA_API",
+    "status_code": 400,
+    "type": "DaytonaBadRequestError"
+   },
+   "state": "ready"
+  },
+  "volume.mount_needs_cua_volume": {
+   "missingVolume": {
+    "source": "DAYTONA_API",
+    "status_code": 404,
+    "type": "DaytonaNotFoundError"
+   },
+   "noCuaVolume": {
+    "source": "DAYTONA_API",
+    "status_code": 400,
+    "type": "DaytonaBadRequestError"
+   },
+   "relativePath": {
+    "source": "DAYTONA_API",
+    "status_code": 400,
+    "type": "DaytonaBadRequestError"
+   }
+  },
+  "volume.mount_without_a_grant_is_explained": {
+   "explainsGrant": true,
+   "refused": 400
+  },
+  "warm_pool.crud": {
+   "duplicate": 409,
+   "pool": 3
+  }
+ },
+ "label": "derived",
+ "note": "Observations of cases whose assertions encode the SDK-defined behaviour; not recorded from a Daytona service.",
+ "sdk": "0.225.0"
+}

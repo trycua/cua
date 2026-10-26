@@ -54,7 +54,7 @@ import type {
 import type { NotificationInput } from "./notifications";
 import type { AboutInput, DriveCheckInput, DriveStorageInput, LoginItemReport, StorageInput, UpdateState } from "./settings";
 import type { ShareEntry, ShareRemoval } from "./share";
-import type { SpaceProgress, SpaceRow } from "./spaces";
+import type { CreateFix, SpaceProgress, SpaceRow } from "./spaces";
 import type { CatalogEntry, ConsentItem, KvDomainCount, KvInventory, OpenWindow, PlanStep, RemoteWindow, RunReport, TeleportPlan } from "./teleport";
 import type { AgentSetupOutcome, DriveGrantInput, DriveMountInput, DriveRequestInput, Experiments, VolumeOverview } from "./volume";
 import type { AgentKeysReport } from "../ops/agent-keys";
@@ -64,10 +64,12 @@ import type { RelayUsage } from "../ops/relay-usage";
 import type { RiskyRequest } from "../ops/nudges";
 import type { ComputerResources, DiskOnHost, DiskWarning, GuestUsage, ResourcesSnapshot, SpaceResources } from "../ops/resources";
 import type { HostChecklistState } from "../ops/checklist";
+import type { ShareLink } from "../ops/links";
+import type { CliInstallPlan } from "./first-run";
 import type { PresenceCursorWire, PresenceJoinInfo, PresenceParticipantWire } from "../ops/presence";
 import type { StartupState } from "../ops/startup";
 import type { StreamTicket } from "../ops/stream";
-import type { GlobalShortcut, HostSettings, HostSignIn, HostSignInFailure, OpName, SessionSnapshot, SettingsSnapshot, SettingsValues } from "../protocol";
+import type { CliInfo, GlobalShortcut, HostSettings, HostSignIn, HostSignInFailure, OpName, SessionSnapshot, SettingsSnapshot, SettingsValues } from "../protocol";
 import type { WebkitMethod, WkHostState, WkMachines, WkOnboarding, WkSession, WkSettings, WkSettingsRow, WkSpace, WkSpaces } from "../webkit-protocol";
 import { Defs, any, bool, dict, list, nul, nullable, num, obj, object, oneOf, opt, optNull, str, union, type Schema } from "./schema";
 
@@ -78,6 +80,25 @@ const limits = list(object({ resource: str, used: num, limit: num, reason: str }
 const os = oneOf("macos", "windows", "linux", "unknown");
 
 /* ---- Spaces and machines --------------------------------------------------- */
+
+const CliInstallPlanShape = ref(
+  "CliInstallPlan",
+  obj<CliInstallPlan>()({
+    source: optNull(str),
+    target: str,
+    binDir: str,
+    method: optNull(oneOf("symlink", "copy")),
+    installed: bool,
+    upToDate: bool,
+    installedVersion: optNull(str),
+    bundledVersion: optNull(str),
+    shadowedBy: optNull(str),
+    onPath: bool,
+    pathProfile: optNull(str),
+    pathLine: optNull(str),
+    found: optNull(str),
+  }),
+);
 
 const DiskWarningShape = ref("DiskWarning", obj<DiskWarning>()({ level: oneOf("ok", "low", "critical"), free: num, total: num, threshold: num }));
 
@@ -107,9 +128,24 @@ const ComputerResourcesShape = ref(
   }),
 );
 
+const CreateFixShape = ref(
+  "CreateFix",
+  obj<CreateFix>()({ text: str, label: str, action: oneOf("copy-command", "open-url", "details"), value: opt(str) }),
+);
+
 const SpaceProgressShape = ref(
   "SpaceProgress",
-  obj<SpaceProgress>()({ phase: str, permille: num, label: str, error: opt(str), transfer: opt(str), cancellable: opt(bool), cancelling: opt(bool) }),
+  obj<SpaceProgress>()({
+    phase: str,
+    permille: num,
+    label: str,
+    error: opt(str),
+    transfer: opt(str),
+    cancellable: opt(bool),
+    cancelling: opt(bool),
+    retrying: opt(bool),
+    fix: opt(CreateFixShape),
+  }),
 );
 
 const SpaceRowShape = ref(
@@ -171,6 +207,7 @@ const HostStatusShape = ref(
     ownerEmail: optNull(str),
     account: optNull(object({ id: optNull(str), email: optNull(str), display: optNull(str) })),
     progress: optNull(str),
+    appName: optNull(str),
   }),
 );
 
@@ -268,6 +305,7 @@ const SettingsShape = ref(
     ),
     globalShortcut: optNull(obj<GlobalShortcut>()({ label: str, registered: bool })),
     accountUrl: optNull(str),
+    cli: optNull(obj<CliInfo>()({ name: str, installed: bool })),
   }),
 );
 
@@ -604,6 +642,8 @@ const AgentSetupRowShape = ref(
     skillsTotal: num,
     mcpConfig: nullable(str),
     skillsDir: nullable(str),
+    signIn: nullable(str),
+    signedIn: bool,
   }),
 );
 
@@ -695,7 +735,20 @@ const PresenceCursorShape = ref(
 
 /** The host's copy of the checklist (`ops/checklist.ts`). */
 const ChecklistAnswerShape = object({
-  state: obj<HostChecklistState>()({ done: strings, dismissed: bool, shown: bool }),
+  state: obj<HostChecklistState>()({ done: strings, dismissed: bool, shown: bool, skipped: strings }),
+});
+
+/** A link to something you run (`ops/links.ts`). */
+const ShareLinkShape = obj<ShareLink>()({
+  id: str,
+  url: str,
+  name: nullable(str),
+  access: oneOf("private", "team", "public"),
+  kind: str,
+  target: str,
+  owner: str,
+  createdAtUnix: nullable(num),
+  expiresAtUnix: nullable(num),
 });
 
 /** One Machines row as the core lists it (`machines::MachinePageRow`). */
@@ -870,6 +923,7 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "agents.resume": nul,
   "agents.setup": agentSetupRows,
   "agents.configure": agentSetupRows,
+  "agents.signIn": agentSetupRows,
   "agents.detail": AgentDetailShape,
   "agents.readFile": AgentOpenFileShape,
   "agents.restoreFile": nul,
@@ -1016,6 +1070,11 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   ),
   "checklist.get": ChecklistAnswerShape,
   "checklist.send": ChecklistAnswerShape,
+  "links.list": object({ links: list(ShareLinkShape) }),
+  "links.create": ShareLinkShape,
+  "links.stop": object({ stopped: strings }),
+  "cli.plan": nullable(CliInstallPlanShape),
+  "cli.install": CliInstallPlanShape,
   "presence.join": obj<PresenceJoinInfo>()({
     handle: str,
     me: PresenceParticipantShape,
@@ -1107,6 +1166,7 @@ const WkHostShape = ref(
     ownerEmail: optNull(str),
     account: optNull(object({ id: optNull(str), email: optNull(str), display: optNull(str) })),
     progress: optNull(str),
+    appName: optNull(str),
   }),
 );
 
@@ -1182,6 +1242,7 @@ const WkSettingsShape = ref(
     updateChannel: optNull(oneOf("stable", "beta")),
     globalShortcut: optNull(object({ label: str, registered: bool })),
     accountUrl: optNull(str),
+    cli: optNull(object({ name: str, installed: bool })),
   }),
 );
 
@@ -1312,6 +1373,7 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "agents.resume": any,
   "agents.setup": agentSetupRows,
   "agents.configure": agentSetupRows,
+  "agents.signIn": agentSetupRows,
   "agents.setupDriver": OP_SHAPES["agents.setupDriver"],
   "agents.detail": AgentDetailShape,
   "agents.readFile": AgentOpenFileShape,
@@ -1417,6 +1479,11 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "machines.checkHealth": nul,
   "checklist.get": OP_SHAPES["checklist.get"],
   "checklist.send": OP_SHAPES["checklist.send"],
+  "links.list": OP_SHAPES["links.list"],
+  "links.create": OP_SHAPES["links.create"],
+  "links.stop": OP_SHAPES["links.stop"],
+  "cli.plan": OP_SHAPES["cli.plan"],
+  "cli.install": OP_SHAPES["cli.install"],
 };
 
 /** Methods whose answer has no shape here, and why (none today: keep the

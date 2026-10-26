@@ -10,6 +10,7 @@
 import { randomUUID } from "node:crypto";
 import type { Native } from "../native/load";
 import type {
+  AppCliInstallPlan,
   AppCreateAction,
   AppCreatesState,
   AppCreateSpaceArgs,
@@ -46,7 +47,7 @@ import { NotchActivity } from "./activity";
 import { createErrorVariant, daemonAnswered, isCancelled, sdkErrorKind, words } from "./errors";
 import type { HostModel } from "./host";
 import { KeyvaultModel } from "./keyvault";
-import type { AccountRunning, TelemetryRunning } from "./services";
+import type { AccountRunning, SignInOptions, TelemetryRunning } from "./services";
 import type { StartupModel } from "./startup";
 import { SignInRuns, type SignInEnd } from "./sign-in";
 import { SpaceThumbnails } from "./thumbnails";
@@ -130,6 +131,8 @@ export class AppModel {
   roster: AppRosterState;
   /** The selected Space (the sidebar's selection). */
   selectedSpaceId: string | null = null;
+  /** The bundled CLI's install plan as last read (`cli.plan`, `settings.get`'s `cli`). */
+  cliPlan: AppCliInstallPlan | null = null;
   loaded = false;
   /** The last list read failed: the page says so above every page, and the
    * rows already listed stay (the SwiftUI app's `rosterError`). Never the
@@ -160,7 +163,7 @@ export class AppModel {
   readonly thumbnails: SpaceThumbnails;
   /** The notch's indicator: the hotspot, a transfer running (a teleport, files dropped on the notch). */
   readonly activity = new NotchActivity();
-  creates: AppCreatesState = { pending: [], deleting: [], powering: [] };
+  creates: AppCreatesState = { pending: [], deleting: [], powering: [], streaks: [] };
   /** macOS VMs running on this Mac, as New Space last read them. */
   runningMacosVms: number | null = null;
   lumeSource: string | null = null;
@@ -682,9 +685,29 @@ export class AppModel {
    * registry's row when it is ready; returns its id. A failure stays on its
    * row; a cancelled create only leaves the list. Either way it throws.
    */
-  async runCreate(args: AppCreateSpaceArgs, os: AppSpaceOs, pendingId: string, progress?: (p: SpaceCreateProgress) => void): Promise<string> {
+  async runCreate(
+    args: AppCreateSpaceArgs,
+    os: AppSpaceOs,
+    pendingId: string,
+    progress?: (p: SpaceCreateProgress) => void,
+    retrying?: (error: string, errorVariant: string) => void,
+  ): Promise<string> {
     this.startCreate(args, os, pendingId);
-    return this.followCreate(args, pendingId, progress);
+    // A failure that usually passes (the core's `fail_decision`: a runtime
+    // that did not start this time, a network drop during the download, a
+    // VM that did not answer in time) runs the create once more by itself,
+    // the row saying "Retrying…"; `retrying` hears of it first (the page
+    // applies the same failure). Only the final outcome throws.
+    for (;;) {
+      try {
+        return await this.followCreate(args, pendingId, progress);
+      } catch (error) {
+        if (isCancelled(error)) throw error;
+        const row = this.creates.pending.find((p) => p.id === pendingId);
+        if (!row?.retryPending || row.cancelling) throw error;
+        retrying?.(words(error), createErrorVariant(error));
+      }
+    }
   }
 
   /** A new pending id (`pending:<uuid>`). */
@@ -747,7 +770,7 @@ export class AppModel {
       return id;
     } catch (error) {
       if (isCancelled(error)) this.sendCreate(new this.native.AppCreateAction.CancelDone({ id: pendingId }));
-      else this.sendCreate(new this.native.AppCreateAction.Fail({ id: pendingId, error: words(error), errorVariant: createErrorVariant(error) }));
+      else this.sendCreate(new this.native.AppCreateAction.Fail({ id: pendingId, error: words(error), errorVariant: createErrorVariant(error), now: AppModel.nowMs() }));
       throw error;
     }
   }
@@ -867,7 +890,7 @@ export class AppModel {
 
   /** The count the menu bar item and the notch show. */
   get statusLine(): string {
-    return this.native.appStatusLine(this.native.appOpenableCount(this.spaces));
+    return this.native.appOnStatusLine(this.native.appOnCount(this.spaces));
   }
 
   /** The window chrome (account line, New Space, empty state). */
@@ -885,9 +908,9 @@ export class AppModel {
   /** "Sign in": the browser flow (opened by the account), the code while it
    * waits. Starting again while it waits is a retry: a new attempt, and
    * whichever attempt the browser finishes signs the app in. */
-  async beginSignIn(): Promise<void> {
+  async beginSignIn(opts?: SignInOptions): Promise<void> {
     if (!this.account || this.signInPhase() === "Starting") return;
-    await this.signIns.begin();
+    await this.signIns.begin(opts);
   }
 
   /** A session is stored (by a sign-in here or `cua auth login`). */

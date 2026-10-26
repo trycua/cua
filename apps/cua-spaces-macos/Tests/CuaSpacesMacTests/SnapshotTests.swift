@@ -48,6 +48,70 @@ struct SnapshotTests {
                                               onCancel: {}), "new-space", size: CGSize(width: 560, height: 520))
     }
 
+    /// Two of your machines that provide Spaces (simulated): one busy, one
+    /// paused (sharing off), each with its one load line.
+    static func machineHosts() -> [AppSpaceHost] {
+        func host(_ id: String, _ name: String, _ load: AppHostLoad) -> AppSpaceHost {
+            AppSpaceHost(id: id, name: name, via: "relay", online: true, os: "macos", limits: [], load: load)
+        }
+        return [
+            host("m-mini", "Mac mini", AppHostLoad(millicpusTotal: 10_000, millicpusFree: 6_000,
+                                                   memoryTotalMb: 32_768, memoryFreeMb: 16_384,
+                                                   spaces: 3, problem: "")),
+            host("m-studio", "Studio", AppHostLoad(millicpusTotal: 24_000, millicpusFree: 24_000,
+                                                   memoryTotalMb: 65_536, memoryFreeMb: 65_536,
+                                                   spaces: 0, problem: "sharing is paused")),
+        ]
+    }
+
+    /// New Space with your machines: "Run on" set to Auto (the least-loaded
+    /// of your machines).
+    @Test func newSpaceWizardAuto() async throws {
+        let backend = FixtureSpacesBackend()
+        backend.fixtureHosts = Self.machineHosts()
+        let m = ViewModelTests().makeModel(backend, kv: FakeKeyvault(try fixtureOverview()),
+                                           host: FixtureHost(), account: FixtureAccount(),
+                                           agents: FixtureAgentSetup())
+        m.onboarding.finish()
+        await m.refresh()
+        await m.openNewSpace()
+        #expect(m.wizard.view.placements.first?.id == "auto")
+        #expect(m.wizard.view.placementId == "local", "This Mac stays the default")
+        m.wizard.send(.choosePlacement(on: "auto"))
+        #expect(m.wizard.view.placementId == "auto")
+        #expect(appWizardCreateArgs(plan: m.wizard.view.plan).on == "auto")
+        try assertSnapshot(NewSpaceWizardView(wizard: m.wizard, onCreate: { _ in }, onAdd: { _, _, _ in },
+                                              onCancel: {}), "new-space-auto", size: CGSize(width: 560, height: 520))
+    }
+
+    /// "My machines" in the sidebar: each machine that provides Spaces says
+    /// how busy it is in one short line.
+    @Test func mainWindowSidebarMachineLoad() async throws {
+        func machine(_ id: String, _ name: String) -> AppSpaceRow {
+            AppSpaceRow(id: "relay:\(id)", name: name, provider: "relay",
+                        spacesdVersion: "0.4.0", features: ["desktop_stream"], addedAt: "2026-09-25T08:00:00Z",
+                        os: .macos, osName: "macOS", osPrettyName: nil, image: nil, imageDigest: nil,
+                        kind: .vm, arch: "arm64", reachable: true,
+                        error: nil, host: nil, hostName: nil, power: nil, powerState: nil,
+                        cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil)
+        }
+        let backend = FixtureSpacesBackend(rows: [machine("m-mini", "Mac mini"), machine("m-studio", "Studio")])
+        backend.fixtureHosts = Self.machineHosts()
+        let m = ViewModelTests().makeModel(backend, kv: FakeKeyvault(try fixtureOverview()),
+                                           host: FixtureHost(), account: FixtureAccount(),
+                                           agents: FixtureAgentSetup())
+        m.onboarding.finish()
+        await m.refresh()
+        await m.refreshHosts()
+        await m.keyvault.refresh()
+        #expect(m.hostLoadLine("relay:m-mini") == "3 running \u{b7} 40% CPU")
+        #expect(m.hostLoadLine("relay:m-studio") == "Paused")
+        #expect(m.hostLoadLine("local:aurora") == nil)
+        m.select("relay:m-mini")
+        try assertSnapshot(Sidebar(model: m).frame(width: 260), "sidebar-machine-load",
+                           size: CGSize(width: 260, height: 520))
+    }
+
     /// The Space detail's Stream section: Desktop with the OS mark and the
     /// resolution, window rows by title with their app icons (none for
     /// xterm), a truncated long title, one panel open.
@@ -491,6 +555,17 @@ struct SnapshotTests {
 
     @Test func notchClosed() async throws {
         try await assertNotch("notch-closed") { _ in }
+    }
+
+    /// Every Space stopped: nothing on, so no tab beside the notch.
+    @Test func notchClosedNoneOn() async throws {
+        try await assertNotch("notch-closed-none-on") { n in
+            n.spaces = n.spaces.map { s in
+                var s = s
+                if s.id != "this-mac" { s.status = .suspended }
+                return s
+            }
+        }
     }
 
     @Test func notchHover() async throws {

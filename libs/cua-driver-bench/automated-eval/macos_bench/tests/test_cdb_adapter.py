@@ -10,6 +10,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent.parent
@@ -91,6 +92,12 @@ class AdapterTest(unittest.TestCase):
         self.assertIn("Electron", kill_names)
         self.assertIn("Google Chrome", kill_names)
 
+    def test_kill_policy_covers_libreoffice_launch(self) -> None:
+        descriptor = {"apps": [{"argv": ["libreoffice", "--calc"]}]}
+        with mock.patch.object(cdb_adapter, "_descriptor", return_value=descriptor):
+            names, _ = cdb_adapter.kill_policy(self.spec)
+        self.assertEqual(names, ["soffice", "soffice.bin"])
+
     def test_brief_and_substitution(self) -> None:
         task = cdb_adapter.CdbTask(self.spec, Path(self.tmp.name))
         brief = task.brief()
@@ -101,6 +108,53 @@ class AdapterTest(unittest.TestCase):
         self.assertEqual([a["id"] for a in task.apps()], ["web", "desk", "browser"])
         self.assertEqual(task.sub("${workspace_uri}"), task.workspace.as_uri())
         self.assertTrue(task.sub("${workspace_uri}").startswith("file:///"))
+
+    def test_seed_and_rendered_brief(self) -> None:
+        task = cdb_adapter.CdbTask(self.spec, Path(self.tmp.name), seed=7)
+        task.workspace = Path(self.tmp.name) / "workspace"
+        rendered = task.workspace / ".runtime/brief.md"
+        rendered.parent.mkdir(parents=True)
+        rendered.write_text("Seeded person: Mira Vale")
+        task.descriptor["semantics"]["brief"] = "${workspace}/.runtime/brief.md"
+        self.assertIn("Mira Vale", task.brief())
+        self.assertEqual(task.sub("${seed}"), "7")
+
+    def test_seed_identity_direct_and_sudo(self) -> None:
+        from unittest import mock
+        import subprocess
+
+        task = cdb_adapter.CdbTask(self.spec, Path(self.tmp.name), seed=7)
+        task.descriptor["semantics"]["reset"]["setup"].extend(["--seed", "${seed}"])
+        for sudo in ("0", "1"):
+            for reported in (None, 8, 7):
+                with self.subTest(sudo=sudo, reported=reported):
+                    data = {"passed": True, "score": 1, "detail": {"checks": {"fields": True}}}
+                    if reported is not None:
+                        data["seed"] = reported
+                    result_file = task.artifacts / "cdb-result.json"
+                    result_file.write_text(json.dumps(data))
+                    done = subprocess.CompletedProcess([], 0, json.dumps(data), "")
+                    with (
+                        mock.patch.dict(os.environ, {"CDB_EVAL_SUDO": sudo}),
+                        mock.patch.object(task, "_run", return_value=done),
+                        mock.patch.object(cdb_adapter.subprocess, "run", return_value=done),
+                    ):
+                        verdict = task.evaluate(0)
+                    self.assertEqual(verdict["passed"], reported == 7)
+                    self.assertEqual(verdict["checks"]["seed_identity"], reported == 7)
+                    self.assertEqual(verdict.get("seed"), reported)
+
+    def test_missing_electron_apps_follow_manifests(self) -> None:
+        root = Path(self.tmp.name) / "tasks"
+        expected = ["shared/syn/apps/desk", "shared/syn/apps/mail"]
+        for name in expected:
+            app = root / name
+            (app / "node_modules/electron/dist").mkdir(parents=True)
+            (app / "package.json").write_text("{}")
+        (root / "shared/syn/apps/unmanaged/node_modules/electron/dist").mkdir(parents=True)
+        self.assertEqual(cdb_adapter.missing_electron_apps(root), (expected, []))
+        (root / expected[1] / "node_modules/electron/dist").rmdir()
+        self.assertEqual(cdb_adapter.missing_electron_apps(), (expected, [expected[1]]))
 
     def test_electron_apps_get_their_own_name_and_bundle_id(self) -> None:
         import plistlib
@@ -299,6 +353,171 @@ class ArgvAndScanTest(unittest.TestCase):
         ]
         self.assertEqual(rb.evaluator_peeks(events, []), ["Bash:bench-work"])
         self.assertEqual(rb.evaluator_peeks(events, ["a.js"]), ["Read:a.js"])
+
+
+class WebWiringTest(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == "darwin", "vendor browser arm requires macOS")
+    def test_browser_selection_row_manifest_and_dry_run_prompt(self) -> None:
+        import contextlib
+        import hashlib
+        import io
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            args = rb.build_parser().parse_args(
+                [
+                    "run",
+                    "--tasks",
+                    "WEB-01",
+                    "WEB-02",
+                    "--arms",
+                    "cc-codex-cu-1007-browser",
+                    "--runs-dir",
+                    tmp,
+                    "--run-id",
+                    "web-test",
+                    "--ledger",
+                    str(Path(tmp) / "ledger.jsonl"),
+                    "--phase1-runs",
+                    "1",
+                    "--phase2-runs",
+                    "0",
+                ]
+            )
+            with (
+                mock.patch.object(rb, "claude_version", return_value="test"),
+                mock.patch.object(rb, "sw_vers", return_value={}),
+                mock.patch.object(rb, "git_commit", return_value="test"),
+            ):
+                ctx = rb.make_ctx(args)
+            self.assertEqual(ctx.task_ids, ["WEB-01", "WEB-02"])
+            entries = rb.core.flat_entries(ctx.blocks())
+            self.assertEqual({entry["task"] for entry in entries}, {"WEB-01", "WEB-02"})
+            arm = ctx.arm_names[0]
+            ctx.mcp[arm] = (Path(tmp) / "mcp.json", "browser")
+            with (
+                mock.patch.object(rb.pilot, "hid_idle_seconds", return_value=1000),
+                mock.patch.object(rb.cdb_adapter, "CdbTask"),
+                mock.patch.object(
+                    rb, "kill_bench_apps", side_effect=[RuntimeError("stop before GUI"), None]
+                ),
+            ):
+                row = rb.run_attempt(ctx, entries[0], 1)
+            rb.write_manifest(ctx, entries)
+            manifest = json.loads((ctx.run_dir / "manifest.json").read_text())
+            prompt = ca.system_prompt_for(arm, browser=True)
+            digest = hashlib.sha256(prompt.encode()).hexdigest()
+            self.assertEqual(row["system_prompt_sha256"], digest)
+            self.assertEqual(manifest["system_prompt_sha256_by_arm_browser"][arm], digest)
+            self.assertIn(prompt, manifest["example_argv"][arm])
+            output = io.StringIO()
+            with (
+                mock.patch.object(rb, "make_ctx", return_value=ctx),
+                mock.patch.object(ca, "mcp_config_for", return_value=ctx.mcp[arm]),
+                contextlib.redirect_stdout(output),
+            ):
+                self.assertEqual(rb.cmd_dry_run(args), 0)
+            self.assertIn(
+                "Do not use the internet; the task's localhost site is allowed.", output.getvalue()
+            )
+
+    def test_browser_policy_and_state_peek(self) -> None:
+        browser = ca.system_prompt_for("cc-cua-driver", browser=True)
+        plain = ca.system_prompt_for("cc-cua-driver")
+        sentence = "Do not use the internet; the task's localhost site is allowed."
+        self.assertIn(sentence, browser)
+        self.assertEqual(browser.replace(sentence, "Do not use the network."), plain)
+        events = [
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "name": "Read",
+                            "input": {"url": "http://127.0.0.1:4191/__state", "path": "oracle"},
+                        }
+                    ]
+                },
+            }
+        ]
+        self.assertEqual(rb.evaluator_peeks(events, []), ["Read:oracle", "Read:/__state"])
+
+    @unittest.skipUnless(sys.platform == "darwin", "WEB task pack ships macOS descriptors only")
+    def test_setup_brief_and_profile_reset(self) -> None:
+        import subprocess
+
+        tasks = rb.load_tasks(HERE / "probes")
+        with tempfile.TemporaryDirectory() as tmp:
+            for tid in ("WEB-01", "WEB-02"):
+                task = cdb_adapter.CdbTask(rb.task_spec(tasks[tid]), Path(tmp), seed=0)
+                task.workspace = Path(tmp) / tid
+                setup = [task.sub(arg) for arg in task.descriptor["semantics"]["reset"]["setup"]]
+                subprocess.run(setup, cwd=task.bundle, check=True, timeout=15)
+                self.assertIn("Mira Vale", task.brief())
+                self.assertNotIn("{{values}}", task.brief())
+                stale = task.workspace / ".runtime/browser/stale"
+                stale.write_text("old cookie")
+                subprocess.run(setup, cwd=task.bundle, check=True, timeout=15)
+                self.assertFalse(stale.exists())
+                task.seed = 1
+                subprocess.run(
+                    [task.sub(arg) for arg in task.descriptor["semantics"]["reset"]["setup"]],
+                    cwd=task.bundle,
+                    check=True,
+                    timeout=15,
+                )
+                self.assertIn("Oren Brook", task.brief())
+
+    def test_selectors_pins_ports_and_ci_skip(self) -> None:
+        import re
+        import subprocess
+
+        tasks = rb.load_tasks(HERE / "probes")
+        pins = json.loads((HERE / "pins.json").read_text())["cdb_pack"]["tree_sha256"]
+        self.assertEqual(rb.WEB_TASKS, ("WEB-01", "WEB-02"))
+        for tid in rb.WEB_TASKS:
+            spec = rb.task_spec(tasks[tid])
+            self.assertTrue(spec["browser"])
+            self.assertFalse(spec["coding_tools"])
+            self.assertEqual(spec["category"], "web_forms")
+            self.assertIn(spec["pack_task"], pins)
+            self.assertNotIn(tid, rb.v2.V2_TASKS)
+            self.assertFalse(rb.default_task(tasks, tid))
+            descriptor = json.loads(
+                (
+                    cdb_adapter.pack_tasks_root() / spec["pack_task"] / "platform/launch.macos.json"
+                ).read_text()
+            )
+            self.assertIn("timeout_seconds", descriptor["apps"][0]["ready"])
+            chrome = descriptor["apps"][1]["command"]
+            self.assertIn("Google Chrome", chrome[0])
+            self.assertIn("--user-data-dir=${workspace}/.runtime/browser", chrome)
+            self.assertTrue(chrome[-1].startswith("http://127.0.0.1:"))
+        self.assertTrue(rb.task_spec(tasks["CDB-G04"])["browser"])
+        ports = {}
+        for descriptor in cdb_adapter.pack_tasks_root().glob("shared/*/platform/launch.macos.json"):
+            for port in set(re.findall(r"127\.0\.0\.1:(\d+)", descriptor.read_text())):
+                self.assertNotIn(port, ports, (port, descriptor, ports))
+                ports[port] = descriptor
+        workflow = HERE.parents[3] / ".github/workflows/ci-cua-driver-bench.yml"
+        text = (
+            workflow.read_text()
+            .split("- name: Evaluator, reset and manifest tests", 1)[1]
+            .split("- name:", 1)[0]
+        )
+        guard = next(line.strip() for line in text.splitlines() if "task.cuabench.json" in line)
+        done = subprocess.run(
+            ["bash", "-c", "for task in */; do " + guard + '; echo "${task%/}"; done'],
+            cwd=cdb_adapter.pack_tasks_root() / "shared",
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        )
+        self.assertNotIn("web-common", done.stdout.splitlines())
+        self.assertIn("web-01", done.stdout.splitlines())
+        self.assertIn("web-02", done.stdout.splitlines())
 
 
 class SideDoorTest(unittest.TestCase):

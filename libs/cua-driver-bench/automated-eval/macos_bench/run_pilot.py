@@ -633,6 +633,7 @@ def run_trial(
         "seed": seed,
         "order_index": order_index,
         "started_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "codex_auth": arms.codex_auth(),
         "model": args.model,
         "reasoning_effort": args.effort,
     }
@@ -715,6 +716,13 @@ def run_trial(
         status = "infra_error"
         note = f"{type(error).__name__}: {error}"
     finally:
+        codex_home = trial_dir / "home" / ".codex"
+        if codex_home.is_dir():
+            try:
+                arms.unlink_chatgpt_auth(codex_home)
+            except RuntimeError as error:
+                status = "infra_error"
+                note = str(error)
         sentinel.stop()
         for proc in procs:
             kill_group(proc.pid)
@@ -799,6 +807,7 @@ def environment_manifest(args: argparse.Namespace) -> dict[str, Any]:
             "CFBundleShortVersionString",
         ),
         "bench_repo_commit": run("git", "-C", str(REPO), "rev-parse", "HEAD"),
+        "codex_auth": arms.codex_auth(),
         "model": args.model,
         "reasoning_effort": args.effort,
         "price_assumed_usd_per_mtok": PRICE,

@@ -216,7 +216,8 @@ struct Sidebar: View {
 
     /// A Space row; also a drop target for a dragged real window.
     private func spaceRow(_ row: AppSidebarRow) -> some View {
-        SpaceRowView(row: row, targeted: model.dropTargets.targetedId == row.id,
+        SpaceRowView(row: row, subtitle: model.hostLoadLine(row.id),
+                     targeted: model.dropTargets.targetedId == row.id,
                      signedIn: signedIn.contains(row.id),
                      onSignedIn: { model.showAccess(spaceId: row.id) }) { on in
             if let space = model.spaces.first(where: { $0.id == row.id }) {
@@ -393,6 +394,9 @@ struct SignInToastView: View {
 /// selected row, and a spinner in its place while it runs.
 struct SpaceRowView: View {
     let row: AppSidebarRow
+    /// One short secondary line under the name: how busy one of your
+    /// machines is ("3 running · 40% CPU", "Paused").
+    var subtitle: String?
     var targeted = false
     /// A Keyvault sign-in is live in it: "Signed in", which opens the
     /// Keyvault's Access page.
@@ -407,7 +411,18 @@ struct SpaceRowView: View {
             OsIconImage(id: row.osIcon, size: 13)
                 .foregroundStyle(.secondary)
                 .frame(width: 16)
-            Text(row.name).lineLimit(1)
+            if let subtitle {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(row.name).lineLimit(1)
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .accessibilityIdentifier("machine-load")
+                }
+            } else {
+                Text(row.name).lineLimit(1)
+            }
             if let place = row.place {
                 // A Space in your cloud: where it runs.
                 Text(place)

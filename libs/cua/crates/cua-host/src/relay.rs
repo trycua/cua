@@ -86,9 +86,10 @@ pub struct NoAccount;
 #[async_trait::async_trait]
 impl AccountTokens for NoAccount {
     async fn access_token(&self) -> Result<String> {
-        Err(Error::Unauthenticated(
-            "not signed in to cua.ai (run `cua auth login` or sign in from the app)".into(),
-        ))
+        Err(Error::Unauthenticated(format!(
+            "not signed in to cua.ai (run `{} auth login` or sign in from the app)",
+            crate::cli()
+        )))
     }
 }
 
@@ -239,6 +240,19 @@ pub struct MachinePatch {
     /// empty value removes the key). Older relays ignore it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub meta: Option<std::collections::BTreeMap<String, String>>,
+}
+
+/// What opening a link once returned (see [`RelayClient::open_link`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LinkProbe {
+    /// HTTP status of the final response.
+    pub status: u16,
+    /// Its content type.
+    pub content_type: String,
+    /// Body bytes read (capped).
+    pub bytes: usize,
+    /// `Location`, when the final response was a redirect.
+    pub location: Option<String>,
 }
 
 /// `GET /v1/info`.
@@ -501,11 +515,15 @@ impl RelayClient {
     /// `wss://…` is accepted and mapped to `https://…`).
     pub fn new(base: &str) -> Result<Self> {
         let base = normalize_base(base)?;
-        let http = reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(10))
-            .timeout(Duration::from_secs(30))
-            .build()
-            .map_err(|e| Error::Relay(e.to_string()))?;
+        // One client per process (cua_auth::http): a client per call read
+        // the OS roots and opened a new TLS connection for every relay call
+        // (F53). Its pool keeps connections to the relay alive between calls.
+        let http = cua_auth::http::shared(cua_auth::http::Shape {
+            connect_timeout: Duration::from_secs(10),
+            timeout: Duration::from_secs(30),
+            user_agent: None,
+        })
+        .map_err(|e| Error::Relay(e.to_string()))?;
         Ok(Self {
             base,
             http,
@@ -531,6 +549,72 @@ impl RelayClient {
 
     pub(crate) fn url(&self, path: &str) -> String {
         format!("{}{path}", self.base)
+    }
+
+    /// Opens `url` once the way a signed-in device would: GET with the
+    /// account token (when given) and this client's device session, and
+    /// redirects followed only within the same host (the credentials never
+    /// leave it). Reads at most `max_body` bytes. Used to confirm a shared
+    /// link loads before it is handed to anyone.
+    pub async fn open_link(
+        &self,
+        url: &str,
+        bearer: Option<&str>,
+        max_body: usize,
+    ) -> Result<LinkProbe> {
+        let start =
+            reqwest::Url::parse(url).map_err(|e| Error::InvalidArgument(format!("{url}: {e}")))?;
+        let host = start.host_str().map(str::to_owned);
+        let http = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(20))
+            .redirect(reqwest::redirect::Policy::custom(move |attempt| {
+                if attempt.previous().len() >= 5 {
+                    attempt.error("too many redirects")
+                } else if attempt.url().host_str().map(str::to_owned) == host {
+                    attempt.follow()
+                } else {
+                    attempt.stop()
+                }
+            }))
+            .build()
+            .map_err(|e| Error::Relay(e.to_string()))?;
+        let mut req = http.get(start);
+        if let Some(b) = bearer {
+            req = req.bearer_auth(b);
+            if let Some(session) = &self.device_session {
+                req = req.header(DEVICE_SESSION_HEADER, session);
+            }
+        }
+        let mut resp = req
+            .send()
+            .await
+            .map_err(|e| Error::Relay(format!("{url}: {e}")))?;
+        let status = resp.status().as_u16();
+        let content_type = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        let location = resp
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
+        let mut bytes = 0usize;
+        while let Ok(Some(chunk)) = resp.chunk().await {
+            bytes += chunk.len();
+            if bytes >= max_body {
+                break;
+            }
+        }
+        Ok(LinkProbe {
+            status,
+            content_type,
+            bytes,
+            location,
+        })
     }
 
     pub(crate) async fn send<T: serde::de::DeserializeOwned>(

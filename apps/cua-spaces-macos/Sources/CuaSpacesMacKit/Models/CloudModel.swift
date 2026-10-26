@@ -6,12 +6,16 @@ import CuaSpacesFFI
 import Foundation
 import Observation
 
-/// The user's own clouds (AWS, Google Cloud, Modal): what `cloud_status`
+/// The user's own clouds (AWS, Google Cloud, Hetzner, Modal): what `cloud_status`
 /// says, the "Your cloud" tile's connected clouds, and the "Connect a
 /// cloud" sheet. The sheet's rows, words and requests are the app core's
 /// (`appCloudConnect*`, the Tauri app draws the same); this runs the
 /// daemon's `cloud_*` tools it asks for. Credentials never pass through
-/// here: each cloud uses its own CLI sign-in.
+/// here: each cloud uses its own CLI sign-in. The one exception is the
+/// Hetzner API token: it lives only in `token` below (never in `state`,
+/// never persisted or logged), goes out on the `cloud_test` /
+/// `cloud_connect` call the core asks it to, and is cleared when Connect
+/// finishes or the sheet closes.
 /// Runs the daemon's `cloud_*` tools (the live backend; fixtures answer
 /// with synthetic clouds).
 public protocol CloudToolRunning: AnyObject, Sendable {
@@ -44,10 +48,37 @@ extension FixtureSpacesBackend: CloudToolRunning {
                 var row = Self.fixtureAws(connected: true)
                 row["checks"] = [["name": "credentials", "ok": true, "detail": "account 1"]]
                 return row
+            case "cloud_hosts":
+                return fixtureElastic ? Self.fixtureElasticHosts : []
+            case "cloud_budget":
+                return ["policy": ["autoscale": true, "max_usd_per_hour": 2.0, "monthly_usd": 300.0,
+                                   "max_new_hosts": 8, "warm": true, "interactive_slo_secs": 30, "routed": true],
+                        "month_usd": fixtureElastic ? 12.5 : 0.0,
+                        "running_usd_per_hour": fixtureElastic ? 0.1368 : 0.0, "hosts": fixtureElastic ? 2 : 0]
             default:
                 throw FixtureError(message: "unknown tool \(tool)")
             }
         }
+    }
+
+    /// Rows as `cloud_hosts` answers (`CloudHost`).
+    static let fixtureElasticHosts: [[String: Any]] = [
+        ["name": "hetzner-1", "provider": "hetzner", "type_name": "cax41", "region": "fsn1", "id": "42",
+         "machine": "m-hetzner-1", "state": "joined", "started": 1_700_000_000, "expires": 1_700_086_400,
+         "usd_per_hour": 0.0684, "billing_step_secs": 3600, "billing_min_secs": 3600, "pinned": false],
+        ["name": "hetzner-2", "provider": "hetzner", "type_name": "cax41", "region": "fsn1", "id": "43",
+         "machine": "", "state": "booting", "started": 1_700_000_100, "expires": 1_700_086_500,
+         "usd_per_hour": 0.0684, "billing_step_secs": 3600, "billing_min_secs": 3600, "pinned": false],
+    ]
+
+    /// A ledger as the core writes it (`LedgerLine`, one JSON per line), with
+    /// the last event a few minutes ago.
+    nonisolated static func fixtureLedger(now: Int = Int(Date().timeIntervalSince1970)) -> String {
+        [(now - 5400, "add", "hetzner-1"), (now - 5300, "busy", "hetzner-1"),
+         (now - 1800, "idle", "hetzner-1"), (now - 240, "add", "hetzner-2")]
+            .map { at, event, host in
+                #"{"at":\#(at),"event":"\#(event)","host":"\#(host)","provider":"hetzner","type_name":"cax41","region":"fsn1","usd_per_hour":0.0684,"billing_step_secs":3600,"billing_min_secs":3600,"reason":""}"#
+            }.joined(separator: "\n")
     }
 
     static func fixtureAws(connected: Bool) -> [String: Any] {
@@ -67,8 +98,13 @@ public final class CloudModel {
     /// `cloud_status` as it came (nil: not read, or no answer).
     var status: Any?
     public private(set) var state = appCloudConnectInitial()
-    /// The sheet shows.
-    public var showing = false
+    /// The sheet shows. Closing it drops the typed token.
+    public var showing = false {
+        didSet { if !showing { token = "" } }
+    }
+    /// The Hetzner API token as typed. Memory only: the core hears just
+    /// whether it is empty (`token_entered`), never its text.
+    private(set) var token = ""
     /// Connected: the wizard reads the clouds again.
     public var onConnected: () -> Void = {}
 
@@ -112,8 +148,18 @@ public final class CloudModel {
     /// How long `refresh` waits for `cloud_status`.
     static let refreshSeconds: Double = 10
 
+    /// The token field changed. The core is told only when it goes between
+    /// empty and not empty.
+    public func setToken(_ text: String) {
+        let was = !token.isEmpty
+        token = text
+        guard was != !text.isEmpty else { return }
+        state = appCloudConnectReduce(input: input, state: state, action: .setTokenEntered(entered: !text.isEmpty))
+    }
+
     /// Opens the sheet on a fresh state.
     public func open() {
+        token = ""
         state = appCloudConnectInitial()
         showing = true
         Task { await refresh() }
@@ -141,7 +187,7 @@ public final class CloudModel {
         do {
             switch request {
             case let .test(target):
-                let r = try await tools.cloudTool("cloud_test", Self.args(target)) as? [String: Any] ?? [:]
+                let r = try await tools.cloudTool("cloud_test", Self.args(target, token: token)) as? [String: Any] ?? [:]
                 let checks = (r["checks"] as? [[String: Any]] ?? []).map {
                     AppCloudCheckInput(name: $0["name"] as? String ?? "", ok: $0["ok"] as? Bool ?? false,
                                        detail: $0["detail"] as? String ?? "")
@@ -149,9 +195,10 @@ public final class CloudModel {
                 state = appCloudConnectReduce(input: before, state: state, action: .tested(
                     ok: r["ok"] as? Bool ?? false, account: r["account"] as? String ?? "", checks: checks))
             case let .connect(target, makeDefault):
-                var args = Self.args(target)
+                var args = Self.args(target, token: token)
                 args["make_default"] = makeDefault
                 let r = try await tools.cloudTool("cloud_connect", args) as? [String: Any] ?? [:]
+                token = ""
                 state = appCloudConnectReduce(input: before, state: state, action: .connected(
                     label: r["label"] as? String ?? target.provider))
                 await refresh()
@@ -159,17 +206,19 @@ public final class CloudModel {
                 onConnected()
             }
         } catch {
+            if case .connect = request { token = "" }
             state = appCloudConnectReduce(input: before, state: state,
                                           action: .failed(error: LiveSpacesBackend.words(error)))
         }
     }
 
-    static func args(_ t: AppCloudTargetArgs) -> [String: Any] {
+    static func args(_ t: AppCloudTargetArgs, token: String = "") -> [String: Any] {
         var a: [String: Any] = ["provider": t.provider]
         if let v = t.profile { a["profile"] = v }
         if let v = t.region { a["region"] = v }
         if let v = t.project { a["project"] = v }
         if let v = t.environment { a["environment"] = v }
+        if t.usesToken, !token.isEmpty { a["token"] = token }
         return a
     }
 }

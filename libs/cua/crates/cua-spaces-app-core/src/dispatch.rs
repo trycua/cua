@@ -15,10 +15,10 @@ use crate::spaces::{self, creating, roster, sidebar, stream};
 use crate::teleport::{drag, flow, grid, transfer, windows};
 use crate::{
     CoreError, about, agent_keys, agents, checklist, cloud_connect, devices, diagnostics,
-    drive_mount_preview, drive_page, drive_settings, driver_preview, experiments, host, login_item,
-    machines, notch, notifications, nudges, onboarding, onboarding_preview, palette, paths,
-    persistent, presence, relay_usage, resources, settings, share, sign_in, telemetry, upsell,
-    window, wizard,
+    drive_mount_preview, drive_page, drive_settings, driver_preview, experiments, host,
+    local_network, login_item, machines, notch, notifications, nudges, onboarding,
+    onboarding_preview, palette, paths, persistent, presence, relay_usage, resources, settings,
+    share, sign_in, telemetry, upsell, window, wizard,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -45,6 +45,8 @@ pub const METHODS: &[&str] = &[
     "roster.initial",
     "roster.reduce",
     "creates.reduce",
+    "localNetwork.applies",
+    "localNetwork.step",
     "creates.compose",
     "creates.isPending",
     "creates.settle",
@@ -65,6 +67,8 @@ pub const METHODS: &[&str] = &[
     "window.menuBar",
     "window.menu",
     "spaces.openableCount",
+    "spaces.onCount",
+    "spaces.onStatusLine",
     "wizard.initial",
     "wizard.reduce",
     "wizard.view",
@@ -83,6 +87,7 @@ pub const METHODS: &[&str] = &[
     "wizard.validateImageRef",
     "wizard.creatingText",
     "wizard.createFailedText",
+    "wizard.setExternalRuntimes",
     "windows.filterWindows",
     "windows.appsFromWindows",
     "windows.teleportButtonEnabled",
@@ -308,10 +313,13 @@ pub const METHODS: &[&str] = &[
     "resources.warning",
     "upsell.prompt",
     "upsell.allows",
+    "upsell.card",
     "firstRun.view",
     "firstRun.todos",
+    "firstRun.permissions",
     "firstRun.agentUsed",
     "firstRun.leadAgent",
+    "firstRun.cli",
     "telemetry.upsell",
     "nudge.secondAgent",
     "nudge.riskyAction",
@@ -379,6 +387,12 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         "spaces.statusLine" => out(spaces::status_line(a.get("count")?)),
         "roster.initial" => out(roster::initial(&a.get::<Vec<Space>>("spaces")?)),
         "roster.reduce" => out(roster::reduce(&a.get("state")?, &a.get("action")?)),
+        "localNetwork.applies" => out(local_network::applies(
+            a.get("provider")?,
+            a.get("os")?,
+            a.get("hostIsMac")?,
+        )),
+        "localNetwork.step" => out(local_network::step(&a.get("input")?)),
         "creates.reduce" => out(creating::reduce(
             &a.get::<Option<creating::CreatesState>>("state")?
                 .unwrap_or_default(),
@@ -470,6 +484,8 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         )),
         "window.menu" => out(window::menu(&a.get::<window::MenuInput>("input")?)),
         "spaces.openableCount" => out(spaces::openable_count(&a.get::<Vec<Space>>("spaces")?)),
+        "spaces.onCount" => out(spaces::on_count(&a.get::<Vec<Space>>("spaces")?)),
+        "spaces.onStatusLine" => out(spaces::on_status_line(a.get("count")?)),
         "window.menuBar" => out(window::menu_bar_with_keyvault(
             a.get("spaces")?,
             a.get::<Option<String>>("keyvault")?.as_deref(),
@@ -536,8 +552,21 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             ))
         }
         "upsell.allows" => out(upsell::allows(&a.get("state")?)),
+        "upsell.card" => {
+            let app = a
+                .get::<Option<String>>("accountApp")?
+                .filter(|u| u.starts_with("https://"))
+                .unwrap_or_else(cua_home::env::account_app_url);
+            out(upsell::card(
+                &a.get::<String>("reason")?,
+                &a.get("usage")?,
+                &app,
+            ))
+        }
         "firstRun.view" => out(crate::first_run::view(&a.get("input")?)),
+        "firstRun.cli" => out(crate::first_run::cli_view(&a.get("input")?)),
         "firstRun.todos" => out(crate::first_run::todos(&a.get("input")?)),
+        "firstRun.permissions" => out(crate::first_run::permissions_view(&a.get("input")?)),
         "firstRun.agentUsed" => out(crate::first_run::agent_used(
             &a.get::<Vec<crate::first_run::AccessLine>>("lines")?,
             a.get::<u64>("sinceMs")?,
@@ -583,6 +612,11 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             a.get("provider")?,
             a.get::<Option<String>>("hostName")?.as_deref(),
         )),
+        "wizard.setExternalRuntimes" => {
+            let list = wizard::external_runtimes_from_doctor(&a.get::<String>("reportJson")?);
+            wizard::set_external_runtimes(list.clone());
+            out(list)
+        }
         "windows.filterWindows" => out(windows::filter_windows(
             &a.get::<Vec<_>>("windows")?,
             &a.get::<String>("query")?,

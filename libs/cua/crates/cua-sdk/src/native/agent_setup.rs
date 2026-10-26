@@ -49,6 +49,13 @@ pub struct AgentInfo {
     pub error: Option<String>,
     /// What could not be verified from the agent's official docs.
     pub unverified: Option<String>,
+    /// The account the agent signs in with on its own (`ChatGPT` for
+    /// Codex), when cua can see that sign-in.
+    #[uniffi(default = None)]
+    pub sign_in: Option<String>,
+    /// That sign-in is on this computer.
+    #[uniffi(default = false)]
+    pub signed_in: bool,
 }
 
 /// A skill bundled with the SDK.
@@ -145,6 +152,8 @@ impl From<cua_agent_setup::AgentStatus> for AgentInfo {
             skills_outdated: a.skills_outdated,
             error: a.error,
             unverified: a.unverified,
+            sign_in: a.sign_in,
+            signed_in: a.signed_in,
         }
     }
 }
@@ -195,8 +204,10 @@ impl AgentSetup {
     fn server(&self, s: Option<AgentMcpServer>) -> cua_agent_setup::McpServer {
         match s {
             Some(s) => cua_agent_setup::McpServer {
+                // No name: the channel's (`cua`, or `cua-local` for the
+                // Local app), so the Local app never writes Stable's entry.
                 name: if s.name.trim().is_empty() {
-                    cua_agent_setup::MCP_SERVER_NAME.into()
+                    self.inner.env().channel.mcp_server_name().into()
                 } else {
                     s.name
                 },
@@ -243,6 +254,13 @@ impl AgentSetup {
         self.detect()
     }
 
+    /// Starts `agent`'s own sign-in on this computer (`codex login`: the
+    /// browser opens). Returns once it is running; `detect` reports
+    /// `signed_in` when it is done. cua never reads or copies the sign-in.
+    pub fn sign_in(&self, agent: String) -> Result<()> {
+        Ok(self.inner.sign_in(&agent)?)
+    }
+
     /// The skills bundled with this SDK.
     pub fn skills(&self) -> Vec<BundledSkill> {
         self.inner
@@ -275,7 +293,8 @@ impl AgentSetup {
     }
 
     /// Configures the MCP server (default: `cua mcp`, `cua` resolved on
-    /// PATH) for `agents`.
+    /// PATH; `cua-local mcp` named `cua-local` for the Local app) for
+    /// `agents`. A server without a name gets the channel's.
     pub async fn configure_mcp(
         &self,
         agents: Vec<String>,
@@ -384,9 +403,19 @@ mod tests {
         assert!(st.cua_configured && st.cua_managed);
         let out = s.update(Some(server)).await.unwrap();
         assert!(out.iter().all(|o| o.change == AgentSetupChange::Unchanged));
+        // Cua Spaces' entries go; the cua-driver skill (one of the bundled
+        // ones) is Cua Driver's and stays.
         let out = s.remove(vec!["codex".into()], true, true).await.unwrap();
         assert!(
-            out.iter().all(|o| o.change == AgentSetupChange::Removed),
+            out.iter()
+                .filter(|o| o.item != "cua-driver")
+                .all(|o| o.change == AgentSetupChange::Removed),
+            "{out:?}"
+        );
+        assert!(
+            out.iter()
+                .filter(|o| o.item == "cua-driver")
+                .all(|o| o.change == AgentSetupChange::Skipped),
             "{out:?}"
         );
         assert!(
@@ -399,6 +428,63 @@ mod tests {
         assert!(!s.onboarding_declined());
         s.set_onboarding_declined(true).unwrap();
         assert!(s.onboarding_declined());
+    }
+
+    #[tokio::test]
+    async fn sdk_local_agent_setup_registers_cua_local_beside_stables_cua() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(d.path().join(".codex")).unwrap();
+        let env = cua_agent_setup::HostEnv::isolated(d.path());
+        let stable = AgentSetup::with_env(env.clone());
+        let local = AgentSetup::with_env(env.with_channel(cua_agent_setup::CuaChannel::Local));
+        let server = |command: &str| AgentMcpServer {
+            // No name: each channel registers its own.
+            name: String::new(),
+            command: command.into(),
+            args: vec!["mcp".into()],
+            env: HashMap::new(),
+        };
+        let out = stable
+            .configure_mcp(
+                vec!["codex".into()],
+                Some(server("/Applications/Cua Spaces.app/Contents/MacOS/cua")),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            (out[0].item.as_str(), out[0].change),
+            ("cua", AgentSetupChange::Created)
+        );
+        let local_cua = "/Users/a/Applications/Cua Spaces Local.app/Contents/MacOS/cua";
+        let out = local
+            .configure_mcp(vec!["codex".into()], Some(server(local_cua)))
+            .await
+            .unwrap();
+        assert_eq!(
+            (out[0].item.as_str(), out[0].change),
+            ("cua-local", AgentSetupChange::Created)
+        );
+        let toml = std::fs::read_to_string(d.path().join(".codex/config.toml")).unwrap();
+        assert!(toml.contains("[mcp_servers.cua]"), "{toml}");
+        assert!(toml.contains("[mcp_servers.cua-local]"), "{toml}");
+        assert!(toml.contains("/Applications/Cua Spaces.app/Contents/MacOS/cua"));
+        assert!(toml.contains(local_cua));
+        // Each reads its own entry as its own.
+        let st = |s: &Arc<AgentSetup>| s.status().into_iter().find(|a| a.id == "codex").unwrap();
+        assert!(st(&stable).cua_configured && st(&local).cua_configured);
+        // Local's skills are `-local` copies beside Stable's.
+        let skills: Vec<String> = local.skills().into_iter().map(|s| s.name).collect();
+        assert!(skills.iter().all(|n| n.ends_with("-local")), "{skills:?}");
+        local
+            .install_skills(vec!["codex".into()], vec![], false)
+            .await
+            .unwrap();
+        assert!(
+            d.path()
+                .join(".agents/skills/cua-spaces-local/SKILL.md")
+                .is_file()
+        );
+        assert!(!d.path().join(".agents/skills/cua-spaces").exists());
     }
 
     #[tokio::test]

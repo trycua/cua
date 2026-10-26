@@ -87,7 +87,7 @@ describe("the Linux install tree", () => {
     dirs.push(root);
     const native = path.join(root, "resources", "native");
     mkdirSync(native, { recursive: true });
-    const files = { "cua-spaces": 0o775, "resources.pak": 0o664, "resources/native/cua": 0o775, "resources/native/libcua_spaces_ffi.so": 0o664, "resources/native/cua_node_runtime.node": 0o664 };
+    const files = { "cua-spaces": 0o775, "resources.pak": 0o664, "resources/native/cua": 0o775, "resources/native/libcua_spaces_ffi.so": 0o664, "resources/native/cua_node_runtime.node": 0o664, "resources/native/cua-spacesd-linux-x86_64": 0o775 };
     for (const [f, m] of Object.entries(files)) {
       writeFileSync(path.join(root, f), "x");
       chmodSync(path.join(root, f), m);
@@ -126,9 +126,20 @@ describe("the Linux install tree", () => {
 
   it("is fixed by afterPack before the deb and the AppImage are made", async () => {
     const root = groupWritableApp();
-    await config.afterPack({ electronPlatformName: "linux", appOutDir: root, packager: { appInfo: { productFilename: "Cua Spaces" } } });
+    await config.afterPack({ electronPlatformName: "linux", arch: 1, appOutDir: root, packager: { appInfo: { productFilename: "Cua Spaces" } } });
     expect(mode(path.join(root, "resources/native"))).toBe(0o755);
     expect(mode(path.join(root, "resources/native/cua"))).toBe(0o755);
+    expect(mode(path.join(root, "resources/native/cua-spacesd-linux-x86_64"))).toBe(0o755);
+  });
+
+  it("refuses a Linux package without the static cua-spacesd next to cua", async () => {
+    const root = groupWritableApp();
+    rmSync(path.join(root, "resources/native/cua-spacesd-linux-x86_64"));
+    const pack = { electronPlatformName: "linux", appOutDir: root, packager: { appInfo: { productFilename: "Cua Spaces" } } };
+    await expect(config.afterPack({ ...pack, arch: 1 })).rejects.toThrow(/cua-spacesd-linux-x86_64/);
+    // arm64 wants its own architecture's binary.
+    writeFileSync(path.join(root, "resources/native/cua-spacesd-linux-x86_64"), "x");
+    await expect(config.afterPack({ ...pack, arch: 3 })).rejects.toThrow(/cua-spacesd-linux-aarch64/);
   });
 
   it("describes the app in the desktop entry and the package, not the shell it is built with", () => {

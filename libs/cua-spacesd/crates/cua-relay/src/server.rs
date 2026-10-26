@@ -46,6 +46,7 @@ use crate::assertion::{self, AssertionClaims, RelayKey, ASSERTION_HEADER};
 use crate::auth_log::{self, Reason, Route};
 use crate::devices::{DevicePolicy, DeviceStore, DEVICE_SESSION_HEADER};
 use crate::directory::{Directory, MACHINE_TOKEN_PREFIX};
+use crate::meter::{Meter, MeterStream};
 use crate::mux::{self, Counted, Counters, MuxHandle};
 use crate::oidc::{Identity, OidcValidator};
 use crate::ws::WsIo;
@@ -57,6 +58,11 @@ pub const RELAY_AUTHORIZATION_HEADER: &str = "x-cua-relay-authorization";
 /// How long a client stays in a machine's presence list after its last
 /// stream closed.
 const PRESENCE_LINGER: Duration = Duration::from_secs(30);
+
+/// Default for [`RelayConfig::audit_retention_days`].
+pub const DEFAULT_AUDIT_RETENTION_DAYS: u64 = 400;
+/// Default for [`RelayConfig::mesh_endpoint_retention_days`].
+pub const DEFAULT_MESH_ENDPOINT_RETENTION_DAYS: u64 = 7;
 
 /// Relay configuration.
 #[derive(Debug, Clone)]
@@ -114,11 +120,44 @@ pub struct RelayConfig {
     /// yamux's per-machine connection receive window: the most one
     /// machine's connection buffers across all of its streams (S7).
     pub machine_window_bytes: usize,
+    /// The mesh coordinator and encrypted relay (see [`crate::mesh`]).
+    pub mesh: crate::mesh::MeshConfig,
+    /// Where the mesh registry persists (default: next to the state file,
+    /// `<state>.mesh.json`; in memory without one).
+    pub mesh_file: Option<PathBuf>,
+    /// Free-space reserve and per-account quota for pool writes (see
+    /// [`crate::storage`]).
+    pub storage_limits: crate::storage::StorageLimits,
+    /// Allowance metering (account mode). Its usage file defaults to
+    /// `<state>.usage.json` next to the state file.
+    #[cfg(feature = "hosted")]
+    pub meter: crate::meter::MeterConfig,
+    /// Where team access comes from (`teams.json`, shadow, organizations)
+    /// and how the Spaces API is reached.
+    #[cfg(feature = "hosted")]
+    pub org_access: crate::org_access::OrgAccessConfig,
     /// For this long after start, a request for a known machine that is
     /// not connected waits for it to reconnect instead of failing: the
-    /// machines of the relay this one took over from are on their way.
-    /// Zero: fail at once.
+    /// machines of the relay this one took over from are on their way
+    /// (CUA-1774). Zero: fail at once.
     pub reconnect_grace: Duration,
+    /// The OIDC web client behind the browser sign-in of `cua share`
+    /// links (see [`crate::share_web`]). `None`: no browser sign-in.
+    pub share_web: Option<crate::share_web::ShareWebConfig>,
+    /// Rate limits for anonymous requests to public share links.
+    pub share_limits: crate::share_web::ShareLimits,
+    /// Key file of the analytics ids and log tags ([`crate::ident`]).
+    /// `None`: next to the state file, or in memory without one.
+    pub analytics_key_file: Option<PathBuf>,
+    /// Audit entries older than this many days are dropped (0: only the
+    /// per-account count limit applies).
+    pub audit_retention_days: u64,
+    /// A mesh node offline for more than this many days loses its stored
+    /// endpoints (its key registration stays). 0: never.
+    pub mesh_endpoint_retention_days: u64,
+    /// Reverse proxies whose `X-Forwarded-For` is believed. Empty: never,
+    /// the socket peer is the client address.
+    pub trusted_proxies: crate::proxies::TrustedProxies,
 }
 
 impl Default for RelayConfig {
@@ -151,7 +190,20 @@ impl Default for RelayConfig {
             max_global_streams: 4096,
             machine_max_streams: crate::mux::MAX_STREAMS,
             machine_window_bytes: crate::mux::DEFAULT_WINDOW_BYTES,
+            mesh: crate::mesh::MeshConfig::default(),
+            mesh_file: None,
+            storage_limits: crate::storage::StorageLimits::default(),
+            #[cfg(feature = "hosted")]
+            meter: crate::meter::MeterConfig::default(),
+            #[cfg(feature = "hosted")]
+            org_access: crate::org_access::OrgAccessConfig::default(),
             reconnect_grace: Duration::ZERO,
+            share_web: None,
+            share_limits: crate::share_web::ShareLimits::default(),
+            analytics_key_file: None,
+            audit_retention_days: DEFAULT_AUDIT_RETENTION_DAYS,
+            mesh_endpoint_retention_days: DEFAULT_MESH_ENDPOINT_RETENTION_DAYS,
+            trusted_proxies: crate::proxies::TrustedProxies::default(),
         }
     }
 }
@@ -188,6 +240,9 @@ pub(crate) struct Machine {
     pub(crate) abort: tokio::task::AbortHandle,
     /// Cancelled to cut every client stream ("stop sharing").
     clients_cut: Mutex<CancellationToken>,
+    /// Per-account children of `clients_cut`: cancelled to cut one
+    /// account's streams (its access was revoked) and no one else's.
+    user_cuts: Mutex<HashMap<String, CancellationToken>>,
     /// Account users with open (or recently closed) streams.
     pub(crate) clients: Mutex<HashMap<String, ClientPresence>>,
 }
@@ -200,13 +255,39 @@ impl Machine {
 
     /// Cuts every client stream and forgets presence.
     pub(crate) fn cut_clients(&self) {
-        let old = std::mem::take(&mut *self.clients_cut.lock().expect("cut"));
+        // Same lock order as `cut_token`, held across both, so no stream
+        // can attach a per-account token to the old one in between.
+        let old = {
+            let mut all = self.clients_cut.lock().expect("cut");
+            self.user_cuts.lock().expect("user cuts").clear();
+            std::mem::take(&mut *all)
+        };
         old.cancel();
         self.clients.lock().expect("clients").clear();
     }
 
-    fn cut_token(&self) -> CancellationToken {
-        self.clients_cut.lock().expect("cut").clone()
+    /// Cuts the streams of account user `user` only, and drops it from
+    /// presence (CUA-1417: a revoke must not cut anyone else).
+    pub(crate) fn cut_user(&self, user: &str) {
+        if let Some(token) = self.user_cuts.lock().expect("user cuts").remove(user) {
+            token.cancel();
+        }
+        self.clients.lock().expect("clients").remove(user);
+    }
+
+    /// The token a new stream watches: its account's own (a child of the
+    /// machine-wide one), or the machine-wide one when it is not attributed.
+    fn cut_token(&self, user: Option<&str>) -> CancellationToken {
+        let all = self.clients_cut.lock().expect("cut");
+        let Some(user) = user else {
+            return all.clone();
+        };
+        self.user_cuts
+            .lock()
+            .expect("user cuts")
+            .entry(user.to_owned())
+            .or_insert_with(|| all.child_token())
+            .clone()
     }
 
     fn client_enter(&self, who: &Identity) {
@@ -231,6 +312,26 @@ impl Machine {
         }
     }
 
+    /// The account user who most recently used this machine (within the
+    /// presence linger): who a machine-minted ticket (a viewer's media
+    /// WebSocket) most likely belongs to, for metering only.
+    fn recent_client(&self) -> Option<Identity> {
+        let clients = self.clients.lock().expect("clients");
+        clients
+            .iter()
+            .filter(|(_, c)| c.streams > 0 || c.last_seen.elapsed() < PRESENCE_LINGER)
+            .max_by_key(|(_, c)| c.last_seen)
+            .map(|(user, c)| Identity {
+                user: user.clone(),
+                account: user.clone(),
+                email: c.email.clone(),
+                name: c.name.clone(),
+                auth_time: None,
+                mfa: false,
+                orgs: Vec::new(),
+            })
+    }
+
     /// Clients with open streams or a stream closed within the linger.
     pub(crate) fn presence(&self) -> Vec<(String, ClientPresence)> {
         let mut clients = self.clients.lock().expect("clients");
@@ -252,12 +353,34 @@ pub struct Relay {
     generation: Arc<AtomicU64>,
     pub(crate) directory: Arc<Directory>,
     pub(crate) devices: Arc<DeviceStore>,
+    pub(crate) teams: Arc<crate::teams::Teams>,
+    /// Team access from Keycloak Organizations and the Spaces API.
+    pub(crate) org: Arc<crate::org_access::OrgAccess>,
+    /// Plans from the Spaces API's entitlements, when that is the source.
+    #[cfg(feature = "hosted")]
+    pub(crate) plans: Option<crate::plan_source::EntitlementPlans>,
+    /// Who reached each machine, and whose access was revoked (tickets).
+    pub(crate) grants: Arc<crate::grants::Grants>,
+    /// Pairing codes ("add a machine" by link or QR).
+    pub(crate) pairing: Arc<crate::pairing::PairingStore>,
     pub(crate) key: Arc<RelayKey>,
     /// Open client streams across every machine (S7): the global memory
     /// budget's live counter.
     pub(crate) global_streams: Arc<AtomicU64>,
+    /// The mesh coordinator's registry and connections.
+    pub(crate) mesh: Arc<crate::mesh::MeshState>,
+    /// Each account's pool: coordinator lease, job log, mailbox.
+    pub(crate) pool: Arc<crate::pool::PoolState>,
+    /// The state volume's health (write failures, budget, probe).
+    pub(crate) storage: Arc<crate::storage::Storage>,
+    /// Allowance metering.
+    pub(crate) meter: Arc<Meter>,
+    /// Connection outcome counters (`cua_relay_connections_total`).
+    pub(crate) conns: Arc<crate::conn_metrics::ConnMetrics>,
     /// When this relay started (the reconnect grace counts from it).
     started: Instant,
+    /// Share links: browser sign-in state and public-link rate limits.
+    pub(crate) share: Arc<crate::share_web::ShareState>,
 }
 
 /// One row of `/relay/v1/machines`.
@@ -285,52 +408,372 @@ impl Relay {
     }
 
     /// Creates a relay, loading the machine directory from the state file.
+    /// Temp files interrupted writes left in the state directory are
+    /// removed first (one relay per state directory).
     pub fn try_new(config: RelayConfig) -> std::io::Result<Self> {
-        let directory = match &config.state_file {
-            Some(path) => Directory::open(path.clone(), config.max_machines_per_account)?,
-            None => Directory::in_memory(config.max_machines_per_account),
-        };
         let devices_file = config.devices_file.clone().or_else(|| {
             config
                 .state_file
                 .as_ref()
                 .map(|p| p.with_extension("devices.json"))
         });
+        let state_dir = config
+            .state_file
+            .as_ref()
+            .or(devices_file.as_ref())
+            .map(|p| match p.parent() {
+                Some(d) if !d.as_os_str().is_empty() => d.to_path_buf(),
+                _ => PathBuf::from("."),
+            });
+        if let Some(dir) = &state_dir {
+            std::fs::create_dir_all(dir)?;
+        }
+        // The analytics id / log tag key, before anything can log a tag.
+        let ident_path = config.analytics_key_file.clone().or_else(|| {
+            crate::ident::default_path(config.state_file.as_deref(), devices_file.as_deref())
+        });
+        crate::ident::install(ident_path.as_deref())?;
+        let storage = Arc::new(crate::storage::Storage::new(
+            state_dir.clone(),
+            config.storage_limits,
+        ));
+        if let Some(dir) = &state_dir {
+            // The pools sweep their own directories when they open.
+            let (files, bytes) = crate::storage::sweep_temps(dir, 0)?;
+            storage.temps_removed(files, bytes);
+        }
+        let directory = match &config.state_file {
+            Some(path) => Directory::open_with(
+                path.clone(),
+                config.max_machines_per_account,
+                storage.clone(),
+            )?,
+            None => Directory::in_memory(config.max_machines_per_account),
+        };
         let devices = match devices_file {
-            Some(path) => DeviceStore::open(path, config.device_policy)?,
+            Some(path) => DeviceStore::open_with(path, config.device_policy, storage.clone())?,
             None => DeviceStore::in_memory(config.device_policy),
+        };
+        let grants = match &config.state_file {
+            Some(path) => crate::grants::Grants::open_with(
+                path.with_extension("grants.json"),
+                storage.clone(),
+            )?,
+            None => crate::grants::Grants::in_memory(),
+        };
+        let pairing = match &config.state_file {
+            Some(path) => crate::pairing::PairingStore::open_with(
+                path.with_extension("pairing.json"),
+                storage.clone(),
+            )?,
+            None => crate::pairing::PairingStore::in_memory(),
         };
         let key = config
             .signing_key
             .clone()
             .unwrap_or_else(|| Arc::new(RelayKey::generate()));
-        Ok(Self {
+        let mesh_file = config.mesh_file.clone().or_else(|| {
+            config
+                .state_file
+                .as_ref()
+                .map(|p| p.with_extension("mesh.json"))
+        });
+        let mesh = Arc::new(crate::mesh::MeshState::open_with(
+            mesh_file,
+            storage.clone(),
+        )?);
+        let pool = Arc::new(crate::pool::PoolState::open_with(
+            config.state_file.as_ref().map(|p| p.with_extension("pool")),
+            storage.clone(),
+        )?);
+        #[cfg(feature = "hosted")]
+        let crate::hosted::HostedState {
+            meter,
+            teams,
+            org,
+            plans,
+        } = crate::hosted::open(&config, &storage)?;
+        #[cfg(not(feature = "hosted"))]
+        let (meter, teams, org) = crate::free::open();
+        let relay = Self {
             config: Arc::new(config),
             machines: Arc::default(),
             generation: Arc::default(),
             directory: Arc::new(directory),
             devices: Arc::new(devices),
+            teams,
+            org,
+            #[cfg(feature = "hosted")]
+            plans,
+            grants: Arc::new(grants),
+            pairing: Arc::new(pairing),
             key,
             global_streams: Arc::default(),
+            mesh,
+            pool,
+            storage,
+            meter,
+            conns: Arc::default(),
             started: Instant::now(),
-        })
+            share: Arc::default(),
+        };
+        relay.sweep_retention();
+        Ok(relay)
+    }
+
+    /// Drops what has outlived its retention: audit entries older than
+    /// `audit_retention_days`, stored mesh endpoints of nodes offline longer
+    /// than `mesh_endpoint_retention_days`. At start and then hourly.
+    pub fn sweep_retention(&self) {
+        let audit = self.devices.trim_audit(self.config.audit_retention_days);
+        let endpoints = self
+            .mesh
+            .forget_stale_endpoints(self.config.mesh_endpoint_retention_days);
+        #[cfg(feature = "hosted")]
+        let audit = audit + self.teams.trim_audit(self.config.audit_retention_days);
+        if audit + endpoints > 0 {
+            tracing::info!(audit, endpoints, "retention sweep dropped expired data");
+        }
     }
 
     /// The HTTP router.
     pub fn router(&self) -> Router {
         Router::new()
+            // Liveness: the process answers. Never touches the disk.
             .route("/healthz", get(|| async { StatusCode::NO_CONTENT }))
+            // The state volume: a write probe, free space, each store's
+            // last write (503 when the probe or a store fails).
+            .route("/readyz", get(readyz))
+            .route("/metrics", get(metrics))
             .route(CONNECT_PATH, get(machine_connect))
+            .route(cua_mesh::proto::CONNECT_PATH, get(crate::mesh::connect))
             .route("/relay/v1/machines", get(machine_list))
+            .route("/relay/v1/mesh", get(mesh_status))
             .merge(crate::api::routes())
             .merge(crate::device_api::routes())
+            .merge(crate::pool::routes())
+            .merge(crate::meter::routes())
+            .merge(self.hosted_routes())
+            .merge(crate::pairing::routes())
+            .merge(if self.share_web_enabled() {
+                crate::share_web::routes()
+            } else {
+                Router::new()
+            })
             .fallback(proxy)
+            .layer(axum::middleware::from_fn_with_state(
+                self.clone(),
+                share_hosts,
+            ))
+            .layer(axum::middleware::from_fn_with_state(
+                self.clone(),
+                count_connections,
+            ))
             .with_state(self.clone())
+    }
+
+    /// The hosted relay's Teams and internal routes. Without the
+    /// `hosted` feature the Teams routes answer 410: not on this relay.
+    fn hosted_routes(&self) -> Router<Relay> {
+        #[cfg(feature = "hosted")]
+        return crate::hosted::routes(self);
+        #[cfg(not(feature = "hosted"))]
+        return crate::free::routes();
+    }
+
+    /// The mesh coordinator (registry, connections, counters).
+    pub fn mesh(&self) -> &crate::mesh::MeshState {
+        &self.mesh
+    }
+
+    /// The relay's allowance meter.
+    pub fn meter(&self) -> &Arc<Meter> {
+        &self.meter
     }
 
     /// The relay's assertion signing key.
     pub fn signing_key(&self) -> &RelayKey {
         &self.key
+    }
+
+    /// The caller's role on `record`: its own (owner, allowlist, viewers)
+    /// first, else an editor's through the teams it is in that the machine
+    /// is shared with (their ids; empty for a direct role).
+    pub(crate) fn machine_role(
+        &self,
+        record: &crate::directory::MachineRecord,
+        who: &crate::oidc::Identity,
+    ) -> Option<(crate::directory::Role, Vec<String>)> {
+        if let Some(role) = record.role_of(who) {
+            // Team-only sharing: a direct share counts only while the
+            // owner's team still has the person (from the answers cached
+            // when they opened it; nothing cached leaves it as it is).
+            let outside = role != crate::directory::Role::Owner
+                && self.org.team_only_sharing()
+                && self
+                    .org
+                    .cached_share_allowed(&record.owner.id, &crate::team_sharing::who_keys(who))
+                    == Some(false);
+            if !outside {
+                return Some((role, Vec::new()));
+            }
+        }
+        let host = record.host.as_deref().and_then(|h| self.directory.get(h));
+        let teams: Vec<String> = if self.org.source() == crate::org_access::TeamsSource::Org {
+            // Organizations: what the Spaces API last answered (asked on
+            // every open; dropped by a membership push), only while the
+            // record's owner is a member of the same org.
+            let orgs = self
+                .org
+                .cached_org_roles(&who.user, &record.owner.id, &record.id);
+            // A team share can be watch only; one editor team is enough
+            // to edit.
+            if !orgs.is_empty() && orgs.iter().all(|(_, viewer)| *viewer) {
+                return Some((
+                    crate::directory::Role::Viewer,
+                    orgs.into_iter().map(|(o, _)| o).collect(),
+                ));
+            }
+            orgs.into_iter().map(|(o, _)| o).collect()
+        } else {
+            self.teams
+                .access(record, host.as_ref(), &who.account)
+                .into_iter()
+                .map(|(t, _)| t)
+                .collect()
+        };
+        (!teams.is_empty()).then_some((crate::directory::Role::Shared, teams))
+    }
+
+    /// Re-checks every account recently authorized on `machines` (all of
+    /// them when `None`) after a sharing or team change, and revokes only
+    /// the ones that lost access or dropped to a lower role: their streams
+    /// are cut and their outstanding tickets refused. Everyone else,
+    /// including the owner, keeps their sessions (CUA-1416, CUA-1417).
+    pub(crate) fn reauthorize(&self, machines: Option<&[String]>) {
+        use crate::grants::rank;
+        let at = crate::grants::now_ms();
+        let ids = match machines {
+            Some(ids) => ids.to_vec(),
+            None => {
+                let mut ids = self.grants.machines();
+                ids.extend(self.machine_ids());
+                ids.sort();
+                ids.dedup();
+                ids
+            }
+        };
+        for id in ids {
+            let record = self.directory.get(&id);
+            let role_of = |who: &Identity| {
+                record
+                    .as_ref()
+                    .and_then(|r| self.machine_role(r, who))
+                    .map(|(role, _)| rank(role))
+            };
+            let seen = self.grants.seen_on(&id);
+            for (user, s) in &seen {
+                let now = role_of(&s.identity(user));
+                match now {
+                    Some(n) if n == s.role => {}
+                    // Raised (a viewer made an editor): reconnect to get
+                    // sessions opened with the new role.
+                    Some(n) if n > s.role => {
+                        self.grants.set_role(&id, user, n);
+                        if let Some(m) = self.machine(&id) {
+                            m.cut_user(user);
+                        }
+                    }
+                    _ => self.revoke_user(&id, user, s.role, now, at),
+                }
+            }
+            // Live clients the store does not know (pruned): check them too.
+            let Some(machine) = self.machine(&id) else {
+                continue;
+            };
+            for (user, c) in machine.presence() {
+                if seen.iter().any(|(u, _)| u == &user) {
+                    continue;
+                }
+                let who = Identity {
+                    user: user.clone(),
+                    account: user.clone(),
+                    email: c.email,
+                    name: c.name,
+                    auth_time: None,
+                    mfa: false,
+                    orgs: Vec::new(),
+                };
+                if role_of(&who).is_none() {
+                    self.revoke_user(&id, &user, rank(crate::directory::Role::Shared), None, at);
+                }
+            }
+        }
+    }
+
+    /// Revokes account user `user` on machine `id` (it had role rank
+    /// `before`, now `now`): cuts its streams and refuses its older tickets.
+    pub(crate) fn revoke_user(&self, id: &str, user: &str, before: u8, now: Option<u8>, at: u64) {
+        self.grants.revoke(id, user, before, now, at);
+        if let Some(m) = self.machine(id) {
+            m.cut_user(user);
+        }
+        tracing::info!(machine = %id, user = %crate::ident::tag(user), "access revoked; the account's streams cut");
+    }
+
+    /// Cuts every stream and outstanding ticket of the account `account`
+    /// on `machines` (all when `None`) without changing its access: a
+    /// device of it was revoked or denied, and tickets don't say which
+    /// device they were minted for.
+    pub(crate) fn cut_account(&self, account: &str, machines: Option<&[String]>) {
+        let at = crate::grants::now_ms();
+        let ids = match machines {
+            Some(ids) => ids.to_vec(),
+            None => self.grants.machines(),
+        };
+        for id in ids {
+            for (user, s) in self.grants.seen_on(&id) {
+                if s.account == account || user == account {
+                    self.revoke_user(&id, &user, s.role, Some(s.role), at);
+                }
+            }
+        }
+        for machine in self.machines.lock().expect("machines").values() {
+            if machines.is_none_or(|m| m.contains(&machine.id)) {
+                machine.cut_user(account);
+            }
+        }
+    }
+
+    /// Whether a machine-minted ticket may still be used: refused when it
+    /// may predate a revoke of the account it was minted for.
+    fn ticket_allowed(
+        &self,
+        id: &str,
+        record: &crate::directory::MachineRecord,
+        ticket: &crate::grants::TicketInfo,
+    ) -> bool {
+        use crate::grants::rank;
+        if ticket.user.is_empty() {
+            return true;
+        }
+        // An account deleted since the ticket was minted (CUA-1950).
+        if self.grants.erased_since(&ticket.user, ticket.issued) {
+            return false;
+        }
+        let (seen, mark) = self.grants.lookup(id, &ticket.user);
+        let Some(s) = seen else {
+            return crate::grants::ticket_allowed(ticket, None, mark, None);
+        };
+        let now = self
+            .machine_role(record, &s.identity(&ticket.user))
+            .map(|(role, _)| rank(role));
+        if now.is_none_or(|n| n < s.role) {
+            // A change the relay hasn't acted on yet: act on it now.
+            self.revoke_user(id, &ticket.user, s.role, now, crate::grants::now_ms());
+            return false;
+        }
+        crate::grants::ticket_allowed(ticket, Some(&s), mark, now)
     }
 
     /// The public base URL for a request (config, else `Host`).
@@ -459,6 +902,32 @@ impl Relay {
         listener: tokio::net::TcpListener,
         shutdown: impl std::future::Future<Output = ()> + Send + 'static,
     ) -> std::io::Result<()> {
+        if self.config.mesh.enabled {
+            crate::mesh::spawn(&self);
+        }
+        // Small frames (gRPC calls, yamux window updates, heartbeats) must
+        // not wait for Nagle: with delayed ACKs each relayed call took about
+        // 80 ms longer than the network round trip.
+        use axum::serve::ListenerExt as _;
+        let listener = listener.tap_io(|tcp| {
+            let _ = tcp.set_nodelay(true);
+        });
+        self.meter.spawn();
+        {
+            let relay = self.clone();
+            tokio::spawn(async move {
+                let mut tick = tokio::time::interval(Duration::from_secs(3600));
+                tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                tick.tick().await; // the first tick is at start (done in try_new)
+                loop {
+                    tick.tick().await;
+                    let relay = relay.clone();
+                    let _ = tokio::task::spawn_blocking(move || relay.sweep_retention()).await;
+                }
+            });
+        }
+        #[cfg(feature = "hosted")]
+        crate::team_sharing::spawn(&self);
         let handle = self.clone();
         axum::serve(
             listener,
@@ -467,17 +936,21 @@ impl Relay {
         )
         .with_graceful_shutdown(async move {
             shutdown.await;
-            // Machines reconnect at once, to the relay that replaces this
-            // one, instead of holding the shutdown open until the process
-            // exits.
+            // Machines and mesh nodes reconnect at once, to the relay that
+            // replaces this one (CUA-1774), instead of holding the shutdown
+            // open until the process exits.
             let machines = handle.machine_ids().len();
+            let mesh = handle.mesh.connected();
             handle.disconnect_all();
-            tracing::info!(machines, "closed machine connections");
+            handle.mesh.disconnect_all();
+            tracing::info!(machines, mesh, "closed machine and mesh connections");
+            // Keep the last minutes of usage across a restart.
+            handle.meter.persist(true);
         })
         .await
     }
 
-    fn token_index(&self, headers: &HeaderMap) -> Option<usize> {
+    pub(crate) fn token_index(&self, headers: &HeaderMap) -> Option<usize> {
         let presented = bearer(headers, header::AUTHORIZATION.as_str())?;
         self.config.tokens.iter().position(|t| {
             use subtle::ConstantTimeEq as _;
@@ -504,8 +977,12 @@ pub(crate) fn account_token(headers: &HeaderMap) -> Option<&str> {
         .or_else(|| bearer(headers, header::AUTHORIZATION.as_str()))
 }
 
-fn text(status: StatusCode, message: impl Into<String>) -> Response {
-    (status, message.into()).into_response()
+pub(crate) fn text(status: StatusCode, message: impl Into<String>) -> Response {
+    let mut response = (status, message.into()).into_response();
+    response
+        .extensions_mut()
+        .insert(crate::conn_metrics::RelayStatus(status));
+    response
 }
 
 /// gRPC status codes the relay produces itself.
@@ -517,6 +994,27 @@ enum GrpcCode {
     ResourceExhausted = 8,
     NotFound = 5,
     InvalidArgument = 3,
+}
+
+/// gRPC methods that hold a session open (process and terminal streams,
+/// window and directory watches). Everything else (list, health, file
+/// transfers, unary calls) is short and never counts as a session.
+const SESSION_GRPC_METHODS: &[&str] = &[
+    "/cua.env.v1.ProcessService/StartProcess",
+    "/cua.env.v1.ProcessService/ConnectProcess",
+    "/cua.env.v1.ProcessService/StreamInput",
+    "/cua.env.v1.WindowsService/WatchWindows",
+    "/cua.env.v1.FilesystemService/WatchDir",
+];
+
+/// Whether a request is a gRPC or gRPC-Web call to a session-holding method.
+/// Matched on the path suffix, since the relay may sit under a prefix.
+fn holds_grpc_session(headers: &HeaderMap, path: &str) -> bool {
+    headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|ct| ct.starts_with("application/grpc"))
+        && SESSION_GRPC_METHODS.iter().any(|m| path.ends_with(m))
 }
 
 /// Refuses a client request. gRPC and gRPC-Web callers get a trailers-only
@@ -536,6 +1034,13 @@ fn refuse(
     let Some(content_type) = content_type else {
         return text(status, message);
     };
+    // gRPC callers see HTTP 200; connection metrics keep the relay's status.
+    let mark = |mut response: Response| {
+        response
+            .extensions_mut()
+            .insert(crate::conn_metrics::RelayStatus(status));
+        response
+    };
     let encoded = percent_encode_grpc(&message);
     let details = {
         use base64::Engine as _;
@@ -548,6 +1053,7 @@ fn refuse(
         .header("grpc-message", encoded)
         .header("grpc-status-details-bin", details)
         .body(Body::empty())
+        .map(mark)
         .unwrap_or_else(|_| text(status, message))
 }
 
@@ -612,6 +1118,29 @@ fn percent_encode_grpc(message: &str) -> String {
 }
 
 async fn machine_connect(
+    state: State<Relay>,
+    headers: HeaderMap,
+    upgrade: Result<WebSocketUpgrade, axum::extract::ws::rejection::WebSocketUpgradeRejection>,
+) -> Response {
+    let mut response = match upgrade {
+        Ok(upgrade) => machine_connect_inner(state, headers, upgrade).await,
+        // Not a WebSocket handshake: refused before the relay looks at it.
+        Err(rejection) => {
+            let mut response = rejection.into_response();
+            let status = response.status();
+            response
+                .extensions_mut()
+                .insert(crate::conn_metrics::RelayStatus(status));
+            response
+        }
+    };
+    response
+        .extensions_mut()
+        .insert(crate::conn_metrics::Kind::Machine);
+    response
+}
+
+async fn machine_connect_inner(
     State(relay): State<Relay>,
     headers: HeaderMap,
     upgrade: WebSocketUpgrade,
@@ -717,6 +1246,7 @@ async fn machine_connect(
                 last_heartbeat: Mutex::new(Instant::now()),
                 abort: driver.abort_handle(),
                 clients_cut: Mutex::default(),
+                user_cuts: Mutex::default(),
                 clients: Mutex::default(),
             });
             if let Some(old) = relay
@@ -780,9 +1310,66 @@ async fn machine_connect(
     response
 }
 
-async fn machine_list(State(relay): State<Relay>, headers: HeaderMap) -> Response {
+async fn mesh_status(State(relay): State<Relay>, headers: HeaderMap) -> Response {
+    if let Err(refused) = require_admin(&relay, &headers) {
+        return refused;
+    }
+    axum::Json(crate::mesh::status(&relay)).into_response()
+}
+
+/// `GET /readyz`: writes, fsyncs and removes a small file in the state
+/// directory and reports free space and each store's last write; 503 when
+/// the probe fails or a store's last write failed. Liveness is `/healthz`.
+async fn readyz(State(relay): State<Relay>) -> Response {
+    let storage = relay.storage.clone();
+    let (ready, mut body) = tokio::task::spawn_blocking(move || storage.report())
+        .await
+        .unwrap_or_else(|e| {
+            (
+                false,
+                serde_json::json!({"ready": false, "error": e.to_string()}),
+            )
+        });
+    body["mesh_nodes_connected"] = serde_json::json!(relay.mesh.connected());
+    let status = if ready {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+    (status, axum::Json(body)).into_response()
+}
+
+/// `GET /metrics`: the state counters in Prometheus text format (no
+/// account data).
+async fn metrics(State(relay): State<Relay>) -> Response {
+    let storage = relay.storage.clone();
+    #[cfg_attr(not(feature = "hosted"), allow(unused_mut))]
+    let mut text = tokio::task::spawn_blocking(move || storage.metrics())
+        .await
+        .unwrap_or_default();
+    text.push_str(&relay.conns.render());
+    #[cfg(feature = "hosted")]
+    {
+        text.push_str(&relay.org.metrics());
+        if let Some(plans) = &relay.plans {
+            text.push_str(&plans.metrics());
+        }
+    }
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        text,
+    )
+        .into_response()
+}
+
+/// Checks the admin token (`/relay/v1/*` admin views).
+#[allow(clippy::result_large_err)]
+pub(crate) fn require_admin(relay: &Relay, headers: &HeaderMap) -> Result<(), Response> {
     let Some(admin) = relay.config.admin_token.as_deref() else {
-        return text(StatusCode::NOT_FOUND, "admin endpoint disabled");
+        return Err(text(StatusCode::NOT_FOUND, "admin endpoint disabled"));
     };
     let ok = headers
         .get(header::AUTHORIZATION)
@@ -798,8 +1385,15 @@ async fn machine_list(State(relay): State<Relay>, headers: HeaderMap) -> Respons
         } else {
             Reason::MissingToken
         };
-        auth_log::rejected(&headers, Route::Admin, reason, None);
-        return text(StatusCode::UNAUTHORIZED, "invalid admin token");
+        auth_log::rejected(headers, Route::Admin, reason, None);
+        return Err(text(StatusCode::UNAUTHORIZED, "invalid admin token"));
+    }
+    Ok(())
+}
+
+async fn machine_list(State(relay): State<Relay>, headers: HeaderMap) -> Response {
+    if let Err(r) = require_admin(&relay, &headers) {
+        return r;
     }
     axum::Json(relay.status()).into_response()
 }
@@ -811,10 +1405,53 @@ async fn machine_list(State(relay): State<Relay>, headers: HeaderMap) -> Respons
 /// machine's viewer or against the relay's own pages (S6). Self-host a
 /// relay without `--host-domain` to keep path mode (single registrable
 /// origin, no wildcard certificate needed).
+#[cfg(test)]
 fn route(relay: &Relay, uri: &Uri, headers: &HeaderMap) -> Option<(String, String, String)> {
+    route_ex(relay, uri, headers).map(|r| (r.id, r.forwarded, r.prefix))
+}
+
+/// A request for a `cua share` link, as the relay sees it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ShareCtx {
+    pub(crate) kind: crate::share_web::ShareKind,
+    /// The share id (private) or token (public).
+    pub(crate) sid: String,
+    /// The request came in on the share's own origin
+    /// (`s<id>-<machine>.<domain>`), not on the machine's origin or in
+    /// path mode.
+    pub(crate) isolated: bool,
+    /// The `Host` the client used.
+    pub(crate) host: String,
+}
+
+/// Where a client request goes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Routed {
+    pub(crate) id: String,
+    pub(crate) forwarded: String,
+    pub(crate) prefix: String,
+    pub(crate) share: Option<ShareCtx>,
+}
+
+fn route_ex(relay: &Relay, uri: &Uri, headers: &HeaderMap) -> Option<Routed> {
     let path = uri.path();
     let query = uri.query().map(|q| format!("?{q}")).unwrap_or_default();
     let domain = relay.config.host_domain.as_deref();
+    let host_header = headers
+        .get(header::HOST)
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let share_of = |forwarded: &str| {
+        crate::share_web::share_of_path(forwarded.split('?').next().unwrap_or(forwarded)).map(
+            |(kind, sid)| ShareCtx {
+                kind,
+                sid,
+                isolated: false,
+                host: host_header.clone(),
+            },
+        )
+    };
     if let Some(rest) = path.strip_prefix("/m/") {
         if domain.is_some() {
             return None;
@@ -823,13 +1460,93 @@ fn route(relay: &Relay, uri: &Uri, headers: &HeaderMap) -> Option<(String, Strin
             Some(i) => (&rest[..i], &rest[i..]),
             None => (rest, "/"),
         };
-        return Some((id.to_owned(), format!("{tail}{query}"), format!("/m/{id}")));
+        let forwarded = format!("{tail}{query}");
+        let share = share_of(&forwarded);
+        return Some(Routed {
+            id: id.to_owned(),
+            forwarded,
+            prefix: format!("/m/{id}"),
+            share,
+        });
     }
     let domain = domain?;
     let host = headers.get(header::HOST)?.to_str().ok()?;
     let host = host.split(':').next()?;
-    let id = host.strip_suffix(domain)?.strip_suffix('.')?;
-    Some((id.to_owned(), format!("{path}{query}"), String::new()))
+    let label = host.strip_suffix(domain)?.strip_suffix('.')?;
+    // A share's own origin: the path is the shared app's, rewritten for
+    // the machine.
+    if let Some(parsed) = crate::share_web::parse_label(label) {
+        let (_, id) = relay.share_origin(host)?;
+        return Some(Routed {
+            id,
+            forwarded: crate::share_web::machine_path(&parsed, path, uri.query()),
+            prefix: String::new(),
+            share: Some(ShareCtx {
+                kind: parsed.kind,
+                sid: parsed.sid,
+                isolated: true,
+                host: host_header,
+            }),
+        });
+    }
+    let forwarded = format!("{path}{query}");
+    let share = share_of(&forwarded);
+    Some(Routed {
+        id: label.to_owned(),
+        forwarded,
+        prefix: String::new(),
+        share,
+    })
+}
+
+/// The address a request came from, for the public-share rate limit: the
+/// socket peer, or, when the peer is a configured trusted proxy, the client
+/// address it forwarded (see [`crate::proxies`]).
+fn client_ip(trusted: &crate::proxies::TrustedProxies, request: &Request) -> String {
+    let Some(peer) = request
+        .extensions()
+        .get::<axum::extract::ConnectInfo<SocketAddr>>()
+        .map(|c| c.0.ip())
+    else {
+        return "unknown".into();
+    };
+    let xff = request
+        .headers()
+        .get_all("x-forwarded-for")
+        .iter()
+        .filter_map(|v| v.to_str().ok());
+    trusted.client_ip(peer, xff).to_string()
+}
+
+/// Counts each connection route's outcome (see `conn_metrics`).
+async fn count_connections(
+    State(relay): State<Relay>,
+    request: Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let response = next.run(request).await;
+    if let Some((kind, outcome)) = crate::conn_metrics::classify(&response) {
+        relay.conns.record(kind, outcome);
+    }
+    response
+}
+
+/// Share origins never fall through to the relay's own routes: every path
+/// on `s<id>-<machine>.<domain>` belongs to the shared app.
+async fn share_hosts(
+    State(relay): State<Relay>,
+    request: Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let on_share_origin = request
+        .headers()
+        .get(header::HOST)
+        .and_then(|h| h.to_str().ok())
+        .is_some_and(|host| relay.is_share_host(host));
+    if on_share_origin {
+        return proxy(State(relay), request).await;
+    }
+    next.run(request).await
 }
 
 fn has_client_credential(uri: &Uri, headers: &HeaderMap, forwarded_path: &str) -> bool {
@@ -873,7 +1590,13 @@ const HOP_BY_HOP: &[&str] = &[
     "upgrade",
 ];
 
-struct ActiveGuard(Arc<Machine>, Option<String>, Arc<AtomicU64>);
+struct ActiveGuard(
+    Arc<Machine>,
+    Option<String>,
+    Arc<AtomicU64>,
+    // Held for its Drop: the metered stream closes with the guard.
+    #[allow(dead_code)] Option<MeterStream>,
+);
 
 impl Drop for ActiveGuard {
     fn drop(&mut self) {
@@ -900,6 +1623,18 @@ pub(crate) struct AccountClient {
     pub(crate) gate: crate::device_api::Gate,
 }
 
+/// Who a request let through to an account machine is.
+#[derive(Default)]
+pub(crate) struct Authorized {
+    /// The signed-in account (an account token).
+    pub(crate) client: Option<AccountClient>,
+    /// The account a machine-minted ticket was issued to, when the request
+    /// carries one instead: its streams are cut with that account's.
+    pub(crate) ticket_user: Option<String>,
+    /// When the request was authorized (ms).
+    pub(crate) at: u64,
+}
+
 #[allow(clippy::result_large_err)]
 /// Authorizes a client request for an account machine and rewrites its
 /// credentials. Returns the account client to record in presence (none for
@@ -910,7 +1645,11 @@ async fn authorize_account_client(
     request: &mut Request,
     forwarded: &str,
     device_session: Option<&str>,
-) -> Result<Option<AccountClient>, Response> {
+    share_session: Option<Identity>,
+) -> Result<Authorized, Response> {
+    // Taken before the role is computed: a revoke racing this request
+    // counts as later (see `Grants::record`).
+    let authorized_at = crate::grants::now_ms();
     let headers = request.headers();
     let Some(record) = relay.directory.get(id) else {
         return Err(refuse(
@@ -922,6 +1661,9 @@ async fn authorize_account_client(
     };
     let is_health = forwarded == "/health" || forwarded.starts_with("/health?");
     let identity = match (account_token(headers), &relay.config.oidc) {
+        // A signed-in browser on a private share origin: the relay verified
+        // its cookie already (machine, share and host bound).
+        _ if share_session.is_some() => share_session.clone(),
         (Some(token), Some(oidc)) => match oidc.validate(token).await {
             Ok(identity) => Some(identity),
             Err(e) if !has_forwardable_credential(request.uri(), headers, forwarded) => {
@@ -946,9 +1688,87 @@ async fn authorize_account_client(
         ));
     }
     let mut gate = None;
+    let mut ticket_user = None;
     let assertion = match &identity {
         Some(who) => {
-            let Some(role) = record.role_of(who) else {
+            use crate::org_access::{OrgDecision, TeamsSource};
+            let source = relay.org.source();
+            // Team-only sharing: a direct share is asked about before it is
+            // used (the answer is cached; fail closed when the API is down
+            // and the person was never asked about).
+            let mut personal = record.role_of(who).is_some();
+            if personal && relay.org.team_only_sharing() && record.owner.id != who.account {
+                match relay
+                    .org
+                    .share_check(&record.owner.id, &crate::team_sharing::who_keys(who))
+                    .await
+                {
+                    Ok(Ok(())) => {}
+                    Ok(Err(_)) => personal = false,
+                    Err(e) => {
+                        tracing::warn!(machine = id, error = %e, "shared access refused: the Spaces API is unavailable");
+                        return Err(refuse(
+                            headers,
+                            StatusCode::SERVICE_UNAVAILABLE,
+                            GrpcCode::Unavailable,
+                            "sharing cannot be checked right now; try again in a minute",
+                        ));
+                    }
+                }
+            }
+            // The account token alone is not enough: the client device must
+            // be enrolled (after the migration grace period).
+            // A share session has no enrolled device behind it, by design
+            // (see `share_web`): only that cookie, only on a share origin.
+            let device_gate = if share_session.is_some() {
+                Ok(crate::device_api::Gate::Off)
+            } else {
+                crate::device_api::gate(relay, device_session, who)
+            };
+            // The organization path (shadow / org): asked here, so the
+            // synchronous re-checks find its answer cached.
+            let org = if source.evaluates_orgs() && !personal {
+                let device = device_gate.as_ref().ok().and_then(|g| g.device());
+                let required = matches!(&device_gate, Ok(g) if *g != crate::device_api::Gate::Off);
+                Some(
+                    relay
+                        .org
+                        .decide(&who.user, &record.owner.id, &who.orgs, id, device, required)
+                        .await,
+                )
+            } else {
+                None
+            };
+            let shadow = |file: bool| {
+                if let (TeamsSource::Shadow, Some(o)) = (source, &org) {
+                    relay.org.shadow("open", &who.user, id, file, o);
+                }
+            };
+            if source == TeamsSource::Org && !personal {
+                match &org {
+                    Some(OrgDecision::Granted { .. }) => {}
+                    Some(OrgDecision::DeviceRefused { message, .. }) => {
+                        return Err(refuse(
+                            headers,
+                            StatusCode::FORBIDDEN,
+                            GrpcCode::PermissionDenied,
+                            message.clone(),
+                        ))
+                    }
+                    Some(OrgDecision::Unavailable(e)) => {
+                        tracing::warn!(machine = id, error = %e, "team access refused: the Spaces API is unavailable");
+                        return Err(refuse(
+                            headers,
+                            StatusCode::SERVICE_UNAVAILABLE,
+                            GrpcCode::Unavailable,
+                            "team access cannot be checked right now; try again in a minute",
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+            let Some((role, teams)) = relay.machine_role(&record, who) else {
+                shadow(false);
                 return Err(refuse(
                     headers,
                     StatusCode::FORBIDDEN,
@@ -956,11 +1776,36 @@ async fn authorize_account_client(
                     "this computer is not shared with your account",
                 ));
             };
-            // The account token alone is not enough: the client device must
-            // be enrolled (after the migration grace period).
-            match crate::device_api::gate(relay, device_session, who) {
+            match device_gate {
                 Ok(g) => {
+                    // Through a team, the device also needs the team's
+                    // approval (a relay without device enrollment has no
+                    // devices to approve). With organizations the API's
+                    // answer already covered it.
+                    if !teams.is_empty() && source != TeamsSource::Org {
+                        let team = if g == crate::device_api::Gate::Off {
+                            teams[0].clone()
+                        } else {
+                            match relay.teams.check_device_any(&teams, who, g.device(), id) {
+                                (team, crate::teams::DeviceCheck::Approved) => team,
+                                (_, crate::teams::DeviceCheck::Refused(message)) => {
+                                    shadow(false);
+                                    return Err(refuse(
+                                        headers,
+                                        StatusCode::FORBIDDEN,
+                                        GrpcCode::PermissionDenied,
+                                        message,
+                                    ));
+                                }
+                            }
+                        };
+                        shadow(true);
+                        relay.teams.record_open(&team, who, g.device(), id);
+                    } else if !personal {
+                        shadow(false);
+                    }
                     crate::device_api::record_access(relay, &g, who, &record, role);
+                    relay.grants.record(id, who, role, authorized_at);
                     gate = Some(g);
                 }
                 Err(message) => {
@@ -986,13 +1831,36 @@ async fn authorize_account_client(
                 iat: now,
                 exp: now + assertion::MAX_ASSERTION_TTL_SECS,
                 jti: uuid::Uuid::new_v4().simple().to_string(),
+                teams: teams.clone(),
             };
             Some(relay.key.sign(&claims))
         }
         // Tickets and signed URLs were minted by the machine for an
         // authorized caller; the machine validates them itself.
         // (Credential headers are stripped below, so they do not count.)
-        None if has_forwardable_credential(request.uri(), headers, forwarded) => None,
+        // A ticket names the account it was minted for: refused when that
+        // account's access was revoked after it may have been minted
+        // (CUA-1416).
+        None if has_forwardable_credential(request.uri(), headers, forwarded) => {
+            for ticket in crate::grants::tickets_in(request.uri(), headers)
+                .iter()
+                .filter_map(|t| crate::grants::parse_ticket(t))
+            {
+                if !relay.ticket_allowed(id, &record, &ticket) {
+                    auth_log::rejected(headers, Route::Proxy, Reason::TicketRevoked, None);
+                    return Err(refuse(
+                        headers,
+                        StatusCode::FORBIDDEN,
+                        GrpcCode::PermissionDenied,
+                        crate::grants::TICKET_REVOKED,
+                    ));
+                }
+                if !ticket.user.is_empty() {
+                    ticket_user = Some(ticket.user);
+                }
+            }
+            None
+        }
         None => {
             auth_log::rejected(headers, Route::Proxy, Reason::MissingToken, None);
             return Err(refuse(
@@ -1012,43 +1880,190 @@ async fn authorize_account_client(
             headers.insert(ASSERTION_HEADER, value);
         }
     }
-    Ok(identity
-        .zip(gate)
-        .map(|(who, gate)| AccountClient { who, gate }))
+    Ok(Authorized {
+        client: identity
+            .zip(gate)
+            .map(|(who, gate)| AccountClient { who, gate }),
+        ticket_user,
+        at: authorized_at,
+    })
 }
 
-async fn proxy(State(relay): State<Relay>, mut request: Request) -> Response {
-    let Some((id, forwarded, prefix)) = route(&relay, request.uri(), request.headers()) else {
+async fn proxy(state: State<Relay>, request: Request) -> Response {
+    let mut response = proxy_inner(state, request).await;
+    response
+        .extensions_mut()
+        .insert(crate::conn_metrics::Kind::Client);
+    response
+}
+
+async fn proxy_inner(State(relay): State<Relay>, mut request: Request) -> Response {
+    let Some(Routed {
+        id,
+        forwarded,
+        prefix,
+        share,
+    }) = route_ex(&relay, request.uri(), request.headers())
+    else {
         let message = match &relay.config.host_domain {
             Some(domain) => format!("use <computer-id>.{domain}/…"),
             None => "use /m/<computer-id>/…".to_owned(),
         };
-        return refuse(
+        // Not a computer route (stray paths, scanners): not a connection.
+        let mut response = refuse(
             request.headers(),
             StatusCode::NOT_FOUND,
             GrpcCode::NotFound,
             message,
         );
+        response
+            .extensions_mut()
+            .insert(crate::conn_metrics::Uncounted);
+        return response;
     };
+    use crate::share_web::{Cookie, ShareKind};
+    // The session endpoint of a private share origin: trades a login code
+    // for the share's cookie (never forwarded to the machine).
+    if let Some(sh) = &share {
+        if sh.isolated
+            && sh.kind == ShareKind::Private
+            && request.uri().path() == crate::share_web::SESSION_PATH
+        {
+            let mut response = crate::share_web::session(&relay, &request);
+            response
+                .extensions_mut()
+                .insert(crate::conn_metrics::Uncounted);
+            return response;
+        }
+    }
     // Only the relay mints assertions; device sessions are for the relay
     // alone and never reach a machine.
     request.headers_mut().remove(ASSERTION_HEADER);
+    request.headers_mut().remove("x-cua-share-caller");
     let device_session = request.headers_mut().remove(DEVICE_SESSION_HEADER);
     let machine = relay.machines.lock().expect("machines").get(&id).cloned();
     let account_machine = matches!(
         machine.as_ref().map(|m| &m.registrant),
         Some(Registrant::Account(_))
     ) || (machine.is_none() && relay.directory.get(&id).is_some());
+    // Share links (`/share/…` on an account machine): public ones carry
+    // their own credential (the token), private ones are signed in with a
+    // bearer token or, on their own origin, the share cookie.
+    let mut session_identity = None;
+    let mut public_share = false;
+    if let Some(sh) = &share {
+        if !account_machine {
+            return refuse(
+                request.headers(),
+                StatusCode::NOT_FOUND,
+                GrpcCode::NotFound,
+                "not found",
+            );
+        }
+        // What the app and the machine see of where they are served.
+        let scheme = relay.share_scheme(request.headers());
+        let cookie = if sh.isolated && sh.kind == ShareKind::Private {
+            relay.share_cookie(request.headers(), &id, &sh.sid, &sh.host)
+        } else {
+            Cookie::Absent
+        };
+        let nav = crate::share_web::is_page_navigation(request.method(), request.headers());
+        crate::share_web::strip_session_cookie(request.headers_mut());
+        let headers = request.headers_mut();
+        headers.remove("x-forwarded-host");
+        headers.remove("x-forwarded-proto");
+        if let Ok(v) = HeaderValue::from_str(&sh.host) {
+            headers.insert("x-forwarded-host", v);
+        }
+        headers.insert("x-forwarded-proto", HeaderValue::from_static(scheme));
+        match sh.kind {
+            ShareKind::Public => {
+                public_share = true;
+                // The token is the credential: whatever else the client
+                // sent is not for the app.
+                for name in CLIENT_CREDENTIAL_HEADERS {
+                    headers.remove(*name);
+                }
+                let record = relay.directory.get(&id);
+                if !record.is_some_and(|r| r.sharing) {
+                    return refuse(
+                        request.headers(),
+                        StatusCode::FORBIDDEN,
+                        GrpcCode::PermissionDenied,
+                        "the host stopped sharing this machine",
+                    );
+                }
+                let client = client_ip(&relay.config.trusted_proxies, &request);
+                if let Err(wait) = relay.share_rate_limit(&client, &id) {
+                    auth_log::share_event("public_rate_limited", "429");
+                    let mut response = refuse(
+                        request.headers(),
+                        StatusCode::TOO_MANY_REQUESTS,
+                        GrpcCode::ResourceExhausted,
+                        "too many requests to this link; slow down",
+                    );
+                    if let Ok(v) =
+                        HeaderValue::from_str(&wait.as_secs().saturating_add(1).to_string())
+                    {
+                        response.headers_mut().insert(header::RETRY_AFTER, v);
+                    }
+                    return response;
+                }
+            }
+            ShareKind::Private => match &cookie {
+                Cookie::Valid(who) if account_token(request.headers()).is_none() => {
+                    session_identity = Some(who.clone());
+                }
+                Cookie::Valid(_) | Cookie::Absent | Cookie::Invalid => {
+                    let credential = account_token(request.headers()).is_some();
+                    if !credential && sh.isolated && nav && relay.share_web_enabled() {
+                        if matches!(cookie, Cookie::Invalid) {
+                            auth_log::share_event("web_session_refused", "cookie_invalid");
+                        }
+                        let original = format!(
+                            "{scheme}://{}{}",
+                            sh.host,
+                            request
+                                .uri()
+                                .path_and_query()
+                                .map(|p| p.as_str())
+                                .unwrap_or("/")
+                        );
+                        let mut response = relay.share_login_redirect(&original);
+                        response
+                            .extensions_mut()
+                            .insert(crate::conn_metrics::Uncounted);
+                        return response;
+                    }
+                }
+            },
+        }
+    }
     let mut identity = None;
+    let mut ticket_user = None;
+    let mut authorized_at = 0;
     let mut grace = false;
-    if account_machine {
+    if public_share {
+        // Anonymous by design: no identity, no assertion.
+    } else if account_machine {
         let session = device_session.as_ref().and_then(|v| v.to_str().ok());
-        match authorize_account_client(&relay, &id, &mut request, &forwarded, session).await {
-            Ok(client) => {
-                if let Some(client) = client {
+        match authorize_account_client(
+            &relay,
+            &id,
+            &mut request,
+            &forwarded,
+            session,
+            session_identity,
+        )
+        .await
+        {
+            Ok(authorized) => {
+                if let Some(client) = authorized.client {
                     grace = matches!(client.gate, crate::device_api::Gate::Grace);
                     identity = Some(client.who);
                 }
+                ticket_user = authorized.ticket_user;
+                authorized_at = authorized.at;
             }
             Err(response) => return response,
         }
@@ -1073,12 +2088,16 @@ async fn proxy(State(relay): State<Relay>, mut request: Request) -> Response {
         None => relay.await_reconnect(&id).await,
     };
     let Some(machine) = machine else {
-        return refuse(
+        let mut response = refuse(
             request.headers(),
             StatusCode::BAD_GATEWAY,
             GrpcCode::Unavailable,
             format!("computer {id:?} is not connected"),
         );
+        response
+            .extensions_mut()
+            .insert(crate::conn_metrics::Offline);
+        return response;
     };
     if machine.active.fetch_add(1, Ordering::SeqCst) >= relay.config.max_streams_per_machine {
         machine.active.fetch_sub(1, Ordering::SeqCst);
@@ -1107,12 +2126,84 @@ async fn proxy(State(relay): State<Relay>, mut request: Request) -> Response {
     if let Some(who) = &identity {
         machine.client_enter(who);
     }
+    // Measure only: past the allowance the stream still goes through, with
+    // a header the client turns into an upgrade prompt (CUA-1360).
+    // A ticketed WebSocket (a viewer's media stream) carries no account:
+    // it is metered as the account that last used the machine.
+    let metered_as = match &identity {
+        Some(who) => Some(who.clone()),
+        None if account_machine
+            && !public_share
+            && request.headers().contains_key(header::UPGRADE) =>
+        {
+            machine.recent_client()
+        }
+        None => None,
+    };
+    // An enforced plan (Pro) is refused at its live-session limit: a
+    // WebSocket upgrade or a long gRPC stream that would open one session
+    // too many gets 429 (ResourceExhausted for gRPC) here, whatever client
+    // sent it. Decided at stream open from the method path; short unary
+    // calls are never refused. In-memory, one lock, no network.
+    let hold = request.headers().contains_key(header::UPGRADE)
+        || holds_grpc_session(request.headers(), request.uri().path());
+    let metered = match metered_as.as_ref() {
+        Some(who) if hold => match relay.meter.enter_enforced(who, &id) {
+            Ok(m) => m,
+            Err(refusal) => {
+                relay.global_streams.fetch_sub(1, Ordering::SeqCst);
+                machine.active.fetch_sub(1, Ordering::SeqCst);
+                if let Some(i) = &identity {
+                    machine.client_leave(&i.user);
+                }
+                let mut response = refuse(
+                    request.headers(),
+                    StatusCode::TOO_MANY_REQUESTS,
+                    GrpcCode::ResourceExhausted,
+                    refusal.message(),
+                );
+                let h = response.headers_mut();
+                for (k, v) in [
+                    ("x-cua-relay-error", refusal.code.to_owned()),
+                    ("x-cua-relay-plan", refusal.plan.clone()),
+                    ("x-cua-relay-used", refusal.used.to_string()),
+                    ("x-cua-relay-limit", refusal.limit.to_string()),
+                ] {
+                    if let Ok(v) = HeaderValue::from_str(&v) {
+                        h.insert(k, v);
+                    }
+                }
+                return response;
+            }
+        },
+        Some(who) => relay.meter.enter(who, &id),
+        None => None,
+    };
+    let allowance = metered.as_ref().and_then(|(_, over)| {
+        crate::meter::allowance_header(*over, &relay.meter.config().upgrade_url)
+    });
+    let metered_user = metered_as.filter(|_| metered.is_some()).map(|w| w.user);
+    let stream_user = identity.as_ref().map(|w| w.user.clone()).or(ticket_user);
+    let cut = machine.cut_token(stream_user.as_deref());
     let guard = ActiveGuard(
         machine.clone(),
         identity.map(|w| w.user),
         relay.global_streams.clone(),
+        metered.map(|(stream, _)| stream),
     );
-    let cut = machine.cut_token();
+    // A revoke that landed between authorizing this request and taking
+    // its cut token: its cut missed this stream, so refuse it here (the
+    // guard undoes the counts).
+    if let Some(user) = &stream_user {
+        if relay.grants.revoked_since(&id, user, authorized_at) {
+            return refuse(
+                request.headers(),
+                StatusCode::FORBIDDEN,
+                GrpcCode::PermissionDenied,
+                crate::grants::TICKET_REVOKED,
+            );
+        }
+    }
     let stream = match machine.handle.open().await {
         Ok(s) => s,
         Err(e) => {
@@ -1176,9 +2267,14 @@ async fn proxy(State(relay): State<Relay>, mut request: Request) -> Response {
         request.headers_mut().remove(header::HOST);
         return match sender.send_request(request).await {
             Ok(mut response) => {
-                harden_machine_response(response.headers_mut(), &forwarded);
+                harden_response(response.headers_mut(), &forwarded, share.as_ref());
                 if grace {
                     crate::device_api::flag_grace(&relay, response.headers_mut());
+                }
+                if let Some(v) = allowance {
+                    response
+                        .headers_mut()
+                        .insert(crate::meter::ALLOWANCE_HEADER, v);
                 }
                 response.map(|b| Body::new(GuardedBody::new(b, body_guard, body_cut)))
             }
@@ -1217,11 +2313,28 @@ async fn proxy(State(relay): State<Relay>, mut request: Request) -> Response {
         Ok(r) => r,
         Err(e) => return text(StatusCode::BAD_GATEWAY, format!("forward: {e}")),
     };
-    harden_machine_response(response.headers_mut(), &forwarded);
+    harden_response(response.headers_mut(), &forwarded, share.as_ref());
     if grace {
         crate::device_api::flag_grace(&relay, response.headers_mut());
     }
+    if let Some(v) = allowance {
+        response
+            .headers_mut()
+            .insert(crate::meter::ALLOWANCE_HEADER, v);
+    }
     if response.status() == StatusCode::SWITCHING_PROTOCOLS {
+        if let Some(user) = &metered_user {
+            relay.meter.mark_live(user, &id);
+            // The upgrade that opens one session too many gets the prompt.
+            if let Some(v) = crate::meter::allowance_header(
+                relay.meter.over_now(user),
+                &relay.meter.config().upgrade_url,
+            ) {
+                response
+                    .headers_mut()
+                    .insert(crate::meter::ALLOWANCE_HEADER, v);
+            }
+        }
         if let Some(client_upgrade) = client_upgrade {
             let machine_upgrade = hyper::upgrade::on(&mut response);
             tokio::spawn(async move {
@@ -1262,6 +2375,52 @@ const KNOWN_VIEWER_PATH: &str = "/viewer";
 /// later requests (including another machine's viewer page), or to get a
 /// browser to render its response as a page at all outside the one known
 /// viewer path.
+/// Hardens a response for the kind of origin it is served on. A share's
+/// own origin may render the shared app's HTML (nothing else lives there);
+/// everywhere else the rules of [`harden_machine_response`] stand, with the
+/// share headers added for `/share/` paths.
+fn harden_response(headers: &mut HeaderMap, forwarded_path: &str, share: Option<&ShareCtx>) {
+    match share {
+        Some(sh) if sh.isolated => {
+            headers.remove("service-worker-allowed");
+            headers.remove("service-worker");
+            // Cookies stay host-only on this one share's origin.
+            crate::share_web::sanitize_set_cookies(headers);
+            headers.insert(
+                header::X_CONTENT_TYPE_OPTIONS,
+                HeaderValue::from_static("nosniff"),
+            );
+            // Share links are not for search engines or referrer leaks.
+            headers.insert(
+                header::REFERRER_POLICY,
+                HeaderValue::from_static("no-referrer"),
+            );
+            headers.insert(
+                "x-robots-tag",
+                HeaderValue::from_static("noindex, nofollow"),
+            );
+            if !headers.contains_key(header::CONTENT_SECURITY_POLICY) {
+                headers.insert(
+                    header::CONTENT_SECURITY_POLICY,
+                    HeaderValue::from_static("frame-ancestors 'self'"),
+                );
+            }
+        }
+        Some(_) => {
+            harden_machine_response(headers, forwarded_path);
+            headers.insert(
+                header::REFERRER_POLICY,
+                HeaderValue::from_static("no-referrer"),
+            );
+            headers.insert(
+                "x-robots-tag",
+                HeaderValue::from_static("noindex, nofollow"),
+            );
+        }
+        None => harden_machine_response(headers, forwarded_path),
+    }
+}
+
 fn harden_machine_response(headers: &mut HeaderMap, forwarded_path: &str) {
     // spacesd sets no cookies (bearer tokens and tickets only); refuse one
     // that would ride the relay's own domain.

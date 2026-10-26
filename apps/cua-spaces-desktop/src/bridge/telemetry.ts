@@ -52,8 +52,12 @@ export function telemetrySignal(native: Native, raw: unknown): AppTelemetrySigna
       const [location, guestOs, kind, outcome, failedPhase] = [word("location"), word("guestOs"), word("kind"), word("outcome"), word("failedPhase")];
       const [stalled, gpu, elapsedMs] = [flag("stalled"), flag("gpu"), ms("elapsedMs")];
       const errorVariant = typeof s.errorVariant === "string" && VARIANT.test(s.errorVariant) ? s.errorVariant : null;
+      // A retried create's final outcome; a page from before them sends neither.
+      const retryAttempt = s.retryAttempt === undefined ? 0 : s.retryAttempt === 0 || s.retryAttempt === 1 ? s.retryAttempt : null;
+      const errorSubclass = s.errorSubclass === undefined ? "none" : word("errorSubclass");
       if (!location || !guestOs || !kind || !outcome || !failedPhase || stalled === null || gpu === null || elapsedMs === null || errorVariant === null) return null;
-      return new S.SpaceCreate({ location, guestOs, kind, outcome, failedPhase, stalled, elapsedMs, gpu, errorVariant });
+      if (retryAttempt === null || !errorSubclass) return null;
+      return new S.SpaceCreate({ location, guestOs, kind, outcome, failedPhase, stalled, elapsedMs, gpu, errorVariant, retryAttempt, errorSubclass });
     }
     case "space-create-started": {
       const [location, guestOs, kind, gpu] = [word("location"), word("guestOs"), word("kind"), flag("gpu")];
@@ -100,8 +104,9 @@ export function telemetrySignal(native: Native, raw: unknown): AppTelemetrySigna
  * The page's store derives the same signals from its own copy of the
  * creates, so recording both counted every create twice on Windows and
  * Linux (`cua_space_create`, `cua_space_create_started`,
- * `space_create_local`, `first_space_created`, `first_space_ready`). The
- * SwiftUI host records only the page's.
+ * `space_create_local`, `first_space_created`, `first_space_ready`). A
+ * page that knows its host runs creates no longer sends them
+ * (`HOST_RUNS_CREATES`); this keeps an older page from counting twice.
  */
 export function hostRecorded(raw: unknown): boolean {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
@@ -125,7 +130,8 @@ export function hostRecorded(raw: unknown): boolean {
 export function leftWelcome(raw: unknown): boolean {
   if (!raw || typeof raw !== "object") return false;
   const s = raw as Record<string, unknown>;
-  if (s.type === "onboarding-page") return !(s.page === "welcome" && s.action === "shown");
+  // Welcome being shown (the old `shown`, the funnel's `step_viewed`) is before the notice.
+  if (s.type === "onboarding-page") return !(s.page === "welcome" && (s.action === "shown" || s.action === "step_viewed"));
   return s.type === "step" && s.step === "onboarding_skipped";
 }
 

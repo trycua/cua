@@ -24,6 +24,24 @@ def pytest_configure(config):
     )
 
 
+def pytest_collection_modifyitems(config, items):
+    """`CUA_E2E_SELECT=<file>` (one node id per line) keeps only those tests:
+    run.py --shard gives each CI shard its slice. An id that no longer exists
+    fails the run, so a plan can never silently drop a test."""
+    chosen = os.environ.get("CUA_E2E_SELECT")
+    if not chosen:
+        return
+    keep = {line.strip() for line in Path(chosen).read_text().splitlines() if line.strip()}
+    missing = keep - {item.nodeid for item in items}
+    if missing:
+        raise pytest.UsageError(
+            f"CUA_E2E_SELECT names tests that do not exist: {sorted(missing)[:5]}"
+        )
+    dropped = [item for item in items if item.nodeid not in keep]
+    items[:] = [item for item in items if item.nodeid in keep]
+    config.hook.pytest_deselected(items=dropped)
+
+
 def _mark(item):
     m = item.get_closest_marker("e2e")
     if m is None:

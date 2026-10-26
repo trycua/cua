@@ -49,7 +49,7 @@ struct UpdatesTests {
         var v = model.view
         #expect(v.title == "Cua Spaces for macOS")
         #expect(v.versionLine == "Version 0.2.0-staging.5 (0.2.0.105)")
-        #expect(v.links.map(\.label) == ["Acknowledgements", "Privacy Policy", "Terms of Service", "Report an Issue\u{2026}"])
+        #expect(v.links.map(\.label) == ["Acknowledgements", "Privacy Policy", "Terms of Service", "System Status", "Report an Issue\u{2026}"])
         #expect(v.updates?.lastCheck == "Last check: Never")
         #expect(v.updates?.autoInstallEnabled == true)
 
@@ -80,7 +80,7 @@ struct UpdatesTests {
     @Test func noUpdaterNoControls() {
         let model = UpdatesModel(updater: nil, info: Self.info)
         #expect(model.view.updates == nil)
-        #expect(model.view.links.count == 4)
+        #expect(model.view.links.count == 5)
     }
 
     @Test func theChannelIsSavedAndGivesSparkleItsChannels() {

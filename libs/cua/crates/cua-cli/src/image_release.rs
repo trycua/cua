@@ -127,6 +127,10 @@ pub struct StepDef {
     /// Only these arches (per-arch steps).
     #[serde(default)]
     pub arches: Option<Vec<String>>,
+    /// Only these tiers (a tier's own gates, e.g. the docker tier's
+    /// dockerd smoke test); absent: every tier.
+    #[serde(default)]
+    pub tiers: Option<Vec<String>>,
     /// Host capabilities the step needs (`kvm`, `runsc`, `docker`, `linux`,
     /// `macos`, `windows`; `!cap` for its absence). Unmet: the step is skipped.
     #[serde(default)]
@@ -648,7 +652,13 @@ pub fn phases(o: &ReleaseOpts) -> BTreeSet<Phase> {
 pub fn plan(rel: &ReleaseFile, ctx: &Context) -> Result<Vec<Planned>, CuaError> {
     let mut steps = Vec::new();
     for phase in Phase::ALL {
-        for def in rel.steps.iter().filter(|d| d.phase == phase) {
+        let tier = ctx.vars.get("tier").map(String::as_str).unwrap_or_default();
+        for def in rel.steps.iter().filter(|d| {
+            d.phase == phase
+                && d.tiers
+                    .as_ref()
+                    .is_none_or(|only| only.iter().any(|t| t == tier))
+        }) {
             let arches: Vec<Option<String>> = if def.per_arch {
                 ctx.arches
                     .iter()
@@ -1249,6 +1259,36 @@ mod tests {
         assert!(p[6].gate_required && !p[7].gate_required);
         assert!(!p[8].gate_required);
         assert_eq!(posix(&p.last().unwrap().argv[1]), "/w/evidence/pins.json");
+    }
+
+    #[test]
+    fn tier_only_steps_run_on_their_tiers() {
+        let r = rel(&TIERED
+            .replace(
+                r#""tag": "build-{stamp}"}}"#,
+                r#""tag": "build-{stamp}"}, "docker": {"series": "24.04-docker", "tag": "build-docker-{stamp}"}}"#,
+            )
+            .replace(
+                r#"{"id": "promote""#,
+                r#"{"id": "docker/{arch}", "phase": "gate", "per_arch": true, "tiers": ["docker"], "run": ["smoke"]},
+        {"id": "promote""#,
+            ));
+        let ids = |tier: &str| {
+            let o = ReleaseOpts {
+                tier: Some(tier.into()),
+                ..Default::default()
+            };
+            let c = ctx_for(&r, &o, &["linux", "docker", "runsc", "kvm"]);
+            plan(&r, &c)
+                .unwrap()
+                .into_iter()
+                .map(|s| s.id)
+                .collect::<Vec<_>>()
+        };
+        assert!(!ids("slim").iter().any(|i| i.starts_with("docker/")));
+        let docker = ids("docker");
+        assert!(docker.contains(&"docker/amd64".to_string()), "{docker:?}");
+        assert!(docker.contains(&"docker/arm64".to_string()), "{docker:?}");
     }
 
     #[test]

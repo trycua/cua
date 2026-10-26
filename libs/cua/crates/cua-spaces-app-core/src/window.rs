@@ -232,11 +232,11 @@ pub fn volume_sync_word(sync: &crate::drive_page::DriveSyncInput, now_ms: u64) -
     }
 }
 
-/// The menu for `input`: the Spaces the user can open (the notch's count)
+/// The menu for `input`: the Spaces on or starting (the notch's count)
 /// with Cua Volume's sync state next to it, its conflicts (they open the
 /// Volume page), then the actions.
 pub fn menu(input: &MenuInput) -> Vec<MenuItem> {
-    let n = crate::spaces::openable_count(&input.spaces);
+    let n = crate::spaces::on_count(&input.spaces);
     let alone = |s: &&crate::drive_page::DriveSyncInput| {
         input.backend.as_deref() == Some("fs")
             && !s
@@ -249,6 +249,7 @@ pub fn menu(input: &MenuInput) -> Vec<MenuItem> {
         .as_ref()
         .filter(|s| !alone(s) && volume_shown(input.experiments.as_ref()));
     let mut items = menu_bar_with_keyvault(n, input.keyvault.as_deref());
+    items[0].label = crate::spaces::on_status_line(n);
     if let Some(word) = sync.and_then(|s| volume_sync_word(s, input.now_ms)) {
         items[0].label = format!("{} \u{b7} {word}", items[0].label);
     }
@@ -408,7 +409,7 @@ mod tests {
                 ..Default::default()
             });
             assert_eq!(tab.count, want.to_string());
-            assert_eq!(items[0].label, crate::spaces::status_line(want));
+            assert_eq!(items[0].label, crate::spaces::on_status_line(want));
         }
     }
 }

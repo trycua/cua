@@ -11,9 +11,17 @@ import Foundation
 /// views captures and UI tests use.
 @MainActor
 public enum AppEnvironment {
+    /// Whether this is a Local build ("Cua Spaces Local", Info.plist
+    /// `CuaChannel` = `local`, stamped by `scripts/build-app.sh --channel
+    /// local`). Tests and every other build are Stable.
+    static let isLocalChannel =
+        ((Bundle.main.object(forInfoDictionaryKey: "CuaChannel") as? String) ?? "")
+        .trimmingCharacters(in: .whitespaces).lowercased() == "local"
+
     /// The bundle identity (the Keyvault's trusted-caller requirement names
-    /// it; see README "Keyvault identity").
-    public static let bundleIdentifier = "com.trycua.spaces.macos"
+    /// it; see README "Keyvault identity"). A Local build keeps its settings
+    /// in its own folder, `com.trycua.spaces.macos.local`, never Stable's.
+    public static let bundleIdentifier = isLocalChannel ? "com.trycua.spaces.macos.local" : "com.trycua.spaces.macos"
 
     /// `$HOME`, so a temp HOME (tests, captures) keeps every file away from
     /// the account's real Library (`FileManager` ignores `$HOME`).
@@ -83,7 +91,7 @@ public enum AppEnvironment {
             // Icons: caches survive restarts; fixtures never resolve apps or
             // touch the network.
             let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
-                .appendingPathComponent("com.trycua.cua-spaces/icons")
+                .appendingPathComponent(isLocalChannel ? "com.trycua.cua-spaces.local/icons" : "com.trycua.cua-spaces/icons")
             keyvault.appIcons = AppIconCache(dir: caches?.appendingPathComponent("apps"))
             keyvault.siteIconStore = SiteIconStore(dir: caches?.appendingPathComponent("sites"))
             keyvault.iconScale = Int(NSScreen.main?.backingScaleFactor ?? 2)
@@ -113,7 +121,10 @@ public enum AppEnvironment {
                              appVersion: fixtures ? nil : info.version)
         if fixtures { model.teamsReader = FixtureTeams() }
         if !fixtures {
-            LiveLocalNetworkPermission().request()
+            // Local Network access is asked for before the first macOS
+            // Space on this Mac, after the core's explanation (not at
+            // launch, where the prompt came without a reason).
+            model.localNetworkGate = LocalNetworkGate(probe: LiveLocalNetworkProbe())
             // Signed out is nil (setup signs in first); anything else (no
             // network, the credential vault) is the error itself, never a
             // silent nil that reads as "not signed in".

@@ -7,11 +7,14 @@
 //
 //   CuaSpacesMac --service-helper run   the login item (SMAppService.agent,
 //                                       Contents/Library/LaunchAgents/
+//                                       <CuaHelperLabel>.plist, by default
 //                                       com.trycua.spaces.helper.plist):
-//                                       reads ~/.cua/helper/service.json
-//                                       (written by cua-host: args, env,
-//                                       log, working directory) and runs
-//                                       Contents/MacOS/cua-spacesd with it
+//                                       reads <CuaHome>/helper/service.json
+//                                       (by default ~/.cua/helper/
+//                                       service.json; written by cua-host:
+//                                       args, env, log, working directory)
+//                                       and runs Contents/Helpers/
+//                                       cua-spacesd with it
 //   CuaSpacesMac check-permissions      `cua-spacesd check-permissions` with
 //                                       this terminal's stdio: the app's own
 //                                       permission state (cua-host's
@@ -30,24 +33,29 @@
 
 import ApplicationServices
 import CoreGraphics
+import CuaSpacesMacKit
 import Darwin
 import Foundation
 
-/// The spec file cua-host writes (`cua_host::service::helper_spec_path`).
-private func specPath() -> String {
+/// The spec file cua-host writes (`cua_host::service::helper_spec_path`):
+/// below the `CuaHome` this bundle was stamped with (Cua Spaces Local:
+/// `~/.cua-local`), else `~/.cua`. `nil` when a bundle of another channel
+/// has no usable home: it must not read the released app's spec.
+private func specPath() -> String? {
     var home = ProcessInfo.processInfo.environment["HOME"] ?? ""
     if home.isEmpty, let pw = getpwuid(getuid()), let dir = pw.pointee.pw_dir {
         home = String(cString: dir)
     }
-    return home + "/.cua/helper/service.json"
+    return HelperService.specPath(info: Bundle.main.infoDictionary, home: home)
 }
 
-/// `cua-spacesd` next to this executable (never a path from the spec: only
-/// the code sealed in this app runs with the app's permissions).
+/// This app's `Contents/Helpers/cua-spacesd` (never a path from the spec:
+/// only the code sealed in this app runs with the app's permissions). Not
+/// `Contents/MacOS`: from there it would register with LaunchServices as
+/// the app itself (see `HelperService.daemonInContents`).
 private func daemonPath() -> String {
     let me = Bundle.main.executablePath ?? CommandLine.arguments[0]
-    return URL(fileURLWithPath: me).resolvingSymlinksInPath()
-        .deletingLastPathComponent().appendingPathComponent("cua-spacesd").path
+    return HelperService.daemonPath(executable: URL(fileURLWithPath: me)).path
 }
 
 private func log(_ message: String) {
@@ -145,12 +153,16 @@ enum ServiceLauncher {
 
     /// `CuaSpacesMac --service-helper run`: the host service.
     static func serve() -> Never {
-        guard let spec = Spec.load(specPath()) else {
-            log("no host service set up (\(specPath())); nothing to run")
+        guard let specFile = specPath() else {
+            log("this app's CuaHome is not usable; nothing to run")
+            exit(0)
+        }
+        guard let spec = Spec.load(specFile) else {
+            log("no host service set up (\(specFile)); nothing to run")
             exit(0)
         }
         guard !spec.args.isEmpty else {
-            log("\(specPath()) has no arguments; nothing to run")
+            log("\(specFile) has no arguments; nothing to run")
             exit(0)
         }
         for sig in [SIGTERM, SIGINT, SIGHUP] {
@@ -159,11 +171,19 @@ enum ServiceLauncher {
                 if serviceChild > 0 { kill(serviceChild, s) }
             }
         }
-        // Sharing the desktop needs Screen Recording and Accessibility. Ask
-        // now, as "Cua Spaces" (macOS shows each prompt once and lists the
-        // app in both panes); a background capture alone is refused without
-        // a prompt.
-        if !spec.args.contains("--no-desktop") {
+        // Sharing the desktop needs Screen Recording and Accessibility. Once
+        // the app has run with its window on this Mac, the app asks for
+        // them itself, in its own words, with a guide to System Settings
+        // (its first run's "Share this Mac's screen", and Settings):
+        // macOS's bare prompts here would pop over that screen first.
+        // Hosting set up without the app ever showing (the CLI, a headless
+        // Mac) still asks here, as "Cua Spaces" (macOS shows each prompt
+        // once and lists the app in both panes); a background capture alone
+        // is refused without a prompt.
+        let appAsks = PermissionGuide.appAsks(specPath: specFile)
+        NSLog("cua-spaces service: Screen Recording and Accessibility are asked %@",
+              appAsks ? "by the app (its permissions screen)" : "here (macOS's prompts)")
+        if !spec.args.contains("--no-desktop") && !appAsks {
             if !CGPreflightScreenCaptureAccess() { _ = CGRequestScreenCaptureAccess() }
             let prompt = "AXTrustedCheckOptionPrompt" // kAXTrustedCheckOptionPrompt
             _ = AXIsProcessTrustedWithOptions([prompt: true] as CFDictionary)
@@ -176,7 +196,6 @@ enum ServiceLauncher {
         // the host was removed: the files are gone while this process still
         // runs from them. Stop, so the service that replaced it can take the
         // port; launchd does not start a program that is gone.
-        let specFile = specPath()
         let daemonFile = daemonPath()
         Thread.detachNewThread {
             var misses = 0

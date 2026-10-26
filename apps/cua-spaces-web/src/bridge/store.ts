@@ -15,6 +15,7 @@ import { isUnsupported, type DataAdapter } from "./adapter";
 import type { AgentRunStatus, AgentSetupRow, PersistentAgent, SpaceAgentRun } from "./contracts/agents";
 import type { CoreClient } from "./core";
 import { withCreateContext } from "./create-context";
+import { HOST_RUNS_CREATES, loadCreateStreaks, saveCreateStreaks } from "./create-retry";
 import { createReport, reportMailto, type CreateReport, type ReportSend } from "./diagnostic-report";
 import type { AboutInput } from "./contracts/settings";
 import { passedSteps } from "./onboarding";
@@ -49,7 +50,7 @@ import {
 import type { HostEvent, HostSignIn, HostSignInFailure, SessionSnapshot, SettingKey, SettingsSnapshot, SettingsValues } from "./protocol";
 import { signInFailedFromError, signInFailedPhase, type FailedPhase } from "./sign-in";
 import { createSettingsFeature, type SettingsFeature } from "./settings-feature";
-import { SpaceDetailStore } from "./space-detail";
+import { SpaceDetailStore, THIS_MACHINE_ID } from "./space-detail";
 import {
   HOST_RECORDS_LAUNCH,
   TelemetryForwarder,
@@ -195,8 +196,9 @@ export interface StoreOptions {
 }
 
 /** A device code lives about this long; a sign-in still waiting after it
- * will not finish. */
-const SIGN_IN_TIMEOUT_MS = 10 * 60_000;
+ * will not finish. A native host ends its own wait at 10 minutes and says
+ * why; this safety net comes after it, so one failure is counted once. */
+const SIGN_IN_TIMEOUT_MS = 11 * 60_000;
 
 const CREATE_TICK_MS = 1_000;
 /** How often a watched run is read while a turn runs, and while it waits. */
@@ -249,7 +251,7 @@ export class BridgeStore {
   private listNoticeText: string | null = null;
   /** The host's standing notice (`DataAdapter.hostNotice`). */
   private hostNoticeText: string | null = null;
-  private creates: CreatesState = NO_CREATES;
+  private creates: CreatesState = { ...NO_CREATES, streaks: loadCreateStreaks() };
   private machineRows: MachineRow[] = [];
   private settingsSnap: SettingsSnapshot | undefined;
   private sessionSnap: SessionSnapshot | undefined;
@@ -260,6 +262,8 @@ export class BridgeStore {
   private agentsPending: string[] = [];
   private signInUrl: string | null = null;
   private signInTimer: ReturnType<typeof setTimeout> | undefined;
+  /** The sign-in in progress asked for a code instead of the browser's way back. */
+  private signInByCode = false;
   /** Counts `session.signIn` answers: a session read started before the
    * latest one says nothing about it (an earlier attempt's failure). */
   private signInEpoch = 0;
@@ -329,6 +333,15 @@ export class BridgeStore {
       (s) => s.type !== "onboarding-page" || !unseen.includes(s.page),
     );
     void this.telemetry.track(seen);
+  }
+
+  /** One first-run funnel event (`cua_onboarding_step_*`, `cua_onboarding_skipped`):
+   * `step` is one of the app core's funnel steps, `action` `step_viewed`,
+   * `step_completed`, `step_failed` or `step_skipped`, `detail` the failure's
+   * reason or how it was skipped. Fixed words only; the host checks the
+   * switch again and fills the step's index, the version, OS and app version. */
+  trackFirstRunStep(step: string, action: string, detail = "none"): void {
+    void this.telemetry.track([{ type: "onboarding-page", page: step, action, choice: detail }]);
   }
 
   /** "Set up later": the first run left for now, on its current page. */
@@ -517,9 +530,13 @@ export class BridgeStore {
   }
 
   private dispatch(action: CreateAction): void {
-    void this.telemetry.track(telemetryCreates(this.core, this.creates, action, this.now()));
+    // A host that runs the create records its usage events itself, from
+    // the same core decisions (`AppModel.sendCreate`): sending the page's
+    // copy too counted every create twice.
+    if (!HOST_RUNS_CREATES[this.adapter.mode]) void this.telemetry.track(telemetryCreates(this.core, this.creates, action, this.now()));
     const before = this.creates;
     this.creates = reduceCreates(this.core, this.creates, action);
+    if (this.creates.streaks !== before.streaks) saveCreateStreaks(this.creates.streaks);
     this.publishSpaces();
     if (action.type === "fail" || action.type === "tick" || action.type === "progress") this.noteFailures(before);
   }
@@ -611,8 +628,9 @@ export class BridgeStore {
       host,
       hostName: machine?.name ?? null,
     });
+    const args = notifyWhenReady ? { config, pendingId, os, notifyWhenReady } : { config, pendingId, os };
     try {
-      const row = await this.adapter.call("spaces.create", notifyWhenReady ? { config, pendingId, os, notifyWhenReady } : { config, pendingId, os });
+      const row = await this.createOnHost(args, pendingId);
       this.createdIds.set(pendingId, row.id);
       this.dispatch({ type: "finish", id: pendingId, spaceId: row.id });
       this.createRequests.delete(pendingId);
@@ -628,10 +646,29 @@ export class BridgeStore {
       // The words it failed with, for a diagnostic report the person may send.
       this.createFailures.set(pendingId, { error: message, at: this.now() });
       if (message.startsWith("cancelled")) this.dispatch({ type: "cancel-done", id: pendingId });
-      // The failed row, and its one notification (`noteFailures`).
-      else this.dispatch({ type: "fail", id: pendingId, error: message });
+      // The failed row (already shown by `createOnHost`), and its one
+      // notification (`noteFailures`).
       // Where it ran, for the notice that words the failure (`createFailedText`).
       throw withCreateContext(toError(e), { provider, hostName: machine?.name });
+    }
+  }
+
+  /** `spaces.create` on the host. A failure the core answers by running the
+   * create once more (one that usually passes: the row says "Retrying…")
+   * runs it again here, unless the host runs creates and retries on its own
+   * side (`HOST_RUNS_CREATES`, telling the page with `CreateProgress.retry`).
+   * Any other failure is put on the row and thrown. */
+  private async createOnHost(args: { config: SpaceCreateConfig; pendingId: string; os: SpaceOs; notifyWhenReady?: boolean }, pendingId: string): Promise<SpaceRow> {
+    for (;;) {
+      try {
+        return await this.adapter.call("spaces.create", args);
+      } catch (e) {
+        const message = toError(e).message;
+        if (message.startsWith("cancelled")) throw e;
+        this.dispatch({ type: "fail", id: pendingId, error: message, now: this.now() });
+        const again = !HOST_RUNS_CREATES[this.adapter.mode] && this.creates.pending.some((p) => p.id === pendingId && p.retryPending && !p.cancelling);
+        if (!again) throw e;
+      }
     }
   }
 
@@ -936,16 +973,21 @@ export class BridgeStore {
     // The host's sign-in failed (the browser never confirmed, the network
     // dropped, the keychain refused): say why now, never keep waiting.
     if (failure) {
-      this.signInFailed({
-        kind: "failed",
-        reason: (failure.reason as SignInFailure) || "unknown",
-        message: failure.message,
-        detail: failure.detail,
-      });
+      this.signInFailed(
+        {
+          kind: "failed",
+          reason: (failure.reason as SignInFailure) || "unknown",
+          message: failure.message,
+          detail: failure.detail,
+        },
+        true,
+      );
       return;
     }
     if (!waiting) return;
     if (waiting.url) this.signInUrl = waiting.url;
+    // The host fell back to a code (no browser, or its way back is blocked).
+    if (waiting.userCode) this.signInByCode = true;
     const opened = waiting.opened !== false;
     if (this.signInPhase.kind === "waiting" && (this.signInPhase.userCode ?? null) === waiting.userCode && (this.signInPhase.opened ?? true) === opened) return;
     this.signInPhase = { kind: "waiting", userCode: waiting.userCode, opened };
@@ -957,15 +999,22 @@ export class BridgeStore {
     this.publishSettings();
   }
 
-  async signIn(): Promise<SignInStart> {
+  /** `code`: sign in with a code to enter on any device, for when the
+   * browser never gets back to the app. */
+  async signIn(opts: { code?: boolean } = {}): Promise<SignInStart> {
     this.stopSignInTimer();
+    this.signInByCode = opts.code === true;
+    if (opts.code) this.trackFeature("sign_in_code_instead");
     this.setSignIn({ kind: "starting" });
     try {
-      const start = await this.adapter.call("session.signIn", {});
+      const start = await this.adapter.call("session.signIn", opts.code ? { code: true } : {});
       this.signInEpoch += 1;
       // Cancelled while it started: leave it.
       if (this.signInPhase.kind !== "starting") return start;
       this.signInUrl = start.verificationUri || null;
+      // The way it actually runs: a code when the host gave one (also its own fallback).
+      this.signInByCode = Boolean(start.userCode) || start.method === "device" || opts.code === true;
+      this.trackFeature(this.signInByCode ? "sign_in_started_code" : "sign_in_started_browser");
       this.setSignIn({ kind: "waiting", userCode: start.userCode ?? null });
       this.signInTimer = setTimeout(() => {
         if (this.signInPhase.kind === "waiting") this.signInFailed(signInFailedPhase(this.core, "notConfirmed"));
@@ -989,10 +1038,17 @@ export class BridgeStore {
 
   /** A sign-in failed: shown with its reason, and counted by its kind
    * (never its words). */
-  private signInFailed(phase: FailedPhase): void {
+  private signInFailed(phase: FailedPhase, counted = false): void {
     this.stopSignInTimer();
-    void this.telemetry.track(telemetrySignInFailure(this.core, phase.reason ?? "unknown"));
+    // The reason's kind, and the way it was tried (browser or code). A host
+    // that ran the sign-in has counted the reason itself.
+    if (!counted) void this.telemetry.track(telemetrySignInFailure(this.core, phase.reason ?? "unknown"));
+    this.trackFeature(this.signInByCode ? "sign_in_failed_code" : "sign_in_failed_browser");
     this.setSignIn(phase);
+  }
+
+  private trackFeature(feature: string): void {
+    void this.telemetry.track([{ type: "feature", feature }]);
   }
 
   private stopSignInTimer(): void {
@@ -1094,9 +1150,11 @@ export class BridgeStore {
     const spaces = (this.resources.spaces.data as Space[] | undefined) ?? [];
     // A machine that does not share its desktop (a spare Mac that only
     // provides Spaces) refuses the processes a run list starts: not asked.
+    // Nor is this machine's own entry: it is not a Space with runs.
     const live = spaces.filter(
       (s) =>
         !s.id.startsWith("pending:") &&
+        s.id !== THIS_MACHINE_ID &&
         (s.status === "running" || s.status === "approval" || s.status === "local") &&
         !s.power?.off &&
         sharesDesktop(this.core, s) !== false,
@@ -1340,6 +1398,13 @@ export class BridgeStore {
         break;
       case "spaces.createProgress": {
         const p = e.progress;
+        // The host runs the create once more after a failure that usually
+        // passes: the same failure here shows "Retrying…" (the core decides
+        // alike on both sides).
+        if (p.retry) {
+          this.dispatch({ type: "fail", id: p.pendingId, error: p.retry.error, errorVariant: p.retry.errorVariant ?? "", now: this.now() });
+          break;
+        }
         this.dispatch({
           type: "progress",
           id: p.pendingId,

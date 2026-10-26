@@ -18,6 +18,7 @@ import type { BridgeContext } from "./context";
 import { Failure, type Handlers } from "./host";
 import { hostParts, type HostParts } from "./host-parts";
 import { encode } from "./value";
+import { cliSetting } from "./cli";
 
 function telemetryInput(model: AppModel): AppTelemetryInput | undefined {
   try {
@@ -91,6 +92,8 @@ export function settingsState(model: AppModel, parts: HostParts) {
     // The account app (CUA_ENV, CUA_ACCOUNT_APP_URL): the page's core has no
     // environment, so Upgrade's billing fallback names this one.
     accountUrl: model.native.appAccountAppUrl(),
+    // The CLI this app installs and whether it is here (`cli.ts`).
+    cli: cliSetting(model),
   };
 }
 

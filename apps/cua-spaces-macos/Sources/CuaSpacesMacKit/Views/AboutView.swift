@@ -115,6 +115,7 @@ struct AboutSettingsView: View {
         case .acknowledgements: "acknowledgements"
         case .privacy: "privacy"
         case .terms: "terms"
+        case .status: "status"
         case .issue: "issue"
         }
     }

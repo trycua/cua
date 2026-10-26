@@ -27,7 +27,10 @@ struct MachinesPageView: View {
 
     var body: some View {
         let view = model.machinesView
-        let selected = view.machines.first { $0.id == selectedId } ?? view.machines.first
+        // A cloud host the pool added shows once, in its own section.
+        let cloudMachines = model.elastic.machineIds
+        let rows = view.machines.filter { !cloudMachines.contains($0.id) }
+        let selected = rows.first { $0.id == selectedId } ?? rows.first
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 0) {
                 searchField
@@ -35,9 +38,25 @@ struct MachinesPageView: View {
                     ForEach(view.groups, id: \.id) { group in
                         groupSection(group, view: view)
                     }
+                    if model.elastic.visible {
+                        Section("Cloud") {
+                            ForEach(model.elastic.hosts) { host in
+                                CloudHostRowView(host: host).selectionDisabled()
+                            }
+                        }
+                    }
                 }
                 .listStyle(.sidebar)
                 .accessibilityIdentifier("machines-list")
+                if model.elastic.visible {
+                    ElasticSummaryView(elastic: model.elastic)
+                }
+                if rows.count <= 1, !model.elastic.visible {
+                    Text("Only this machine so far. Add another to run Spaces on it from here.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .padding(12)
+                }
             }
             .frame(width: 300)
             Divider()
@@ -163,6 +182,68 @@ struct MachinesPageView: View {
     }
 }
 
+/// A cloud host the pool added: name, cloud and type with its state, and
+/// what it costs an hour.
+struct CloudHostRowView: View {
+    let host: ElasticHostRow
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "cloud")
+                .foregroundStyle(.secondary)
+                .frame(width: 30, height: 30)
+                .background(.fill.tertiary, in: .rect(cornerRadius: 7))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(host.name).lineLimit(1)
+                Text("\(host.kindLine) \u{00B7} \(host.stateWord)")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 4)
+            Text("\(ElasticSpend.money(host.usdPerHour, perHour: true))/h")
+                .font(.callout.monospacedDigit())
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 3)
+        .opacity(host.running ? 1 : 0.6)
+        .accessibilityIdentifier("cloud-host-row")
+    }
+}
+
+/// One quiet line (what the clouds cost now and this month) and the last
+/// few scaling events in small text.
+struct ElasticSummaryView: View {
+    let elastic: ElasticModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            if let spend = elastic.spend {
+                Text(spend.line)
+                    .font(.callout.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("elastic-summary")
+            }
+            ForEach(elastic.events) { e in
+                Text("\(e.text) \u{00B7} \(Self.ago(e.at))")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .accessibilityIdentifier("elastic-events")
+    }
+
+    static func ago(_ at: Int, now: Date = Date()) -> String {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .short
+        return f.localizedString(for: Date(timeIntervalSince1970: TimeInterval(at)), relativeTo: now)
+    }
+}
+
+/// The OS mark for a page row's system (`os-macos`, ..., `computer`).
 /// The OS mark for a machine's system (`os-macos`, ..., `computer`).
 private func osIcon(_ os: String) -> String { os.isEmpty ? "computer" : "os-\(os)" }
 

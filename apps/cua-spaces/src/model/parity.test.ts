@@ -55,6 +55,7 @@ import {
   deleteFailedText,
   detailCopy,
   mainChrome,
+  onCount,
   openableCount,
   pipClick,
   pipReduce,
@@ -155,6 +156,7 @@ const MODEL: Record<string, (a: Args) => unknown> = {
   'window.chrome': (a) => mainChrome(a.input),
   'window.menu': (a) => trayMenu(a.input),
   'spaces.openableCount': (a) => openableCount(a.spaces),
+  'spaces.onCount': (a) => onCount(a.spaces),
   'settings.page': (a) => settingsPage(a.input),
   'loginItem.launchPlan': (a) => launchPlan(a.choice, a.onboarded, a.serves, a.status),
   'host.formInitial': () => hostFormInitial(),
@@ -252,6 +254,7 @@ describe('app core parity flows (webview)', () => {
       'checklist',
       'create-stages',
       'first-run',
+      'create-retry',
     ]);
   });
 

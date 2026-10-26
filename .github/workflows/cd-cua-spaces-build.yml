@@ -1,0 +1,928 @@
+name: "CD: Cua Spaces build (shadow)"
+
+# Phase 1 of CUA-1991 (design: docs/design/desktop-release-build-once-promote.md,
+# trycua/cua#5704). A signed, notarized and attested build of Cua Spaces for
+# every change to the release inputs on main, kept as an Actions artifact.
+# NOTHING CONSUMES IT YET: cd-cua-spaces.yml still builds and publishes the
+# release from the tag, unchanged. This workflow only measures what building
+# once per commit costs (see the cost summary at the end of each run).
+#
+# What it builds (the stable release set of cd-cua-spaces.yml):
+#  - macOS: the SwiftUI app, universal, as a DMG and a .pkg (Developer ID
+#    signed, notarized, stapled).
+#  - Windows: the Electron installers, x64 and arm64 (Azure Artifact Signing).
+#  - Linux: the Electron AppImage and deb, x64 and arm64.
+#  - The Electron updater feeds as built (relative URLs; the tag run makes
+#    them absolute when it publishes) and the signing notes.
+# Not built here: Sparkle appcast (needs the published release), Sigstore
+# bundles and release-artifacts.json (made at the tag), Electron macOS (beta
+# only), dSYMs.
+#
+# Trigger: push to main when a release input changes (paths below). The inputs
+# are keyed by their git tree hash: a run whose tree hash already has a live,
+# complete build (an Actions cache marker pointing at a run whose artifact has
+# not expired) does nothing. workflow_dispatch can force a rebuild.
+#
+# Secrets: only jobs that sign use the `cua-driver-release-signing`
+# environment, which is restricted to the main branch. Pull requests never
+# run this workflow and never see these secrets. Changes to this file need
+# CODEOWNERS review.
+#
+# Output: artifact `spaces-build-<sha>` with every installer and
+# build-manifest.json (file, sha256, platform, version, build number, source
+# SHA, input tree hash). Retained 7 days, 30 when the commit changes a VERSION
+# file. Every file, the manifest included, has a GitHub artifact attestation
+# (signer workflow: this file at refs/heads/main). verify-release.sh runs on
+# the produced set before it is attested.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/cua-spaces-macos/**"
+      - "apps/cua-spaces/**"
+      - "apps/cua-spaces-desktop/**"
+      - "apps/cua-spaces-web/**"
+      - "libs/cua/**"
+      - "libs/cua-spacesd/VERSION"
+      - ".github/actions/spaces-native/**"
+      - ".github/actions/spaces-rust-slice/**"
+      - ".github/actions/setup-protoc/**"
+      - ".github/scripts/spaces_build_*.py"
+      - ".github/workflows/cd-cua-spaces-build.yml"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Build even if a live build of this exact input tree exists"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# One build at a time, never cancelled: a notarization in flight is not
+# thrown away by a newer push. (GitHub keeps one pending run per group; the
+# newest waits, an older pending one is replaced. The tree-hash key means the
+# newest build still covers every input.)
+concurrency:
+  group: cd-cua-spaces-build
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+  # The CLI sidecar downloads cua-spacesd from this repository's releases.
+  CUA_RELEASE_REPOSITORY: ${{ github.repository }}
+  # Fail closed on the canonical repository (a main build must be signed).
+  REQUIRE_SIGNING: ${{ github.repository == 'trycua/cua' }}
+
+jobs:
+  # Decides whether to build and fixes the identity of the build: version,
+  # build number, source SHA, the tree hash of the inputs, the retention.
+  plan:
+    name: Plan
+    # The signing environment is restricted to main; so is this workflow.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      skip: ${{ steps.plan.outputs.skip }}
+      reuse_run: ${{ steps.plan.outputs.reuse_run }}
+      version: ${{ steps.plan.outputs.version }}
+      build_number: ${{ github.run_number }}
+      tree: ${{ steps.plan.outputs.tree }}
+      retention: ${{ steps.plan.outputs.retention }}
+      marker_key: ${{ steps.tree.outputs.key }}
+      artifact: spaces-build-${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Hash the release inputs
+        id: tree
+        run: |
+          set -euo pipefail
+          # Everything that can change the shipped bytes. Same list as `on.push.paths`.
+          inputs=(
+            apps/cua-spaces-macos apps/cua-spaces apps/cua-spaces-desktop apps/cua-spaces-web
+            libs/cua libs/cua-spacesd/VERSION
+            .github/actions/spaces-native .github/actions/spaces-rust-slice .github/actions/setup-protoc
+            .github/workflows/cd-cua-spaces-build.yml
+          )
+          args=()
+          for p in "${inputs[@]}"; do args+=("HEAD:$p"); done
+          tree="$(git rev-parse "${args[@]}" | git hash-object --stdin)"
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+          echo "key=spaces-build-done-v1-${GITHUB_REPOSITORY//\//-}-$tree" >> "$GITHUB_OUTPUT"
+      - name: Look for a live build of this tree
+        id: marker
+        if: github.event_name != 'workflow_dispatch' || !inputs.force
+        uses: actions/cache/restore@v4
+        with:
+          path: marker
+          key: ${{ steps.tree.outputs.key }}
+      - name: Plan
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TREE: ${{ steps.tree.outputs.tree }}
+          HIT: ${{ steps.marker.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < apps/cua-spaces-macos/VERSION)"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "::error::bad version: $version"; exit 1; }
+          skip=false; reuse_run=""
+          if [ "$HIT" = true ] && [ -f marker/build ]; then
+            read -r old_sha old_run < marker/build
+            # The marker is only as good as the artifact it points at.
+            live="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$old_run/artifacts" \
+              --jq ".artifacts[] | select(.name == \"spaces-build-$old_sha\" and .expired == false) | .id" || true)"
+            if [ -n "$live" ]; then skip=true; reuse_run="$old_run"; fi
+          fi
+          # 30 days when this commit bumps a VERSION file, else 7.
+          retention=7
+          if git diff --name-only HEAD^ HEAD | grep -Eq '^(apps/cua-spaces-macos|libs/cua|libs/cua-spacesd)/VERSION$'; then retention=30; fi
+          {
+            echo "skip=$skip"
+            echo "reuse_run=$reuse_run"
+            echo "version=$version"
+            echo "tree=$TREE"
+            echo "retention=$retention"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "## Plan"
+            echo "- Version $version, build number $GITHUB_RUN_NUMBER, source $GITHUB_SHA"
+            echo "- Input tree hash \`$TREE\`"
+            if [ "$skip" = true ]; then
+              echo "- **Skipped:** a live build of this tree exists (run $reuse_run); nothing to do."
+            else
+              echo "- Building. Retention $retention days."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # The bundled `cua` CLI bakes libs/cua-spacesd/VERSION and "Set up for
+  # access" downloads that release: refuse to build an app whose pinned
+  # cua-spacesd is not published.
+  spacesd-published:
+    name: cua-spacesd pin is published
+    needs: plan
+    if: needs.plan.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the baked cua-spacesd release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .github/scripts/check_spacesd_published.sh "$CUA_RELEASE_REPOSITORY"
+
+  # The SwiftUI app's Rust slices, restored from the cache the main producer
+  # (ci-cua-spaces-rust-slice.yml) fills, or built.
+  macos-rust:
+    name: SwiftUI Rust (${{ matrix.arch }})
+    needs: [plan, spacesd-published]
+    runs-on: macos-26
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: arm64, triple: aarch64-apple-darwin }
+          - { arch: x86_64, triple: x86_64-apple-darwin }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/spaces-rust-slice
+        with:
+          triple: ${{ matrix.triple }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-rust-${{ matrix.arch }}
+          path: |
+            libs/cua/target/${{ matrix.triple }}/release/libcua_spaces_ffi.dylib
+            libs/cua/target/${{ matrix.triple }}/release/cua-spaces-cli
+          if-no-files-found: error
+          retention-days: 1
+
+  # The web UI, built once for the SwiftUI app and the Electron apps.
+  web:
+    name: Web UI
+    needs: plan
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - name: Restore wasm-bindgen
+        id: wasm-bindgen
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/wasm-bindgen
+            ~/.cargo/bin/wasm-bindgen-test-runner
+            ~/.cargo/bin/wasm2es6js
+          key: wasm-bindgen-cli-0.2.126-${{ runner.os }}-${{ runner.arch }}
+      - name: Install wasm-bindgen (the web UI's app core)
+        if: steps.wasm-bindgen.outputs.cache-hit != 'true'
+        run: cargo install wasm-bindgen-cli --version 0.2.126 --locked
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          package_json_file: apps/cua-spaces-desktop/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build the web UI
+        working-directory: apps/cua-spaces-web
+        run: |
+          pnpm install --ignore-workspace --frozen-lockfile
+          pnpm build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: spaces-web-dist
+          path: apps/cua-spaces-web/dist/
+          if-no-files-found: error
+          retention-days: 1
+
+  # macOS: sign, notarize, staple; DMG and .pkg. Same steps as build-macos in
+  # cd-cua-spaces.yml (without the release upload, the appcast and the dSYMs).
+  build-macos:
+    name: darwin-universal (SwiftUI)
+    needs: [plan, spacesd-published, macos-rust, web]
+    runs-on: macos-26
+    timeout-minutes: 180
+    # Holds the Apple signing secrets; restricted to main.
+    environment: cua-driver-release-signing
+    permissions:
+      contents: read
+    env:
+      CARGO_BUILD_JOBS: 4
+      CARGO_TARGET_DIR: ${{ github.workspace }}/libs/cua/target
+      VERSION: ${{ needs.plan.outputs.version }}
+    outputs:
+      signed: ${{ steps.signing.outputs.apple }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Signing configuration
+        id: signing
+        env:
+          APPLICATION_CERT_BASE64: ${{ secrets.APPLICATION_CERT_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.CERT_PASSWORD }}
+          DEVELOPER_NAME: ${{ secrets.DEVELOPER_NAME }}
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APP_SPECIFIC_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
+          INSTALLER_CERT_BASE64: ${{ secrets.INSTALLER_CERT_BASE64 }}
+        run: |
+          missing=()
+          for name in APPLICATION_CERT_BASE64 CERT_PASSWORD DEVELOPER_NAME TEAM_ID APPLE_ID \
+            APP_SPECIFIC_PASSWORD INSTALLER_CERT_BASE64; do
+            [ -n "${!name}" ] || missing+=("$name")
+          done
+          if [ ${#missing[@]} -eq 0 ]; then
+            # The Keyvault trusts only the team it pins; compared here, never printed.
+            for pin in libs/cua/crates/cua-keyvault/src/caller.rs libs/cua/crates/cua-auth/src/lib.rs; do
+              pinned="$(sed -n 's/^pub const CUA_TEAM_ID: &str = "\([A-Z0-9]*\)";/\1/p' "$pin")"
+              if [ -z "$pinned" ] || [ "$pinned" != "$TEAM_ID" ]; then
+                echo "::error::the TEAM_ID secret is not the team $pin pins (CUA_TEAM_ID); the Keyvault would refuse this build"
+                exit 1
+              fi
+            done
+            echo "apple=true" >> "$GITHUB_OUTPUT"
+          elif [ "$REQUIRE_SIGNING" = true ]; then
+            echo "::error::refusing to build an unsigned Cua Spaces main build; missing secrets: ${missing[*]}"
+            exit 1
+          else
+            echo "apple=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::macOS build is UNSIGNED (ad-hoc signed, not notarized); missing secrets: ${missing[*]}"
+          fi
+
+      - name: Download the Rust slices
+        uses: actions/download-artifact@v4
+        with:
+          pattern: macos-rust-*
+          path: ${{ runner.temp }}/macos-rust
+      - name: Place the Rust slices
+        run: |
+          set -euo pipefail
+          for pair in arm64:aarch64-apple-darwin x86_64:x86_64-apple-darwin; do
+            dir="libs/cua/target/${pair#*:}/release"
+            mkdir -p "$dir"
+            cp "$RUNNER_TEMP/macos-rust/macos-rust-${pair%%:*}/"* "$dir/"
+            chmod +x "$dir/cua-spaces-cli"
+          done
+
+      # A throwaway keychain holds the Developer ID Application identity for
+      # this job only (deleted in the last step).
+      - name: Import the Developer ID Application certificate
+        if: steps.signing.outputs.apple == 'true'
+        env:
+          APPLICATION_CERT_BASE64: ${{ secrets.APPLICATION_CERT_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          kc="$RUNNER_TEMP/spaces-signing.keychain-db"
+          kc_password="$(uuidgen)"
+          security create-keychain -p "$kc_password" "$kc"
+          security set-keychain-settings -lut 21600 "$kc"
+          security unlock-keychain -p "$kc_password" "$kc"
+          printf '%s' "$APPLICATION_CERT_BASE64" | base64 --decode > "$RUNNER_TEMP/application.p12"
+          security import "$RUNNER_TEMP/application.p12" -k "$kc" -P "$CERT_PASSWORD" \
+            -T /usr/bin/codesign >/dev/null
+          rm -f "$RUNNER_TEMP/application.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$kc_password" "$kc" >/dev/null
+          existing=()
+          while IFS= read -r keychain; do existing+=("$keychain"); done \
+            < <(security list-keychains -d user | tr -d '"' | sed 's/^ *//')
+          security list-keychains -d user -s "$kc" "${existing[@]}"
+          test "$(security find-identity -v -p codesigning "$kc" | grep -c 'Developer ID Application')" -ge 1
+
+      - name: Download the web UI
+        uses: actions/download-artifact@v4
+        with:
+          name: spaces-web-dist
+          path: apps/cua-spaces-web/dist
+
+      - name: Build and sign Cua Spaces.app (universal)
+        env:
+          SIGNED: ${{ steps.signing.outputs.apple }}
+          DEVELOPER_NAME: ${{ secrets.DEVELOPER_NAME }}
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+        run: |
+          set -euo pipefail
+          identity="-"
+          [ "$SIGNED" = true ] && identity="Developer ID Application: $DEVELOPER_NAME ($TEAM_ID)"
+          # CFBundleVersion is X.Y.Z.<run number>: the build number of this run.
+          apps/cua-spaces-macos/scripts/build-release.sh --version "$VERSION" \
+            --build-number "$GITHUB_RUN_NUMBER" --arch universal --skip-cargo \
+            --sign "$identity" --out "$RUNNER_TEMP/spaces-app" \
+            --feed-url "https://github.com/$GITHUB_REPOSITORY/releases/download/cua-spaces-latest/cua-spaces-appcast.xml"
+
+      - name: Notarize and staple the app
+        if: steps.signing.outputs.apple == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.TEAM_ID }}
+        run: |
+          set -euo pipefail
+          app="$RUNNER_TEMP/spaces-app/Cua Spaces.app"
+          ditto -c -k --keepParent "$app" "$RUNNER_TEMP/spaces-app.zip"
+          apps/cua-spaces-macos/scripts/notarize.sh "$RUNNER_TEMP/spaces-app.zip"
+          xcrun stapler staple "$app"
+          xcrun stapler validate "$app"
+          spctl -a -vv "$app"
+
+      - name: Installer assets (DMG, .pkg for MDM)
+        env:
+          SIGNED: ${{ steps.signing.outputs.apple }}
+          DEVELOPER_NAME: ${{ secrets.DEVELOPER_NAME }}
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+          INSTALLER_CERT_BASE64: ${{ secrets.INSTALLER_CERT_BASE64 }}
+          INSTALLER_CERT_PASSWORD: ${{ secrets.INSTALLER_CERT_PASSWORD || secrets.CERT_PASSWORD }}
+          INSTALLER_SIGNING_IDENTITY: ${{ secrets.INSTALLER_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.TEAM_ID }}
+        run: |
+          set -euo pipefail
+          app="$RUNNER_TEMP/spaces-app/Cua Spaces.app"
+          test -x "$app/Contents/MacOS/cua" || { echo "the app bundle is missing the cua CLI" >&2; exit 1; }
+          mkdir -p installer-assets
+          dmg="installer-assets/cua-spaces-$VERSION-darwin-universal.dmg"
+          pkg="installer-assets/cua-spaces-$VERSION-darwin-universal.pkg"
+          # macOS bash 3.2 under `set -u` rejects "${sign[@]}" when empty.
+          dmg_sign=()
+          [ "$SIGNED" = true ] && dmg_sign=(--sign "Developer ID Application: $DEVELOPER_NAME ($TEAM_ID)")
+          apps/cua-spaces-macos/scripts/package-dmg.sh --app "$app" --out "$dmg" ${dmg_sign[@]+"${dmg_sign[@]}"}
+          # The disk image goes to Apple now and is notarized while the .pkg is
+          # built, signed and submitted.
+          dmg_notary=""
+          if [ "$SIGNED" = true ]; then
+            apps/cua-spaces-macos/scripts/notarize.sh "$dmg" > "$RUNNER_TEMP/notarize-dmg.log" 2>&1 &
+            dmg_notary=$!
+          fi
+          if [ -z "$INSTALLER_SIGNING_IDENTITY" ] && [ -n "$DEVELOPER_NAME" ] && [ -n "$TEAM_ID" ]; then
+            INSTALLER_SIGNING_IDENTITY="Developer ID Installer: $DEVELOPER_NAME ($TEAM_ID)"
+          fi
+          sign=()
+          if [ -n "$INSTALLER_CERT_BASE64" ] && [ -n "$INSTALLER_SIGNING_IDENTITY" ]; then
+            kc="$RUNNER_TEMP/installer.keychain-db"
+            kc_password="$(uuidgen)"
+            security create-keychain -p "$kc_password" "$kc"
+            security set-keychain-settings -lut 3600 "$kc"
+            security unlock-keychain -p "$kc_password" "$kc"
+            printf '%s' "$INSTALLER_CERT_BASE64" | base64 --decode > "$RUNNER_TEMP/installer.p12"
+            security import "$RUNNER_TEMP/installer.p12" -k "$kc" -P "$INSTALLER_CERT_PASSWORD" -T /usr/bin/productbuild >/dev/null
+            rm -f "$RUNNER_TEMP/installer.p12"
+            existing=()
+            while IFS= read -r keychain; do existing+=("$keychain"); done \
+              < <(security list-keychains -d user | tr -d '"' | sed 's/^ *//')
+            security list-keychains -d user -s "$kc" "${existing[@]}"
+            sign=(--sign "$INSTALLER_SIGNING_IDENTITY")
+          fi
+          # The SwiftUI app needs macOS 26.
+          apps/cua-spaces/scripts/build-pkg.sh --app "$app" --version "$VERSION" --min-os 26.0 \
+            --out "$pkg" ${sign[@]+"${sign[@]}"}
+          pkg_status=0
+          if [ ${#sign[@]} -gt 0 ] && [ -n "$APPLE_ID" ]; then
+            apps/cua-spaces-macos/scripts/notarize.sh "$pkg" || pkg_status=$?
+          elif [ "$REQUIRE_SIGNING" = true ]; then
+            echo "::error::the .pkg would ship unsigned or unnotarized" >&2
+            exit 1
+          fi
+          if [ -n "$dmg_notary" ]; then
+            dmg_status=0
+            wait "$dmg_notary" || dmg_status=$?
+            cat "$RUNNER_TEMP/notarize-dmg.log"
+            [ "$dmg_status" -eq 0 ] || { echo "::error::the DMG was not notarized" >&2; exit 1; }
+            xcrun stapler staple "$dmg"
+          fi
+          [ "$pkg_status" -eq 0 ] || { echo "::error::the .pkg was not notarized" >&2; exit 1; }
+          if [ ${#sign[@]} -gt 0 ] && [ -n "$APPLE_ID" ]; then xcrun stapler staple "$pkg"; fi
+          if [ "$SIGNED" = true ]; then
+            codesign --verify --deep --strict "$app"
+            xcrun stapler validate "$app"
+            spctl -a -vv "$app"
+            xcrun stapler validate "$dmg"
+            spctl -a -vv -t open --context context:primary-signature "$dmg"
+            pkgutil --check-signature "$pkg"
+            xcrun stapler validate "$pkg"
+            echo "darwin-universal: Developer ID signed and notarized (SwiftUI app, DMG, PKG)" > installer-assets/signing-darwin-universal.txt
+          else
+            codesign --verify --deep --strict "$app"
+            echo "darwin-universal: UNSIGNED (ad-hoc signed app, unsigned DMG and PKG, not notarized)" > installer-assets/signing-darwin-universal.txt
+          fi
+          shasum -a 256 installer-assets/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: part-darwin-universal
+          path: installer-assets/
+          if-no-files-found: error
+          retention-days: 2
+
+      - name: Remove the signing keychains
+        if: always()
+        run: |
+          for kc in "$RUNNER_TEMP/spaces-signing.keychain-db" "$RUNNER_TEMP/installer.keychain-db"; do
+            [ -f "$kc" ] && security delete-keychain "$kc" || true
+          done
+          rm -f "$RUNNER_TEMP/application.p12" "$RUNNER_TEMP/installer.p12"
+
+  # The Windows and Linux native libraries, one job per target on the runner
+  # of its architecture (restored from the cache when the inputs are unchanged).
+  electron-native:
+    name: Electron native (${{ matrix.label }})
+    needs: plan
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { label: win32-x64, runner: windows-latest, target: x86_64-pc-windows-msvc }
+          - { label: win32-arm64, runner: windows-11-arm, target: aarch64-pc-windows-msvc }
+          - { label: linux-x64, runner: ubuntu-22.04, target: x86_64-unknown-linux-gnu }
+          - { label: linux-arm64, runner: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu }
+    defaults:
+      run:
+        working-directory: apps/cua-spaces-desktop
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/spaces-native
+        with:
+          label: ${{ matrix.label }}
+          target: ${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: electron-native-${{ matrix.label }}
+          path: apps/cua-spaces-desktop/native/${{ matrix.label }}/
+          if-no-files-found: error
+          retention-days: 1
+
+  # Windows: x64 and arm64 packaged and Authenticode signed in parallel.
+  electron-windows-pkg:
+    name: Electron windows (${{ matrix.arch }})
+    needs: [plan, electron-native, web]
+    runs-on: windows-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+    # Holds the Azure Artifact Signing identity; restricted to main.
+    environment: cua-driver-release-signing
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      signed: ${{ steps.signing.outputs.azure }}
+    defaults:
+      run:
+        working-directory: apps/cua-spaces-desktop
+        shell: bash
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      # Pack this architecture only (packaging/archs.cjs).
+      CUA_SPACES_ARCHS: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Signing configuration
+        id: signing
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_ARTIFACT_SIGNING_ENDPOINT: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+        run: |
+          if [ -n "$AZURE_CLIENT_ID" ] && [ -n "$AZURE_ARTIFACT_SIGNING_ENDPOINT" ]; then
+            echo "azure=true" >> "$GITHUB_OUTPUT"
+          elif [ "$REQUIRE_SIGNING" = true ]; then
+            echo "::error::Azure Artifact Signing vars are missing (environment cua-driver-release-signing)"; exit 1
+          else
+            echo "azure=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Electron Windows build is UNSIGNED (no Authenticode; Azure Artifact Signing vars are not set)"
+          fi
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          package_json_file: apps/cua-spaces-desktop/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Download the web UI
+        uses: actions/download-artifact@v4
+        with:
+          name: spaces-web-dist
+          path: apps/cua-spaces-web/dist
+      - name: Native library
+        uses: actions/download-artifact@v4
+        with:
+          name: electron-native-win32-${{ matrix.arch }}
+          path: apps/cua-spaces-desktop/native/win32-${{ matrix.arch }}
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Azure login for Artifact Signing
+        if: steps.signing.outputs.azure == 'true'
+        uses: azure/login@f5d393ae46f8fde4be8b75f32e3fc50e654ad0ca # v3.0.1
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          enable-AzPSSession: true
+      # electron-builder installs the TrustedSigning module from the PowerShell
+      # Gallery on first use and fails the whole build when the Gallery blips
+      # (shadow build 39900294264). Install it here with retries instead.
+      - name: Install the TrustedSigning module (with retries)
+        if: steps.signing.outputs.azure == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($i in 1..4) {
+            try {
+              # PSResourceGet (in PowerShell 7) needs no NuGet package provider; the
+              # provider bootstrap behind Install-PackageProvider stopped resolving.
+              if (Get-Command Install-PSResource -ErrorAction SilentlyContinue) {
+                Install-PSResource -Name TrustedSigning -Repository PSGallery -TrustRepository -Scope CurrentUser -Reinstall
+              } else {
+                Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser | Out-Null
+                Install-Module -Name TrustedSigning -Scope CurrentUser -Force -Repository PSGallery
+              }
+              Import-Module TrustedSigning
+              Write-Host "TrustedSigning $((Get-Module TrustedSigning).Version) ready"
+              exit 0
+            } catch {
+              Write-Host "attempt ${i} failed: $($_.Exception.Message)"
+              Start-Sleep -Seconds (15 * $i)
+            }
+          }
+          throw 'TrustedSigning module could not be installed'
+      - name: Build and sign (electron-builder)
+        env:
+          SIGNED: ${{ steps.signing.outputs.azure }}
+          CUA_SPACES_VERSION: ${{ needs.plan.outputs.version }}
+          CUA_SPACES_BUILD_NUMBER: ${{ github.run_number }}
+          ENDPOINT: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+          ACCOUNT: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME }}
+          PROFILE: ${{ vars.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME }}
+          # The certificate's CN (electron-updater accepts only installers
+          # signed by it), as in cd-cua-spaces.yml.
+          PUBLISHER: ${{ vars.AZURE_ARTIFACT_SIGNING_PUBLISHER_NAME || 'Cua AI, Inc.' }}
+        run: |
+          set -euo pipefail
+          if [ "$SIGNED" = true ]; then
+            export AZURE_SIGNING_ENDPOINT="$ENDPOINT" AZURE_SIGNING_ACCOUNT="$ACCOUNT" AZURE_SIGNING_PROFILE="$PROFILE"
+            [ -n "$PUBLISHER" ] && export AZURE_SIGNING_PUBLISHER="$PUBLISHER"
+          fi
+          pnpm dist:win
+      - name: Verify Authenticode and collect the assets
+        shell: pwsh
+        env:
+          SIGNED: ${{ steps.signing.outputs.azure }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          $files = @(Get-ChildItem dist -Filter *.exe) + @(Get-ChildItem dist/win-unpacked, dist/win-arm64-unpacked -Filter "Cua Spaces.exe" -ErrorAction SilentlyContinue)
+          if ($files.Count -lt 2) { throw "no Windows installer for $env:ARCH in dist" }
+          if (-not (Test-Path "dist/Cua-Spaces-Setup-$env:VERSION-$env:ARCH.exe")) { throw "no Cua-Spaces-Setup-$env:VERSION-$env:ARCH.exe in dist" }
+          foreach ($file in $files) {
+            $signature = Get-AuthenticodeSignature -FilePath $file.FullName
+            Write-Host "$($file.Name): $($signature.Status)"
+            if ($env:SIGNED -eq 'true' -and $signature.Status -ne 'Valid') { throw "$($file.Name) is not Authenticode-signed" }
+          }
+          New-Item -ItemType Directory -Force electron-assets, electron-feed | Out-Null
+          Copy-Item dist/*.exe, dist/*.blockmap electron-assets/
+          Copy-Item dist/beta.yml, dist/latest.yml electron-feed/ -ErrorAction SilentlyContinue
+          if ($env:ARCH -eq 'x64') {
+            if ($env:SIGNED -eq 'true') {
+              "electron-windows: Authenticode signed (Electron app, Azure Artifact Signing)" | Set-Content electron-assets/signing-electron-windows.txt
+            } else {
+              "electron-windows: UNSIGNED (Electron app, no Authenticode)" | Set-Content electron-assets/signing-electron-windows.txt
+            }
+          }
+          Get-FileHash electron-assets/* | Format-Table -AutoSize
+      - uses: actions/upload-artifact@v4
+        with:
+          name: part-windows-${{ matrix.arch }}
+          path: apps/cua-spaces-desktop/electron-assets/
+          if-no-files-found: error
+          retention-days: 2
+      - uses: actions/upload-artifact@v4
+        with:
+          name: part-winfeed-${{ matrix.arch }}
+          path: apps/cua-spaces-desktop/electron-feed/
+          if-no-files-found: error
+          retention-days: 2
+
+  # Linux: x64 and arm64 packaged in parallel (fpm and the AppImage tools run
+  # on x64 for both).
+  electron-linux-pkg:
+    name: Electron linux (${{ matrix.arch }})
+    needs: [plan, electron-native, web]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+    defaults:
+      run:
+        working-directory: apps/cua-spaces-desktop
+    env:
+      CUA_SPACES_ARCHS: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          package_json_file: apps/cua-spaces-desktop/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Download the web UI
+        uses: actions/download-artifact@v4
+        with:
+          name: spaces-web-dist
+          path: apps/cua-spaces-web/dist
+      - name: Native library
+        uses: actions/download-artifact@v4
+        with:
+          name: electron-native-linux-${{ matrix.arch }}
+          path: apps/cua-spaces-desktop/native/linux-${{ matrix.arch }}
+      # Artifacts drop the executable bit; the daemon starts from this cua,
+      # and a Space without cua-spacesd runs the static one beside it.
+      - name: The bundled cua is executable
+        run: chmod +x native/linux-${{ matrix.arch }}/cua native/linux-${{ matrix.arch }}/cua-spacesd-linux-*
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      # No OS code signing on Linux; electron-updater checks each file's sha512.
+      - name: Build (electron-builder)
+        env:
+          CUA_SPACES_VERSION: ${{ needs.plan.outputs.version }}
+          CUA_SPACES_BUILD_NUMBER: ${{ github.run_number }}
+        run: pnpm dist:linux
+      - name: Collect the assets
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          mkdir -p electron-assets
+          cp dist/*.AppImage dist/*.deb electron-assets/
+          cp dist/beta-linux*.yml dist/latest-linux*.yml electron-assets/ 2>/dev/null || true
+          if [ "$ARCH" = x64 ]; then
+            echo "electron-linux: updater sha512 only (no OS code signing on Linux)" > electron-assets/signing-electron-linux.txt
+          fi
+          sha256sum electron-assets/*
+      - name: Check the deb ships the static cua-spacesd next to cua
+        working-directory: .
+        run: .github/scripts/check_static_spacesd_packaged.sh apps/cua-spaces-desktop/electron-assets
+      - uses: actions/upload-artifact@v4
+        with:
+          name: part-linux-${{ matrix.arch }}
+          path: apps/cua-spaces-desktop/electron-assets/
+          if-no-files-found: error
+          retention-days: 2
+
+  # Joins every platform into the one set, writes build-manifest.json and
+  # uploads it as spaces-build-<sha>.
+  assemble:
+    name: Assemble the build set
+    needs: [plan, build-macos, electron-windows-pkg, electron-linux-pkg]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: part-*
+          path: parts
+      - name: Join the parts
+        run: |
+          set -euo pipefail
+          mkdir -p set merged-feed
+          cp parts/part-darwin-universal/* parts/part-windows-*/* parts/part-linux-*/* set/
+          # The Windows feed lists both architectures.
+          for name in latest.yml beta.yml; do
+            if [ -f "parts/part-winfeed-x64/$name" ] || [ -f "parts/part-winfeed-arm64/$name" ]; then
+              test -f "parts/part-winfeed-x64/$name" && test -f "parts/part-winfeed-arm64/$name" \
+                || { echo "::error::$name is missing from one architecture's build"; exit 1; }
+              node apps/cua-spaces-desktop/scripts/merge-feeds.mjs --out "merged-feed/$name" \
+                "parts/part-winfeed-x64/$name" "parts/part-winfeed-arm64/$name"
+            fi
+          done
+          test -n "$(ls merged-feed)" || { echo "::error::no Windows feed"; exit 1; }
+          cp merged-feed/* set/
+          # The full stable set, or the build is incomplete.
+          for want in \
+            "cua-spaces-${VERSION}-darwin-universal.dmg" "cua-spaces-${VERSION}-darwin-universal.pkg" \
+            "Cua-Spaces-Setup-${VERSION}-x64.exe" "Cua-Spaces-Setup-${VERSION}-arm64.exe" \
+            "Cua-Spaces-${VERSION}-x86_64.AppImage" "Cua-Spaces-${VERSION}-arm64.AppImage" \
+            "cua-spaces_${VERSION}_amd64.deb" "cua-spaces_${VERSION}_arm64.deb"; do
+            test -f "set/$want" || { echo "::error::missing $want"; exit 1; }
+          done
+      - name: Write build-manifest.json
+        env:
+          TREE: ${{ needs.plan.outputs.tree }}
+        run: |
+          python3 -I .github/scripts/spaces_build_manifest.py set --version "$VERSION" \
+            --build-number "$GITHUB_RUN_NUMBER" --source-sha "$GITHUB_SHA" --tree-hash "$TREE" \
+            --repository "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID"
+          ls -la set
+          {
+            echo "## Build set"
+            echo '```'
+            ( cd set && shasum -a 256 -- * )
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ needs.plan.outputs.artifact }}
+          path: set/
+          if-no-files-found: error
+          retention-days: ${{ needs.plan.outputs.retention }}
+          # Installers are already compressed.
+          compression-level: 0
+
+  # verify-release.sh on the produced set, as cd-cua-spaces.yml's
+  # verify-release does on the tag build: Gatekeeper, stapled tickets, strict
+  # codesign, launch and Keyvault smoke, Authenticode by Cua AI, Inc.
+  verify:
+    name: Verify the signed build
+    needs: [plan, assemble, build-macos, electron-windows-pkg]
+    runs-on: macos-26
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      SWIFT_SIGNED: ${{ needs.build-macos.outputs.signed }}
+      WINDOWS_SIGNED: ${{ needs.electron-windows-pkg.outputs.signed }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.plan.outputs.artifact }}
+          path: release
+      - name: Check the manifest against the files
+        run: |
+          python3 -I - <<'PY'
+          import hashlib, json, os, sys
+          m = json.load(open("release/build-manifest.json"))
+          bad = []
+          listed = set()
+          for f in m["files"]:
+              listed.add(f["file"])
+              h = hashlib.sha256(open(os.path.join("release", f["file"]), "rb").read()).hexdigest()
+              if h != f["sha256"]:
+                  bad.append(f["file"])
+              if f["version"] != os.environ["VERSION"] or f["source_sha"] != os.environ["GITHUB_SHA"]:
+                  bad.append(f["file"] + " (version or source)")
+          extra = set(os.listdir("release")) - listed - {"build-manifest.json"}
+          if bad or extra:
+              sys.exit(f"manifest mismatch: {bad} unlisted: {sorted(extra)}")
+          print(f"manifest ok: {len(listed)} files")
+          PY
+      - name: Install osslsigncode (Windows Authenticode)
+        if: env.WINDOWS_SIGNED == 'true'
+        run: brew install osslsigncode
+      - name: verify-release.sh
+        run: |
+          set -euo pipefail
+          expect=()
+          if [ "$REQUIRE_SIGNING" = true ] && { [ "$SWIFT_SIGNED" != true ] || [ "$WINDOWS_SIGNED" != true ]; }; then
+            echo "::error::a trycua/cua main build must be fully signed (swift=$SWIFT_SIGNED windows=$WINDOWS_SIGNED)"
+            exit 1
+          fi
+          if [ "$SWIFT_SIGNED" = true ]; then expect+=(swift); else
+            echo "::warning::the SwiftUI build is unsigned: not verified"; rm -f release/cua-spaces-*.dmg
+          fi
+          if [ "$WINDOWS_SIGNED" = true ]; then expect+=(windows); else
+            echo "::warning::the Electron Windows build is unsigned: not verified"; rm -f release/Cua-Spaces-Setup-*.exe
+          fi
+          if [ ${#expect[@]} -eq 0 ]; then
+            echo "::warning::nothing in this build is signed: no release verification"; exit 0
+          fi
+          ls -la release
+          kinds="$(IFS=,; echo "${expect[*]}")"
+          apps/cua-spaces-macos/scripts/verify-release.sh --dir release --version "$VERSION" \
+            --repo "$GITHUB_REPOSITORY" --expect "$kinds"
+
+  # GitHub artifact attestations (SLSA provenance) for every file of the set,
+  # the manifest included, once it has passed verification.
+  attest:
+    name: Attest the build set
+    needs: [plan, verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.plan.outputs.artifact }}
+          path: release
+      - uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: release/*
+
+  # The cost summary of the run, and (when everything passed) the marker that
+  # makes the next run of the same input tree a no-op.
+  summary:
+    name: Cost summary
+    needs: [plan, assemble, verify, attest]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cost summary
+        if: needs.plan.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT: ${{ needs.plan.outputs.artifact }}
+        run: |
+          python3 -I .github/scripts/spaces_build_summary.py "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" "$ARTIFACT" \
+            >> "$GITHUB_STEP_SUMMARY"
+      - name: Mark this tree as built
+        if: needs.plan.outputs.skip != 'true' && needs.attest.result == 'success'
+        run: |
+          mkdir -p marker
+          echo "$GITHUB_SHA $GITHUB_RUN_ID" > marker/build
+      - name: Save the marker
+        if: needs.plan.outputs.skip != 'true' && needs.attest.result == 'success'
+        uses: actions/cache/save@v4
+        with:
+          path: marker
+          key: ${{ needs.plan.outputs.marker_key }}

@@ -24,6 +24,8 @@ Python, TypeScript and Rust, see [Use Cua in your own harness](/cua-sdk/guides/o
 
 ![A terminal on a local Linux sandbox desktop, opened from the dock and typed into through the HTML5 viewer](/img/cua-sdk/viewer-terminal.png)
 
+The window manager can start after the sandbox is ready, so the example waits until the terminal really has focus before it types.
+
 <Tabs groupId="language" persist items={['Python', 'TypeScript', 'CLI']}>
   <Tab value="Python">
 
@@ -31,14 +33,23 @@ Python, TypeScript and Rust, see [Use Cua in your own harness](/cua-sdk/guides/o
 from pathlib import Path
 from cua_sandbox import Image, Sandbox
 
-FOCUS_TERMINAL = ("export DISPLAY=:1; setsid -f xfce4-terminal -T demo >/dev/null 2>&1; "
-                  "xdotool search --sync --onlyvisible --name demo windowactivate --sync")
+FOCUS_TERMINAL = (
+    "export DISPLAY=:1; setsid -f xfce4-terminal -T demo >/dev/null 2>&1; "
+    "end=$(($(date +%s) + 20)); "
+    "while [ $(date +%s) -lt $end ]; do "
+    "w=$(xdotool search --onlyvisible --limit 1 --name ^demo$) && "
+    "xprop -id $w WM_STATE | grep -q window.state && "
+    "timeout 5 xdotool windowactivate --sync $w && exit 0; "
+    "sleep 0.2; done; "
+    "echo demo terminal never got keyboard focus >&2; exit 1"
+)
 
 async with Sandbox.ephemeral(Image.linux()) as sb:
     width, height = await sb.get_dimensions()
     await sb.mouse.click(width // 2, height // 2)
     # Keys go to the focused window, so open one.
-    assert (await sb.shell.run(FOCUS_TERMINAL)).success
+    focus = await sb.shell.run(FOCUS_TERMINAL, timeout=40)
+    assert focus.success, f"terminal focus failed ({focus.returncode}): {focus.stderr}"
     await sb.keyboard.type("hello")
     await sb.keyboard.keypress(["ctrl", "a"])
     Path("desk.png").write_bytes(await sb.screenshot())
@@ -49,11 +60,17 @@ async with Sandbox.ephemeral(Image.linux()) as sb:
 
 ```ts test="container" id="desktop-typescript"
 import { writeFile } from 'node:fs/promises';
-import { embedded, SandboxCreateOptions, SpacesdCommand } from '@trycua/cua';
+import { embedded, SandboxCreateOptions } from '@trycua/cua';
 
 const FOCUS_TERMINAL =
   'export DISPLAY=:1; setsid -f xfce4-terminal -T demo >/dev/null 2>&1; ' +
-  'xdotool search --sync --onlyvisible --name demo windowactivate --sync';
+  'end=$(($(date +%s) + 20)); ' +
+  'while [ $(date +%s) -lt $end ]; do ' +
+  'w=$(xdotool search --onlyvisible --limit 1 --name ^demo$) && ' +
+  'xprop -id $w WM_STATE | grep -q window.state && ' +
+  'timeout 5 xdotool windowactivate --sync $w && exit 0; ' +
+  'sleep 0.2; done; ' +
+  'echo demo terminal never got keyboard focus >&2; exit 1';
 
 const sb = await embedded().sandboxes().create(
   SandboxCreateOptions.create({
@@ -65,7 +82,12 @@ try {
   const shot = await env.screenshot(undefined);
   await env.click(Math.floor(shot.width / 2), Math.floor(shot.height / 2));
   // Keys go to the focused window, so open one.
-  await env.run(SpacesdCommand.create({ program: 'sh', args: ['-c', FOCUS_TERMINAL] }));
+  const focus = await env.sh(FOCUS_TERMINAL, 40_000);
+  if (!focus.exit.success) {
+    throw new Error(
+      `terminal focus failed (${JSON.stringify(focus.exit)}): ${new TextDecoder().decode(focus.stderr)}`
+    );
+  }
   await env.typeText('hello');
   await env.hotkey(['ctrl', 'a']);
   await writeFile('desk.png', Buffer.from((await env.screenshot(undefined)).image));

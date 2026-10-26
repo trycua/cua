@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-//! An in-process coordinator and relay for tests (never the real one, which
-//! runs in Cua's relay service). It speaks the same protocol: the challenge, the network
+//! An in-process coordinator and relay for tests (never the real one; that
+//! is `cua-relay`). It speaks the same protocol: the challenge, the network
 //! map, relayed frames, pairing and STUN.
 //!
 //! - [`Mode::Account`]: every client peers with every machine (machines see
-//!   clients with an owner grant).
+//!   clients with an owner grant); with
+//!   [`FakeCoordinator::set_machine_peering`], machines also peer with each
+//!   other, as machines of one account ([`proto::ROLE_MACHINE`]).
 //! - [`Mode::Static`]: clients pair with machines by proof, as in
 //!   production.
 //!
@@ -43,6 +45,17 @@ struct State {
     denied: Mutex<Vec<(String, String)>>,
     /// The relay's mesh is turned off: every connect gets HTTP 404.
     mesh_off: AtomicBool,
+    /// Account mode: machines also peer with each other (one account's
+    /// hosts, as `cua-relay` does).
+    machine_peering: AtomicBool,
+    /// Every welcomed node is closed at once with this WebSocket close.
+    close_after_welcome: Mutex<Option<(u16, String)>>,
+    /// Nodes welcomed since start.
+    welcomes: AtomicU64,
+    /// The account credential (`x-cua-relay-authorization`) each client node
+    /// key was first seen with: a key belongs to one owner for life, as in
+    /// `cua-relay`.
+    key_owners: Mutex<HashMap<PublicKey, String>>,
 }
 
 /// See the module docs.
@@ -164,7 +177,7 @@ impl FakeCoordinator {
     }
 
     /// Turns the mesh off (`false`: every node is disconnected and each
-    /// reconnect gets HTTP 404, as from a relay that turned its mesh off)
+    /// reconnect gets HTTP 404, as from a relay with `CUA_RELAY_MESH=off`)
     /// or back on.
     pub fn set_mesh(&self, on: bool) {
         self.state.mesh_off.store(!on, Ordering::SeqCst);
@@ -173,6 +186,26 @@ impl FakeCoordinator {
                 let _ = tx.send(WsMessage::Close(None));
             }
         }
+    }
+
+    /// Account mode: machines peer with each other too (true) or only
+    /// with clients (false, the default). Maps are pushed again at once.
+    pub fn set_machine_peering(&self, on: bool) {
+        self.state.machine_peering.store(on, Ordering::SeqCst);
+        push_netmaps(&self.state, self.mode);
+    }
+
+    /// Closes every node right after it is welcomed, with `code` and
+    /// `reason` (`None`: stops doing so), as the relay does when it drops
+    /// a session for a reason of its own.
+    pub fn close_after_welcome(&self, close: Option<(u16, &str)>) {
+        *self.state.close_after_welcome.lock().expect("close") =
+            close.map(|(c, r)| (c, r.to_owned()));
+    }
+
+    /// Nodes welcomed since start.
+    pub fn welcomes(&self) -> u64 {
+        self.state.welcomes.load(Ordering::SeqCst)
     }
 
     /// Nodes connected right now.
@@ -199,13 +232,22 @@ async fn stun_loop(sock: UdpSocket) {
     }
 }
 
+/// Whether two kinds of node peer: a client and a machine always, two
+/// machines with machine peering on (account mode).
+fn kinds_peer(state: &State, mode: Mode, a: NodeKind, b: NodeKind) -> bool {
+    a != b
+        || (a == NodeKind::Machine
+            && mode == Mode::Account
+            && state.machine_peering.load(Ordering::SeqCst))
+}
+
 fn peers_of(state: &State, mode: Mode, me: &PeerInfo) -> Vec<PeerInfo> {
     let nodes = state.nodes.lock().expect("nodes");
     let online = state.conns.lock().expect("conns");
     let pairs = state.pairs.lock().expect("pairs");
     nodes
         .values()
-        .filter(|p| p.node_key != me.node_key && p.kind != me.kind)
+        .filter(|p| p.node_key != me.node_key && kinds_peer(state, mode, me.kind, p.kind))
         .filter(|p| match mode {
             Mode::Account => true,
             Mode::Static => {
@@ -219,7 +261,17 @@ fn peers_of(state: &State, mode: Mode, me: &PeerInfo) -> Vec<PeerInfo> {
         .map(|p| {
             let mut p = p.clone();
             p.online = online.contains_key(&p.node_key);
-            if mode == Mode::Account && me.kind == NodeKind::Machine {
+            if mode == Mode::Account && me.kind == NodeKind::Machine && p.kind == NodeKind::Machine
+            {
+                p.grant = Some(Grant {
+                    user: "acct-1".into(),
+                    account: "acct-1".into(),
+                    email: Some("ada@example.com".into()),
+                    name: Some(p.name.clone()),
+                    role: proto::ROLE_MACHINE.into(),
+                    device: None,
+                });
+            } else if mode == Mode::Account && me.kind == NodeKind::Machine {
                 p.grant = Some(Grant {
                     user: "user-1".into(),
                     account: "acct-1".into(),
@@ -260,7 +312,7 @@ fn may_relay(state: &State, mode: Mode, a: &PublicKey, b: &PublicKey) -> bool {
     let (Some(x), Some(y)) = (nodes.get(a), nodes.get(b)) else {
         return false;
     };
-    if x.kind == y.kind {
+    if !kinds_peer(state, mode, x.kind, y.kind) {
         return false;
     }
     match mode {
@@ -279,12 +331,18 @@ fn may_relay(state: &State, mode: Mode, a: &PublicKey, b: &PublicKey) -> bool {
 #[allow(clippy::result_large_err)]
 async fn serve(state: Arc<State>, mode: Mode, tcp: tokio::net::TcpStream) {
     let mut machine_id = None::<String>;
+    let mut account = None::<String>;
     let denied = state.denied.lock().expect("denied").clone();
     let mesh_off = state.mesh_off.load(Ordering::SeqCst);
     let ws = tokio_tungstenite::accept_hdr_async(tcp, |req: &Request, resp: Response| {
         machine_id = req
             .headers()
             .get(proto::MACHINE_ID_HEADER)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
+        account = req
+            .headers()
+            .get("x-cua-relay-authorization")
             .and_then(|v| v.to_str().ok())
             .map(str::to_owned);
         let refused = denied.iter().any(|(k, v)| {
@@ -357,6 +415,27 @@ async fn serve(state: Arc<State>, mode: Mode, tcp: tokio::net::TcpStream) {
             .await;
         return;
     }
+    let owned_by_another = match &account {
+        Some(owner) if kind == NodeKind::Client => {
+            let mut owners = state.key_owners.lock().expect("owners");
+            owners.entry(node_key).or_insert_with(|| owner.clone()) != owner
+        }
+        _ => false,
+    };
+    {
+        if owned_by_another {
+            let _ = sink
+                .send(WsMessage::Text(
+                    serde_json::to_string(&ServerMsg::Error {
+                        message: crate::coord::KEY_OWNED_BY_ANOTHER.into(),
+                    })
+                    .expect("json")
+                    .into(),
+                ))
+                .await;
+            return;
+        }
+    }
     let info = PeerInfo {
         node_key,
         disco_key,
@@ -387,6 +466,19 @@ async fn serve(state: Arc<State>, mode: Mode, tcp: tokio::net::TcpStream) {
         .await
         .is_err()
     {
+        return;
+    }
+    state.welcomes.fetch_add(1, Ordering::SeqCst);
+    let close = state.close_after_welcome.lock().expect("close").clone();
+    if let Some((code, reason)) = close {
+        let _ = sink
+            .send(WsMessage::Close(Some(
+                tokio_tungstenite::tungstenite::protocol::CloseFrame {
+                    code: code.into(),
+                    reason: reason.into(),
+                },
+            )))
+            .await;
         return;
     }
     let (tx, mut rx) = mpsc::unbounded_channel::<WsMessage>();

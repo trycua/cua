@@ -19,6 +19,8 @@ import { NUDGES_ARGS } from "../ops/nudges";
 import { RESOURCES_ARGS } from "../ops/resources";
 import { MACHINES_ARGS } from "../ops/machines";
 import { CHECKLIST_ARGS } from "../ops/checklist";
+import { LINKS_ARGS } from "../ops/links";
+import { CLI_ARGS } from "../ops/cli";
 import { PRESENCE_ARGS } from "../ops/presence";
 import { RUNTIME_FIX_ARGS } from "../ops/runtime-fix";
 import type { HostWindow } from "../detect";
@@ -58,6 +60,7 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "agents.resume": { name: "ada" },
   "agents.setup": {},
   "agents.configure": { agents: null },
+  "agents.signIn": { agent: "codex" },
   ...AGENT_DETAIL_ARGS,
   ...NEW_SPACE_ARGS,
   ...AGENT_KEYS_ARGS,
@@ -138,6 +141,8 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   ...RESOURCES_ARGS,
   ...MACHINES_ARGS,
   ...CHECKLIST_ARGS,
+  ...LINKS_ARGS,
+  ...CLI_ARGS,
   ...PRESENCE_ARGS,
   ...RUNTIME_FIX_ARGS,
 };

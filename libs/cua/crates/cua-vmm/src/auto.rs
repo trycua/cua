@@ -119,6 +119,125 @@ pub struct ContainerReport {
     pub gvisor_allow_suid: Option<bool>,
 }
 
+/// A host check for `cua runtime doctor`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct MicroVmReport {
+    /// `/dev/kvm` opens read-write.
+    pub kvm: bool,
+    pub firecracker: Option<PathBuf>,
+    pub firecracker_version: Option<String>,
+    pub init: Option<PathBuf>,
+    pub pasta: Option<PathBuf>,
+    pub sqfstar: Option<PathBuf>,
+    #[serde(default)]
+    pub debugfs: Option<PathBuf>,
+    /// The guest init is statically linked (a dynamic one cannot boot).
+    #[serde(default)]
+    pub init_static: bool,
+    pub mkfs_ext4: Option<PathBuf>,
+    pub iptables: Option<PathBuf>,
+    pub ip: Option<PathBuf>,
+    /// The guest kernel is cached (it is downloaded on first use).
+    pub kernel_cached: bool,
+    /// Unprivileged user namespaces are allowed (pasta needs them).
+    pub userns: bool,
+}
+
+impl MicroVmReport {
+    /// What is missing, as words for the doctor.
+    pub fn missing(&self) -> Vec<String> {
+        let mut m = Vec::new();
+        if !self.kvm {
+            m.push("/dev/kvm (read-write)".into());
+        }
+        if self.firecracker.is_none() {
+            m.push("firecracker".into());
+        }
+        if self.init.is_none() {
+            m.push("cua-microvm-init".into());
+        } else if !self.init_static {
+            m.push(
+                "a static cua-microvm-init (this one is dynamically linked; build it with \
+                 --target x86_64-unknown-linux-musl)"
+                    .into(),
+            );
+        }
+        for (what, have) in [
+            ("pasta (passt)", &self.pasta),
+            ("debugfs (e2fsprogs)", &self.debugfs),
+            ("mkfs.ext4 (e2fsprogs)", &self.mkfs_ext4),
+            ("iptables", &self.iptables),
+            ("ip (iproute2)", &self.ip),
+        ] {
+            if have.is_none() {
+                m.push(what.into());
+            }
+        }
+        if std::env::var("CUA_MICROVM_BASE").as_deref() == Ok("squashfs") && self.sqfstar.is_none()
+        {
+            m.push("sqfstar (squashfs-tools)".into());
+        }
+        if !self.userns {
+            m.push("unprivileged user namespaces".into());
+        }
+        m
+    }
+}
+
+/// microVMs on a Mac under cua's own monitor (Virtualization.framework,
+/// `cua-vz`) for `cua runtime doctor`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VzReport {
+    /// An Apple silicon Mac on macOS 14+ (or why not).
+    pub supported_host: bool,
+    #[serde(default)]
+    pub unsupported: Option<String>,
+    /// `cua-vz`, which ships next to `cua`.
+    pub monitor: Option<PathBuf>,
+    /// The guest init (shipped next to `cua`), and whether it is static.
+    pub init: Option<PathBuf>,
+    #[serde(default)]
+    pub init_static: bool,
+    /// gvproxy (downloaded on first use, pinned).
+    pub gvproxy: Option<PathBuf>,
+    /// The guest kernel is cached (downloaded on first use).
+    pub kernel_cached: bool,
+}
+
+impl VzReport {
+    /// What is missing that first use cannot download.
+    pub fn missing(&self) -> Vec<String> {
+        let mut m = Vec::new();
+        if self.monitor.is_none() {
+            m.push("cua-vz (ships next to `cua`)".into());
+        }
+        if self.init.is_none() {
+            m.push("cua-microvm-init (ships next to `cua`)".into());
+        } else if !self.init_static {
+            m.push("a static cua-microvm-init (this one is dynamically linked)".into());
+        }
+        m
+    }
+}
+
+/// microVMs on a Mac (Apple's Containerization) for `cua runtime doctor`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContainerizationReport {
+    /// An Apple silicon Mac on macOS 26+.
+    pub supported_host: bool,
+    pub macos_version: Option<String>,
+    /// cua's own `container` binary, when installed.
+    pub binary: Option<PathBuf>,
+    /// The pinned version cua installs.
+    pub version: String,
+    /// `running` (cua's own services), `stopped`, or `other` (another
+    /// install of `container` runs the per-user services).
+    pub services: String,
+    /// The other install's application root, when `services` is `other`.
+    #[serde(default)]
+    pub other_app_root: Option<String>,
+}
+
 /// Structured `cua runtime doctor` output.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DoctorReport {
@@ -127,6 +246,15 @@ pub struct DoctorReport {
     pub qemu: QemuReport,
     pub lume: LumeReport,
     pub container: ContainerReport,
+    /// Firecracker microVMs (Linux hosts).
+    #[serde(default)]
+    pub microvm: Option<MicroVmReport>,
+    /// Apple's Containerization microVMs (Mac hosts).
+    #[serde(default)]
+    pub containerization: Option<ContainerizationReport>,
+    /// microVMs under cua's own monitor (Mac hosts).
+    #[serde(default)]
+    pub vz: Option<VzReport>,
 }
 
 impl DoctorReport {
@@ -285,18 +413,21 @@ pub async fn doctor() -> DoctorReport {
     let mut lume = LumeReport {
         supported_host: host_os == HostOs::Macos && host_arch == Arch::Aarch64,
         binary: lume_binary(),
-        url: std::env::var("LUME_API").unwrap_or_else(|_| "http://127.0.0.1:7777".into()),
+        url: crate::local_network::lume_base(),
         ..Default::default()
     };
     #[cfg(feature = "lume")]
     if lume.supported_host {
         let c = crate::lume::LumeClient::new(lume.url.clone());
         lume.serving = c.reachable().await;
-        if let Some(b) = &lume.binary {
-            lume.version = host::run(b, &["--version"])
-                .await
-                .ok()
-                .map(|s| s.trim().to_string());
+        if lume.binary.is_some() {
+            // Run as Lume runs for this channel: a bare `lume --version`
+            // initialises the pinned Lume's settings and telemetry under
+            // Stable's `~/.config/lume` and `~/.lume`. (For Local this
+            // writes only its own config under its home.)
+            if let Ok(Some(l)) = crate::lume::lume_cmd() {
+                lume.version = crate::lume::version_text(&l).await;
+            }
         }
     }
     // Without any Lume, the built-in one is set up on first use unless the
@@ -418,13 +549,222 @@ pub async fn doctor() -> DoctorReport {
             .push("use the built-in Linux runtime (a VM with Docker and gVisor)".into());
     }
 
+    let mut backends = vec![lume_status, qemu_status, container_status, managed_status];
+    let microvm = microvm_status().await.map(|(status, report)| {
+        backends.push(status);
+        report
+    });
+    let containerization = containerization_status().await.map(|(status, report)| {
+        backends.push(status);
+        report
+    });
+    let vz = vz_status().map(|(status, report)| {
+        backends.push(status);
+        report
+    });
     DoctorReport {
         host,
-        backends: vec![lume_status, qemu_status, container_status, managed_status],
+        backends,
         qemu,
         lume,
         container,
+        microvm,
+        containerization,
+        vz,
     }
+}
+
+/// microVMs on a Mac under `cua-vz`: ready when the monitor and the guest
+/// init are installed (they ship next to `cua`); the guest kernel and
+/// gvproxy download on first use.
+#[cfg(feature = "microvm")]
+fn vz_status() -> Option<(BackendStatus, VzReport)> {
+    use crate::microvm::{assets, vz};
+    if HostOs::current() != HostOs::Macos {
+        return None;
+    }
+    let root = crate::microvm::MicroVmConfig::default().root;
+    let unsupported = vz::unsupported_reason();
+    let init = assets::init_bin();
+    let r = VzReport {
+        supported_host: unsupported.is_none(),
+        unsupported: unsupported.clone(),
+        monitor: vz::vz_bin(),
+        init_static: init
+            .as_ref()
+            .and_then(|p| std::fs::read(p).ok())
+            .and_then(|b| crate::microvm::rootfs::elf_interpreter(&b))
+            .is_some_and(|interp| interp.is_none()),
+        init,
+        gvproxy: vz::gvproxy_bin(),
+        kernel_cached: assets::kernel_path(&root).is_file(),
+    };
+    let missing = if r.supported_host {
+        r.missing()
+    } else {
+        vec![]
+    };
+    let mut provisioning = Vec::new();
+    if r.supported_host && missing.is_empty() {
+        if !r.kernel_cached {
+            provisioning.push(format!(
+                "download the guest kernel {} (pinned, about 17 MB)",
+                assets::KERNEL_VERSION
+            ));
+        }
+        if r.gvproxy.is_none() {
+            provisioning.push(format!(
+                "download gvproxy {} (pinned, about 27 MB) for the guests' network",
+                vz::GVPROXY_VERSION
+            ));
+        }
+    }
+    let status = BackendStatus {
+        backend: BackendKind::Vz,
+        ready: r.supported_host && missing.is_empty(),
+        provisionable: false,
+        detail: match (&unsupported, missing.is_empty()) {
+            (Some(why), _) => why.clone(),
+            (None, true) if provisioning.is_empty() => {
+                "microVMs with checkpoints and forks (Virtualization.framework)".into()
+            }
+            (None, true) => "microVMs with checkpoints and forks; the guest kernel and network \
+                             download on first use"
+                .into(),
+            (None, false) => "macOS microVMs are not installed with this cua".into(),
+        },
+        missing,
+        provisioning,
+    };
+    Some((status, r))
+}
+
+#[cfg(not(feature = "microvm"))]
+fn vz_status() -> Option<(BackendStatus, VzReport)> {
+    None
+}
+
+/// microVMs on a Mac: ready once cua's own `container` is installed and no
+/// other install holds the per-user services; `cua runtime setup
+/// containerization` (or the first microVM Space) installs it and starts
+/// them.
+#[cfg(feature = "containerization")]
+async fn containerization_status() -> Option<(BackendStatus, ContainerizationReport)> {
+    use crate::containerization::ContainerizationRuntime;
+    if HostOs::current() != HostOs::Macos {
+        return None;
+    }
+    let r = ContainerizationRuntime::with_defaults().report().await;
+    Some((containerization_backend(&r), r))
+}
+
+#[cfg(not(feature = "containerization"))]
+async fn containerization_status() -> Option<(BackendStatus, ContainerizationReport)> {
+    None
+}
+
+/// The doctor's row for a [`ContainerizationReport`].
+#[cfg(feature = "containerization")]
+pub fn containerization_backend(r: &ContainerizationReport) -> BackendStatus {
+    use crate::containerization::install;
+    let mut s = BackendStatus {
+        backend: BackendKind::Containerization,
+        ready: false,
+        provisionable: false,
+        detail: String::new(),
+        missing: vec![],
+        provisioning: vec![],
+    };
+    if !r.supported_host {
+        s.detail = install::unsupported_reason()
+            .unwrap_or_else(|| "Apple's Containerization needs macOS 26 on Apple silicon".into());
+        return s;
+    }
+    if r.services == "other" {
+        s.detail = format!(
+            "another install of Apple's `container` runs its per-user services (data in {});              stop them (`container system stop`) to run microVM Spaces",
+            r.other_app_root.as_deref().unwrap_or("another directory")
+        );
+        s.missing
+            .push("Apple container services (held by another install)".into());
+        return s;
+    }
+    if r.binary.is_none() {
+        s.provisionable = true;
+        s.detail = "microVM Spaces: Apple's container is set up on first use".into();
+        s.provisioning.push(format!(
+            "download Apple's container {} (about {} MB, signed by Apple) into ~/.cua",
+            r.version,
+            install::PKG_BYTES >> 20
+        ));
+        s.provisioning
+            .push("start its services with cua's own data directory".into());
+        return s;
+    }
+    s.ready = true;
+    s.detail = if r.services == "running" {
+        format!("Apple container {} running", r.version)
+    } else {
+        format!("Apple container {}, started on demand", r.version)
+    };
+    s
+}
+
+/// The microVM backend on a Linux host: ready when KVM, Firecracker, the
+/// guest init and the host tools are there (the kernel downloads on first
+/// use); `cua runtime setup firecracker` installs Firecracker.
+#[cfg(feature = "microvm")]
+async fn microvm_status() -> Option<(BackendStatus, MicroVmReport)> {
+    if HostOs::current() != HostOs::Linux {
+        return None;
+    }
+    let root = crate::microvm::MicroVmConfig::default().root;
+    let r = crate::microvm::assets::report(&root).await;
+    let missing = r.missing();
+    let only_fc = missing.iter().all(|m| m == "firecracker");
+    let mut provisioning = Vec::new();
+    if r.firecracker.is_none() && r.kvm {
+        provisioning.push(format!(
+            "download Firecracker {} into ~/.cua/bin",
+            crate::microvm::assets::FIRECRACKER_VERSION
+        ));
+    }
+    if !r.kernel_cached {
+        provisioning.push(format!(
+            "download the guest kernel {} (pinned, about 44 MB)",
+            crate::microvm::assets::KERNEL_VERSION
+        ));
+    }
+    let status = BackendStatus {
+        backend: BackendKind::Firecracker,
+        ready: missing.is_empty(),
+        provisionable: !missing.is_empty() && only_fc && r.kvm,
+        detail: if !r.kvm {
+            "microVMs need /dev/kvm (read-write) on this Linux host".into()
+        } else if missing.is_empty() {
+            format!(
+                "{} with KVM{}",
+                r.firecracker_version
+                    .clone()
+                    .unwrap_or_else(|| "Firecracker".into()),
+                if r.kernel_cached {
+                    ""
+                } else {
+                    "; guest kernel downloads on first use"
+                }
+            )
+        } else {
+            "Firecracker microVMs are not set up".into()
+        },
+        missing,
+        provisioning,
+    };
+    Some((status, r))
+}
+
+#[cfg(not(feature = "microvm"))]
+async fn microvm_status() -> Option<(BackendStatus, MicroVmReport)> {
+    None
 }
 
 fn note_kvm(status: &mut BackendStatus, host_os: HostOs, kvm: &std::io::Result<()>) {
@@ -585,7 +925,14 @@ pub fn select(req: &SelectRequest, report: &DoctorReport) -> Result<Selection> {
                         provisioning: l.provisioning,
                     });
                 }
-                Err(VmmError::missing("QEMU", q.missing.join(", ")))
+                Err(VmmError::missing(
+                    "QEMU",
+                    if host.os == HostOs::Windows {
+                        crate::preflight::QEMU_MISSING_WINDOWS.to_string()
+                    } else {
+                        q.missing.join(", ")
+                    },
+                ))
             }
         },
     }
@@ -611,7 +958,7 @@ fn lume_binary() -> Option<PathBuf> {
     }
     #[cfg(not(feature = "lume"))]
     {
-        host::which("lume")
+        host::which(cua_home::channel::CuaChannel::current().lume_bin_name())
     }
 }
 
@@ -662,6 +1009,9 @@ mod tests {
                 st(BackendKind::Container, engine),
                 st(BackendKind::Managed, false),
             ],
+            microvm: None,
+            containerization: None,
+            vz: None,
             qemu: QemuReport::default(),
             lume: LumeReport {
                 supported_host: host_os == HostOs::Macos,

@@ -52,6 +52,29 @@ impl QuicMedia {
     pub fn video_packets_dropped(&self) -> u64 {
         self.video_dropped.load(Ordering::Relaxed)
     }
+
+    /// Serves new connections with a new certificate and key (the guest
+    /// became a new machine: a memory snapshot shared the old key with
+    /// every clone). Returns this listener with the new pin; connections
+    /// already open keep the old one until they close.
+    pub(crate) fn renew_identity(&self) -> Result<QuicMedia, String> {
+        let identity = QuicIdentity::generate()?;
+        self.endpoint
+            .set_server_config(Some(server_config(&identity)?));
+        Ok(QuicMedia {
+            certificate_sha256: identity.certificate_sha256(),
+            ..self.clone()
+        })
+    }
+}
+
+/// The listener's TLS config: media and the presence datagram channel share
+/// the port and certificate.
+fn server_config(identity: &QuicIdentity) -> Result<quinn::ServerConfig, String> {
+    identity.server_config_with_alpns(&[
+        cua_media_protocol::v2::QUIC_ALPN,
+        cua_media_protocol::presence::PRESENCE_ALPN.as_bytes(),
+    ])
 }
 
 pub(crate) fn start(state: Arc<DesktopState>, address: SocketAddr) -> Result<QuicMedia, String> {
@@ -73,11 +96,7 @@ pub(crate) fn start_on(
     let runtime = quinn::default_runtime().ok_or("no async runtime for QUIC")?;
     let endpoint = quinn::Endpoint::new(
         quinn::EndpointConfig::default(),
-        // The presence datagram channel shares the port and certificate.
-        Some(identity.server_config_with_alpns(&[
-            cua_media_protocol::v2::QUIC_ALPN,
-            cua_media_protocol::presence::PRESENCE_ALPN.as_bytes(),
-        ])?),
+        Some(server_config(&identity)?),
         socket,
         runtime,
     )

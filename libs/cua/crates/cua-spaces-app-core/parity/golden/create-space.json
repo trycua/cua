@@ -18,6 +18,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
+          "connect-cloud: Connect a cloud…",
           "connect-by-address: Connect by address…"
         ],
         "gpu": null,
@@ -46,7 +47,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.1 GB initially; grows with use"
+          "Disk: 3.0 GB–7.2 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "auto",
@@ -76,6 +77,7 @@
           "placement: Run on !This Mac cannot run QEMU Spaces.",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
+          "connect-cloud: Connect a cloud…",
           "connect-by-address: Connect by address…"
         ],
         "gpu": null,
@@ -132,6 +134,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
+          "connect-cloud: Connect a cloud…",
           "connect-by-address: Connect by address…"
         ],
         "gpu": null,
@@ -160,7 +163,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.1 GB initially; grows with use"
+          "Disk: 3.0 GB–7.2 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "auto",
@@ -190,6 +193,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
+          "connect-cloud: Connect a cloud…",
           "connect-by-address: Connect by address…"
         ],
         "gpu": null,
@@ -218,7 +222,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.1 GB initially; grows with use"
+          "Disk: 3.0 GB–7.2 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "auto",
@@ -248,6 +252,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
+          "connect-cloud: Connect a cloud…",
           "connect-by-address: Connect by address…"
         ],
         "gpu": null,
@@ -276,7 +281,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.1 GB initially; grows with use"
+          "Disk: 3.0 GB–7.2 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "auto",
@@ -306,6 +311,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
+          "connect-cloud: Connect a cloud…",
           "connect-by-address: Connect by address…"
         ],
         "gpu": null,
@@ -334,7 +340,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.1 GB initially; grows with use"
+          "Disk: 3.0 GB–7.2 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "auto",
@@ -364,6 +370,7 @@
           "placement: Run on !This Mac cannot run QEMU Spaces.",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
+          "connect-cloud: Connect a cloud…",
           "connect-by-address: Connect by address…"
         ],
         "gpu": null,
@@ -420,6 +427,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
+          "connect-cloud: Connect a cloud…",
           "connect-by-address: Connect by address…"
         ],
         "gpu": null,
@@ -448,7 +456,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.1 GB initially; grows with use"
+          "Disk: 3.0 GB–7.2 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "auto",
@@ -478,6 +486,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
+          "connect-cloud: Connect a cloud…",
           "connect-by-address: Connect by address…"
         ],
         "gpu": null,
@@ -506,7 +515,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.1 GB initially; grows with use"
+          "Disk: 3.0 GB–7.2 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "gvisor",
@@ -536,6 +545,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
+          "connect-cloud: Connect a cloud…",
           "connect-by-address: Connect by address…"
         ],
         "gpu": null,
@@ -571,7 +581,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.1 GB initially; grows with use"
+          "Disk: 3.0 GB–7.2 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "gvisor",
@@ -601,6 +611,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
+          "connect-cloud: Connect a cloud…",
           "connect-by-address: Connect by address…"
         ],
         "gpu": null,
@@ -636,7 +647,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.1 GB initially; grows with use"
+          "Disk: 3.0 GB–7.2 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "gvisor",
@@ -666,6 +677,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
+          "connect-cloud: Connect a cloud…",
           "connect-by-address: Connect by address…"
         ],
         "gpu": null,
@@ -701,7 +713,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.1 GB initially; grows with use"
+          "Disk: 3.0 GB–7.2 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "gvisor",
@@ -731,6 +743,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
+          "connect-cloud: Connect a cloud…",
           "connect-by-address: Connect by address…"
         ],
         "gpu": null,
@@ -759,7 +772,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.1 GB initially; grows with use"
+          "Disk: 3.0 GB–7.2 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "gvisor",
@@ -789,6 +802,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
+          "connect-cloud: Connect a cloud…",
           "connect-by-address: Connect by address…"
         ],
         "gpu": null,
@@ -848,6 +862,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
+          "connect-cloud: Connect a cloud…",
           "connect-by-address: Connect by address…"
         ],
         "gpu": null,
@@ -907,6 +922,7 @@
           "placement: Run on !This Mac cannot run QEMU Spaces.",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
+          "connect-cloud: Connect a cloud…",
           "connect-by-address: Connect by address…"
         ],
         "gpu": null,
@@ -963,6 +979,7 @@
           "placement: Run on !This Mac cannot run QEMU Spaces.",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
+          "connect-cloud: Connect a cloud…",
           "connect-by-address: Connect by address…"
         ],
         "gpu": null,
@@ -1018,6 +1035,7 @@
           "placement: Run on !This Mac cannot run QEMU Spaces.",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
+          "connect-cloud: Connect a cloud…",
           "connect-by-address: Connect by address…"
         ],
         "gpu": null,
@@ -1073,6 +1091,7 @@
           "placement: Run on !This Mac cannot run QEMU Spaces.",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
+          "connect-cloud: Connect a cloud…",
           "connect-by-address: Connect by address…"
         ],
         "gpu": null,
@@ -1128,6 +1147,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
+          "connect-cloud: Connect a cloud…",
           "connect-by-address: Connect by address…"
         ],
         "gpu": null,
@@ -1161,7 +1181,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.1 GB initially; grows with use"
+          "Disk: 3.0 GB–7.2 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "gvisor",
@@ -1191,6 +1211,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
+          "connect-cloud: Connect a cloud…",
           "connect-by-address: Connect by address…"
         ],
         "gpu": null,
@@ -1248,6 +1269,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
+          "connect-cloud: Connect a cloud…",
           "connect-by-address: Connect by address…"
         ],
         "gpu": null,
@@ -1521,6 +1543,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
+          "connect-cloud: Connect a cloud…",
           "connect-by-address: Connect by address…"
         ],
         "gpu": null,

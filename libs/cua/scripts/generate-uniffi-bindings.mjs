@@ -18,8 +18,15 @@
  *
  * Only the `cua_sdk` namespace is generated.
  *
+ * The library is built with the dev profile. UniFFI reads the interface
+ * from metadata the proc macros embed, which does not depend on the
+ * profile, so the bindings are identical. A cold release build alone took
+ * most of the CI drift job's time limit and shared nothing with the job's
+ * other (dev profile) cargo steps. Pass `--release` to read
+ * `target/release` instead, e.g. with `--skip-build` after a release build.
+ *
  * Usage: node generate-uniffi-bindings.mjs [--check] [--skip-build]
- *        [--only=python,swift,kotlin,typescript]
+ *        [--release] [--only=python,swift,kotlin,typescript]
  */
 
 import { spawnSync } from "node:child_process"
@@ -48,6 +55,7 @@ const kotlinRoot = join(cuaRoot, "kotlin")
 const typescriptRoot = join(cuaRoot, "typescript")
 const check = process.argv.includes("--check")
 const skipBuild = process.argv.includes("--skip-build")
+const release = process.argv.includes("--release")
 const onlyArgument = process.argv.find((argument) => argument.startsWith("--only="))
 const languages = new Set(
   (onlyArgument ? onlyArgument.slice("--only=".length) : "python,swift,kotlin,typescript")
@@ -76,7 +84,7 @@ function nativeLibraryPath() {
   const targetDirectory = process.env.CARGO_TARGET_DIR
     ? resolve(process.env.CARGO_TARGET_DIR)
     : join(cuaRoot, "target")
-  return join(targetDirectory, "release", file)
+  return join(targetDirectory, release ? "release" : "debug", file)
 }
 
 function normalizeWhitespace(source) {
@@ -192,10 +200,15 @@ function bindgen(library, language, outDir) {
 const temporaryRoot = mkdtempSync(join(tmpdir(), "cua-uniffi-"))
 try {
   if (!skipBuild) {
-    run("cargo", ["build", "--locked", "--release", "-p", "cua-sdk"], cuaRoot)
+    run("cargo", ["build", "--locked", ...(release ? ["--release"] : []), "-p", "cua-sdk"], cuaRoot)
   }
   const library = nativeLibraryPath()
-  if (!existsSync(library)) throw new Error(`missing built SDK library ${library}`)
+  if (!existsSync(library)) {
+    throw new Error(
+      `missing built SDK library ${library}` +
+        (release ? "" : " (pass --release to use a release build)"),
+    )
+  }
 
   if (languages.has("python")) {
     const out = join(temporaryRoot, "python")

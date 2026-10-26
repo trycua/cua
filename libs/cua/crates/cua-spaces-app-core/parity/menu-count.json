@@ -1,6 +1,6 @@
 {
   "name": "menu-count",
-  "about": "The menu bar item and the notch tab count the same Spaces (never This machine or another machine's own desktop, even while it provides Spaces; the Spaces a machine provides count), and the menu shows Cua Volume's sync state next to the count when sync applies: synced, syncing, conflicts (they open the Volume page) and offline; nothing on this Mac's store with one device; a bucket that has not answered for 30 s is offline.",
+  "about": "The menu bar item and the notch tab count the same Spaces, the ones on or starting (a stopped Space is not counted; never This machine or another machine's own desktop, even while it provides Spaces; the Spaces a machine provides count), and the menu shows Cua Volume's sync state next to the count when sync applies: synced, syncing, conflicts (they open the Volume page) and offline; nothing on this Mac's store with one device; a bucket that has not answered for 30 s is offline.",
   "now": 1800000000000,
   "cases": [
     {
@@ -303,6 +303,224 @@
           "os": "linux",
           "reachable": true,
           "error": null
+        }
+      ],
+      "sync": null,
+      "nowMs": 1800000000000,
+      "backend": null
+    },
+    {
+      "name": "four spaces stopped",
+      "hostState": {
+        "configured": true,
+        "mode": "relay",
+        "relayUrl": "https://relay.cua.ai",
+        "name": "Studio",
+        "sharing": true,
+        "serviceInstalled": true,
+        "serviceRunning": true,
+        "serviceKind": "launchd",
+        "online": true,
+        "clients": [
+          {
+            "id": "u1",
+            "email": "ada@example.com",
+            "name": "Ada",
+            "streams": 2
+          },
+          {
+            "id": "u2",
+            "email": "grace@example.com"
+          }
+        ],
+        "permissions": [
+          {
+            "id": "screen-recording",
+            "title": "Screen Recording",
+            "settingsUrl": "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+            "instructions": "Turn on Cua Spaces"
+          },
+          {
+            "id": "accessibility",
+            "title": "Accessibility",
+            "settingsUrl": "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+            "granted": true
+          }
+        ]
+      },
+      "rows": [
+        {
+          "id": "local:alpha",
+          "name": "alpha",
+          "provider": "local",
+          "spacesdVersion": "0.4.0",
+          "features": [
+            "desktop_stream",
+            "window_stream"
+          ],
+          "addedAt": "2026-09-25T08:00:00Z",
+          "os": "linux",
+          "reachable": false,
+          "error": null,
+          "power": "stop",
+          "powerState": "stopped"
+        },
+        {
+          "id": "local:bravo",
+          "name": "bravo",
+          "provider": "local",
+          "spacesdVersion": "0.4.0",
+          "features": [
+            "desktop_stream",
+            "window_stream"
+          ],
+          "addedAt": "2026-09-25T08:00:00Z",
+          "os": "linux",
+          "reachable": false,
+          "error": null,
+          "power": "stop",
+          "powerState": "stopped"
+        },
+        {
+          "id": "local:charlie",
+          "name": "charlie",
+          "provider": "local",
+          "spacesdVersion": "0.4.0",
+          "features": [
+            "desktop_stream",
+            "window_stream"
+          ],
+          "addedAt": "2026-09-25T08:00:00Z",
+          "os": "linux",
+          "reachable": false,
+          "error": null,
+          "power": "stop",
+          "powerState": "stopped"
+        },
+        {
+          "id": "local:delta",
+          "name": "delta",
+          "provider": "local",
+          "spacesdVersion": "0.4.0",
+          "features": [
+            "desktop_stream",
+            "window_stream"
+          ],
+          "addedAt": "2026-09-25T08:00:00Z",
+          "os": "linux",
+          "reachable": false,
+          "error": null,
+          "power": "stop",
+          "powerState": "stopped"
+        }
+      ],
+      "sync": null,
+      "nowMs": 1800000000000,
+      "backend": null
+    },
+    {
+      "name": "one of four spaces running",
+      "hostState": {
+        "configured": true,
+        "mode": "relay",
+        "relayUrl": "https://relay.cua.ai",
+        "name": "Studio",
+        "sharing": true,
+        "serviceInstalled": true,
+        "serviceRunning": true,
+        "serviceKind": "launchd",
+        "online": true,
+        "clients": [
+          {
+            "id": "u1",
+            "email": "ada@example.com",
+            "name": "Ada",
+            "streams": 2
+          },
+          {
+            "id": "u2",
+            "email": "grace@example.com"
+          }
+        ],
+        "permissions": [
+          {
+            "id": "screen-recording",
+            "title": "Screen Recording",
+            "settingsUrl": "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+            "instructions": "Turn on Cua Spaces"
+          },
+          {
+            "id": "accessibility",
+            "title": "Accessibility",
+            "settingsUrl": "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+            "granted": true
+          }
+        ]
+      },
+      "rows": [
+        {
+          "id": "local:alpha",
+          "name": "alpha",
+          "provider": "local",
+          "spacesdVersion": "0.4.0",
+          "features": [
+            "desktop_stream",
+            "window_stream"
+          ],
+          "addedAt": "2026-09-25T08:00:00Z",
+          "os": "linux",
+          "reachable": false,
+          "error": null,
+          "power": "stop",
+          "powerState": "stopped"
+        },
+        {
+          "id": "local:bravo",
+          "name": "bravo",
+          "provider": "local",
+          "spacesdVersion": "0.4.0",
+          "features": [
+            "desktop_stream",
+            "window_stream"
+          ],
+          "addedAt": "2026-09-25T08:00:00Z",
+          "os": "linux",
+          "reachable": true,
+          "error": null,
+          "power": "stop",
+          "powerState": "running"
+        },
+        {
+          "id": "local:charlie",
+          "name": "charlie",
+          "provider": "local",
+          "spacesdVersion": "0.4.0",
+          "features": [
+            "desktop_stream",
+            "window_stream"
+          ],
+          "addedAt": "2026-09-25T08:00:00Z",
+          "os": "linux",
+          "reachable": false,
+          "error": null,
+          "power": "stop",
+          "powerState": "stopped"
+        },
+        {
+          "id": "local:delta",
+          "name": "delta",
+          "provider": "local",
+          "spacesdVersion": "0.4.0",
+          "features": [
+            "desktop_stream",
+            "window_stream"
+          ],
+          "addedAt": "2026-09-25T08:00:00Z",
+          "os": "linux",
+          "reachable": false,
+          "error": null,
+          "power": "stop",
+          "powerState": "stopped"
         }
       ],
       "sync": null,

@@ -36,6 +36,9 @@ import type {
 
 export type * from "./ops/space-detail";
 
+/** This machine's own roster entry (the core's `host::THIS_MACHINE_ID`). */
+export const THIS_MACHINE_ID = "this-mac";
+
 export const USAGE_REFRESH_MS = 10_000;
 export const WINDOWS_REFRESH_MS = 5_000;
 /** How often a shown Space's agent runs are read (`AgentRunsModel.poll`). */
@@ -377,7 +380,11 @@ export function useSpaceDetail(space: Space | undefined, hostArch: string | null
   // windows: it is not asked (the core's detail says why in its note).
   // Nor is a machine on the relay while this device is not enrolled (the
   // relay refuses it; the detail says why).
-  const noDesktop = space ? sharesDesktop(ctx.core, space) === false || Boolean(seen.access && space.id.startsWith("relay:")) : false;
+  // Nor is this machine's own screen: it is not a Space, and nothing here
+  // streams it (the core's detail says so in its note).
+  const noDesktop = space
+    ? space.id === THIS_MACHINE_ID || sharesDesktop(ctx.core, space) === false || Boolean(seen.access && space.id.startsWith("relay:"))
+    : false;
   useEffect(() => {
     if (!details || !id || id.startsWith("pending:") || noDesktop) return;
     return details.watch(id);

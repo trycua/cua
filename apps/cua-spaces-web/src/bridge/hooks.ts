@@ -315,7 +315,7 @@ export interface SessionHook extends Resource<SessionData> {
   refresh(): Promise<void>;
   /** Starts the browser sign-in; `session.signIn` tracks it until the host
    * reports signed in (or failed). */
-  signIn(): Promise<SignInStart>;
+  signIn(opts?: { code?: boolean }): Promise<SignInStart>;
   /** Stops waiting for the browser. */
   cancelSignIn(): void;
   signOut(): Promise<void>;
@@ -329,7 +329,7 @@ export function useSession(): SessionHook {
   const run = useAction();
   return {
     ...r,
-    signIn: () => run((s) => s.signIn()),
+    signIn: (opts) => run((s) => s.signIn(opts)),
     cancelSignIn: () => void run((s) => s.cancelSignIn()),
     signOut: () => run((s) => s.signOut()),
     completeOnboarding: (mode, launchAtLogin) => run((s) => s.completeOnboarding(mode, launchAtLogin)),

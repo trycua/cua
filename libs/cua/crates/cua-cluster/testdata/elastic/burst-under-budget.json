@@ -1,0 +1,80 @@
+{
+  "assignments": [
+    {
+      "group": "burst",
+      "target": {
+        "on": "new",
+        "index": 0
+      },
+      "count": 31,
+      "sync": false
+    },
+    {
+      "group": "burst",
+      "target": {
+        "on": "new",
+        "index": 1
+      },
+      "count": 31,
+      "sync": false
+    },
+    {
+      "group": "burst",
+      "target": {
+        "on": "new",
+        "index": 2
+      },
+      "count": 3,
+      "sync": false
+    }
+  ],
+  "new_hosts": [
+    {
+      "provider": "hetzner",
+      "type_name": "cx53",
+      "region": "fsn1",
+      "usd_per_hour": 0.0674,
+      "boot_secs": 50,
+      "billed_secs": 3600,
+      "one_space": false
+    },
+    {
+      "provider": "hetzner",
+      "type_name": "cx53",
+      "region": "fsn1",
+      "usd_per_hour": 0.0674,
+      "boot_secs": 50,
+      "billed_secs": 3600,
+      "one_space": false
+    },
+    {
+      "provider": "hetzner",
+      "type_name": "cx23",
+      "region": "fsn1",
+      "usd_per_hour": 0.0114,
+      "boot_secs": 50,
+      "billed_secs": 3600,
+      "one_space": false
+    }
+  ],
+  "unplaced": [
+    {
+      "group": "burst",
+      "count": 135,
+      "reason": "your clouds' cost cap ($0.15/h) is reached: raise it with `cua cloud budget --max-per-hour`"
+    }
+  ],
+  "added_usd_per_hour": 0.1462,
+  "projected_usd": 0.1462,
+  "lower_bound_usd": 0.43483870967741933,
+  "solver": "greedy",
+  "elapsed_us": 0,
+  "relay_after": 3,
+  "ready_in_secs": 50,
+  "explain": [
+    "31 x burst -> new hetzner cx53 in fsn1 ($0.0674/h, ready in ~50 s)",
+    "31 x burst -> new hetzner cx53 in fsn1 ($0.0674/h, ready in ~50 s)",
+    "3 x burst -> new hetzner cx23 in fsn1 ($0.0114/h, ready in ~50 s)",
+    "135 x burst not placed: your clouds' cost cap ($0.15/h) is reached: raise it with `cua cloud budget --max-per-hour`"
+  ]
+}

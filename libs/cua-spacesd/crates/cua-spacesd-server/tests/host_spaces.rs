@@ -96,11 +96,27 @@ impl HostSpacesService for FakeDaemon {
         }))
     }
 
+    async fn set_host_warm(
+        &self,
+        _: tonic::Request<cua_proto::env::v1::SetHostWarmRequest>,
+    ) -> Result<tonic::Response<cua_proto::env::v1::SetHostWarmResponse>, tonic::Status> {
+        Err(tonic::Status::unimplemented("warm pools"))
+    }
+
     async fn set_host_space_power(
         &self,
         _: tonic::Request<SetHostSpacePowerRequest>,
     ) -> Result<tonic::Response<SetHostSpacePowerResponse>, tonic::Status> {
         Ok(tonic::Response::new(SetHostSpacePowerResponse::default()))
+    }
+
+    async fn set_host_space_egress(
+        &self,
+        _: tonic::Request<SetHostSpaceEgressRequest>,
+    ) -> Result<tonic::Response<SetHostSpaceEgressResponse>, tonic::Status> {
+        Ok(tonic::Response::new(SetHostSpaceEgressResponse {
+            enforced: "host".into(),
+        }))
     }
 
     async fn cancel_host_space(

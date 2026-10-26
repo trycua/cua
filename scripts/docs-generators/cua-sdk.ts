@@ -538,6 +538,24 @@ export const PAGES: PageSpec[] = [
     modules: ['spaces'],
   },
   {
+    slug: 'spaces/sharing',
+    title: 'Share a Space',
+    description: 'Give another person access to a Space, list who has it and take it back.',
+    intro:
+      '`Space.share` gives a person access to a Space, `Space.shares` lists who has it, and `Space.unshare` takes it back.',
+    items: ['SpaceShareEntry', 'SpaceShares'],
+    members: [{ object: 'Space', title: 'Sharing', methods: ['share', 'shares', 'unshare'] }],
+  },
+  {
+    slug: 'spaces/relay-registration',
+    title: 'Relay registration',
+    description: 'Register a Space with the relay so other devices reach it, and unregister it.',
+    intro:
+      '`Spaces.relay_register` makes a Space reachable from your other devices through the relay; `Spaces.relay_unregister` stops that.',
+    items: ['SpaceRelayRegistration'],
+    members: [{ object: 'Spaces', title: 'Relay registration', methods: ['relay_register', 'relay_unregister'] }],
+  },
+  {
     slug: 'spaces/elastic',
     title: 'Elastic pool and prewarm',
     description: 'Plan where Spaces go and what it costs, add and remove cloud hosts, set the budget, and keep Spaces ready.',

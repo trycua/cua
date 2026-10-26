@@ -5,12 +5,12 @@ import CuaSpacesFFI
 import Foundation
 import Observation
 
-/// Settings → Agents: the provider keys agents get. The cua daemon keeps
+/// Settings → Connectors: the provider keys agents get. The cua daemon keeps
 /// them in the Keychain (`agent_keys.list/set/remove`, its app methods; no
 /// MCP tool reaches them) and answers only the provider, the variable, the
 /// last four characters and when each was added. Every word and rule is the
 /// app core's (`appAgentKeysView`, `appAgentKeyForm`); the web UI's
-/// Settings → Agents draws the same.
+/// Settings → Connectors draws the same.
 ///
 /// A key passes through here once, in `save`, and is never kept.
 @MainActor @Observable

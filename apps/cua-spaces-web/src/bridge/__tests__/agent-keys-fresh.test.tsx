@@ -54,7 +54,7 @@ function fakeTarget() {
   return { target, doc, fire: (t: string) => [...(on[t] ?? [])].forEach((l) => l()), count: () => Object.values(on).reduce((n, s) => n + s.size, 0) };
 }
 
-describe("Settings, Connected apps keeps its list fresh", () => {
+describe("Settings, Connectors keeps its list fresh", () => {
   it("reads when watching starts, on focus, on a visible document and on agents.changed", async () => {
     const h = loggedDemo();
     const store = new AgentKeysStore(h.adapter);
@@ -134,7 +134,7 @@ describe("Settings, Connected apps keeps its list fresh", () => {
   });
 });
 
-describe.skipIf(!wasmBuilt)("the Settings, Connected apps account keys", () => {
+describe.skipIf(!wasmBuilt)("the Settings, Connectors account keys", () => {
   const Page = AccountKeysSection;
   const status = (provider: string) => document.querySelector(`[data-agent-key-provider="${provider}"] [data-agent-key-status]`)?.textContent;
   const click = (provider: string, what: "action" | "remove") => {

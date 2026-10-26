@@ -1,0 +1,199 @@
+{
+  "components/add-agent/add-agent-sheet.tsx": {
+    "radius": 1
+  },
+  "components/agents/agent-chat.tsx": {
+    "pill": 1
+  },
+  "components/agents/agent-panels.tsx": {
+    "radius": 1,
+    "partial-line": 1,
+    "outlined-box": 1
+  },
+  "components/agents/agents-empty.tsx": {
+    "radius": 1,
+    "outlined-box": 1
+  },
+  "components/agents/connect-dialog.tsx": {
+    "outlined-box": 2,
+    "partial-line": 2
+  },
+  "components/agents/harness-mark.tsx": {
+    "outlined-box": 1
+  },
+  "components/agents/key-sheet.tsx": {
+    "partial-line": 1
+  },
+  "components/agents/run-agent-dialog.tsx": {
+    "partial-line": 1,
+    "outlined-box": 1
+  },
+  "components/agents/timeline.tsx": {
+    "radius": 2,
+    "partial-line": 1
+  },
+  "components/ask-first/ask-box.tsx": {
+    "dot-chain": 1,
+    "outlined-box": 6,
+    "radius": 5,
+    "partial-line": 1
+  },
+  "components/ask-first/home.tsx": {
+    "radius": 5,
+    "outlined-box": 4,
+    "partial-line": 1
+  },
+  "components/ask-first/task-view.tsx": {
+    "partial-line": 5,
+    "radius": 11,
+    "outlined-box": 8
+  },
+  "components/cli-hint.tsx": {
+    "radius": 1
+  },
+  "components/cloud-logo.tsx": {
+    "radius": 1
+  },
+  "components/clouds/cloud-detail.tsx": {
+    "partial-line": 12
+  },
+  "components/keyvault/options-dialog.tsx": {
+    "partial-line": 1
+  },
+  "components/markdown.tsx": {
+    "partial-line": 2,
+    "outlined-box": 1,
+    "radius": 1
+  },
+  "components/new-space/connect-cloud-dialog.tsx": {
+    "partial-line": 3,
+    "outlined-box": 1
+  },
+  "components/settings/account-tab.tsx": {
+    "dot-chain": 1
+  },
+  "components/settings/notices-dialog.tsx": {
+    "dot-chain": 2
+  },
+  "components/settings/snippet.tsx": {
+    "outlined-box": 1,
+    "partial-line": 1
+  },
+  "components/shell/account-area.tsx": {
+    "outlined-box": 1,
+    "radius": 1
+  },
+  "components/shell/command-palette.tsx": {
+    "partial-line": 2,
+    "radius": 1
+  },
+  "components/shell/relay-allowance-notice.tsx": {
+    "partial-line": 1
+  },
+  "components/shell/sidebar.tsx": {
+    "partial-line": 3,
+    "outlined-box": 1,
+    "radius": 1
+  },
+  "components/shell/top-bar.tsx": {
+    "partial-line": 1,
+    "outlined-box": 1
+  },
+  "components/shell/update-indicator.tsx": {
+    "outlined-box": 1
+  },
+  "components/sign-in-link.tsx": {
+    "radius": 1
+  },
+  "components/space-detail/agents-section.tsx": {
+    "radius": 1,
+    "partial-line": 1,
+    "outlined-box": 1
+  },
+  "components/space-detail/drop-well.tsx": {
+    "radius": 1,
+    "outlined-box": 2
+  },
+  "components/space-detail/facts.tsx": {
+    "radius": 1
+  },
+  "components/space-detail/space-header.tsx": {
+    "partial-line": 1
+  },
+  "components/space-detail/stream-section.tsx": {
+    "radius": 5,
+    "outlined-box": 3,
+    "partial-line": 1
+  },
+  "components/space-thread/avatar.tsx": {
+    "radius": 1,
+    "outlined-box": 1
+  },
+  "components/space-thread/composer.tsx": {
+    "outlined-box": 1
+  },
+  "components/space-thread/identity.tsx": {
+    "radius": 2
+  },
+  "components/space-thread/members-panel.tsx": {
+    "radius": 1,
+    "partial-line": 1
+  },
+  "components/space-thread/space-call.tsx": {
+    "partial-line": 1,
+    "radius": 1
+  },
+  "components/spaces/selection.tsx": {
+    "radius": 2
+  },
+  "components/spaces/space-tile.tsx": {
+    "radius": 3
+  },
+  "components/spaces/spaces-toolbar.tsx": {
+    "radius": 2
+  },
+  "components/tips.tsx": {
+    "radius": 1
+  },
+  "components/ui/select.tsx": {
+    "radius": 1
+  },
+  "components/upgrade-card.tsx": {
+    "outlined-box": 1
+  },
+  "components/volume/agents-step.tsx": {
+    "partial-line": 1
+  },
+  "routes/agents/all.tsx": {
+    "radius": 2,
+    "outlined-box": 2,
+    "partial-line": 6,
+    "dot-chain": 1
+  },
+  "routes/machines/index.tsx": {
+    "outlined-box": 2,
+    "radius": 7,
+    "partial-line": 13
+  },
+  "routes/onboarding/index.tsx": {
+    "pill": 13,
+    "outlined-box": 7,
+    "partial-line": 2,
+    "radius": 5
+  },
+  "routes/settings/about.tsx": {
+    "partial-line": 1
+  },
+  "routes/settings/devices.tsx": {
+    "outlined-box": 3,
+    "partial-line": 3
+  },
+  "routes/settings/route.tsx": {
+    "radius": 1
+  },
+  "routes/spaces/$spaceId.tsx": {
+    "outlined-box": 3,
+    "radius": 3,
+    "partial-line": 1
+  }
+}

@@ -95,6 +95,12 @@ pub struct HostCaller {
     /// `relay` or `token`.
     #[serde(default)]
     pub via: String,
+    /// A Space thread grant: the one Space this machine provides (its
+    /// relay machine id) whose thread the caller may reach, because that
+    /// Space is shared with them (`role` is their role on it). Nothing
+    /// else of this machine answers such a caller.
+    #[serde(default)]
+    pub space: Option<String>,
 }
 
 impl HostCaller {
@@ -352,8 +358,13 @@ fn to_pb(s: &ProvidedSpace) -> pb::HostSpace {
         egress_enforced: String::new(),
         // Only the create response says which network it applied.
         network: String::new(),
+        // Only when asked ([`HostSpacesServer::with_disks`]).
+        disk: None,
     }
 }
+
+/// How long a host measures its Spaces' disks for one `GetHostSpaces`.
+const DISK_ANSWER_WITHIN: Duration = Duration::from_secs(10);
 
 #[derive(Default)]
 struct Reserved {
@@ -529,7 +540,7 @@ async fn following_host<T>(
         let r = tokio::time::timeout(
             HOST_PROGRESS_ASK,
             host.host_spaces()
-                .get_host_spaces(pb::GetHostSpacesRequest {}),
+                .get_host_spaces(pb::GetHostSpacesRequest::default()),
         )
         .await
         .ok()?
@@ -1362,6 +1373,23 @@ impl HostSpacesServer {
             images,
             creating: self.creating.listed(caller),
         })
+    }
+
+    /// `spaces` (a [`HostSpacesServer::get`] answer's) with what each
+    /// takes on this computer's disk (`GetHostSpacesRequest.disk`): measured
+    /// when due, else the sampler's last measurement. Bounded: a
+    /// measurement that takes longer leaves them unset this time.
+    pub async fn with_disks(&self, spaces: &mut [pb::HostSpace]) {
+        let disks = tokio::time::timeout(DISK_ANSWER_WITHIN, self.spaces.local_space_disks())
+            .await
+            .unwrap_or_default();
+        for s in spaces {
+            s.disk = disks.get(&s.local_space).map(|d| pb::HostSpaceDisk {
+                bytes: d.bytes,
+                allocated: d.allocated,
+                shares_space: d.shares_space,
+            });
+        }
     }
 
     /// `CreateHostSpace`: creates one Space here and attaches it to the
@@ -2993,7 +3021,7 @@ async fn host_answer(space: &crate::Space) -> Result<pb::GetHostSpacesResponse> 
     space
         .spacesd()?
         .host_spaces()
-        .get_host_spaces(pb::GetHostSpacesRequest {})
+        .get_host_spaces(pb::GetHostSpacesRequest::default())
         .await
         .map(tonic::Response::into_inner)
         .map_err(|e| from_host(cua_spacesd_client::Error::from(e)))
@@ -3288,7 +3316,7 @@ impl Spaces {
             None => match space
                 .spacesd()?
                 .host_spaces()
-                .get_host_spaces(pb::GetHostSpacesRequest {})
+                .get_host_spaces(pb::GetHostSpacesRequest::default())
                 .await
             {
                 Ok(r) if !r.get_ref().name.is_empty() => r.into_inner().name,
@@ -3332,9 +3360,46 @@ impl Spaces {
         space
             .spacesd()?
             .host_spaces()
-            .get_host_spaces(pb::GetHostSpacesRequest {})
+            .get_host_spaces(pb::GetHostSpacesRequest::default())
             .await
             .map(tonic::Response::into_inner)
+            .map_err(|e| from_host(cua_spacesd_client::Error::from(e)))
+    }
+
+    /// Your Spaces on computer `host` (a [`SpaceInfo::host`]: a relay
+    /// machine id, or the Space of a host added by its address), each with
+    /// what it takes on that computer's disk when the computer measured it
+    /// (`GetHostSpacesRequest.disk`). Reached the way a delete reaches it,
+    /// from the machine list already read (no relay listing of its own).
+    /// Fails when the computer is offline, not reachable as a host, or not
+    /// one this device knows.
+    pub(crate) async fn host_space_disks(&self, host: &str) -> Result<Vec<pb::HostSpace>> {
+        let space = if host.contains(':') {
+            let h = self
+                .registry()
+                .direct_hosts()?
+                .into_iter()
+                .find(|h| h.space == host)
+                .ok_or_else(|| Error::NotFound(format!("host {host}")))?;
+            self.direct_host_space(&h).await?
+        } else {
+            let m = self
+                .inner
+                .relay_cache
+                .lock()
+                .expect("relay cache")
+                .iter()
+                .find(|m| m.id == host)
+                .cloned()
+                .ok_or_else(|| Error::NotFound(format!("host {host}")))?;
+            self.host_space(&m).await?
+        };
+        space
+            .spacesd()?
+            .host_spaces()
+            .get_host_spaces(pb::GetHostSpacesRequest { disk: true })
+            .await
+            .map(|r| r.into_inner().spaces)
             .map_err(|e| from_host(cua_spacesd_client::Error::from(e)))
     }
 

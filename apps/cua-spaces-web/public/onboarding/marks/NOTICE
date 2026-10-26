@@ -94,3 +94,10 @@ mark-openclaw.svg
 
 No usable official mark (letter tile):
   Kiro (Amazon): no brand or press kit at https://kiro.dev; AWS marks need permission.
+
+mark-t3code.png
+  T3 Code (T3 Tools Inc.): apps/web/public/apple-touch-icon.png in github.com/pingdotgg/t3code (main, Oct 2026),
+  scaled to 128 px, used in both themes.
+  Source: https://github.com/pingdotgg/t3code
+  Terms: the repository is MIT (Copyright (c) 2026 T3 Tools Inc.); no trademark or logo policy is published.
+  The MIT License grants rights to the copyrighted file, not to the mark, which names the harness only.

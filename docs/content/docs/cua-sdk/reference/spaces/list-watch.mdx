@@ -1,6 +1,6 @@
 ---
-title: "List changes"
-description: "Hear when the Space list changed, so it is read again then instead of on a timer."
+title: "The list and its changes"
+description: "The Space list `Spaces.list` reads, and hearing when it changed so it is read again then instead of on a timer."
 ---
 
 {/*
@@ -71,6 +71,21 @@ pub fn watch_list(&self, listener: Arc<dyn SpacesListListener>) -> Arc<SpacesLis
 | `listener` | [`SpacesListListener`](#spaceslistlistener) | required |
 
 **Returns** [`SpacesListWatch`](#spaceslistwatch)
+
+## `SpaceList` record
+
+The Spaces known now (`Spaces.list_known`) and how far the read got.
+
+Returned by [`Spaces.list_known`](/cua-sdk/reference/spaces#spaceslist_known).
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `spaces` | [`Vec<SpaceInfo>`](/cua-sdk/reference/spaces#spaceinfo-record) |  | This machine's Spaces, and the account's other computers' as far as they answered (the last known ones meanwhile). |
+| `incomplete` | `bool` |  | Some of the account's computers have not answered yet: the list may grow, and an empty one is not "no Spaces". Always false from a daemon that predates it (it answers once every computer did). |
+| `reaching` | `u32` |  | How many computers are still being reached (0 when unknown). |
+| `stale` | `bool` |  | The other computers' rows are the last known ones, not yet confirmed by the relay. |
+| `notice` | `String` |  | Why the account's computers could not be read, when they could not. |
+| `creating` | [`Vec<SpaceCreatingElsewhere>`](/cua-sdk/reference/spaces/space#spacecreatingelsewhere-record) |  | Spaces your other computers are creating now, from what each published through the relay (empty from a daemon that predates it). |
 
 ## `SpacesListListener`
 

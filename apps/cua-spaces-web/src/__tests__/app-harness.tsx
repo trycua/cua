@@ -47,6 +47,8 @@ export interface TestHost {
   /** Rewrites the demo host's answer to `op` (extra rows, this machine's
    * enrollment). */
   answer?: (op: string, out: unknown) => unknown;
+  /** A daemon without the Space thread: the Space page keeps its classic layout. */
+  noThread?: boolean;
   /** Answers `op` itself instead of the demo host (undefined: the demo's). */
   intercept?: (op: string, args: unknown) => unknown;
   /** The Machines page as the host's core drew it (`machinesView`). */
@@ -72,7 +74,7 @@ afterEach(async () => {
 });
 
 export async function mountApp(path: string, host: TestHost = { failsCreates: true, listsGhost: true }) {
-  const demo = createDemoAdapter({ latencyMs: 1, stepMs: 4, ...host.demo });
+  const demo = createDemoAdapter({ latencyMs: 1, stepMs: 4, noThread: host.noThread, ...host.demo });
   // The page's listeners, so a test can push what the host would (`emit`).
   const listeners = new Set<(event: HostEvent) => void>();
   const adapter: DataAdapter = {

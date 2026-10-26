@@ -124,6 +124,226 @@ pub struct CloudProvider {
     /// What it can run, and the cost.
     #[serde(default)]
     pub kinds: Vec<CloudKind>,
+    /// How it reaches the cloud: `cli` (the cloud CLI's sign-in on this
+    /// device), `oidc` (Cua's issuer, no stored key) or `sealed`; empty
+    /// when not connected.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub auth: String,
+    /// [`status`]: `connected`, `waiting-for-approval`, `not-connected`
+    /// (and, from `cloud_connect`, `needs-trust`, `checking`, `failed`).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub status: String,
+    /// The monthly budget (US dollars), when one is set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_usd_month: Option<f64>,
+    /// The largest machine Cua may create there (`4x16`: vCPUs x GiB),
+    /// empty: no limit.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub max_size: String,
+    /// Estimated US dollars Cua's machines there cost this calendar month
+    /// (UTC), list price times runtime.
+    #[serde(default)]
+    pub spent_month: f64,
+    /// Machines (and sandboxes) Cua runs there now.
+    #[serde(default)]
+    pub running: u32,
+    /// What waits for a person's approval in Cua Spaces: `connection`,
+    /// `limits`, or empty.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub approval: String,
+    /// The agent whose link or limits wait for approval, when an agent
+    /// asked.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub approval_agent: String,
+    /// The monthly budget an agent asked for, waiting for approval.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_budget_usd_month: Option<f64>,
+    /// The largest machine an agent asked for (`4x16`), waiting for
+    /// approval.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub pending_max_size: String,
+    /// Whether the caller can approve or deny what waits (`cloud_approve`):
+    /// a person's session on a device signed in to the account, never an
+    /// agent.
+    #[serde(default)]
+    pub can_approve: bool,
+    /// A better way to link it that this link could switch to (`oidc` for
+    /// an AWS link through the CLI sign-in), or empty.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub suggest_auth: String,
+    /// What is wrong with the link and what to do, in one plain sentence
+    /// (for example, it was disconnected on another device), or empty.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub issue: String,
+    /// `sealed`: the devices that can open the account's API token now
+    /// (names, else ids). At least one must be online for machines to be
+    /// made there unattended.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub holders: Vec<String>,
+}
+
+/// The words of [`CloudProvider::status`] and [`CloudConnected`]'s outcome.
+pub mod status {
+    /// Ready: Spaces can be created there.
+    pub const CONNECTED: &str = "connected";
+    /// Not linked.
+    pub const NOT_CONNECTED: &str = "not-connected";
+    /// The cloud does not trust Cua yet: a person sets up the trust
+    /// (`next.open`).
+    pub const NEEDS_TRUST: &str = "needs-trust";
+    /// Recorded; the check that proves it works has not run
+    /// (`next.run`).
+    pub const CHECKING: &str = "checking";
+    /// An agent linked it or raised a limit: a person approves it in Cua
+    /// Spaces.
+    pub const WAITING_FOR_APPROVAL: &str = "waiting-for-approval";
+    /// It did not work; `checks` and `next` say why.
+    pub const FAILED: &str = "failed";
+}
+
+/// The next step of a `cloud_connect`: a command for the agent to run, or
+/// a page for a person to open, and why.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CloudNext {
+    /// The exact command the agent runs next.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<String>,
+    /// The page a person opens next.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub open: Option<String>,
+    /// What the person pastes there (an AWS CloudShell command), when
+    /// there is something to paste.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paste: Option<String>,
+    /// Why, in plain words.
+    pub why: String,
+}
+
+impl CloudNext {
+    /// Whether it waits on a person (a page to open).
+    pub fn for_person(&self) -> bool {
+        self.open.is_some()
+    }
+}
+
+/// The environment variable a Cua agent run carries with its agent's name
+/// (a persistent agent or routine).
+pub const AGENT_VAR: &str = "CUA_AGENT";
+
+/// The run id every Cua agent run carries: an agent with no name is still
+/// an agent.
+pub const AGENT_RUN_VAR: &str = "CUA_AGENT_RUN_ID";
+
+/// Coding agents that mark their shells, and the name each acts as.
+pub const CODING_AGENT_VARS: &[(&str, &str)] = &[
+    ("CLAUDECODE", "claude-code"),
+    ("CURSOR_AGENT", "cursor"),
+    ("GEMINI_CLI", "gemini-cli"),
+    ("CODEX_SANDBOX", "codex"),
+];
+
+/// The Cua agent this process runs for ([`AGENT_VAR`], else
+/// [`AGENT_RUN_VAR`]) over `env`; `None` when none.
+pub fn cua_agent_with(env: impl Fn(&str) -> Option<String>) -> Option<String> {
+    [AGENT_VAR, AGENT_RUN_VAR]
+        .into_iter()
+        .filter_map(env)
+        .map(|v| v.trim().to_string())
+        .find(|v| !v.is_empty())
+}
+
+/// [`cua_agent_with`] over this process's environment.
+pub fn cua_agent() -> Option<String> {
+    cua_agent_with(|k| std::env::var(k).ok())
+}
+
+/// Who runs this process, over `env`: a Cua agent's name or run id, else a
+/// coding agent that marks its shell (Claude Code, Cursor, Gemini CLI,
+/// Codex); `None` when a person does.
+pub fn caller_agent_with(env: impl Fn(&str) -> Option<String>) -> Option<String> {
+    cua_agent_with(&env).or_else(|| {
+        CODING_AGENT_VARS
+            .iter()
+            .find(|(k, _)| env(k).is_some_and(|v| !v.trim().is_empty()))
+            .map(|(_, name)| (*name).to_string())
+    })
+}
+
+/// [`caller_agent_with`] over this process's environment.
+pub fn caller_agent() -> Option<String> {
+    caller_agent_with(|k| std::env::var(k).ok())
+}
+
+/// What `cloud_connect` asks for.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ConnectRequest {
+    /// Where in the account.
+    pub target: CloudTarget,
+    /// Also make it the default location.
+    pub make_default: bool,
+    /// Hours a Space there lives (default 8, 0: never).
+    pub ttl_hours: Option<u32>,
+    /// `cli` (default: the cloud CLI's sign-in), `oidc` or `sealed`.
+    pub auth: Option<String>,
+    /// The monthly budget, US dollars.
+    pub budget_usd_month: Option<f64>,
+    /// The largest machine, `4x16` (vCPUs x GiB).
+    pub max_size: Option<String>,
+    /// AWS: the 12-digit account id the trust stack is in.
+    pub account_id: Option<String>,
+    /// AWS: the role, when it is not `cua-spaces`.
+    pub role_arn: Option<String>,
+    /// Google Cloud `oidc`: the project number (the trust script prints
+    /// it). The project id is `target.project`.
+    pub project_number: Option<String>,
+    /// Google Cloud `oidc`: a service account to act as (default: none,
+    /// the federated identity calls Google directly).
+    pub service_account: Option<String>,
+    /// Azure: the subscription id.
+    pub subscription_id: Option<String>,
+    /// Azure: the Microsoft Entra tenant id.
+    pub tenant_id: Option<String>,
+    /// Azure: the client id of the `cua-spaces` managed identity.
+    pub client_id: Option<String>,
+    /// Azure: the resource group Cua works in (default `cua-spaces`).
+    pub resource_group: Option<String>,
+    /// Run the check that proves the link works (a `check` token, the
+    /// exchange, a dry run).
+    pub check: bool,
+    /// The agent that asks, when an agent does (its changes wait for a
+    /// person's approval).
+    pub agent: Option<String>,
+}
+
+impl ConnectRequest {
+    /// The way it links, `cli`, `oidc` or `sealed`: the one asked for,
+    /// else `oidc` for Azure (it has no CLI sign-in link) and for a Google
+    /// Cloud project number or service account (they name OIDC trust),
+    /// else `cli`.
+    pub fn auth_word(&self) -> String {
+        let given = |o: &Option<String>| o.as_deref().is_some_and(|v| !v.trim().is_empty());
+        match self
+            .auth
+            .as_deref()
+            .map(str::trim)
+            .filter(|a| !a.is_empty())
+        {
+            Some(a) => a.to_ascii_lowercase(),
+            None if self.target.provider.eq_ignore_ascii_case("azure") => "oidc".into(),
+            None if self.target.provider.eq_ignore_ascii_case("gcp")
+                && (given(&self.project_number) || given(&self.service_account)) =>
+            {
+                "oidc".into()
+            }
+            None => "cli".into(),
+        }
+    }
+
+    /// Whether it asks for today's CLI sign-in link ([`Self::auth_word`]
+    /// is `cli`).
+    pub fn is_cli(&self) -> bool {
+        self.auth_word() == "cli"
+    }
 }
 
 /// One thing Cua created in a cloud.
@@ -159,6 +379,12 @@ pub struct CloudResource {
     /// Whether it is past `expires`.
     #[serde(default)]
     pub expired: bool,
+    /// Who started it: the agent's name, or `user`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub started_by: String,
+    /// Estimated US dollars it cost so far (list price times runtime).
+    #[serde(default)]
+    pub cost_usd: f64,
 }
 
 /// `cloud_status`.
@@ -200,15 +426,22 @@ pub struct CloudTestReport {
     pub checks: Vec<CloudCheck>,
 }
 
-/// `cloud_connect`: the connected cloud plus the checks it passed.
+/// `cloud_connect`: the cloud as `cloud_status` lists it (its `status`
+/// is the outcome), the checks it ran, the next step and how to verify.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct CloudConnected {
     /// The cloud, as `cloud_status` lists it.
     #[serde(flatten)]
     pub provider: CloudProvider,
-    /// The checks it passed.
+    /// The checks it ran.
     #[serde(default)]
     pub checks: Vec<CloudCheck>,
+    /// What to do next (`None`: nothing, it is connected).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next: Option<CloudNext>,
+    /// The command that confirms it (`cua cloud status aws`).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub verify: String,
 }
 
 /// `cloud_disconnect`.
@@ -258,6 +491,129 @@ pub struct CloudAuditEntry {
     /// A short note (the reason, or the error).
     #[serde(default)]
     pub detail: String,
+    /// Where it was recorded: `device` (this cua home's log) or `account`
+    /// (Cua's issuer, for clouds linked to the account: tokens issued or
+    /// refused, approvals, limit changes). Empty from an older cua: this
+    /// device.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub source: String,
+}
+
+/// How `cloud_cost` groups the spend.
+pub mod cost_by {
+    /// One row per Space.
+    pub const SPACE: &str = "space";
+    /// One row per agent (`user` for what a person started).
+    pub const AGENT: &str = "agent";
+    /// One row per UTC day (`YYYY-MM-DD`).
+    pub const DAY: &str = "day";
+    /// One row per cloud.
+    pub const CLOUD: &str = "cloud";
+    /// Every grouping, in the order the docs list them.
+    pub const ALL: &[&str] = &[SPACE, AGENT, DAY, CLOUD];
+}
+
+/// One row of `cloud_cost`.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct CloudCostRow {
+    /// The Space, agent, day (`YYYY-MM-DD`) or cloud.
+    pub key: String,
+    /// Estimated US dollars (list price times runtime), to the cent.
+    pub usd: f64,
+    /// Machine hours, to the hundredth.
+    pub hours: f64,
+    /// How many machines ran.
+    pub machines: u32,
+}
+
+/// `cloud_cost`: what the machines Cua created cost, estimated from list
+/// price times runtime (the cloud's bill is the final word).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct CloudCostReport {
+    /// `space`, `agent`, `day` or `cloud`.
+    pub by: String,
+    /// The first day counted (`YYYY-MM-DD`, UTC).
+    pub since: String,
+    /// Up to when (RFC 3339).
+    pub until: String,
+    /// The rows: by day oldest first, otherwise the costliest first.
+    pub rows: Vec<CloudCostRow>,
+    /// The sum of the rows, to the cent.
+    pub total_usd: f64,
+}
+
+/// A cloud's spend crossed a share of its monthly budget.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct CloudBudgetAlert {
+    /// `aws`, `gcp`, `hetzner`, `modal`.
+    pub provider: String,
+    /// `AWS`, `Google Cloud`, ...
+    pub title: String,
+    /// 50, 80 or 100.
+    pub percent: u32,
+    /// `YYYY-MM` (UTC).
+    pub month: String,
+    /// Estimated US dollars spent this month.
+    pub spent_usd: f64,
+    /// The monthly budget.
+    pub budget_usd: f64,
+}
+
+impl CloudBudgetAlert {
+    /// "AWS reached 80% of its budget".
+    pub fn title_line(&self) -> String {
+        if self.percent >= 100 {
+            format!("{} reached its monthly budget", self.title)
+        } else {
+            format!("{} reached {}% of its budget", self.title, self.percent)
+        }
+    }
+
+    /// One plain sentence with the figures and what happens next.
+    pub fn body_line(&self) -> String {
+        let figures = format!(
+            "About ${:.2} of ${:.2} spent this month.",
+            self.spent_usd, self.budget_usd
+        );
+        if self.percent >= 100 {
+            format!(
+                "{figures} New machines there are refused until next month; stopping and \
+                 deleting still work. Raise it with `cua cloud connect {} --budget <usd>`.",
+                self.provider
+            )
+        } else {
+            figures
+        }
+    }
+}
+
+/// Where budget alerts go besides the audit log: the app's notification
+/// feed, registered by the Spaces runtime. Takes the cua home and the alert.
+pub type BudgetAlertSink =
+    std::sync::Arc<dyn Fn(&std::path::Path, &CloudBudgetAlert) + Send + Sync>;
+
+fn alert_sink() -> &'static std::sync::RwLock<Option<BudgetAlertSink>> {
+    static SINK: std::sync::OnceLock<std::sync::RwLock<Option<BudgetAlertSink>>> =
+        std::sync::OnceLock::new();
+    SINK.get_or_init(Default::default)
+}
+
+/// Sets where budget alerts are posted (the last call wins).
+pub fn set_budget_alert_sink(sink: BudgetAlertSink) {
+    *alert_sink().write().expect("alert sink") = Some(sink);
+}
+
+/// Posts `alert` for the cua home `home` to the registered sink, if any;
+/// whether one was registered.
+pub fn post_budget_alert(home: &std::path::Path, alert: &CloudBudgetAlert) -> bool {
+    let sink = alert_sink().read().expect("alert sink").clone();
+    match sink {
+        Some(f) => {
+            f(home, alert);
+            true
+        }
+        None => false,
+    }
 }
 
 /// One row of `cloud_sweep`.
@@ -471,11 +827,33 @@ pub trait CloudManager: Send + Sync + 'static {
         ttl_hours: Option<u32>,
     ) -> Result<CloudConnected>;
 
+    /// `cloud_connect` with every option: federation (`auth`), limits,
+    /// the check. Without `auth` (or `cli`) it is [`CloudManager::connect`]
+    /// plus the limits.
+    async fn connect_with(&self, req: &ConnectRequest) -> Result<CloudConnected> {
+        if !req.is_cli() {
+            return Err(not_built());
+        }
+        let mut c = self
+            .connect(&req.target, req.make_default, req.ttl_hours)
+            .await?;
+        c.provider.status = status::CONNECTED.into();
+        Ok(c)
+    }
+
     /// `cloud_disconnect`: refuses while Spaces Cua created still run
     /// there (it lists them). With `delete`, deletes everything Cua created
     /// there first and forgets the connection only once the cloud confirms
     /// nothing is left.
     async fn disconnect(&self, provider: &str, delete: bool) -> Result<CloudDisconnected>;
+
+    /// `cloud_approve`: a person approves (or, with `deny`, declines) what
+    /// an agent asked for on `provider`: its link, or its raised limits.
+    /// Refused when an agent calls.
+    async fn approve(&self, provider: &str, deny: bool) -> Result<CloudProvider> {
+        let _ = (provider, deny);
+        Err(not_built())
+    }
 
     /// `cloud_sweep`: dry run unless `dry_run` is false.
     async fn sweep(
@@ -524,6 +902,33 @@ pub trait CloudManager: Send + Sync + 'static {
     /// `cloud_audit`: the newest `limit` lines of the audit log, newest
     /// last.
     async fn audit(&self, limit: usize) -> Result<Vec<CloudAuditEntry>>;
+
+    /// `cloud_audit` with every option: `provider` narrows it to one cloud;
+    /// clouds linked to the account also bring the account's entries
+    /// (`source: account`). Oldest first, newest last.
+    async fn audit_for(
+        &self,
+        provider: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<CloudAuditEntry>> {
+        let mut v = self.audit(limit).await?;
+        if let Some(p) = provider {
+            v.retain(|e| e.provider.eq_ignore_ascii_case(p));
+        }
+        Ok(v)
+    }
+
+    /// `cloud_cost`: what the machines Cua created cost since `since`
+    /// (`YYYY-MM-DD`; default the first of this month), grouped `by`
+    /// ([`cost_by`]).
+    async fn cost(
+        &self,
+        _provider: Option<&str>,
+        _by: &str,
+        _since: Option<&str>,
+    ) -> Result<CloudCostReport> {
+        Err(not_built())
+    }
 }
 
 /// The error a cloud word without a manager in this build gets.
@@ -533,5 +938,44 @@ pub fn not_built() -> crate::Error {
         op: "your own cloud (aws, gcp, hetzner, modal): this build has no cloud providers (build the \
              cua CLI or SDK with the `byoc` feature, which the release builds include)"
             .into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn azure_and_named_google_trust_link_through_the_issuer() {
+        let req = |provider: &str, f: &dyn Fn(&mut ConnectRequest)| {
+            let mut r = ConnectRequest {
+                target: CloudTarget {
+                    provider: provider.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            f(&mut r);
+            r
+        };
+        assert_eq!(req("aws", &|_| {}).auth_word(), "cli");
+        assert!(req("gcp", &|_| {}).is_cli());
+        assert_eq!(req("azure", &|_| {}).auth_word(), "oidc");
+        assert_eq!(
+            req("gcp", &|r| r.project_number = Some("123".into())).auth_word(),
+            "oidc"
+        );
+        assert_eq!(
+            req("gcp", &|r| r.service_account = Some(" ".into())).auth_word(),
+            "cli"
+        );
+        assert_eq!(
+            req("aws", &|r| r.auth = Some(" OIDC ".into())).auth_word(),
+            "oidc"
+        );
+        assert_eq!(
+            req("azure", &|r| r.auth = Some("sealed".into())).auth_word(),
+            "sealed"
+        );
     }
 }

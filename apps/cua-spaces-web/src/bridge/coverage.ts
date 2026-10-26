@@ -46,7 +46,9 @@ import { MACHINES_COVERAGE } from "./ops/machines";
 import { CHECKLIST_COVERAGE } from "./ops/checklist";
 import { LINKS_COVERAGE } from "./ops/links";
 import { CLI_COVERAGE } from "./ops/cli";
+import { THREAD_COVERAGE } from "./ops/thread";
 import { PRESENCE_COVERAGE } from "./ops/presence";
+import { CLOUD_APPROVE_COVERAGE } from "./ops/cloud-approve";
 import { RUNTIME_FIX_COVERAGE } from "./ops/runtime-fix";
 import { TELEMETRY_COVERAGE } from "./ops/telemetry";
 import { STARTUP_COVERAGE } from "./ops/startup";
@@ -68,6 +70,21 @@ export const HOST_COVERAGE = {
   },
   "spaces.setPower": { webkit: { methods: ["spaces.setPower"] }, tauri: ["set_space_power"] },
   "spaces.delete": { webkit: { methods: ["spaces.delete"] }, tauri: ["delete_space"] },
+  "spaces.deleteMany": {
+    webkit: { methods: ["spaces.deleteMany"] },
+    tauri: [],
+    unsupported: { tauri: "the Tauri shell is not the shipped app (SwiftUI and Electron are); it deletes one Space at a time" },
+  },
+  "spaces.leave": {
+    webkit: { methods: ["spaces.leave"] },
+    tauri: [],
+    unsupported: { tauri: "the Tauri shell is not the shipped app (SwiftUI and Electron are); it has no leave" },
+  },
+  "spaces.rename": {
+    webkit: { methods: ["spaces.rename"] },
+    tauri: [],
+    unsupported: { tauri: "the Tauri shell is not the shipped app (SwiftUI and Electron are); it has no rename" },
+  },
   "machines.list": {
     webkit: { methods: ["spaces.list", "machines.list"] },
     tauri: ["host_status", "list_hosts", "get_environment"],
@@ -76,8 +93,8 @@ export const HOST_COVERAGE = {
   "settings.get": { webkit: { methods: ["settings.get"] }, tauri: ["telemetry_status", "get_default_location", "login_item_status"] },
   "settings.set": {
     webkit: {
-      methods: ["settings.choose", "settings.get", "window.setBackgroundColor"],
-      byDesign: "theme and hotkey are page-side; New Spaces start on This Mac only",
+      methods: ["settings.choose", "settings.get", "settings.update", "window.setBackgroundColor"],
+      byDesign: "theme and hotkey are page-side; New Spaces start on This Mac, or in a linked cloud when This Mac is full",
     },
     tauri: ["ui_storage_set", "telemetry_set_enabled", "set_default_location", "login_item_set", "telemetry_status", "get_default_location", "login_item_status"],
   },
@@ -137,6 +154,9 @@ export const HOST_COVERAGE = {
   "agents.setup": { webkit: { methods: ["agents.setup"] }, tauri: ["agent_setup_detect"] },
   "agents.configure": { webkit: { methods: ["agents.configure"] }, tauri: ["agent_setup_configure"] },
   "agents.signIn": { webkit: { methods: ["agents.signIn"] }, tauri: [], unsupported: { tauri: "no command starts an agent's own sign-in" } },
+  "agents.status": { webkit: { methods: ["agents.status"] }, tauri: [], unsupported: { tauri: "the Tauri shell has no connection status command (cua connect status --json)" } },
+  "agents.connect": { webkit: { methods: ["agents.connect"] }, tauri: [], unsupported: { tauri: "the Tauri shell can't copy an agent's sign-in to Keyvault" } },
+  "agents.disconnect": { webkit: { methods: ["agents.disconnect"] }, tauri: [], unsupported: { tauri: "the Tauri shell can't delete a copied sign-in" } },
   ...AGENT_DETAIL_COVERAGE,
   ...NEW_SPACE_COVERAGE,
   ...TELEPORT_COVERAGE,
@@ -186,7 +206,9 @@ export const HOST_COVERAGE = {
   ...CHECKLIST_COVERAGE,
   ...LINKS_COVERAGE,
   ...CLI_COVERAGE,
+  ...THREAD_COVERAGE,
   ...PRESENCE_COVERAGE,
+  ...CLOUD_APPROVE_COVERAGE,
   ...RUNTIME_FIX_COVERAGE,
 } as const satisfies Record<OpName, OpCoverage>;
 

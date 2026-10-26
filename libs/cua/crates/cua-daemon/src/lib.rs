@@ -142,6 +142,11 @@ pub enum Error {
     /// Missing or wrong token.
     #[error("unauthenticated: {0}")]
     Unauthenticated(String),
+    /// Signed in, but not allowed (the relay refused this account: a Space
+    /// shared with you is not yours to rename). Signing in again does not
+    /// help, unlike [`Error::Unauthenticated`].
+    #[error("permission denied: {0}")]
+    PermissionDenied(String),
     /// Could not reach the daemon.
     #[error("daemon transport: {0}")]
     Transport(String),
@@ -195,6 +200,7 @@ impl Error {
             Error::Env(_) => R::Env,
             Error::Http(_) => R::Http,
             Error::Unauthenticated(_) => R::Unauthenticated,
+            Error::PermissionDenied(_) => R::PermissionDenied,
             Error::CapabilityMissing(_) => R::CapabilityMissing,
             Error::HostCapabilityMissing(_) => R::HostCapabilityMissing,
             Error::TeleportRefused(_) => R::TeleportRefused,
@@ -219,6 +225,7 @@ impl Error {
             | Error::Env(m)
             | Error::Http(m)
             | Error::Unauthenticated(m)
+            | Error::PermissionDenied(m)
             | Error::Transport(m)
             | Error::DaemonNotRunning(m)
             | Error::CapabilityMissing(m)
@@ -287,6 +294,7 @@ impl Error {
             R::Env => Error::Env(m),
             R::Http => Error::Http(m),
             R::Unauthenticated => Error::Unauthenticated(m),
+            R::PermissionDenied => Error::PermissionDenied(m),
             R::CapabilityMissing => Error::CapabilityMissing(m),
             R::HostCapabilityMissing => Error::HostCapabilityMissing(m),
             R::TeleportRefused => Error::TeleportRefused(m),
@@ -312,7 +320,7 @@ impl Error {
             Error::CapabilityMissing(_) | Error::HostCapabilityMissing(_) => {
                 Code::FailedPrecondition
             }
-            Error::TeleportRefused(_) => Code::PermissionDenied,
+            Error::TeleportRefused(_) | Error::PermissionDenied(_) => Code::PermissionDenied,
             Error::InsufficientDisk(_) | Error::HostCapacity(_) => Code::ResourceExhausted,
             Error::Cancelled(_) => Code::Cancelled,
             Error::Cloud(_) | Error::Runtime(_) | Error::Env(_) | Error::Http(_) => Code::Aborted,
@@ -358,6 +366,7 @@ impl Error {
         let m = status.message().to_string();
         match status.code() {
             tonic::Code::Unauthenticated => Error::Unauthenticated(m),
+            tonic::Code::PermissionDenied => Error::PermissionDenied(m),
             tonic::Code::NotFound => Error::NotFound(m),
             tonic::Code::InvalidArgument => Error::InvalidArgument(m),
             tonic::Code::Unimplemented => Error::Unsupported(m),
@@ -479,9 +488,10 @@ impl From<cua_spaces::Error> for Error {
             E::Io(_) | E::Json(_) => Error::Internal(m),
             E::Mcp(_) => Error::Http(m),
             E::Relay(r) => match r {
-                cua_host::Error::Unauthenticated(_) | cua_host::Error::PermissionDenied(_) => {
-                    Error::Unauthenticated(m)
-                }
+                // Signed out or expired: sign in again.
+                cua_host::Error::Unauthenticated(_) => Error::Unauthenticated(m),
+                // Signed in, but the relay refused this account.
+                cua_host::Error::PermissionDenied(_) => Error::PermissionDenied(m),
                 cua_host::Error::NotFound(_) => Error::NotFound(m),
                 cua_host::Error::InvalidArgument(_) => Error::InvalidArgument(m),
                 _ => Error::Http(m),
@@ -1058,6 +1068,43 @@ mod tests {
             Error::from_status(&status),
             Error::HostCapacity(m) if m.contains("no room")
         ));
+    }
+
+    /// The relay's two refusals stay apart through the daemon: signed out
+    /// or expired is Unauthenticated (sign in again), signed in but not
+    /// allowed (a Space shared with you, renamed) is PermissionDenied.
+    #[test]
+    fn relay_refusals_keep_their_kind_through_the_daemon() {
+        let expired = Error::from(cua_spaces::Error::Relay(cua_host::Error::Unauthenticated(
+            "Relay authentication failed. Sign in again to refresh your computers.".into(),
+        )));
+        assert!(matches!(&expired, Error::Unauthenticated(_)), "{expired:?}");
+        let status = expired.to_status();
+        assert_eq!(status.code(), tonic::Code::Unauthenticated);
+        assert!(
+            matches!(Error::from_status(&status), Error::Unauthenticated(m) if m.contains("Sign in again"))
+        );
+
+        let refused = Error::from(cua_spaces::Error::Relay(cua_host::Error::PermissionDenied(
+            "studio is shared with you. Only its owner can rename it.".into(),
+        )));
+        assert_eq!(
+            refused,
+            Error::PermissionDenied(
+                "studio is shared with you. Only its owner can rename it.".into()
+            )
+        );
+        let status = refused.to_status();
+        assert_eq!(status.code(), tonic::Code::PermissionDenied);
+        assert_eq!(Error::from_status(&status), refused);
+        // A plain status (no detail) maps by its code too.
+        assert!(matches!(
+            Error::from_status(&tonic::Status::permission_denied("no")),
+            Error::PermissionDenied(_)
+        ));
+        // The teleport gate keeps its own kind on the same code.
+        let teleport = Error::TeleportRefused("the approver declined".into());
+        assert_eq!(Error::from_status(&teleport.to_status()), teleport);
     }
 
     #[test]

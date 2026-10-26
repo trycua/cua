@@ -42,6 +42,9 @@ export default defineConfig({
     cwd: "..",
     url: `http://localhost:${PORT}`,
     reuseExistingServer: !process.env.CI,
+    // The flows run on the new design (`spaces_redesign`); the classic pages
+    // keep their own tests in src/legacy/__tests__.
+    env: { VITE_CUA_FLAG_SPACES_REDESIGN: process.env.VITE_CUA_FLAG_SPACES_REDESIGN ?? "1" },
     timeout: 60_000,
   },
 });

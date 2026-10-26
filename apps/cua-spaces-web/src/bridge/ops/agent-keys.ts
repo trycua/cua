@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * Settings → Agents: the provider keys agents get (Anthropic, OpenAI and
+ * Settings → Connectors: the provider keys agents get (Anthropic, OpenAI and
  * other keys by variable name). The cua daemon keeps them in the Keychain
  * (`cua_spaces::agents::keys`) and gives each one only to the runs whose
  * harness reads it. Each operation is one of the daemon's app methods over

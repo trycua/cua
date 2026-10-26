@@ -92,6 +92,9 @@ pub struct AppSettings {
     /// when it is in several ([`crate::teams::current`]); `None` or an id
     /// the account left: its first owned team.
     pub current_team_id: Option<String>,
+    /// Tips ([`crate::tips`]): "Don't show tips" and the ones done. An
+    /// older settings file without it reads as tips on, none done.
+    pub tips: crate::tips::TipsState,
 }
 
 impl Default for AppSettings {
@@ -113,6 +116,7 @@ impl Default for AppSettings {
             teleport_choices: vec![],
             auto_connect: true,
             current_team_id: None,
+            tips: crate::tips::TipsState::default(),
         }
     }
 }
@@ -427,6 +431,10 @@ pub struct SettingsInput {
     /// (`placement.overflow`); none: no row.
     #[serde(default)]
     pub overflow: Option<bool>,
+    /// Settings, General's Show tips switch: tips are on
+    /// (`!AppSettings.tips.off`). A shell that does not say reads as on.
+    #[serde(default = "default_true")]
+    pub show_tips: bool,
 }
 
 impl Default for SettingsInput {
@@ -452,6 +460,7 @@ impl Default for SettingsInput {
             lume_source: None,
             linux_source: None,
             overflow: None,
+            show_tips: true,
         }
     }
 }
@@ -480,6 +489,34 @@ pub fn auto_connect_row(on: bool) -> SettingsRow {
         "Opening a running Space shows a preview and a Connect button".into()
     });
     r
+}
+
+/// Settings, General, after Welcome: the Show tips switch (row `tips`,
+/// options `on` and `off`) and Reset tips (row `reset-tips`, button
+/// "Reset"). [`choose`] applies both.
+pub fn tips_rows(on: bool) -> Vec<SettingsRow> {
+    let mut show = row("tips", SettingsRowKind::Toggle, "Show tips");
+    show.options = vec![opt("on", "On", on), opt("off", "Off", !on)];
+    let mut reset = row("reset-tips", SettingsRowKind::Text, "Reset tips");
+    reset.button = Some("Reset".into());
+    vec![show, reset]
+}
+
+/// The settings after a Settings row's choice or button that the core
+/// owns: `tips` (`on`/`off`: Show tips; on brings back the tips not done)
+/// and `reset-tips` (any option: every tip starts over, and tips are on).
+/// Any other row leaves the settings as they are.
+pub fn choose(settings: &AppSettings, row: &str, option: &str) -> AppSettings {
+    use crate::tips::{TipsEvent, reduce};
+    let mut s = settings.clone();
+    match (row, option) {
+        ("tips", "on" | "off") => {
+            s.tips = reduce(&s.tips, &TipsEvent::ShowTips { on: option == "on" });
+        }
+        ("reset-tips", _) => s.tips = reduce(&s.tips, &TipsEvent::Reset),
+        _ => {}
+    }
+    s
 }
 
 /// The overflow switch's label.
@@ -776,6 +813,7 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
     let mut welcome = row("welcome", Text, "Welcome");
     welcome.button = Some("Show again".into());
     general.push(welcome);
+    general.extend(tips_rows(input.show_tips));
 
     let mut sections = vec![
         SettingsSection {
@@ -1091,6 +1129,95 @@ mod tests {
         std::fs::write(&path, "{nope").unwrap();
         assert_eq!(load(&path), AppSettings::default());
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn tips_persist_and_older_files_load() {
+        let dir =
+            std::env::temp_dir().join(format!("cua-app-core-settings-tips-{}", std::process::id()));
+        let path = dir.join("settings.json");
+        let s = AppSettings {
+            tips: crate::tips::TipsState {
+                off: true,
+                done: vec!["try-agent".into()],
+            },
+            ..Default::default()
+        };
+        save(&path, &s).unwrap();
+        assert_eq!(load(&path), s);
+        // A file from before tips: on, none done.
+        std::fs::write(&path, r#"{"menuBar":true,"autoConnect":false}"#).unwrap();
+        let old = load(&path);
+        assert!(old.menu_bar);
+        assert_eq!(old.tips, crate::tips::TipsState::default());
+        // A file saved while the Pro banner could still be closed carries a
+        // key the app no longer knows; it loads, and the key is dropped.
+        std::fs::write(&path, r#"{"menuBar":true,"proBannerDismissedUntilMs":42}"#).unwrap();
+        assert!(load(&path).menu_bar);
+        save(&path, &load(&path)).unwrap();
+        assert!(
+            !std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("proBanner")
+        );
+        // A partial tips object reads too.
+        std::fs::write(&path, r#"{"tips":{"done":["power"]}}"#).unwrap();
+        assert_eq!(load(&path).tips.done, ["power"]);
+        assert!(!load(&path).tips.off);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn show_tips_and_reset_tips_follow_welcome() {
+        let general = |input: &SettingsInput| {
+            page(input)
+                .sections
+                .into_iter()
+                .find(|s| s.id == "general")
+                .unwrap()
+                .rows
+        };
+        let rows = general(&SettingsInput::default());
+        let ids: Vec<_> = rows.iter().map(|r| r.id.as_str()).collect();
+        let at = ids.iter().position(|i| *i == "welcome").unwrap();
+        assert_eq!(&ids[at..], ["welcome", "tips", "reset-tips"]);
+        let show = &rows[at + 1];
+        assert_eq!(show.kind, SettingsRowKind::Toggle);
+        assert_eq!(show.label, "Show tips");
+        assert!(show.options[0].active, "on by default");
+        let reset = &rows[at + 2];
+        assert_eq!(reset.label, "Reset tips");
+        assert_eq!(reset.button.as_deref(), Some("Reset"));
+        let off = general(&SettingsInput {
+            show_tips: false,
+            ..Default::default()
+        });
+        assert!(off[at + 1].options[1].active);
+        // A shell that does not say: on.
+        let input: SettingsInput = serde_json::from_str("{}").unwrap();
+        assert!(input.show_tips);
+    }
+
+    #[test]
+    fn choosing_tips_rows_applies_them() {
+        let s = AppSettings {
+            tips: crate::tips::TipsState {
+                off: false,
+                done: vec!["try-agent".into(), "power".into()],
+            },
+            ..Default::default()
+        };
+        let off = choose(&s, "tips", "off");
+        assert!(off.tips.off);
+        assert_eq!(off.tips.done, s.tips.done, "turning off forgets nothing");
+        let on = choose(&off, "tips", "on");
+        assert!(!on.tips.off);
+        assert_eq!(on.tips.done, s.tips.done, "the ones not done come back");
+        let reset = choose(&off, "reset-tips", "press");
+        assert_eq!(reset.tips, crate::tips::TipsState::default());
+        // Anything else: unchanged.
+        assert_eq!(choose(&s, "tips", "maybe"), s);
+        assert_eq!(choose(&s, "notch", "hide"), s);
     }
 
     #[test]

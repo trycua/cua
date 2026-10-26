@@ -122,6 +122,43 @@ pub fn prompt(
     }
 }
 
+// ---- The Pro banner (the sidebar's foot) -----------------------------------
+
+/// The Pro banner's line.
+pub const PRO_BANNER_TEXT: &str = "Run more Spaces at once with Pro";
+
+/// What the Pro banner reads.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ProBannerInput {
+    /// The account's plan, as the relay names it (`free`, `pro`, `team`;
+    /// empty: not known, so no banner).
+    pub plan: String,
+}
+
+/// The calm banner above the account line, on Free only: the line and
+/// Upgrade (which opens the plan card's Pro link). It cannot be closed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProBanner {
+    /// It shows.
+    pub visible: bool,
+    /// [`PRO_BANNER_TEXT`].
+    pub text: String,
+    /// "Upgrade".
+    pub button: String,
+}
+
+/// The Pro banner: on Free only, always. Paid plans never see it.
+pub fn pro_banner(input: &ProBannerInput) -> ProBanner {
+    let free = plan_kind(&input.plan.trim().to_ascii_lowercase()) == "free";
+    ProBanner {
+        visible: free,
+        text: PRO_BANNER_TEXT.into(),
+        button: crate::relay_usage::UPGRADE.into(),
+    }
+}
+
 /// Where a limit card can show, and what it is about (`card`). The matching
 /// usage events are `upsell_card_<reason>_<action>`.
 pub const CARD_REASONS: [&str; 5] = ["hours", "sessions", "invite", "seats", "machines"];
@@ -329,6 +366,22 @@ mod tests {
         };
         assert!(!allows(&closed(29)));
         assert!(allows(&closed(30)));
+    }
+
+    fn banner(plan: &str) -> ProBanner {
+        pro_banner(&ProBannerInput { plan: plan.into() })
+    }
+
+    #[test]
+    fn the_pro_banner_shows_on_free_only_and_cannot_be_closed() {
+        let b = banner("free");
+        assert!(b.visible);
+        assert_eq!(b.text, "Run more Spaces at once with Pro");
+        assert_eq!(b.button, "Upgrade");
+        assert!(banner("Free").visible);
+        for paid in ["pro", "team", "teams", "", "enterprise"] {
+            assert!(!banner(paid).visible, "{paid}");
+        }
     }
 
     #[test]

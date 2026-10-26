@@ -6,8 +6,8 @@ import { CheckIcon, CopyIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { useAgents, type AgentSetupRow } from "@/bridge";
+import { HarnessMark } from "@/components/agents/harness-mark";
 import { Button } from "@/components/ui/button";
-import { toastError } from "@/components/ui/toast";
 
 const MAIN_PROMPT = "Reproduce the crash from issue #4821 on a fresh Windows 11 Space and show me a recording.";
 const MORE_PROMPTS = ["Run our tests on Ubuntu and macOS at the same time and tell me which ones fail.", "Check that the installer works on a clean Windows machine."];
@@ -20,15 +20,14 @@ export function nameList(names: string[]): string {
 
 /**
  * The Agents page before any run. It says what to do next, by what is true
- * on this computer: coding apps found but Cua not in them yet (one Set up
- * button, asked once, in place); Cua already in them (the first prompts to
+ * on this computer: coding apps found but Cua not in them yet (their marks
+ * and a button to Settings, Connectors, where each has its switch); Cua already in them (the first prompts to
  * try); or no coding app found.
  */
 export function AgentsEmpty() {
-  const { agentSetup, configureAgents } = useAgents();
+  const { agentSetup } = useAgents();
   const navigate = useNavigate();
   const [rows, setRows] = useState<AgentSetupRow[] | null>(null);
-  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -48,13 +47,8 @@ export function AgentsEmpty() {
   const todo = installed.filter((r) => !r.configured);
   const state = installed.length === 0 ? "none" : ready.length === 0 ? "setup" : "ready";
 
-  const setUp = () => {
-    setBusy(true);
-    configureAgents(todo.map((r) => r.agent))
-      .then(setRows)
-      .catch(toastError("Couldn't set up your apps"))
-      .finally(() => setBusy(false));
-  };
+  // Connecting is its switch in Settings, Connectors: open it at the first app waiting for Cua.
+  const openConnectors = (agent?: string) => void navigate({ to: "/settings/connectors", search: { app: agent } });
 
   return (
     <div className="mx-auto flex w-full max-w-xl flex-col items-center pt-8 text-center" data-agents-empty={state}>
@@ -70,9 +64,16 @@ export function AgentsEmpty() {
             : "Install Claude Code, Codex or Cursor and Cua will notice. Spaces work without one."}
       </p>
       {state === "setup" ? (
-        <Button size="lg" className="mt-6" disabled={busy} onClick={setUp} data-agents-setup>
-          {busy ? "Setting up…" : "Set up"}
-        </Button>
+        <>
+          <div className="mt-6 flex items-center gap-2" data-agents-setup-marks="">
+            {todo.slice(0, 5).map((r) => (
+              <HarnessMark key={r.agent} agent={r.agent} name={r.name} />
+            ))}
+          </div>
+          <Button size="lg" className="mt-4" onClick={() => openConnectors(todo[0]?.agent)} data-agents-setup>
+            Open Connectors
+          </Button>
+        </>
       ) : null}
       {state !== "none" ? (
         <>
@@ -92,7 +93,7 @@ export function AgentsEmpty() {
             {state === "ready" ? (
               <>
                 {nameList(ready.map((r) => r.name))} can use Cua.{" "}
-                <button type="button" className="text-brand-strong hover:underline" onClick={() => void navigate({ to: "/settings/connected-apps" as "/settings" })}>
+                <button type="button" className="text-brand-strong hover:underline" onClick={() => openConnectors()}>
                   Manage
                 </button>
               </>

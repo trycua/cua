@@ -16,16 +16,16 @@
       "case": "02 pick your agent, nothing connected",
       "connect": {
         "agents": [
-          "Hermes (~/.hermes/config.yaml) connect:Connect",
-          "Claude Code (~/.claude.json) connect:Connect",
-          "OpenAI Codex (~/.codex/config.toml) connect:Connect"
+          "Hermes connect:Connect",
+          "Claude Code connect:Connect",
+          "OpenAI Codex connect:Connect"
         ],
         "alternatives": [],
         "credentials": null,
         "error": null,
         "lede": "Cua found these on this Mac. Connect the ones you want to use with Cua.",
         "primary": "continue:Continue",
-        "secondary": "skip:Skip",
+        "secondary": "",
         "title": "Pick your agent."
       },
       "step": "connect"
@@ -35,16 +35,16 @@
       "case": "03 pick your agent, connecting Hermes",
       "connect": {
         "agents": [
-          "Hermes (~/.hermes/config.yaml) [Connecting…]",
-          "Claude Code (~/.claude.json) connect:Connect",
-          "OpenAI Codex (~/.codex/config.toml) connect:Connect"
+          "Hermes [Connecting…]",
+          "Claude Code connect:Connect",
+          "OpenAI Codex connect:Connect"
         ],
         "alternatives": [],
         "credentials": null,
         "error": null,
         "lede": "Cua found these on this Mac. Connect the ones you want to use with Cua.",
         "primary": "continue:Continue",
-        "secondary": "skip:Skip",
+        "secondary": "",
         "title": "Pick your agent."
       },
       "step": "connect"
@@ -54,7 +54,7 @@
       "case": "04 pick your agent, Codex only, connected, signing in",
       "connect": {
         "agents": [
-          "OpenAI Codex (~/.codex/config.toml) [Connected]"
+          "OpenAI Codex [Connected]"
         ],
         "alternatives": [],
         "credentials": "Sign-ins and keys stay on this Mac.: ChatGPT sign-in — OpenAI Codex uses it on this Mac [Finish in your browser…] / OpenAI key — OpenAI Codex uses it in your Spaces (add-key:Add key)",
@@ -71,9 +71,9 @@
       "case": "05 pick your agent, Claude Code and Hermes connected",
       "connect": {
         "agents": [
-          "Hermes (~/.hermes/config.yaml) [Connected]",
-          "Claude Code (~/.claude.json) [Connected]",
-          "OpenAI Codex (~/.codex/config.toml) connect:Connect"
+          "Hermes [Connected]",
+          "Claude Code [Connected]",
+          "OpenAI Codex connect:Connect"
         ],
         "alternatives": [],
         "credentials": "Sign-ins and keys stay on this Mac.: Anthropic key — Claude Code uses it in your Spaces [Saved]",
@@ -98,7 +98,7 @@
         "error": null,
         "lede": "No agents found on this Mac. Install one, or use Cua from a terminal.",
         "primary": "continue:Continue",
-        "secondary": "skip:Skip",
+        "secondary": "",
         "title": "Connect an agent."
       },
       "step": "connect"
@@ -113,7 +113,7 @@
         "error": null,
         "lede": "Looking for agents on this Mac…",
         "primary": "continue:Continue",
-        "secondary": "skip:Skip",
+        "secondary": "",
         "title": "Pick your agent."
       },
       "step": "connect"
@@ -191,8 +191,8 @@
       "case": "12 try it in Hermes, waiting",
       "setup": {
         "extra": null,
-        "lede": "Paste this request into Hermes. It makes a Space and opens its desktop in a window.",
-        "primary": "done:Done",
+        "lede": "Paste this in Hermes now, or try it later from Home.",
+        "primary": "done:Skip, I'll try it later",
         "prompt": "Paste this in Hermes: Make a Linux Space on this Mac and show its desktop in a new window. / The Space runs on this Mac.",
         "status": "[checking] Waiting for Hermes… — If Hermes was already open, restart it so it can find Cua.",
         "title": "Try it in Hermes."
@@ -204,8 +204,8 @@
       "case": "13 try it in Hermes, used",
       "setup": {
         "extra": null,
-        "lede": "Paste this request into Hermes. It makes a Space and opens its desktop in a window.",
-        "primary": "done:Done",
+        "lede": "Paste this in Hermes now, or try it later from Home.",
+        "primary": "done:Continue to the app",
         "prompt": "Paste this in Hermes: Make a Linux Space on this Mac and show its desktop in a new window. / The Space runs on this Mac.",
         "status": "[ok] Hermes used Cua at 18:12. — Ask it anything else.",
         "title": "Try it in Hermes."
@@ -229,8 +229,8 @@
       "case": "14 try it in Codex on a Windows PC",
       "setup": {
         "extra": null,
-        "lede": "Paste this request into OpenAI Codex. It makes a Space and opens its desktop in a window.",
-        "primary": "done:Done",
+        "lede": "Paste this in OpenAI Codex now, or try it later from Home.",
+        "primary": "done:Skip, I'll try it later",
         "prompt": "Paste this in OpenAI Codex: Make a Linux Space on this PC and show its desktop in a new window. / The Space runs on this PC.",
         "status": "[checking] Waiting for OpenAI Codex… — If OpenAI Codex was already open, restart it so it can find Cua.",
         "title": "Try it in OpenAI Codex."
@@ -317,8 +317,8 @@
       "case": "18 to-do list, signed in, a permission missing",
       "setup": {
         "extra": null,
-        "lede": "Paste this request into Claude Code. It makes a Space and opens its desktop in a window.",
-        "primary": "done:Done",
+        "lede": "Paste this in Claude Code now, or try it later from Home.",
+        "primary": "done:Skip, I'll try it later",
         "prompt": "Paste this in Claude Code: Make a Linux Space on this Mac and show its desktop in a new window. / The Space runs on this Mac.",
         "status": "[checking] Waiting for Claude Code… — If Claude Code was already open, restart it so it can find Cua.",
         "title": "Try it in Claude Code."
@@ -342,16 +342,16 @@
       "case": "cli 01 a disk-image install offers the CLI screen",
       "connect": {
         "agents": [
-          "Hermes (~/.hermes/config.yaml) connect:Connect",
-          "Claude Code (~/.claude.json) connect:Connect",
-          "OpenAI Codex (~/.codex/config.toml) connect:Connect"
+          "Hermes connect:Connect",
+          "Claude Code connect:Connect",
+          "OpenAI Codex connect:Connect"
         ],
         "alternatives": [],
         "credentials": null,
         "error": null,
         "lede": "Cua found these on this Mac. Connect the ones you want to use with Cua.",
         "primary": "continue:Continue",
-        "secondary": "skip:Skip",
+        "secondary": "",
         "title": "Pick your agent."
       },
       "step": "connect",
@@ -453,16 +453,16 @@
       "case": "cli 06 already installed: no CLI screen",
       "connect": {
         "agents": [
-          "Hermes (~/.hermes/config.yaml) connect:Connect",
-          "Claude Code (~/.claude.json) connect:Connect",
-          "OpenAI Codex (~/.codex/config.toml) connect:Connect"
+          "Hermes connect:Connect",
+          "Claude Code connect:Connect",
+          "OpenAI Codex connect:Connect"
         ],
         "alternatives": [],
         "credentials": null,
         "error": null,
         "lede": "Cua found these on this Mac. Connect the ones you want to use with Cua.",
         "primary": "continue:Continue",
-        "secondary": "skip:Skip",
+        "secondary": "",
         "title": "Pick your agent."
       },
       "step": "connect",
@@ -503,7 +503,7 @@
         "error": null,
         "lede": "No agents found on this Mac. Install one, or use Cua from a terminal.",
         "primary": "continue:Continue",
-        "secondary": "skip:Skip",
+        "secondary": "",
         "title": "Connect an agent."
       },
       "step": "connect"
@@ -629,8 +629,8 @@
       "case": "24 try it after permissions, Back goes to permissions",
       "setup": {
         "extra": null,
-        "lede": "Paste this request into Hermes. It makes a Space and opens its desktop in a window.",
-        "primary": "done:Done",
+        "lede": "Paste this in Hermes now, or try it later from Home.",
+        "primary": "done:Skip, I'll try it later",
         "prompt": "Paste this in Hermes: Make a Linux Space on this Mac and show its desktop in a new window. / The Space runs on this Mac.",
         "status": "[checking] Waiting for Hermes… — If Hermes was already open, restart it so it can find Cua.",
         "title": "Try it in Hermes."
@@ -672,8 +672,8 @@
       "case": "26 a Mac kept for Spaces only: no permissions screen",
       "setup": {
         "extra": null,
-        "lede": "Paste this request into Hermes. It makes a Space and opens its desktop in a window.",
-        "primary": "done:Done",
+        "lede": "Paste this in Hermes now, or try it later from Home.",
+        "primary": "done:Skip, I'll try it later",
         "prompt": "Paste this in Hermes: Make a Linux Space on this Mac and show its desktop in a new window. / The Space runs on this Mac.",
         "status": "[checking] Waiting for Hermes… — If Hermes was already open, restart it so it can find Cua.",
         "title": "Try it in Hermes."
@@ -708,6 +708,162 @@
         "devices",
         "setup"
       ]
+    },
+    {
+      "art": "other on outline",
+      "case": "31 offers: a Mac with room shows Linux and macOS",
+      "offers": [
+        "linux linux (1.1 GB download; about 2 min)",
+        "macos macos (23 GB download; 10 to 30 min the first time)"
+      ],
+      "setup": {
+        "extra": {
+          "action": "not-now:Not now",
+          "choices": [
+            "linux Linux: Ready in about 2 min",
+            "macos macOS: 23 GB download · 10 to 30 min the first time"
+          ],
+          "footnote": null,
+          "note": "A separate computer on this Mac. Pick a system to start it.",
+          "phase": "choose",
+          "title": "Make a first Space"
+        },
+        "lede": "Spaces run on this Mac, away from your files and your mouse.",
+        "primary": "done:Done",
+        "prompt": null,
+        "status": null,
+        "title": "Try a first Space."
+      },
+      "step": "setup"
+    },
+    {
+      "art": "other on outline",
+      "case": "32 offers: a low-disk Mac shows Linux only",
+      "offers": [
+        "linux linux (1.1 GB download; about 2 min)"
+      ],
+      "setup": {
+        "extra": {
+          "action": "not-now:Not now",
+          "choices": [
+            "linux Linux: Ready in about 2 min"
+          ],
+          "footnote": null,
+          "note": "A separate computer on this Mac. Pick a system to start it.",
+          "phase": "choose",
+          "title": "Make a first Space"
+        },
+        "lede": "Spaces run on this Mac, away from your files and your mouse.",
+        "primary": "done:Done",
+        "prompt": null,
+        "status": null,
+        "title": "Try a first Space."
+      },
+      "step": "setup"
+    },
+    {
+      "art": "other on outline",
+      "case": "33 offers: an Intel Mac shows Linux only",
+      "offers": [
+        "linux linux (1.2 GB download; about 2 min)"
+      ],
+      "setup": {
+        "extra": {
+          "action": "not-now:Not now",
+          "choices": [
+            "linux Linux: Ready in about 2 min"
+          ],
+          "footnote": null,
+          "note": "A separate computer on this Mac. Pick a system to start it.",
+          "phase": "choose",
+          "title": "Make a first Space"
+        },
+        "lede": "Spaces run on this Mac, away from your files and your mouse.",
+        "primary": "done:Done",
+        "prompt": null,
+        "status": null,
+        "title": "Try a first Space."
+      },
+      "step": "setup"
+    },
+    {
+      "art": "other on outline",
+      "case": "34 offers: an Intel Mac with QEMU adds Omarchy",
+      "offers": [
+        "linux linux (1.2 GB download; about 2 min)",
+        "omarchy linux (1.7 GB download; about 3 min the first time)"
+      ],
+      "setup": {
+        "extra": {
+          "action": "not-now:Not now",
+          "choices": [
+            "linux Linux: Ready in about 2 min",
+            "omarchy Omarchy: 1.7 GB download · about 3 min the first time"
+          ],
+          "footnote": null,
+          "note": "A separate computer on this Mac. Pick a system to start it.",
+          "phase": "choose",
+          "title": "Make a first Space"
+        },
+        "lede": "Spaces run on this Mac, away from your files and your mouse.",
+        "primary": "done:Done",
+        "prompt": null,
+        "status": null,
+        "title": "Try a first Space."
+      },
+      "step": "setup"
+    },
+    {
+      "art": "other on outline",
+      "case": "35 offers: an amd64 Linux PC shows Linux and Omarchy",
+      "offers": [
+        "linux linux (1.2 GB download; about 2 min)",
+        "omarchy linux (1.7 GB download; about 3 min the first time)"
+      ],
+      "setup": {
+        "extra": {
+          "action": "not-now:Not now",
+          "choices": [
+            "linux Linux: Ready in about 2 min",
+            "omarchy Omarchy: 1.7 GB download · about 3 min the first time"
+          ],
+          "footnote": null,
+          "note": "A separate computer on this computer. Pick a system to start it.",
+          "phase": "choose",
+          "title": "Make a first Space"
+        },
+        "lede": "Spaces run on this computer, away from your files and your mouse.",
+        "primary": "done:Done",
+        "prompt": null,
+        "status": null,
+        "title": "Try a first Space."
+      },
+      "step": "setup"
+    },
+    {
+      "art": "other on outline",
+      "case": "36 offers: a Mac still checking shows Linux only",
+      "offers": [
+        "linux linux (1.1 GB download; about 2 min)"
+      ],
+      "setup": {
+        "extra": {
+          "action": "not-now:Not now",
+          "choices": [
+            "linux Linux: Ready in about 2 min"
+          ],
+          "footnote": null,
+          "note": "A separate computer on this Mac. Pick a system to start it.",
+          "phase": "choose",
+          "title": "Make a first Space"
+        },
+        "lede": "Spaces run on this Mac, away from your files and your mouse.",
+        "primary": "done:Done",
+        "prompt": null,
+        "status": null,
+        "title": "Try a first Space."
+      },
+      "step": "setup"
     }
   ]
 }

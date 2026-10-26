@@ -285,6 +285,9 @@ export interface WizardView {
   cloud: string | null;
   host: string | null;
   placementError: string | null;
+  /** With `placementError` when a cloud of yours cannot run the image: the
+   * line to copy for an agent that runs it there by hand. */
+  placementPrompt?: string | null;
   placementHint?: string | null;
   /** A setting that lets This Mac run it, offered beside `placementError`
    * ("Use built-in Lume"), when the person chose only this Mac's own
@@ -292,6 +295,8 @@ export interface WizardView {
   runtimeSwitch?: RuntimeSwitch | null;
   advanced: boolean;
   kindTiles: WizardTile[];
+  /** One plain line under Kind: what the chosen kind is (and why MicroVM is greyed out). */
+  kindHelp?: string | null;
   runtimes: { value: Runtime; label: string }[];
   runtime: Runtime;
   runtimeEnabled: boolean;
@@ -344,42 +349,38 @@ export interface WizardView {
 
 /* ---- Connect a cloud ------------------------------------------------------ */
 
-export interface CloudProviderInput {
-  name: string;
-  title: string;
-  connected?: boolean;
-  found?: boolean;
-  source?: string;
-  profile?: string;
-  region?: string;
-  project?: string;
-  environment?: string;
-  label?: string;
+/** What the sheet reads (`cloud_sheet::CloudSheetInput`). */
+export interface CloudSheetInput {
+  providers: { name: string; found: boolean; region: string; environment: string; budget: number | null; maxSize: string }[];
 }
 
-export interface CloudConnectInput {
-  providers: CloudProviderInput[];
+export type CloudSheetState = Record<string, unknown>;
+
+export interface CloudSheetAnswer {
+  status: string;
+  open: string;
+  paste: string;
+  why: string;
+  failedCheck: string;
 }
 
-export type CloudConnectState = Record<string, unknown>;
-
-export type CloudConnectAction =
-  | { type: "select"; name: string }
-  | { type: "set-value"; text: string }
-  | { type: "set-profile"; text: string }
-  | { type: "set-make-default"; on: boolean }
+export type CloudSheetAction =
+  | { type: "choose"; id: string }
+  | { type: "back" }
+  | { type: "set-place"; text: string }
+  | { type: "set-budget"; text: string }
+  | { type: "set-size"; text: string }
+  | { type: "set-account-id"; text: string }
   | { type: "set-token-entered"; entered: boolean }
-  | { type: "test" }
-  | { type: "tested"; ok: boolean; account: string; checks: { name: string; ok: boolean; detail: string }[] }
-  | { type: "connect" }
-  | { type: "connected"; label: string }
+  | { type: "press" }
+  | ({ type: "answered" } & CloudSheetAnswer)
   | { type: "failed"; error: string };
 
 /**
- * Where Spaces go in the account. Names only: credentials stay with each
- * cloud's CLI. The one exception is Hetzner's API token: `uses_token` is the
- * core's request to attach it, and `token` is the secret the shell adds for
- * that one call (never stored, logged or sent to the core).
+ * The `cloud_connect` call the sheet asks for: names and numbers only. The
+ * one secret is Hetzner's API token: `uses_token` is the core's request to
+ * attach it, and `token` is what the shell adds for that one call (never
+ * stored, logged or sent to the core).
  */
 export interface CloudTarget {
   provider: string;
@@ -387,42 +388,50 @@ export interface CloudTarget {
   region?: string;
   project?: string;
   environment?: string;
+  /** `oidc` for AWS through Cua's issuer. */
+  auth?: string;
+  budget_usd_month?: number;
+  /** The largest machine, `4x16`. */
+  max_size?: string;
+  /** AWS: the account the trust stack is in. */
+  account_id?: string;
+  /** Run the check that proves the link. */
+  check?: boolean;
   uses_token?: boolean;
   token?: string;
 }
 
-export type CloudConnectRequest =
-  | { kind: "test"; target: CloudTarget }
-  | { kind: "connect"; target: CloudTarget; make_default: boolean };
-
-export interface CloudField {
-  id: string;
+export interface CloudSheetField {
+  id: "place" | "budget" | "size" | "account" | "token";
   label: string;
-  placeholder: string;
+  kind: "select" | "text" | "money" | "secret";
   value: string;
+  placeholder: string;
+  options: { value: string; label: string }[];
 }
 
-export interface CloudConnectView {
+export interface CloudSheetView {
+  stage: "picker" | "cloud";
   title: string;
-  rows: { id: string; title: string; detail: string; found: boolean; selected: boolean }[];
-  field: CloudField | null;
-  profileField: CloudField | null;
-  /** Hetzner's masked API token field; the shell keeps its text. */
-  tokenField: CloudField | null;
-  checks: { ok: boolean; text: string }[];
-  result: string | null;
-  touches: string[];
-  makeDefaultLabel: string;
-  makeDefault: boolean;
-  testLabel: string;
-  canTest: boolean;
-  testHelp: string;
-  connectLabel: string;
-  canConnect: boolean;
+  logo: string;
+  intro: string;
+  rows: { id: string; name: string; logo: string; auth: string; note: string }[];
+  fields: CloudSheetField[];
+  trust: { text: string; openUrl: string; openLabel: string; paste: string; copyLabel: string } | null;
+  note: string;
+  detailsLabel: string;
+  detailsUrl: string;
+  promptTitle: string;
+  prompt: string;
+  copyLabel: string;
+  primaryLabel: string;
+  primaryEnabled: boolean;
+  backLabel: string;
   cancelLabel: string;
+  footnote: string;
   error: string | null;
   done: boolean;
-  request: CloudConnectRequest | null;
+  request: { provider: string; auth?: string; region?: string; environment?: string; budget_usd_month: number; max_size?: string; account_id?: string; check?: boolean; uses_token?: boolean } | null;
 }
 
 /* ---- The SDK's cloud tools (snake_case wire records) --------------------- */
@@ -453,12 +462,51 @@ export interface CloudProviderWire {
   label?: string;
   ttl_hours?: number;
   kinds?: CloudKindWire[];
+  /** `oidc`, `sealed` or `cli`; empty when not connected. */
+  auth?: string;
+  /** `connected`, `waiting-for-approval`, `failed`, `not-connected`. */
+  status?: string;
+  budget_usd_month?: number;
+  /** The largest machine, `4x16`. */
+  max_size?: string;
+  spent_month?: number;
+  running?: number;
+  /** What waits for a person: `connection`, `limits` or empty. */
+  approval?: string;
+  /** Who can open a sealed token, when the host knows. */
+  holders?: string[];
+  /** The agent that set the cloud up, while its approval waits ("Claude Code on This Mac"). */
+  approval_agent?: string;
+  /** The budget an agent asked for, while it waits. */
+  pending_budget_usd_month?: number | null;
+  /** The size an agent asked for, while it waits (`8x32`). */
+  pending_max_size?: string;
+  /** This caller (a person) may approve or deny what waits (`cloud_approve`). */
+  can_approve?: boolean;
+  /** `oidc` when a CLI sign-in link could link without a stored key. */
+  suggest_auth?: string;
+  /** What is wrong with the link and what to do, one sentence. */
+  issue?: string;
+}
+
+/** What Cua created in a cloud. */
+export interface CloudResourceWire {
+  provider: string;
+  id: string;
+  type: string;
+  sandbox?: string;
+  state?: string;
+  started_by?: string;
+  cost_usd?: number;
 }
 
 /** `cloud_status`. */
 export interface CloudStatusWire {
   default_on?: string;
   providers: CloudProviderWire[];
+  resources?: CloudResourceWire[];
+  /** The host can approve what an agent set up (it has the approve tool). */
+  can_approve?: boolean;
 }
 
 export interface CloudCheckWire {
@@ -475,5 +523,15 @@ export interface CloudTestWire {
   checks: CloudCheckWire[];
 }
 
-/** `cloud_connect`: the provider as now connected. */
-export type CloudConnectWire = CloudProviderWire & { checks?: CloudCheckWire[] };
+/** `cloud_connect`: the provider as now linked, and what to do next. */
+export type CloudConnectWire = CloudProviderWire & {
+  checks?: CloudCheckWire[];
+  next?: { run?: string; open?: string; paste?: string; why?: string };
+  verify?: string;
+};
+
+/** `cloud_disconnect`. */
+export interface CloudDisconnectedWire {
+  provider: string;
+  disconnected: boolean;
+}

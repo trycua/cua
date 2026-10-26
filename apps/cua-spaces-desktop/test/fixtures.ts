@@ -21,12 +21,13 @@ import type {
   SpacePresenceLike,
   TeleportLike,
 } from "../src/native/generated/index";
-import type { LocalRuntimes, MachineHealthReport, ShareLinkRow, SpaceThumbnailData, SpacesBackend } from "../src/model/backend";
+import type { BulkResult, LocalRuntimes, MachineHealthReport, ShareLinkRow, SpaceThumbnailData, SpacesBackend } from "../src/model/backend";
 import type { StreamWindow } from "../src/model/streams";
 import type { AccountProfile, AccountRunning, LinkNoticeView, SignInAttempt, TelemetryRunning } from "../src/model/services";
 
 export function sampleRows(n: Native): AppSpaceRow[] {
   const row = (r: Partial<AppSpaceRow> & Pick<AppSpaceRow, "id" | "name" | "provider">): AppSpaceRow => ({
+    displayName: undefined,
     spacesdVersion: "0.4.0",
     features: [],
     addedAt: undefined,
@@ -134,6 +135,37 @@ export class FixtureSpacesBackend implements SpacesBackend {
   async remove(id: string, removeOnly: boolean) {
     this.removed.push({ id, removeOnly });
     this.rowsNow = this.rowsNow.filter((r) => r.id !== id);
+  }
+  /** Ids whose bulk delete fails, and why. */
+  readonly bulkErrors = new Map<string, string>();
+  readonly left: string[] = [];
+  async deleteMany(ids: string[]): Promise<BulkResult[]> {
+    return ids.map((id) => {
+      const error = this.bulkErrors.get(id);
+      if (error) return { id, ok: false, error };
+      this.removed.push({ id, removeOnly: false });
+      this.rowsNow = this.rowsNow.filter((r) => r.id !== id);
+      return { id, ok: true };
+    });
+  }
+  async leave(ids: string[]): Promise<BulkResult[]> {
+    return ids.map((id) => {
+      const row = this.rowsNow.find((r) => r.id === id);
+      if (!row?.sharing || row.sharing.role === "owner") return { id, ok: false, error: `Couldn't leave ${row?.name ?? id}: it's yours; delete it instead.` };
+      this.left.push(id);
+      this.rowsNow = this.rowsNow.filter((r) => r.id !== id);
+      return { id, ok: true };
+    });
+  }
+  readonly renamed: { id: string; name: string }[] = [];
+  /** What the next rename throws (the SDK's error), once. */
+  renameError: Error | null = null;
+  async rename(id: string, name: string) {
+    this.renamed.push({ id, name });
+    const failure = this.renameError;
+    this.renameError = null;
+    if (failure) throw failure;
+    this.rowsNow = this.rowsNow.map((r) => (r.id === id ? { ...r, displayName: name } : r));
   }
   /** What `machineHealth` answers, by machine (`this` for this one); a string is the error it throws. */
   health = new Map<string, MachineHealthReport | string>();
@@ -250,6 +282,8 @@ export class FixtureSpacesBackend implements SpacesBackend {
   /** The daemon's tool calls, in order. */
   readonly toolCalls: [string, Record<string, unknown>][] = [];
   cloudConnected = false;
+  /** What `cloud_approve` was asked, in order. */
+  readonly cloudApprovals: { provider: string; deny: boolean }[] = [];
   async tool(tool: string, args: Record<string, unknown> = {}): Promise<unknown> {
     this.toolCalls.push([tool, args]);
     const aws = (connected: boolean) => ({
@@ -271,6 +305,14 @@ export class FixtureSpacesBackend implements SpacesBackend {
     if (tool === "cloud_connect") {
       this.cloudConnected = true;
       return { ...aws(true), checks: [{ name: "credentials", ok: true, detail: "account 1" }] };
+    }
+    if (tool === "cloud_disconnect") {
+      this.cloudConnected = false;
+      return { provider: "aws", disconnected: true };
+    }
+    if (tool === "cloud_approve") {
+      this.cloudApprovals.push(args as { provider: string; deny: boolean });
+      return aws(this.cloudConnected);
     }
     throw new Error(`unknown tool ${tool}`);
   }

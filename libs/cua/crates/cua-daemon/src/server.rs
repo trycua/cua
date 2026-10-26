@@ -454,6 +454,9 @@ pub async fn start(runtime: Runtime, config: ServerConfig) -> Result<DaemonHandl
                 .iter()
                 .map(|n| format!("{}{n}", crate::extension::FEATURE_PREFIX)),
         );
+        // What the extensions serve (`thread.v1`, ...).
+        #[cfg(feature = "spaces")]
+        f.extend(runtime.extension_features().iter().cloned());
         f
     };
     #[cfg(feature = "spaces")]
@@ -793,7 +796,9 @@ async fn accept_loop<L: Accept>(listener: L, app: BoxedApp, mut shutdown: watch:
     conns.abort_all();
 }
 
-/// Headers that name a caller other than this machine's user.
+/// Headers that name a caller other than the owner: the relay-verified
+/// caller the host's cua-spacesd forwards (`x-cua-host-caller`), and the
+/// share gateway's (`x-cua-share-caller`), which no daemon call reads.
 pub const FORWARDED_CALLER_HEADERS: &[&str] = &["x-cua-host-caller", "x-cua-share-caller"];
 
 /// Removes [`FORWARDED_CALLER_HEADERS`] from a request that did not come
@@ -855,6 +860,13 @@ fn app(shared: Arc<Shared>, require_token: bool) -> BoxedApp {
             .max_encoding_message_size(64 * 1024 * 1024),
         )
         .add_service(
+            cua_proto::env::v1::host_thread_service_server::HostThreadServiceServer::new(
+                crate::host_svc::HostThreadSvc(svc.0.clone()),
+            )
+            .max_decoding_message_size(limit)
+            .max_encoding_message_size(limit),
+        )
+        .add_service(
             cua_proto::env::v1::host_snapshots_service_server::HostSnapshotsServiceServer::new(
                 crate::host_svc::HostSnapshotsSvc(svc.0.clone()),
             )
@@ -914,8 +926,11 @@ fn app(shared: Arc<Shared>, require_token: bool) -> BoxedApp {
                 return Ok::<_, std::convert::Infallible>(unauthorized(&req));
             }
             if require_token {
-                // A call on the loopback listener is this machine's user:
-                // only the socket's peer forwards another caller.
+                // Only the 0600 socket's peer (the host's cua-spacesd)
+                // forwards a relay-verified caller. On the loopback listener
+                // (the apps, web views, anything holding the token) a
+                // caller header is the client's own claim: dropped, so the
+                // call is the owner's.
                 strip_forwarded_caller(req.headers_mut());
             }
             let grpc_web = req

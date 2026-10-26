@@ -61,6 +61,37 @@ pub fn session_message(device: &str, ts: u64) -> String {
     format!("cua-device-session/v1\n{device}\n{ts}")
 }
 
+/// What a device signs to prove a Space member key is used from the device
+/// it was bound to (`cua join`): the membership and the time (ms).
+pub fn member_message(member_id: &str, ts_ms: u64) -> String {
+    format!("cua-space-member/v1\n{member_id}\n{ts_ms}")
+}
+
+/// The device id (`dev_…`) of a device public key (uncompressed point,
+/// base64url), as [`DeviceKey::id`] derives it; `None` when it isn't one.
+pub fn device_id_of(public_key: &str) -> Option<String> {
+    let raw = b64().decode(public_key.trim()).ok()?;
+    if raw.len() != 65 || raw[0] != 4 {
+        return None;
+    }
+    let digest = ring::digest::digest(&ring::digest::SHA256, &raw);
+    Some(format!("dev_{}", &hex::encode(digest.as_ref())[..24]))
+}
+
+/// Whether `signature` (base64url, fixed size) is `public_key`'s signature
+/// of `message` (see [`DeviceKey::sign`]).
+pub fn verify_device_signature(public_key: &str, message: &str, signature: &str) -> bool {
+    let (Ok(key), Ok(sig)) = (
+        b64().decode(public_key.trim()),
+        b64().decode(signature.trim()),
+    ) else {
+        return false;
+    };
+    ring::signature::UnparsedPublicKey::new(&ring::signature::ECDSA_P256_SHA256_FIXED, key)
+        .verify(message.as_bytes(), &sig)
+        .is_ok()
+}
+
 /// Where the device key (PKCS#8) is kept.
 pub trait KeySlot: Send + Sync {
     /// The stored key, if any.
@@ -861,6 +892,24 @@ fn is_session_rejection(e: &Error) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn member_signatures_verify_only_for_their_key_and_message() {
+        let (key, _) = DeviceKey::generate().unwrap();
+        let (other, _) = DeviceKey::generate().unwrap();
+        let msg = member_message("mem_1", 42);
+        let sig = key.sign(&msg).unwrap();
+        assert_eq!(device_id_of(&key.public_key()), Some(key.id()));
+        assert!(verify_device_signature(&key.public_key(), &msg, &sig));
+        assert!(!verify_device_signature(&other.public_key(), &msg, &sig));
+        assert!(!verify_device_signature(
+            &key.public_key(),
+            &member_message("mem_1", 43),
+            &sig
+        ));
+        assert!(!verify_device_signature("not base64!", &msg, &sig));
+        assert_eq!(device_id_of("AAAA"), None);
+    }
 
     #[test]
     fn refused_state_reads_the_relays_messages() {

@@ -367,6 +367,152 @@ impl AgentSetup {
     }
 }
 
+/// Keyvault on This Mac as the connection status and Connect's sign-in
+/// copy see it: the Keychain-backed agent keys (`cua_spaces::agents::keys`),
+/// which runs in your Spaces read at run time. Values never leave this
+/// process except into a run's env.
+#[cfg(feature = "spaces")]
+pub struct KeyvaultSignIns(&'static cua_spaces::agents::keys::AgentKeys);
+
+#[cfg(feature = "spaces")]
+impl KeyvaultSignIns {
+    /// This process's store.
+    pub fn global() -> Self {
+        KeyvaultSignIns(cua_spaces::agents::keys::global())
+    }
+}
+
+#[cfg(feature = "spaces")]
+impl cua_agent_setup::SignInVault for KeyvaultSignIns {
+    fn imported(&self) -> std::result::Result<Vec<cua_agent_setup::ImportedSignIn>, String> {
+        Ok(self
+            .0
+            .imported()
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .filter_map(|k| {
+                Some(cua_agent_setup::ImportedSignIn {
+                    source: k.source?,
+                    label: k.label.unwrap_or_default(),
+                    env: k.env,
+                    expires_ms: k.expires_ms,
+                    added_ms: k.added_ms,
+                })
+            })
+            .collect())
+    }
+
+    fn save(
+        &self,
+        c: &cua_agent_setup::SignInCopy,
+    ) -> std::result::Result<cua_agent_setup::ImportedSignIn, String> {
+        let k = self
+            .0
+            .import(&c.source, &c.env, &c.label, &c.value, c.expires_ms)
+            .map_err(|e| e.to_string())?;
+        cua_telemetry::global().capture(cua_telemetry::events::agent_signin_imported(&c.source));
+        Ok(cua_agent_setup::ImportedSignIn {
+            source: c.source.clone(),
+            env: k.env,
+            label: c.label.clone(),
+            expires_ms: c.expires_ms,
+            added_ms: k.added_ms,
+        })
+    }
+
+    fn remove(&self, source: &str) -> std::result::Result<Vec<String>, String> {
+        self.0.remove_imported(source).map_err(|e| e.to_string())
+    }
+}
+
+/// The vault this build uses, when it has one.
+pub fn sign_in_vault() -> Option<Box<dyn cua_agent_setup::SignInVault>> {
+    #[cfg(feature = "spaces")]
+    {
+        Some(Box::new(KeyvaultSignIns::global()))
+    }
+    #[cfg(not(feature = "spaces"))]
+    {
+        None
+    }
+}
+
+fn to_json<T: serde::Serialize>(v: &T) -> Result<String> {
+    serde_json::to_string(v).map_err(|e| CuaError::Internal(e.to_string()))
+}
+
+#[uniffi::export]
+impl AgentSetup {
+    /// Whether each agent is really connected (CONTRACT §4: `{agents,
+    /// checked_at_ms}`), as JSON, the same JSON `cua connect status --json`
+    /// prints and the `connect_status` MCP tool answers. `expected` is the
+    /// MCP server this app writes (an entry launching another cua is
+    /// `stale`); `refresh` skips the few-second cache (window focus).
+    pub fn connection_status_json(
+        &self,
+        expected: Option<AgentMcpServer>,
+        refresh: bool,
+    ) -> String {
+        let opts = cua_agent_setup::StatusOptions {
+            expected: expected.map(|e| self.server(Some(e))),
+            refresh,
+            ..Default::default()
+        };
+        let vault = sign_in_vault();
+        let r = self.inner.connection_status(&opts, vault.as_deref());
+        serde_json::to_string(&r).unwrap_or_default()
+    }
+
+    /// Connect (and Reconnect) for `agents`: Cua's skills and MCP entry
+    /// (`server`, default this channel's cua), and with `sign_in` the
+    /// agent's sign-in copied into Keyvault on This Mac (Claude Code waits
+    /// for its one browser approval). JSON: one result per agent.
+    pub async fn connect_json(
+        &self,
+        agents: Vec<String>,
+        server: Option<AgentMcpServer>,
+        skills: bool,
+        mcp: bool,
+        sign_in: bool,
+    ) -> Result<String> {
+        let server = self.server(server);
+        self.blocking(move |s| {
+            let vault = sign_in_vault();
+            let r = s.connect(
+                &agents,
+                &server,
+                cua_agent_setup::connection::ConnectParts {
+                    skills,
+                    mcp,
+                    sign_in,
+                },
+                vault.as_deref(),
+                cua_agent_setup::signin::SETUP_TOKEN_WAIT,
+            )?;
+            to_json(&r)
+        })
+        .await
+    }
+
+    /// Disconnect: what Connect did, undone (the previous config entry back
+    /// from Cua's record, the skills, and with `sign_in` the copy in
+    /// Keyvault). JSON `{outcomes, removed_sign_ins}`.
+    pub async fn disconnect_json(&self, agents: Vec<String>, sign_in: bool) -> Result<String> {
+        self.blocking(move |s| {
+            let vault = sign_in_vault();
+            let (outcomes, removed) = s.disconnect(
+                &agents,
+                cua_agent_setup::Parts::ALL,
+                cua_agent_setup::RemoveOptions::default(),
+                sign_in,
+                vault.as_deref(),
+            )?;
+            to_json(&serde_json::json!({"outcomes": outcomes, "removed_sign_ins": removed}))
+        })
+        .await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

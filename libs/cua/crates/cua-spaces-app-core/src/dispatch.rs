@@ -14,11 +14,11 @@ use crate::model::*;
 use crate::spaces::{self, creating, roster, sidebar, stream};
 use crate::teleport::{drag, flow, grid, transfer, windows};
 use crate::{
-    CoreError, about, agent_keys, agents, checklist, cloud_connect, devices, diagnostics,
-    drive_mount_preview, drive_page, drive_settings, driver_preview, experiments, host,
-    local_network, login_item, machines, notch, notifications, nudges, onboarding,
-    onboarding_preview, palette, paths, persistent, presence, relay_usage, resources, settings,
-    share, sign_in, telemetry, upsell, window, wizard,
+    CoreError, about, account, agent_keys, agents, bulk_confirm, checklist, cloud_connect,
+    cloud_page, cloud_sheet, devices, diagnostics, drive_mount_preview, drive_page, drive_settings,
+    driver_preview, experiments, host, local_network, login_item, machines, notch, notifications,
+    nudges, onboarding, onboarding_preview, palette, paths, persistent, presence, relay_usage,
+    resources, settings, share, sign_in, space_menu, telemetry, tips, upsell, window, wizard,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -62,6 +62,8 @@ pub const METHODS: &[&str] = &[
     "spaces.desktopCover",
     "stream.pipReduce",
     "stream.pipClick",
+    "stream.viewContext",
+    "stream.viewLine",
     "window.chrome",
     "window.emptyLinuxDetail",
     "window.menuBar",
@@ -73,6 +75,7 @@ pub const METHODS: &[&str] = &[
     "wizard.reduce",
     "wizard.view",
     "wizard.createArgs",
+    "wizard.firstSpaceOffers",
     "wizard.pickerImages",
     "wizard.pickerGroups",
     "wizard.findImage",
@@ -237,6 +240,7 @@ pub const METHODS: &[&str] = &[
     "agents.order",
     "agents.settingsRows",
     "agents.setupSummary",
+    "agents.connectionRows",
     "paths.displayPath",
     "paths.displayPaths",
     "devices.view",
@@ -260,6 +264,12 @@ pub const METHODS: &[&str] = &[
     "cloudConnect.inputFromStatus",
     "cloudConnect.cloudsFromStatus",
     "cloudConnect.isCloudWord",
+    "clouds.inputFromStatus",
+    "clouds.view",
+    "cloudSheet.initial",
+    "cloudSheet.reduce",
+    "cloudSheet.view",
+    "cloudSheet.inputFromStatus",
     "share.initial",
     "share.reduce",
     "share.view",
@@ -321,8 +331,21 @@ pub const METHODS: &[&str] = &[
     "firstRun.leadAgent",
     "firstRun.cli",
     "telemetry.upsell",
+    "telemetry.planLimit",
+    "upgrade.link",
     "nudge.secondAgent",
     "nudge.riskyAction",
+    // The new Spaces page: menus, bulk delete and leave, tips, the Pro
+    // banner and the account menu (CUA-2204).
+    "spaces.menu",
+    "spaces.bulkConfirm",
+    "spaces.bulkProgress",
+    "spaces.bulkDone",
+    "tips.view",
+    "tips.reduce",
+    "settings.choose",
+    "upsell.proBanner",
+    "account.menu",
 ];
 
 struct Args(Value);
@@ -331,6 +354,13 @@ impl Args {
     fn get<T: DeserializeOwned>(&self, name: &str) -> Result<T, CoreError> {
         let v = self.0.get(name).cloned().unwrap_or(Value::Null);
         serde_json::from_value(v).map_err(|e| CoreError::Invalid(format!("argument {name}: {e}")))
+    }
+
+    /// All the arguments as one record (methods whose arguments are its
+    /// fields: `spaces.menu`, `upsell.proBanner`, `account.menu`).
+    fn all<T: DeserializeOwned>(&self) -> Result<T, CoreError> {
+        serde_json::from_value(self.0.clone())
+            .map_err(|e| CoreError::Invalid(format!("arguments: {e}")))
     }
 }
 
@@ -473,6 +503,14 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get::<Option<Vec<String>>>("open")?.unwrap_or_default(),
             &a.get("event")?,
         )),
+        // What a thread post made while the main view shows a window says
+        // the person was looking at, and the line a message with one shows.
+        "stream.viewContext" => out(stream::view_context(&a.get("row")?)),
+        "stream.viewLine" => out(stream::view_line(
+            &a.get::<String>("kind")?,
+            a.get::<Option<String>>("app")?.as_deref(),
+            a.get::<Option<String>>("title")?.as_deref(),
+        )),
         "stream.pipClick" => out(stream::pip_click(
             &a.get::<Option<Vec<String>>>("open")?.unwrap_or_default(),
             &a.get::<String>("row")?,
@@ -506,6 +544,11 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
                 .unwrap_or(SpaceOs::Macos),
         )),
         "wizard.createArgs" => out(wizard::create_args(&a.get("plan")?)),
+        "wizard.firstSpaceOffers" => out(wizard::first_space_offers(
+            &a.get("env")?,
+            a.get::<Option<SpaceOs>>("hostOs")?
+                .unwrap_or(SpaceOs::Macos),
+        )),
         "wizard.placementOptions" => out(wizard::placement_options_on(
             &a.get("state")?,
             &a.get("env")?,
@@ -586,9 +629,62 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
                 .unwrap_or_default(),
         )),
         "nudge.riskyAction" => out(nudges::risky_action(&a.get("request")?, a.get("nowMs")?)),
-        "telemetry.upsell" => out(telemetry::upsell(
+        // `kind` (the meter's cap past a limit) and `plan` are optional: a
+        // click is also `cua_upgrade_link_opened`, the meter past a limit
+        // also `cua_plan_limit_shown`.
+        "telemetry.upsell" => out(telemetry::upsell_with(
             &a.get::<String>("surface")?,
             &a.get::<String>("action")?,
+            a.get::<Option<String>>("kind")?.as_deref(),
+            a.get::<Option<String>>("plan")?.as_deref(),
+        )),
+        // A plan limit shown at `surface` (`action` `shown`) or its upgrade
+        // link opened (`opened`).
+        "telemetry.planLimit" => out(telemetry::plan_limit(
+            &a.get::<String>("action")?,
+            &a.get::<String>("surface")?,
+            &a.get::<Option<String>>("kind")?.unwrap_or_default(),
+            &a.get::<Option<String>>("plan")?.unwrap_or_default(),
+        )),
+        // An upgrade link with `?from=<surface>`, its other parameters kept.
+        // ---- The new Spaces page (CUA-2204) ----
+        "spaces.menu" => out(space_menu::menu(&a.all()?)),
+        "spaces.bulkConfirm" => out(bulk_confirm::confirm(
+            &a.get::<Vec<bulk_confirm::BulkItem>>("items")?,
+        )),
+        "spaces.bulkProgress" => out(bulk_confirm::progress(
+            &a.get::<Vec<bulk_confirm::BulkItem>>("items")?,
+            &a.get::<Option<Vec<String>>>("finished")?
+                .unwrap_or_default(),
+        )),
+        "spaces.bulkDone" => out(bulk_confirm::done(
+            &a.get::<Vec<bulk_confirm::BulkItem>>("items")?,
+            &a.get::<Vec<bulk_confirm::BulkResult>>("results")?,
+        )),
+        "tips.view" => out(tips::view(
+            a.get::<Option<tips::TipPlace>>("place")?
+                .unwrap_or_default(),
+            &a.get::<Option<tips::TipFacts>>("facts")?
+                .unwrap_or_default(),
+            &a.get::<Option<tips::TipsState>>("state")?
+                .unwrap_or_default(),
+        )),
+        "tips.reduce" => out(tips::reduce(
+            &a.get::<Option<tips::TipsState>>("state")?
+                .unwrap_or_default(),
+            &a.get::<tips::TipsEvent>("event")?,
+        )),
+        "settings.choose" => out(settings::choose(
+            &a.get::<Option<settings::AppSettings>>("settings")?
+                .unwrap_or_default(),
+            &a.get::<String>("row")?,
+            &a.get::<Option<String>>("option")?.unwrap_or_default(),
+        )),
+        "upsell.proBanner" => out(upsell::pro_banner(&a.all()?)),
+        "account.menu" => out(account::menu(&a.all()?)),
+        "upgrade.link" => out(telemetry::upgrade_link(
+            &a.get::<String>("url")?,
+            &a.get::<String>("from")?,
         )),
         "wizard.pickerImages" => out(wizard::picker_images()),
         "wizard.pickerGroups" => out(wizard::picker_groups()),
@@ -1109,6 +1205,29 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get::<Value>("status")?,
         )),
         "cloudConnect.isCloudWord" => out(cloud_connect::is_cloud_word(&a.get::<String>("on")?)),
+        "clouds.inputFromStatus" => out(cloud_page::input_from_status(
+            &a.get::<Value>("status")?,
+            a.get::<Option<u64>>("now")?.unwrap_or(0),
+            a.get::<Option<bool>>("canApprove")?.unwrap_or(false),
+        )),
+        "clouds.view" => out(cloud_page::view(&a.get("input")?)),
+        "cloudSheet.initial" => out(cloud_sheet::cloud_sheet_initial(
+            &a.get("input")?,
+            a.get::<Option<String>>("cloud")?.as_deref(),
+            a.get::<Option<bool>>("limits")?.unwrap_or(false),
+        )),
+        "cloudSheet.reduce" => out(cloud_sheet::cloud_sheet_reduce(
+            &a.get("input")?,
+            &a.get("state")?,
+            &a.get("action")?,
+        )),
+        "cloudSheet.view" => out(cloud_sheet::cloud_sheet_view(
+            &a.get("input")?,
+            &a.get("state")?,
+        )),
+        "cloudSheet.inputFromStatus" => {
+            out(cloud_sheet::input_from_status(&a.get::<Value>("status")?))
+        }
         "share.initial" => out(share::share_initial()),
         "share.reduce" => out(share::share_reduce(
             &a.get::<share::ShareInput>("input")?,
@@ -1177,6 +1296,9 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         "agents.settingsRows" => out(agents::agent_settings_rows(
             &a.get::<Vec<_>>("statuses")?,
             a.get("total")?,
+        )),
+        "agents.connectionRows" => out(crate::connection::connection_rows(
+            &a.get::<Vec<_>>("rows")?,
         )),
         "agents.setupSummary" => out(agents::agent_setup_summary(
             &a.get::<Vec<_>>("outcomes")?,
@@ -1292,6 +1414,102 @@ mod tests {
             )
             .unwrap(),
             json!([])
+        );
+        assert_eq!(
+            call_value(
+                "telemetry.upsell",
+                json!({"surface": "meter", "action": "click", "kind": "hours", "plan": "free"})
+            )
+            .unwrap(),
+            json!([
+                {"type": "feature", "feature": "upsell_meter_click"},
+                {"type": "upgrade-link-opened", "surface": "app_meter", "kind": "hours", "plan": "free"}
+            ])
+        );
+        assert_eq!(
+            call_value(
+                "telemetry.planLimit",
+                json!({"action": "shown", "surface": "app_create", "kind": "sessions", "plan": "pro"})
+            )
+            .unwrap(),
+            json!([{"type": "plan-limit-shown", "surface": "app_create", "kind": "sessions", "plan": "pro"}])
+        );
+        assert_eq!(
+            call_value(
+                "upgrade.link",
+                json!({"url": "https://app.cua.ai/buy/pro?from=plan_limit", "from": "app_create"})
+            )
+            .unwrap(),
+            json!("https://app.cua.ai/buy/pro?from=app_create")
+        );
+    }
+
+    /// The new Spaces page's methods over JSON, as the web calls them.
+    #[test]
+    fn the_spaces_page_methods_answer_over_json() {
+        let menu = call_value(
+            "spaces.menu",
+            json!({"kind": "withMe", "power": "off", "canPower": true, "canLeave": true}),
+        )
+        .unwrap();
+        let labels: Vec<_> = menu
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["label"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(labels, ["Open", "Turn on", "Leave"]);
+        let item = json!({"id": "local:a", "name": "a", "os": "linux", "running": true, "bytes": 14_000_000_000u64, "mine": true, "place": "This Mac", "people": [{"who": "sam@x.com", "name": "Sam", "role": "editor"}]});
+        let v = call_value("spaces.bulkConfirm", json!({"items": [item.clone()]})).unwrap();
+        assert_eq!(v["title"], "Delete a?");
+        assert_eq!(v["frees"], "14 GB");
+        assert_eq!(v["deleteIds"], json!(["local:a"]));
+        assert_eq!(
+            call_value("spaces.bulkConfirm", json!({"items": []})).unwrap(),
+            Value::Null
+        );
+        assert_eq!(
+            call_value("spaces.bulkProgress", json!({"items": [item.clone()]})).unwrap(),
+            "Deleting 1 of 1\u{2026}"
+        );
+        let done = call_value(
+            "spaces.bulkDone",
+            json!({"items": [item], "results": [{"id": "local:a", "ok": true}]}),
+        )
+        .unwrap();
+        assert_eq!(
+            done,
+            json!({"text": "Deleted a. 14 GB freed.", "tone": "ok"})
+        );
+        let tip = call_value(
+            "tips.view",
+            json!({"place": "spaces", "facts": {"newestRunning": "a", "agentsConnected": ["hermes"]}}),
+        )
+        .unwrap();
+        assert_eq!(tip["text"], "Try a in Hermes");
+        let state = call_value(
+            "tips.reduce",
+            json!({"event": {"type": "next", "id": "try-agent"}}),
+        )
+        .unwrap();
+        assert_eq!(state, json!({"off": false, "done": ["try-agent"]}));
+        let s = call_value("settings.choose", json!({"row": "tips", "option": "off"})).unwrap();
+        assert_eq!(s["tips"]["off"], true);
+        let b = call_value("upsell.proBanner", json!({"plan": "free"})).unwrap();
+        assert_eq!(
+            b,
+            json!({"visible": true, "text": "Run more Spaces at once with Pro", "button": "Upgrade"})
+        );
+        let b = call_value("upsell.proBanner", json!({"plan": "pro"})).unwrap();
+        assert_eq!(b["visible"], false);
+        let m = call_value(
+            "account.menu",
+            json!({"plan": "pro", "signedIn": true, "authMode": "user"}),
+        )
+        .unwrap();
+        assert_eq!(
+            m[1],
+            json!({"id": "plan", "label": "Plan", "value": "Pro", "separatorBefore": false})
         );
     }
 

@@ -102,11 +102,11 @@ import Testing
     }
 
     static func row(_ id: String) -> AppSpaceRow {
-        AppSpaceRow(id: id, name: String(id.split(separator: ":").last ?? ""), provider: "local",
+        AppSpaceRow(id: id, name: String(id.split(separator: ":").last ?? ""), displayName: nil, provider: "local",
                     spacesdVersion: "0.5.3", features: ["desktop_stream"], addedAt: nil, os: .linux,
                     osName: nil, osPrettyName: nil, image: "ghcr.io/trycua/linux:24.04", imageDigest: nil,
                     kind: .container, arch: nil, reachable: true, error: nil, host: nil, hostName: nil,
-                    power: nil, powerState: "running", cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil)
+                    power: nil, powerState: "running", cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil)
     }
 
     func eventually(_ seconds: Double = 120, _ condition: @MainActor () -> Bool) async -> Bool {

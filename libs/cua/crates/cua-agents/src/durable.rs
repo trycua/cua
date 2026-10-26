@@ -23,6 +23,16 @@
 //! |---|---|
 //! | those the harness asks permission for | the intent is journaled before the approval; a call id is approved once; a repeat of a call with an unknown outcome is refused |
 //! | built-in tools that never ask | the outcome is journaled when the harness reports it; after a crash the call is listed as "may have partially run"; **not** exactly-once (see [`COVERAGE`]) |
+//!
+//! With [`DurableOptions::ship`] the guarantee holds across hosts: the host
+//! that drives the run mirrors the journal to the Cua Volume as immutable
+//! chunks (`cua_volume::journal`), and the runner answers a permission
+//! request only once the intent is on the Volume ([`SHIP_ACK_FILE`]); a
+//! re-drive on another host (or in a re-placed Space) starts from the
+//! journal restored from the Volume ([`DurableOptions::restore`]). The
+//! Volume fence that cuts off a stale host is a compare-and-swap: atomic
+//! across machines on the S3 backend, only between processes of one machine
+//! on the `fs` backend.
 
 use crate::harness::{self, Endpoint};
 use crate::{Error, Result, installables};
@@ -108,6 +118,39 @@ pub struct DurableOptions {
     /// boundary (the runner approves everything). Default true; false trades
     /// the guarantee for fewer round trips.
     pub guard: bool,
+    /// Mirror the journal to the Cua Volume (see [`Ship`]): the host that
+    /// drives the run ships it, and the runner answers a permission request
+    /// only once the host acknowledged the intent on the Volume. `None`:
+    /// the journal stays local.
+    pub ship: Option<Ship>,
+    /// Journal files to put in the state directory before the runner starts
+    /// (file name -> bytes: `events.jsonl`, `tools.jsonl`, `state.json`,
+    /// `epoch`), for a re-drive from a journal restored from the Cua Volume
+    /// on another host or in a re-placed Space. Use a higher `epoch` than the
+    /// restored one and `resume`. Empty: none.
+    pub restore: BTreeMap<String, Vec<u8>>,
+}
+
+/// The ship file the host writes into the state directory once journal
+/// bytes are on the Volume: `{"epoch": E, "end": {"tools.jsonl": N,
+/// "events.jsonl": M}}`.
+pub const SHIP_ACK_FILE: &str = "ship.ack";
+
+/// Journal shipping (the runner's side of `cua_volume::journal`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Ship {
+    /// How long the runner waits for the host to acknowledge an intent
+    /// before it refuses the tool call (journaled as a denied outcome, so
+    /// the call never ran and at-most-once holds). Default 30 s.
+    pub ack_timeout_ms: u64,
+}
+
+impl Default for Ship {
+    fn default() -> Self {
+        Ship {
+            ack_timeout_ms: 30_000,
+        }
+    }
 }
 
 impl Default for DurableOptions {
@@ -120,6 +163,8 @@ impl Default for DurableOptions {
             policy: Policy::default(),
             max_agent_restarts: 3,
             guard: true,
+            ship: None,
+            restore: BTreeMap::new(),
         }
     }
 }
@@ -135,6 +180,10 @@ impl DurableOptions {
             "policy": self.policy.as_str(),
             "maxAgentRestarts": self.max_agent_restarts,
             "guard": self.guard,
+            "ship": self.ship.as_ref().map(|s| json!({
+                "ackFile": SHIP_ACK_FILE,
+                "ackTimeoutMs": s.ack_timeout_ms,
+            })),
         })
     }
 }
@@ -398,6 +447,9 @@ pub fn durable_driver_spec(
         )));
     }
     let mut env: BTreeMap<String, String> = opts.env.clone();
+    // A copied Codex sign-in is a file for the guest, never agent env (a
+    // durable driver doesn't write it yet).
+    env.remove(crate::runs::CODEX_AUTH_ENV);
     let mut mcp: Vec<Value> = vec![];
     for (i, s) in opts.mcp_servers.iter().enumerate() {
         if let Some(url) = &s.url {
@@ -719,6 +771,11 @@ mod tests {
         for p in [Policy::AskModel, Policy::RerunSafe] {
             assert!(runner.contains(p.as_str()));
         }
+        // The ship ack: the runner reads the file the host writes, by the
+        // keys cua_volume::journal ships.
+        for k in ["ackFile", "ackTimeoutMs", "tools.jsonl"] {
+            assert!(runner.contains(k), "the runner does not read {k}");
+        }
     }
 
     #[test]
@@ -774,5 +831,13 @@ mod tests {
         assert_eq!(v["stateDir"], "/runs/r1");
         assert_eq!(v["epoch"], 4);
         assert_eq!(v["maxAgentRestarts"], 3);
+        assert!(v["ship"].is_null());
+        let d = DurableOptions {
+            ship: Some(Ship::default()),
+            ..Default::default()
+        };
+        let v = d.run_section(None);
+        assert_eq!(v["ship"]["ackFile"], SHIP_ACK_FILE);
+        assert_eq!(v["ship"]["ackTimeoutMs"], 30_000);
     }
 }

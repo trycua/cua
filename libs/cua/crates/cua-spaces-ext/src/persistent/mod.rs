@@ -28,8 +28,13 @@
 
 pub mod access;
 pub mod bridge;
+pub mod durable;
 pub mod home;
+pub mod identity;
+pub mod join;
+pub mod members;
 pub mod notify;
+pub mod rights;
 
 use crate::DriveResult as _;
 use crate::SpacesDrive as _;
@@ -48,12 +53,14 @@ use cua_spaces::routines::{
 };
 use cua_spaces::{Error, Result, SpaceId, Spaces};
 
+pub use members::{InFlight, MemberOptions, Policy, Thread};
+
 /// The directory under the cua home.
 pub const DIR: &str = "persistent";
 /// How long a home lease lasts without renewal.
 pub const LEASE_TTL: Duration = Duration::from_secs(10 * 60);
 /// Budget for one agent's share of a supervisor pass.
-const AGENT_TICK_BUDGET: Duration = Duration::from_secs(60);
+pub(crate) const AGENT_TICK_BUDGET: Duration = Duration::from_secs(60);
 
 /// Reads a JSON array file (`[]` when missing).
 pub(crate) fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<Vec<T>> {
@@ -160,9 +167,191 @@ pub struct AgentRecord {
     /// per failed turn, however many passes see its events.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notified_error: Option<String>,
+    /// As an agent member of its Space: parallel sessions (1..=8). The
+    /// run fields above (`run_id`, `cursor`, `saved_turn`, `last_error`,
+    /// `notified_error`, `task`, `activity`, `epoch`) are session 1's;
+    /// sessions 2 and up keep theirs in `session_runs`.
+    #[serde(default = "one")]
+    pub sessions: u32,
+    /// As an agent member: how it runs.
+    #[serde(default)]
+    pub policy: Policy,
+    /// Who added it (absent: the owner, for agents created before members).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub added_by: Option<crate::thread::Author>,
+    /// Unix ms it became a member (set on its first save).
+    #[serde(default)]
+    pub member_since_ms: u64,
+    /// The thread task its current turn works on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<InFlight>,
+    /// Who took control of it (an interrupt or stop by name): no task is
+    /// delivered until control is given back (`agent_resume`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub held_by: Option<crate::thread::Author>,
+    /// Who it is ([`identity`]): absent on records from before identities
+    /// (read as a started agent; written on the record's next save).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<identity::Stored>,
+    /// A durable member's current run: its epoch, its re-drives and its
+    /// journal's session on the Volume.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::durable_member::Redrive::is_empty"
+    )]
+    pub redrive: crate::durable_member::Redrive,
+    /// `on: auto`: the durable Space it works in, by its stable name (the
+    /// Space's id changes when it moves to another machine).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub durable_space: Option<String>,
+    /// Its Space's `.cua/setup`: empty (nothing to run), `pending`, `ok` or
+    /// `failed` (no tasks are delivered until it is `ok` or empty).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub setup: String,
+    /// What the last `.cua/setup` said.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub setup_note: String,
+    /// Its durable run was lost with its Space: started again from the
+    /// journal on the Volume once the new Space is set up.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub relaunch: bool,
+    /// What the current turn is doing (the latest tool or plan step, one
+    /// short line, secret-scanned).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity: Option<String>,
+    /// The session's drive epoch (0 or 1: a plain run; a durable re-drive
+    /// raises it). Task claims are held at this epoch.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub epoch: u64,
+    /// Sessions 2 and up (session 1's run fields are the ones above).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub session_runs: Vec<SessionRun>,
+    /// Which session this record shows (not stored): 0 or 1 is session 1;
+    /// [`AgentRecord::session`] gives a record whose run fields are
+    /// session `k`'s.
+    #[serde(skip)]
+    pub session_k: u32,
+    /// Fields written by a newer daemon, kept as they are.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
-fn yes() -> bool {
+fn is_zero(n: &u64) -> bool {
+    *n == 0
+}
+
+/// The run fields of session `k` (2 and up) of an agent member.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct SessionRun {
+    pub k: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(default)]
+    pub cursor: u64,
+    #[serde(default)]
+    pub saved_turn: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notified_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<InFlight>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity: Option<String>,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub epoch: u64,
+    /// Fields written by a newer daemon, kept as they are.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+/// The most sessions an agent member runs.
+pub const MAX_SESSIONS: u32 = 8;
+
+impl AgentRecord {
+    /// The session this record shows (1-based).
+    pub fn k(&self) -> u32 {
+        self.session_k.max(1)
+    }
+
+    /// The session's drive epoch (at least 1).
+    pub fn drive_epoch(&self) -> u64 {
+        self.epoch.max(1)
+    }
+
+    /// Swaps the run fields with `s`'s.
+    fn swap_session(&mut self, s: &mut SessionRun) {
+        std::mem::swap(&mut self.run_id, &mut s.run_id);
+        std::mem::swap(&mut self.cursor, &mut s.cursor);
+        std::mem::swap(&mut self.saved_turn, &mut s.saved_turn);
+        std::mem::swap(&mut self.last_error, &mut s.last_error);
+        std::mem::swap(&mut self.notified_error, &mut s.notified_error);
+        std::mem::swap(&mut self.task, &mut s.task);
+        std::mem::swap(&mut self.activity, &mut s.activity);
+        std::mem::swap(&mut self.epoch, &mut s.epoch);
+    }
+
+    /// This member with session `k`'s run fields (1..=`sessions`).
+    pub fn session(&self, k: u32) -> AgentRecord {
+        let mut v = self.clone();
+        let k = k.max(1);
+        if k > 1 {
+            let mut s = self
+                .session_runs
+                .iter()
+                .find(|s| s.k == k)
+                .cloned()
+                .unwrap_or(SessionRun {
+                    k,
+                    ..Default::default()
+                });
+            v.swap_session(&mut s);
+        }
+        v.session_k = k;
+        v
+    }
+
+    /// Every session of this member, session 1 first.
+    pub fn session_views(&self) -> Vec<AgentRecord> {
+        (1..=self.sessions.clamp(1, MAX_SESSIONS))
+            .map(|k| self.session(k))
+            .collect()
+    }
+
+    /// Runs `f` on the record with session `k`'s run fields in place.
+    fn with_session<R>(&mut self, k: u32, f: impl FnOnce(&mut AgentRecord) -> R) -> R {
+        if k <= 1 {
+            return f(self);
+        }
+        let i = match self.session_runs.iter().position(|s| s.k == k) {
+            Some(i) => i,
+            None => {
+                self.session_runs.push(SessionRun {
+                    k,
+                    ..Default::default()
+                });
+                self.session_runs.sort_by_key(|s| s.k);
+                self.session_runs
+                    .iter()
+                    .position(|s| s.k == k)
+                    .expect("just added")
+            }
+        };
+        let mut s = std::mem::take(&mut self.session_runs[i]);
+        self.swap_session(&mut s);
+        let r = f(self);
+        self.swap_session(&mut s);
+        s.k = k;
+        self.session_runs[i] = s;
+        r
+    }
+}
+
+fn one() -> u32 {
+    1
+}
+
+pub(crate) fn yes() -> bool {
     true
 }
 
@@ -233,6 +422,9 @@ pub struct ResumeReport {
     pub run_id: Option<String>,
     /// From the call to the Space being ready with the home restored.
     pub ready_ms: u64,
+    /// What `.cua/resume` did (or `.cua/setup`, for a Space created again).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hook: Option<crate::hooks::HookReport>,
 }
 
 /// One supervisor pass.
@@ -253,6 +445,16 @@ pub(crate) struct Live {
     routines: Option<Arc<tokio::sync::Mutex<RoutineStore>>>,
     routines_mtime: Option<std::time::SystemTime>,
     supervising: Option<std::fs::File>,
+    /// Threads already rebuilt from the Volume (or tried) by this process.
+    rebuilt: std::collections::HashSet<String>,
+    /// Per thread: failed mirror passes in a row, and when to try again.
+    mirror_backoff: HashMap<String, (u32, u64)>,
+    /// Wrong join codes and connected members' posts.
+    pub(crate) join: join::LiveJoin,
+    /// Members whose `.cua/setup` runs now.
+    setups: std::collections::HashSet<String>,
+    /// Journal shippers of durable runs, by `<run>#<epoch>`.
+    shippers: HashMap<String, crate::session_journal::Shipper>,
 }
 
 /// The persistent agents of one cua home. Cheap to clone.
@@ -262,6 +464,10 @@ pub struct Persistent {
     pub(crate) drive: cua_volume::Drive,
     dir: PathBuf,
     live: Arc<tokio::sync::Mutex<Live>>,
+    /// This machine's user as a thread author.
+    owner: Arc<std::sync::RwLock<crate::thread::Author>>,
+    /// Account ids of the admins of the owner's teams.
+    admins: Arc<std::sync::RwLock<std::collections::HashSet<String>>>,
 }
 
 impl std::fmt::Debug for Persistent {
@@ -284,6 +490,8 @@ impl Persistent {
         spaces: Spaces,
         drive: cua_volume::Drive,
         live: Arc<tokio::sync::Mutex<Live>>,
+        owner: Arc<std::sync::RwLock<crate::thread::Author>>,
+        admins: Arc<std::sync::RwLock<std::collections::HashSet<String>>>,
     ) -> Persistent {
         let dir = spaces.home_dir().join(DIR);
         Persistent {
@@ -291,6 +499,8 @@ impl Persistent {
             drive,
             dir,
             live,
+            owner,
+            admins,
         }
     }
 
@@ -329,9 +539,27 @@ impl Persistent {
             .ok_or_else(|| Error::NotFound(format!("persistent agent {name}")))
     }
 
+    /// [`Self::update`] of the session `rec` shows (its run fields).
+    fn update_in<R>(&self, rec: &AgentRecord, f: impl FnOnce(&mut AgentRecord) -> R) -> Result<R> {
+        let k = rec.k();
+        self.update(&rec.name, |r| r.with_session(k, f))
+    }
+
     fn update<R>(&self, name: &str, f: impl FnOnce(&mut AgentRecord) -> R) -> Result<R> {
+        let owner = self.owner();
         locked_json(&self.agents_path(), |all: &mut Vec<AgentRecord>| {
-            all.iter_mut().find(|a| a.name == name).map(f)
+            all.iter_mut().find(|a| a.name == name).map(|a| {
+                // An agent from before members becomes one on its first save.
+                if a.member_since_ms == 0 {
+                    a.member_since_ms = cua_volume::now_ms();
+                }
+                let r = f(a);
+                // ...and gets the identity it was read as.
+                if a.identity.is_none() {
+                    a.identity = Some(identity::stored_of(a, &owner));
+                }
+                r
+            })
         })?
         .ok_or_else(|| Error::NotFound(format!("persistent agent {name}")))
     }
@@ -361,7 +589,7 @@ impl Persistent {
         for k in &spec.env_from_host {
             if !allowed.contains(&k.as_str()) && !saved.contains(k) {
                 return Err(Error::invalid(format!(
-                    "{k} is not a provider key variable (or a key saved in Cua Spaces → Settings → Agents)"
+                    "{k} is not a provider key variable (or a key saved in Cua Spaces → Settings → Connectors)"
                 )));
             }
         }
@@ -384,6 +612,23 @@ impl Persistent {
             saved_ms: 0,
             last_error: None,
             notified_error: None,
+            sessions: 1,
+            policy: Policy::default(),
+            added_by: None,
+            member_since_ms: cua_volume::now_ms(),
+            task: None,
+            held_by: None,
+            identity: None,
+            redrive: Default::default(),
+            durable_space: None,
+            setup: String::new(),
+            setup_note: String::new(),
+            relaunch: false,
+            activity: None,
+            epoch: 0,
+            session_runs: vec![],
+            session_k: 0,
+            extra: Default::default(),
         };
         let out = rec.clone();
         locked_json(&self.agents_path(), |all: &mut Vec<AgentRecord>| {
@@ -403,8 +648,26 @@ impl Persistent {
     /// is stopped and its routines removed.
     pub async fn remove(&self, name: &str) -> Result<AgentRecord> {
         let rec = self.get(name)?;
-        if rec.run_id.is_some() && !rec.paused {
-            let _ = self.stop_run(&rec).await;
+        if identity::is_external(&rec) {
+            // A connected agent has no run, home or routines here: dropping
+            // its record stops its member key at once.
+            if let Err(e) = self.fail_open_tasks(&rec, &format!("{name} was removed")) {
+                tracing::warn!(agent = name, "open tasks not closed: {e}");
+            }
+            locked_json(&self.agents_path(), |all: &mut Vec<AgentRecord>| {
+                all.retain(|a| a.name != name)
+            })?;
+            return Ok(rec);
+        }
+        if !rec.paused {
+            for s in rec.session_views() {
+                if s.run_id.is_some() {
+                    let _ = self.stop_run(&s).await;
+                }
+            }
+        }
+        if let Err(e) = self.fail_open_tasks(&rec, &format!("{name} was removed")) {
+            tracing::warn!(agent = name, "open tasks not closed: {e}");
         }
         self.release_lease(name).await;
         // A home on the mounted volume: its writes land, and the volume
@@ -478,6 +741,14 @@ impl Persistent {
         Ok(())
     }
 
+    /// Releases the home's lease when `rec` shows session 1 (the home's
+    /// one writer; the other sessions never take it).
+    async fn release_writer(&self, rec: &AgentRecord) {
+        if rec.k() == 1 {
+            self.release_lease(&rec.name).await;
+        }
+    }
+
     async fn release_lease(&self, name: &str) {
         let lease = self.live.lock().await.leases.remove(name);
         if let Some(l) = lease {
@@ -521,6 +792,7 @@ impl Persistent {
     /// Nothing moves when the home is on the Space's mounted volume.
     pub async fn restore(&self, name: &str) -> Result<home::Transfer> {
         let rec = self.get(name)?;
+        self.not_external(&rec)?;
         let t0 = Instant::now();
         if self.mounted_home(&rec).await.is_some() {
             return Ok(home::Transfer::mounted(t0.elapsed().as_millis() as u64));
@@ -534,6 +806,7 @@ impl Persistent {
     /// mounted volume: lands the writes still pending).
     pub async fn save(&self, name: &str) -> Result<home::Transfer> {
         let rec = self.get(name)?;
+        self.not_external(&rec)?;
         let t0 = Instant::now();
         let flushed = self
             .spaces
@@ -563,27 +836,82 @@ impl Persistent {
     /// [`Self::start`], recording `entry` (`persistent` or `routine`) as
     /// where the run was started from.
     async fn start_from(&self, name: &str, prompt: &str, entry: &str) -> Result<Delivery> {
+        self.start_with(name, prompt, entry, None).await
+    }
+
+    /// [`Self::start_from`]; `restore`: a durable member's journal from the
+    /// Volume and the epoch to continue it at.
+    async fn start_with(
+        &self,
+        name: &str,
+        prompt: &str,
+        entry: &str,
+        restore: Option<(u64, std::collections::BTreeMap<String, Vec<u8>>)>,
+    ) -> Result<Delivery> {
         let rec = self.get(name)?;
+        self.not_external(&rec)?;
+        if restore.is_some() && !rec.policy.durable {
+            return Err(Error::invalid(format!("{name} is not durable")));
+        }
+        self.start_session(&rec, prompt, entry, restore).await
+    }
+
+    /// Starts a run of the session `view` shows. Session 1 is the home's
+    /// one writer: it takes the home's lease and works in the home (on the
+    /// mounted volume when there is one), and only its turns are saved.
+    /// Sessions 2 and up start from a copy of the home as last saved, in
+    /// their own folder next to it, and never write the home. `restore`: a
+    /// durable member's journal from the Volume and the epoch to continue
+    /// it at (session 1 only; a durable run is session 1's).
+    async fn start_session(
+        &self,
+        view: &AgentRecord,
+        prompt: &str,
+        entry: &str,
+        restore: Option<(u64, std::collections::BTreeMap<String, Vec<u8>>)>,
+    ) -> Result<Delivery> {
+        let k = view.k();
+        let rec = self.get(&view.name)?.session(k);
+        let name = rec.name.as_str();
         if rec.paused {
             return Err(Error::Agent(format!(
                 "{name} is paused; resume it first (agent_resume)"
             )));
         }
-        self.take_lease(&rec).await?;
-        let agents = self.agents_for(&rec.space).await?;
+        if k == 1 {
+            self.take_lease(&rec).await?;
+        }
+        let agents = match self.agents_for(&rec.space).await {
+            Ok(a) => a,
+            Err(e) => {
+                self.release_writer(&rec).await;
+                return Err(e);
+            }
+        };
         let t0 = Instant::now();
-        let mounted = self.mounted_home(&rec).await;
+        let mounted = if k == 1 {
+            self.mounted_home(&rec).await
+        } else {
+            None
+        };
+        let home_dir = match &mounted {
+            Some(m) => Some(m.clone()),
+            None if k > 1 => Some(session_home_dir(&agents, name, k)),
+            None => None,
+        };
         let restored = match &mounted {
             Some(_) => Ok(home::Transfer::mounted(t0.elapsed().as_millis() as u64)),
             None => {
-                let dir = agents.agent_home_dir(&rec.name);
+                let dir = home_dir
+                    .clone()
+                    .unwrap_or_else(|| agents.agent_home_dir(&rec.name));
                 home::restore(agents.guest(), &self.session(&rec), &rec.name, &dir).await
             }
         };
         let restored = match restored {
             Ok(t) => t,
             Err(e) => {
-                self.release_lease(name).await;
+                self.release_writer(&rec).await;
                 return Err(e);
             }
         };
@@ -596,7 +924,7 @@ impl Persistent {
             rec.base_url.is_some(),
         )?;
         if !missing.is_empty() {
-            self.release_lease(name).await;
+            self.release_writer(&rec).await;
             return Err(Error::invalid(format!(
                 "not set in this server's environment: {}",
                 missing.join(", ")
@@ -607,6 +935,12 @@ impl Persistent {
             wire: None,
             model: rec.model.clone(),
         });
+        let (durable, redrive) = if rec.policy.durable && k == 1 {
+            let (d, r) = Self::durable_run(&rec, restore);
+            (Some(d), r)
+        } else {
+            (None, Default::default())
+        };
         let started = agents
             .start(
                 &rec.harness,
@@ -616,9 +950,14 @@ impl Persistent {
                     endpoint,
                     model: rec.model.clone(),
                     home: Some(rec.name.clone()),
-                    home_dir: mounted,
+                    home_dir,
                     bridge: true,
-                    label: Some(rec.name.clone()),
+                    label: Some(if k == 1 {
+                        rec.name.clone()
+                    } else {
+                        format!("{} (session {k})", rec.name)
+                    }),
+                    durable,
                     ..Default::default()
                 },
             )
@@ -629,19 +968,21 @@ impl Persistent {
                 s
             }
             Err(e) => {
-                self.release_lease(name).await;
+                self.release_writer(&rec).await;
                 let e = Error::from(e);
                 cua_spaces::agents::telemetry::start_failed(&rec.harness, &rec.space, entry, &e);
                 let msg = e.to_string();
-                let _ = self.update(name, |r| r.last_error = Some(msg.clone()));
+                let _ = self.update_in(&rec, |r| r.last_error = Some(msg.clone()));
                 return Err(e);
             }
         };
-        self.update(name, |r| {
+        self.update_in(&rec, |r| {
             r.run_id = Some(started.run_id.clone());
             r.cursor = 0;
             r.saved_turn = 0;
             r.last_error = None;
+            r.redrive = redrive;
+            r.activity = None;
         })?;
         Ok(Delivery {
             run_id: started.run_id,
@@ -660,6 +1001,14 @@ impl Persistent {
     /// [`Self::send`], recording `entry` for a run it starts.
     async fn send_from(&self, name: &str, text: &str, entry: &str) -> Result<Delivery> {
         let rec = self.get(name)?;
+        self.not_external(&rec)?;
+        self.send_session(&rec, text, entry).await
+    }
+
+    /// [`Self::send_from`] to the session `view` shows.
+    async fn send_session(&self, view: &AgentRecord, text: &str, entry: &str) -> Result<Delivery> {
+        let rec = self.get(&view.name)?.session(view.k());
+        let name = rec.name.as_str();
         if rec.paused {
             return Err(Error::Agent(format!("{name} is paused")));
         }
@@ -671,8 +1020,13 @@ impl Persistent {
                         "{name} is in the middle of a turn; try again when it ends"
                     )));
                 }
+                Ok(st) if Self::redriving(&rec, st.status) => {
+                    return Err(Error::Agent(format!(
+                        "{name} is in the middle of a turn (it crashed and is being resumed); try again when it ends"
+                    )));
+                }
                 Ok(st) if st.accepts_message && st.status == RunStatus::Idle => {
-                    if !self.live.lock().await.leases.contains_key(name) {
+                    if rec.k() == 1 && !self.live.lock().await.leases.contains_key(name) {
                         self.take_lease(&rec).await?;
                     }
                     agents.send(run, text, vec![]).await?;
@@ -687,7 +1041,7 @@ impl Persistent {
                 _ => {}
             }
         }
-        self.start_from(name, text, entry).await
+        self.start_session(&rec, text, entry, None).await
     }
 
     async fn stop_run(&self, rec: &AgentRecord) -> Result<Option<String>> {
@@ -707,6 +1061,7 @@ impl Persistent {
     pub async fn pause(&self, name: &str) -> Result<PauseReport> {
         let t0 = Instant::now();
         let rec = self.get(name)?;
+        self.not_external(&rec)?;
         if rec.paused {
             return Ok(PauseReport {
                 space_state: rec.space_state,
@@ -716,8 +1071,19 @@ impl Persistent {
         // Routines and notifications stop first, so nothing starts the
         // agent again while it is being paused.
         self.update(name, |r| r.paused = true)?;
+        // Its tasks go back to the queue and wait for the resume.
+        for s in rec.session_views() {
+            if let Err(e) = self.requeue(&s, &format!("{name} was paused")) {
+                tracing::warn!(agent = name, "task not requeued: {e}");
+            }
+        }
         let mut report = PauseReport::default();
         let result: Result<()> = async {
+            for s in rec.session_views().iter().skip(1) {
+                if s.run_id.is_some() {
+                    self.stop_run(s).await?;
+                }
+            }
             report.stopped_run = self.stop_run(&rec).await?;
             report.saved = Some(self.save(name).await?);
             self.release_lease(name).await;
@@ -771,6 +1137,11 @@ impl Persistent {
         self.update(name, |r| {
             r.space_state = state;
             r.run_id = None;
+            r.activity = None;
+            for s in &mut r.session_runs {
+                s.run_id = None;
+                s.activity = None;
+            }
             r.last_error = result.as_ref().err().map(|e| e.to_string());
         })?;
         result?;
@@ -784,6 +1155,7 @@ impl Persistent {
     pub async fn resume(&self, name: &str, prompt: Option<&str>) -> Result<ResumeReport> {
         let t0 = Instant::now();
         let rec = self.get(name)?;
+        self.not_external(&rec)?;
         let mut report = ResumeReport {
             space: rec.space.clone(),
             ..Default::default()
@@ -835,6 +1207,19 @@ impl Persistent {
             r.paused = false;
         })?;
         report.restored = Some(self.restore(name).await?);
+        let rec = self.get(name)?;
+        if report.recreated {
+            // Created again from scratch: .cua/setup prepares it again
+            // (a failed one holds the member's tasks).
+            report.hook = self.run_setup(&rec).await?;
+        } else {
+            // The Space kept its state: .cua/resume restarts what a
+            // suspend stopped (a dev server, a database).
+            match self.run_hook(&rec, crate::hooks::HookKind::Resume).await {
+                Ok(h) => report.hook = h,
+                Err(e) => tracing::warn!(agent = name, ".cua/resume: {e}"),
+            }
+        }
         report.ready_ms = t0.elapsed().as_millis() as u64;
         if let Some(p) = prompt {
             report.run_id = Some(self.start(name, p).await?.run_id);
@@ -881,7 +1266,7 @@ impl Persistent {
         schedule: Schedule,
         enabled: bool,
     ) -> Result<Routine> {
-        self.get(agent)?;
+        self.not_external(&self.get(agent)?)?;
         if schedule.next_fire(Utc::now()).is_none() {
             return Err(Error::invalid("that schedule never fires"));
         }
@@ -1132,16 +1517,25 @@ impl Persistent {
                 return report;
             }
         };
+        // A Space someone stopped or suspended is left alone: its durable
+        // members wait for it to run again instead of waking it.
+        let off = self.spaces_off();
         for rec in records
-            .into_iter()
-            .filter(|r| !r.paused && r.run_id.is_some())
+            .iter()
+            .filter(|r| !r.paused && !(r.policy.durable && off.contains(&r.space)))
+            .flat_map(|r| r.session_views())
+            .filter(|r| r.run_id.is_some())
         {
-            let name = rec.name.clone();
+            let name = match rec.k() {
+                1 => rec.name.clone(),
+                k => format!("{} session {k}", rec.name),
+            };
+            let view = rec.clone();
             match tokio::time::timeout(AGENT_TICK_BUDGET, self.tick_agent(rec, &mut report)).await {
                 Ok(Ok(())) => {}
                 Ok(Err(e)) => {
                     let msg = e.to_string();
-                    let _ = self.update(&name, |r| r.last_error = Some(msg.clone()));
+                    let _ = self.update_in(&view, |r| r.last_error = Some(msg.clone()));
                     report.errors.push(format!("{name}: {msg}"));
                 }
                 Err(_) => report
@@ -1149,16 +1543,55 @@ impl Persistent {
                     .push(format!("{name}: supervisor pass timed out")),
             }
         }
+        // Durable members whose run is lost with their Space.
+        if let Ok(all) = self.list() {
+            for rec in all
+                .into_iter()
+                .filter(|r| r.relaunch && !r.paused && !off.contains(&r.space))
+            {
+                let name = rec.name.clone();
+                match tokio::time::timeout(AGENT_TICK_BUDGET, Box::pin(self.tick_relaunch(&rec)))
+                    .await
+                {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => report.errors.push(format!("{name} relaunch: {e}")),
+                    Err(_) => report.errors.push(format!("{name} relaunch: timed out")),
+                }
+            }
+        }
+        self.tick_setups(&mut report).await;
+        // Thread tasks for members that are free (after the turns that
+        // ended above closed theirs).
+        self.dispatch(&mut report).await;
         self.tick_watched(&mut report).await;
+        self.tick_mirror(&mut report).await;
         report
+    }
+
+    /// The Spaces of this machine that are stopped or suspended now.
+    fn spaces_off(&self) -> std::collections::BTreeSet<String> {
+        self.spaces
+            .list()
+            .map(|l| {
+                l.into_iter()
+                    .filter(|s| space_is_off(&s.power_state))
+                    .map(|s| s.id)
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     async fn tick_agent(&self, rec: AgentRecord, report: &mut TickReport) -> Result<()> {
         let space = rec.space.clone();
-        let r = self.tick_agent_inner(rec, report).await;
+        let follow = rec.policy.durable && rec.durable_space.is_some() && !rec.relaunch;
+        let r = self.tick_agent_inner(rec.clone(), report).await;
         if r.is_err() {
             // Reconnect on the next pass (the Space may have been recreated).
             self.forget_space(&space).await;
+            // A durable Space that moved: the member follows it.
+            if follow && let Err(e) = Box::pin(self.tick_relaunch(&rec)).await {
+                report.errors.push(format!("{} relaunch: {e}", rec.name));
+            }
         }
         r
     }
@@ -1179,42 +1612,117 @@ impl Persistent {
         let bridged = bridge::pump(agents.guest(), &run_dir, &mut state, &server).await;
         self.live.lock().await.bridges.insert(run.clone(), state);
         report.bridged += bridged?;
+        // A durable run: ship its journal, re-drive it after a crash.
+        if rec.policy.durable && !rec.relaunch && !self.tick_durable(&rec, &agents, report).await? {
+            return Ok(());
+        }
         // Then the run's events since the bookmark.
         let page = agents.events(&run, rec.cursor, 500).await?;
+        // The Space answered: the session's claims hold on (before anything
+        // below can fail this pass).
+        self.renew_claims(&rec, &agents, &run).await?;
+        let rec = self.get(&rec.name)?.session(rec.k());
         let (ended, failed) = turn_outcome(&page.events);
+        // The thread task this run's turn worked on: its reply and state.
+        let mut anchor = None;
+        let mut task_ended = false;
+        if let Some(inflight) = rec.task.clone() {
+            let error = failed
+                .as_ref()
+                .filter(|(t, _)| *t > inflight.turn)
+                .map(|(_, e)| e.clone());
+            if let Some(turn) = ended
+                && turn > inflight.turn
+            {
+                let answer = match &error {
+                    Some(_) => None,
+                    None => Some(agents.result(&run).await?.text),
+                };
+                anchor = self.finish_task(&rec, &inflight, answer, error).await?;
+                task_ended = true;
+            } else if page.caught_up
+                && let Ok(st) = agents.status(&run).await
+                && st.alive == Some(false)
+                && st.status != RunStatus::Idle
+                && !Self::redriving(&rec, st.status)
+            {
+                // The run died without ending the turn (a durable one is
+                // re-driven instead, and its turn goes on).
+                let why = st.error.clone().unwrap_or_else(|| st.reason.clone());
+                anchor = self.finish_task(&rec, &inflight, None, Some(why)).await?;
+                task_ended = true;
+            }
+        }
         if let Some((turn, err)) = &failed {
             // One notification per failed turn, posted before anything
             // below can fail this pass (a later pass sees the same events).
             let key = format!("{run}#{turn}");
             let notify = rec.notify && rec.notified_error.as_deref() != Some(key.as_str());
             if notify {
-                self.feed().post(
+                self.feed().post_anchored(
                     Some(&rec.name),
                     "error",
                     &notify::stopped_title(&rec.name, err),
                     err,
                     Some(&run),
                     Some(&rec.space),
+                    anchor,
                 )?;
                 report.notified += 1;
             }
             let err = err.clone();
-            self.update(&rec.name, |r| {
+            self.update_in(&rec, |r| {
                 r.last_error = Some(err);
                 r.notified_error = Some(key);
             })?;
         }
+        if task_ended && rec.policy.once {
+            // `once`: its one task is done (its answer is the reply), so it
+            // leaves; its home is saved first and stays.
+            if let Err(e) = self.save(&rec.name).await {
+                report
+                    .errors
+                    .push(format!("{} home not saved before it left: {e}", rec.name));
+            }
+            let _ = self
+                .thread_store(&rec.space)
+                .append(crate::thread::Draft::note(
+                    "dispatch",
+                    rec.task.as_ref().map(|t| t.seq),
+                    format!("{} finished its task and left (added with once)", rec.name),
+                ));
+            self.remove(&rec.name).await?;
+            return Ok(());
+        }
+        // What the turn is doing now, for the member's session state.
+        let activity = activity_line(&page.events);
+        if activity != Activity::Unchanged {
+            let line = match activity {
+                Activity::Line(l) => Some(l),
+                _ => None,
+            };
+            if line != rec.activity {
+                self.update_in(&rec, |r| r.activity = line)?;
+            }
+        }
         if let Some(turn) = ended
             && turn > rec.saved_turn
         {
-            let saved = self.save(&rec.name).await?;
-            report.saved.push(format!(
-                "{} turn {turn}: {} files, {} bytes, {} blocked",
-                rec.name,
-                saved.files,
-                saved.bytes,
-                saved.blocked.len()
-            ));
+            // Session 1 is the home's one writer; the others' turns are
+            // not saved.
+            let saved = if rec.k() == 1 {
+                let saved = self.save(&rec.name).await?;
+                report.saved.push(format!(
+                    "{} turn {turn}: {} files, {} bytes, {} blocked",
+                    rec.name,
+                    saved.files,
+                    saved.bytes,
+                    saved.blocked.len()
+                ));
+                saved
+            } else {
+                home::Transfer::default()
+            };
             if !saved.blocked.is_empty() {
                 let what: Vec<String> = saved
                     .blocked
@@ -1241,17 +1749,18 @@ impl Persistent {
                 } else {
                     result.text.trim().to_string()
                 };
-                self.feed().post(
+                self.feed().post_anchored(
                     Some(&rec.name),
                     "turn_ended",
                     &rec.name,
                     &body,
                     Some(&run),
                     Some(&rec.space),
+                    anchor,
                 )?;
                 report.notified += 1;
             }
-            self.update(&rec.name, |r| r.saved_turn = turn)?;
+            self.update_in(&rec, |r| r.saved_turn = turn)?;
         }
         let run_failed = failed.is_some();
         // Agent-run telemetry: the end of a run this install started.
@@ -1263,11 +1772,71 @@ impl Persistent {
         }
         if page.cursor != rec.cursor {
             let cursor = page.cursor;
-            self.update(&rec.name, |r| r.cursor = cursor)?;
+            self.update_in(&rec, |r| r.cursor = cursor)?;
         }
-        self.renew_lease(&rec.name).await?;
+        if rec.k() == 1 {
+            self.renew_lease(&rec.name).await?;
+        }
         Ok(())
     }
+}
+
+/// The guest folder a session other than the first works in: a copy of the
+/// home as last saved, next to the home (`@` never appears in an agent
+/// name, so it never collides with another agent's home).
+fn session_home_dir(agents: &Agents, name: &str, k: u32) -> String {
+    format!("{}@{k}", agents.agent_home_dir(name))
+}
+
+/// What a page of events says the turn is doing.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Activity {
+    /// Nothing new.
+    Unchanged,
+    /// The turn ended: nothing.
+    Cleared,
+    Line(String),
+}
+
+/// The latest tool title or plan step in `events` (one line, at most 80
+/// characters, never a secret), `Cleared` when the turn ended after it.
+fn activity_line(events: &[ag::AgentEvent]) -> Activity {
+    for e in events.iter().rev() {
+        let line = match e.kind {
+            "turn_ended" | "exited" => return Activity::Cleared,
+            "tool_call" => e
+                .tool_title
+                .clone()
+                .filter(|t| !t.trim().is_empty())
+                .or_else(|| e.tool_kind.clone()),
+            "plan" => {
+                let entries = e.raw["update"]["entries"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default();
+                let pick = |status: &str| {
+                    entries
+                        .iter()
+                        .find(|x| x["status"] == status)
+                        .and_then(|x| x["content"].as_str())
+                        .map(str::to_string)
+                };
+                pick("in_progress").or_else(|| pick("pending"))
+            }
+            _ => None,
+        };
+        if let Some(l) = line {
+            let one: String = l.split_whitespace().collect::<Vec<_>>().join(" ");
+            if one.is_empty() {
+                continue;
+            }
+            if !cua_volume::scan::scan(one.as_bytes()).is_empty() {
+                return Activity::Line("Working (a step that looked like a secret)".into());
+            }
+            return Activity::Line(members::clip_line(&one, 80));
+        }
+    }
+    Activity::Unchanged
 }
 
 /// In a page of a run's events: the last turn that ended, and the last
@@ -1324,12 +1893,11 @@ impl RoutineRunner for Runner {
                 };
             }
         }
-        match self
-            .0
-            .send_from(&routine.bot_id, &routine.turn_text(), "routine")
-            .await
-        {
-            Ok(d) => RoutineFiring::Started { run_id: d.run_id },
+        // A task in the agent's Space thread, delivered at once (a busy
+        // agent skips the slot).
+        match self.0.fire_schedule(routine).await {
+            Ok(Ok(d)) => RoutineFiring::Started { run_id: d.run_id },
+            Ok(Err(reason)) => RoutineFiring::Refused { reason },
             Err(Error::Agent(m)) if m.contains("middle of a turn") => {
                 RoutineFiring::Refused { reason: m }
             }
@@ -1372,7 +1940,13 @@ impl SpacesPersistent for Spaces {
         let ext = self
             .extension::<crate::DriveExtension>()
             .expect("persistent agents need the Cua Volume extension (cua_spaces_ext::register)");
-        Persistent::new(self.clone(), ext.drive().clone(), ext.live())
+        Persistent::new(
+            self.clone(),
+            ext.drive().clone(),
+            ext.live(),
+            ext.owner(),
+            ext.team_admins(),
+        )
     }
 }
 
@@ -1502,5 +2076,25 @@ mod tests {
         ] {
             assert_eq!(bad.unwrap_err().tag(), "invalid_argument");
         }
+    }
+}
+
+/// Whether a Space in this power state is off for the supervisor: stopped,
+/// or suspended (#5912), which counts as stopped. A durable member never
+/// wakes it; it waits until the Space runs again.
+pub(crate) fn space_is_off(power_state: &str) -> bool {
+    matches!(power_state, "stopped" | "suspended")
+}
+
+#[cfg(test)]
+mod power_tests {
+    use super::space_is_off;
+
+    #[test]
+    fn suspended_counts_as_stopped_and_running_or_unknown_does_not() {
+        assert!(space_is_off("stopped"));
+        assert!(space_is_off("suspended"));
+        assert!(!space_is_off("running"));
+        assert!(!space_is_off(""));
     }
 }

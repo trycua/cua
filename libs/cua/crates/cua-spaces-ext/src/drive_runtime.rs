@@ -254,6 +254,13 @@ impl SpacesDrive for Spaces {
             return;
         };
         ext.runtime.stop_watchers();
+        // This machine's mount first: it is quick, and a daemon that is
+        // ended before the Spaces' volumes are done (a stop that waits
+        // 30 s, then signals) must not leave it behind with no server, the
+        // macOS "Server connections interrupted" dialog.
+        if let Some(svc) = ext.runtime.service.get() {
+            Box::pin(svc.release_mount()).await;
+        }
         let all: Vec<Mounted> = std::mem::take(&mut *ext.runtime.volumes.lock().await)
             .into_values()
             .collect();

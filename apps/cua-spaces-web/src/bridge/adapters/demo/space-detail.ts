@@ -53,6 +53,20 @@ const win = (id: string, appName: string, title: string, appId: string, pid: num
   pid,
 });
 
+/** Spaces with their own windows (the thread's Space shows a full Stream list). */
+const SPACE_WINDOWS: Record<string, SpaceWindows> = {
+  "relay:linux-box/ubuntu-build": {
+    windows: [
+      win("w-terminal", "Terminal", "ada@ubuntu-build: ~/cua", "xfce4-terminal", 701),
+      win("w-firefox", "Firefox", "Pull requests · trycua/cua — Mozilla Firefox", "firefox", 812),
+      win("w-files", "Files", "Downloads", "thunar", 845),
+      win("w-buildlog", "Build log", "cargo build --release", "mousepad", 966),
+      win("w-code", "Code", "build.rs - cua - Visual Studio Code", "code", 1120),
+    ],
+    display: { widthPx: 1280, heightPx: 800 },
+  },
+};
+
 const WINDOWS: Record<string, SpaceWindows> = {
   macos: {
     windows: [
@@ -85,7 +99,7 @@ export function demoSpaceDetailHandlers({ state, findRow }: DemoContext): DemoHa
     "spaces.windows": ({ spaceId }) => {
       const row = findRow(spaceId);
       if (!running(row)) throw offline(row);
-      const w = WINDOWS[row.os ?? "linux"] ?? WINDOWS.linux!;
+      const w = SPACE_WINDOWS[spaceId] ?? WINDOWS[row.os ?? "linux"] ?? WINDOWS.linux!;
       return { windows: w.windows.map((x) => ({ ...x })), display: w.display ? { ...w.display } : null, open: [...(state.pip.get(spaceId) ?? [])] };
     },
     "stream.pip": ({ spaceId, command }) => {

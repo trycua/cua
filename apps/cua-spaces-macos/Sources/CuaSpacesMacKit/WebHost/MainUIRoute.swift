@@ -123,7 +123,7 @@ struct MainUIRouter {
     /// Settings (⌘,, the menu bar item, the notch, the palette): the page's
     /// Settings in the web UI window. There is no native Settings window,
     /// so the two can't drift. `route`: one tab
-    /// (`/settings/connected-apps`, ...).
+    /// (`/settings/connectors`, ...).
     func openSettings(_ route: MainUIRoute = .settings) {
         settings(route)
     }

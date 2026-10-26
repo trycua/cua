@@ -105,6 +105,7 @@ fn cfg() -> AgentConfig {
             c
         },
         keys_grace: Duration::from_secs(2),
+        space_setup: None,
     }
 }
 

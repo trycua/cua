@@ -21,6 +21,7 @@ struct ParityTests {
     @Test("create-space") func createSpace() throws { try check("create-space", runCreateSpace) }
     @Test("create-resources") func createResources() throws { try check("create-resources", runCreateSpace) }
     @Test("create-gpu") func createGpu() throws { try check("create-gpu", runCreateSpace) }
+    @Test("create-microvm") func createMicrovm() throws { try check("create-microvm", runCreateSpace) }
     @Test("create-cancel") func createCancel() throws { try check("create-cancel", runProvisioning) }
     @Test("teleport-review") func teleportReview() throws { try check("teleport-review", runTeleport) }
     @Test("teleport-sign-ins") func teleportSignIns() throws { try check("teleport-sign-ins", runTeleport) }
@@ -52,9 +53,12 @@ struct ParityTests {
     @Test("telemetry-funnel") func telemetryFunnel() throws { try check("telemetry-funnel", runTelemetry) }
     @Test("experiments") func experiments() throws { try check("experiments", runExperiments) }
     @Test("placement-picker") func placementPicker() throws { try check("placement-picker", runPlacementPicker) }
-    @Test("checklist") func checklist() throws { try check("checklist", runChecklist) }
     @Test("create-stages") func createStages() throws { try check("create-stages", runProvisioning) }
     @Test("create-retry") func createRetry() throws { try check("create-retry", runProvisioning) }
+    @Test("spaces-menu") func spacesMenu() throws { try check("spaces-menu", runSpacesMenu) }
+    @Test("bulk-confirm") func bulkConfirm() throws { try check("bulk-confirm", runBulkConfirm) }
+    @Test("tips") func tips() throws { try check("tips", runTips) }
+    @Test("pro-banner") func proBanner() throws { try check("pro-banner", runProBanner) }
 
     /// A fix button's action word, as the core serializes it.
     func fixWord(_ a: AppCreateFixAction) -> String {
@@ -108,7 +112,7 @@ struct ParityTests {
         case "next": return .next
         case "back": return .back
         case "toggle-advanced": return .toggleAdvanced
-        case "choose-kind": return .chooseKind(kind: (a["kind"] as! String) == "vm" ? .vm : .container)
+        case "choose-kind": return .chooseKind(kind: AppSpaceKind(word: a["kind"] as! String)!)
         case "set-runtime": return .setRuntime(runtime: runtime(a["runtime"] as! String))
         case "set-cpus": return .setCpus(cpus: UInt32(a["cpus"] as! Int))
         case "set-memory": return .setMemory(memoryGb: UInt32(a["memoryGb"] as! Int))
@@ -271,7 +275,7 @@ struct ParityTests {
         let view = appWizardView(state: state, env: env)
         let args = appWizardCreateArgs(plan: view.plan)
         var create: [String: Any] = [
-            "image": args.image, "on": args.on, "kind": args.kind == .vm ? "vm" : "container",
+            "image": args.image, "on": args.on, "kind": args.kind.word,
             "runtime": word(args.runtime), "spacesd": args.spacesd,
         ]
         if let n = args.name { create["name"] = n }
@@ -1293,40 +1297,6 @@ struct ParityTests {
     }
 
     /// The notch and the menu count the same Spaces (`run_menu_count`).
-    /// The checklist: the Machines page from each case's input
-    /// (`appMachinesPageRows`), the core's reading of it, its Spaces and
-    /// agents (`appChecklistObserveFrom`), the count after it, and after
-    /// merging progress kept elsewhere before.
-    func runChecklist(_ f: [String: Any]) throws -> [Any] {
-        var frames: [Any] = []
-        for c in f["cases"] as! [[String: Any]] {
-            let page = try appMachinesPageInputFromJson(json: text(c["page"]))
-            let rows = appMachinesPageRows(input: page)
-            let action = appChecklistObserveFrom(seen: AppChecklistSeen(
-                machines: rows, spaces: page.spaces,
-                agents: UInt32(c["agents"] as! Int), runs: UInt32(c["runs"] as! Int)))
-            guard case let .observe(otherMachine, hasSpace, agentRan) = action else {
-                Issue.record("not an observation")
-                return frames
-            }
-            let t = appChecklistReduce(state: try appChecklistStateFromJson(json: text(c["state"])), action: action)
-            var frame: [String: Any] = [
-                "case": c["name"] as! String,
-                "observe": ["otherMachine": otherMachine, "hasSpace": hasSpace, "agentRan": agentRan],
-                "progress": appChecklistView(state: t.state).progress,
-                "events": t.signals.compactMap { if case let .step(step, _) = $0 { return step } else { return nil } },
-            ]
-            if let earlier = c["earlier"], !(earlier is NSNull) {
-                let merged = appChecklistReduce(state: t.state,
-                                                action: .merge(state: try appChecklistStateFromJson(json: text(earlier))))
-                let view = appChecklistView(state: merged.state)
-                frame["merged"] = ["progress": view.progress, "visible": view.visible, "events": merged.signals.count]
-            }
-            frames.append(frame)
-        }
-        return frames
-    }
-
     func runMenuCount(_ f: [String: Any]) throws -> [Any] {
         let now = Int64(f["now"] as! Int)
         var frames: [Any] = []
@@ -1870,7 +1840,7 @@ struct ParityTests {
 
     func os(_ w: String) -> AppSpaceOs { w == "macos" ? .macos : w == "windows" ? .windows : .linux }
     func runtime(_ w: String) -> AppRuntime {
-        [.auto, .gvisor, .runc, .qemu, .lume].first { word($0) == w } ?? (w.isEmpty ? .auto : .other(w))
+        AppRuntime(word: w)
     }
     func move(_ w: String) -> AppTeleportMove {
         [.appOnly, .appWithFiles, .appWithState].first { word($0) == w }!
@@ -1893,6 +1863,9 @@ struct ParityTests {
         case .runc: "runc"
         case .qemu: "qemu"
         case .lume: "lume"
+        case .firecracker: "firecracker"
+        case .vz: "vz"
+        case .containerization: "containerization"
         case .other(let name): name
         }
     }
@@ -2224,6 +2197,10 @@ struct ParityTests {
         case let .experiment(action, experiment):
             return ["type": "experiment", "action": action, "experiment": experiment]
         case let .experimentsOn(experiments): return ["type": "experiments-on", "experiments": experiments]
+        case let .planLimitShown(surface, kind, plan):
+            return ["type": "plan-limit-shown", "surface": surface, "kind": kind, "plan": plan]
+        case let .upgradeLinkOpened(surface, kind, plan):
+            return ["type": "upgrade-link-opened", "surface": surface, "kind": kind, "plan": plan]
         }
     }
 
@@ -2286,7 +2263,7 @@ struct ParityTests {
         }
     }
 
-    /// Settings → Agents (`run_agent_keys`): the section for each input, the
+    /// Settings → Connectors (`run_agent_keys`): the section for each input, the
     /// add or replace sheet, the Remove question and the variable names.
     func runAgentKeys(_ f: [String: Any]) throws -> [Any] {
         var frames: [Any] = []
@@ -2488,6 +2465,194 @@ struct ParityTests {
                 "wizard": yourCloudFrame(v),
                 "on": appWizardCreateArgs(plan: v.plan).on,
             ])
+        }
+        return frames
+    }
+
+    // MARK: - The new Spaces page (CUA-2204)
+
+    func spaceMenuWord(_ id: AppSpaceMenuItemId) -> String {
+        switch id {
+        case .open: "open"
+        case .power: "power"
+        case .share: "share"
+        case .manageSharing: "manageSharing"
+        case .teleport: "teleport"
+        case .rename: "rename"
+        case .delete: "delete"
+        case .leave: "leave"
+        }
+    }
+
+    /// `run_spaces_menu`: a Space's "…" menu for each case.
+    func runSpacesMenu(_ f: [String: Any]) throws -> [Any] {
+        try (f["steps"] as! [[String: Any]]).map { step -> Any in
+            let menu = appSpaceMenu(input: try appSpaceMenuInputFromJson(json: text(step["input"])))
+            let lines = menu.map { i in
+                "\(i.separatorBefore ? "--- " : "")\(spaceMenuWord(i.id)): \(i.label)"
+                    + (i.enabled ? "" : " (disabled)") + (i.destructive ? " (red)" : "")
+            }
+            return ["step": step["step"] as! String, "menu": lines] as [String: Any]
+        }
+    }
+
+    func bulkTone(_ t: AppBulkTone) -> String {
+        switch t {
+        case .ok: "ok"
+        case .partial: "partial"
+        case .failed: "failed"
+        }
+    }
+
+    /// `bulk_frame`: the confirm dialog as strings.
+    func bulkFrame(_ v: AppBulkConfirmView?) -> Any {
+        guard let v else { return NSNull() }
+        var rows: [String] = []
+        for g in v.groups {
+            if let t = g.title { rows.append("# \(t)") }
+            for r in g.rows {
+                rows.append("\(r.name) (\(r.os))" + (r.status.map { " [\($0)]" } ?? "")
+                    + (r.people.isEmpty ? "" : " <\(r.people.joined(separator: ", "))>") + " = \(r.detail ?? "-")")
+            }
+        }
+        return [
+            "title": v.title,
+            "body": v.body,
+            "rows": rows,
+            "frees": opt(v.frees.map { "\(v.freesLabel) \($0)" }),
+            "buttons": "\(v.cancel) / \(v.button)\(v.destructive ? " (red)" : "")",
+            "ids": "delete \(v.deleteIds.joined(separator: ",")) / leave \(v.leaveIds.joined(separator: ","))",
+        ] as [String: Any]
+    }
+
+    /// `run_bulk_confirm`: the dialog, the count as each id finishes, the toast.
+    func runBulkConfirm(_ f: [String: Any]) throws -> [Any] {
+        var frames: [Any] = []
+        for step in f["steps"] as! [[String: Any]] {
+            let items = try appBulkItemsFromJson(json: text(step["items"]))
+            var progress: [Any] = []
+            var finished: [String] = []
+            for id in step["order"] as! [String] {
+                progress.append(opt(appBulkProgress(items: items, finished: finished)))
+                finished.append(id)
+            }
+            progress.append(opt(appBulkProgress(items: items, finished: finished)))
+            let done = appBulkDone(items: items, results: try appBulkResultsFromJson(json: text(step["results"])))
+            frames.append([
+                "step": step["step"] as! String,
+                "confirm": bulkFrame(appBulkConfirm(items: items)),
+                "progress": progress,
+                "done": "\(done.text) (\(bulkTone(done.tone)))",
+            ] as [String: Any])
+        }
+        return frames
+    }
+
+    func tipPlace(_ word: String) -> AppTipPlace {
+        switch word {
+        case "space": .space
+        case "sidebar": .sidebar
+        default: .spaces
+        }
+    }
+
+    func tipPlaceWord(_ p: AppTipPlace) -> String {
+        switch p {
+        case .spaces: "spaces"
+        case .space: "space"
+        case .sidebar: "sidebar"
+        }
+    }
+
+    func tipActionWord(_ k: AppTipActionKind) -> String {
+        switch k {
+        case .none: "none"
+        case .copy: "copy"
+        case .selectStopped: "selectStopped"
+        case .share: "share"
+        case .copyCommand: "copyCommand"
+        }
+    }
+
+    /// `tip_frame`: a tip as strings.
+    func tipFrame(_ t: AppTip?) -> Any {
+        guard let t else { return NSNull() }
+        let a = t.action
+        let action = tipActionWord(a.kind) + (a.label.isEmpty ? "" : " [\(a.label)]")
+            + (a.value.map { " = \($0)" } ?? "") + (a.doneLabel.map { " then \($0)" } ?? "")
+        return [
+            "tip": "\(t.id) (\(tipPlaceWord(t.place))): \(t.text)",
+            "code": opt(t.code),
+            "agent": opt(t.agent),
+            "action": action,
+            "buttons": [opt(t.next), opt(t.dontShow), t.close],
+            "openIn": opt(t.openIn.map { "\($0.label) <\($0.url)>" }),
+        ] as [String: Any]
+    }
+
+    /// `run_tips`: facts, tips events and Settings' tips rows, then the tip
+    /// for the step's place and the sidebar's.
+    func runTips(_ f: [String: Any]) throws -> [Any] {
+        var facts = f["facts"] as! [String: Any]
+        var settings = appSettingsDefaults()
+        var frames: [Any] = []
+        for step in f["steps"] as! [[String: Any]] {
+            if let patch = step["facts"] as? [String: Any] {
+                for (k, v) in patch { facts[k] = v }
+            }
+            if let e = step["event"] as? [String: Any] {
+                settings.tips = appTipsReduce(state: settings.tips, event: try appTipsEventFromJson(json: text(e)))
+            }
+            var general: Any = NSNull()
+            if let s = step["settings"] as? [String: Any], let row = s["row"] as? String {
+                settings = appSettingsChoose(settings: settings, row: row, option: s["option"] as? String ?? "")
+                var input = try appSettingsInputFromJson(json: "{}")
+                input.showTips = !settings.tips.off
+                general = appSettingsPage(input: input).sections.filter { $0.id == "general" }.flatMap(\.rows)
+                    .filter { $0.id == "tips" || $0.id == "reset-tips" }.map(settingRow)
+            }
+            let place = step["place"] as! String
+            let tip = appTipsView(place: tipPlace(place), facts: try appTipFactsFromJson(json: text(facts)),
+                                  state: settings.tips)
+            var side = facts
+            side["pageTipShown"] = tip != nil && place != "sidebar"
+            let sidebar = appTipsView(place: .sidebar, facts: try appTipFactsFromJson(json: text(side)),
+                                      state: settings.tips)
+            frames.append([
+                "step": step["step"] as! String,
+                "tip": tipFrame(tip),
+                "sidebar": tipFrame(sidebar),
+                "state": "off=\(settings.tips.off) done=\(settings.tips.done.joined(separator: ","))",
+                "settings": general,
+            ] as [String: Any])
+        }
+        return frames
+    }
+
+    func accountMenuWord(_ id: AppAccountMenuItemId) -> String {
+        switch id {
+        case .settings: "settings"
+        case .plan: "plan"
+        case .signOut: "signOut"
+        }
+    }
+
+    /// `run_pro_banner`: the Pro banner (Free only, not closable) and the
+    /// account menu.
+    func runProBanner(_ f: [String: Any]) throws -> [Any] {
+        var frames: [Any] = []
+        for step in f["steps"] as! [[String: Any]] {
+            let plan = step["plan"] as! String
+            let banner = appProBanner(input: AppProBannerInput(plan: plan))
+            let menu = appAccountMenu(input: AppAccountMenuInput(
+                plan: plan, signedIn: step["signedIn"] as! Bool, authMode: step["authMode"] as! String))
+            frames.append([
+                "step": step["step"] as! String,
+                "banner": banner.visible ? "\(banner.text) [\(banner.button)]" : "hidden",
+                "menu": menu.map { i in
+                    "\(i.separatorBefore ? "--- " : "")\(accountMenuWord(i.id)): \(i.label)" + (i.value.map { " = \($0)" } ?? "")
+                },
+            ] as [String: Any])
         }
         return frames
     }

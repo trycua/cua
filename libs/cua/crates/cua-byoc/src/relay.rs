@@ -131,6 +131,13 @@ pub fn is_fatal(e: &Error) -> bool {
     m.contains("cua.ai sign-in") || m.contains("not enrolled")
 }
 
+/// The relay's cap on unused pairing codes (HTTP 429 `at most N unused
+/// pairing codes at once`): a wait fixes it, as codes get used or revoked.
+pub fn is_code_cap(e: &Error) -> bool {
+    let m = e.to_string();
+    m.contains("429") && m.contains("unused pairing codes")
+}
+
 impl RelayAccess {
     /// `url` with `tokens` (tests, fixtures).
     pub fn new(url: impl Into<String>, tokens: Arc<dyn AccountTokens>) -> Self {

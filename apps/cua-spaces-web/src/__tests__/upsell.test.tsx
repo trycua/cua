@@ -119,17 +119,23 @@ describe.skipIf(!wasmBuilt)("in-app Pro and Teams prompts (real routes, wasm cor
     expect(document.querySelector("[data-manage-account]")?.textContent).toBe("Manage account on the web");
   });
 
-  it("the account name carries the plan; on Free it opens Pro's checkout", async () => {
+  it("the account menu's Plan names the plan; on Free it opens Pro's checkout", async () => {
     const opened: string[] = [];
     const tracked: unknown[] = [];
     const { router } = await mountApp("/spaces", host(idle(), opened, tracked));
     await router.load();
-    const plan = await waitFor(() => {
-      const el = document.querySelector("[data-account-plan]");
+    const line = await waitFor(() => {
+      const el = document.querySelector("[data-account-line]");
       expect(el).toBeTruthy();
       return el as HTMLElement;
     });
-    expect(plan.textContent).toBe("Free plan · Upgrade");
+    fireEvent.click(line);
+    const plan = await waitFor(() => {
+      const el = document.querySelector("[data-account-item=plan]");
+      expect(el).toBeTruthy();
+      return el as HTMLElement;
+    });
+    expect(plan.textContent).toBe("PlanFree");
     fireEvent.click(plan);
     await waitFor(() => expect(opened).toEqual(["https://app.cua.ai/buy/pro?from=app_account_menu"]));
     await waitFor(() => expect(features(tracked)).toContain("upsell_account_menu_click"));

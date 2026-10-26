@@ -207,6 +207,20 @@ impl DaemonClient {
             .max_encoding_message_size(cua_spacesd_client::MAX_MESSAGE_BYTES)
     }
 
+    /// The raw `HostThreadService` client: what the host's cua-spacesd
+    /// calls on this daemon's socket for the people the host is shared
+    /// with (on the loopback listener, every caller is this machine's
+    /// user).
+    pub fn host_thread(
+        &self,
+    ) -> cua_proto::env::v1::host_thread_service_client::HostThreadServiceClient<Chan> {
+        cua_proto::env::v1::host_thread_service_client::HostThreadServiceClient::new(
+            self.channel.clone(),
+        )
+        .max_decoding_message_size(cua_spacesd_client::MAX_MESSAGE_BYTES)
+        .max_encoding_message_size(cua_spacesd_client::MAX_MESSAGE_BYTES)
+    }
+
     fn map(e: tonic::Status) -> Error {
         status_error(e)
     }

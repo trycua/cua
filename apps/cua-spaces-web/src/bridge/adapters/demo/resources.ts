@@ -3,7 +3,9 @@
 
 /**
  * The demo host's resource numbers (`resources.get`): This Mac and each of
- * its Spaces, and a summary from the Mac mini (the Linux box sends none).
+ * its Spaces, a summary from the Mac mini (the Linux box sends none), and
+ * what each of your Spaces on your other computers takes there (only its
+ * disk; none for a computer that is offline).
  * Busy and in-use numbers drift a little with the clock, so the bars move
  * as live ones do. `diskFree` in its state sets This Mac's free disk
  * (`?demo=low-disk`, `?demo=disk-full`).
@@ -12,6 +14,7 @@
 import type { SpaceRow } from "../../contracts/spaces";
 import type { ComputerResources, DiskWarning, ResourcesSnapshot, SpaceResources } from "../../ops/resources";
 import type { DemoContext, DemoHandlers } from "./context";
+import { DEMO_MACHINES } from "../demo-data";
 
 const GB = 1_000_000_000;
 const GIB = 1024 ** 3;
@@ -72,6 +75,30 @@ function spaceResources(row: SpaceRow, now: number, index: number): SpaceResourc
   };
 }
 
+/** GB each demo Space on another computer takes there (stopped ones too). */
+const ON_OTHER_COMPUTER: Record<string, number> = {
+  "relay:mac-mini/release-checks": 21,
+  "relay:mac-mini/qa-windows": 25,
+  "relay:linux-box/ubuntu-build": 5,
+  "relay:linux-box/windows-legacy": 31,
+};
+
+const POWER_STATES = ["running", "stopped", "suspended"] as const;
+
+/** One of your Spaces on another computer: only what it takes there. */
+function remoteSpaceResources(row: SpaceRow): SpaceResources {
+  const gb = ON_OTHER_COMPUTER[row.id] ?? (row.kind === "container" ? 4 : 24);
+  return {
+    id: row.id,
+    powerState: POWER_STATES.find((p) => p === row.powerState) ?? "",
+    cpuAllocated: 0,
+    memoryAllocated: 0,
+    diskAllocated: 0,
+    usage: null,
+    diskOnHost: { bytes: gb * GB, allocated: gb * GB, sharesSpace: false },
+  };
+}
+
 function computer(c: Omit<ComputerResources, "warning">): ComputerResources {
   return { ...c, warning: demoDiskWarning(c.diskFree, c.diskTotal) };
 }
@@ -124,7 +151,9 @@ export function demoResources(rows: readonly SpaceRow[], now: number, diskFree: 
     spacesDiskBytes: 46 * GB,
     spacesDiskExact: false,
   });
-  return { sequence: Math.floor(now / 10_000), sampledAtMs: now, thisMac, spaces, computers: [macMini], warning: thisMac.warning };
+  const online = (host: string) => DEMO_MACHINES.some((m) => m.id === host && m.online);
+  const remote = rows.filter((r) => r.provider !== "local" && r.host && online(r.host)).map(remoteSpaceResources);
+  return { sequence: Math.floor(now / 10_000), sampledAtMs: now, thisMac, spaces: [...spaces, ...remote], computers: [macMini], warning: thisMac.warning };
 }
 
 export function demoResourcesHandlers({ state, now }: DemoContext): DemoHandlers<"resources.get"> {

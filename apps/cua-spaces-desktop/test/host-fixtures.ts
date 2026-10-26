@@ -48,6 +48,9 @@ export class FixtureHost {
     if (next) throw next;
     const relay = o.mode === "relay";
     const spare = o.profile === "spare";
+    // As cua-host decides when the request leaves it out: a machine set up
+    // before keeps its setting; a new relay setup provides Spaces.
+    const keep = this.current.configured ? this.current.provideSpaces : relay;
     this.current = {
       ...unconfiguredHost(),
       configured: true,
@@ -63,7 +66,7 @@ export class FixtureHost {
       online: true,
       allow: o.allow,
       shareDesktop: o.shareDesktop ?? !spare,
-      provideSpaces: o.provideSpaces ?? spare,
+      provideSpaces: o.provideSpaces ?? (spare || keep),
       owner: relay ? this.owner : undefined,
       ownerEmail: relay ? this.ownerEmail : undefined,
     };
@@ -333,7 +336,7 @@ export const HOST_METHODS = [
   "devices.get", "devices.enroll", "devices.checkEnrolled", "devices.approve", "devices.rename", "devices.revoke", "devices.confirmMachine",
   "devices.createPairingCode", "devices.pairingCodes", "devices.revokePairingCode", "teams.list",
   "storage.get", "storage.run", "notifications.list", "notifications.markAllRead", "notifications.markRead",
-  "host.setUp", "host.joinWithCode", "host.action", "host.openSettings", "settings.get", "settings.choose",
+  "host.setUp", "host.joinWithCode", "host.action", "host.openSettings", "settings.get", "settings.choose", "settings.update",
   "onboarding.get", "onboarding.complete",
 ];
 

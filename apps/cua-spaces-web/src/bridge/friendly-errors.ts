@@ -40,7 +40,7 @@ export function throttleSeconds(raw: string): number | null {
   return own ? Number(own[1]) : null;
 }
 
-/** What "Join with a code" says for a failure. */
+/** What "Enter a code" (Have a code? Enter it) says for a failure. */
 export function plainJoinError(e: unknown): string {
   const raw = rawText(e);
   console.warn("[Cua Spaces] join with a code failed:", raw);
@@ -55,7 +55,7 @@ export function plainJoinError(e: unknown): string {
   return stripInternalPrefixes(raw) || "Couldn't join with that code.";
 }
 
-/** What "Add a machine" says when it can't make a link. */
+/** What "Add a computer" says when it can't make a link. */
 export function plainPairingError(e: unknown): string {
   const raw = rawText(e);
   console.warn("[Cua Spaces] making a pairing link failed:", raw);

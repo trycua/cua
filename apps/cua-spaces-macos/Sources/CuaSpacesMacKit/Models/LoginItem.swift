@@ -218,6 +218,23 @@ public enum HelperService {
     /// (EX_TEMPFAIL): non-zero, so launchd starts it again.
     public static let restartExitCode: Int32 = 75
 
+    /// A launch of this executable that is not the app's window: the host
+    /// service and its commands (`--service-helper`, `check-permissions`,
+    /// `preflight-permissions`). These must never touch AppKit or start
+    /// anything that does (the Sentry SDK): a windowless process checked in
+    /// with LaunchServices as "Cua Spaces" makes opening the app fail.
+    public static func isServiceCommand(_ args: [String]) -> Bool {
+        ["--service-helper", "check-permissions", "preflight-permissions"].contains(args.first ?? "")
+    }
+
+    /// The service holds the app's LaunchServices entry: it shows as a
+    /// running "Cua Spaces" (0.17.0-beta.3 and beta.4 checked in through the
+    /// Sentry SDK). Opening the app then fails until the service restarts.
+    static func serviceHoldsAppEntry(servicePid: pid_t, bundleId: String) -> Bool {
+        NSRunningApplication.runningApplications(withBundleIdentifier: bundleId)
+            .contains { $0.processIdentifier == servicePid }
+    }
+
     /// The service started from an older build than the one installed now:
     /// it started before this app's cua-spacesd was put in place. That is
     /// the file's status-change time (an update writes new files, and no
@@ -277,10 +294,14 @@ public enum HelperService {
         guard let executable else { return }
         let target = "gui/\(getuid())/\(label)"
         DispatchQueue.global(qos: .utility).async {
-            guard let pid = runningPid(target: target), let started = processStart(pid),
-                  let installed = placedTime(daemonPath(executable: executable).path),
-                  isStale(serviceStarted: started, daemonInstalled: installed) else { return }
-            NSLog("cua-spaces: the host service (pid %d) is from before this build; restarting it", pid)
+            guard let pid = runningPid(target: target) else { return }
+            let stale = processStart(pid).flatMap { started in
+                placedTime(daemonPath(executable: executable).path).map { isStale(serviceStarted: started, daemonInstalled: $0) }
+            } ?? false
+            let holdsEntry = serviceHoldsAppEntry(servicePid: pid, bundleId: Bundle.main.bundleIdentifier ?? "com.trycua.spaces.macos")
+            guard stale || holdsEntry else { return }
+            NSLog("cua-spaces: restarting the host service (pid %d): %@", pid,
+                  stale ? "it is from before this build" : "it holds the app's LaunchServices entry")
             let p = Process()
             p.executableURL = URL(fileURLWithPath: "/bin/launchctl")
             p.arguments = ["kickstart", "-k", target]

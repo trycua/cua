@@ -57,7 +57,7 @@ export interface SurfaceState {
   radius: number;
   /** A dialog (or anything else on top, but floating UI) covers part of the slot: the host hides the video. */
   occluded: boolean;
-  /** Floating page UI over the slot (a menu, a popover, a tooltip, a toast), in the same coordinates,
+  /** Floating page UI over the slot (a menu, a popover, a tooltip, a toast, a tile's checkbox and power button while they show), in the same coordinates,
    * inside `clip`: the host cuts the video out there and keeps the rest playing. */
   holes?: SurfaceRect[];
   /** On screen at all: the page is visible, the slot is laid out and not clipped away. */

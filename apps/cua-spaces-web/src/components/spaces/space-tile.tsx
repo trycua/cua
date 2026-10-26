@@ -7,20 +7,25 @@
  * state is a quiet dot and word at the end of the name row, as the card had
  * before the redesign; power shows on hover. Files dropped on a running tile go into it,
  * and a real window dragged over it is offered to it (macOS).
+ *
+ * The controls over the picture (checkbox, power, badges) are
+ * `data-video-hole`: where the host draws the live desktop natively over
+ * the page (macOS), it cuts them out of the video while they show, so a
+ * live tile has them as any other does (`lib/video-slots.ts`).
  */
 
 import { Link } from "@tanstack/react-router";
 import { ArrowDownCircleIcon, KeyRoundIcon, LoaderCircleIcon, PowerIcon } from "lucide-react";
 import { useEffect, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from "react";
 
-import { useBridge, useSpaceFiles, useSpaces, useSpaceThumbnail, useTips, useWindowDropTarget, type Space } from "@/bridge";
+import { useBridge, useSpaceFiles, useSpaces, useSpaceThumbnail, useTips, useWindowDropTarget, type Space, type SpaceAccess } from "@/bridge";
 import { OsIcon } from "@/components/os-icon";
 import { StateLabel } from "@/components/state-dot";
 import { toast, toastError } from "@/components/ui/toast";
 import { useTileVideo } from "@/components/video/tile-video";
 import { useInView } from "@/hooks/use-in-view";
 import { creatingLine } from "@/lib/host-labels";
-import { createError, createProgress, powerButton, powerError } from "@/lib/spaces";
+import { createError, createProgress, powerButton, powerError, type PowerButton } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
 
 import { PeopleStack, SpaceMark } from "./avatars";
@@ -42,15 +47,29 @@ export interface SpaceTileProps {
   onClick?: (e: MouseEvent) => void;
 }
 
+/**
+ * A tile's grid cell (`<li>`). Off-screen cells skip layout and paint
+ * (`content-visibility`), which also clips what they paint to their box: the
+ * cell keeps 4 px of room around the tile (padding, taken back by a negative
+ * margin so the grid doesn't move) for the selected and focus rings drawn
+ * just outside the picture.
+ */
+export const TILE_CELL = "-m-1 p-1 [content-visibility:auto] [contain-intrinsic-size:auto_240px]";
+
 export function SpaceTile({ item, accessKey, selected = false, busy = false, topLeft, more, onClick }: SpaceTileProps) {
   const { space, state, access } = item;
   const drop = useTileDrop(space, state === "running");
   // A real window dragged over this tile (the host hit-tests the tiles' boxes and says which; macOS only).
   const windowOver = useWindowDropTarget() === space.id;
   const creating = state === "creating";
+  const { core } = useBridge();
+  // Shown wherever the Space has power at all; disabled, with why, where you may not use it.
+  const power = powerButton(core, space);
+  const hasPower = power !== null;
   return (
     <div
       className={cn("group/tile relative", (busy || state === "deleting") && "opacity-60")}
+      data-video-hole-scope=""
       data-tile-drop={drop.over ?? undefined}
       data-drop-status={drop.status?.kind}
       data-window-drop={space.id}
@@ -108,7 +127,7 @@ export function SpaceTile({ item, accessKey, selected = false, busy = false, top
       {drop.over ? <DropOverlay space={space} accepts={drop.over === "accept"} /> : null}
       {/* A drop on the tile still going in: the core's "Sending …" line. */}
       {drop.status?.kind === "working" && !drop.over ? (
-        <div className="pointer-events-none absolute top-2 left-2 z-20 flex max-w-[60%] items-center gap-1.5 rounded-[4px] bg-black/70 px-1.5 py-px text-[11px] font-medium text-white">
+        <div data-video-hole="" className="pointer-events-none absolute top-2 left-2 z-20 flex max-w-[60%] items-center gap-1.5 rounded-[4px] bg-black/70 px-1.5 py-px text-[11px] font-medium text-white">
           <LoaderCircleIcon className="size-3 shrink-0 animate-spin" aria-hidden />
           <span className="truncate">{drop.status.text}</span>
         </div>
@@ -122,16 +141,21 @@ export function SpaceTile({ item, accessKey, selected = false, busy = false, top
             to="/keyvault"
             search={{ view: "access", focus: accessKey ?? undefined }}
             data-signed-in={space.id}
+            data-video-hole=""
             title="A Keyvault sign-in is live in this Space. Open Access."
             className={cn(
               "ml-auto inline-flex h-6 items-center gap-1 rounded-md bg-black/55 px-1.5 text-[11px] font-medium text-white/90 outline-none backdrop-blur-sm transition-[margin] hover:text-white focus-visible:ring-2 focus-visible:ring-ring/60",
-              access.canPower && "group-hover/tile:mr-7 group-focus-within/tile:mr-7",
+              hasPower && "group-hover/tile:mr-7 group-focus-within/tile:mr-7",
             )}
           >
             <KeyRoundIcon className="size-3" /> Signed in
           </Link>
         ) : null}
-        {access.canPower ? <div className="absolute right-0 top-0"><TilePower space={space} /></div> : null}
+        {hasPower ? (
+          <div className="absolute right-0 top-0">
+            <TilePower space={space} button={power} denied={access.canPower ? null : cantPower(access)} />
+          </div>
+        ) : null}
       </div>
       {more ? <div className="absolute top-[calc(100%-2.75rem)] right-0 z-10">{more}</div> : null}
     </div>
@@ -151,11 +175,13 @@ function Picture({ item, ring, busy }: { item: SpaceItem; ring: boolean; busy: b
   return (
     <div
       ref={ref}
+      data-tile-picture=""
       data-stream-state={video?.phase}
       className={cn(
-        "relative flex aspect-[16/10] items-center justify-center overflow-hidden rounded-lg bg-tile transition-shadow",
+        "relative flex aspect-[16/10] items-center justify-center overflow-hidden rounded-lg bg-tile ring-offset-2 ring-offset-background transition-shadow",
+        // Both rings sit just outside the picture (a live tile's video covers the inside), in the room `TILE_CELL` keeps.
         "group-focus-visible/link:ring-2 group-focus-visible/link:ring-ring/60",
-        ring && "ring-2 ring-brand ring-offset-2 ring-offset-background",
+        ring && "ring-2 ring-brand",
       )}
     >
       {thumbnail ? (
@@ -171,7 +197,7 @@ function Picture({ item, ring, busy }: { item: SpaceItem; ring: boolean; busy: b
         </div>
       ) : null}
       {busy || state === "deleting" ? (
-        <div data-tile-busy="" className="absolute inset-0 flex items-center justify-center bg-background/40">
+        <div data-tile-busy="" data-video-hole="" className="absolute inset-0 z-10 flex items-center justify-center bg-background/40">
           <LoaderCircleIcon className="size-5 animate-spin text-muted-foreground" aria-hidden />
         </div>
       ) : null}
@@ -226,8 +252,9 @@ function DropOverlay({ space, accepts }: { space: Space; accepts: boolean }) {
   return (
     <div
       aria-hidden
+      data-video-hole=""
       className={cn(
-        "pointer-events-none absolute inset-x-0 top-0 flex aspect-[16/10] flex-col items-center justify-center gap-1.5 rounded-lg text-center text-[13px] backdrop-blur-[2px]",
+        "pointer-events-none absolute inset-x-0 top-0 z-20 flex aspect-[16/10] flex-col items-center justify-center gap-1.5 rounded-lg text-center text-[13px] backdrop-blur-[2px]",
         accepts ? "bg-brand/20 text-foreground ring-2 ring-brand" : "bg-background/75 text-muted-foreground",
       )}
     >
@@ -237,18 +264,22 @@ function DropOverlay({ space, accepts }: { space: Space; accepts: boolean }) {
   );
 }
 
+/** Why you can't turn a Space on or off that has power (shared with you to watch). */
+function cantPower(access: SpaceAccess): string {
+  return access.role === "viewer" ? "You can view this Space but not turn it on or off" : "You can't turn this Space on or off";
+}
+
 /**
  * The core's power button, while the pointer is on the tile or focus is in
  * it, and always while it runs (the SwiftUI sidebar row's, which shows on
- * hover, on the selected row and while busy).
+ * hover, on the selected row and while busy). `denied`: you may not use it
+ * (a Space shared with you to watch); it shows disabled, saying why.
  */
-function TilePower({ space }: { space: Space }) {
-  const { core } = useBridge();
+function TilePower({ space, button, denied }: { space: Space; button: PowerButton; denied: string | null }) {
   const { startSpace, stopSpace } = useSpaces();
   const tips = useTips();
-  const button = powerButton(core, space);
-  if (!button) return null;
   const press = () => {
+    if (denied) return;
     const [act, word] = button.turnOn ? [startSpace, "start"] : [stopSpace, "stop"];
     void tips.send({ type: "powered" });
     void act(space.id).catch(toastError(`Couldn't ${word} ${space.name}`));
@@ -258,13 +289,18 @@ function TilePower({ space }: { space: Space }) {
       type="button"
       data-tile-power={button.turnOn ? "on" : "off"}
       data-busy={button.busy || undefined}
+      data-denied={denied ? "" : undefined}
+      data-video-hole=""
       disabled={button.busy}
-      title={button.help}
+      aria-disabled={denied ? true : undefined}
+      title={denied ?? button.help}
       aria-label={`${button.help} ${space.name}`}
+      aria-description={denied ?? undefined}
       onClick={press}
       className={cn(
         "inline-flex size-6 items-center justify-center rounded-md bg-black/55 text-white/90 outline-none backdrop-blur-sm hover:bg-black/70 hover:text-white focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-default",
         !button.busy && "opacity-0 group-focus-within/tile:opacity-100 group-hover/tile:opacity-100",
+        denied && "cursor-default text-white/45 hover:bg-black/55 hover:text-white/45",
       )}
     >
       {button.busy ? <LoaderCircleIcon className="size-3 animate-spin" aria-hidden /> : <PowerIcon className="size-3" aria-hidden />}

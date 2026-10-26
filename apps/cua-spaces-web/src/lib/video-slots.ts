@@ -68,6 +68,11 @@ export const HOLE_SELECTOR = [
   "[data-toast]",
 ].join(",");
 
+/** Where a slot's own controls live (a Space tile): a `[data-video-hole]`
+ * inside one counts only for the slot in the same scope, and only while it
+ * shows (a hover control sits at `opacity: 0` until then). */
+export const HOLE_SCOPE_SELECTOR = "[data-video-hole-scope]";
+
 /** Transparent layers that only catch outside clicks (Base UI's
  * `InternalBackdrop` under an open menu or popover): they paint nothing, so
  * they never cover video. */
@@ -127,6 +132,9 @@ interface Slot extends SlotOptions {
   status: SlotStatus;
   listener: (status: SlotStatus) => void;
 }
+
+/** Events after which a tile's hover controls may have shown or hidden. */
+const POINTER_FOCUS = ["pointerover", "pointerout", "focusin", "focusout"] as const;
 
 /** Frames to keep measuring after something changed (follows transitions). */
 const SETTLE_FRAMES = 20;
@@ -279,10 +287,13 @@ export class VideoSlotReporter {
         childList: true,
         subtree: true,
         attributes: true,
-        attributeFilter: ["data-open", "data-closed", "data-state", "open", "hidden", "style"],
+        // `class`: a tile's controls (holes) show and hide by class (selection mode).
+        attributeFilter: ["data-open", "data-closed", "data-state", "open", "hidden", "style", "class"],
       });
     }
     w.addEventListener("scroll", this.schedule, { capture: true, passive: true });
+    // Hover and focus show a tile's controls by CSS alone (no DOM change): measure their holes.
+    for (const type of POINTER_FOCUS) w.addEventListener(type, this.schedule, { passive: true });
     w.addEventListener("resize", this.schedule);
     w.addEventListener("cua:event", this.onHostEvent);
     w.document.addEventListener("visibilitychange", this.schedule);
@@ -299,6 +310,7 @@ export class VideoSlotReporter {
     this.mutations?.disconnect();
     this.mutations = null;
     w.removeEventListener("scroll", this.schedule, { capture: true });
+    for (const type of POINTER_FOCUS) w.removeEventListener(type, this.schedule);
     w.removeEventListener("resize", this.schedule);
     w.removeEventListener("cua:event", this.onHostEvent);
     w.document.removeEventListener("visibilitychange", this.schedule);
@@ -372,13 +384,21 @@ function topmostPainted(doc: Document, x: number, y: number): Element | null {
 
 /**
  * The floating UI over `clip` (menus, popovers, tooltips, toasts, the
- * viewer's key bar), each clipped to it: the host draws no video there.
+ * viewer's key bar, a tile's checkbox and power button while they show),
+ * each clipped to it: the host draws no video there.
  */
 export function videoHoles(el: Element, clip: SurfaceRect, doc: Document = document): SurfaceRect[] {
   const holes: SurfaceRect[] = [];
+  const win = doc.defaultView;
   for (const o of doc.querySelectorAll(HOLE_SELECTOR)) {
     // Floating UI inside the slot counts only when it asks (`data-video-hole`).
     if (o.contains(el) || (el.contains(o) && !o.hasAttribute("data-video-hole"))) continue;
+    if (o.hasAttribute("data-video-hole")) {
+      // Another tile's control, or one hidden until hover: no hole.
+      const scope = o.closest(HOLE_SCOPE_SELECTOR);
+      if (scope && !scope.contains(el)) continue;
+      if (win && !showsNow(o, scope, win)) continue;
+    }
     // One hole for a nested pair (a menu inside a marked popup).
     if (o.parentElement?.closest(HOLE_SELECTOR)) continue;
     const r = o.getBoundingClientRect();
@@ -387,6 +407,17 @@ export function videoHoles(el: Element, clip: SurfaceRect, doc: Document = docum
     if (hole) holes.push(hole);
   }
   return holes;
+}
+
+/** Laid out, not hidden and not fully transparent (itself or an ancestor up to `scope`). */
+function showsNow(o: Element, scope: Element | null, win: Window): boolean {
+  if (win.getComputedStyle(o).visibility === "hidden") return false;
+  const stop = scope?.parentElement ?? null;
+  for (let a: Element | null = o; a && a !== stop; a = a.parentElement) {
+    const style = win.getComputedStyle(a);
+    if (style.display === "none" || Number.parseFloat(style.opacity) === 0) return false;
+  }
+  return true;
 }
 
 let shared: VideoSlotReporter | null | undefined;

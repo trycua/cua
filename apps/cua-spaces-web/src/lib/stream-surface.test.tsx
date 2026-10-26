@@ -168,6 +168,71 @@ describe("stream surface helpers", () => {
     expect(videoHoles(slot, { x: 0, y: 0, width: 400, height: 300 })).toEqual([{ x: 100, y: 260, width: 200, height: 30 }]);
   });
 
+  it("cuts a tile's own checkbox and power out of its video while they show, never another tile's", () => {
+    const tile = (name: string) => {
+      const scope = document.createElement("div");
+      scope.setAttribute("data-video-hole-scope", "");
+      const picture = document.createElement("div");
+      const check = document.createElement("button");
+      check.setAttribute("data-video-hole", "");
+      const power = document.createElement("button");
+      power.setAttribute("data-video-hole", "");
+      power.style.opacity = "0";
+      scope.append(picture, check, power);
+      scope.dataset.name = name;
+      document.body.append(scope);
+      return { picture, check, power };
+    };
+    const a = tile("a");
+    const b = tile("b");
+    const clip = { x: 0, y: 0, width: 320, height: 200 };
+    box(a.picture, clip);
+    box(a.check, { x: 8, y: 8, width: 16, height: 16 });
+    box(a.power, { x: 288, y: 8, width: 24, height: 24 });
+    // The next tile's controls overlap this clip here only to prove scope is what decides.
+    box(b.check, { x: 40, y: 8, width: 16, height: 16 });
+    // Power is hidden until hover (opacity 0): only the checkbox is cut.
+    expect(videoHoles(a.picture, clip)).toEqual([{ x: 8, y: 8, width: 16, height: 16 }]);
+    // Hover shows it.
+    a.power.style.opacity = "1";
+    expect(videoHoles(a.picture, clip)).toEqual([
+      { x: 8, y: 8, width: 16, height: 16 },
+      { x: 288, y: 8, width: 24, height: 24 },
+    ]);
+    // Hidden by an ancestor in the tile: no hole.
+    a.check.parentElement!.style.opacity = "0";
+    expect(videoHoles(a.picture, clip)).toEqual([]);
+    // A tile's control is not something on top of its video.
+    a.check.parentElement!.style.opacity = "1";
+    document.elementsFromPoint = (x, y) => (x < 30 && y < 30 ? [a.check, a.picture] : [a.picture]);
+    expect(isOccluded(a.picture, clip, document, 8)).toBe(false);
+  });
+
+  it("measures holes again on hover and focus, which change no DOM", () => {
+    const sent: StreamSurfaceMessage[] = [];
+    const frames: FrameRequestCallback[] = [];
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => (frames.push(cb), frames.length));
+    const reporter = new VideoSlotReporter({ postMessage: (m) => void sent.push(m) });
+    const scope = document.createElement("div");
+    scope.setAttribute("data-video-hole-scope", "");
+    const picture = document.createElement("div");
+    const power = document.createElement("button");
+    power.setAttribute("data-video-hole", "");
+    power.style.opacity = "0";
+    scope.append(picture, power);
+    document.body.append(scope);
+    box(picture, { x: 0, y: 0, width: 320, height: 200 });
+    box(power, { x: 288, y: 8, width: 24, height: 24 });
+    const stop = reporter.register(picture, { spaceId: "a", tier: "tile", interactive: false, radius: 8 }, () => {});
+    const last = () => (sent.at(-1) as Extract<StreamSurfaceMessage, { type: "surfaces" }>).update[0]!;
+    expect(last().holes).toEqual([]);
+    power.style.opacity = "1";
+    window.dispatchEvent(new Event("pointerover"));
+    frames.splice(0).forEach((f) => f(0));
+    expect(last().holes).toEqual([{ x: 288, y: 8, width: 24, height: 24 }]);
+    stop();
+  });
+
   it("calls a slot occluded when something else is on top of it (a backdrop)", () => {
     const slot = document.createElement("div");
     const inner = document.createElement("span");

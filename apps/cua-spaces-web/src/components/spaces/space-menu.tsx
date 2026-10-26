@@ -94,20 +94,45 @@ function Items({ items, Item, Separator }: { items: ReturnType<typeof useSpaceMe
   ));
 }
 
-/** The "⋯" button, shown on hover (and while its menu is open). */
+const MORE_BUTTON =
+  "flex size-7 shrink-0 cursor-default items-center justify-center rounded-lg text-muted-foreground opacity-0 outline-none group-hover/row:opacity-100 group-hover/tile:opacity-100 group-focus-within/tile:opacity-100 hover:bg-tile hover:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/60 data-popup-open:bg-tile data-popup-open:text-foreground data-popup-open:opacity-100";
+
+/**
+ * The "⋯" button, shown on hover, while focus is in the tile and while its
+ * menu is open. Without items (the app core still loading, or none here)
+ * it still shows, disabled, saying why, so every tile has the same controls.
+ */
 export function SpaceMoreMenu({ item, actions, className }: { item: SpaceItem; actions: MenuActions; className?: string }) {
   const items = useSpaceMenu(item, actions);
-  if (!items.length) return null;
+  const { core } = useBridge();
+  if (!items.length) {
+    const why = core.status === "loading" ? "Still loading" : "This Space's actions aren't available here";
+    return (
+      <button
+        type="button"
+        aria-label={`More for ${item.space.name}`}
+        aria-disabled
+        aria-description={why}
+        title={why}
+        data-space-more={item.space.id}
+        data-disabled=""
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        }}
+        className={cn(MORE_BUTTON, "text-muted-foreground/50 hover:bg-transparent hover:text-muted-foreground/50", className)}
+      >
+        <MoreHorizontalIcon className="size-4" />
+      </button>
+    );
+  }
   return (
     <MenuPrimitive.Root>
       <MenuPrimitive.Trigger
         aria-label={`More for ${item.space.name}`}
         data-space-more={item.space.id}
         onClick={(e) => e.stopPropagation()}
-        className={cn(
-          "flex size-7 shrink-0 cursor-default items-center justify-center rounded-lg text-muted-foreground opacity-0 outline-none group-hover/row:opacity-100 group-hover/tile:opacity-100 hover:bg-tile hover:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/60 data-popup-open:bg-tile data-popup-open:text-foreground data-popup-open:opacity-100",
-          className,
-        )}
+        className={cn(MORE_BUTTON, className)}
       >
         <MoreHorizontalIcon className="size-4" />
       </MenuPrimitive.Trigger>

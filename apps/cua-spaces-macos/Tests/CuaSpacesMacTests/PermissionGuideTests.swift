@@ -5,6 +5,7 @@
 import Foundation
 import PermissionFlow
 import Testing
+import WebKit
 
 /// `host.openSettings` guides Screen Recording and Accessibility (the panes
 /// the host's permission hints and the first run's rows name); any other
@@ -90,5 +91,62 @@ struct PermissionGuideTests {
         let done = await PermissionGuide.waitForGrant(.accessibility, read: { [] },
                                                       interval: .milliseconds(1), giveUpAfter: .milliseconds(30))
         #expect(!done)
+    }
+
+    /// The page's Allow reaches System Settings through the bridge, and a
+    /// grant after that ends the watch (CUA-2342).
+    @MainActor
+    @Test func allowOpensThePaneThroughTheBridgeThenAGrantCompletes() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cua-allow-\(UUID().uuidString)")
+        let model = AppModel(backend: FixtureSpacesBackend(rows: []), keyvault: KeyvaultModel(client: nil),
+                             onboarding: OnboardingModel(statePath: dir.appendingPathComponent("onboarding.json").path),
+                             settingsPath: dir.appendingPathComponent("settings.json").path,
+                             telemetry: FixtureTelemetry())
+        let bridge = WebUIBridge(model: model, allowedOrigins: [])
+        let (savedOpen, savedShows, savedHook, savedRead, savedStore) =
+            (PermissionGuide.openPane, PermissionGuide.showsGuide, PermissionGuide.grantedHook,
+             PermissionGuide.readGranted, PermissionGuide.listedStore)
+        defer {
+            (PermissionGuide.openPane, PermissionGuide.showsGuide, PermissionGuide.grantedHook,
+             PermissionGuide.readGranted, PermissionGuide.listedStore) = (savedOpen, savedShows, savedHook, savedRead, savedStore)
+        }
+        let suite = "PermissionGuideTests.bridge.\(UUID().uuidString)"
+        let store = UserDefaults(suiteName: suite)!
+        defer { store.removePersistentDomain(forName: suite) }
+        PermissionGuide.listedStore = store
+        var opened: [String] = []
+        var granted: [PermissionFlowPane] = []
+        PermissionGuide.openPane = { opened.append($0.absoluteString) }
+        PermissionGuide.showsGuide = false
+        PermissionGuide.grantedHook = { granted.append($0) }
+        // Denied: off for the first reads; then the person turns it on.
+        actor Reads {
+            var n = 0
+            func next() -> Set<PermissionFlowPane> { n += 1; return n > 2 ? [.accessibility] : [] }
+            func reset() { n = 0 }
+        }
+        let reads = Reads()
+        PermissionGuide.readGranted = { await reads.next() }
+
+        // Both a switched-off (listed) and a never-asked app go to the pane.
+        for listed in [true, false] {
+            opened = []
+            granted = []
+            PermissionGuide.markListed(.accessibility, listed)
+            let url = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+            _ = try await bridge.handle("host.openSettings", ["url": url])
+            #expect(opened == [url], "listed: \(listed)")
+            for _ in 0..<200 where granted.isEmpty { try await Task.sleep(for: .milliseconds(50)) }
+            #expect(granted == [.accessibility], "listed: \(listed)")
+            await reads.reset()
+        }
+    }
+
+    /// WKWebView refuses a window's first click by default: with System
+    /// Settings in front, "Allow" then only brought the app forward.
+    @MainActor
+    @Test func theWebViewTakesTheClickThatActivatesItsWindow() {
+        let web = WebUIWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        #expect(web.acceptsFirstMouse(for: nil))
     }
 }

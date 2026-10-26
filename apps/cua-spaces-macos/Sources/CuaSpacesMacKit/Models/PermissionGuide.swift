@@ -51,6 +51,13 @@ public enum PermissionGuide {
 
     private static var controller: PermissionFlowController?
 
+    /// How a pane is opened, what the guide draws over it, and what runs on
+    /// a grant. Replaced in tests, which must not open System Settings or
+    /// draw panels.
+    nonisolated(unsafe) static var openPane: (URL) -> Void = { NSWorkspace.shared.open($0) }
+    nonisolated(unsafe) static var showsGuide = true
+    nonisolated(unsafe) static var grantedHook: ((PermissionFlowPane) -> Void)?
+
     // MARK: - Listed or not (CUA-2283)
 
     /// What the guide tells the person to do in a pane's list.
@@ -202,8 +209,13 @@ public enum PermissionGuide {
         // Already in the list: say "switch on", not "drag".
         if instruction(for: pane, listed: isListed(pane)) == .switchOn, let u = URL(string: url) {
             controller?.closePanel()
-            NSWorkspace.shared.open(u)
-            showSwitchOnHint(for: pane, url: url)
+            openPane(u)
+            if showsGuide { showSwitchOnHint(for: pane, url: url) }
+            watch(pane)
+            return true
+        }
+        guard showsGuide else {
+            if let u = URL(string: url) { openPane(u) }
             watch(pane)
             return true
         }
@@ -320,6 +332,7 @@ public enum PermissionGuide {
     private static func granted(_ pane: PermissionFlowPane, others: Set<PermissionFlowPane>) {
         watching = nil
         reopening?.cancel()
+        if let hook = grantedHook { return hook(pane) }
         controller?.closePanel()
         closeHint()
         let followUp = {

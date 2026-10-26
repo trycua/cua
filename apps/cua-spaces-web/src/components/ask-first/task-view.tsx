@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { Link } from "@tanstack/react-router";
-import { ArrowLeftIcon, ArrowUpIcon, CheckIcon, EyeIcon, HandIcon, Loader2Icon, Maximize2Icon, Minimize2Icon, Trash2Icon, TriangleAlertIcon, UserPlusIcon } from "lucide-react";
+import { ArrowLeftIcon, ArrowUpIcon, CheckIcon, ChevronDownIcon, EyeIcon, HandIcon, Loader2Icon, Maximize2Icon, Minimize2Icon, RotateCwIcon, Trash2Icon, TriangleAlertIcon, UserPlusIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { useAgents, useAgentTimeline, useSession, useShareSheet, useSpaceDetail, useSpaces, type AgentTimeline, type Space } from "@/bridge";
@@ -13,12 +13,14 @@ import { StreamSurface } from "@/components/space-detail/stream-surface";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { toastError } from "@/components/ui/toast";
-import { keepTranscript, taskState, TASK_STATE_TEXT, taskTitle, updateAskTask, useAskTasks, type AskTask, type TaskState } from "@/lib/ask-first";
+import { keepTranscript, startErrorView, taskState, TASK_STATE_TEXT, taskTitle, updateAskTask, useAskTasks, type AskTask, type TaskState, type TaskWhere } from "@/lib/ask-first";
 import { createProgress, spaceState } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
 
-import { agentName, AppMark } from "./ask-box";
+import { agentName, AppMark, WherePicker } from "./ask-box";
 import { StateDot, taskRun } from "./home";
+import { useStartTask } from "./use-start-task";
+import { useWhereOptions } from "./where-options";
 
 /** What the agent is told when the person hands the computer back. */
 /** How long a sent reply may take to show in the run before the thread trusts the run's status again (ms). */
@@ -52,6 +54,7 @@ function TaskView({ task }: { task: AskTask }) {
   const { data: agents, sendMessage } = useAgents();
   const { data: session } = useSession();
   const sharing = useShareSheet();
+  const { retry } = useStartTask();
   const space = spaces?.find((s) => s.id === task.spaceId);
   const pending = task.pendingId ? spaces?.find((s) => s.id === task.pendingId) : undefined;
   const ref = task.runId && task.spaceId && task.ending !== "thrown" ? { spaceId: task.spaceId, runId: task.runId } : null;
@@ -122,6 +125,7 @@ function TaskView({ task }: { task: AskTask }) {
       onAnswer={() => replyRef.current?.focus()}
       onKeep={keep}
       onThrow={() => setThrowing(true)}
+      onRetry={(where) => retry(task, where)}
     />
   );
   const hasThread = timeline.items.length > 0;
@@ -265,6 +269,53 @@ function Starting({ pending, space, name }: { pending: Space | undefined; space:
   );
 }
 
+/**
+ * A start that failed, in plain words: what went wrong, Try again and
+ * Change computer right in the card, and the core's own words under
+ * Details.
+ */
+export function StartFailed({ error, name, onRetry }: { error: string; name: string; onRetry: (where?: TaskWhere) => void }) {
+  const view = startErrorView(error, name);
+  const { kinds, spaces } = useWhereOptions();
+  return (
+    <CuaLine tone="bad">
+      <div data-ask-start-failed={view.action}>
+        <div className="mb-1 flex items-center gap-2 text-[15px] font-semibold text-foreground">
+          <TriangleAlertIcon className="size-4 text-destructive" /> {view.title}
+        </div>
+        <p>{view.body}</p>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {view.action === "add-key" ? (
+            <Button className="h-10 px-4" render={<Link to="/settings/connected-apps" />}>
+              Add your key
+            </Button>
+          ) : null}
+          {view.retry ? (
+            <Button variant={view.action === "retry" ? "default" : "outline"} className="h-10 px-4" onClick={() => onRetry()}>
+              <RotateCwIcon /> Try again
+            </Button>
+          ) : null}
+          <WherePicker
+            where={null}
+            onWhere={(w) => onRetry(w)}
+            kinds={kinds}
+            spaces={spaces}
+            trigger={
+              <Button variant={view.action === "change-computer" ? "default" : "outline"} className="h-10 px-4" data-ask-change-computer="">
+                Change computer <ChevronDownIcon />
+              </Button>
+            }
+          />
+        </div>
+        <details className="mt-3 text-[12px]">
+          <summary className="cursor-pointer select-none">Details</summary>
+          <p className="mt-1 font-mono break-words whitespace-pre-wrap">{error}</p>
+        </details>
+      </div>
+    </CuaLine>
+  );
+}
+
 function ThreadFooter({
   task,
   state,
@@ -275,6 +326,7 @@ function ThreadFooter({
   onAnswer,
   onKeep,
   onThrow,
+  onRetry,
 }: {
   task: AskTask;
   state: TaskState;
@@ -285,26 +337,11 @@ function ThreadFooter({
   onAnswer: () => void;
   onKeep: () => void;
   onThrow: () => void;
+  onRetry: (where?: TaskWhere) => void;
 }) {
   return (
     <div className="flex flex-col gap-5" data-ask-footer="">
-      {task.error ? (
-        <CuaLine tone="bad">
-          <div className="mb-1 flex items-center gap-2 text-[15px] font-semibold text-foreground">
-            <TriangleAlertIcon className="size-4 text-destructive" /> This task couldn't start
-          </div>
-          {task.error}
-          {/key|sign|auth|login|credential/i.test(task.error) ? (
-            <p className="mt-2">
-              {name} needs your key to work on the new computer. Add it in{" "}
-              <Link to="/settings/connected-apps" className="underline">
-                Settings → Connected apps
-              </Link>
-              , then ask again.
-            </p>
-          ) : null}
-        </CuaLine>
-      ) : null}
+      {task.error ? <StartFailed error={task.error} name={name} onRetry={onRetry} /> : null}
       {state === "working" ? (
         <p className="flex items-center gap-2 text-xs text-muted-foreground" role="status">
           <StateDot state="working" />
@@ -390,8 +427,22 @@ function Screen({
   onBig: () => void;
 }) {
   const detail = useSpaceDetail(space, null).detail;
-  const on = space ? spaceState(space) === "running" : false;
-  const caption = !space ? (task.ending === "thrown" ? "Thrown away" : "Not ready yet") : state === "needs-you" ? "Waiting for you" : state === "working" ? "Live" : "Finished";
+  // A task that never started shows no screen: there is nothing of its to watch.
+  const on = space && state !== "didnt-start" ? spaceState(space) === "running" : false;
+  const caption =
+    state === "didnt-start"
+      ? TASK_STATE_TEXT["didnt-start"]
+      : !space
+        ? task.ending === "thrown"
+          ? "Thrown away"
+          : "Not ready yet"
+        : state === "needs-you"
+          ? "Waiting for you"
+          : state === "working" || state === "stuck"
+            ? "Live"
+            : state === "failed"
+              ? TASK_STATE_TEXT.failed
+              : "Finished";
   return (
     <div className={cn("overflow-hidden rounded-xl border bg-card shadow-xs", state === "needs-you" && mode === "watch" && "ring-2 ring-warning/70", mode === "control" && "ring-2 ring-brand")} data-ask-screen={mode}>
       {space && on ? (

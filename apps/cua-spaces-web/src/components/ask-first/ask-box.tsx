@@ -8,7 +8,10 @@ import { useEffect, useRef, type ReactElement, type ReactNode } from "react";
 import type { Space, SpaceOs } from "@/bridge";
 import { AppMarkImage } from "@/components/agents/harness-mark";
 import { OsIcon } from "@/components/os-icon";
+import type { NewKind, TaskWhere } from "@/lib/ask-first";
 import { cn } from "@/lib/utils";
+
+export type { TaskWhere } from "@/lib/ask-first";
 
 /** The coding apps a task can run with (`agent_start`'s harnesses), in the picker's order. */
 export const TASK_AGENTS: { id: string; name: string; setupId: string }[] = [
@@ -21,9 +24,6 @@ export const TASK_AGENTS: { id: string; name: string; setupId: string }[] = [
 ];
 
 export const agentName = (id: string) => TASK_AGENTS.find((a) => a.id === id)?.name ?? id;
-
-/** Where the job runs: a new computer of a kind on this Mac, or a Space you already have. */
-export type TaskWhere = { kind: "new"; os: SpaceOs } | { kind: "space"; space: Space };
 
 const OS_WORD: Record<SpaceOs, string> = { linux: "Linux", macos: "Mac", windows: "Windows", unknown: "" };
 
@@ -38,6 +38,9 @@ export function AppMark({ agent, size = 32 }: { agent: string; size?: number }) 
     </span>
   );
 }
+
+/** Why this Mac itself isn't in the list. */
+export const WHERE_FOOTER = "Agents don't work on this Mac itself. Each job gets its own computer, so yours stays untouched.";
 
 function Picker({ trigger, title, children, footer }: { trigger: ReactElement; title: string; children: ReactNode; footer?: ReactNode }) {
   return (
@@ -104,8 +107,8 @@ export function AskBox({
   where: TaskWhere;
   onWhere: (w: TaskWhere) => void;
   /** The kinds of new computer this Mac can make, with a line each ("about 2 min"). */
-  kinds: { os: SpaceOs; note: string; blocked: string | null }[];
-  /** Running Spaces to use instead. */
+  kinds: NewKind[];
+  /** Running Spaces to use instead (never this Mac's own desktop: `pickableSpaces`). */
   spaces: Space[];
   busy: boolean;
   onSubmit: () => void;
@@ -152,8 +155,11 @@ export function AskBox({
           ))}
         </Picker>
         <span className="px-1 text-[14px] text-muted-foreground">on</span>
-        <Picker
-          title="Where it runs"
+        <WherePicker
+          where={where}
+          onWhere={onWhere}
+          kinds={kinds}
+          spaces={spaces}
           trigger={
             <button type="button" className={pickerButton} data-picker="where">
               {where.kind === "new" ? <OsIcon os={where.os} className="size-4 text-muted-foreground" /> : <MonitorIcon className="size-4 text-muted-foreground" />}
@@ -161,37 +167,7 @@ export function AskBox({
               <ChevronDownIcon className="size-4 text-muted-foreground" />
             </button>
           }
-        >
-          {kinds.map((k) => (
-            <PickerRow
-              key={k.os}
-              icon={
-                <span className="flex size-7 items-center justify-center rounded-md border text-muted-foreground">
-                  <OsIcon os={k.os} className="size-4" />
-                </span>
-              }
-              title={`A new ${OS_WORD[k.os]} computer on this Mac`}
-              note={k.blocked ?? k.note}
-              selected={where.kind === "new" && where.os === k.os}
-              onSelect={() => onWhere({ kind: "new", os: k.os })}
-            />
-          ))}
-          {spaces.length ? <p className="px-3 pt-3 pb-1 text-[12px] font-medium text-muted-foreground">Or use a computer you already have</p> : null}
-          {spaces.slice(0, 5).map((s) => (
-            <PickerRow
-              key={s.id}
-              icon={
-                <span className="flex size-7 items-center justify-center rounded-md border text-muted-foreground">
-                  {s.provider === "local" ? <LaptopIcon className="size-4" /> : <OsIcon os={s.os} className="size-4" />}
-                </span>
-              }
-              title={s.name}
-              note="On now"
-              selected={where.kind === "space" && where.space.id === s.id}
-              onSelect={() => onWhere({ kind: "space", space: s })}
-            />
-          ))}
-        </Picker>
+        />
         <div className="flex-1" />
         <button
           type="button"
@@ -204,5 +180,58 @@ export function AskBox({
         </button>
       </div>
     </div>
+  );
+}
+
+/**
+ * "Where it runs": the kinds of new computer this Mac can make, then the
+ * running Spaces you have. This Mac's own desktop is never offered (the
+ * footer says why): `agent_start` runs only in a Space.
+ */
+export function WherePicker({
+  where,
+  onWhere,
+  kinds,
+  spaces,
+  trigger,
+}: {
+  where: TaskWhere | null;
+  onWhere: (w: TaskWhere) => void;
+  kinds: NewKind[];
+  spaces: Space[];
+  trigger: ReactElement;
+}) {
+  return (
+    <Picker title="Where it runs" trigger={trigger} footer={WHERE_FOOTER}>
+      {kinds.map((k) => (
+        <PickerRow
+          key={k.os}
+          icon={
+            <span className="flex size-7 items-center justify-center rounded-md border text-muted-foreground">
+              <OsIcon os={k.os} className="size-4" />
+            </span>
+          }
+          title={`A new ${OS_WORD[k.os]} computer on this Mac`}
+          note={k.blocked ?? k.note}
+          selected={where?.kind === "new" && where.os === k.os}
+          onSelect={() => onWhere({ kind: "new", os: k.os })}
+        />
+      ))}
+      {spaces.length ? <p className="px-3 pt-3 pb-1 text-[12px] font-medium text-muted-foreground">Or use a computer you already have</p> : null}
+      {spaces.slice(0, 5).map((s) => (
+        <PickerRow
+          key={s.id}
+          icon={
+            <span className="flex size-7 items-center justify-center rounded-md border text-muted-foreground">
+              {s.provider === "local" ? <LaptopIcon className="size-4" /> : <OsIcon os={s.os} className="size-4" />}
+            </span>
+          }
+          title={s.name}
+          note="On now"
+          selected={where?.kind === "space" && where.space.id === s.id}
+          onSelect={() => onWhere({ kind: "space", space: s })}
+        />
+      ))}
+    </Picker>
   );
 }

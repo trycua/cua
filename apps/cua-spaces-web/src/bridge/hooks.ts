@@ -230,8 +230,12 @@ export function useMachines(): MachinesHook {
     view: ctx.store?.machinesView ?? null,
     rename: (id, name) => run((s) => s.renameMachine(id, name)),
     remove: (machine, device) => run((s) => s.removeMachine(machine, device)),
+    // The page asks once on opening, which can be before the store is up
+    // (the core still loading): wait for it rather than skip the check
+    // until the next minute's.
     checkHealth: async () => {
-      await ctx.store?.checkMachinesHealth().catch(() => undefined);
+      const store = ctx.store ?? (await ctx.ready.catch(() => null));
+      await store?.checkMachinesHealth().catch(() => undefined);
     },
   };
 }

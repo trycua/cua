@@ -310,6 +310,12 @@ jobs:
           test -s "$app/Contents/Resources/Assets.car"
           test -s "$app/Contents/Resources/AppIcon.icns"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$app/Contents/Info.plist")" = AppIcon
+      # The host service never checks in with LaunchServices as the app:
+      # while a windowless helper held the app's entry, opening Cua Spaces
+      # failed with error -600 (0.17.0-beta.3/beta.4, through the Sentry SDK).
+      - name: The host service is not an app
+        working-directory: apps/cua-spaces-macos
+        run: scripts/tests/helper-not-an-app.sh ".build/app/Cua Spaces.app"
       # Cua Spaces Local (--channel local) runs beside an installed Cua
       # Spaces and must not be able to touch it (CUA-1776): the Local bundle
       # id, helper, URL scheme and home, staging, and no Sparkle feed. The

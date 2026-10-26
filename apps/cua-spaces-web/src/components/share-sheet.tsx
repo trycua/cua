@@ -11,6 +11,7 @@ import {
   useShareSheet,
   useTeamChoices,
 } from "@/bridge";
+import { useAddAgentLauncher } from "@/components/add-agent/add-agent-launcher";
 import { Button } from "@/components/ui/button";
 import { GroupedRow, GroupedSection } from "@/components/ui/grouped";
 import { Dialog, DialogPopup, DialogTitle } from "@/components/ui/dialog";
@@ -36,6 +37,8 @@ export default function ShareSheet() {
   const { openExternal } = useSession();
   const { hasTeam } = choices;
   const cards = useFlag("upsell_cards");
+  // The Space page that shows this Space's thread can add an agent to it instead.
+  const addAgent = useAddAgentLauncher(session?.input.spaceId);
   useEffect(() => {
     sharing?.setHasTeam(hasTeam);
   }, [sharing, hasTeam, session?.input.spaceId]);
@@ -152,6 +155,19 @@ export default function ShareSheet() {
           ) : null}
         </div>
         <div /* design-ok: full-width dialog footer */ className="flex items-center justify-end gap-2 border-t bg-muted/60 px-5 py-3">
+          {addAgent ? (
+            <Button
+              variant="outline"
+              data-share-add-agent=""
+              onClick={() => {
+                // One sheet at a time: this one closes, then Add an agent opens in its place.
+                sharing.close();
+                addAgent();
+              }}
+            >
+              Add an agent
+            </Button>
+          ) : null}
           <Button onClick={() => sharing.close()}>{v.doneLabel}</Button>
         </div>
       </DialogPopup>

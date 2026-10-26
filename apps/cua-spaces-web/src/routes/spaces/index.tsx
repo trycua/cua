@@ -15,7 +15,7 @@ import { BulkConfirmDialog, useBulkRemove } from "@/components/spaces/bulk-remov
 import { SpaceList } from "@/components/spaces/space-list";
 import { SpaceContextMenu, SpaceMoreMenu, type MenuActions } from "@/components/spaces/space-menu";
 import { SelectAllBox, SelectBox, SelectionBar, stoppedDeletable, useSelection } from "@/components/spaces/selection";
-import { SpaceTile } from "@/components/spaces/space-tile";
+import { SpaceTile, TILE_CELL } from "@/components/spaces/space-tile";
 import { CreatingElsewhereTile } from "@/components/spaces/creating-elsewhere-tile";
 import { SpacesToolbar } from "@/components/spaces/spaces-toolbar";
 import { PageTip, useTipsLoaded } from "@/components/tips";
@@ -247,8 +247,8 @@ function SpacesPage() {
               <ul className="grid grid-cols-[repeat(auto-fill,minmax(232px,1fr))] gap-x-5 gap-y-7">
                 {elsewhereTiles}
                 {shown.map((it) => (
-                  // Off-screen tiles skip layout and paint until they scroll in.
-                  <li key={it.space.id} className="[content-visibility:auto] [contain-intrinsic-size:auto_232px]">
+                  // Off-screen tiles skip layout and paint until they scroll in (with room for the selected ring).
+                  <li key={it.space.id} className={TILE_CELL}>
                     <SpaceContextMenu item={it} actions={actions}>
                       <SpaceTile
                         item={it}

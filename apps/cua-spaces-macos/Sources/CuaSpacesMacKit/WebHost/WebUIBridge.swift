@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import AppKit
+import Combine
 import CuaSDK
 import CuaSpacesFFI
 import CuaSpacesStreaming
@@ -159,6 +160,13 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
     /// detail view keeps them. A deleted Space's are closed and dropped
     /// (`pruneStreams`).
     var streams: [String: (rows: StreamRowsModel, pips: StreamPiPSet)] = [:]
+    /// Each Space's watch on its open panels: the page hears a panel that
+    /// closed by itself (`stream.pipChanged`), and the desktop panel's hold
+    /// on the viewer session goes when it closes.
+    var pipWatches: [String: AnyCancellable] = [:]
+    /// Spaces whose desktop panel holds this window's viewer session
+    /// (`WebUIVideoSurfaces.holdViewer`).
+    var heldDesktops: Set<String> = []
     /// The page has called in since it last loaded (its listener is up).
     var pageListening = false
     /// A New Space asked for before the page listened (`on`: "Run on").

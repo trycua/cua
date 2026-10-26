@@ -7,6 +7,7 @@ fn fake_swtpm() {
         return;
     };
     let dir = PathBuf::from(dir);
+    std::fs::create_dir_all(&dir).unwrap();
     let _listener = std::os::unix::net::UnixListener::bind(dir.join("swtpm.sock")).unwrap();
     std::fs::write(dir.join("../swtpm.pid"), std::process::id().to_string()).unwrap();
     std::thread::sleep(Duration::from_secs(30));
@@ -26,7 +27,7 @@ async fn daemon_script_success_failure_and_force_stop() {
         let body = match mode {
             "failure" => "#!/bin/sh\nexit 1\n",
             _ => {
-                "#!/bin/sh\n\"$CUA_TEST_BIN\" --exact qemu::tpm_tests::fake_swtpm --nocapture </dev/null >/dev/null 2>&1 &\nwhile [ ! -S \"$CUA_TPM_DIR/swtpm.sock\" ]; do sleep 0.01; done\n"
+                "#!/bin/sh\n\"$CUA_FAKE_SWTPM\" --exact qemu::tpm_tests::fake_swtpm --nocapture \"dir=$CUA_TPM_DIR\" </dev/null >/dev/null 2>&1 &\nwhile [ ! -S \"$CUA_TPM_DIR/swtpm.sock\" ]; do sleep 0.01; done\n"
             }
         };
         std::fs::write(&tpm, body).unwrap();
@@ -41,7 +42,7 @@ async fn daemon_script_success_failure_and_force_stop() {
                     "-c",
                     "[ -S \"$CUA_TPM_DIR/swtpm.sock\" ] && touch \"$CUA_TPM_DIR/../started\"",
                 ])
-                .env("CUA_TEST_BIN", std::env::current_exe().unwrap())
+                .env("CUA_FAKE_SWTPM", fake_swtpm_link(tmp.path()))
                 .env("CUA_SWTPM", &tpm)
                 .env("CUA_TPM_DIR", dir.join("tpm"))
                 .env("CUA_QEMU_LOG", dir.join("qemu.log"))
@@ -62,14 +63,19 @@ async fn daemon_script_success_failure_and_force_stop() {
             // stop_tpm only needs the persisted instance name.
             let mut st: QemuState = serde_json::from_value(serde_json::json!({
                 "name":"vm", "kind":"instance", "arch":"aarch64", "os":"windows",
-                "disk":"disk", "disk_format":"qcow2", "firmware":{"type":"bios"},
-                "cpus":2, "memory_mb":4096, "created_at":0
+                "disk":dir.join("disk"), "disk_format":"qcow2", "firmware":{"type":"bios"},
+                "cpus":2, "memory_mb":4096, "created_at":0, "tpm":true
             }))
             .unwrap_or_else(|_| panic!("state fixture must deserialize"));
-            assert!(dir.join("swtpm.pid").exists());
+            let pid: u32 = std::fs::read_to_string(dir.join("swtpm.pid"))
+                .unwrap()
+                .parse()
+                .unwrap();
+            assert!(host::pid_alive(pid));
             st.pid = None;
             runtime.force_stop(&mut st, Duration::ZERO).await.unwrap();
             assert!(!dir.join("swtpm.pid").exists());
+            assert!(!host::pid_alive(pid));
         } else {
             assert!(!output.status.success());
             assert!(!dir.join("started").exists());
@@ -93,30 +99,31 @@ async fn launch_once_wiring_child() {
     let mut st: QemuState = serde_json::from_value(serde_json::json!({
         "name":"vm", "kind":"instance", "arch":"aarch64", "os":"windows",
         "disk":dir.join("disk"), "disk_format":"qcow2", "firmware":{"type":"bios"},
-        "cpus":2, "memory_mb":4096, "created_at":0
+        "cpus":2, "memory_mb":4096, "created_at":0, "tpm":true
     }))
     .unwrap();
-    let mut spec = StartSpec::new("vm", ImageSource::Existing);
+    let spec = StartSpec::new("vm", ImageSource::Existing);
     if std::env::var("CUA_WIRING_MODE").unwrap() == "missing" {
         // A machine with a system-wide swtpm cannot exercise missing discovery.
         if host::which("swtpm").is_some() {
             return;
         }
-        spec.tpm = true;
         let error = runtime
             .launch_once(&mut st, &spec, Boot::default(), true, true)
             .await
             .unwrap_err();
-        assert!(error.to_string().contains("swtpm is not available"));
+        assert!(matches!(
+            error,
+            VmmError::Missing { ref what, ref hint }
+                if what == "swtpm" && hint.starts_with("install it (macOS: brew install swtpm;")
+        ));
         assert!(!dir.join("tpm").exists());
     } else {
-        std::fs::create_dir(dir.join("tpm")).unwrap();
-        assert!(!spec.tpm);
         let error = runtime
             .launch_once(&mut st, &spec, Boot::default(), true, true)
             .await
             .unwrap_err();
-        assert!(error.to_string().contains("swtpm.log"));
+        assert!(error.to_string().contains("swtpm.log"), "{error}");
         assert!(error.to_string().contains("could not launch"));
         let argv = std::fs::read_to_string(dir.join("cmdline")).unwrap();
         assert!(argv.contains(&format!(
@@ -162,10 +169,109 @@ fn launch_once_wiring() {
 }
 
 #[test]
-fn tpm_defaults() {
-    let spec = StartSpec::new("vm", ImageSource::Existing);
-    assert!(!spec.tpm);
-    let mut json = serde_json::to_value(spec).unwrap();
-    json.as_object_mut().unwrap().remove("tpm");
-    assert!(!serde_json::from_value::<StartSpec>(json).unwrap().tpm);
+fn tpm_state_defaults_off() {
+    let st: QemuState = serde_json::from_value(serde_json::json!({
+        "name":"vm", "kind":"instance", "arch":"aarch64", "os":"windows",
+        "disk":"/d", "disk_format":"qcow2", "firmware":{"type":"bios"},
+        "cpus":2, "memory_mb":4096, "created_at":0
+    }))
+    .unwrap();
+    assert!(!st.tpm);
+}
+
+#[test]
+fn tpm_launch_ends_with_qemu_launch() {
+    assert!(TPM_LAUNCH.ends_with(QEMU_LAUNCH));
+}
+
+/// The test binary behind a symlink named `swtpm`, so its argv passes the
+/// production identity check.
+fn fake_swtpm_link(dir: &Path) -> PathBuf {
+    let link = dir.join("swtpm");
+    if !link.exists() {
+        std::os::unix::fs::symlink(std::env::current_exe().unwrap(), &link).unwrap();
+    }
+    link
+}
+
+/// A running fake swtpm serving `tpm_dir`.
+fn spawn_fake(link: &Path, tpm_dir: &Path) -> std::process::Child {
+    let mut child = std::process::Command::new(link)
+        .args(["--exact", "qemu::tpm_tests::fake_swtpm", "--nocapture"])
+        .arg(format!("dir={}", tpm_dir.display()))
+        .env("CUA_TPM_DIR", tpm_dir)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    for _ in 0..500 {
+        if tpm_dir.join("swtpm.sock").exists() {
+            return child;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    panic!("fake swtpm did not start");
+}
+
+#[tokio::test]
+async fn stop_tpm_leaves_other_processes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let link = fake_swtpm_link(tmp.path());
+    let runtime = QemuRuntime::new(QemuConfig {
+        root: tmp.path().join("root"),
+        ..Default::default()
+    });
+    let dir = runtime.dir("vm");
+    std::fs::create_dir_all(dir.join("tpm")).unwrap();
+    let mut st: QemuState = serde_json::from_value(serde_json::json!({
+        "name":"vm", "kind":"instance", "arch":"aarch64", "os":"windows",
+        "disk":dir.join("disk"), "disk_format":"qcow2", "firmware":{"type":"bios"},
+        "cpus":2, "memory_mb":4096, "created_at":0, "tpm":true
+    }))
+    .unwrap();
+    let other = tmp.path().join("other/tpm");
+    let prefix = dir.join("tpm-other");
+    let mut sleeper = std::process::Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .unwrap();
+    let mut elsewhere = spawn_fake(&link, &other);
+    let mut prefixed = spawn_fake(&link, &prefix);
+    for pid in [
+        sleeper.id().to_string(),
+        elsewhere.id().to_string(),
+        prefixed.id().to_string(),
+        "not-a-pid".into(),
+        "0".into(),
+        "1".into(),
+    ] {
+        std::fs::write(dir.join("swtpm.pid"), &pid).unwrap();
+        st.pid = None;
+        runtime.force_stop(&mut st, Duration::ZERO).await.unwrap();
+        assert!(!dir.join("swtpm.pid").exists(), "{pid}");
+    }
+    for child in [&mut sleeper, &mut elsewhere, &mut prefixed] {
+        assert!(child.try_wait().unwrap().is_none(), "survives");
+        child.kill().unwrap();
+        child.wait().unwrap();
+    }
+}
+
+#[tokio::test]
+async fn abandoned_launch_stops_swtpm() {
+    let tmp = tempfile::tempdir().unwrap();
+    let link = fake_swtpm_link(tmp.path());
+    let tpm = tmp.path().join("tpm");
+    std::fs::create_dir_all(&tpm).unwrap();
+    let mut fake = spawn_fake(&link, &tpm);
+    let mut guard = LaunchGuard::new(tmp.path().join("qemu.pid"));
+    guard.tpm_dir = Some(tmp.path().to_path_buf());
+    // Written as the fake does; the guard finds no QEMU, then stops swtpm.
+    std::fs::write(tmp.path().join("swtpm.pid"), fake.id().to_string()).unwrap();
+    drop(guard);
+    assert!(crate::cleanup::settle(Duration::from_secs(10)).await);
+    assert!(fake.wait().is_ok());
+    assert!(!tmp.path().join("swtpm.pid").exists());
 }

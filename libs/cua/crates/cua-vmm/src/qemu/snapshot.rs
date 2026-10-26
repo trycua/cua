@@ -358,6 +358,7 @@ impl QemuRuntime {
             (spec.gpu.is_some(), "a GPU"),
             (!spec.extra_args.is_empty(), "extra QEMU arguments"),
             (st.install_iso.is_some(), "an installer ISO"),
+            (st.tpm, "a TPM"),
             (st.arch != Arch::host(), "an emulated architecture"),
             (accel == "tcg", "no hardware acceleration"),
         ];
@@ -656,12 +657,7 @@ impl QemuRuntime {
                 .filter(|pid| host::pid_alive(*pid))
                 // Only the template VM itself (a pid may have been reused).
                 .filter(|pid| {
-                    std::process::Command::new("ps")
-                        .args(["-o", "command=", "-p", &pid.to_string()])
-                        .output()
-                        .is_ok_and(|o| {
-                            String::from_utf8_lossy(&o.stdout).contains(&p.display().to_string())
-                        })
+                    host::pid_command(*pid).is_some_and(|c| c.contains(&p.display().to_string()))
                 })
             {
                 host::signal(pid, "KILL");
@@ -1330,6 +1326,7 @@ mod tests {
             ram_file: None,
             headless: false,
             bulk: false,
+            tpm: false,
             egress: None,
             netns: false,
             pasta_pid: None,

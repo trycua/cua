@@ -274,6 +274,54 @@ pub struct QemuState {
     /// cold; a memory restore keeps the device set of the snapshot it loads.
     #[serde(default)]
     pub bulk: bool,
+    /// swtpm TPM 2.0 with state in `tpm/` of the entry directory; set at
+    /// creation for Windows on ARM; forks and checkpoints keep it.
+    #[serde(default)]
+    pub tpm: bool,
+}
+
+/// Windows 11 on ARM: the guest that needs Secure Boot firmware and a TPM.
+fn is_windows_arm(os: GuestOs, arch: Arch) -> bool {
+    os == GuestOs::Windows && arch == Arch::Aarch64
+}
+
+/// Whether this host can run a Windows-on-ARM guest.
+fn windows_arm_host(os: GuestOs, guest: Arch, host: Arch, host_os: host::HostOs) -> Result<()> {
+    if !is_windows_arm(os, guest) {
+        return Ok(());
+    }
+    if host != Arch::Aarch64 {
+        return Err(VmmError::invalid(format!(
+            "Windows on ARM guests need an arm64 host (Apple silicon, or arm64 Linux with KVM); this host is {host}"
+        )));
+    }
+    if host_os == host::HostOs::Windows {
+        return Err(VmmError::invalid(
+            "Windows on ARM guests need swtpm for their TPM, which runs on macOS and Linux hosts only",
+        ));
+    }
+    Ok(())
+}
+
+/// Windows 11 needs 4 GB; `cua-vmm` cannot tell the 2048 MB default from an
+/// explicit 2048, so a smaller ask is raised.
+fn guest_memory_mb(os: GuestOs, arch: Arch, asked: u64) -> u64 {
+    if is_windows_arm(os, arch) {
+        asked.max(4096)
+    } else {
+        asked
+    }
+}
+
+/// A TPM VM's state cannot follow `what`: refuse before anything changes.
+fn refuse_tpm(st: &QemuState, what: &str) -> Result<()> {
+    if st.tpm {
+        return Err(VmmError::invalid(format!(
+            "'{}' has a TPM, whose state cannot follow {what}; stop it first",
+            st.name
+        )));
+    }
+    Ok(())
 }
 
 /// What `qemu` (a `qemu-system-*` binary) offers for virgl on this host:
@@ -605,19 +653,36 @@ impl QemuRuntime {
             return Ok(Firmware::Bios);
         }
         let bin = self.binary(arch).await?;
-        let windows_arm = os == GuestOs::Windows && arch == Arch::Aarch64;
+        let windows_arm = is_windows_arm(os, arch);
+        let cua_dir = host::cua_home().join("firmware").join("aavmf");
+        let override_dir = std::env::var_os(firmware::AAVMF_DIR_ENV)
+            .filter(|d| !d.is_empty())
+            .map(PathBuf::from);
         let fw = (if windows_arm {
-            firmware::find_windows_arm(&bin, |p| p.is_file())
+            let real = std::fs::canonicalize(&bin).unwrap_or_else(|_| bin.clone());
+            let dirs = firmware::windows_arm_dirs(override_dir.as_deref(), &cua_dir, &bin, &real);
+            firmware::find_windows_arm(&dirs, |p| p.is_file())
         } else {
             firmware::find_uefi(arch, &bin)
         })
         .ok_or_else(|| {
             VmmError::missing(
                 format!("UEFI firmware for {arch}"),
-                if windows_arm {
-                    "Windows ARM requires a Secure Boot firmware pair: AAVMF_CODE.secboot.fd + \
-                     AAVMF_VARS.ms.fd in <qemu prefix>/share/AAVMF or /usr/share/AAVMF"
-                        .into()
+                if let (true, Some(dir)) = (windows_arm, &override_dir) {
+                    format!(
+                        "{}={} does not hold AAVMF_CODE.secboot.fd and AAVMF_VARS.ms.fd",
+                        firmware::AAVMF_DIR_ENV,
+                        dir.display()
+                    )
+                } else if windows_arm {
+                    format!(
+                        "Windows on ARM needs a Secure Boot UEFI pair, AAVMF_CODE.secboot.fd and \
+                         AAVMF_VARS.ms.fd (Debian's qemu-efi-aarch64 package has them): put both \
+                         in {} or set {} to their directory; see \
+                         https://cua.ai/docs/cua-sdk/guides/local-runtimes#windows-on-arm",
+                        cua_dir.display(),
+                        firmware::AAVMF_DIR_ENV
+                    )
                 } else {
                     format!(
                         "install edk2 (Homebrew qemu ships it; {})",
@@ -670,6 +735,18 @@ impl QemuRuntime {
             }
             let (os, want) = boot_hints(backing, arch, spec_like).await;
             let firmware = self.setup_firmware(&dir, arch, os, want).await?;
+            let tpm = is_windows_arm(os, arch);
+            if tpm {
+                std::fs::create_dir_all(dir.join("tpm"))?;
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    std::fs::set_permissions(
+                        dir.join("tpm"),
+                        std::fs::Permissions::from_mode(0o700),
+                    )?;
+                }
+            }
             Ok(QemuState {
                 name: name.to_string(),
                 kind: EntryKind::Instance,
@@ -707,6 +784,7 @@ impl QemuRuntime {
                 shared_memory: spec_like.forkable,
                 pinned: false,
                 bulk: false,
+                tpm,
             })
         }
         .await;
@@ -757,6 +835,22 @@ impl QemuRuntime {
         boot: Boot,
         persist: bool,
     ) -> Result<()> {
+        windows_arm_host(st.os, st.arch, Arch::host(), host::HostOs::current())?;
+        let floored;
+        let spec = if guest_memory_mb(st.os, st.arch, spec.memory_mb) > spec.memory_mb {
+            tracing::info!(
+                sandbox = %st.name,
+                asked = spec.memory_mb,
+                "Windows 11 needs 4 GB; giving the VM 4096 MB"
+            );
+            floored = StartSpec {
+                memory_mb: guest_memory_mb(st.os, st.arch, spec.memory_mb),
+                ..spec.clone()
+            };
+            &floored
+        } else {
+            spec
+        };
         self.admit_waiting(
             &st.name,
             spec.cpus,
@@ -976,21 +1070,20 @@ impl QemuRuntime {
         force_tcg: bool,
     ) -> Result<()> {
         let bin = self.binary(st.arch).await?;
-        let dir = st
-            .disk
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| self.dir(&st.name));
+        let dir = self.run_dir(st);
         let tpm_dir = dir.join("tpm");
-        let tpm_env: Option<(PathBuf, PathBuf)> = if spec.tpm || tpm_dir.exists() {
+        let tpm_env: Option<(PathBuf, PathBuf)> = if st.tpm {
             #[cfg(not(unix))]
             return Err(VmmError::invalid("TPM requires a Unix host"));
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                let bin = host::which("swtpm").ok_or(VmmError::invalid(
-                    "swtpm is not available: install swtpm with TPM 2.0 support and add it to PATH",
-                ))?;
+                let bin = host::which("swtpm").ok_or_else(|| {
+                    VmmError::missing(
+                        "swtpm",
+                        "install it (macOS: brew install swtpm; Debian/Ubuntu: sudo apt-get install swtpm) and add it to PATH",
+                    )
+                })?;
                 self.stop_tpm(st);
                 std::fs::create_dir_all(&tpm_dir)?;
                 std::fs::set_permissions(&tpm_dir, std::fs::Permissions::from_mode(0o700))?;
@@ -1153,6 +1246,7 @@ impl QemuRuntime {
         // recorded would leave a running QEMU nothing knows about: the
         // guard ends whatever its pid file names unless the start finished.
         let mut launch_guard = LaunchGuard::new(dir.join("qemu.pid"));
+        launch_guard.tpm_dir = tpm_env.as_ref().map(|_| dir.clone());
 
         // Launch detached: on Unix a throwaway `sh` backgrounds QEMU and exits,
         // so QEMU is re-parented to init (no zombie in long-lived callers) and
@@ -1366,6 +1460,10 @@ impl QemuRuntime {
     /// Restore an internal snapshot taken by [`Runtime::checkpoint`] on a
     /// running instance (in place, RAM included).
     pub async fn restore(&self, name: &str, snapshot: &str) -> Result<()> {
+        refuse_tpm(
+            &self.load(name)?,
+            "an in-place restore (restore by forking a stopped checkpoint)",
+        )?;
         let mut q = self.qmp(name).await?;
         q.loadvm(snapshot).await?;
         let mut st = self.load(name)?;
@@ -1406,6 +1504,43 @@ impl QemuRuntime {
             }
             other => other.clone(),
         })
+    }
+
+    /// Copy the TPM state of `from` (stopped) into `to_dir/tpm`. Files are
+    /// copied, never linked; anything but plain files is an error.
+    fn copy_tpm(&self, from: &QemuState, to_dir: &Path) -> Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        if !from.tpm {
+            return Ok(());
+        }
+        // The disk of a checkpoint lives in the layer store: use the entry.
+        let src = self.dir(&from.name).join("tpm");
+        let launch = self.run_dir(from);
+        if stop_swtpm(&launch) {
+            return Err(VmmError::other(format!(
+                "the TPM of '{}' is still running; stop the VM first",
+                from.name
+            )));
+        }
+        let dst = to_dir.join("tpm");
+        std::fs::create_dir_all(&dst)?;
+        std::fs::set_permissions(&dst, std::fs::Permissions::from_mode(0o700))?;
+        for entry in std::fs::read_dir(&src)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            if name == "swtpm.sock" || name == ".lock" {
+                continue;
+            }
+            if !entry.file_type()?.is_file() {
+                return Err(VmmError::other(format!(
+                    "TPM state of '{}' holds {}, which is not a plain file",
+                    from.name,
+                    name.to_string_lossy()
+                )));
+            }
+            std::fs::copy(entry.path(), dst.join(&name))?;
+        }
+        Ok(())
     }
 
     /// Collects unreferenced layers after a removal. The collection reads
@@ -1497,14 +1632,16 @@ impl QemuRuntime {
         !host::pid_alive(pid)
     }
 
+    /// The directory a VM runs in (where its pidfiles and `tpm/` live).
+    fn run_dir(&self, st: &QemuState) -> PathBuf {
+        st.disk
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| self.dir(&st.name))
+    }
+
     fn stop_tpm(&self, st: &QemuState) {
-        let pidfile = self.dir(&st.name).join("swtpm.pid");
-        if let Ok(pid) = std::fs::read_to_string(&pidfile)
-            && let Ok(pid) = pid.trim().parse()
-        {
-            host::signal(pid, "TERM");
-        }
-        let _ = std::fs::remove_file(pidfile);
+        let _ = stop_swtpm(&self.run_dir(st));
     }
 
     async fn force_stop(&self, st: &mut QemuState, graceful: Duration) -> Result<()> {
@@ -2164,6 +2301,7 @@ impl Runtime for QemuRuntime {
             shared_memory: false,
             pinned: false,
             bulk: false,
+            tpm: false,
         };
         self.save(&st)?;
         Ok(CheckpointInfo::now(base_name, BackendKind::Qemu, source))
@@ -2197,6 +2335,12 @@ impl Runtime for QemuRuntime {
         crate::types::reject_injection(BackendKind::Qemu, spec)?;
         crate::egress::check(BackendKind::Qemu, &spec.egress)?;
         crate::cloudinit::check_guest_support(spec)?;
+        windows_arm_host(
+            spec.os,
+            spec.effective_arch(),
+            Arch::host(),
+            host::HostOs::current(),
+        )?;
         let (mut st, fresh_backing) = {
             let _g = self.lock.lock().await;
             match self.load(&spec.name) {
@@ -2512,6 +2656,12 @@ impl Runtime for QemuRuntime {
             None => (source, None),
         };
         let mut src = self.load(src_name)?;
+        if src.tpm && snapshot.is_some() {
+            return refuse_tpm(&src, "a disk snapshot (fork a stopped checkpoint instead)");
+        }
+        if Self::is_running(&src) {
+            refuse_tpm(&src, "a live fork")?;
+        }
         let dir = self.dir(new_name);
         // A running VM forks with its memory: a one-time snapshot in the
         // fork's own directory, restored at the fork's first start.
@@ -2607,6 +2757,10 @@ impl Runtime for QemuRuntime {
             EntryKind::Base => self.setup_firmware(&dir, src.arch, src.os, None).await?,
             _ => self.copy_vars(&src.firmware, &dir)?,
         };
+        if let Err(e) = self.copy_tpm(&src, &dir) {
+            let _ = std::fs::remove_dir_all(&dir);
+            return Err(e);
+        }
         let st = QemuState {
             name: new_name.into(),
             kind: EntryKind::Instance,
@@ -2647,6 +2801,9 @@ impl Runtime for QemuRuntime {
         validate_name(checkpoint)?;
         let _g = self.lock.lock().await;
         let mut st = self.load(name)?;
+        if Self::is_running(&st) {
+            refuse_tpm(&st, "a live checkpoint")?;
+        }
         if Self::is_running(&st) && self.restores_memory() {
             // Live: a memory checkpoint entry (RAM, devices, a copy of the
             // disk layer); forks of it restore that memory with their own
@@ -2736,6 +2893,10 @@ impl Runtime for QemuRuntime {
         self.save(&st)?;
         let dir = self.dir(checkpoint);
         let firmware = self.copy_vars(&st.firmware, &dir)?;
+        if let Err(e) = self.copy_tpm(&st, &dir) {
+            let _ = std::fs::remove_dir_all(&dir);
+            return Err(e);
+        }
         let ck = QemuState {
             name: checkpoint.into(),
             kind: EntryKind::Checkpoint,
@@ -2780,6 +2941,9 @@ impl Runtime for QemuRuntime {
         let mut st = self.load(name)?;
         if st.kind != EntryKind::Instance {
             return Err(VmmError::invalid(format!("'{name}' is not a VM instance")));
+        }
+        if Self::is_running(&st) {
+            refuse_tpm(&st, "a move into a new network namespace")?;
         }
         let previous = st.egress.replace(policy.clone());
         if Self::is_running(&st) {
@@ -3220,6 +3384,178 @@ mod tests {
             .map(|d| d.count())
             .unwrap_or(0);
         assert_eq!(left, 0, "unreferenced layers should be garbage-collected");
+    }
+
+    #[test]
+    fn windows_arm_host_policy() {
+        use host::HostOs::*;
+        let x86 = "Windows on ARM guests need an arm64 host (Apple silicon, or arm64 Linux with KVM); this host is x86_64";
+        let win = "Windows on ARM guests need swtpm for their TPM, which runs on macOS and Linux hosts only";
+        let msg = |r: Result<()>| match r.unwrap_err() {
+            VmmError::Invalid(m) => m,
+            e => panic!("{e:?}"),
+        };
+        let (w, a) = (GuestOs::Windows, Arch::Aarch64);
+        assert_eq!(msg(windows_arm_host(w, a, Arch::X86_64, Linux)), x86);
+        assert_eq!(msg(windows_arm_host(w, a, Arch::Aarch64, Windows)), win);
+        assert!(windows_arm_host(w, a, Arch::Aarch64, Macos).is_ok());
+        assert!(windows_arm_host(w, a, Arch::Aarch64, Linux).is_ok());
+        assert!(windows_arm_host(GuestOs::Linux, a, Arch::X86_64, Linux).is_ok());
+        assert!(windows_arm_host(w, Arch::X86_64, Arch::X86_64, Linux).is_ok());
+    }
+
+    #[test]
+    fn windows_arm_memory_floor() {
+        let (w, a) = (GuestOs::Windows, Arch::Aarch64);
+        assert_eq!(guest_memory_mb(w, a, 2048), 4096);
+        assert_eq!(guest_memory_mb(w, a, 4096), 4096);
+        assert_eq!(guest_memory_mb(w, a, 8192), 8192);
+        assert_eq!(guest_memory_mb(GuestOs::Linux, a, 2048), 2048);
+        assert_eq!(guest_memory_mb(w, Arch::X86_64, 2048), 2048);
+    }
+
+    fn invalid(r: Result<impl std::fmt::Debug>) -> String {
+        match r.unwrap_err() {
+            VmmError::Invalid(m) => m,
+            e => panic!("{e:?}"),
+        }
+    }
+
+    /// A runtime with a base, a stopped TPM VM `vm1`, and its TPM files.
+    async fn tpm_runtime(tmp: &Path) -> Option<QemuRuntime> {
+        if img::qemu_img().is_err() {
+            eprintln!("qemu-img missing; skipping");
+            return None;
+        }
+        let root = tmp.join("qemu");
+        let r = rt(&root);
+        let image = tmp.join("image.qcow2");
+        img::create_blank(&image, 1).await.unwrap();
+        r.ensure_base(&ImageSource::disk(&image), "base")
+            .await
+            .unwrap();
+        let mut base = r.load("base").unwrap();
+        base.arch = Arch::X86_64;
+        r.save(&base).unwrap();
+        r.fork("base", "vm1").await.unwrap();
+        let mut vm = r.load("vm1").unwrap();
+        vm.tpm = true;
+        r.save(&vm).unwrap();
+        let tpm = root.join("vm1/tpm");
+        std::fs::create_dir_all(&tpm).unwrap();
+        std::fs::write(tpm.join("tpm2-00.permall"), b"keys-1").unwrap();
+        Some(r)
+    }
+
+    #[tokio::test]
+    async fn tpm_state_follows_stopped_fork_and_checkpoint() {
+        use std::os::unix::fs::MetadataExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let Some(r) = tpm_runtime(tmp.path()).await else {
+            return;
+        };
+        let root = tmp.path().join("qemu");
+        let _sock =
+            std::os::unix::net::UnixListener::bind(root.join("vm1/tpm/swtpm.sock")).unwrap();
+        r.checkpoint("vm1", "ck1").await.unwrap();
+        let (src, ck) = (
+            root.join("vm1/tpm/tpm2-00.permall"),
+            root.join("ck1/tpm/tpm2-00.permall"),
+        );
+        assert_eq!(std::fs::read(&ck).unwrap(), b"keys-1");
+        assert!(!root.join("ck1/tpm/swtpm.sock").exists());
+        assert!(r.load("ck1").unwrap().tpm);
+        assert_ne!(
+            std::fs::metadata(&src).unwrap().ino(),
+            std::fs::metadata(&ck).unwrap().ino()
+        );
+        std::fs::write(&src, b"keys-2").unwrap();
+        assert_eq!(std::fs::read(&ck).unwrap(), b"keys-1");
+        r.fork("ck1", "f1").await.unwrap();
+        assert_eq!(
+            std::fs::read(root.join("f1/tpm/tpm2-00.permall")).unwrap(),
+            b"keys-1"
+        );
+        assert!(r.load("f1").unwrap().tpm);
+        // A stopped fork of the VM itself carries the current state.
+        r.fork("vm1", "f2").await.unwrap();
+        assert_eq!(
+            std::fs::read(root.join("f2/tpm/tpm2-00.permall")).unwrap(),
+            b"keys-2"
+        );
+
+        let msg = "holds TPM state, which is not copied between hosts";
+        let err = invalid(r.export("ck1").await);
+        assert_eq!(err, format!("checkpoint 'ck1' {msg}"));
+        let mut state = serde_json::to_value(r.load("ck1").unwrap()).unwrap();
+        state["tpm"] = true.into();
+        let err = invalid(r.import("ck2", state, vec![]).await);
+        assert_eq!(err, format!("checkpoint 'ck2' {msg}"));
+    }
+
+    #[tokio::test]
+    async fn tpm_copy_fails_closed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let Some(r) = tpm_runtime(tmp.path()).await else {
+            return;
+        };
+        let root = tmp.path().join("qemu");
+        std::fs::create_dir(root.join("vm1/tpm/nested")).unwrap();
+        assert!(r.checkpoint("vm1", "ck1").await.is_err());
+        assert!(!root.join("ck1").exists());
+        std::fs::remove_dir_all(root.join("vm1/tpm")).unwrap();
+        assert!(r.checkpoint("vm1", "ck2").await.is_err());
+        assert!(!root.join("ck2").exists());
+        assert!(r.load("ck1").is_err() && r.load("ck2").is_err());
+        assert!(r.load("vm1").is_ok());
+    }
+
+    #[tokio::test]
+    async fn live_tpm_vm_refusals() {
+        let tmp = tempfile::tempdir().unwrap();
+        let Some(r) = tpm_runtime(tmp.path()).await else {
+            return;
+        };
+        let root = tmp.path().join("qemu");
+        let names = |r: &QemuRuntime| {
+            let mut v: Vec<_> = std::fs::read_dir(&r.cfg.root)
+                .unwrap()
+                .map(|e| e.unwrap().file_name())
+                .collect();
+            v.sort();
+            v
+        };
+        let before = names(&r);
+        let refused = |what: &str| {
+            format!("'vm1' has a TPM, whose state cannot follow {what}; stop it first")
+        };
+        // A stopped TPM VM refuses a disk-snapshot fork.
+        assert_eq!(
+            invalid(r.fork("vm1@snap", "x").await),
+            refused("a disk snapshot (fork a stopped checkpoint instead)")
+        );
+        let mut vm = r.load("vm1").unwrap();
+        vm.pid = Some(std::process::id());
+        r.save(&vm).unwrap();
+        assert_eq!(invalid(r.fork("vm1", "x").await), refused("a live fork"));
+        assert_eq!(
+            invalid(r.checkpoint("vm1", "x").await),
+            refused("a live checkpoint")
+        );
+        assert_eq!(
+            invalid(r.restore("vm1", "s").await),
+            refused("an in-place restore (restore by forking a stopped checkpoint)")
+        );
+        let block = crate::egress::EgressPolicy {
+            deny: vec!["all".into()],
+            ..Default::default()
+        };
+        assert_eq!(
+            invalid(r.set_egress("vm1", &block).await),
+            refused("a move into a new network namespace")
+        );
+        assert_eq!(names(&r), before);
+        assert!(!root.join("x").exists());
     }
 
     #[tokio::test]
@@ -4145,6 +4481,53 @@ mod tests {
     }
 }
 
+/// Whether `pid` is the swtpm serving `tpm_dir` (a reused pid is not).
+fn swtpm_owns(pid: u32, tpm_dir: &Path) -> bool {
+    let Some(cmd) = host::pid_command(pid) else {
+        return false;
+    };
+    let is_swtpm = cmd
+        .split_whitespace()
+        .next()
+        .and_then(|w| Path::new(w).file_name())
+        .is_some_and(|n| n == "swtpm");
+    let needle = format!("dir={}", tpm_dir.display());
+    let names_dir = cmd.match_indices(&needle).any(|(i, _)| {
+        cmd[i + needle.len()..]
+            .chars()
+            .next()
+            .is_none_or(char::is_whitespace)
+    });
+    is_swtpm && names_dir
+}
+
+/// End the swtpm of the VM running in `dir`, if the pidfile still names it,
+/// and remove the pidfile. Returns whether that swtpm is still alive.
+fn stop_swtpm(dir: &Path) -> bool {
+    let pidfile = dir.join("swtpm.pid");
+    let tpm_dir = dir.join("tpm");
+    let mut alive = false;
+    if let Some(pid) = std::fs::read_to_string(&pidfile)
+        .ok()
+        .and_then(|t| t.trim().parse::<u32>().ok())
+        .filter(|p| *p >= 2 && swtpm_owns(*p, &tpm_dir))
+    {
+        host::signal(pid, "TERM");
+        for _ in 0..40 {
+            if !host::pid_alive(pid) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        if host::pid_alive(pid) && swtpm_owns(pid, &tpm_dir) {
+            host::signal(pid, "KILL");
+        }
+        alive = host::pid_alive(pid);
+    }
+    let _ = std::fs::remove_file(pidfile);
+    alive
+}
+
 /// Ends the QEMU a start launched when the start does not finish (its
 /// future dropped by a cancel, or an early error): the pid file QEMU writes
 /// names it even before the caller recorded the pid.
@@ -4157,6 +4540,8 @@ struct LaunchGuard {
     pid: Option<u32>,
     /// The pid as the launch task learned it (0: not yet).
     pid_cell: Arc<std::sync::atomic::AtomicU32>,
+    /// The launch directory of a VM with a TPM: its swtpm ends with QEMU.
+    tpm_dir: Option<PathBuf>,
 }
 
 /// TERM, then KILL, a QEMU nobody will use.
@@ -4179,6 +4564,7 @@ impl LaunchGuard {
             abandoned: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             pid: None,
             pid_cell: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+            tpm_dir: None,
         }
     }
 
@@ -4201,8 +4587,17 @@ impl Drop for LaunchGuard {
                     p => Some(p),
                 },
             );
+        let tpm_dir = self.tpm_dir.clone();
+        let stop_tpm = move || {
+            if let Some(dir) = tpm_dir {
+                let _ = stop_swtpm(&dir);
+            }
+        };
         if let Some(pid) = known {
-            crate::cleanup::spawn(async move { end_launched(pid).await });
+            crate::cleanup::spawn(async move {
+                end_launched(pid).await;
+                stop_tpm();
+            });
             return;
         }
         let pidfile = self.pidfile.clone();
@@ -4213,18 +4608,13 @@ impl Drop for LaunchGuard {
                     .ok()
                     .and_then(|t| t.trim().parse::<u32>().ok())
                 {
-                    host::signal(pid, "TERM");
-                    for _ in 0..20 {
-                        if !host::pid_alive(pid) {
-                            return;
-                        }
-                        tokio::time::sleep(Duration::from_millis(100)).await;
-                    }
-                    host::signal(pid, "KILL");
+                    end_launched(pid).await;
+                    stop_tpm();
                     return;
                 }
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
+            stop_tpm();
         });
     }
 }

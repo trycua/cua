@@ -431,6 +431,21 @@ Response for `SpaceService.ListSpaces`.
 | `reaching` | 3 | `uint32` | `known_now` only: how many computers are still being reached (0 when unknown). |
 | `stale` | 4 | `bool` | `known_now` only: the other computers' rows are the last known ones, not yet confirmed by the relay. |
 | `notice` | 5 | `string` | `known_now` only: why the account's computers could not be read, when they could not. |
+| `creating` | 6 | repeated [`CreatingSpace`](#creatingspace) | `known_now` only: Spaces your other computers are creating now, from what each published in its relay machine record (CUA-2349). |
+
+### CreatingSpace
+
+A Space another of your computers is creating.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `machine_id` | 1 | `string` | The computer's relay machine id. |
+| `machine_name` | 2 | `string` | The computer's name. |
+| `name` | 3 | `string` | The Space's name. |
+| `os` | 4 | `string` | `macos`, `linux`, `windows`, or empty when unknown. |
+| `phase` | 5 | `string` | The create's phase (`preparing`, `pulling`, `booting`, ...). |
+| `percent` | 6 | `uint32` | How far along the whole create is, 0 to 100. |
+| `updated_at_ms` | 7 | `uint64` | When the computer published it, unix ms. |
 
 ### NamedVolume
 

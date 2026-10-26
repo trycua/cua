@@ -285,6 +285,28 @@ pub struct SpaceList {
     pub stale: bool,
     /// Why the account's computers could not be read, when they could not.
     pub notice: String,
+    /// Spaces your other computers are creating now, from what each
+    /// published through the relay (empty from a daemon that predates it).
+    pub creating: Vec<SpaceCreatingElsewhere>,
+}
+
+/// A Space another of your computers is creating ([`SpaceList::creating`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
+pub struct SpaceCreatingElsewhere {
+    /// The computer's relay machine id.
+    pub machine_id: String,
+    /// The computer's name.
+    pub machine_name: String,
+    /// The Space's name.
+    pub name: String,
+    /// `macos`, `linux`, `windows`, or empty when unknown.
+    pub os: String,
+    /// The create's phase (`preparing`, `pulling`, `booting`, ...).
+    pub phase: String,
+    /// How far along the whole create is, 0 to 100.
+    pub percent: u32,
+    /// When the computer published it, unix ms.
+    pub updated_at_ms: u64,
 }
 
 /// A registered Space.
@@ -2939,6 +2961,19 @@ impl Spaces {
                         reaching: l.progress.reaching,
                         stale: l.progress.stale,
                         notice: l.progress.notice,
+                        creating: l
+                            .creating
+                            .into_iter()
+                            .map(|c| SpaceCreatingElsewhere {
+                                machine_id: c.machine_id,
+                                machine_name: c.machine_name,
+                                name: c.name,
+                                os: c.os,
+                                phase: c.phase,
+                                percent: u32::from(c.percent),
+                                updated_at_ms: c.updated_at_ms,
+                            })
+                            .collect(),
                     })
                 }
                 Host::Daemon(d) => {
@@ -2954,6 +2989,19 @@ impl Spaces {
                         reaching: r.reaching,
                         stale: r.stale,
                         notice: r.notice,
+                        creating: r
+                            .creating
+                            .into_iter()
+                            .map(|c| SpaceCreatingElsewhere {
+                                machine_id: c.machine_id,
+                                machine_name: c.machine_name,
+                                name: c.name,
+                                os: c.os,
+                                phase: c.phase,
+                                percent: c.percent.min(100),
+                                updated_at_ms: c.updated_at_ms,
+                            })
+                            .collect(),
                     })
                 }
             }

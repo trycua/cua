@@ -36,8 +36,6 @@ Returned by [`Cua.spaces`](/cua-sdk/reference/cua#cua).
 | [`list`](#spaceslist) | Registered Spaces. |
 | [`list_known`](#spaceslist_known) | The Spaces known now: this machine's at once, and the account's other computers as far as they answered within a moment (`SpaceList` says how far the read got). |
 | [`list_tools_json`](#spaceslist_tools_json) | The Spaces MCP `tools/list` result as JSON (the contract). |
-| [`relay_register`](#spacesrelay_register) | Publishes `space` on the cua.ai relay as a machine of the signed-in account, the way `cua host setup` publishes this computer: the Space's own driver dials out, so the account's other devices (a phone off this network) reach it as `relay:<machine>`, and nobody else until it is shared. |
-| [`relay_unregister`](#spacesrelay_unregister) | Takes `space` off the relay (its driver leaves; every share goes). |
 | [`remove`](#spacesremove) | Unregisters a Space (the sandbox is not touched). |
 | [`resolve`](#spacesresolve) | Resolves an id, legacy id, URL or display name. |
 | [`space`](#spacesspace) | A connected handle to a registered Space. |
@@ -80,6 +78,8 @@ Returned by [`Cua.spaces`](/cua-sdk/reference/cua#cua).
 | [`persistent_agents`](/cua-sdk/reference/spaces/persistent-agents#spacespersistent_agents) | Every persistent agent. |
 | [`prewarm`](/cua-sdk/reference/spaces/elastic#spacesprewarm) | Keeps Spaces of `image` ready where the elastic pool puts them (the same solve as `on` `auto`, under the budget and pins), so the next creates of that shape start in a fraction of a second. |
 | [`prewarms`](/cua-sdk/reference/spaces/elastic#spacesprewarms) | The prewarms, with how many each keeps ready now. |
+| [`relay_register`](/cua-sdk/reference/spaces/relay-registration#spacesrelay_register) | Publishes `space` on the cua.ai relay as a machine of the signed-in account, the way `cua host setup` publishes this computer: the Space's own driver dials out, so the account's other devices (a phone off this network) reach it as `relay:<machine>`, and nobody else until it is shared. |
+| [`relay_unregister`](/cua-sdk/reference/spaces/relay-registration#spacesrelay_unregister) | Takes `space` off the relay (its driver leaves; every share goes). |
 | [`remove_prewarm`](/cua-sdk/reference/spaces/elastic#spacesremove_prewarm) | Ends prewarm `id` (its ready Spaces go). |
 | [`resize`](/cua-sdk/reference/spaces/resize#spacesresize) | Gives a local VM Space another shape: `cpus` vCPUs, `memory_mb` MiB of memory, a disk grown to `disk_gb` GiB (each `None` keeps it). |
 | [`resources`](/cua-sdk/reference/spaces/resources#spacesresources) | What this Mac, its extra Spaces and your other computers use now: processor, memory and disk, as one snapshot (a few seconds old at most). |
@@ -780,109 +780,6 @@ pub async fn list_tools_json(&self) -> Result<String, CuaError>
 
 **Returns** `String` · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
 
-### `Spaces.relay_register`
-
-Publishes `space` on the cua.ai relay as a machine of the signed-in
-account, the way `cua host setup` publishes this computer: the
-Space's own driver dials out, so the account's other devices (a
-phone off this network) reach it as `relay:<machine>`, and nobody
-else until it is shared. Idempotent.
-
-<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
-<Tab value="Python">
-
-```python
-async def relay_register(self, space: str) -> SpaceRelayRegistration
-```
-
-</Tab>
-<Tab value="TypeScript">
-
-```ts
-relayRegister(space: string, asyncOpts_?: { signal: AbortSignal }): Promise<SpaceRelayRegistration>
-```
-
-</Tab>
-<Tab value="Swift">
-
-```swift
-func relayRegister(space: String) async throws -> SpaceRelayRegistration
-```
-
-</Tab>
-<Tab value="Kotlin">
-
-```kotlin
-@Throws(CuaException::class)
-suspend fun relayRegister(space: String): SpaceRelayRegistration
-```
-
-</Tab>
-<Tab value="Rust">
-
-```rust
-pub async fn relay_register(&self, space: String) -> Result<SpaceRelayRegistration, CuaError>
-```
-
-</Tab>
-</Tabs>
-
-| Parameter | Type | Default |
-| --- | --- | --- |
-| `space` | `String` | required |
-
-**Returns** [`SpaceRelayRegistration`](/cua-sdk/reference/spaces/space#spacerelayregistration-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
-
-### `Spaces.relay_unregister`
-
-Takes `space` off the relay (its driver leaves; every share goes).
-Returns false when it was not on the relay.
-
-<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
-<Tab value="Python">
-
-```python
-async def relay_unregister(self, space: str) -> bool
-```
-
-</Tab>
-<Tab value="TypeScript">
-
-```ts
-relayUnregister(space: string, asyncOpts_?: { signal: AbortSignal }): Promise<boolean>
-```
-
-</Tab>
-<Tab value="Swift">
-
-```swift
-func relayUnregister(space: String) async throws -> Bool
-```
-
-</Tab>
-<Tab value="Kotlin">
-
-```kotlin
-@Throws(CuaException::class)
-suspend fun relayUnregister(space: String): Boolean
-```
-
-</Tab>
-<Tab value="Rust">
-
-```rust
-pub async fn relay_unregister(&self, space: String) -> Result<bool, CuaError>
-```
-
-</Tab>
-</Tabs>
-
-| Parameter | Type | Default |
-| --- | --- | --- |
-| `space` | `String` | required |
-
-**Returns** `bool` · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
-
 ### `Spaces.remove`
 
 Unregisters a Space (the sandbox is not touched).
@@ -1239,6 +1136,7 @@ Returned by [`Spaces.list_known`](#spaceslist_known).
 | `reaching` | `u32` |  | How many computers are still being reached (0 when unknown). |
 | `stale` | `bool` |  | The other computers' rows are the last known ones, not yet confirmed by the relay. |
 | `notice` | `String` |  | Why the account's computers could not be read, when they could not. |
+| `creating` | [`Vec<SpaceCreatingElsewhere>`](/cua-sdk/reference/spaces/space#spacecreatingelsewhere-record) |  | Spaces your other computers are creating now, from what each published through the relay (empty from a daemon that predates it). |
 
 ## `SpacePowerReport` record
 

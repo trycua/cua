@@ -5,7 +5,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { ArrowDownCircleIcon, KeyRoundIcon, LoaderCircleIcon, MonitorIcon, PlusIcon, PowerIcon, SearchIcon } from "lucide-react";
 import { useEffect, useRef, useState, type DragEvent } from "react";
 
-import { emptyHome, listView, spaceResources, useAgents, useBridge, useChecklist, useResources, useFirstSpaceOffers, useMachines, useNewSpaceWizard, useSpaceAccess, useSpaceFiles, useSpaces, useSpaceThumbnail, useWindowDropTarget, type Space } from "@/bridge";
+import { emptyHome, listView, spaceResources, type CreatingElsewhere, useAgents, useBridge, useChecklist, useResources, useFirstSpaceOffers, useMachines, useNewSpaceWizard, useSpaceAccess, useSpaceFiles, useSpaces, useSpaceThumbnail, useWindowDropTarget, type Space } from "@/bridge";
 import { EmptyHome } from "@/components/empty-home";
 import { RunAgentDialog } from "@/components/agents/run-agent-dialog";
 import { SpaceReadyCard, useAgentOffer } from "@/components/space-ready-card";
@@ -26,7 +26,7 @@ import { toast, toastError } from "@/components/ui/toast";
 import { creatingLine, thisComputerText } from "@/lib/host-labels";
 import { plural } from "@/lib/plural";
 import { cn } from "@/lib/utils";
-import { createError, createProgress, machineName, matchesQuery, powerButton, powerError, realSpaces, spacePlace, spaceState, visibleSpaces, type SpaceFilter } from "@/lib/spaces";
+import { createError, createProgress, creatingElsewhereLine, creatingElsewherePercent, creatingElsewherePlace, elsewhereOs, machineName, matchesQuery, powerButton, powerError, realSpaces, spacePlace, spaceState, visibleSpaces, type SpaceFilter } from "@/lib/spaces";
 
 export const Route = createFileRoute("/spaces/")({
   component: SpacesPage,
@@ -42,7 +42,7 @@ const FILTERS: { value: SpaceFilter; label: string }[] = [
 ];
 
 function SpacesPage() {
-  const { data: all = [], isLoading, error, listNotice, listStatus } = useSpaces();
+  const { data: all = [], isLoading, error, listNotice, listStatus, creatingElsewhere } = useSpaces();
   // Machines' own desktops are on Machines, not here.
   const spaces = realSpaces(all);
   const { data: machines = [] } = useMachines();
@@ -60,6 +60,11 @@ function SpacesPage() {
   const visible = visibleSpaces(spaces, filter, (s) => matchesQuery(core, s, machineName(machines, s), query));
   const onDisk = (s: Space) => spaceResources(resources, s.id)?.diskOnHost?.bytes ?? -1;
   const shown = sort === "size" ? [...visible].sort((a, b) => onDisk(b) - onDisk(a)) : visible;
+  // Spaces your other computers are creating (CUA-2349): first in the grid, until they are ready.
+  const elsewhere =
+    filter === "all" || filter === "creating"
+      ? creatingElsewhere.filter((c) => matchesQuery(core, { id: `${c.machineId}/${c.name}`, name: c.name, detail: creatingElsewhereLine(c) }, c.machineName, query))
+      : [];
   const access = useSpaceAccess(spaces);
   const running = spaces.filter((s) => spaceState(s) === "running").length;
   // After the first run's Finish later, its to-do list stands in for the checklist.
@@ -78,7 +83,7 @@ function SpacesPage() {
   const view = listView(core, listStatus, spaces.length);
   // Never read, and the host says why: "Spaces could not be loaded" (the empty home's unread title).
   const unread = !listStatus.loaded && Boolean(listNotice);
-  const empty = !error && !isLoading && (view.empty || unread);
+  const empty = !error && !isLoading && (view.empty || unread) && creatingElsewhere.length === 0;
   // No Spaces yet (or the list could not be read): the SwiftUI app's empty home, as the first-run guide.
   const guide = empty && home && home.tiles.length > 0 ? home : null;
   const reachingLine = error || unread ? null : view.reachingLine;
@@ -158,7 +163,22 @@ function SpacesPage() {
         <EmptyState icon={<MonitorIcon />} title="Couldn't load Spaces">
           {error.message}
         </EmptyState>
-      ) : isLoading ? null : guide ? (
+      ) : isLoading ? null : shown.length + elsewhere.length > 0 ? (
+        <ul className="grid grid-cols-[repeat(auto-fill,minmax(232px,1fr))] gap-4">
+          {/* Being created, first: as this computer's own creates sort. */}
+          {elsewhere.map((c) => (
+            <li key={`elsewhere:${c.machineId}/${c.name}`}>
+              <CreatingElsewhereTile creating={c} />
+            </li>
+          ))}
+          {shown.map((space) => (
+            // Off-screen tiles skip layout and paint until they scroll in.
+            <li key={space.id} className="[content-visibility:auto] [contain-intrinsic-size:auto_232px]">
+              <SpaceTile space={space} machine={machineName(machines, space)} accessKey={access.signedIn.has(space.id) ? access.accessKey(space.id) : undefined} />
+            </li>
+          ))}
+        </ul>
+      ) : guide ? (
         <EmptyHome home={guide} unread={Boolean(listNotice)} />
       ) : spaces.length === 0 && !empty ? null : spaces.length === 0 ? (
         <EmptyState
@@ -180,16 +200,7 @@ function SpacesPage() {
         <EmptyState icon={<MonitorIcon />} title={`No ${filter} Spaces`}>
           Pick another filter to see the rest.
         </EmptyState>
-      ) : (
-        <ul className="grid grid-cols-[repeat(auto-fill,minmax(232px,1fr))] gap-4">
-          {shown.map((space) => (
-            // Off-screen tiles skip layout and paint until they scroll in.
-            <li key={space.id} className="[content-visibility:auto] [contain-intrinsic-size:auto_232px]">
-              <SpaceTile space={space} machine={machineName(machines, space)} accessKey={access.signedIn.has(space.id) ? access.accessKey(space.id) : undefined} />
-            </li>
-          ))}
-        </ul>
-      )}
+      ) : null}
       {reachingLine && !isLoading ? (
         <p data-spaces-reaching="" role="status" className={cn("px-1 text-xs text-muted-foreground", spaces.length > 0 ? "mt-4" : "py-6 text-center")}>
           {reachingLine}
@@ -377,6 +388,44 @@ function SpaceLink({ space, machine, windowOver = false }: { space: Space; machi
       </div>
       {/* What it was given and uses now, when its computer says. */}
     </Link>
+  );
+}
+
+/**
+ * A Space another of your computers is creating (CUA-2349): the same tile
+ * as one this computer creates, with "Creating macOS on Mac mini… 40%" from
+ * that computer's own report. Nothing to open yet; once it is ready it is a
+ * Space like any other (or that computer's count, when its Spaces are not
+ * shared).
+ */
+function CreatingElsewhereTile({ creating }: { creating: CreatingElsewhere }) {
+  const os = elsewhereOs(creating);
+  const line = creatingElsewhereLine(creating);
+  return (
+    <div data-creating-elsewhere={creating.machineId} data-state="creating" role="group" aria-label={`${creating.name}: ${line}`} className="block w-full rounded-xl border bg-card p-1.5 text-left shadow-xs">
+      <SpaceCanvas>
+        <OsIcon os={os} className="size-6 text-muted-foreground/30" />
+        <div className="absolute inset-x-3 bottom-3">
+          <div className="h-1 overflow-hidden rounded-full bg-foreground/10">
+            <div data-create-progress className="h-full rounded-full bg-brand transition-[width] duration-500" style={{ width: `${Math.min(100, Math.max(0, creating.percent))}%` }} />
+          </div>
+        </div>
+      </SpaceCanvas>
+      <div className="flex items-start gap-2.5 px-1.5 pt-2.5 pb-1">
+        <OsIcon os={os} className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-[13px] font-medium">{creating.name}</div>
+          <div className="mt-0.5 truncate text-xs text-muted-foreground" title={line}>
+            {creatingElsewherePlace(creating)}
+          </div>
+        </div>
+        {/* How far, where this computer's own creates say "Creating". */}
+        <span data-state-label="creating" className="mt-px inline-flex shrink-0 items-center gap-1.5 text-xs tabular-nums text-muted-foreground">
+          <span className="size-1.5 animate-pulse rounded-full bg-brand" aria-hidden />
+          {creatingElsewherePercent(creating)}
+        </span>
+      </div>
+    </div>
   );
 }
 

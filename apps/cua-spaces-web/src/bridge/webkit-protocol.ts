@@ -284,6 +284,9 @@ export interface WkSpaces {
   /** Your other computers' rows are the last known ones (kept across a
    * daemon restart), not yet confirmed by the relay. */
   stale?: boolean;
+  /** Spaces your other computers are creating now (CUA-2349). Absent from
+   * a host that does not read them. */
+  creatingElsewhere?: import("./contracts/spaces").CreatingElsewhere[];
 }
 
 /** `machines.list`: the sidebar and the account's devices. */

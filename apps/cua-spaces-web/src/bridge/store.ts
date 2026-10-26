@@ -23,7 +23,7 @@ import type { MachineRow, MachinesView, OnboardingMode, SettingsPage, SignInFail
 import type { OnboardingAction, OnboardingFlowState } from "./contracts/onboarding";
 import type { KeyvaultOverview, KvGrant, KvListView, KvSelection, VaultAction, VaultState } from "./contracts/keyvault";
 import type { KvAccessCommand } from "./ops/keyvault-manage";
-import { LIST_COMPLETE, type CreateAction, type CreatesState, type ListStatus, type Space, type SpaceOs, type SpaceRow } from "./contracts/spaces";
+import { LIST_COMPLETE, type CreateAction, type CreatingElsewhere, type CreatesState, type ListStatus, type Space, type SpaceOs, type SpaceRow } from "./contracts/spaces";
 import {
   INITIAL_VAULT_STATE,
   agentRows,
@@ -252,6 +252,8 @@ export class BridgeStore {
   /** How far the host's last registry read got (`DataAdapter.listStatus`):
    * not read yet until the first answer. */
   private listStatusValue: ListStatus = { loaded: false, incomplete: false, reaching: 0, stale: false };
+  /** What your other computers are creating (`DataAdapter.creatingElsewhere`). */
+  private creatingElsewhereValue: CreatingElsewhere[] = [];
   /** The host's standing notice (`DataAdapter.hostNotice`). */
   private hostNoticeText: string | null = null;
   private creates: CreatesState = { ...NO_CREATES, streaks: loadCreateStreaks() };
@@ -410,6 +412,11 @@ export class BridgeStore {
     return this.listStatusValue;
   }
 
+  /** The Spaces your other computers are creating now. */
+  get creatingElsewhere(): CreatingElsewhere[] {
+    return this.creatingElsewhereValue;
+  }
+
   get listNotice(): string | null {
     return this.listNoticeText;
   }
@@ -458,6 +465,7 @@ export class BridgeStore {
           const rows = await this.adapter.call("spaces.list", {});
           this.listNoticeText = this.adapter.listNotice?.() ?? null;
           this.listStatusValue = this.adapter.listStatus?.() ?? LIST_COMPLETE;
+          this.creatingElsewhereValue = this.adapter.creatingElsewhere?.() ?? [];
           this.hostNoticeText = this.adapter.hostNotice?.() ?? null;
           this.applyRows(rows);
           break;

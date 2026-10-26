@@ -23687,6 +23687,75 @@ class _UniffiFfiConverterTypeSpaceCreateResult(_UniffiConverterRustBuffer):
         _UniffiFfiConverterBoolean.write(value.reused, buf)
 
 @dataclass
+class SpaceCreatingElsewhere:
+    """
+    A Space another of your computers is creating ([`SpaceList::creating`]).
+"""
+    def __init__(self, *, machine_id:str, machine_name:str, name:str, os:str, phase:str, percent:int, updated_at_ms:int):
+        self.machine_id = machine_id
+        self.machine_name = machine_name
+        self.name = name
+        self.os = os
+        self.phase = phase
+        self.percent = percent
+        self.updated_at_ms = updated_at_ms
+
+
+
+
+    def __str__(self):
+        return "SpaceCreatingElsewhere(machine_id={}, machine_name={}, name={}, os={}, phase={}, percent={}, updated_at_ms={})".format(self.machine_id, self.machine_name, self.name, self.os, self.phase, self.percent, self.updated_at_ms)
+    def __eq__(self, other):
+        if self.machine_id != other.machine_id:
+            return False
+        if self.machine_name != other.machine_name:
+            return False
+        if self.name != other.name:
+            return False
+        if self.os != other.os:
+            return False
+        if self.phase != other.phase:
+            return False
+        if self.percent != other.percent:
+            return False
+        if self.updated_at_ms != other.updated_at_ms:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeSpaceCreatingElsewhere(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return SpaceCreatingElsewhere(
+            machine_id=_UniffiFfiConverterString.read(buf),
+            machine_name=_UniffiFfiConverterString.read(buf),
+            name=_UniffiFfiConverterString.read(buf),
+            os=_UniffiFfiConverterString.read(buf),
+            phase=_UniffiFfiConverterString.read(buf),
+            percent=_UniffiFfiConverterUInt32.read(buf),
+            updated_at_ms=_UniffiFfiConverterUInt64.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.machine_id)
+        _UniffiFfiConverterString.check_lower(value.machine_name)
+        _UniffiFfiConverterString.check_lower(value.name)
+        _UniffiFfiConverterString.check_lower(value.os)
+        _UniffiFfiConverterString.check_lower(value.phase)
+        _UniffiFfiConverterUInt32.check_lower(value.percent)
+        _UniffiFfiConverterUInt64.check_lower(value.updated_at_ms)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.machine_id, buf)
+        _UniffiFfiConverterString.write(value.machine_name, buf)
+        _UniffiFfiConverterString.write(value.name, buf)
+        _UniffiFfiConverterString.write(value.os, buf)
+        _UniffiFfiConverterString.write(value.phase, buf)
+        _UniffiFfiConverterUInt32.write(value.percent, buf)
+        _UniffiFfiConverterUInt64.write(value.updated_at_ms, buf)
+
+@dataclass
 class SpaceDisplay:
     """
     One of a Space's displays ([`Space::displays`]).
@@ -23847,23 +23916,47 @@ class _UniffiFfiConverterSequenceTypeSpaceInfo(_UniffiConverterRustBuffer):
             _UniffiFfiConverterTypeSpaceInfo.read(buf) for i in range(count)
         ]
 
+class _UniffiFfiConverterSequenceTypeSpaceCreatingElsewhere(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiFfiConverterTypeSpaceCreatingElsewhere.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiFfiConverterTypeSpaceCreatingElsewhere.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiFfiConverterTypeSpaceCreatingElsewhere.read(buf) for i in range(count)
+        ]
+
 @dataclass
 class SpaceList:
     """
     The Spaces known now ([`Spaces::list_known`]) and how far the read got.
 """
-    def __init__(self, *, spaces:typing.List[SpaceInfo], incomplete:bool, reaching:int, stale:bool, notice:str):
+    def __init__(self, *, spaces:typing.List[SpaceInfo], incomplete:bool, reaching:int, stale:bool, notice:str, creating:typing.List[SpaceCreatingElsewhere]):
         self.spaces = spaces
         self.incomplete = incomplete
         self.reaching = reaching
         self.stale = stale
         self.notice = notice
+        self.creating = creating
 
 
 
 
     def __str__(self):
-        return "SpaceList(spaces={}, incomplete={}, reaching={}, stale={}, notice={})".format(self.spaces, self.incomplete, self.reaching, self.stale, self.notice)
+        return "SpaceList(spaces={}, incomplete={}, reaching={}, stale={}, notice={}, creating={})".format(self.spaces, self.incomplete, self.reaching, self.stale, self.notice, self.creating)
     def __eq__(self, other):
         if self.spaces != other.spaces:
             return False
@@ -23874,6 +23967,8 @@ class SpaceList:
         if self.stale != other.stale:
             return False
         if self.notice != other.notice:
+            return False
+        if self.creating != other.creating:
             return False
         return True
 
@@ -23886,6 +23981,7 @@ class _UniffiFfiConverterTypeSpaceList(_UniffiConverterRustBuffer):
             reaching=_UniffiFfiConverterUInt32.read(buf),
             stale=_UniffiFfiConverterBoolean.read(buf),
             notice=_UniffiFfiConverterString.read(buf),
+            creating=_UniffiFfiConverterSequenceTypeSpaceCreatingElsewhere.read(buf),
         )
 
     @staticmethod
@@ -23895,6 +23991,7 @@ class _UniffiFfiConverterTypeSpaceList(_UniffiConverterRustBuffer):
         _UniffiFfiConverterUInt32.check_lower(value.reaching)
         _UniffiFfiConverterBoolean.check_lower(value.stale)
         _UniffiFfiConverterString.check_lower(value.notice)
+        _UniffiFfiConverterSequenceTypeSpaceCreatingElsewhere.check_lower(value.creating)
 
     @staticmethod
     def write(value, buf):
@@ -23903,6 +24000,7 @@ class _UniffiFfiConverterTypeSpaceList(_UniffiConverterRustBuffer):
         _UniffiFfiConverterUInt32.write(value.reaching, buf)
         _UniffiFfiConverterBoolean.write(value.stale, buf)
         _UniffiFfiConverterString.write(value.notice, buf)
+        _UniffiFfiConverterSequenceTypeSpaceCreatingElsewhere.write(value.creating, buf)
 
 @dataclass
 class SpacePowerReport:
@@ -45428,6 +45526,7 @@ __all__ = [
     "SpaceCreateProgress",
     "SpaceInfo",
     "SpaceCreateResult",
+    "SpaceCreatingElsewhere",
     "SpaceDisplay",
     "SpaceHotspotStatus",
     "SpaceList",

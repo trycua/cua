@@ -36,7 +36,7 @@ import type {
   LocalStorage,
   SpaceCreateProgress,
 } from "../native/generated/index";
-import type { ListRead, LocalRuntimes, SpacesBackend } from "./backend";
+import type { CreatingElsewhereRow, ListRead, LocalRuntimes, SpacesBackend } from "./backend";
 import { AgentsModel, type AgentSetupRunning, type ToolRunner } from "./agents";
 import { ChecklistModel } from "./checklist";
 import type { CloudModel } from "./cloud";
@@ -579,6 +579,8 @@ export class AppModel {
   listReaching = 0;
   /** Your other computers' rows are the last known ones, not yet confirmed. */
   listStale = false;
+  /** What your other computers are creating now (CUA-2349), less what the list already has a row for. */
+  creatingElsewhere: CreatingElsewhereRow[] = [];
   private incompleteFollow: ReturnType<typeof setTimeout> | null = null;
 
   /** While some of your computers have not answered, the list is read again
@@ -603,6 +605,8 @@ export class AppModel {
       this.listIncomplete = list.incomplete;
       this.listReaching = list.reaching;
       this.listStale = list.stale;
+      // A create this app asked another computer for already has its own pending row.
+      this.creatingElsewhere = (list.creating ?? []).filter((c) => !this.spaces.some((s) => s.name === c.name && (s.host === c.machineId || this.native.appCreatesIsPending(s.id))));
       // Your other computers could not be read: their rows are the last known ones.
       this.rosterError = list.notice ? "Could not reach your other computers. Their Spaces may be out of date." : null;
       if (this.selectedSpaceId === null) {

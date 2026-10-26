@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import type { CoreClient, Machine, Space } from "@/bridge";
+import type { CoreClient, CreatingElsewhere, Machine, Space, SpaceOs } from "@/bridge";
 import { OS_NAME } from "@/components/os-icon";
 import { thisComputerLabel } from "@/lib/host-labels";
 import { messageText } from "@/lib/messages";
@@ -91,6 +91,26 @@ export function osLabel(space: Pick<Space, "os" | "osPrettyName">): string {
 export function spacePlace(space: Pick<Space, "os" | "osPrettyName">, machine: string): string {
   const os = osLabel(space);
   return os ? `${os} on ${machine}` : machine;
+}
+
+/** A Space another computer is creating: its OS as an icon takes (`unknown` when it did not say). */
+export function elsewhereOs(c: Pick<CreatingElsewhere, "os">): SpaceOs {
+  return c.os === "macos" || c.os === "linux" || c.os === "windows" ? c.os : "unknown";
+}
+
+/** "Creating macOS on Mac mini…" (CUA-2349): what another computer is making, from its own report. */
+export function creatingElsewherePlace(c: Pick<CreatingElsewhere, "os" | "machineName">): string {
+  const os = elsewhereOs(c);
+  const what = os === "unknown" ? "a Space" : OS_NAME[os];
+  return `Creating ${what} on ${c.machineName.trim() || "another computer"}…`;
+}
+
+/** How far it got: "40%". */
+export const creatingElsewherePercent = (c: Pick<CreatingElsewhere, "percent">): string => `${Math.min(100, Math.max(0, Math.round(c.percent)))}%`;
+
+/** "Creating macOS on Mac mini… 40%". */
+export function creatingElsewhereLine(c: Pick<CreatingElsewhere, "os" | "machineName" | "percent">): string {
+  return `${creatingElsewherePlace(c)} ${creatingElsewherePercent(c)}`;
 }
 
 /** The machine a Space runs on, by the machines' `spaceIds`. */

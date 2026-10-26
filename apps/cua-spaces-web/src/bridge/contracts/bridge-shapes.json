@@ -775,6 +775,37 @@
         "action"
       ]
     },
+    "CreatingElsewhere": {
+      "type": "object",
+      "properties": {
+        "machineId": {
+          "type": "string"
+        },
+        "machineName": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "os": {
+          "type": "string"
+        },
+        "phase": {
+          "type": "string"
+        },
+        "percent": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "machineId",
+        "machineName",
+        "name",
+        "os",
+        "phase",
+        "percent"
+      ]
+    },
     "DevicesInput": {
       "type": "object",
       "properties": {
@@ -5053,6 +5084,12 @@
         },
         "stale": {
           "type": "boolean"
+        },
+        "creatingElsewhere": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CreatingElsewhere"
+          }
         }
       },
       "required": [

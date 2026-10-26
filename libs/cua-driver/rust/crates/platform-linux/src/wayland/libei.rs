@@ -1605,10 +1605,10 @@ mod tests {
     #[test]
     fn drag_endpoint_outside_selected_device_fails_before_any_event() {
         let (result, events) = record(|| drag(100.0, 100.0, 11_000.0, 100.0, 4, 0, Button::Left));
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("outside every announced pointer region"));
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "libei: (11000, 100) lies outside every announced pointer region"
+        );
         assert_eq!(events, vec![]);
     }
 
@@ -1622,10 +1622,10 @@ mod tests {
             )
         });
         for r in [result.0, result.1, result.2] {
-            assert!(r
-                .unwrap_err()
-                .to_string()
-                .contains("outside every announced pointer region"));
+            assert_eq!(
+                r.unwrap_err().to_string(),
+                "libei: (8000, 100) lies outside every announced pointer region"
+            );
         }
         assert_eq!(events, vec![]);
     }

@@ -3881,9 +3881,10 @@ mod tests {
         let both = [region(0.0), region(3840.0)];
         for x in [8000.0, 7680.0] {
             let err = region_route::route_absolute([("abs", &both[..])], x, 100.0).unwrap_err();
-            assert!(err
-                .to_string()
-                .contains("outside every announced pointer region"));
+            assert_eq!(
+                err.to_string(),
+                format!("libei: ({x}, 100) lies outside every announced pointer region")
+            );
         }
     }
 
@@ -3893,9 +3894,10 @@ mod tests {
         let none: [region_route::RegionRect; 0] = [];
         let mixed = [("empty", &none[..]), ("left", &l[..])];
         let err = region_route::route_absolute(mixed, 6237.0, 1014.0).unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("outside every announced pointer region"));
+        assert_eq!(
+            err.to_string(),
+            "libei: (6237, 1014) lies outside every announced pointer region"
+        );
     }
 
     #[cfg(feature = "portal-input")]
@@ -3968,10 +3970,10 @@ mod tests {
                 libei_move_absolute(8000, 100)?;
                 libei_scroll("down", 1)
             });
-            assert!(result
-                .unwrap_err()
-                .to_string()
-                .contains("outside every announced pointer region"));
+            assert_eq!(
+                result.unwrap_err().to_string(),
+                "libei: (8000, 100) lies outside every announced pointer region"
+            );
             assert_eq!(events, vec![]);
         }
     }

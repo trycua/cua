@@ -126,6 +126,18 @@ describe("the call layout's surfaces", () => {
     expect(field.className).toContain("bg-muted");
     expect(field.className).not.toMatch(/(^|\s)border(\s|$)/);
   });
+
+  it("the tip sits flush on the stage and the rail: no bottom margin under it", async () => {
+    await mountApp(path, { failsCreates: false, listsGhost: false });
+    await waitFor(() => expect(q("[data-call-layout] [data-tip]")).not.toBeNull(), { timeout: 4000 });
+    const tip = q("[data-call-layout] [data-tip]")!;
+    // A bottom margin here is the gap the rail used to start below.
+    expect(tip.className).not.toMatch(/(^|\s)(mb|my|m)-(?!0(\s|$))\S+/);
+    expect(tip.className).toMatch(/(^|\s)mb-0(\s|$)/);
+    // Directly above the row that holds the stage and the rail.
+    const row = tip.nextElementSibling ?? tip.parentElement!.nextElementSibling;
+    expect(row?.querySelector("[data-members-panel]")).not.toBeNull();
+  });
 });
 
 // WCAG contrast of a token on the header's surface, from index.css itself.

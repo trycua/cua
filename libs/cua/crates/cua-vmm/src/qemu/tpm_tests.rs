@@ -559,3 +559,63 @@ fn text_fallback_requires_the_exact_last_directory() {
         n
     ));
 }
+
+#[test]
+fn identity_survives_a_spaced_executable_and_the_legacy_pidfile() {
+    let tmp = tempfile::tempdir().unwrap();
+    let spaced = tmp.path().join("bin dir");
+    std::fs::create_dir(&spaced).unwrap();
+    let link = fake_swtpm_link(&spaced);
+    let (run, tpm) = (tmp.path().join("run"), tmp.path().join("run/tpm"));
+    std::fs::create_dir_all(&run).unwrap();
+    let record = run.join("swtpm.a.pid");
+    let mut fake = spawn_fake(&link, &record, &tpm);
+    assert_eq!(swtpm_state(fake.id(), &record, &tpm), Tpm::Ours);
+    fake.kill().unwrap();
+    fake.wait().unwrap();
+    // The previous launch script's spelling of the shared pidfile.
+    let link = fake_swtpm_link(tmp.path());
+    let (run, tpm) = (tmp.path().join("run2"), tmp.path().join("run2/tpm"));
+    std::fs::create_dir_all(&run).unwrap();
+    let old = tpm.join("../swtpm.pid");
+    let mut fake = spawn_fake(&link, &old, &tpm);
+    assert_eq!(
+        swtpm_state(fake.id(), &run.join("swtpm.pid"), &tpm),
+        Tpm::Ours
+    );
+    fake.kill().unwrap();
+    fake.wait().unwrap();
+}
+
+#[tokio::test]
+async fn a_tpm_vm_cannot_be_claimed_and_a_busy_tpm_refuses_a_copy() {
+    let tmp = tempfile::tempdir().unwrap();
+    let runtime = QemuRuntime::new(QemuConfig {
+        root: tmp.path().join("root"),
+        ..Default::default()
+    });
+    let dir = runtime.dir("vm");
+    std::fs::create_dir_all(dir.join("tpm")).unwrap();
+    let mut st = tpm_state("vm", &dir);
+    st.pid = Some(std::process::id());
+    runtime.save(&st).unwrap();
+    let id = crate::types::ClaimIdentity::default();
+    let e = runtime
+        .claim("vm", "vm2", &id)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("cannot be claimed"), "{e}");
+    assert!(dir.join("tpm").exists() && !runtime.dir("vm2").exists());
+    // A launch in flight holds the TPM: a copy is refused.
+    let busy = runtime.tpm_claim(&st, false).await.unwrap();
+    let e = runtime
+        .tpm_claim(&st, false)
+        .await
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(e.contains("being started or copied"), "{e}");
+    drop(busy);
+    assert!(runtime.tpm_claim(&st, false).await.is_ok());
+}

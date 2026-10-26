@@ -369,6 +369,9 @@ pub async fn virgl_host(qemu: &std::path::Path) -> crate::gpu::VirglHost {
 pub struct QemuRuntime {
     cfg: QemuConfig,
     lock: Mutex<()>,
+    /// TPM VMs whose swtpm is being launched (until its clean-up is done) or
+    /// whose TPM state is being copied: the two never overlap.
+    tpm_busy: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
     /// Serializes recording golden snapshots.
     golden_lock: Mutex<()>,
     /// VMs admitted whose launch has not finished (within
@@ -401,6 +404,7 @@ impl QemuRuntime {
         Self {
             cfg,
             lock: Mutex::new(()),
+            tpm_busy: Default::default(),
             golden_lock: Mutex::new(()),
             pending: Default::default(),
             gc_asked: Default::default(),
@@ -1069,6 +1073,9 @@ impl QemuRuntime {
         persist: bool,
         force_tcg: bool,
     ) -> Result<()> {
+        // Held until this launch's swtpm is running (and so visible to the
+        // copy checks) or its clean-up is done, however the start ends.
+        let busy = self.tpm_claim(st, true).await?;
         let bin = self.binary(st.arch).await?;
         let dir = self.run_dir(st);
         let tpm_dir = dir.join("tpm");
@@ -1246,6 +1253,7 @@ impl QemuRuntime {
         // recorded would leave a running QEMU nothing knows about: the
         // guard ends whatever its pid file names unless the start finished.
         let mut launch_guard = LaunchGuard::new();
+        launch_guard.busy = busy.clone();
         // Each launch has its own swtpm record, so cleanup can never reach
         // another launch's TPM through a shared pidfile.
         let record = tpm_env
@@ -1332,7 +1340,9 @@ impl QemuRuntime {
                 }
                 Err(failed)
             };
+            let busy2 = busy.clone();
             let undo = move |pid: u32| async move {
+                let _busy = busy2;
                 end_launched(pid).await;
                 if let Some(record) = &record3 {
                     let _ = end_record(record, &tpm_dir3).await;
@@ -1660,6 +1670,33 @@ impl QemuRuntime {
             }
         }
         first.map_or(Ok(()), Err)
+    }
+
+    /// Marks the TPM of `st` busy (a launch or a copy); `wait` retries while
+    /// a previous launch's clean-up still holds it.
+    async fn tpm_claim(&self, st: &QemuState, wait: bool) -> Result<Option<Arc<TpmBusy>>> {
+        if !st.tpm {
+            return Ok(None);
+        }
+        for _ in 0..100 {
+            {
+                let mut set = self.tpm_busy.lock().unwrap_or_else(|e| e.into_inner());
+                if set.insert(st.name.clone()) {
+                    return Ok(Some(Arc::new(TpmBusy {
+                        set: self.tpm_busy.clone(),
+                        name: st.name.clone(),
+                    })));
+                }
+            }
+            if !wait {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        Err(VmmError::invalid(format!(
+            "the TPM of '{}' is being started or copied; try again",
+            st.name
+        )))
     }
 
     /// Refuse while any swtpm of this VM is alive (or cannot be told apart
@@ -2631,6 +2668,11 @@ impl Runtime for QemuRuntime {
                 "'{member}' is not a running VM, so it cannot be claimed"
             )));
         }
+        if st.tpm {
+            return Err(VmmError::invalid(format!(
+                "'{member}' has a TPM, whose swtpm is bound to the VM's directory; it cannot be claimed"
+            )));
+        }
         if self.dir(new_name).exists() {
             return Err(VmmError::AlreadyExists(new_name.to_string()));
         }
@@ -2746,6 +2788,7 @@ impl Runtime for QemuRuntime {
                 "'{src_name}' is running; stop it (or checkpoint it) before forking"
             )));
         }
+        let _busy = self.tpm_claim(&src, false).await?;
         self.tpm_stopped(&src)?;
         let backing = match (snapshot, src.kind) {
             (Some(snap), _) => {
@@ -2926,6 +2969,7 @@ impl Runtime for QemuRuntime {
         if self.state_path(checkpoint).exists() {
             return Err(VmmError::AlreadyExists(checkpoint.to_string()));
         }
+        let _busy = self.tpm_claim(&st, false).await?;
         self.tpm_stopped(&st)?;
         let layer = self.freeze(&mut st).await?;
         self.save(&st)?;
@@ -4558,6 +4602,21 @@ mod tests {
     }
 }
 
+/// Holds a VM's name in [`QemuRuntime::tpm_busy`] until dropped.
+struct TpmBusy {
+    set: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
+    name: String,
+}
+
+impl Drop for TpmBusy {
+    fn drop(&mut self) {
+        self.set
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.name);
+    }
+}
+
 /// What a recorded pid is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Tpm {
@@ -4581,19 +4640,32 @@ fn swtpm_state(pid: u32, record: &Path, tpm_dir: &Path) -> Tpm {
             Tpm::Gone
         };
     };
-    let is_swtpm = cmd
-        .split_whitespace()
-        .next()
-        .and_then(|w| Path::new(w).file_name())
-        .is_some_and(|n| n == "swtpm");
-    let file = format!("file={}", record.display());
-    let dir = format!("dir={}", tpm_dir.display());
-    // Linux keeps argument boundaries: the arguments must be exactly ours.
-    let ours = if let Ok(raw) = std::fs::read(format!("/proc/{pid}/cmdline")) {
-        let args: Vec<&[u8]> = raw.split(|b| *b == 0).collect();
-        args.contains(&file.as_bytes()) && args.contains(&dir.as_bytes())
+    // The shared pidfile earlier builds passed, spelled as they spelled it.
+    let file = if record.file_name().is_some_and(|n| n == "swtpm.pid") {
+        format!("file={}/../swtpm.pid", tpm_dir.display())
     } else {
-        names_dir_text(&cmd, &file, &dir)
+        format!("file={}", record.display())
+    };
+    let dir = format!("dir={}", tpm_dir.display());
+    // Linux keeps argument boundaries (and a path with spaces): the program
+    // and arguments must be exactly ours. Elsewhere the program is the text
+    // before the `socket` subcommand.
+    let (is_swtpm, ours) = if let Ok(raw) = std::fs::read(format!("/proc/{pid}/cmdline")) {
+        let args: Vec<&[u8]> = raw.split(|b| *b == 0).collect();
+        let exe = std::str::from_utf8(args[0]).unwrap_or_default();
+        (
+            Path::new(exe).file_name().is_some_and(|n| n == "swtpm"),
+            args.contains(&file.as_bytes()) && args.contains(&dir.as_bytes()),
+        )
+    } else {
+        let exe = cmd.split_once(" socket ").map_or_else(
+            || cmd.split_whitespace().next().unwrap_or_default(),
+            |(e, _)| e,
+        );
+        (
+            Path::new(exe).file_name().is_some_and(|n| n == "swtpm"),
+            names_dir_text(&cmd, &file, &dir),
+        )
     };
     if is_swtpm && ours {
         Tpm::Ours
@@ -4675,6 +4747,8 @@ struct LaunchGuard {
     pid: Option<u32>,
     /// The swtpm record and TPM directory of this launch.
     tpm: Option<(PathBuf, PathBuf)>,
+    /// Keeps the VM's TPM busy until the clean-up has run.
+    busy: Option<Arc<TpmBusy>>,
 }
 
 /// TERM, then KILL, a QEMU nobody will use.
@@ -4695,6 +4769,7 @@ impl LaunchGuard {
             armed: true,
             pid: None,
             tpm: None,
+            busy: None,
         }
     }
 
@@ -4708,8 +4783,9 @@ impl Drop for LaunchGuard {
         if !self.armed || (self.pid.is_none() && self.tpm.is_none()) {
             return;
         }
-        let (pid, tpm) = (self.pid, self.tpm.take());
+        let (pid, tpm, busy) = (self.pid, self.tpm.take(), self.busy.take());
         crate::cleanup::spawn(async move {
+            let _busy = busy;
             if let Some(p) = pid {
                 end_launched(p).await;
             }

@@ -369,11 +369,12 @@ with tempfile.TemporaryDirectory() as tmp:
             time.sleep(0.15)
 
         def find(name, role=None):
-            if role == "push button":
-                role = "button"
+            # at-spi2-core < 2.53 reports GTK buttons as "push button"; >= 2.53 as "button".
+            buttons = {"button", "push button"}
+            roles = buttons if role in buttons else {role}
 
             def walk(node):
-                if node.get_name() == name and (role is None or node.get_role_name() == role):
+                if node.get_name() == name and (role is None or node.get_role_name() in roles):
                     return node
                 for i in range(node.get_child_count()):
                     found = walk(node.get_child_at_index(i))

@@ -219,17 +219,19 @@ public enum HelperService {
     public static let restartExitCode: Int32 = 75
 
     /// The service started from an older build than the one installed now:
-    /// it started before this app's cua-spacesd was put in place (an update
-    /// writes new files, so their birth time is when the update landed).
+    /// it started before this app's cua-spacesd was put in place. That is
+    /// the file's status-change time (an update writes new files, and no
+    /// copy keeps it), not its birth time, which an archive keeps from the
+    /// build.
     public static func isStale(serviceStarted: Date, daemonInstalled: Date) -> Bool {
         serviceStarted < daemonInstalled
     }
 
-    /// When `path` came into being (`st_birthtime`), or `nil` when it is gone.
-    public static func birthTime(_ path: String) -> Date? {
+    /// When `path` was put in place (`st_ctime`), or `nil` when it is gone.
+    public static func placedTime(_ path: String) -> Date? {
         var st = stat()
         guard stat(path, &st) == 0 else { return nil }
-        let t = st.st_birthtimespec
+        let t = st.st_ctimespec
         return Date(timeIntervalSince1970: TimeInterval(t.tv_sec) + TimeInterval(t.tv_nsec) / 1e9)
     }
 
@@ -276,7 +278,7 @@ public enum HelperService {
         let target = "gui/\(getuid())/\(label)"
         DispatchQueue.global(qos: .utility).async {
             guard let pid = runningPid(target: target), let started = processStart(pid),
-                  let installed = birthTime(daemonPath(executable: executable).path),
+                  let installed = placedTime(daemonPath(executable: executable).path),
                   isStale(serviceStarted: started, daemonInstalled: installed) else { return }
             NSLog("cua-spaces: the host service (pid %d) is from before this build; restarting it", pid)
             let p = Process()

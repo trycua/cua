@@ -116,7 +116,7 @@ struct HelperServiceTests {
         #expect(HelperService.parsePid("\tstate = not running\n") == nil)
         // This process started after its own executable was written.
         let me = Bundle.main.executablePath ?? CommandLine.arguments[0]
-        let born = HelperService.birthTime(me)
+        let born = HelperService.placedTime(me)
         let started = HelperService.processStart(getpid())
         #expect(born != nil && started != nil)
         if let born, let started { #expect(!HelperService.isStale(serviceStarted: started, daemonInstalled: born)) }

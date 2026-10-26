@@ -328,7 +328,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             .filter(|a| !a.is_empty())
             .collect();
         config.account_claim = args.account_claim.clone();
-        std::sync::Arc::new(cua_relay::oidc::OidcValidator::new(config))
+        let validator = std::sync::Arc::new(cua_relay::oidc::OidcValidator::new(config));
+        validator.spawn_refresher();
+        validator
     });
     let share_web = match args.web_client_id.clone().filter(|c| !c.is_empty()) {
         Some(client_id) => {

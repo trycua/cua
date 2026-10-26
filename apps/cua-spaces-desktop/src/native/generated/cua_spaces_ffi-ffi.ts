@@ -392,6 +392,11 @@ const DEFINITIONS = {
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
+    "uniffi_cua_spaces_ffi_fn_func_app_about_feed_url": {
+      args: [FfiType.RustBuffer, FfiType.RustBuffer],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
     "uniffi_cua_spaces_ffi_fn_func_app_about_input_from_json": {
       args: [FfiType.RustBuffer],
       ret: FfiType.RustBuffer,
@@ -2198,6 +2203,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_spaces_ffi_checksum_func_app_about_allowed_channels": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_spaces_ffi_checksum_func_app_about_feed_url": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -4204,6 +4214,7 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_fn_init_callback_vtable_teleportwindowdraglistener(vtable: UniffiVTableCallbackInterfaceCuaSpacesFfiTeleportWindowDragListener): void;
     uniffi_cua_spaces_ffi_fn_func_app_about_after_launch(input: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_about_allowed_channels(channel: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_spaces_ffi_fn_func_app_about_feed_url(channel: Uint8Array, stableFeed: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_about_input_from_json(json: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_about_refresh_notice(report: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_about_restart_daemon(check: Uint8Array, uniffi_out_err: UniffiRustCallStatus): number;
@@ -4566,6 +4577,7 @@ interface NativeModuleInterface {
     ffi_cua_spaces_ffi_uniffi_contract_version(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_about_after_launch(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_about_allowed_channels(): number;
+    uniffi_cua_spaces_ffi_checksum_func_app_about_feed_url(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_about_input_from_json(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_about_refresh_notice(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_about_restart_daemon(): number;

@@ -15,10 +15,12 @@
         "updates": {
           "autoCheck": "[x] Check for and download updates automatically",
           "autoInstall": "[ ] Install a downloaded update when Cua Spaces quits",
-          "channel": "Update to: Stable* | Beta",
+          "channel": "Get updates from Stable* | Beta",
           "check": "Check Now on",
-          "help": "Stable gets tested releases. Beta also gets prereleases: new features sooner, with rough edges. Back on Stable, this version stays until a newer stable release.",
+          "download": null,
+          "help": "Tested releases. Best for most people.",
           "lastCheck": "Last check: Never",
+          "note": null,
           "sparkleChannels": []
         },
         "version": "Version 0.2.0 (0.2.0.123)"
@@ -39,10 +41,12 @@
         "updates": {
           "autoCheck": "[x] Check for and download updates automatically",
           "autoInstall": "[x] Install a downloaded update when Cua Spaces quits",
-          "channel": "Update to: Stable* | Beta",
+          "channel": "Get updates from Stable* | Beta",
           "check": "Check Now on",
-          "help": "Stable gets tested releases. Beta also gets prereleases: new features sooner, with rough edges. Back on Stable, this version stays until a newer stable release.",
+          "download": null,
+          "help": "Tested releases. Best for most people.",
           "lastCheck": "Last check: Never",
+          "note": null,
           "sparkleChannels": []
         },
         "version": "Version 0.2.0 (0.2.0.123)"
@@ -63,10 +67,12 @@
         "updates": {
           "autoCheck": "[x] Check for and download updates automatically",
           "autoInstall": "[x] Install a downloaded update when Cua Spaces quits",
-          "channel": "Update to: Stable | Beta*",
+          "channel": "Get updates from Stable | Beta*",
           "check": "Check Now on",
-          "help": "Stable gets tested releases. Beta also gets prereleases: new features sooner, with rough edges. Back on Stable, this version stays until a newer stable release.",
+          "download": null,
+          "help": "New features a little sooner, with rough edges.",
           "lastCheck": "Last check: 9/30/26, 3:04 PM",
+          "note": null,
           "sparkleChannels": [
             "beta"
           ]
@@ -89,15 +95,97 @@
         "updates": {
           "autoCheck": "[x] Check for and download updates automatically",
           "autoInstall": "[x] Install a downloaded update when Cua Spaces quits",
-          "channel": "Update to: Stable | Beta*",
-          "check": "Checking… off",
-          "help": "Stable gets tested releases. Beta also gets prereleases: new features sooner, with rough edges. Back on Stable, this version stays until a newer stable release.",
+          "channel": "Get updates from Stable | Beta* | Nightly",
+          "check": "Check Now on",
+          "download": null,
+          "help": "New features a little sooner, with rough edges.",
           "lastCheck": "Last check: 9/30/26, 3:04 PM",
+          "note": null,
           "sparkleChannels": [
             "beta"
           ]
         },
         "version": "Version 0.3.0-beta.1 (0.3.0.130)"
+      },
+      "step": "nightly offered"
+    },
+    {
+      "about": {
+        "copyright": "© 2026 Cua AI, Inc. All rights reserved.",
+        "links": [
+          "acknowledgements Acknowledgements -> (bundled notices)",
+          "privacy Privacy Policy -> https://cua.ai/privacy-policy",
+          "terms Terms of Service -> https://cua.ai/terms-of-service",
+          "status System Status -> https://status.cua.ai",
+          "issue Report an Issue… -> https://github.com/trycua/cua/issues/new?template=bug.yml&environment=Cua%20Spaces%20for%20macOS%200.17.0-nightly.20261025%2B1a2b3c4%20%280.16.0.2026102503%29%0AmacOS%2026.0%20%28arm64%29"
+        ],
+        "title": "Cua Spaces for macOS",
+        "updates": {
+          "autoCheck": "[x] Check for and download updates automatically",
+          "autoInstall": "[x] Install a downloaded update when Cua Spaces quits",
+          "channel": "Get updates from Stable | Beta | Nightly*",
+          "check": "Check Now on",
+          "download": null,
+          "help": "A new build most nights with the very latest changes. Nightly builds are not tested, so something may break.",
+          "lastCheck": "Last check: 9/30/26, 3:04 PM",
+          "note": "If a nightly build gives you trouble, switch back to Stable. You keep your Spaces and settings.",
+          "sparkleChannels": [
+            "nightly"
+          ]
+        },
+        "version": "Version 0.17.0-nightly.20261025+1a2b3c4 (0.16.0.2026102503)"
+      },
+      "step": "nightly"
+    },
+    {
+      "about": {
+        "copyright": "© 2026 Cua AI, Inc. All rights reserved.",
+        "links": [
+          "acknowledgements Acknowledgements -> (bundled notices)",
+          "privacy Privacy Policy -> https://cua.ai/privacy-policy",
+          "terms Terms of Service -> https://cua.ai/terms-of-service",
+          "status System Status -> https://status.cua.ai",
+          "issue Report an Issue… -> https://github.com/trycua/cua/issues/new?template=bug.yml&environment=Cua%20Spaces%20for%20macOS%200.17.0-nightly.20261025%2B1a2b3c4%20%280.16.0.2026102503%29%0AmacOS%2026.0%20%28arm64%29"
+        ],
+        "title": "Cua Spaces for macOS",
+        "updates": {
+          "autoCheck": "[x] Check for and download updates automatically",
+          "autoInstall": "[x] Install a downloaded update when Cua Spaces quits",
+          "channel": "Get updates from Stable* | Beta | Nightly",
+          "check": "Check Now on",
+          "download": "Download Stable -> https://spaces.cua.ai/download",
+          "help": "Tested releases. Best for most people.",
+          "lastCheck": "Last check: 9/30/26, 3:04 PM",
+          "note": "This nightly build is newer than the latest Stable release, so it stays until the next Stable release replaces it. To go back now, download Stable and move it to Applications.",
+          "sparkleChannels": []
+        },
+        "version": "Version 0.17.0-nightly.20261025+1a2b3c4 (0.16.0.2026102503)"
+      },
+      "step": "back on stable from a nightly"
+    },
+    {
+      "about": {
+        "copyright": "© 2026 Cua AI, Inc. All rights reserved.",
+        "links": [
+          "acknowledgements Acknowledgements -> (bundled notices)",
+          "privacy Privacy Policy -> https://cua.ai/privacy-policy",
+          "terms Terms of Service -> https://cua.ai/terms-of-service",
+          "status System Status -> https://status.cua.ai",
+          "issue Report an Issue… -> https://github.com/trycua/cua/issues/new?template=bug.yml&environment=Cua%20Spaces%20for%20macOS%200.17.0-nightly.20261025%2B1a2b3c4%20%280.16.0.2026102503%29%0AmacOS%2026.0%20%28arm64%29"
+        ],
+        "title": "Cua Spaces for macOS",
+        "updates": {
+          "autoCheck": "[x] Check for and download updates automatically",
+          "autoInstall": "[x] Install a downloaded update when Cua Spaces quits",
+          "channel": "Get updates from Stable* | Beta | Nightly",
+          "check": "Checking… off",
+          "download": "Download Stable -> https://spaces.cua.ai/download",
+          "help": "Tested releases. Best for most people.",
+          "lastCheck": "Last check: 9/30/26, 3:04 PM",
+          "note": "This nightly build is newer than the latest Stable release, so it stays until the next Stable release replaces it. To go back now, download Stable and move it to Applications.",
+          "sparkleChannels": []
+        },
+        "version": "Version 0.17.0-nightly.20261025+1a2b3c4 (0.16.0.2026102503)"
       },
       "step": "checking"
     },
@@ -109,21 +197,21 @@
           "privacy Privacy Policy -> https://cua.ai/privacy-policy",
           "terms Terms of Service -> https://cua.ai/terms-of-service",
           "status System Status -> https://status.cua.ai",
-          "issue Report an Issue… -> https://github.com/trycua/cua/issues/new?template=bug.yml&environment=Cua%20Spaces%20for%20macOS%200.3.0-beta.1%20%280.3.0.130%29%0AmacOS%2026.0%20%28arm64%29"
+          "issue Report an Issue… -> https://github.com/trycua/cua/issues/new?template=bug.yml&environment=Cua%20Spaces%20for%20macOS%200.17.0-nightly.20261025%2B1a2b3c4%20%280.16.0.2026102503%29%0AmacOS%2026.0%20%28arm64%29"
         ],
         "title": "Cua Spaces for macOS",
         "updates": {
           "autoCheck": "[ ] Check for and download updates automatically",
           "autoInstall": "[x] Install a downloaded update when Cua Spaces quits (disabled)",
-          "channel": "Update to: Stable | Beta*",
+          "channel": "Get updates from Stable* | Beta | Nightly",
           "check": "Check Now on",
-          "help": "Stable gets tested releases. Beta also gets prereleases: new features sooner, with rough edges. Back on Stable, this version stays until a newer stable release.",
+          "download": "Download Stable -> https://spaces.cua.ai/download",
+          "help": "Tested releases. Best for most people.",
           "lastCheck": "Last check: 9/30/26, 3:04 PM",
-          "sparkleChannels": [
-            "beta"
-          ]
+          "note": "This nightly build is newer than the latest Stable release, so it stays until the next Stable release replaces it. To go back now, download Stable and move it to Applications.",
+          "sparkleChannels": []
         },
-        "version": "Version 0.3.0-beta.1 (0.3.0.130)"
+        "version": "Version 0.17.0-nightly.20261025+1a2b3c4 (0.16.0.2026102503)"
       },
       "step": "no automatic checks"
     },
@@ -135,11 +223,11 @@
           "privacy Privacy Policy -> https://cua.ai/privacy-policy",
           "terms Terms of Service -> https://cua.ai/terms-of-service",
           "status System Status -> https://status.cua.ai",
-          "issue Report an Issue… -> https://github.com/trycua/cua/issues/new?template=bug.yml&environment=Cua%20Spaces%20for%20macOS%200.3.0-beta.1%0AmacOS%2026.0%20%28arm64%29"
+          "issue Report an Issue… -> https://github.com/trycua/cua/issues/new?template=bug.yml&environment=Cua%20Spaces%20for%20macOS%200.17.0-nightly.20261025%2B1a2b3c4%0AmacOS%2026.0%20%28arm64%29"
         ],
         "title": "Cua Spaces for macOS",
         "updates": null,
-        "version": "Version 0.3.0-beta.1"
+        "version": "Version 0.17.0-nightly.20261025+1a2b3c4"
       },
       "step": "no updater"
     },

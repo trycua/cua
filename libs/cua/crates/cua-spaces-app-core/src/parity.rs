@@ -1733,6 +1733,12 @@ pub mod frame {
                     .map(|o| format!("{}{}", str_of(&o["label"]), if o["active"] == true { "*" } else { "" }))
                     .collect::<Vec<_>>().join(" | ")),
                 "help": u["channelHelp"],
+                "note": u["channelNote"],
+                "download": if u["downloadUrl"].is_string() {
+                    json!(format!("{} -> {}", str_of(&u["downloadLabel"]), str_of(&u["downloadUrl"])))
+                } else {
+                    Value::Null
+                },
                 "check": format!("{} {}", str_of(&u["checkLabel"]), if u["checkEnabled"] == true { "on" } else { "off" }),
                 "lastCheck": u["lastCheck"],
                 "sparkleChannels": channels,

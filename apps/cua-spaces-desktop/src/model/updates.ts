@@ -177,6 +177,8 @@ export class UpdatesModel {
       channel: this.channel,
       lastCheck: u?.lastCheck != null ? dateText(u.lastCheck) : undefined,
       checking: !(u?.canCheck ?? true),
+      // electron-updater has no nightly feed yet (the Mac app's Sparkle does).
+      nightly: false,
     };
   }
 

@@ -68,6 +68,29 @@ export function appAboutAllowedChannels(channel: AppUpdateChannel): Array<string
     }
 
 /**
+ * The appcast a Sparkle updater on `channel` reads, from the app's own
+ * `SUFeedURL` (`stable_feed`): the nightly appcast for Nightly; `None`
+ * keeps `SUFeedURL` (and for Nightly: this feed has no nightly).
+ */
+export function appAboutFeedUrl(channel: AppUpdateChannel, stableFeed: string): string | undefined {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterOptionalString.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_about_feed_url(
+        FfiConverterTypeAppUpdateChannel.lower(channel, nativeModule().rustbuffer_alloc),
+        FfiConverterString.lower(stableFeed, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
  * The About input from JSON (parity flows).
  */
 export function appAboutInputFromJson(json: string): AppAboutInput /*throws*/ {
@@ -6750,7 +6773,12 @@ export enum AppUpdateChannel {
     /**
      * Releases and prereleases (`X.Y.Z-suffix`).
      */
-    Beta = "beta"
+    Beta = "beta",
+    /**
+     * A build of main most nights (`X.Y.Z-nightly.YYYYMMDD+sha`), from its
+     * own appcast ([`nightly_feed_url`]). Untested.
+     */
+    Nightly = "nightly"
 }
 
 const FfiConverterTypeAppUpdateChannel = (() => {
@@ -6761,6 +6789,7 @@ const FfiConverterTypeAppUpdateChannel = (() => {
             switch (ordinalConverter.read(from)) {
                 case 1: return AppUpdateChannel.Stable;
                 case 2: return AppUpdateChannel.Beta;
+                case 3: return AppUpdateChannel.Nightly;
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
@@ -6768,6 +6797,7 @@ const FfiConverterTypeAppUpdateChannel = (() => {
             switch (value) {
                 case AppUpdateChannel.Stable: return ordinalConverter.write(1, into);
                 case AppUpdateChannel.Beta: return ordinalConverter.write(2, into);
+                case AppUpdateChannel.Nightly: return ordinalConverter.write(3, into);
             }
         }
         allocationSize(value: TypeName): number {
@@ -6818,7 +6848,12 @@ export type AppAboutInput = {
     /**
      * A check is running.
      */
-    checking: boolean
+    checking: boolean,
+    /**
+     * The updater can follow the nightly appcast (the macOS app with the
+     * release feed); the picker offers Nightly only then.
+     */
+    nightly: boolean
 }
 
 /**
@@ -6851,7 +6886,8 @@ const FfiConverterTypeAppAboutInput = (() => {
                 autoInstall: FfiConverterBool.read(from),
                 channel: FfiConverterTypeAppUpdateChannel.read(from),
                 lastCheck: FfiConverterOptionalString.read(from),
-                checking: FfiConverterBool.read(from)
+                checking: FfiConverterBool.read(from),
+                nightly: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -6865,6 +6901,7 @@ const FfiConverterTypeAppAboutInput = (() => {
             FfiConverterTypeAppUpdateChannel.write(value.channel, into);
             FfiConverterOptionalString.write(value.lastCheck, into);
             FfiConverterBool.write(value.checking, into);
+            FfiConverterBool.write(value.nightly, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.platform) +
@@ -6876,7 +6913,8 @@ const FfiConverterTypeAppAboutInput = (() => {
              FfiConverterBool.allocationSize(value.autoInstall) +
              FfiConverterTypeAppUpdateChannel.allocationSize(value.channel) +
              FfiConverterOptionalString.allocationSize(value.lastCheck) +
-             FfiConverterBool.allocationSize(value.checking);
+             FfiConverterBool.allocationSize(value.checking) +
+             FfiConverterBool.allocationSize(value.nightly);
 
         }
     };
@@ -7070,17 +7108,32 @@ export type AppAboutUpdates = {
      */
     autoInstallEnabled: boolean,
     /**
-     * "Update to:".
+     * "Get updates from".
      */
     channelLabel: string,
     /**
-     * Stable, Beta.
+     * Stable, Beta and, where offered, Nightly.
      */
     channels: Array<AppSettingsOption>,
     /**
-     * The channel picker's tooltip.
+     * What the chosen channel gets, in a line.
      */
     channelHelp: string,
+    /**
+     * A word about the version running on this channel: Nightly may
+     * break, or this build is newer than the channel's latest release and
+     * stays until that channel passes it; `None`: nothing to say.
+     */
+    channelNote?: string,
+    /**
+     * "Download Stable": the way back to an older Stable right now
+     * ([`DOWNLOAD_URL`]); `None` when no way back is needed.
+     */
+    downloadLabel?: string,
+    /**
+     * Where [`AboutUpdates::download_label`] goes.
+     */
+    downloadUrl?: string,
     /**
      * "Check Now" (or "Checking…").
      */
@@ -7124,6 +7177,9 @@ const FfiConverterTypeAppAboutUpdates = (() => {
                 channelLabel: FfiConverterString.read(from),
                 channels: FfiConverterSequenceTypeAppSettingsOption.read(from),
                 channelHelp: FfiConverterString.read(from),
+                channelNote: FfiConverterOptionalString.read(from),
+                downloadLabel: FfiConverterOptionalString.read(from),
+                downloadUrl: FfiConverterOptionalString.read(from),
                 checkLabel: FfiConverterString.read(from),
                 checkEnabled: FfiConverterBool.read(from),
                 lastCheck: FfiConverterString.read(from)
@@ -7138,6 +7194,9 @@ const FfiConverterTypeAppAboutUpdates = (() => {
             FfiConverterString.write(value.channelLabel, into);
             FfiConverterSequenceTypeAppSettingsOption.write(value.channels, into);
             FfiConverterString.write(value.channelHelp, into);
+            FfiConverterOptionalString.write(value.channelNote, into);
+            FfiConverterOptionalString.write(value.downloadLabel, into);
+            FfiConverterOptionalString.write(value.downloadUrl, into);
             FfiConverterString.write(value.checkLabel, into);
             FfiConverterBool.write(value.checkEnabled, into);
             FfiConverterString.write(value.lastCheck, into);
@@ -7151,6 +7210,9 @@ const FfiConverterTypeAppAboutUpdates = (() => {
              FfiConverterString.allocationSize(value.channelLabel) +
              FfiConverterSequenceTypeAppSettingsOption.allocationSize(value.channels) +
              FfiConverterString.allocationSize(value.channelHelp) +
+             FfiConverterOptionalString.allocationSize(value.channelNote) +
+             FfiConverterOptionalString.allocationSize(value.downloadLabel) +
+             FfiConverterOptionalString.allocationSize(value.downloadUrl) +
              FfiConverterString.allocationSize(value.checkLabel) +
              FfiConverterBool.allocationSize(value.checkEnabled) +
              FfiConverterString.allocationSize(value.lastCheck);
@@ -65452,6 +65514,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_about_allowed_channels() !== 59781) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_about_allowed_channels");
+    }
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_about_feed_url() !== 49899) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_about_feed_url");
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_about_input_from_json() !== 570) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_about_input_from_json");

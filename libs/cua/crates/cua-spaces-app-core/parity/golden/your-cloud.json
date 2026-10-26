@@ -17,7 +17,7 @@
           "connect-by-address"
         ],
         "kindsOff": [
-          "microvm | MicroVM | Needs macOS 26. | off"
+          "microvm | MicroVM |  | off"
         ],
         "placement": "local",
         "placementError": null,
@@ -64,7 +64,7 @@
           "connect-by-address"
         ],
         "kindsOff": [
-          "microvm | MicroVM | Needs macOS 26. | off"
+          "microvm | MicroVM |  | off"
         ],
         "placement": "local",
         "placementError": null,
@@ -701,7 +701,7 @@
         ],
         "kindsOff": [
           "vm | Virtual machine | VM Spaces need a nested-virtualization machine; not offered yet. Ask your agent to deploy the Ubuntu 24.04 VM image on AWS and add it with cua spaces add. | off",
-          "microvm | MicroVM | Is not offered on AWS. | off"
+          "microvm | MicroVM |  | off"
         ],
         "placement": "yours",
         "placementError": null,
@@ -743,7 +743,7 @@
         "fields": [],
         "kindsOff": [
           "vm | Virtual machine | VM Spaces need a nested-virtualization machine; not offered yet. Ask your agent to deploy the Ubuntu 24.04 VM image on AWS and add it with cua spaces add. | off",
-          "microvm | MicroVM | Is not offered on AWS. | off"
+          "microvm | MicroVM |  | off"
         ],
         "placement": "yours",
         "placementError": null,
@@ -788,7 +788,7 @@
         ],
         "kindsOff": [
           "vm | Virtual machine | VM Spaces need a nested-virtualization machine; not offered yet. Ask your agent to deploy the Ubuntu 24.04 VM image on AWS and add it with cua spaces add. | off",
-          "microvm | MicroVM | Is not offered on AWS. | off"
+          "microvm | MicroVM |  | off"
         ],
         "placement": "yours",
         "placementError": null,
@@ -830,7 +830,7 @@
         "fields": [],
         "kindsOff": [
           "vm | Virtual machine | VM Spaces need a nested-virtualization machine; not offered yet. Ask your agent to deploy the Ubuntu 24.04 VM image on AWS and add it with cua spaces add. | off",
-          "microvm | MicroVM | Is not offered on AWS. | off"
+          "microvm | MicroVM |  | off"
         ],
         "placement": "yours",
         "placementError": null,
@@ -875,7 +875,7 @@
         ],
         "kindsOff": [
           "vm | Virtual machine | VM Spaces need a nested-virtualization machine; not offered yet. Ask your agent to deploy the Ubuntu 24.04 VM image on AWS and add it with cua spaces add. | off",
-          "microvm | MicroVM | Is not offered on AWS. | off"
+          "microvm | MicroVM |  | off"
         ],
         "placement": "yours",
         "placementError": null,
@@ -921,7 +921,7 @@
         ],
         "kindsOff": [
           "vm | Virtual machine | Modal does not run this image. Ask your agent to deploy the Ubuntu 24.04 VM image on Modal and add it with cua spaces add. | off",
-          "microvm | MicroVM | Is not offered on Modal. | off"
+          "microvm | MicroVM |  | off"
         ],
         "placement": "yours",
         "placementError": null,
@@ -966,7 +966,7 @@
           "open-when-ready"
         ],
         "kindsOff": [
-          "microvm | MicroVM | Needs macOS 26. | off"
+          "microvm | MicroVM |  | off"
         ],
         "placement": "local",
         "placementError": null,

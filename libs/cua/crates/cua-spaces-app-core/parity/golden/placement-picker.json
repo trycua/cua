@@ -16,7 +16,7 @@
           "connect-by-address"
         ],
         "kindsOff": [
-          "microvm | MicroVM | Needs macOS 26. | off"
+          "microvm | MicroVM |  | off"
         ],
         "placement": "local",
         "placementError": null,
@@ -68,7 +68,7 @@
           "connect-by-address"
         ],
         "kindsOff": [
-          "microvm | MicroVM | Needs macOS 26. | off"
+          "microvm | MicroVM |  | off"
         ],
         "placement": "local",
         "placementError": null,
@@ -120,7 +120,7 @@
           "connect-by-address"
         ],
         "kindsOff": [
-          "microvm | MicroVM | Needs macOS 26. | off"
+          "microvm | MicroVM |  | off"
         ],
         "placement": "local",
         "placementError": null,
@@ -172,7 +172,7 @@
           "connect-by-address"
         ],
         "kindsOff": [
-          "microvm | MicroVM | Needs macOS 26 on Mac mini. | off"
+          "microvm | MicroVM |  | off"
         ],
         "placement": "host",
         "placementError": null,
@@ -222,7 +222,7 @@
         ],
         "kindsOff": [
           "container | Container |  | off",
-          "microvm | MicroVM | Runs Linux images only. | off"
+          "microvm | MicroVM |  | off"
         ],
         "placement": "host",
         "placementError": "Mac mini is at its limit: Apple's macOS license allows two macOS VMs per Mac.",
@@ -271,7 +271,7 @@
           "connect-by-address"
         ],
         "kindsOff": [
-          "microvm | MicroVM | Needs macOS 26 on Mac mini. | off"
+          "microvm | MicroVM |  | off"
         ],
         "placement": "host",
         "placementError": null,
@@ -320,7 +320,7 @@
           "connect-by-address"
         ],
         "kindsOff": [
-          "microvm | MicroVM | Needs Linux with KVM on lab. | off"
+          "microvm | MicroVM |  | off"
         ],
         "placement": "host",
         "placementError": null,
@@ -370,7 +370,7 @@
           "connect-by-address"
         ],
         "kindsOff": [
-          "microvm | MicroVM | Needs Linux with KVM on lab. | off"
+          "microvm | MicroVM |  | off"
         ],
         "placement": "host",
         "placementError": null,
@@ -423,7 +423,7 @@
         ],
         "kindsOff": [
           "vm | Virtual machine | AWS does not run this image. Ask your agent to deploy the Ubuntu 24.04 VM image on AWS and add it with cua spaces add. | off",
-          "microvm | MicroVM | Is not offered on AWS. | off"
+          "microvm | MicroVM |  | off"
         ],
         "placement": "yours",
         "placementError": null,
@@ -477,7 +477,7 @@
           "connect-by-address"
         ],
         "kindsOff": [
-          "microvm | MicroVM | Needs macOS 26. | off"
+          "microvm | MicroVM |  | off"
         ],
         "placement": "local",
         "placementError": null,
@@ -529,7 +529,7 @@
           "connect-by-address"
         ],
         "kindsOff": [
-          "microvm | MicroVM | Needs macOS 26 on Mac mini. | off"
+          "microvm | MicroVM |  | off"
         ],
         "placement": "host",
         "placementError": null,
@@ -574,7 +574,7 @@
           "memory"
         ],
         "kindsOff": [
-          "microvm | MicroVM | Needs macOS 26 on Mac mini. | off"
+          "microvm | MicroVM |  | off"
         ],
         "placement": "host",
         "placementError": null,
@@ -619,7 +619,7 @@
           "open-when-ready"
         ],
         "kindsOff": [
-          "microvm | MicroVM | Needs macOS 26 on Mac mini. | off"
+          "microvm | MicroVM |  | off"
         ],
         "placement": "host",
         "placementError": null,
@@ -661,7 +661,7 @@
         "cloud": null,
         "fields": [],
         "kindsOff": [
-          "microvm | MicroVM | Needs macOS 26 on Mac mini. | off"
+          "microvm | MicroVM |  | off"
         ],
         "placement": "host",
         "placementError": null,
@@ -703,7 +703,7 @@
         "cloud": null,
         "fields": [],
         "kindsOff": [
-          "microvm | MicroVM | Needs macOS 26. | off"
+          "microvm | MicroVM |  | off"
         ],
         "placement": "local",
         "placementError": null,
@@ -742,7 +742,7 @@
         "cloud": null,
         "fields": [],
         "kindsOff": [
-          "microvm | MicroVM | Needs macOS 26. | off"
+          "microvm | MicroVM |  | off"
         ],
         "placement": "local",
         "placementError": null,

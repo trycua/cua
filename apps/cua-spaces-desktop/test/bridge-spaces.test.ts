@@ -228,17 +228,17 @@ describe.skipIf(!built)("a Space's detail, files, sharing and clouds on the app 
 
   describe("bulk delete and leave", () => {
     it("deletes several, one result per id in order, a failure restoring only its row", async () => {
-      backend.bulkErrors.set("cloud:builder", "timed out");
-      const answer = (await call("spaces.deleteMany", { ids: [aurora, "cloud:builder", "local:nowhere"] })) as { results: { id: string; ok: boolean; error?: string }[] };
+      backend.bulkErrors.set("direct:builder", "timed out");
+      const answer = (await call("spaces.deleteMany", { ids: [aurora, "direct:builder", "local:nowhere"] })) as { results: { id: string; ok: boolean; error?: string }[] };
       expect(answer.results).toEqual([
         { id: aurora, ok: true },
-        { id: "cloud:builder", ok: false, error: "timed out" },
+        { id: "direct:builder", ok: false, error: "timed out" },
         { id: "local:nowhere", ok: false, error: "No Space local:nowhere." },
       ]);
       expect(backend.removed).toEqual([{ id: aurora, removeOnly: false }]);
       expect(model.spaces.some((s) => s.id === aurora)).toBe(false);
-      expect(model.isDeleting("cloud:builder")).toBe(false);
-      expect(model.spaces.some((s) => s.id === "cloud:builder")).toBe(true);
+      expect(model.isDeleting("direct:builder")).toBe(false);
+      expect(model.spaces.some((s) => s.id === "direct:builder")).toBe(true);
       expect(await code("spaces.deleteMany", { ids: "x" })).toBe("bad_args");
     });
 

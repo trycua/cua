@@ -104,6 +104,7 @@ export {
   useCloudActions,
   useConnectCloud,
   useFirstSpaceOffers,
+  useMicrovmRows,
   useNewSpaceRequests,
   useNewSpaceWizard,
   useRuntimeFix,

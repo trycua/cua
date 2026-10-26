@@ -83,15 +83,14 @@ describe.skipIf(!wasmBuilt)("New Space (wasm core)", () => {
       ["vm", true, false],
       ["microvm", true, true],
     ]);
-    expect(v.kindHelp).toBe("The container image with its own kernel, on Apple Containerization.");
     expect(v.runtimes.map((r) => r.value)).toEqual(["auto", "containerization"]);
     expect(wizardCreateArgs(core, v.plan)).toMatchObject({ kind: "microvm", image: "ghcr.io/trycua/linux:24.04", on: "local" });
 
-    // Without one, greyed out with why, and the line under Kind says it.
+    // Without one, greyed out, with no words in New Space (Settings, Advanced says why).
     const none = wizardEnv(core, { options: DEMO_NEW_SPACE_OPTIONS, clouds: null, defaultLocation: "local", machines: [] });
     const off = wizardView(core, wizardReduce(core, wizardInitial(core, none), { type: "choose-kind", kind: "microvm" }, none), none, "macos");
-    expect(off.kindTiles.find((t) => t.id === "microvm")).toMatchObject({ enabled: false, pressed: false, detail: "Needs macOS 26." });
-    expect(off.kindHelp).toBe("A sandboxed Linux container. Starts fastest. MicroVM needs macOS 26.");
+    expect(off.kindTiles.find((t) => t.id === "microvm")).toMatchObject({ enabled: false, pressed: false, detail: "" });
+    expect("kindHelp" in off).toBe(false);
     expect(wizardCreateArgs(core, off.plan).kind).toBe("container");
   });
 

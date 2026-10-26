@@ -183,7 +183,10 @@ describe.skipIf(!built)("the bridge on the app core", () => {
       ["links.list", {}],
       ["links.create", { target: "3000" }],
       ["links.stop", { id: "all" }],
+      ["checklist.get", {}],
       ["cli.plan", {}],
+      ["checklist.send", { action: { type: "done", step: "teleport" } }],
+      ["crashReporting.config", {}],
       ["session.signOut", {}],
     ];
     const problems: string[] = [];
@@ -603,6 +606,7 @@ describe.skipIf(!built)("the bridge on the app core", () => {
       "nudges.answer": { id: "none", choice: "separate" },
       "links.create": { target: "3000" },
       "links.stop": { id: "all" },
+      "checklist.send": { action: { type: "done", step: "teleport" } },
       "spaces.deleteMany": { ids: ["local:nowhere"] },
       "spaces.leave": { ids: ["local:nowhere"] },
     };

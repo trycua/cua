@@ -31366,6 +31366,69 @@ const FfiConverterTypeAppMenuPreview = (() => {
     return new FFIConverter();
 })();
 
+export type AppMicrovmInput = {
+    /**
+     * This machine's system (`macos`, `linux`, `windows`).
+     */
+    os?: AppSpaceOs,
+    /**
+     * Ready backends (none: not read yet).
+     */
+    localBackends?: Array<string>,
+    /**
+     * Why each other backend is not ready, by backend name.
+     */
+    localDetails?: Map<string, string>,
+    /**
+     * This machine's architecture (`arm64`, `amd64`).
+     */
+    hostArch?: string
+}
+
+/**
+ * Generated factory for {@link AppMicrovmInput} record objects.
+ */
+export const AppMicrovmInput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppMicrovmInput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppMicrovmInput>,
+    });
+})();
+
+const FfiConverterTypeAppMicrovmInput = (() => {
+    type TypeName = AppMicrovmInput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                os: FfiConverterOptionalTypeAppSpaceOs.read(from),
+                localBackends: FfiConverterOptionalSequenceString.read(from),
+                localDetails: FfiConverterOptionalMapStringString.read(from),
+                hostArch: FfiConverterOptionalString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterOptionalTypeAppSpaceOs.write(value.os, into);
+            FfiConverterOptionalSequenceString.write(value.localBackends, into);
+            FfiConverterOptionalMapStringString.write(value.localDetails, into);
+            FfiConverterOptionalString.write(value.hostArch, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterOptionalTypeAppSpaceOs.allocationSize(value.os) +
+             FfiConverterOptionalSequenceString.allocationSize(value.localBackends) +
+             FfiConverterOptionalMapStringString.allocationSize(value.localDetails) +
+             FfiConverterOptionalString.allocationSize(value.hostArch);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export enum AppOnboardingMode {
     /**
      * Access other machines (nothing installed).
@@ -40990,6 +41053,11 @@ export type AppSettingsInput = {
      */
     overflow?: boolean,
     /**
+     * What this machine's runtime doctor said, for Runtimes' MicroVM row
+     * (whether microVMs run here, and why not); none: no MicroVM row.
+     */
+    microvm?: AppMicrovmInput,
+    /**
      * Settings, General's Show tips switch: tips are on
      * (`!AppSettings.tips.off`). A shell that does not say reads as on.
      */
@@ -41037,6 +41105,7 @@ const FfiConverterTypeAppSettingsInput = (() => {
                 lumeSource: FfiConverterOptionalString.read(from),
                 linuxSource: FfiConverterOptionalString.read(from),
                 overflow: FfiConverterOptionalBoolean.read(from),
+                microvm: FfiConverterOptionalTypeAppMicrovmInput.read(from),
                 showTips: FfiConverterBool.read(from)
             };
         }
@@ -41061,6 +41130,7 @@ const FfiConverterTypeAppSettingsInput = (() => {
             FfiConverterOptionalString.write(value.lumeSource, into);
             FfiConverterOptionalString.write(value.linuxSource, into);
             FfiConverterOptionalBoolean.write(value.overflow, into);
+            FfiConverterOptionalTypeAppMicrovmInput.write(value.microvm, into);
             FfiConverterBool.write(value.showTips, into);
         }
         allocationSize(value: TypeName): number {
@@ -41084,6 +41154,7 @@ const FfiConverterTypeAppSettingsInput = (() => {
              FfiConverterOptionalString.allocationSize(value.lumeSource) +
              FfiConverterOptionalString.allocationSize(value.linuxSource) +
              FfiConverterOptionalBoolean.allocationSize(value.overflow) +
+             FfiConverterOptionalTypeAppMicrovmInput.allocationSize(value.microvm) +
              FfiConverterBool.allocationSize(value.showTips);
 
         }
@@ -45980,11 +46051,6 @@ export type AppWizardView = {
      */
     kindTiles: Array<AppTile>,
     /**
-     * One plain line under Kind: what the chosen kind is (and why MicroVM
-     * is greyed out, when it is).
-     */
-    kindHelp?: string,
-    /**
      * Runtime menu.
      */
     runtimes: Array<AppMenuOption>,
@@ -46184,7 +46250,6 @@ const FfiConverterTypeAppWizardView = (() => {
                 runtimeSwitch: FfiConverterOptionalTypeAppRuntimeSwitch.read(from),
                 advanced: FfiConverterBool.read(from),
                 kindTiles: FfiConverterSequenceTypeAppTile.read(from),
-                kindHelp: FfiConverterOptionalString.read(from),
                 runtimes: FfiConverterSequenceTypeAppMenuOption.read(from),
                 runtime: FfiConverterTypeAppRuntime.read(from),
                 runtimeEnabled: FfiConverterBool.read(from),
@@ -46243,7 +46308,6 @@ const FfiConverterTypeAppWizardView = (() => {
             FfiConverterOptionalTypeAppRuntimeSwitch.write(value.runtimeSwitch, into);
             FfiConverterBool.write(value.advanced, into);
             FfiConverterSequenceTypeAppTile.write(value.kindTiles, into);
-            FfiConverterOptionalString.write(value.kindHelp, into);
             FfiConverterSequenceTypeAppMenuOption.write(value.runtimes, into);
             FfiConverterTypeAppRuntime.write(value.runtime, into);
             FfiConverterBool.write(value.runtimeEnabled, into);
@@ -46301,7 +46365,6 @@ const FfiConverterTypeAppWizardView = (() => {
              FfiConverterOptionalTypeAppRuntimeSwitch.allocationSize(value.runtimeSwitch) +
              FfiConverterBool.allocationSize(value.advanced) +
              FfiConverterSequenceTypeAppTile.allocationSize(value.kindTiles) +
-             FfiConverterOptionalString.allocationSize(value.kindHelp) +
              FfiConverterSequenceTypeAppMenuOption.allocationSize(value.runtimes) +
              FfiConverterTypeAppRuntime.allocationSize(value.runtime) +
              FfiConverterBool.allocationSize(value.runtimeEnabled) +
@@ -69432,6 +69495,12 @@ const FfiConverterOptionalTypeAppCloudsInput = new FfiConverterOptional(FfiConve
 // FfiConverter for Array<AppMenuPreviewRow>
 const FfiConverterSequenceTypeAppMenuPreviewRow = new FfiConverterArray(FfiConverterTypeAppMenuPreviewRow);
 
+// FfiConverter for AppSpaceOs | undefined
+const FfiConverterOptionalTypeAppSpaceOs = new FfiConverterOptional(FfiConverterTypeAppSpaceOs);
+
+// FfiConverter for Map<string, string> | undefined
+const FfiConverterOptionalMapStringString = new FfiConverterOptional(FfiConverterMapStringString);
+
 // FfiConverter for Array<AppNotchButton>
 const FfiConverterSequenceTypeAppNotchButton = new FfiConverterArray(FfiConverterTypeAppNotchButton);
 
@@ -69464,9 +69533,6 @@ const FfiConverterOptionalTypeAppCliInstallPlan = new FfiConverterOptional(FfiCo
 
 // FfiConverter for AppOnboardingMode | undefined
 const FfiConverterOptionalTypeAppOnboardingMode = new FfiConverterOptional(FfiConverterTypeAppOnboardingMode);
-
-// FfiConverter for AppSpaceOs | undefined
-const FfiConverterOptionalTypeAppSpaceOs = new FfiConverterOptional(FfiConverterTypeAppSpaceOs);
 
 // FfiConverter for AppDriveStepRequest | undefined
 const FfiConverterOptionalTypeAppDriveStepRequest = new FfiConverterOptional(FfiConverterTypeAppDriveStepRequest);
@@ -69612,6 +69678,9 @@ const FfiConverterOptionalTypeAppTeamsInput = new FfiConverterOptional(FfiConver
 // FfiConverter for AppLoginItemInput | undefined
 const FfiConverterOptionalTypeAppLoginItemInput = new FfiConverterOptional(FfiConverterTypeAppLoginItemInput);
 
+// FfiConverter for AppMicrovmInput | undefined
+const FfiConverterOptionalTypeAppMicrovmInput = new FfiConverterOptional(FfiConverterTypeAppMicrovmInput);
+
 // FfiConverter for Array<AppSettingsSection>
 const FfiConverterSequenceTypeAppSettingsSection = new FfiConverterArray(FfiConverterTypeAppSettingsSection);
 
@@ -69683,9 +69752,6 @@ const FfiConverterOptionalTypeAppStreamDisplay = new FfiConverterOptional(FfiCon
 
 // FfiConverter for AppTipLink | undefined
 const FfiConverterOptionalTypeAppTipLink = new FfiConverterOptional(FfiConverterTypeAppTipLink);
-
-// FfiConverter for Map<string, string> | undefined
-const FfiConverterOptionalMapStringString = new FfiConverterOptional(FfiConverterMapStringString);
 
 // FfiConverter for AppLocalStorage | undefined
 const FfiConverterOptionalTypeAppLocalStorage = new FfiConverterOptional(FfiConverterTypeAppLocalStorage);
@@ -71405,6 +71471,7 @@ export default Object.freeze({
     FfiConverterTypeAppMenuOption,
     FfiConverterTypeAppMenuPreview,
     FfiConverterTypeAppMenuPreviewRow,
+    FfiConverterTypeAppMicrovmInput,
     FfiConverterTypeAppModeChoice,
     FfiConverterTypeAppMsg,
     FfiConverterTypeAppNewSpaceOn,

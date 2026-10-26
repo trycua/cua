@@ -4139,9 +4139,6 @@ pub struct AppWizardView {
     pub advanced: bool,
     /// Kind tiles: Container, Virtual machine, MicroVM.
     pub kind_tiles: Vec<AppTile>,
-    /// One plain line under Kind: what the chosen kind is (and why MicroVM
-    /// is greyed out, when it is).
-    pub kind_help: Option<String>,
     /// Runtime menu.
     pub runtimes: Vec<AppMenuOption>,
     /// Effective runtime.
@@ -7020,6 +7017,21 @@ pub struct AppTelemetryInput {
     pub notice_shown: bool,
 }
 
+/// This machine's runtime doctor, for Settings, Advanced, Runtimes'
+/// MicroVM row (the same facts New Space's MicroVM tile follows).
+pub type AppMicrovmInput = core::settings::MicrovmInput;
+#[uniffi::remote(Record)]
+pub struct AppMicrovmInput {
+    /// This machine's system (`macos`, `linux`, `windows`).
+    pub os: Option<AppSpaceOs>,
+    /// Ready backends (none: not read yet).
+    pub local_backends: Option<Vec<String>>,
+    /// Why each other backend is not ready, by backend name.
+    pub local_details: Option<std::collections::HashMap<String, String>>,
+    /// This machine's architecture (`arm64`, `amd64`).
+    pub host_arch: Option<String>,
+}
+
 /// What the Settings page shows.
 pub type AppSettingsInput = core::settings::SettingsInput;
 #[uniffi::remote(Record)]
@@ -7075,6 +7087,9 @@ pub struct AppSettingsInput {
     /// Overflow into your clouds when this machine is full
     /// (`placement.overflow`); none: no row.
     pub overflow: Option<bool>,
+    /// What this machine's runtime doctor said, for Runtimes' MicroVM row
+    /// (whether microVMs run here, and why not); none: no MicroVM row.
+    pub microvm: Option<AppMicrovmInput>,
     /// Settings, General's Show tips switch: tips are on
     /// (`!AppSettings.tips.off`). A shell that does not say reads as on.
     pub show_tips: bool,

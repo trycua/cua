@@ -25488,6 +25488,92 @@ public func FfiConverterTypeAppMenuPreviewRow_lower(_ value: AppMenuPreviewRow) 
 }
 
 
+public struct AppMicrovmInput: Equatable, Hashable {
+    /**
+     * This machine's system (`macos`, `linux`, `windows`).
+     */
+    public var os: AppSpaceOs?
+    /**
+     * Ready backends (none: not read yet).
+     */
+    public var localBackends: [String]?
+    /**
+     * Why each other backend is not ready, by backend name.
+     */
+    public var localDetails: [String: String]?
+    /**
+     * This machine's architecture (`arm64`, `amd64`).
+     */
+    public var hostArch: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * This machine's system (`macos`, `linux`, `windows`).
+         */os: AppSpaceOs?,
+        /**
+         * Ready backends (none: not read yet).
+         */localBackends: [String]?,
+        /**
+         * Why each other backend is not ready, by backend name.
+         */localDetails: [String: String]?,
+        /**
+         * This machine's architecture (`arm64`, `amd64`).
+         */hostArch: String?) {
+        self.os = os
+        self.localBackends = localBackends
+        self.localDetails = localDetails
+        self.hostArch = hostArch
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppMicrovmInput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppMicrovmInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppMicrovmInput {
+        return
+            try AppMicrovmInput(
+                os: FfiConverterOptionTypeAppSpaceOs.read(from: &buf),
+                localBackends: FfiConverterOptionSequenceString.read(from: &buf),
+                localDetails: FfiConverterOptionDictionaryStringString.read(from: &buf),
+                hostArch: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppMicrovmInput, into buf: inout [UInt8]) {
+        FfiConverterOptionTypeAppSpaceOs.write(value.os, into: &buf)
+        FfiConverterOptionSequenceString.write(value.localBackends, into: &buf)
+        FfiConverterOptionDictionaryStringString.write(value.localDetails, into: &buf)
+        FfiConverterOptionString.write(value.hostArch, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMicrovmInput_lift(_ buf: RustBuffer) throws -> AppMicrovmInput {
+    return try FfiConverterTypeAppMicrovmInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMicrovmInput_lower(_ value: AppMicrovmInput) -> RustBuffer {
+    return FfiConverterTypeAppMicrovmInput.lower(value)
+}
+
+
 public struct AppModeChoice: Equatable, Hashable {
     /**
      * What it means.
@@ -35175,6 +35261,11 @@ public struct AppSettingsInput: Equatable, Hashable {
      */
     public var overflow: Bool?
     /**
+     * What this machine's runtime doctor said, for Runtimes' MicroVM row
+     * (whether microVMs run here, and why not); none: no MicroVM row.
+     */
+    public var microvm: AppMicrovmInput?
+    /**
      * Settings, General's Show tips switch: tips are on
      * (`!AppSettings.tips.off`). A shell that does not say reads as on.
      */
@@ -35255,6 +35346,10 @@ public struct AppSettingsInput: Equatable, Hashable {
          * (`placement.overflow`); none: no row.
          */overflow: Bool?,
         /**
+         * What this machine's runtime doctor said, for Runtimes' MicroVM row
+         * (whether microVMs run here, and why not); none: no MicroVM row.
+         */microvm: AppMicrovmInput?,
+        /**
          * Settings, General's Show tips switch: tips are on
          * (`!AppSettings.tips.off`). A shell that does not say reads as on.
          */showTips: Bool) {
@@ -35278,6 +35373,7 @@ public struct AppSettingsInput: Equatable, Hashable {
         self.lumeSource = lumeSource
         self.linuxSource = linuxSource
         self.overflow = overflow
+        self.microvm = microvm
         self.showTips = showTips
     }
 
@@ -35317,6 +35413,7 @@ public struct FfiConverterTypeAppSettingsInput: FfiConverterRustBuffer {
                 lumeSource: FfiConverterOptionString.read(from: &buf),
                 linuxSource: FfiConverterOptionString.read(from: &buf),
                 overflow: FfiConverterOptionBool.read(from: &buf),
+                microvm: FfiConverterOptionTypeAppMicrovmInput.read(from: &buf),
                 showTips: FfiConverterBool.read(from: &buf)
         )
     }
@@ -35342,6 +35439,7 @@ public struct FfiConverterTypeAppSettingsInput: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.lumeSource, into: &buf)
         FfiConverterOptionString.write(value.linuxSource, into: &buf)
         FfiConverterOptionBool.write(value.overflow, into: &buf)
+        FfiConverterOptionTypeAppMicrovmInput.write(value.microvm, into: &buf)
         FfiConverterBool.write(value.showTips, into: &buf)
     }
 }
@@ -44228,11 +44326,6 @@ public struct AppWizardView: Equatable, Hashable {
      */
     public var kindTiles: [AppTile]
     /**
-     * One plain line under Kind: what the chosen kind is (and why MicroVM
-     * is greyed out, when it is).
-     */
-    public var kindHelp: String?
-    /**
      * Runtime menu.
      */
     public var runtimes: [AppMenuOption]
@@ -44452,10 +44545,6 @@ public struct AppWizardView: Equatable, Hashable {
          * Kind tiles: Container, Virtual machine, MicroVM.
          */kindTiles: [AppTile],
         /**
-         * One plain line under Kind: what the chosen kind is (and why MicroVM
-         * is greyed out, when it is).
-         */kindHelp: String?,
-        /**
          * Runtime menu.
          */runtimes: [AppMenuOption],
         /**
@@ -44594,7 +44683,6 @@ public struct AppWizardView: Equatable, Hashable {
         self.runtimeSwitch = runtimeSwitch
         self.advanced = advanced
         self.kindTiles = kindTiles
-        self.kindHelp = kindHelp
         self.runtimes = runtimes
         self.runtime = runtime
         self.runtimeEnabled = runtimeEnabled
@@ -44668,7 +44756,6 @@ public struct FfiConverterTypeAppWizardView: FfiConverterRustBuffer {
                 runtimeSwitch: FfiConverterOptionTypeAppRuntimeSwitch.read(from: &buf),
                 advanced: FfiConverterBool.read(from: &buf),
                 kindTiles: FfiConverterSequenceTypeAppTile.read(from: &buf),
-                kindHelp: FfiConverterOptionString.read(from: &buf),
                 runtimes: FfiConverterSequenceTypeAppMenuOption.read(from: &buf),
                 runtime: FfiConverterTypeAppRuntime.read(from: &buf),
                 runtimeEnabled: FfiConverterBool.read(from: &buf),
@@ -44728,7 +44815,6 @@ public struct FfiConverterTypeAppWizardView: FfiConverterRustBuffer {
         FfiConverterOptionTypeAppRuntimeSwitch.write(value.runtimeSwitch, into: &buf)
         FfiConverterBool.write(value.advanced, into: &buf)
         FfiConverterSequenceTypeAppTile.write(value.kindTiles, into: &buf)
-        FfiConverterOptionString.write(value.kindHelp, into: &buf)
         FfiConverterSequenceTypeAppMenuOption.write(value.runtimes, into: &buf)
         FfiConverterTypeAppRuntime.write(value.runtime, into: &buf)
         FfiConverterBool.write(value.runtimeEnabled, into: &buf)
@@ -69845,6 +69931,30 @@ fileprivate struct FfiConverterOptionTypeAppMenuPreview: FfiConverterRustBuffer 
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeAppMenuPreview.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeAppMicrovmInput: FfiConverterRustBuffer {
+    typealias SwiftType = AppMicrovmInput?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAppMicrovmInput.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAppMicrovmInput.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }

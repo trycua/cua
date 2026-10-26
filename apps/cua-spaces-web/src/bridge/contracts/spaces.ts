@@ -6,7 +6,7 @@
  * them onto, and the create/power/delete state machine's types.
  *
  * Hand-written mirror, copied from the Tauri app (`apps/cua-spaces/src/
- * model/types.ts`, `model/spaces.ts`, `model/creates.ts`, `native/fleet.ts`).
+ * model/types.ts`, `model/spaces.ts`, `model/creates.ts`, `native/account.ts`).
  * The source of truth is Rust: `cua-spaces-app-core::model` (Space,
  * SpaceRow) and `cua-spaces-app-core::spaces::creating`. serde there is
  * camelCase, so these names are the JSON the core returns.
@@ -58,24 +58,23 @@ export interface SpaceSdkRef {
 }
 
 /**
- * Where a Space runs: the SDK's location words. `cloud` is Cua Cloud,
- * `local` this Mac, `direct` a machine added by address, `relay` a machine
- * of the signed-in account reached through the cua relay.
+ * Where a Space runs: the SDK's location words. `local` is this Mac,
+ * `direct` a machine added by address, `relay` a machine of the signed-in
+ * account reached through the cua relay.
  */
-export type SpaceProvider = "cloud" | "local" | "direct" | "relay";
+export type SpaceProvider = "local" | "direct" | "relay";
 
-/** Where new Spaces can be created (existing machines are added, not created). */
-export type Location = "cloud" | "local";
+/** Where new Spaces can be created: this Mac, your own cloud, or one of your machines. */
+export type Location = "local" | "yours" | "host";
 
 /** What kind of machine a Space is. */
 export type SpaceKind = "container" | "vm";
 
 /**
  * Which engine runs it. Local: `gvisor`, `runc` (containers), `qemu`, `lume`
- * (VMs). Cloud: `gvisor` (containers), `kubevirt` (VMs). `auto` lets the SDK
- * pick for the location and image.
+ * (VMs). `auto` lets the SDK pick for the location and image.
  */
-export type Runtime = "auto" | "gvisor" | "runc" | "qemu" | "lume" | "kubevirt";
+export type Runtime = "auto" | "gvisor" | "runc" | "qemu" | "lume";
 
 export interface Space {
   id: string;
@@ -90,12 +89,10 @@ export interface Space {
    * progress so it doesn't reset when the UI reopens. */
   startedAt?: number;
   scene: ThumbnailScene;
-  /** The group this Space belongs to (a cloud namespace or its location). */
-  fleetId?: string;
   /** Machine size label; undefined for the local Mac. */
   size?: MachineSize;
   region?: RegionId;
-  /** Where this Space runs; treated as "cloud" when omitted. */
+  /** Where this Space runs; treated as "direct" when omitted. */
   provider?: SpaceProvider;
   /** SDK registry facts, when the Space came from the live registry. */
   sdk?: SpaceSdkRef;
@@ -227,7 +224,7 @@ export interface PendingCreate {
   id: string;
   name: string;
   os: SpaceOs;
-  provider: Location | "relay";
+  provider: "local" | "relay";
   startedAt: number;
   phase: string;
   fraction?: number | null;
@@ -304,7 +301,7 @@ export type CreateAction =
       id: string;
       name: string;
       os: SpaceOs;
-      provider: Location | "relay";
+      provider: "local" | "relay";
       now: number;
       /** The image (its catalog entry names the distribution, kind and
        * platforms), the kind asked for, and this Mac's CPU architecture. */
@@ -354,3 +351,33 @@ export type CreateAction =
   | { type: "power-fail"; id: string; error: string };
 
 export const NO_CREATES: CreatesState = { pending: [], deleting: [], powering: [] };
+
+/**
+ * How far the host's last `spaces.list` got (the SDK's `Spaces.list_known`).
+ * This machine's Spaces come at once; the account's other computers as they
+ * answer, so a list can be incomplete for a while (right after the daemon
+ * restarts, say). An incomplete list is never "no Spaces".
+ */
+export interface ListStatus {
+  /** The list was read at least once (before that nothing is known). */
+  loaded: boolean;
+  /** Some of the account's computers have not answered yet. */
+  incomplete: boolean;
+  /** How many computers are still being reached (0 when unknown). */
+  reaching: number;
+  /** The other computers' rows are the last known ones (kept across a daemon
+   * restart, or from before a failed read), not yet confirmed. */
+  stale: boolean;
+}
+
+/** What the Spaces page shows besides the Spaces (`spaces::ListView`). */
+export interface ListView {
+  /** "Create your first Space": a complete list with no Space only. */
+  empty: boolean;
+  /** One quiet line where the Spaces go while the list is not complete
+   * ("Reaching 6 computers…"); null once it is. */
+  reachingLine: string | null;
+}
+
+/** A host that lists complete lists only (`DataAdapter.listStatus` undefined). */
+export const LIST_COMPLETE: ListStatus = { loaded: true, incomplete: false, reaching: 0, stale: false };

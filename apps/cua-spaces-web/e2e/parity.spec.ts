@@ -40,10 +40,11 @@ const PATHS: Record<ParityScreen, string> = {
   spaces: "/spaces",
   keyvault: "/keyvault",
   settings: "/settings",
+  "settings/general": "/settings/general",
   "settings/about": "/settings/about",
-  "settings/agents": "/settings/agents",
+  "settings/advanced": "/settings/advanced",
+  "settings/connected-apps": "/settings/connected-apps",
   "settings/devices": "/settings/devices",
-  "settings/experiments": "/settings/experiments",
   notifications: "/notifications",
   machines: "/machines",
   agents: "/agents",
@@ -453,7 +454,7 @@ test.describe("parity flows", () => {
           ? await checkTeleport(page, cps)
           : screen === "share"
             ? await checkShare(page, cps)
-            : screen === "volume" || screen === "onboarding" || screen === "settings"
+            : screen === "volume" || screen === "onboarding" || screen === "settings/connected-apps"
               ? await checkVolumeFlow(page, name, cps)
               : await checkScreens(page, screen, cps);
       expect(states, "the replay reached a state the screen draws").toBeGreaterThan(0);

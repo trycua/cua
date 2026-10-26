@@ -7,7 +7,7 @@ use crate::error::{Error, Result};
 use crate::id::{Provider, SpaceId, authority};
 use crate::operator::{ControlServerDisplay, OperatorDisplay};
 use crate::registry::{Credential, Registry, cua_home};
-use crate::space::{Gateway, Space, SpaceInfo, SpacePower};
+use crate::space::{Gateway, Space, SpaceInfo, SpacePower, SpaceResize};
 use crate::space::{ServiceSource, SpaceService};
 use cua_proto::daemon::v1 as dpb;
 use cua_sandbox_core::placement::{Kind, On, Runtime};
@@ -173,6 +173,20 @@ impl SpaceCreated {
 }
 
 /// Options for a local Space (see [`Spaces::create`]).
+/// [`Spaces::space`]'s per-Space turn, and the last failure under it.
+#[derive(Default)]
+struct ConnectGate {
+    turn: Arc<tokio::sync::Mutex<()>>,
+    failed: std::sync::Mutex<Option<FailedConnect>>,
+}
+
+#[derive(Clone)]
+struct FailedConnect {
+    at: std::time::Instant,
+    presence: crate::dial_backoff::Presence,
+    reason: String,
+}
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct LocalProvision {
     /// Image. Default: the canonical Linux image.
@@ -343,6 +357,7 @@ impl SpacesBuilder {
                 probe_timeout: self.probe_timeout.unwrap_or(DEFAULT_PROBE_TIMEOUT),
                 download_dir,
                 connections: tokio::sync::Mutex::new(HashMap::new()),
+                connecting: Default::default(),
                 dial_backoff: Default::default(),
                 mesh: crate::mesh::MeshClients::default(),
                 #[cfg(feature = "spaces-hotspot")]
@@ -353,6 +368,9 @@ impl SpacesBuilder {
                 relay_cache: std::sync::Mutex::new(Vec::new()),
                 relay_reported: std::sync::Mutex::new(relay_reported),
                 relay_read: tokio::sync::Mutex::new(None),
+                relay_confirmed: std::sync::atomic::AtomicBool::new(false),
+                rounds: Default::default(),
+                list_watch: Default::default(),
                 site_login: std::sync::RwLock::new(None),
                 pool: std::sync::RwLock::new(None),
                 durable: std::sync::Mutex::new(Vec::new()),
@@ -547,6 +565,9 @@ pub(crate) struct Inner {
     probe_timeout: Duration,
     pub(crate) download_dir: PathBuf,
     connections: tokio::sync::Mutex<HashMap<String, Space>>,
+    /// One connect at a time per Space; callers that arrive meanwhile take
+    /// its outcome instead of dialing again.
+    connecting: std::sync::Mutex<HashMap<String, Arc<ConnectGate>>>,
     /// Mesh nodes for `relay:` Spaces ([`crate::mesh`]).
     /// Your computers that did not answer, and when to dial them again.
     pub(crate) dial_backoff: crate::dial_backoff::DialBackoff,
@@ -565,6 +586,14 @@ pub(crate) struct Inner {
     relay_reported: std::sync::Mutex<HashMap<String, ReportedFacts>>,
     /// Held across a read so only one directory read runs at a time.
     relay_read: tokio::sync::Mutex<Option<std::time::Instant>>,
+    /// The relay answered a directory read in this process (until then the
+    /// directory is the one saved by an earlier process, if any).
+    pub(crate) relay_confirmed: std::sync::atomic::AtomicBool,
+    /// The read of the account's computers [`Spaces::list_known`] runs.
+    pub(crate) rounds: crate::listing::AccountRounds,
+    /// The list's watcher, while anything subscribes
+    /// ([`Spaces::watch_list`]).
+    pub(crate) list_watch: crate::list_watch::ListWatchSlot,
     /// The Keyvault broker `request_site_login` signs in through (the
     /// daemon sets it once its Keyvault is up).
     site_login: std::sync::RwLock<Option<Arc<dyn crate::site_login::SiteLoginBroker>>>,
@@ -729,7 +758,7 @@ impl Spaces {
                 return Err(e);
             }
             tracing::debug!("relay directory skipped: not signed in");
-            self.inner.relay_cache.lock().expect("relay cache").clear();
+            self.forget_account_computers();
         }
         self.list()
     }
@@ -791,11 +820,20 @@ impl Spaces {
     }
 
     /// Configures (or clears) the relay account after construction, e.g.
-    /// when `cua daemon` picks up the signed-in session. Clears the cached
-    /// directory listing.
+    /// when `cua daemon` picks up the signed-in session. The cached
+    /// directory listing becomes the one an earlier process saved for this
+    /// relay (`relay-directory.json`), unconfirmed until the relay answers.
     pub fn set_relay(&self, relay: Option<crate::relay::RelayAccount>) {
+        let saved = relay
+            .as_ref()
+            .map(|r| crate::listing::load_directory(self.home_dir(), &r.url))
+            .unwrap_or_default();
         *self.inner.relay.write().expect("relay") = relay;
-        self.inner.relay_cache.lock().expect("relay cache").clear();
+        *self.inner.relay_cache.lock().expect("relay cache") = saved;
+        self.inner
+            .relay_confirmed
+            .store(false, std::sync::atomic::Ordering::Release);
+        self.inner.rounds.reset();
     }
 
     /// `e`, from a call on `space`, with the reason when the call failed
@@ -895,7 +933,21 @@ impl Spaces {
             }
         };
         *read_at = Some(std::time::Instant::now());
-        *self.inner.relay_cache.lock().expect("relay cache") = machines.clone();
+        let changed = {
+            let mut cache = self.inner.relay_cache.lock().expect("relay cache");
+            let changed = *cache != machines;
+            *cache = machines.clone();
+            changed
+        };
+        let first = !self
+            .inner
+            .relay_confirmed
+            .swap(true, std::sync::atomic::Ordering::AcqRel);
+        // Kept for the next process: it lists these at once, before the
+        // relay answers it (`Spaces::list_known`).
+        if changed || first {
+            crate::listing::save_directory(self.home_dir(), &relay.url, &machines);
+        }
         Ok(machines)
     }
 
@@ -1442,6 +1494,68 @@ impl Spaces {
     pub async fn space(&self, space: &str) -> Result<Space> {
         let id = self.resolve_now(space).await?;
         let key = id.to_string();
+        if let Some(s) = self.cached_connection(&key).await {
+            return Ok(s);
+        }
+        // One connect per Space at a time, run on its own: an app polling
+        // the list gives up on a computer that does not answer and asks
+        // again before the attempt ended. The attempt goes on (a caller's
+        // deadline does not cancel it), and its outcome answers whoever
+        // asked meanwhile, so a slow computer is dialed once, not once a
+        // poll.
+        let gate = self
+            .inner
+            .connecting
+            .lock()
+            .expect("connecting")
+            .entry(key.clone())
+            .or_default()
+            .clone();
+        let arrived = std::time::Instant::now();
+        let me = self.clone();
+        let attempt = tokio::spawn(async move {
+            let _turn = gate.turn.clone().lock_owned().await;
+            if let Some(s) = me.inner.connections.lock().await.get(&key).cloned() {
+                return Ok(s);
+            }
+            // What the relay says about the computer now: one that came
+            // back (online again, or a new session) is dialed afresh.
+            let presence = match &id {
+                SpaceId::Relay { machine_id } => me.relay_presence(machine_id),
+                _ => None,
+            };
+            if let Some(f) = gate.failed.lock().expect("gate").clone()
+                && f.at >= arrived
+                && f.presence == presence
+            {
+                return Err(Error::SpacesdNotAvailable {
+                    space: key,
+                    reason: f.reason,
+                });
+            }
+            let r = me.connect_space(id, key).await;
+            if let Err(e) = &r {
+                let reason = match e {
+                    Error::SpacesdNotAvailable { reason, .. } => reason.clone(),
+                    e => e.to_string(),
+                };
+                *gate.failed.lock().expect("gate") = Some(FailedConnect {
+                    at: std::time::Instant::now(),
+                    presence,
+                    reason,
+                });
+            }
+            r
+        });
+        attempt
+            .await
+            .map_err(|e| Error::Cancelled(format!("the connect to this Space ended: {e}")))?
+    }
+
+    /// The open connection to `key`, unless its route went stale or it can
+    /// move to the mesh now (then it is dropped, to connect again).
+    async fn cached_connection(&self, key: &str) -> Option<Space> {
+        let key = key.to_string();
         // Bound first: the cache's guard must be gone before the lock is
         // taken again below.
         let cached = self.inner.connections.lock().await.get(&key).cloned();
@@ -1460,7 +1574,7 @@ impl Spaces {
                     .upgrade(&key, crate::mesh::UPGRADE_CHECK)
                     .await
                 {
-                    None => return Ok(s),
+                    None => return Some(s),
                     Some(reason) => {
                         tracing::info!(space = %key, %reason, "moving to the mesh");
                         self.inner.connections.lock().await.remove(&key);
@@ -1472,6 +1586,19 @@ impl Spaces {
                 }
             }
         }
+        None
+    }
+
+    /// [`Spaces::space`] behind a type-erased future: the routed Space's
+    /// connect awaits its host's, and the erased type ends the recursion.
+    fn space_of_host(
+        &self,
+        host: String,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Space>> + Send + '_>> {
+        Box::pin(async move { self.space(&host).await })
+    }
+
+    async fn connect_space(&self, id: SpaceId, key: String) -> Result<Space> {
         let name = match (&id, self.inner.registry.get(&key)?) {
             (_, Some(record)) => Some(record.name),
             (SpaceId::Relay { machine_id }, None) => Some(
@@ -1638,7 +1765,7 @@ impl Spaces {
                 // Provided by a host and reached through it: a forward of
                 // its loopback port over the host's own channel.
                 let (machine, port) = crate::id::routed_host(authority).expect("routed");
-                let host = Box::pin(self.space(&format!("relay:{machine}"))).await?;
+                let host = self.space_of_host(format!("relay:{machine}")).await?;
                 let fwd = host
                     .spacesd()?
                     .forward_tcp(cua_spacesd_client::tunnel::ForwardOptions::new(port))
@@ -3219,6 +3346,96 @@ impl Spaces {
         self.set_power(space, true).await
     }
 
+    /// Suspends a local Space, keeping its memory (it resumes where it
+    /// was, and its memory stays in use meanwhile): a container or a QEMU
+    /// VM. [`Self::stop`] stops it instead and frees its memory. Other
+    /// Spaces are refused.
+    pub async fn suspend(&self, space: &str) -> Result<SpacePower> {
+        let id = self.resolve(space)?;
+        let SpaceId::Local { name } = &id else {
+            return Err(Error::WrongProvider {
+                op: "Suspending".into(),
+                provider: format!("{} (only a Space on this computer)", id.provider()),
+            });
+        };
+        let sandboxes = &self.inner.sandboxes;
+        if sandboxes.power_control(name).is_none() {
+            return Err(Error::invalid(format!("{space} cannot be suspended")));
+        }
+        self.drop_connection(&id).await;
+        let state = sandboxes
+            .power_off_as(name, cua_sandbox_core::PowerControl::Suspend)
+            .await?;
+        Ok(SpacePower::new(
+            &id.to_string(),
+            cua_sandbox_core::PowerControl::Suspend,
+            state,
+        ))
+    }
+
+    /// Gives a local VM Space another shape: `cpus` vCPUs, `memory_mb` MiB
+    /// of memory, a disk grown to `disk_gb` GiB (each `None` keeps it). The
+    /// VM shuts down and boots again from its own disk (a stopped one
+    /// boots), so its files stay and its memory and processes do not.
+    /// Returns once it is ready again. Other Spaces are refused.
+    pub async fn resize(
+        &self,
+        space: &str,
+        cpus: Option<u32>,
+        memory_mb: Option<u64>,
+        disk_gb: Option<u32>,
+    ) -> Result<SpaceResize> {
+        if cpus.is_none() && memory_mb.is_none() && disk_gb.is_none() {
+            return Err(Error::invalid(
+                "say what to change: cpus, memory_mb or disk_gb",
+            ));
+        }
+        let id = self.resolve(space)?;
+        let SpaceId::Local { name } = &id else {
+            return Err(Error::WrongProvider {
+                op: "Resizing".into(),
+                provider: format!(
+                    "{} (only a VM on this computer; resize it on the computer that runs it)",
+                    id.provider()
+                ),
+            });
+        };
+        self.drop_connection(&id).await;
+        let shape = cua_sandbox_core::Resize {
+            cpus,
+            memory_mb,
+            disk_gb,
+            probes: Vec::new(),
+        };
+        self.inner.sandboxes.resize(name, &shape).await?;
+        #[cfg(feature = "mcp")]
+        self.notify_connected(&id);
+        // It booted again: a Space that was on the relay goes back on it.
+        #[cfg(feature = "spaces-agents")]
+        self.reattach_relay_after_boot(&id).await;
+        let mut what = Vec::new();
+        if let Some(c) = cpus {
+            what.push(format!("{c} vCPUs"));
+        }
+        if let Some(m) = memory_mb {
+            what.push(format!("{m} MiB of memory"));
+        }
+        if let Some(d) = disk_gb {
+            what.push(format!("a {d} GiB disk"));
+        }
+        Ok(SpaceResize {
+            space: id.to_string(),
+            cpus,
+            memory_mb,
+            disk_gb,
+            message: format!(
+                "{} now has {}; it booted again from its disk.",
+                id,
+                what.join(", ")
+            ),
+        })
+    }
+
     async fn set_power(&self, space: &str, on: bool) -> Result<SpacePower> {
         let id = self.resolve(space)?;
         let cloud = self.cloud_sandbox_of(&id.to_string())?;
@@ -3239,6 +3456,9 @@ impl Spaces {
                     // again now, not only when something next connects.
                     #[cfg(feature = "mcp")]
                     self.notify_connected(&id);
+                    // A guest that booted again forgot its relay attachment.
+                    #[cfg(feature = "spaces-agents")]
+                    self.reattach_relay_after_boot(&id).await;
                     cua_sandbox_core::PowerState::Running
                 } else {
                     sandboxes.power_off(name).await?

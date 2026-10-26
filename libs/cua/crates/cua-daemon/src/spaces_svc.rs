@@ -338,23 +338,43 @@ mod imp {
 
         async fn list_spaces(
             &self,
-            _: tonic::Request<pb::ListSpacesRequest>,
+            req: tonic::Request<pb::ListSpacesRequest>,
         ) -> R<pb::ListSpacesResponse> {
+            let known_now = req.into_inner().known_now;
             let mut spaces = self.spaces().registry().list().map_err(|e| st(e.into()))?;
             for s in &mut spaces {
                 (s.power, s.power_state) = self.spaces().power_of(&s.id);
                 s.stop_reason = self.spaces().stop_reason_of(&s.id);
             }
             self.spaces().fill_records(&mut spaces);
-            // Plus the signed-in account's relay machines (refreshed).
-            for info in self.spaces().list_all().await.map_err(|e| st(e.into()))? {
+            // Plus the signed-in account's relay machines: refreshed, or
+            // (`known_now`) as far as they answered, never holding up this
+            // machine's own Spaces.
+            let (others, progress) = if known_now {
+                let l = self
+                    .spaces()
+                    .list_known(cua_spaces::LIST_WAIT)
+                    .await
+                    .map_err(|e| st(e.into()))?;
+                (l.spaces, l.progress)
+            } else {
+                let all = self.spaces().list_all().await.map_err(|e| st(e.into()))?;
+                (all, cua_spaces::ListProgress::default())
+            };
+            for info in others {
                 if info.provider == cua_spaces::Provider::Relay
                     && !spaces.iter().any(|s| s.id == info.id)
                 {
                     spaces.push(info_record(&info));
                 }
             }
-            ok(pb::ListSpacesResponse { spaces })
+            ok(pb::ListSpacesResponse {
+                spaces,
+                incomplete: progress.incomplete,
+                reaching: progress.reaching,
+                stale: progress.stale,
+                notice: progress.notice,
+            })
         }
 
         async fn list_volumes(
@@ -1006,6 +1026,44 @@ mod imp {
             });
             ok(Box::pin(tokio_stream::wrappers::ReceiverStream::new(rx)))
         }
+
+        type WatchSpacesStream = std::pin::Pin<
+            Box<
+                dyn tokio_stream::Stream<
+                        Item = std::result::Result<pb::WatchSpacesResponse, tonic::Status>,
+                    > + Send,
+            >,
+        >;
+
+        async fn watch_spaces(
+            &self,
+            _: tonic::Request<pb::WatchSpacesRequest>,
+        ) -> R<Self::WatchSpacesStream> {
+            let mut watch = self.spaces().watch_list();
+            let (tx, rx) = tokio::sync::mpsc::channel(4);
+            // The subscription is the interest: it ends with the stream, so
+            // the watcher stops when the last reader is gone.
+            tokio::spawn(async move {
+                let mut generation = watch.generation();
+                loop {
+                    if tx
+                        .send(Ok(pb::WatchSpacesResponse { generation }))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                    tokio::select! {
+                        g = watch.changed() => match g {
+                            Some(g) => generation = g,
+                            None => break,
+                        },
+                        _ = tx.closed() => break,
+                    }
+                }
+            });
+            ok(Box::pin(tokio_stream::wrappers::ReceiverStream::new(rx)))
+        }
     }
 }
 
@@ -1209,6 +1267,21 @@ mod imp {
             &self,
             _: tonic::Request<pb::WatchResourcesRequest>,
         ) -> R<Self::WatchResourcesStream> {
+            off()
+        }
+
+        type WatchSpacesStream = std::pin::Pin<
+            Box<
+                dyn tokio_stream::Stream<
+                        Item = std::result::Result<pb::WatchSpacesResponse, tonic::Status>,
+                    > + Send,
+            >,
+        >;
+
+        async fn watch_spaces(
+            &self,
+            _: tonic::Request<pb::WatchSpacesRequest>,
+        ) -> R<Self::WatchSpacesStream> {
             off()
         }
     }

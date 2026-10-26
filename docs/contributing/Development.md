@@ -67,6 +67,51 @@ API keys are not required for ordinary builds and deterministic tests. Add
 credentials only for a test or example that explicitly calls an external
 provider, and never commit them.
 
+## Fast Rust Builds
+
+The Rust workspaces compile several hundred crates. Share one compile cache
+between every checkout and worktree, so a crate compiled once is reused
+everywhere:
+
+```bash
+brew install sccache          # or: cargo install sccache --locked
+export RUSTC_WRAPPER=sccache  # route rustc through the cache
+export SCCACHE_CACHE_SIZE=30G # least recently used objects are evicted beyond this
+```
+
+Put the exports in your shell profile. Every `cargo` command then reads and
+fills the cache in `~/Library/Caches/Mozilla.sccache` (macOS) or
+`~/.cache/sccache` (Linux); `sccache --show-stats` reports the hit rate. A new
+worktree with an empty `target/` compiles its dependencies from the cache in a
+fraction of the cold time. Dependencies are shared between all checkouts;
+the workspace's own crates are cached per checkout path, and only when
+incremental compilation is off. Scripted and agent builds should set
+`CARGO_INCREMENTAL=0` (smaller `target/`, every crate cached); keep the
+default when you iterate on one crate, where incremental rebuilds are faster.
+
+Other defaults that keep builds small:
+
+* The dev and test profile of `libs/cua` keeps line tables only for workspace
+  crates and no debug info for dependencies; set
+  `CARGO_PROFILE_DEV_DEBUG=full` for a debugger session.
+* The cloud SDKs (AWS, Google Cloud, Hetzner, Modal) compile only with the
+  `byoc` feature. `cargo build -p cua-cli` and `cargo test -p cua-cli` do not
+  need them; the release builds turn the feature on.
+* Build one package at a time (`-p <crate>`) and cap parallelism on a laptop
+  (`CARGO_BUILD_JOBS=4`); the largest crates take about 1 GB of RAM each.
+* The linkers are already fast: Xcode's linker on macOS and `rust-lld`, the
+  default on x86-64 Linux, so the repository sets none.
+* Building `cua-cli` and then `cua-sdk` in one `target/` compiles about 100
+  dependencies a second time with other features (`cua-sdk` turns on `byoc`).
+  This happens once per `target/` and both variants are cached, so there is
+  no workspace-hack crate: it would make every build compile the cloud SDKs.
+
+`node libs/cua/scripts/generate-uniffi-bindings.mjs` builds `cua-sdk` without
+the cloud SDKs, and caches the generated bindings by a fingerprint of the
+interface sources: when the `cua-sdk` crate has not changed, a rerun from any
+worktree writes them without compiling. `--library=PATH` reads a
+`libcua_sdk` you already built instead.
+
 ## Root Formatting Hooks
 
 Install the root Python development tools and optional Git hooks with:

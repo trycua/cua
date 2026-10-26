@@ -218,7 +218,6 @@ fn sample_space(name: &str, os: SpaceOs, os_name: &str, scene: ThumbnailScene) -
         last_used_at: 0,
         started_at: None,
         scene,
-        fleet_id: None,
         size: None,
         region: None,
         provider: Some(SpaceProvider::Local),

@@ -77,7 +77,7 @@ export const HOST_COVERAGE = {
   "settings.set": {
     webkit: {
       methods: ["settings.choose", "settings.get", "window.setBackgroundColor"],
-      byDesign: "theme and hotkey are page-side; New Spaces start on This Mac or Cua Cloud only",
+      byDesign: "theme and hotkey are page-side; New Spaces start on This Mac only",
     },
     tauri: ["ui_storage_set", "telemetry_set_enabled", "set_default_location", "login_item_set", "telemetry_status", "get_default_location", "login_item_status"],
   },
@@ -101,7 +101,7 @@ export const HOST_COVERAGE = {
   "keyvault.revokeGrant": { webkit: { methods: ["keyvault.revokeGrant"] }, tauri: ["keyvault_revoke_grant"] },
   "session.get": {
     webkit: { methods: ["session.get", "onboarding.get"] },
-    tauri: ["fleet_status", "onboarding_state", "daemon_status"],
+    tauri: ["account_status", "onboarding_state", "daemon_status"],
   },
   "session.signIn": { webkit: { methods: ["session.signIn"] }, tauri: ["begin_sign_in"] },
   "session.signOut": { webkit: { methods: ["session.signOut"] }, tauri: ["sign_out"] },
@@ -121,6 +121,16 @@ export const HOST_COVERAGE = {
     webkit: { methods: ["agents.events"] },
     tauri: [],
     unsupported: { tauri: "no Tauri command reads agent_events, and agents_tool doesn't allow it" },
+  },
+  "agents.start": {
+    webkit: { methods: ["agents.start"] },
+    tauri: [],
+    unsupported: { tauri: "no Tauri command starts a run, and agents_tool doesn't allow agent_start" },
+  },
+  "agents.message": {
+    webkit: { methods: ["agents.message"] },
+    tauri: [],
+    unsupported: { tauri: "no Tauri command sends to a run, and agents_tool doesn't allow agent_message" },
   },
   "agents.pause": { webkit: { methods: ["agents.pause"] }, tauri: ["agents_tool"] },
   "agents.resume": { webkit: { methods: ["agents.resume"] }, tauri: ["agents_tool"] },

@@ -138,6 +138,24 @@ service SpaceService {
   // Cancel the stream to stop; call again with the other `visible` to
   // switch.
   rpc WatchResources(WatchResourcesRequest) returns (stream WatchResourcesResponse);
+  // Says when the Space list changed, so a client reads it again
+  // (`ListSpaces`) when something happened instead of on a timer: one
+  // message at once (the generation now), then one per change. This
+  // computer's Spaces are announced within a second; your other computers
+  // on the mesh within about a second of connecting or going away (the mesh
+  // coordinator pushes it); computers not on the mesh within 10 seconds.
+  // Cancel the stream to stop.
+  rpc WatchSpaces(WatchSpacesRequest) returns (stream WatchSpacesResponse);
+}
+
+// `SpaceService.WatchSpaces` takes no arguments.
+message WatchSpacesRequest {}
+
+// One event of `SpaceService.WatchSpaces`.
+message WatchSpacesResponse {
+  // Moves on every change of the list (only increases while the daemon
+  // runs; a new daemon starts again from 0).
+  uint64 generation = 1;
 }
 
 // A registered Space.
@@ -256,12 +274,30 @@ message AddSpaceResponse {
 }
 
 // Request for `SpaceService.ListSpaces`.
-message ListSpacesRequest {}
+message ListSpacesRequest {
+  // Answer with what is known now: this machine's Spaces at once, the
+  // account's other computers as far as they answered within a moment
+  // (the response says how far it got). Without it the daemon waits for
+  // the relay and fails when it cannot be read.
+  bool known_now = 1;
+}
 
 // Response for `SpaceService.ListSpaces`.
 message ListSpacesResponse {
   // Spaces.
   repeated Space spaces = 1;
+  // `known_now` only: some of the account's computers have not answered
+  // yet, so the list may grow (an empty one is not "no Spaces").
+  bool incomplete = 2;
+  // `known_now` only: how many computers are still being reached (0 when
+  // unknown).
+  uint32 reaching = 3;
+  // `known_now` only: the other computers' rows are the last known ones,
+  // not yet confirmed by the relay.
+  bool stale = 4;
+  // `known_now` only: why the account's computers could not be read, when
+  // they could not.
+  string notice = 5;
 }
 
 // A named volume: the folder `volumes/<name>/` of Cua Volume.

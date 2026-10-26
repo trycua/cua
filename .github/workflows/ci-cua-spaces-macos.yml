@@ -188,13 +188,19 @@ jobs:
       - name: Stage the Cua Spaces app library
         working-directory: libs/cua
         run: ../spaces-app-swift/scripts/stage-library.sh
+      # swift test has no retry flag, so flaky.sh runs the failed tests once
+      # more. A test that passes only then is reported and gets a `flaky`
+      # issue (.github/flaky/).
       - name: spaces-app-swift tests
-        run: libs/spaces-app-swift/scripts/test.sh
+        run: |
+          "$GITHUB_WORKSPACE/.github/scripts/flaky/flaky.sh" run --suite spaces-swift-app --format log --rerun-failed -- libs/spaces-app-swift/scripts/test.sh
       - name: Notch package tests (the views and the Electron helper's protocol)
-        run: libs/spaces-notch-swift/scripts/test.sh
+        run: |
+          "$GITHUB_WORKSPACE/.github/scripts/flaky/flaky.sh" run --suite spaces-swift-notch --format log --rerun-failed -- libs/spaces-notch-swift/scripts/test.sh
       - name: Swift tests (view models, parity, snapshots)
         working-directory: apps/cua-spaces-macos
-        run: scripts/test.sh
+        run: |
+          "$GITHUB_WORKSPACE/.github/scripts/flaky/flaky.sh" run --suite spaces-swift-mac --format log --rerun-failed -- scripts/test.sh
       # install-local.sh and uninstall-local.sh against a fake HOME and a fake
       # build: a Stable install stays byte-identical, a wrong bundle id is
       # refused. Needs no build, certificate or network.
@@ -218,6 +224,10 @@ jobs:
           answers="$RUNNER_TEMP/bridge-answers.json"
           (cd apps/cua-spaces-macos && CUA_BRIDGE_ANSWERS="$answers" scripts/test.sh --filter BridgeContractTests)
           (cd apps/cua-spaces-web && CUA_BRIDGE_ANSWERS="$answers" npx vitest run src/bridge/__tests__/contract.test.ts)
+      - uses: ./.github/actions/flaky-upload
+        if: always()
+        with:
+          suite: spaces-swift
       - name: Upload snapshot differences
         if: failure()
         uses: actions/upload-artifact@v4
@@ -343,5 +353,12 @@ jobs:
         run: |
           brew install xcodegen
           xcodegen generate
-          xcodebuild test -project CuaSpacesMac.xcodeproj -scheme CuaSpacesMacUITests \
-            -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO
+          # -retry-tests-on-failure with 2 iterations: one retry.
+          "$GITHUB_WORKSPACE/.github/scripts/flaky/flaky.sh" run --suite spaces-xcuitest --format log -- \
+            xcodebuild test -project CuaSpacesMac.xcodeproj -scheme CuaSpacesMacUITests \
+            -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO \
+            -retry-tests-on-failure -test-iterations 2
+      - uses: ./.github/actions/flaky-upload
+        if: always()
+        with:
+          suite: spaces-xcuitest

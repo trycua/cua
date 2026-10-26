@@ -460,6 +460,38 @@ identity_trusted() {
     security find-identity -v -p codesigning "$2" 2>/dev/null | grep -qF "$1"
 }
 
+# Why the stable local certificate cannot sign, when the script can tell a
+# locked Keychain from a new one (a new one only needs the one-time setup; a
+# locked one needs unlocking first, and the setup's commands would fail on it):
+#   locked          codesign needed the Keychain's password. An SSH session, or
+#                   a VM that logged in on its own, has the Keychain locked and
+#                   cannot be asked for it (errSecInternalComponent).
+#   no-certificate  the certificate could not be created in the Keychain, which
+#                   a locked Keychain refuses.
+#   (empty)         a new Keychain: the certificate is there but not trusted.
+SIGNING_PROBLEM=""
+# What codesign said on the last signing_probe.
+SIGNING_PROBE_ERROR=""
+
+# Whether the last signing_probe failed because the Keychain is locked.
+signing_probe_locked() {
+    case "$SIGNING_PROBE_ERROR" in
+        *errSecInternalComponent*|*"User interaction is not allowed"*) return 0 ;;
+    esac
+    return 1
+}
+
+# Whether the Keychain exists but holds no stable local certificate although the
+# script just tried to create one (the shared helper swallows why it could not).
+signing_certificate_missing() {
+    local kc
+    [ -z "${CUA_DRIVER_LOCAL_SIGNING_IDENTITY:-}" ] || return 1
+    command -v openssl >/dev/null 2>&1 || return 1
+    kc="$(local_signing_keychain)"
+    [ -f "$kc" ] || return 1
+    ! security find-certificate -c "$CUA_LOCAL_SIGN_CN" "$kc" >/dev/null 2>&1
+}
+
 # The one-time setup, as the commands to type, for a Mac where the script
 # could not (or was not allowed to) do it.
 SIGNING_HELP_SHOWN=0
@@ -469,10 +501,30 @@ print_signing_bootstrap() {
     [ "$SIGNING_HELP_SHOWN" = 0 ] || return 0
     SIGNING_HELP_SHOWN=1
     kc="$(local_signing_keychain)"
-    echo "Cua Spaces Local is signed with the stable local certificate \"$CUA_LOCAL_SIGN_CN\"" >&2
-    echo "(the one Cua Driver's local install uses), so its Screen Recording and" >&2
-    echo "Accessibility permissions survive rebuilds. On a new Keychain that needs a" >&2
-    echo "one-time setup, in Terminal on this Mac:" >&2
+    case "$SIGNING_PROBLEM" in
+        no-certificate)
+            echo "The stable local certificate \"$CUA_LOCAL_SIGN_CN\" is not in the Keychain $kc:" >&2
+            echo "it could not be created there. A locked Keychain refuses it, as in an SSH session" >&2
+            echo "or a VM that logged in on its own. Unlock it (it asks for the Keychain's password)" >&2
+            echo "and run this script again:" >&2
+            echo "  security unlock-keychain \"$kc\"" >&2
+            return 0
+            ;;
+        locked)
+            echo "The Keychain $kc is locked, so codesign cannot use the stable local certificate's key." >&2
+            echo "That is usual in an SSH session or a VM that logged in on its own. Unlock it" >&2
+            echo "(it asks for the Keychain's password) and run this script again:" >&2
+            echo "  security unlock-keychain \"$kc\"" >&2
+            echo "If codesign still cannot sign after that, the certificate also needs the" >&2
+            echo "one-time setup, in Terminal on this Mac:" >&2
+            ;;
+        *)
+            echo "Cua Spaces Local is signed with the stable local certificate \"$CUA_LOCAL_SIGN_CN\"" >&2
+            echo "(the one Cua Driver's local install uses), so its Screen Recording and" >&2
+            echo "Accessibility permissions survive rebuilds. On a new Keychain that needs a" >&2
+            echo "one-time setup, in Terminal on this Mac:" >&2
+            ;;
+    esac
     echo "  security find-certificate -c \"$CUA_LOCAL_SIGN_CN\" -p \"$kc\" > $pem" >&2
     echo "  security add-trusted-cert -r trustRoot -p codeSign -k \"$kc\" $pem" >&2
     echo "      (macOS asks for your password once. In an SSH session or a VM without a" >&2
@@ -491,10 +543,11 @@ print_signing_bootstrap() {
 # certificate-backed is checked by sign_staged_app, as before.)
 signing_probe() {
     local identity="$1" macho="$2" dir probe status=0
+    SIGNING_PROBE_ERROR=""
     dir="$(mktemp -d "${TMPDIR:-/tmp}/cua-local-sign-probe.XXXXXX")" || return 1
     probe="$dir/probe"
     if cp "$macho" "$probe"; then
-        codesign_bounded 20 --force --sign "$identity" "$probe" >/dev/null 2>&1 || status=$?
+        SIGNING_PROBE_ERROR="$(codesign_bounded 20 --force --sign "$identity" "$probe" 2>&1 >/dev/null)" || status=$?
     else
         status=1
     fi
@@ -536,6 +589,27 @@ make_signing_identity_usable() {
         return 1
     fi
     kc="$(local_signing_keychain)"
+    if signing_probe_locked; then
+        SIGNING_PROBLEM=locked
+        warn "codesign cannot use the stable local certificate: its Keychain ($kc) is locked. That is usual in an SSH session or a VM that logged in on its own, where nothing can ask for the password."
+        if [ -t 0 ] && [ -t 1 ]; then
+            printf 'Unlock it now? It asks for the Keychain password. [Y/n] '
+            read -r answer || answer=n
+            case "$answer" in ""|y|Y|yes|YES|Yes) answer=y ;; *) answer=n ;; esac
+            if [ "$answer" = y ] && security unlock-keychain "$kc"; then
+                if signing_probe "$identity" "$macho"; then
+                    ok "codesign can use the stable local certificate"
+                    return 0
+                fi
+            fi
+        fi
+        if signing_probe_locked; then
+            print_signing_bootstrap
+            return 1
+        fi
+        # Unlocked now; what is left is a new Keychain's setup.
+        SIGNING_PROBLEM=""
+    fi
     warn "codesign cannot use the stable local certificate yet (a new Keychain: it is not trusted for code signing, or codesign may not use its key)."
 
     answer=n
@@ -617,6 +691,9 @@ sign_staged_app() {
     sign_id="$(ensure_local_signing_identity)"
     if [ "$sign_id" != "-" ]; then
         make_signing_identity_usable "$sign_id" "$app_stage" || true
+    elif signing_certificate_missing; then
+        SIGNING_PROBLEM=no-certificate
+        warn "could not create the stable local certificate in $(local_signing_keychain): the Keychain is probably locked."
     fi
 
     if [ "$sign_id" != "-" ]; then

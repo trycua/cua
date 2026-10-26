@@ -12,7 +12,7 @@
 import { hostOs } from "./host-os";
 import { spokenName } from "./space-names";
 import { isUnsupported, type DataAdapter } from "./adapter";
-import type { AgentRunStatus, AgentSetupRow, PersistentAgent, SpaceAgentRun } from "./contracts/agents";
+import type { AgentMessageSent, AgentRunStatus, AgentSetupRow, AgentStarted, AgentStartRequest, PersistentAgent, SpaceAgentRun } from "./contracts/agents";
 import type { CoreClient } from "./core";
 import { withCreateContext } from "./create-context";
 import { HOST_RUNS_CREATES, loadCreateStreaks, saveCreateStreaks } from "./create-retry";
@@ -23,7 +23,7 @@ import type { MachineRow, MachinesView, OnboardingMode, SettingsPage, SignInFail
 import type { OnboardingAction, OnboardingFlowState } from "./contracts/onboarding";
 import type { KeyvaultOverview, KvGrant, KvListView, KvSelection, VaultAction, VaultState } from "./contracts/keyvault";
 import type { KvAccessCommand } from "./ops/keyvault-manage";
-import type { CreateAction, CreatesState, Space, SpaceOs, SpaceRow } from "./contracts/spaces";
+import { LIST_COMPLETE, type CreateAction, type CreatesState, type ListStatus, type Space, type SpaceOs, type SpaceRow } from "./contracts/spaces";
 import {
   INITIAL_VAULT_STATE,
   agentRows,
@@ -249,6 +249,9 @@ export class BridgeStore {
   private registry: Space[] = [];
   /** The host's word on its last registry read (`DataAdapter.listNotice`). */
   private listNoticeText: string | null = null;
+  /** How far the host's last registry read got (`DataAdapter.listStatus`):
+   * not read yet until the first answer. */
+  private listStatusValue: ListStatus = { loaded: false, incomplete: false, reaching: 0, stale: false };
   /** The host's standing notice (`DataAdapter.hostNotice`). */
   private hostNoticeText: string | null = null;
   private creates: CreatesState = { ...NO_CREATES, streaks: loadCreateStreaks() };
@@ -401,6 +404,12 @@ export class BridgeStore {
   }
 
   /** Why the listed Spaces may be out of date (null: the host's last read worked). */
+  /** How far the list got: an incomplete one (computers still answering) is
+   * never "no Spaces". */
+  get listStatus(): ListStatus {
+    return this.listStatusValue;
+  }
+
   get listNotice(): string | null {
     return this.listNoticeText;
   }
@@ -448,6 +457,7 @@ export class BridgeStore {
         case "spaces": {
           const rows = await this.adapter.call("spaces.list", {});
           this.listNoticeText = this.adapter.listNotice?.() ?? null;
+          this.listStatusValue = this.adapter.listStatus?.() ?? LIST_COMPLETE;
           this.hostNoticeText = this.adapter.hostNotice?.() ?? null;
           this.applyRows(rows);
           break;
@@ -608,7 +618,7 @@ export class BridgeStore {
     const os = osOf(req);
     const on = config.on ?? this.settingsSnap?.values.defaultLocation ?? "local";
     // A Space on one of your machines or in your own cloud lists as a relay machine.
-    const provider = on === "local" || on === "cloud" ? on : "relay";
+    const provider = on === "local" ? on : "relay";
     // The machine a create on one of yours runs on: its id lets the core
     // fold that machine's own record of the Space into this row, its name
     // is what the row and a failure call it.
@@ -946,10 +956,10 @@ export class BridgeStore {
 
   private publishSession(): void {
     if (!this.sessionSnap) return;
-    const identity = this.sessionSnap.fleet.identity ?? null;
+    const identity = this.sessionSnap.account.identity ?? null;
     const data: SessionData = {
       ...this.sessionSnap,
-      signedIn: this.sessionSnap.fleet.authMode !== "none" && this.sessionSnap.fleet.configured,
+      signedIn: this.sessionSnap.account.authMode !== "none" && this.sessionSnap.account.configured,
       identity,
       signIn: this.signInPhase,
       signInUrl: this.signInPhase.kind === "waiting" ? this.signInUrl : null,
@@ -965,7 +975,7 @@ export class BridgeStore {
     // A native host signed in, whichever attempt (a retry's, or one before
     // it) finished: the wait is over.
     const snap = this.sessionSnap;
-    if (snap && snap.hostSignIn !== undefined && snap.fleet.authMode === "user" && snap.fleet.identity) {
+    if (snap && snap.hostSignIn !== undefined && snap.account.authMode === "user" && snap.account.identity) {
       this.stopSignInTimer();
       this.signInPhase = { kind: "idle" };
       return;
@@ -1085,6 +1095,7 @@ export class BridgeStore {
     this.ensured.add("spaces");
     this.registry = registry;
     this.creates = creates;
+    this.listStatusValue = LIST_COMPLETE;
     this.set("spaces", { data: composeCreates(this.core, registry, creates), isLoading: false, error: null });
   }
 
@@ -1253,6 +1264,22 @@ export class BridgeStore {
 
   resumeAgent(name: string): Promise<void> {
     return this.agentAction(() => this.adapter.call("agents.resume", { name }));
+  }
+
+  /** Starts a coding agent in a Space (`agents.start`); the runs are read again. */
+  async startRun(req: AgentStartRequest): Promise<AgentStarted> {
+    let started: AgentStarted | undefined;
+    await this.agentAction(async () => {
+      started = await this.adapter.call("agents.start", req);
+    });
+    return started!;
+  }
+
+  /** Sends a reply to a run (`agents.message`); its conversation is read again at once. */
+  async sendToRun(ref: RunRef, text: string, force = false): Promise<AgentMessageSent> {
+    const sent = await this.adapter.call("agents.message", { spaceId: ref.spaceId, runId: ref.runId, text, ...(force ? { force } : {}) });
+    void this.refresh("agents");
+    return sent;
   }
 
   agentSetup(): Promise<AgentSetupRow[]> {

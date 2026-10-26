@@ -5,8 +5,8 @@ import { act, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { RemoteWindow } from "../model/teleport";
-import type { ViewerConfig } from "../native/fleet";
-import { fakeFleetBridge } from "../test/fakeFleet";
+import type { ViewerConfig } from "../native/spacesBridge";
+import { fakeSpacesBridge } from "../test/fakeSpacesBridge";
 import { avcCodecFromAnnexB } from "@cua/spacesd-html5/core/h264";
 import {
   applyCursorShape,
@@ -163,7 +163,7 @@ describe("WindowStream", () => {
         mediaSessionId: "m-9",
       },
     };
-    render(<WindowStream fleet={fakeFleetBridge({ viewerConfig: async () => config, openStream })} />);
+    render(<WindowStream bridge={fakeSpacesBridge({ viewerConfig: async () => config, openStream })} />);
     await screen.findByText(/Connecting to Firefox/);
     // The canvas opens its socket after the status text renders.
     await vi.waitFor(() => expect(RecordingSocket.urls).toEqual(["ws://h:1/media?ticket=from-mcp"]));
@@ -189,7 +189,7 @@ describe("WindowStream", () => {
       targetWindow: { id: "w-7", appName: "Firefox", title: "Docs" },
     };
     const { unmount } = render(
-      <WindowStream fleet={fakeFleetBridge({ viewerConfig: async () => primary, openStream })} />,
+      <WindowStream bridge={fakeSpacesBridge({ viewerConfig: async () => primary, openStream })} />,
     );
     await vi.waitFor(() => expect(openStream).toHaveBeenCalled());
     expect(openStream).toHaveBeenLastCalledWith(
@@ -201,7 +201,7 @@ describe("WindowStream", () => {
     unmount();
 
     const replica: ViewerConfig = { ...primary, targetWindow: { ...primary.targetWindow!, replica: true } };
-    render(<WindowStream fleet={fakeFleetBridge({ viewerConfig: async () => replica, openStream })} />);
+    render(<WindowStream bridge={fakeSpacesBridge({ viewerConfig: async () => replica, openStream })} />);
     await vi.waitFor(() => expect(openStream).toHaveBeenCalledTimes(2));
     expect(openStream).toHaveBeenLastCalledWith(
       "space://direct/h:1",
@@ -229,7 +229,7 @@ describe("WindowStream", () => {
     const config: ViewerConfig = { view: "windows", space: { id: "space://direct/h:1", name: "Box" } };
     render(
       <WindowStream
-        fleet={fakeFleetBridge({ viewerConfig: async () => config, openStream: openStream as never })}
+        bridge={fakeSpacesBridge({ viewerConfig: async () => config, openStream: openStream as never })}
         listWindows={listWindows}
       />,
     );

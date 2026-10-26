@@ -64,7 +64,7 @@ export function sampleRows(n: Native): AppSpaceRow[] {
       power: "suspend",
       powerState: "running",
     }),
-    row({ id: "cloud:builder", name: "builder", provider: "cloud", features: ["desktop_stream"], addedAt: "2026-09-24T08:00:00Z", os: n.AppSpaceOs.Linux, osName: "Arch Linux", reachable: false, error: "timed out" }),
+    row({ id: "direct:builder", name: "builder", provider: "direct", features: ["desktop_stream"], addedAt: "2026-09-24T08:00:00Z", os: n.AppSpaceOs.Linux, osName: "Arch Linux", reachable: false, error: "timed out" }),
     row({ id: "direct:10.0.0.5:3211", name: "10.0.0.5:3211", provider: "direct", addedAt: "2026-09-23T08:00:00Z", os: n.AppSpaceOs.Windows, osName: "Windows" }),
   ];
 }
@@ -167,14 +167,11 @@ export class FixtureSpacesBackend implements SpacesBackend {
   async localStorage() {
     return null;
   }
-  async cloudAvailable() {
+  async loggedIn() {
     return false;
   }
   async runningMacosVms() {
     return 1;
-  }
-  async cloudPricing() {
-    return null;
   }
   async usage() {
     return null;

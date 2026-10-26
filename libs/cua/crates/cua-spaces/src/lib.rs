@@ -80,6 +80,8 @@ pub mod host_jobs;
 pub mod host_spaces;
 pub mod id;
 pub mod lifetimes;
+pub mod list_watch;
+pub mod listing;
 mod local_load;
 pub mod mesh;
 pub mod named_volumes;
@@ -138,9 +140,12 @@ pub use app_icon::{AppIcon, IconRequest};
 pub use creating::{CancelOutcome, CancelState};
 pub use error::{Error, Result};
 pub use id::{Provider, SpaceId};
+pub use listing::{LIST_WAIT, ListProgress, SpaceListing};
 pub use relay::{RelayAccount, RelayMachine};
 pub use route::{ChannelRoute, Transport};
-pub use space::{SPACESD_FEATURE, ServiceSource, Space, SpaceInfo, SpacePower, SpaceService};
+pub use space::{
+    SPACESD_FEATURE, ServiceSource, Space, SpaceInfo, SpacePower, SpaceResize, SpaceService,
+};
 pub use spaces::{
     CreatePhase, CreateProgress, DEFAULT_PROBE_TIMEOUT, PendingSpace, ProgressSink,
     RecoveredCreate, RecoveryOutcome, SpaceCreate, SpaceCreated, Spaces, SpacesBuilder,

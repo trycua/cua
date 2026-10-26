@@ -60,6 +60,7 @@ without touching it.
 | [`GetSpaceRoute`](#spaceservicegetspaceroute) | [`GetSpaceRouteRequest`](#getspacerouterequest) | [`GetSpaceRouteResponse`](#getspacerouteresponse) | unary |
 | [`GetResources`](#spaceservicegetresources) | [`GetResourcesRequest`](/cua-sdk/reference/protocol/daemon-resources#getresourcesrequest) | [`GetResourcesResponse`](/cua-sdk/reference/protocol/daemon-resources#getresourcesresponse) | unary |
 | [`WatchResources`](#spaceservicewatchresources) | [`WatchResourcesRequest`](/cua-sdk/reference/protocol/daemon-resources#watchresourcesrequest) | [`WatchResourcesResponse`](/cua-sdk/reference/protocol/daemon-resources#watchresourcesresponse) | server stream |
+| [`WatchSpaces`](#spaceservicewatchspaces) | [`WatchSpacesRequest`](#watchspacesrequest) | [`WatchSpacesResponse`](#watchspacesresponse) | server stream |
 
 ### SpaceService.AddSpace
 
@@ -295,6 +296,18 @@ sampled every 5 minutes and still hears `low_disk`, for the menu bar.
 Cancel the stream to stop; call again with the other `visible` to
 switch.
 
+### SpaceService.WatchSpaces
+
+`/cua.daemon.v1.SpaceService/WatchSpaces`, server stream: [`WatchSpacesRequest`](#watchspacesrequest) to [`WatchSpacesResponse`](#watchspacesresponse).
+
+Says when the Space list changed, so a client reads it again
+(`ListSpaces`) when something happened instead of on a timer: one
+message at once (the generation now), then one per change. This
+computer's Spaces are announced within a second; your other computers
+on the mesh within about a second of connecting or going away (the mesh
+coordinator pushes it); computers not on the mesh within 10 seconds.
+Cancel the stream to stop.
+
 ## DaemonService
 
 `cua.daemon.v1.DaemonService`
@@ -328,6 +341,20 @@ browser never sees the spacesd token.
 Stops the daemon after the response is sent.
 
 ## Types in `cua/daemon/v1/spaces.proto`
+
+### WatchSpacesRequest
+
+`SpaceService.WatchSpaces` takes no arguments.
+
+No fields.
+
+### WatchSpacesResponse
+
+One event of `SpaceService.WatchSpaces`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `generation` | 1 | `uint64` | Moves on every change of the list (only increases while the daemon runs; a new daemon starts again from 0). |
 
 ### Space
 
@@ -389,7 +416,9 @@ Response for `SpaceService.AddSpace`.
 
 Request for `SpaceService.ListSpaces`.
 
-No fields.
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `known_now` | 1 | `bool` | Answer with what is known now: this machine's Spaces at once, the account's other computers as far as they answered within a moment (the response says how far it got). Without it the daemon waits for the relay and fails when it cannot be read. |
 
 ### ListSpacesResponse
 
@@ -398,6 +427,10 @@ Response for `SpaceService.ListSpaces`.
 | Field | # | Type | Description |
 | --- | --- | --- | --- |
 | `spaces` | 1 | repeated [`Space`](#space) | Spaces. |
+| `incomplete` | 2 | `bool` | `known_now` only: some of the account's computers have not answered yet, so the list may grow (an empty one is not "no Spaces"). |
+| `reaching` | 3 | `uint32` | `known_now` only: how many computers are still being reached (0 when unknown). |
+| `stale` | 4 | `bool` | `known_now` only: the other computers' rows are the last known ones, not yet confirmed by the relay. |
+| `notice` | 5 | `string` | `known_now` only: why the account's computers could not be read, when they could not. |
 
 ### NamedVolume
 

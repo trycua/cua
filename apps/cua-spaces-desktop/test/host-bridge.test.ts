@@ -534,6 +534,14 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(s.globalShortcut).toEqual({ label: "\u2318\u21e7Space", registered: false });
   });
 
+  it("changes the global shortcut from General, and says when another app holds the keys", async () => {
+    await call("settings.choose", { row: "global-shortcut", option: "Control+Alt+K" });
+    expect(system.shortcutChanges).toEqual(["Control+Alt+K"]);
+    expect(((await call("settings.get")) as { globalShortcut: unknown }).globalShortcut).toEqual({ label: "Control+Alt+K", registered: true });
+    expect(await code("settings.choose", { row: "global-shortcut", option: "Command+K" })).toBe("failed");
+    expect(system.shortcutChanges).toEqual(["Control+Alt+K"]);
+  });
+
   it("chooses each row as the Swift app does", async () => {
     let settingsEvents = 0;
     bridge.events.subscribe((e) => e.event === "settings.changed" && settingsEvents++);
@@ -543,9 +551,6 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(model.settings.autoConnect).toBe(false);
     await call("settings.choose", { row: "team-current", option: "org-2" });
     expect(model.settings.currentTeamId).toBe("org-2");
-    await call("settings.choose", { row: "default-location", option: "cloud" });
-    // Cua Cloud has ended: the default stays on this machine.
-    expect(model.settings.defaultLocation).toBe(native.AppLocation.Local);
     await call("settings.choose", { row: "telemetry", option: "off" });
     expect(model.telemetry?.status().enabled).toBe(false);
     await call("settings.choose", { row: "launch-at-login", option: "on" });
@@ -597,7 +602,7 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
   it("asks for Local Network access when a Space is created on this machine", async () => {
     let asked = 0;
     model.host.localNetwork = { request: () => asked++ };
-    await call("spaces.create", { config: { image: "ghcr.io/trycua/linux:24.04", kind: "container", on: "cloud" }, pendingId: "pending:c1", os: "linux" });
+    await call("spaces.create", { config: { image: "ghcr.io/trycua/linux:24.04", kind: "container", on: "host:mini" }, pendingId: "pending:c1", os: "linux" });
     expect(asked).toBe(0);
     await call("spaces.create", { config: { image: "ghcr.io/trycua/linux:24.04", kind: "container", on: "local" }, pendingId: "pending:l1", os: "linux" });
     expect(asked).toBe(1);
@@ -911,7 +916,8 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(ids.some((id) => isMachineDesktop(model.spaces.find((s) => s.id === id)!))).toBe(false);
     // The list and the menu's count are the same Spaces.
     expect(ids.sort()).toEqual(realSpaces(model.spaces).map((s) => s.id).sort());
-    expect(view.tab.count).toBe(String(ids.length));
+    // The tab counts the Spaces on or starting (never a stopped one), though it lists them all.
+    expect(view.tab.count).toBe(String(native.appOnCount(model.spaces)));
   });
 
   it("says the launch is still waiting first", async () => {

@@ -21,7 +21,7 @@
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
           "---",
-          "local | This Mac | Container on this Mac (gVisor when installed) | on *",
+          "local | This Mac | Linux, on this Mac | on *",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on",
           "host:lab | lab | Over Tailscale or your network | on",
@@ -31,18 +31,18 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.9 GB–6.9 GB initially; grows with use"
+          "Disk: 2.9–6.9 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
           "System: Ubuntu 24.04",
           "Image: ghcr.io/trycua/linux:24.04",
-          "Runs on: This Mac",
+          "Runs on: Linux, on this Mac",
           "Kind: Container",
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Disk: 2.9 GB–6.9 GB initially; grows with use",
+          "Disk: 2.9–6.9 GB initially; grows with use",
           "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
@@ -71,7 +71,7 @@
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
           "---",
-          "local | This Mac | Container on this Mac (gVisor when installed) | on *",
+          "local | This Mac | Linux, on this Mac | on *",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on",
           "host:lab | lab | Over Tailscale or your network | on",
@@ -81,18 +81,18 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.9 GB–6.9 GB initially; grows with use"
+          "Disk: 2.9–6.9 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
           "System: Ubuntu 24.04",
           "Image: ghcr.io/trycua/linux:24.04",
-          "Runs on: This Mac",
+          "Runs on: Linux, on this Mac",
           "Kind: Container",
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Disk: 2.9 GB–6.9 GB initially; grows with use",
+          "Disk: 2.9–6.9 GB initially; grows with use",
           "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
@@ -121,7 +121,7 @@
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
           "---",
-          "local | This Mac | Container on this Mac (gVisor when installed) | on *",
+          "local | This Mac | Linux, on this Mac | on *",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on",
           "host:lab | lab | Over Tailscale or your network | on",
@@ -131,18 +131,18 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.9 GB–6.9 GB initially; grows with use"
+          "Disk: 2.9–6.9 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
           "System: Ubuntu 24.04",
           "Image: ghcr.io/trycua/linux:24.04",
-          "Runs on: This Mac",
+          "Runs on: Linux, on this Mac",
           "Kind: Container",
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Disk: 2.9 GB–6.9 GB initially; grows with use",
+          "Disk: 2.9–6.9 GB initially; grows with use",
           "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
@@ -171,7 +171,7 @@
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
           "---",
-          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "local | This Mac | Linux, on this Mac | on",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on *",
           "host:lab | lab | Over Tailscale or your network | on",
@@ -180,7 +180,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.2 GB initially; grows with use"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
@@ -267,7 +267,7 @@
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
           "---",
-          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "local | This Mac | Linux, on this Mac | on",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on *",
           "host:lab | lab | Over Tailscale or your network | on",
@@ -276,7 +276,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.2 GB initially; grows with use"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
@@ -314,7 +314,7 @@
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
           "---",
-          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "local | This Mac | Linux, on this Mac | on",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on",
           "host:lab | lab | Over Tailscale or your network | on *",
@@ -323,7 +323,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.2 GB initially; grows with use"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
@@ -362,7 +362,7 @@
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
           "---",
-          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "local | This Mac | Linux, on this Mac | on",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on",
           "host:lab | lab | Over Tailscale or your network | on *",
@@ -373,7 +373,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.2 GB initially; grows with use"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
@@ -414,7 +414,7 @@
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
           "---",
-          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "local | This Mac | Linux, on this Mac | on",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on",
           "host:lab | lab | Over Tailscale or your network | on",
@@ -466,7 +466,7 @@
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
           "---",
-          "local | This Mac | Container on this Mac (gVisor when installed) | on *",
+          "local | This Mac | Linux, on this Mac | on *",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on",
           "host:lab | lab | Over Tailscale or your network | on",
@@ -476,18 +476,18 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.9 GB–6.9 GB initially; grows with use"
+          "Disk: 2.9–6.9 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
           "System: Ubuntu 24.04",
           "Image: ghcr.io/trycua/linux:24.04",
-          "Runs on: This Mac",
+          "Runs on: Linux, on this Mac",
           "Kind: Container",
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Disk: 2.9 GB–6.9 GB initially; grows with use",
+          "Disk: 2.9–6.9 GB initially; grows with use",
           "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
@@ -516,7 +516,7 @@
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
           "---",
-          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "local | This Mac | Linux, on this Mac | on",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on *",
           "host:lab | lab | Over Tailscale or your network | on",
@@ -525,7 +525,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.2 GB initially; grows with use"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
@@ -559,7 +559,7 @@
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
           "---",
-          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "local | This Mac | Linux, on this Mac | on",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on *",
           "host:lab | lab | Over Tailscale or your network | on",
@@ -568,7 +568,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.2 GB initially; grows with use"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "step": 1,
         "summary": [
@@ -602,7 +602,7 @@
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
           "---",
-          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "local | This Mac | Linux, on this Mac | on",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on *",
           "host:lab | lab | Over Tailscale or your network | on",
@@ -611,7 +611,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.2 GB initially; grows with use"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "step": 2,
         "summary": [
@@ -642,7 +642,7 @@
         "placements": [
           "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
           "---",
-          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "local | This Mac | Linux, on this Mac | on",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on *",
           "host:lab | lab | Over Tailscale or your network | on",
@@ -651,7 +651,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.2 GB initially; grows with use"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "step": 3,
         "summary": [
@@ -680,24 +680,24 @@
         "placement": "local",
         "placementError": null,
         "placements": [
-          "local | This Mac | Container on this Mac (gVisor when installed) | on *"
+          "local | This Mac | Linux, on this Mac | on *"
         ],
         "price": null,
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.9 GB–6.9 GB initially; grows with use"
+          "Disk: 2.9–6.9 GB initially; grows with use"
         ],
         "step": 3,
         "summary": [
           "System: Ubuntu 24.04",
           "Image: ghcr.io/trycua/linux:24.04",
-          "Runs on: This Mac",
+          "Runs on: Linux, on this Mac",
           "Kind: Container",
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Disk: 2.9 GB–6.9 GB initially; grows with use",
+          "Disk: 2.9–6.9 GB initially; grows with use",
           "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
@@ -717,24 +717,24 @@
         "placement": "local",
         "placementError": null,
         "placements": [
-          "local | This Mac | Container on this Mac (gVisor when installed) | on *"
+          "local | This Mac | Linux, on this Mac | on *"
         ],
         "price": null,
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.9 GB–6.9 GB initially; grows with use"
+          "Disk: 2.9–6.9 GB initially; grows with use"
         ],
         "step": 3,
         "summary": [
           "System: Ubuntu 24.04",
           "Image: ghcr.io/trycua/linux:24.04",
-          "Runs on: This Mac",
+          "Runs on: Linux, on this Mac",
           "Kind: Container",
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Disk: 2.9 GB–6.9 GB initially; grows with use",
+          "Disk: 2.9–6.9 GB initially; grows with use",
           "Name: space-000000002a",
           "When ready: Open the desktop"
         ],

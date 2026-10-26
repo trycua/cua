@@ -45,7 +45,14 @@
         {
           "name": "key",
           "image-name": "key.png",
-          "glass": true
+          "glass": true,
+          "position": {
+            "scale": 1.2,
+            "translation-in-points": [
+              -2.1,
+              2.4
+            ]
+          }
         }
       ],
       "shadow": {

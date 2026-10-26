@@ -38,7 +38,7 @@ export { createAdapter, createDemoAdapter, createElectronAdapter, createTauriAda
 export { detectMode } from "./detect";
 export { loadCore, type CoreClient, type CoreParity, type CoreStatus, type ParityFlow } from "./core";
 export type { Machine, HostSetupGuide, KeyvaultAppGroup, KeyvaultViews } from "./derive";
-export { machineIdOf } from "./derive";
+export { listView, machineIdOf } from "./derive";
 export type {
   AgentRunSummary,
   AgentState,
@@ -52,6 +52,7 @@ export type {
   SessionData,
   SettingsData,
 } from "./store";
+export { newPendingId } from "./store";
 export type { TranscriptItem, TranscriptStep } from "./transcript";
 export { GRID_COLUMNS, iconKey, thumbnailKey, useTeleport, type TeleportHook, type TeleportSession, type TeleportStore } from "./teleport";
 export { useShareSheet, type ShareHook, type ShareSession } from "./share";

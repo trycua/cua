@@ -47,7 +47,11 @@ export default defineConfig({
   optimizeDeps: { entries: ["index.html", "src/**/*.{ts,tsx}", "!src/**/*.d.ts", "!src/**/__tests__/**", "!src/**/*.test.{ts,tsx}"] },
   server: { port: 5174, strictPort: true },
   preview: { port: 5174 },
-  build: { target: "es2023", sourcemap: true },
+  // Source maps: shown in a plain build (`pnpm dev`, local checks). Release CD
+  // sets CUA_SOURCEMAPS=1 to emit them hidden (no sourceMappingURL comment) in
+  // dist/**/*.map, uploads them to Sentry, then deletes them: the app never
+  // ships them (electron-builder's extraResources filter drops *.map too).
+  build: { target: "es2023", sourcemap: process.env.CUA_SOURCEMAPS === "1" ? "hidden" : false },
   test: {
     environment: "jsdom",
     include: ["src/**/*.test.{ts,tsx}"],

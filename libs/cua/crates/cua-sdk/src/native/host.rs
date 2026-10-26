@@ -16,7 +16,7 @@ impl From<cua_host::Error> for CuaError {
             E::Unauthenticated(_) => CuaError::Unauthenticated(m),
             E::PermissionDenied(_) => CuaError::PermissionDenied(m),
             E::NotFound(_) => CuaError::NotFound(m),
-            E::Relay(_) | E::Download(_) => CuaError::Http(m),
+            E::Relay(_) | E::Download(_) | E::Throttled { .. } => CuaError::Http(m),
             // The plain sentence, then where to upgrade, as the CLI says it;
             // the Python and TypeScript SDKs read both back as `PlanLimitError`.
             E::PlanLimit(_) => {
@@ -221,6 +221,18 @@ impl Relay {
             .clone()
             .with_device_session(self.device_session().await)
     }
+}
+
+/// This device's session on the relay at `url`, when it is enrolled there
+/// (`None` otherwise: the relay then decides what it trusts).
+async fn own_device_session(url: &str) -> Option<String> {
+    let session = Arc::new(cua_auth::Session::from_env());
+    let store = session.store().clone();
+    let tokens = Arc::new(SessionTokens(session));
+    cua_host::DeviceAuth::new(url, tokens, Arc::new(store), cua_host::device_name())
+        .ok()?
+        .try_session()
+        .await
 }
 
 #[uniffi::export]
@@ -706,6 +718,15 @@ impl Host {
         let (r, failed_stage, http_status) = match opts {
             Ok(opts) => {
                 let staged = run(async move {
+                    let mut opts = opts;
+                    // The Mac the user signed in on is enrolled by that
+                    // sign-in: registering with its session is the proof
+                    // the relay needs not to flag it as a new computer.
+                    if let (cua_host::HostMode::Relay { url }, Some(_)) =
+                        (&opts.mode, account_token.as_ref())
+                    {
+                        opts.device_session = own_device_session(url).await;
+                    }
                     let host = cua_host::Host::new(home);
                     let staged = match account_token {
                         Some(t) => host.setup_staged(opts, &cua_host::StaticToken(t)).await,

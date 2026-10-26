@@ -53,6 +53,7 @@ cua-byoc = { workspace = true, optional = true, features = ["aws"] }
 # The `cluster_*` MCP tools: a client of the cluster coordinator's API.
 # Anonymous usage telemetry (`cua telemetry`, the first-run notice).
 cua-telemetry.workspace = true
+cua-crash.workspace = true
 async-trait.workspace = true
 cua-proto = { workspace = true, features = ["client", "serde"] }
 cua-spaces = { path = "../cua-spaces", default-features = false, features = ["mcp", "spaces-hotspot"] }
@@ -98,8 +99,10 @@ cua-host = { workspace = true, features = ["testing"] }
 cua-daemon = { workspace = true, features = ["server", "client", "test-fixtures"] }
 cua-spacesd-client = { workspace = true, features = ["testing"] }
 cua-sandbox-core = { workspace = true, features = ["testing"] }
-# The scripted cloud for `cua cloud add aws`'s create-all-or-none tests.
-cua-byoc = { workspace = true, features = ["aws", "testing"] }
+# The scripted cloud for `cua cloud add aws`'s create-all-or-none tests
+# (built only with `byoc`, which brings the AWS provider itself, so plain
+# `cargo test -p cua-cli` does not compile the AWS SDK).
+cua-byoc = { workspace = true, features = ["testing"] }
 tempfile.workspace = true
 # The default log filter test emits events.
 tracing.workspace = true

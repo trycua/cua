@@ -43,7 +43,7 @@ struct BridgeContractTests {
                              settingsPath: dir.appendingPathComponent("settings.json").path,
                              telemetry: FixtureTelemetry())
         let bridge = WebUIBridge(model: model, allowedOrigins: [])
-        bridge.actions = WebUIActions(openSpace: { _ in }, openMain: {})
+        bridge.actions = WebUIActions(openSpace: { _ in })
         // The CLI's plan on temp folders, not this Mac's ~/.local/bin.
         let cliDir = dir.appendingPathComponent("cli").path
         bridge.makeCliInstaller = {
@@ -152,9 +152,7 @@ struct BridgeContractTests {
         func linuxSource() async -> String? { await inner.linuxSource() }
         func setLinuxSource(_ value: String) async throws { try await inner.setLinuxSource(value) }
         func localStorage() async -> LocalStorage? { await inner.localStorage() }
-        func cloudAvailable() async -> Bool { await inner.cloudAvailable() }
         func runningMacosVms() async -> Int? { await inner.runningMacosVms() }
-        func cloudPricing() async -> AppCloudPricing? { await inner.cloudPricing() }
         func teleportContext(id: String) async throws -> (CuaSpacesFFI.Teleport, CuaSDK.Space)? {
             try await inner.teleportContext(id: id)
         }
@@ -192,13 +190,13 @@ struct BridgeContractTests {
                              settingsPath: dir.appendingPathComponent("settings.json").path,
                              host: FixtureHost(), account: FixtureAccount(identity: "ada@example.com"),
                              telemetry: FixtureTelemetry(), agentSetup: FixtureAgentSetup(),
-                             billing: FixtureBilling(), devices: FixtureDevices(), presence: FixturePresence(),
+                             devices: FixtureDevices(), presence: FixturePresence(),
                              loginItem: FixtureLoginItem(.enabled), startup: startup)
         model.updates = UpdatesModel(updater: FixtureUpdater(lastCheck: fixtureNow), channel: .stable)
         await model.refresh()
         await model.keyvault.refresh()
         let bridge = WebUIBridge(model: model, allowedOrigins: [])
-        bridge.actions = WebUIActions(openSpace: { _ in }, openMain: {})
+        bridge.actions = WebUIActions(openSpace: { _ in })
         // The CLI's plan on temp folders, not this Mac's ~/.local/bin.
         let cliDir = dir.appendingPathComponent("cli").path
         bridge.makeCliInstaller = {
@@ -254,7 +252,7 @@ struct BridgeContractTests {
             ("storage.get", [:]), ("storage.run", ["request": ["kind": "clear-cache"]]),
             ("notifications.list", [:]), ("notifications.markRead", ["ids": ["n1"]]), ("notifications.markAllRead", [:]),
             ("telemetry.track", ["signals": [["type": "step", "step": "app_launched", "ok": true]]]),
-            ("telemetry.linkNotice", [:]), ("telemetry.acknowledgeLinkNotice", [:]),
+            ("telemetry.linkNotice", [:]), ("telemetry.acknowledgeLinkNotice", [:]), ("crashReporting.config", [:]),
             ("spaces.usage", ["spaceId": space]), ("spaces.windows", ["spaceId": space]),
             ("spaces.thumbnail", ["spaceId": space]),
             ("spaces.droppedFiles", ["names": ["notes.txt"]]), ("spaces.chooseFiles", [:]),
@@ -287,6 +285,8 @@ struct BridgeContractTests {
         "host.openSettings": "opens System Settings",
         "host.joinWithCode": "runs the bundled cua; JoinWithCodeTests covers the arguments and bad args",
         "agents.events": "needs the daemon's agent_events; WebUIHostTests checks it is unsupported without it",
+        "agents.start": "starts a coding agent through the daemon; WebUIHostTests checks it is unsupported without it",
+        "agents.message": "as agents.start (the daemon's agent_message)",
         "agents.pause": "changes the fake's state for agents.list", "agents.resume": "as agents.pause",
         "agents.setupDriver": "writes the coding agents' configs on the fixture setup",
         // Teleport needs the SDK's handle and a reachable Space; its answers
@@ -428,7 +428,7 @@ struct BridgeContractTests {
         let ready = try Self.json(WebUIBridge.createOptions(env: await model.newSpaceEnv(), macosVmsRunning: 1, pending: false))
         #expect(JSONShape.validate(schema, ready, defs: defs) == [])
         // Such an answer fails.
-        let broken: [String: Any] = ["local": NSNull(), "gpus": NSNull(), "cloudPricing": NSNull(), "experiments": [:], "maxCpus": 8]
+        let broken: [String: Any] = ["local": NSNull(), "gpus": NSNull(), "experiments": [:], "maxCpus": 8]
         #expect(JSONShape.validate(schema, broken, defs: defs).sorted() == ["$.env: missing", "$.local: expected object, got null"])
     }
 

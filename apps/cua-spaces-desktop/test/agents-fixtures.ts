@@ -69,6 +69,10 @@ export class FakeAgentsTools {
       case "routine_set_enabled":
       case "routine_remove":
         return {};
+      case "agent_start":
+        return { run_id: "run-2", agent: args.agent, space: args.space, process_tag: "cua-agent-run-2", cwd: "/home/cua/run-2", notes: [], hint: "" };
+      case "agent_message":
+        return { delivered: true, run_id: args.run_id, status: "running", phase: "working", reason: "" };
       case "agent_events":
         return { run_id: args.run_id, status: "idle", phase: "idle", events: [], cursor: args.cursor, caught_up: true };
       default:
@@ -175,7 +179,7 @@ export class FixtureAgentSetup implements AgentSetupRunning {
 
 /** The methods test/agents.test.ts checks (their answers need a daemon's tools, which the shared bridge test has none of). */
 export const AGENT_METHODS = [
-  "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume", "agents.setup", "agents.configure", "agents.signIn", "agents.setupDriver",
+  "agents.list", "agents.runs", "agents.events", "agents.start", "agents.message", "agents.pause", "agents.resume", "agents.setup", "agents.configure", "agents.signIn", "agents.setupDriver",
   "agents.detail", "agents.readFile", "agents.restoreFile", "agents.addRoutine", "agents.setRoutine", "agents.removeRoutine",
   "agents.allowComputer", "agents.revokeComputer",
   "agentKeys.list", "agentKeys.set", "agentKeys.remove",

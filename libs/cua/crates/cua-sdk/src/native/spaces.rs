@@ -39,6 +39,7 @@ pub const SPACES_TOOL_METHODS: &[(&str, &str)] = &[
     ("delete_space", "Spaces.delete"),
     ("stop_space", "Spaces.stop"),
     ("start_space", "Spaces.start"),
+    ("resize_space", "Spaces.resize"),
     ("space_bash", "Space.bash"),
     ("space_write", "Space.write"),
     ("upload", "Space.upload"),
@@ -138,6 +139,7 @@ pub const SPACES_SDK_ONLY_METHODS: &[&str] = &[
     "Spaces.call_tool_json",
     "Spaces.resources",
     "Spaces.watch_resources",
+    "Spaces.watch_list",
     "Space.home",
     "Space.screenshot",
     "Space.close_stream",
@@ -264,6 +266,25 @@ pub struct SpaceTransport {
     /// empty on the mesh and when the HTTPS path was chosen
     /// (`CUA_MESH=off`), and from an older daemon.
     pub fallback_reason: String,
+}
+
+/// The Spaces known now ([`Spaces::list_known`]) and how far the read got.
+#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
+pub struct SpaceList {
+    /// This machine's Spaces, and the account's other computers' as far as
+    /// they answered (the last known ones meanwhile).
+    pub spaces: Vec<SpaceInfo>,
+    /// Some of the account's computers have not answered yet: the list may
+    /// grow, and an empty one is not "no Spaces". Always false from a
+    /// daemon that predates it (it answers once every computer did).
+    pub incomplete: bool,
+    /// How many computers are still being reached (0 when unknown).
+    pub reaching: u32,
+    /// The other computers' rows are the last known ones, not yet
+    /// confirmed by the relay.
+    pub stale: bool,
+    /// Why the account's computers could not be read, when they could not.
+    pub notice: String,
 }
 
 /// A registered Space.
@@ -2005,9 +2026,28 @@ pub struct SpacePowerReport {
     pub space: String,
     /// `running`, `suspended` or `stopped`: the state it is in now.
     pub state: String,
-    /// How it turns off: `suspend` (its memory is kept) or `stop` (its
-    /// disk is kept).
+    /// How it was turned off: `suspend` (its memory is kept, and still in
+    /// use) or `stop` (its disk is kept; its memory is freed).
     pub power: String,
+    /// What happened, for people.
+    #[serde(default)]
+    pub message: String,
+}
+
+/// What [`Spaces::resize`] did: the shape the Space has now.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, Deserialize)]
+pub struct SpaceResizeReport {
+    /// The Space.
+    pub space: String,
+    /// vCPUs (when changed).
+    #[serde(default)]
+    pub cpus: Option<u32>,
+    /// Memory in MiB (when changed).
+    #[serde(default)]
+    pub memory_mb: Option<u64>,
+    /// Disk in GiB (when grown).
+    #[serde(default)]
+    pub disk_gb: Option<u32>,
     /// What happened, for people.
     #[serde(default)]
     pub message: String,
@@ -2430,6 +2470,9 @@ impl ToolOut {
 // generators read `native/*.rs`), included here so they share this module's
 // private `Host` and `daemon_err`.
 include!("spaces_resources.rs");
+
+// The list watch lives in `spaces_list_watch.rs`.
+include!("spaces_list_watch.rs");
 
 /// Where the Spaces runtime lives.
 #[derive(Clone)]
@@ -2865,7 +2908,7 @@ impl Spaces {
                 Host::Embedded(s) => Ok(s.list_all().await?.into_iter().map(Into::into).collect()),
                 Host::Daemon(d) => Ok(d
                     .spaces()
-                    .list_spaces(dpb::ListSpacesRequest {})
+                    .list_spaces(dpb::ListSpacesRequest::default())
                     .await
                     .map_err(daemon_err)?
                     .into_inner()
@@ -2873,6 +2916,46 @@ impl Spaces {
                     .into_iter()
                     .map(Into::into)
                     .collect()),
+            }
+        })
+        .await
+    }
+
+    /// The Spaces known now: this machine's at once, and the account's other
+    /// computers as far as they answered within a moment ([`SpaceList`]
+    /// says how far the read got). A slow or unreachable relay never holds
+    /// up or fails this machine's own Spaces, so an app shows them right
+    /// away and reads again while the list is incomplete. [`Spaces::list`]
+    /// waits for every computer instead.
+    pub async fn list_known(&self) -> Result<SpaceList> {
+        let host = self.host.clone();
+        run(async move {
+            match &host {
+                Host::Embedded(s) => {
+                    let l = s.list_known(cua_spaces::LIST_WAIT).await?;
+                    Ok(SpaceList {
+                        spaces: l.spaces.into_iter().map(Into::into).collect(),
+                        incomplete: l.progress.incomplete,
+                        reaching: l.progress.reaching,
+                        stale: l.progress.stale,
+                        notice: l.progress.notice,
+                    })
+                }
+                Host::Daemon(d) => {
+                    let r = d
+                        .spaces()
+                        .list_spaces(dpb::ListSpacesRequest { known_now: true })
+                        .await
+                        .map_err(daemon_err)?
+                        .into_inner();
+                    Ok(SpaceList {
+                        spaces: r.spaces.into_iter().map(Into::into).collect(),
+                        incomplete: r.incomplete,
+                        reaching: r.reaching,
+                        stale: r.stale,
+                        notice: r.notice,
+                    })
+                }
             }
         })
         .await
@@ -3629,16 +3712,57 @@ impl Spaces {
     }
 
     /// Turns a Space off the way its provider can (`SpaceInfo.power`):
-    /// suspends it, keeping its memory (a local container or QEMU VM), or
-    /// stops it, keeping its disk (a local Lume VM; a Space one of your
-    /// machines provides, which that machine stops). A cloud Space, a Space
-    /// added by address and your own computers cannot be turned off.
+    /// stops it, keeping its disk and freeing its memory (a local VM; a
+    /// Space one of your machines provides, which that machine stops), or
+    /// suspends it, keeping its memory (a local container that cannot
+    /// stop). [`Spaces::suspend`] suspends a local container or QEMU VM on
+    /// purpose. A Space added by address and your own computers cannot be
+    /// turned off.
     pub async fn stop(&self, space: String) -> Result<SpacePowerReport> {
         let host = self.host.clone();
         run(async move {
             parse(
                 host.tool_value("stop_space", json!({"space": space}))
                     .await?,
+            )
+        })
+        .await
+    }
+
+    /// Suspends a local Space (a container or a QEMU VM), keeping its
+    /// memory: it resumes where it was, and its memory stays in use until
+    /// then. [`Spaces::stop`] stops it instead and frees its memory.
+    pub async fn suspend(&self, space: String) -> Result<SpacePowerReport> {
+        let host = self.host.clone();
+        run(async move {
+            parse(
+                host.tool_value("stop_space", json!({"space": space, "suspend": true}))
+                    .await?,
+            )
+        })
+        .await
+    }
+
+    /// Gives a local VM Space another shape: `cpus` vCPUs, `memory_mb` MiB
+    /// of memory, a disk grown to `disk_gb` GiB (each `None` keeps it). It
+    /// shuts down and boots again from its own disk (a stopped one boots),
+    /// so its files stay and its memory and processes do not. Returns once
+    /// it is ready again.
+    pub async fn resize(
+        &self,
+        space: String,
+        cpus: Option<u32>,
+        memory_mb: Option<u64>,
+        disk_gb: Option<u32>,
+    ) -> Result<SpaceResizeReport> {
+        let host = self.host.clone();
+        run(async move {
+            parse(
+                host.tool_value(
+                    "resize_space",
+                    json!({"space": space, "cpus": cpus, "memory_mb": memory_mb, "disk_gb": disk_gb}),
+                )
+                .await?,
             )
         })
         .await

@@ -8,7 +8,7 @@
  */
 
 /** Welcome, Pick your agent (`connect`), Install the Cua CLI (`cli`, only
- * while it is missing), Connect your other devices, Share this Mac's screen
+ * while it is missing), Add your other computers, Share this Mac's screen
  * (`permissions`, only on a signed-in Mac that shares it), Try it (`setup`). */
 export type FirstRunStep = "welcome" | "connect" | "cli" | "devices" | "permissions" | "setup";
 
@@ -166,7 +166,7 @@ export interface FirstRunAgentPick {
   connected: boolean;
   /** "Connect" (`connect`), none once connected or while it runs. */
   action: FirstRunButton | null;
-  /** "Connected", "Adding Cua…". */
+  /** "Connected", "Connecting…". */
   note: string | null;
 }
 
@@ -221,7 +221,7 @@ export interface FirstRunDevicesView {
   rows: { title: string; note: string }[];
   /** The sign-in waiting, or this computer being added to the account. */
   status: FirstRunRow | null;
-  /** "Sign in to connect" (`sign-in`), or "Continue" once signed in. */
+  /** "Sign in" (`sign-in`), or "Continue" once signed in. */
   primary: FirstRunButton;
   /** "Not now" (`not-now`). */
   secondary: FirstRunButton | null;
@@ -234,7 +234,7 @@ export interface FirstRunDevicesView {
 export interface FirstRunPermissionsView {
   title: string;
   lede: string;
-  /** `screen-recording`, `accessibility`: `ok`, `fix` (Allow), `checking`. */
+  /** `screen-recording`, `accessibility`, `local-network`: `ok`, `fix` (Allow), `checking`. */
   rows: FirstRunRow[];
   note: string;
   /** "Continue" once both are granted. */
@@ -246,7 +246,7 @@ export interface FirstRunPermissionsView {
 export type FirstRunRowState = "checking" | "ok" | "fix";
 
 export interface FirstRunRow {
-  id: "agent" | "computer" | "account" | "screen-recording" | "accessibility";
+  id: "agent" | "computer" | "account" | "screen-recording" | "accessibility" | "local-network";
   state: FirstRunRowState;
   title: string;
   note: string;

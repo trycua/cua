@@ -24,9 +24,9 @@
 #                                          it would register as the app)
 #   Cua Spaces.app                         com.trycua.spaces.macos, Support/CuaSpacesMac.entitlements
 #
-#   scripts/build-release.sh --version 0.2.0[-suffix] [--build-number N]
-#       [--arch universal|arm64|x86_64] [--sign IDENTITY] [--out DIR]
-#       [--feed-url URL] [--skip-cargo]
+#   scripts/build-release.sh --version 0.2.0[-suffix][+build] [--build-number N]
+#       [--bundle-version A.B.C.D[.E]] [--arch universal|arm64|x86_64]
+#       [--sign IDENTITY] [--out DIR] [--feed-url URL] [--skip-cargo]
 #
 # Every release build, a beta included, is a production build: it talks to
 # Cua production unless CUA_ENV=staging is set at launch. The script keeps
@@ -38,6 +38,12 @@
 # apps set to "Update to: Beta" are offered it, and they keep their
 # production session and home. A build that defaults to staging is a local
 # build, not a release.
+#
+# A nightly (nightly-cua-spaces.yml, --version X.Y.Z-nightly.YYYYMMDD+sha)
+# is the same build again. It names its own CFBundleVersion with
+# --bundle-version (numbers and dots), which Sparkle compares: it sorts
+# above every release of the version it was built from and below the next
+# one, so a nightly app on Stable takes the next stable release.
 #
 # --feed-url sets the updater's appcast (SUFeedURL; default Support/Info.plist's,
 # trycua/cua's rolling cua-spaces-latest release). The release workflow passes
@@ -65,6 +71,7 @@ cua="$repo/libs/cua"
 
 version=""
 build_number=""
+bundle_override=""
 arch=universal
 identity="-"
 out="$here/.build/release-app"
@@ -74,12 +81,13 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --version) version="$2"; shift ;;
     --build-number) build_number="$2"; shift ;;
+    --bundle-version) bundle_override="$2"; shift ;;
     --arch) arch="$2"; shift ;;
     --sign) identity="$2"; shift ;;
     --out) out="$2"; shift ;;
     --skip-cargo) skip_cargo=1 ;;
     --feed-url) feed_url="$2"; shift ;;
-    -h | --help) sed -n '5,45p' "$0"; exit 0 ;;
+    -h | --help) sed -n '5,52p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
   shift
@@ -88,8 +96,8 @@ done
 # CFBundleShortVersionString is X.Y.Z (numbers only); a prerelease suffix
 # (0.2.0-staging.4) goes in CuaVersion. CFBundleVersion is X.Y.Z plus the
 # build number when there is one (the release workflow's run number).
-if [[ ! "$version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)(-[0-9A-Za-z.-]+)?$ ]]; then
-  echo "--version must look like 1.2.3 or 1.2.3-suffix" >&2
+if [[ ! "$version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+  echo "--version must look like 1.2.3, 1.2.3-suffix or 1.2.3-suffix+build" >&2
   exit 2
 fi
 short="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
@@ -97,6 +105,11 @@ bundle_version="$short"
 if [ -n "$build_number" ]; then
   [[ "$build_number" =~ ^[0-9]+$ ]] || { echo "--build-number must be a number" >&2; exit 2; }
   bundle_version="$short.$build_number"
+fi
+if [ -n "$bundle_override" ]; then
+  [[ "$bundle_override" =~ ^[0-9]+(\.[0-9]+){2,4}$ ]] ||
+    { echo "--bundle-version must be 3 to 5 numbers joined by dots" >&2; exit 2; }
+  bundle_version="$bundle_override"
 fi
 
 case "$arch" in

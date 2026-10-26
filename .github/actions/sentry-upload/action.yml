@@ -1,0 +1,74 @@
+name: "Sentry upload (Cua Spaces desktop)"
+description: >-
+  Uploads debug symbols (dSYMs, native debug files) or JavaScript source maps for
+  one Cua Spaces release to Sentry (CUA-2343), so crash reports are readable.
+  Does nothing, and says so, when the Sentry auth token is empty (a fork, or the
+  secret is not set yet) or config/spaces-crash-reporting.json has no DSN. Never
+  fails a release build: an upload error is a warning. Org and project come from
+  config/spaces-crash-reporting.json; the release is cua-spaces-desktop@<version>.
+
+inputs:
+  token:
+    description: "SENTRY_AUTH_TOKEN (project:releases, project:write, org:read)."
+    default: ""
+  version:
+    description: "App version, as in the update feed (0.7.2 or 0.7.2-beta.1)."
+    required: true
+  kind:
+    description: "`debug-files` (path: a directory or .zip of dSYMs or native binaries) or `sourcemaps` (path: a directory of built .js and .map files)."
+    required: true
+  path:
+    description: "What to upload."
+    required: true
+  url-prefix:
+    description: "Sourcemaps only: URL prefix of the files as the app reports them (for example `app:///dist`)."
+    default: "~/"
+  inject:
+    description: "Sourcemaps only: inject debug IDs into the .js files first. Leave off when the files were already packed into the app (the release and URL prefix match instead)."
+    default: "true"
+  delete-maps:
+    description: "Sourcemaps only: delete the .map files after the upload, so they never ship."
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        SENTRY_AUTH_TOKEN: ${{ inputs.token }}
+        VERSION: ${{ inputs.version }}
+        KIND: ${{ inputs.kind }}
+        UPLOAD_PATH: ${{ inputs.path }}
+        URL_PREFIX: ${{ inputs.url-prefix }}
+        DELETE_MAPS: ${{ inputs.delete-maps }}
+        INJECT: ${{ inputs.inject }}
+        SENTRY_CLI: "@sentry/cli@3.8.2"
+      run: |
+        set -uo pipefail
+        cfg="$GITHUB_WORKSPACE/config/spaces-crash-reporting.json"
+        dsn=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("dsn",""))' "$cfg" 2>/dev/null || true)
+        org=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["org"])' "$cfg")
+        project=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["project"])' "$cfg")
+        if [ -z "$SENTRY_AUTH_TOKEN" ] || [ -z "$dsn" ]; then
+          echo "::notice::Sentry upload skipped (${SENTRY_AUTH_TOKEN:+token set, }${dsn:+DSN set}: needs the SENTRY_AUTH_TOKEN secret and a DSN in config/spaces-crash-reporting.json)"
+          exit 0
+        fi
+        release="cua-spaces-desktop@$VERSION"
+        export SENTRY_ORG="$org" SENTRY_PROJECT="$project"
+        sentry() { npx --yes "$SENTRY_CLI" "$@"; }
+        sentry releases new "$release" || echo "::warning::sentry releases new failed"
+        # shellcheck disable=SC2086
+        target=$(compgen -G "$UPLOAD_PATH" | head -1 || true)
+        [ -n "$target" ] || { echo "::warning::nothing to upload at $UPLOAD_PATH"; exit 0; }
+        case "$target" in
+          *.zip) d=$(mktemp -d); unzip -q "$target" -d "$d"; target="$d" ;;
+        esac
+        case "$KIND" in
+          debug-files)
+            sentry debug-files upload --include-sources "$target" || echo "::warning::debug files upload failed for $release" ;;
+          sourcemaps)
+            if [ "$INJECT" = true ]; then sentry sourcemaps inject "$target" || echo "::warning::sourcemaps inject failed"; fi
+            sentry sourcemaps upload --release "$release" --url-prefix "$URL_PREFIX" "$target" || echo "::warning::sourcemaps upload failed for $release"
+            [ "$DELETE_MAPS" = true ] && find "$target" -name '*.map' -delete ;;
+          *) echo "::error::unknown kind $KIND"; exit 1 ;;
+        esac

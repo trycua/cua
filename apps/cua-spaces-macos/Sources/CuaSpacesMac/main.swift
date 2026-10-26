@@ -24,6 +24,11 @@ if CommandLine.arguments.dropFirst().first == "--check-launch-only" {
 // build changes nothing here.
 TargetEnvironment.pinChannel()
 
+// Crash reporting, as early as the switch can be read (it lives in the
+// channel's home, settled above) and before the Rust core or the daemon start:
+// it sets the CUA_CRASH_* variables they inherit. Off without a DSN or consent.
+CrashReporting.start()
+
 // The host service, run by this same executable so every permission is the
 // app's ("Cua Spaces"; ServiceLauncher.swift), before anything else:
 //  * `--service-helper run`: the service itself (the login item launchd

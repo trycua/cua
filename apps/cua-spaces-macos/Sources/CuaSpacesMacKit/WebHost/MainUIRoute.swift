@@ -4,9 +4,9 @@
 import AppKit
 import Foundation
 
-/// Where the app's chrome (the notch, the menu bar item) opens the main UI.
-/// With New UI on it is a page of the New UI window, at the routes the
-/// Electron app opens for the same actions (apps/cua-spaces-desktop/src/main.ts).
+/// Where the app's chrome (the notch, the menu bar item) opens the main UI:
+/// a page of the web UI window, at the routes the Electron app opens for the
+/// same actions (apps/cua-spaces-desktop/src/main.ts).
 public enum MainUIRoute: Equatable, Sendable {
     /// The Spaces list.
     case home
@@ -68,22 +68,64 @@ public enum MainUIRoute: Equatable, Sendable {
     }
 }
 
-/// The one place the app's chrome (the notch, the menu bar item, the menus,
-/// notifications) opens the main UI: the New UI window at a route while its
-/// experiment is on, else the native window or Settings as before.
+/// The one place the app's chrome (the Dock icon, the notch, the menu bar
+/// item, the menus, ⌘⇧Space, notifications) opens the main UI: the web UI
+/// window (`WebUIWindowController`) at a route. It is the app's only main
+/// window; there is no native one to fall back to.
 @MainActor
 struct MainUIRouter {
     let model: AppModel
-    /// Opens the New UI window at a route (tests set their own).
+    /// Opens the web UI window at a route (tests set their own).
     var web: (MainUIRoute) -> Void
+    /// Opens the page's Settings (tests set their own).
+    var settings: (MainUIRoute) -> Void
 
-    init(model: AppModel, web: ((MainUIRoute) -> Void)? = nil) {
+    init(model: AppModel, web: ((MainUIRoute) -> Void)? = nil, settings: ((MainUIRoute) -> Void)? = nil) {
         self.model = model
         self.web = web ?? { WebUIWindowController.show(model: model, at: $0) }
+        self.settings = settings ?? { WebUIWindowController.openSettings(model: model, at: $0) }
     }
 
-    func open(_ route: MainUIRoute, native: () -> Void) {
-        if model.settings.experiments.webUi { web(route) } else { native() }
+    func open(_ route: MainUIRoute) {
+        web(route)
+    }
+
+    /// The main window as the person left it, or the first run while it is
+    /// due (`launchRoute`): the Dock icon, Open, ⌘⇧Space, the notch's list.
+    func openMain() {
+        if let route = Self.launchRoute(onboarded: model.onboarding.completed) {
+            web(route)
+        } else if WebUIWindowController.shared != nil {
+            // Open already: in front, on the page it shows.
+            WebUIWindowController.show(model: model)
+        } else {
+            web(.home)
+        }
+    }
+
+    /// Where a window opens while the first run may be due: its page until it
+    /// is done (`.firstRunDue`, which keeps a "Skip for now"), else nil (the
+    /// page the window shows, or Spaces).
+    static func launchRoute(onboarded: Bool) -> MainUIRoute? {
+        onboarded ? nil : .firstRunDue
+    }
+
+    /// The page a click on one of the app's notifications opens: a Space that
+    /// came up (its page), a device asking to join (Settings, Devices, with
+    /// its approval), an agent's answer or request (Agents), else Spaces.
+    static func route(forNotification id: String) -> MainUIRoute {
+        if let spaceId = SpaceReadyNote.spaceId(fromIdentifier: id) { return .space(spaceId) }
+        if id.hasPrefix("device-") { return .path("/settings/devices") }
+        if id.hasPrefix("agent-") { return .agents }
+        return .home
+    }
+
+    /// Settings (⌘,, the menu bar item, the notch, the palette): the page's
+    /// Settings in the web UI window. There is no native Settings window,
+    /// so the two can't drift. `route`: one tab
+    /// (`/settings/connected-apps`, ...).
+    func openSettings(_ route: MainUIRoute = .settings) {
+        settings(route)
     }
 
     /// The page a View menu `nav.*` command names.
@@ -96,117 +138,5 @@ struct MainUIRouter {
         case "nav.settings": return .settings
         default: return nil
         }
-    }
-}
-
-/// New UI (preview) is the main window while it is on, not a second one:
-/// turning it on puts its window where the native one was (same frame) and
-/// closes that; turning it off does the reverse. Whatever opens the native
-/// main window while it is on (the Dock, the Window menu, a path not routed
-/// through `MainUIRouter`) gets the New UI window in its place.
-///
-/// The first run is the web UI's onboarding, with New UI on or off: until it
-/// is done the native window never shows anything of its own, and whatever
-/// opens it gets the New UI window at `/onboarding` in its place. Once done,
-/// New UI off puts the native window back (`WebUIWindowController.closeShared`).
-@MainActor
-enum MainWindowSwitch {
-    /// The native main window (`Window(id: "main")`), while it exists.
-    static weak var nativeWindow: NSWindow?
-    /// Where the native window opens next: New UI's frame when it was turned off.
-    static var pendingNativeFrame: NSRect?
-
-    /// Whether the native window showing the main UI (not the launch or the
-    /// first run) gives way to New UI.
-    static func replacesNative(webUi: Bool, ready: Bool, onboarded: Bool) -> Bool {
-        webUi && ready && onboarded
-    }
-
-    static func replacesNative(_ model: AppModel) -> Bool {
-        replacesNative(webUi: model.settings.experiments.webUi, ready: model.startup.isReady,
-                       onboarded: model.onboarding.completed)
-    }
-
-    /// The first run is due and the launch is ready: the web onboarding
-    /// replaces the native window, whether or not New UI is on.
-    static func opensFirstRun(ready: Bool, onboarded: Bool) -> Bool {
-        ready && !onboarded
-    }
-
-    static func opensFirstRun(_ model: AppModel) -> Bool {
-        opensFirstRun(ready: model.startup.isReady, onboarded: model.onboarding.completed)
-    }
-
-    /// Where a window opens while the first run may be due: its page until it
-    /// is done (`.firstRunDue`, which keeps a "Skip for now"), else nil, the
-    /// app as it was. The launch and the native window's replacement both ask.
-    static func firstRunRoute(onboarded: Bool) -> MainUIRoute? {
-        onboarded ? nil : .firstRunDue
-    }
-
-    /// The native window is up while the first run is due (and the launch is
-    /// ready): the web onboarding opens in its frame and it closes.
-    static func firstRunAppeared(_ window: NSWindow?, model: AppModel, web: ((NSRect?) -> Void)? = nil) {
-        if let window { nativeWindow = window }
-        guard opensFirstRun(model), let window = window ?? nativeWindow else { return }
-        replace(window, model: model, web: web)
-    }
-
-    /// The native window is showing the main UI (`MainWindow` appeared in
-    /// it): with New UI on, New UI opens in its frame and it closes.
-    static func nativeAppeared(_ window: NSWindow?, model: AppModel,
-                               web: ((NSRect?) -> Void)? = nil) {
-        if let window { nativeWindow = window }
-        guard let window = window ?? nativeWindow else { return }
-        if let frame = pendingNativeFrame {
-            pendingNativeFrame = nil
-            // After SwiftUI placed it.
-            DispatchQueue.main.async { window.setFrame(frame, display: true) }
-        }
-        guard replacesNative(model) else { return }
-        replace(window, model: model, web: web)
-    }
-
-    /// New UI was turned on: its window takes the native one's place.
-    static func switchToWebUI(model: AppModel, web: ((NSRect?) -> Void)? = nil) {
-        guard let window = nativeWindow, window.isVisible else {
-            // No native window up (only Settings, say): New UI opens as at launch.
-            if model.startup.isReady, model.onboarding.completed { (web ?? { show(model, frame: $0) })(nil) }
-            return
-        }
-        replace(window, model: model, web: web)
-    }
-
-    /// The native window being closed for New UI (its reader and its
-    /// `onAppear` both report it).
-    private static weak var replacing: NSWindow?
-
-    private static func replace(_ window: NSWindow, model: AppModel, web: ((NSRect?) -> Void)?) {
-        guard replacing !== window else { return }
-        replacing = window
-        let frame = window.frame.width > 0 ? window.frame : nil
-        // Never seen: hidden before it draws, where it can.
-        window.alphaValue = 0
-        (web ?? { show(model, frame: $0) })(frame)
-        DispatchQueue.main.async {
-            window.close()
-            window.alphaValue = 1
-            if replacing === window { replacing = nil }
-        }
-    }
-
-    private static func show(_ model: AppModel, frame: NSRect?) {
-        // The first run opens on its page; the rest is the app as it was.
-        if let route = firstRunRoute(onboarded: model.onboarding.completed) {
-            WebUIWindowController.show(model: model, at: route, frame: frame)
-        } else {
-            WebUIWindowController.show(model: model, frame: frame)
-        }
-    }
-
-    /// New UI was turned off: the native window opens in its frame.
-    static func switchToNative(webFrame: NSRect?, openMain: (() -> Void)?) {
-        pendingNativeFrame = webFrame
-        openMain?()
     }
 }

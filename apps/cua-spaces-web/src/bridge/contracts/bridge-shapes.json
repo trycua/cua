@@ -548,21 +548,6 @@
         "onPath"
       ]
     },
-    "CloudPricing": {
-      "type": "object",
-      "properties": {
-        "vcpuHourUsd": {
-          "type": "number"
-        },
-        "memoryGibHourUsd": {
-          "type": "number"
-        }
-      },
-      "required": [
-        "vcpuHourUsd",
-        "memoryGibHourUsd"
-      ]
-    },
     "CloudProviderWire": {
       "type": "object",
       "properties": {
@@ -730,6 +715,38 @@
         "spacesDiskBytes",
         "spacesDiskExact",
         "warning"
+      ]
+    },
+    "CrashReportingConfig": {
+      "type": "object",
+      "properties": {
+        "allowed": {
+          "type": "boolean"
+        },
+        "dsn": {
+          "type": "string"
+        },
+        "release": {
+          "type": "string"
+        },
+        "environment": {
+          "type": "string"
+        },
+        "shell": {
+          "type": "string"
+        },
+        "crashTest": {
+          "enum": [
+            "ui"
+          ]
+        }
+      },
+      "required": [
+        "allowed",
+        "dsn",
+        "release",
+        "environment",
+        "shell"
       ]
     },
     "CreateFix": {
@@ -2426,16 +2443,6 @@
             "$ref": "#/$defs/GpuChoice"
           }
         },
-        "cloudPricing": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/CloudPricing"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
         "experiments": {
           "$ref": "#/$defs/Experiments"
         },
@@ -2468,7 +2475,6 @@
       "required": [
         "local",
         "gpus",
-        "cloudPricing",
         "experiments",
         "maxCpus"
       ]
@@ -2754,7 +2760,7 @@
     "SessionSnapshot": {
       "type": "object",
       "properties": {
-        "fleet": {
+        "account": {
           "type": "object",
           "properties": {
             "configured": {
@@ -2768,33 +2774,16 @@
                 "none"
               ]
             },
-            "baseUrl": {
-              "type": "string"
-            },
-            "tokenUrl": {
-              "type": "string"
-            },
             "clientId": {
               "type": "string"
             },
             "identity": {
               "type": "string"
-            },
-            "namespaces": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            },
-            "probeError": {
-              "type": "string"
             }
           },
           "required": [
             "configured",
-            "authMode",
-            "baseUrl",
-            "tokenUrl"
+            "authMode"
           ]
         },
         "onboarding": {
@@ -2902,7 +2891,7 @@
         }
       },
       "required": [
-        "fleet",
+        "account",
         "onboarding",
         "daemon"
       ]
@@ -3322,7 +3311,6 @@
         },
         "provider": {
           "enum": [
-            "cloud",
             "local",
             "direct",
             "relay"
@@ -3767,14 +3755,10 @@
       "properties": {
         "defaultLocation": {
           "enum": [
-            "cloud",
             "local",
             "yours",
             "host"
           ]
-        },
-        "cloudAvailable": {
-          "type": "boolean"
         },
         "localAvailable": {
           "type": "boolean"
@@ -3807,16 +3791,6 @@
           "anyOf": [
             {
               "$ref": "#/$defs/LocalStorage"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "cloudPricing": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/CloudPricing"
             },
             {
               "type": "null"
@@ -3954,7 +3928,6 @@
       },
       "required": [
         "defaultLocation",
-        "cloudAvailable",
         "localAvailable",
         "maxCpus"
       ]
@@ -4093,16 +4066,6 @@
             "$ref": "#/$defs/GpuChoice"
           }
         },
-        "cloudPricing": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/CloudPricing"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
         "experiments": {
           "$ref": "#/$defs/Experiments"
         },
@@ -4128,7 +4091,6 @@
       "required": [
         "local",
         "gpus",
-        "cloudPricing",
         "experiments",
         "maxCpus",
         "env"
@@ -4881,7 +4843,6 @@
         },
         "provider": {
           "enum": [
-            "cloud",
             "local",
             "direct",
             "relay",
@@ -5083,6 +5044,15 @@
             "string",
             "null"
           ]
+        },
+        "incomplete": {
+          "type": "boolean"
+        },
+        "reaching": {
+          "type": "number"
+        },
+        "stale": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -5241,6 +5211,35 @@
         ]
       }
     },
+    "agents.message": {
+      "type": "object",
+      "properties": {
+        "delivered": {
+          "type": "boolean"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "running",
+            "idle",
+            "failed",
+            "crashed",
+            "unknown"
+          ]
+        },
+        "phase": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "delivered",
+        "run_id",
+        "status",
+        "phase"
+      ]
+    },
     "agents.pause": {
       "type": "null"
     },
@@ -5296,6 +5295,24 @@
           },
           "turn": {
             "type": "number"
+          },
+          "needsYou": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "title": {
+                "type": "string"
+              },
+              "detail": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "title",
+              "detail"
+            ]
           }
         },
         "required": [
@@ -5357,6 +5374,21 @@
       "items": {
         "$ref": "#/$defs/AgentSetupRow"
       }
+    },
+    "agents.start": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "type": "string"
+        },
+        "agent": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "agent"
+      ]
     },
     "checklist.get": {
       "type": "object",
@@ -5504,6 +5536,9 @@
         "ok",
         "checks"
       ]
+    },
+    "crashReporting.config": {
+      "$ref": "#/$defs/CrashReportingConfig"
     },
     "devices.approve": {
       "type": "null"
@@ -6997,6 +7032,35 @@
         ]
       }
     },
+    "agents.message": {
+      "type": "object",
+      "properties": {
+        "delivered": {
+          "type": "boolean"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "running",
+            "idle",
+            "failed",
+            "crashed",
+            "unknown"
+          ]
+        },
+        "phase": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "delivered",
+        "run_id",
+        "status",
+        "phase"
+      ]
+    },
     "agents.pause": {},
     "agents.readFile": {
       "$ref": "#/$defs/AgentOpenFile"
@@ -7048,6 +7112,24 @@
           },
           "turn": {
             "type": "number"
+          },
+          "needsYou": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "title": {
+                "type": "string"
+              },
+              "detail": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "title",
+              "detail"
+            ]
           }
         },
         "required": [
@@ -7109,6 +7191,21 @@
       "items": {
         "$ref": "#/$defs/AgentSetupRow"
       }
+    },
+    "agents.start": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "type": "string"
+        },
+        "agent": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "agent"
+      ]
     },
     "app.info": {
       "type": "object",
@@ -7289,6 +7386,9 @@
         "ok",
         "checks"
       ]
+    },
+    "crashReporting.config": {
+      "$ref": "#/$defs/CrashReportingConfig"
     },
     "devices.approve": {
       "type": "null"

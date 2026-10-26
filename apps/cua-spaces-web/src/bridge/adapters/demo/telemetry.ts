@@ -15,7 +15,7 @@ export interface DemoTelemetryState {
 
 export const demoTelemetryState = (): DemoTelemetryState => ({ telemetry: [] });
 
-export function demoTelemetryHandlers({ state }: DemoContext): DemoHandlers<"telemetry.track" | "telemetry.linkNotice" | "telemetry.acknowledgeLinkNotice"> {
+export function demoTelemetryHandlers({ state }: DemoContext): DemoHandlers<"telemetry.track" | "telemetry.linkNotice" | "telemetry.acknowledgeLinkNotice" | "crashReporting.config"> {
   return {
     "telemetry.track": ({ signals }) => {
       if (state.settings.telemetry) state.telemetry.push(...signals);
@@ -23,5 +23,7 @@ export function demoTelemetryHandlers({ state }: DemoContext): DemoHandlers<"tel
     },
     "telemetry.linkNotice": () => null,
     "telemetry.acknowledgeLinkNotice": () => null,
+    // The demo host has no app to report for.
+    "crashReporting.config": () => ({ allowed: false, dsn: "", release: "", environment: "", shell: "" }),
   };
 }

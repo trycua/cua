@@ -2322,6 +2322,7 @@ dependencies = [
 name = "cua-agent-setup"
 version = "0.9.0"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "cua-home",
  "hex",
@@ -2397,6 +2398,7 @@ version = "0.9.0"
 dependencies = [
  "async-trait",
  "aws-config",
+ "aws-credential-types",
  "aws-sdk-ec2",
  "aws-sdk-sts",
  "aws-types",
@@ -2419,10 +2421,13 @@ dependencies = [
  "ring",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tempfile",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "url",
+ "zeroize",
 ]
 
 [[package]]
@@ -3191,6 +3196,7 @@ dependencies = [
  "base64 0.22.1",
  "clap",
  "cua-auth",
+ "cua-byoc",
  "cua-cli",
  "cua-cluster",
  "cua-contrib",
@@ -3221,6 +3227,7 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
+ "zeroize",
 ]
 
 [[package]]
@@ -3310,6 +3317,7 @@ dependencies = [
  "tokio-stream",
  "tokio-tungstenite 0.29.0",
  "tonic",
+ "tonic-web",
  "tracing",
  "tracing-subscriber",
  "url",

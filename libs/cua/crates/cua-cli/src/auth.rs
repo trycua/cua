@@ -119,19 +119,52 @@ async fn link_usage(s: &cua_auth::Session) {
     if !t.is_enabled() {
         return;
     }
-    let Ok(Ok(token)) =
-        tokio::time::timeout(std::time::Duration::from_secs(5), s.access_token(false)).await
-    else {
-        return;
-    };
-    let Ok(api) = SpacesApiClient::current() else {
-        return;
-    };
-    if let Ok(Ok(me)) =
-        tokio::time::timeout(std::time::Duration::from_secs(5), api.me(&token)).await
-    {
+    t.mark_account_checked();
+    if let Some(me) = fetch_me(s).await {
         offer_account(&me);
     }
+}
+
+/// `GET /v1/me` for the signed-in session, within a few seconds; none when
+/// signed out, offline or slow.
+async fn fetch_me(s: &cua_auth::Session) -> Option<cua_host::spaces_api::ApiMe> {
+    let budget = std::time::Duration::from_secs(5);
+    let token = tokio::time::timeout(budget, s.access_token(false))
+        .await
+        .ok()?
+        .ok()?;
+    let api = SpacesApiClient::current().ok()?;
+    tokio::time::timeout(budget, api.me(&token))
+        .await
+        .ok()?
+        .ok()
+}
+
+/// How often a signed-in machine's CLI asks the Spaces API for the account
+/// id again ([`refresh_usage_link`]).
+pub const ACCOUNT_CHECK_EVERY: std::time::Duration = std::time::Duration::from_secs(6 * 3600);
+
+/// A CLI that was signed in before the server offered linking (or before
+/// this release) links too: at most every [`ACCOUNT_CHECK_EVERY`] per
+/// machine, in the background of a command, it asks `GET /v1/me` for the
+/// account id and hands it to telemetry. It never prints: the next command
+/// shows the one-time notice when it is due ([`cua_telemetry::Telemetry::show_notice_if_needed`]).
+/// Nothing happens while usage data is off, signed out, or on a server
+/// without `analytics_id` (that unlinks, as a sign-in would).
+pub async fn refresh_usage_link() {
+    refresh_usage_link_with(cua_telemetry::global(), &session()).await;
+}
+
+/// [`refresh_usage_link`] on `t` for `s`; returns whether it asked.
+pub async fn refresh_usage_link_with(t: &cua_telemetry::Telemetry, s: &cua_auth::Session) -> bool {
+    if !t.account_check_due(ACCOUNT_CHECK_EVERY) || !matches!(s.credentials(), Ok(Some(_))) {
+        return false;
+    }
+    t.mark_account_checked();
+    if let Some(me) = fetch_me(s).await {
+        t.offer_account(me.analytics_id.as_deref());
+    }
+    true
 }
 
 /// Hands the account id `GET /v1/me` answered with (or its absence) to
@@ -144,6 +177,17 @@ fn offer_account(me: &cua_host::spaces_api::ApiMe) {
 
 /// `cua auth logout`.
 pub async fn logout(out: &mut dyn Write) -> Result<i32, CuaError> {
+    // Agents this computer connected to Spaces with `cua join` stop at once.
+    let removed = crate::member_cmd::forget_this_computer().await;
+    if !removed.is_empty() {
+        line(
+            out,
+            format!(
+                "Removed the agents this computer connected to Spaces: {}.",
+                removed.join(", ")
+            ),
+        );
+    }
     let (existed, revoked) = session().logout().await.map_err(auth_err)?;
     // Signed out: usage data goes back to a new anonymous install id.
     let _ = cua_telemetry::global().forget_account();
@@ -352,6 +396,48 @@ mod tests {
         let mut out = Vec::new();
         let r = whoami_with(api, token, json, &mut out).await;
         (r, String::from_utf8(out).unwrap())
+    }
+
+    fn telemetry(home: &std::path::Path, off: bool) -> cua_telemetry::Telemetry {
+        cua_telemetry::Telemetry::builder()
+            .env(move |k| match k {
+                "CUA_TELEMETRY_FORBID_NETWORK" => Some("1".into()),
+                "DO_NOT_TRACK" if off => Some("1".into()),
+                _ => None,
+            })
+            .home(home)
+            .sink(std::sync::Arc::new(cua_telemetry::sink::MemorySink::new()))
+            .product("cli", "0.1.0")
+            .foreground()
+            .build()
+    }
+
+    fn signed_out(dir: &std::path::Path) -> cua_auth::Session {
+        // Nothing listens on port 9 on loopback; a file store, never the keychain.
+        cua_auth::Session::new(
+            cua_auth::Oidc::new("http://127.0.0.1:9", "cua-cli"),
+            Store::File(dir.join("credentials.json")),
+        )
+    }
+
+    /// CUA-1881: the background refresh never asks (or writes anything)
+    /// with usage data off, or signed out.
+    #[tokio::test]
+    async fn the_usage_link_refresh_respects_the_switch_and_the_session() {
+        let home = tempfile::tempdir().unwrap();
+        let off = telemetry(home.path(), true);
+        assert!(!refresh_usage_link_with(&off, &signed_out(home.path())).await);
+        let dir = home.path().join("telemetry");
+        assert!(!dir.join(cua_telemetry::link::CHECKED_FILE).exists());
+        assert!(!dir.join(cua_telemetry::link::ACCOUNT_FILE).exists());
+
+        let on = telemetry(home.path(), false);
+        assert!(!refresh_usage_link_with(&on, &signed_out(home.path())).await);
+        assert!(
+            !dir.join(cua_telemetry::link::CHECKED_FILE).exists(),
+            "signed out: not asked"
+        );
+        assert_eq!(on.link_state(), cua_telemetry::LinkState::NotOffered);
     }
 
     #[test]

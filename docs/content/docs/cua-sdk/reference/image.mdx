@@ -976,7 +976,7 @@ Options for `Sandboxes.create`.
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `on` | `Option<String>` | `None` | Where it runs: `local`, `direct:<addr>` (an existing machine running cua-spacesd) or a registered provider. `None` (the default): the user default (`default.on` in `~/.cua/config.toml`, `CUA_DEFAULT_ON`, else `local`). `cloud` fails with the "Cua Cloud has ended" error. |
-| `kind` | `Option<String>` | `None` | What kind of machine: `auto`, `container` or `vm`. `None`: the user default (`default.kind`, else `auto`: macOS and Windows images are VMs, an image with a container rootfs is a container, a disk-only image is a VM). |
+| `kind` | `Option<String>` | `None` | What kind of machine: `auto`, `container`, `vm` or `microvm`. `None`: the user default (`default.kind`, else `auto`: macOS and Windows images are VMs, an image with a container rootfs is a container, a disk-only image is a VM). |
 | `runtime` | `Option<String>` | `None` | Which engine: `auto` or one the location offers for the kind (local `gvisor`, `runc`, `qemu`, `lume`). `None`: the user default (`default.runtime`, else `auto`, the safest available). A local sandbox with sidecars needs `runc` where gVisor would run. A combination that does not exist is `InvalidPlacement`, listing the valid values. |
 | `image` | `String` | `""` | Image reference. A `pool:<name>` image fails with the "Cua Cloud has ended" error. |
 | `name` | `Option<String>` | `None` | Name. `None`: ephemeral (no state file; deleted with the sandbox). |

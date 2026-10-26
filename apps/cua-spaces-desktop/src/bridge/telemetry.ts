@@ -93,6 +93,13 @@ export function telemetrySignal(native: Native, raw: unknown): AppTelemetrySigna
       if (!list.every((w) => typeof w === "string" && WORD.test(w))) return null;
       return new S.ExperimentsOn({ experiments: list as string[] });
     }
+    // A plan limit shown, or its (or an upgrade prompt's) link opened (CUA-1881).
+    case "plan-limit-shown":
+    case "upgrade-link-opened": {
+      const [surface, kind, plan] = [word("surface"), word("kind"), word("plan")];
+      if (!surface || !kind || !plan) return null;
+      return s.type === "plan-limit-shown" ? new S.PlanLimitShown({ surface, kind, plan }) : new S.UpgradeLinkOpened({ surface, kind, plan });
+    }
     default:
       return null;
   }

@@ -107,7 +107,7 @@ describe.skipIf(!wasmBuilt)("resources on Home and a Space's page", () => {
     expect(document.body.textContent).not.toMatch(/is offline/);
   });
 
-  it("low disk: one quiet line for This Mac, and See what's using space lists the Spaces biggest first", async () => {
+  it("low disk: one quiet line for This Mac, and See what's using space lists This Mac's Spaces biggest first", async () => {
     const { router } = await mountApp("/spaces", { failsCreates: false, listsGhost: false, answer: lowDisk });
     const warning = await waitFor(() => {
       const el = document.querySelector<HTMLElement>('[data-computer-warnings] [data-low-disk="low"]');
@@ -117,14 +117,18 @@ describe.skipIf(!wasmBuilt)("resources on Home and a Space's page", () => {
     expect(warning.textContent).toMatch(/^Disk almost full on This Mac \(41 GB left\)/);
     expect(document.querySelectorAll("[data-computer-warning]")).toHaveLength(1);
     fireEvent.click(warning.querySelector("[data-see-space-use]")!);
-    await waitFor(() => expect(router.state.location.search).toEqual({ sort: "size" }));
-    await waitFor(() => expect(document.querySelector("[data-sorted-by-size]")).not.toBeNull());
-    const ids = Array.from(document.querySelectorAll("[data-space-id]")).map((t) => t.getAttribute("data-space-id"));
+    // The list, This Mac only, sorted by size.
+    await waitFor(() => expect(router.state.location.search).toEqual({ view: "list", on: "this-mac", sort: "size" }));
+    await waitFor(() => expect(document.querySelector("[data-space-list]")).not.toBeNull());
+    expect(document.querySelector('[data-sort-header="size"]')?.className).toContain("font-medium");
+    const ids = Array.from(document.querySelectorAll("[data-space-row]")).map((t) => t.getAttribute("data-space-row"));
+    expect(ids.length).toBeGreaterThan(0);
+    expect(ids.every((id) => id?.startsWith("local:"))).toBe(true);
     expect(ids.slice(0, 2)).toEqual(["local:design-review", "local:agent-sandbox"]);
   });
 
   it("a Space's page: given vs in use, how it fits on this Mac, and the warning", async () => {
-    await mountApp(`/spaces/${encodeURIComponent("local:design-review")}`, { failsCreates: false, listsGhost: false, answer: lowDisk });
+    await mountApp(`/spaces/${encodeURIComponent("local:design-review")}`, { failsCreates: false, listsGhost: false, answer: lowDisk, noThread: true });
     const panel = await waitFor(() => {
       const el = document.querySelector<HTMLElement>("[data-space-resources]");
       if (!el) throw new Error("no panel");
@@ -142,8 +146,8 @@ describe.skipIf(!wasmBuilt)("resources on Home and a Space's page", () => {
     expect(fit.querySelector("[data-low-disk]")).not.toBeNull();
   });
 
-  it("another computer's Space has no panel without its numbers", async () => {
-    await mountApp(`/spaces/${encodeURIComponent("relay:mac-mini/qa-windows")}`, { failsCreates: false, listsGhost: false });
+  it("another computer's running Space has no panel with only its size there", async () => {
+    await mountApp(`/spaces/${encodeURIComponent("relay:mac-mini/qa-windows")}`, { failsCreates: false, listsGhost: false, noThread: true });
     await waitFor(() => expect(document.querySelector("[data-detail-title]")).not.toBeNull());
     await act(() => new Promise((r) => setTimeout(r, 50)));
     expect(document.querySelector("[data-space-resources]")).toBeNull();

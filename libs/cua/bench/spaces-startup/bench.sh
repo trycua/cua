@@ -66,7 +66,12 @@ mkdir -p "$OUT"
 # exit also adds a network round trip to every CLI command).
 export DO_NOT_TRACK=1 CUA_TELEMETRY=0
 
-now_ms() { date +%s%3N; }
+# Milliseconds since the epoch: GNU date has %3N; BSD date (macOS) does not.
+if [ -n "$(date +%s%3N | tr -d 0-9)" ]; then
+  now_ms() { python3 -c 'import time; print(int(time.time() * 1000))'; }
+else
+  now_ms() { date +%s%3N; }
+fi
 log() { echo "[$(date +%H:%M:%S)] $*" >&2; }
 
 daemon_restart() {

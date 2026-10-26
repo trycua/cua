@@ -864,6 +864,7 @@ How busy one of your machines is (its job runner's view).
 | `memory_free_mb` / `memoryFreeMb` | `u64` |  | Of that, free. |
 | `spaces` | `u32` |  | Spaces running there. |
 | `problem` | `String` |  | Why it takes nothing now (empty: it does). |
+| `kinds` | `Vec<String>` |  | The kinds it creates (`container`, `vm`, `microvm`), as it reports them; empty when it does not say. |
 
 ## `HostAccessRecord` record
 
@@ -940,7 +941,7 @@ A change to this machine's Spaces settings (`None` keeps a value).
 | `runner` | `Option<String>` |  | `auto`, `systemd`, `launchd`, `windows-task` or `process`. |
 | `profile` | `Option<String>` | `None` | `desktop` (share this desktop; the default) or `spare` (do not share the desktop; provide Spaces). The two settings below override it. |
 | `share_desktop` / `shareDesktop` | `Option<bool>` | `None` | Share this machine's own desktop as a Space. |
-| `provide_spaces` / `provideSpaces` | `Option<bool>` | `None` | Create Spaces for your enrolled devices on this machine (relay mode). |
+| `provide_spaces` / `provideSpaces` | `Option<bool>` | `None` | Create Spaces for your enrolled devices on this machine (relay mode). `None`: on for a machine set up for the first time through the relay; a machine set up before keeps its setting. |
 
 ## `HostSpacesAuditRecord` record
 

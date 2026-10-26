@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * Connected apps: which coding apps Cua is set up in, and the rules for
+ * Connectors: which coding apps Cua is set up in, and the rules for
  * setting up newly installed ones. Pure: the hook in `hooks/use-connected-apps`
  * reads the apps and writes the state; this decides.
  */

@@ -15,7 +15,10 @@ import type {
   AppSpaceKind,
   AppSpaceOs,
   AppSpaceRow,
+  AppSpaceSharingFacts,
   AppSentFileInfo,
+  BulkResult as SdkBulkResult,
+  SpaceSharing,
   AppShareEntryInput,
   AppSpaceUsage,
   AppStreamDisplay,
@@ -31,6 +34,7 @@ import type {
   SpaceLike,
   SpacePresenceLike,
   PresenceIdentity,
+  ResourcesSnapshot,
   TeleportLike,
 } from "../native/generated/index";
 import { words } from "./errors";
@@ -63,6 +67,33 @@ export function linkRow(s: Share): ShareLinkRow {
     owner: s.owner,
     createdAtUnix: n(s.createdAtUnix),
     expiresAtUnix: n(s.expiresAtUnix),
+  };
+}
+
+/** One Space's outcome of a bulk delete or leave, as the page reads it. */
+export interface BulkResult {
+  id: string;
+  ok: boolean;
+  error?: string;
+}
+
+function bulkResult(r: SdkBulkResult): BulkResult {
+  return r.ok ? { id: r.id, ok: true } : { id: r.id, ok: false, error: r.error ?? "It didn't go through." };
+}
+
+/** The SDK's sharing facts as the core's row field (empty texts absent). */
+export function sharingFacts(s: SpaceSharing | undefined): AppSpaceSharingFacts | undefined {
+  if (!s) return undefined;
+  return {
+    ownerId: s.ownerId,
+    ownerEmail: text(s.ownerEmail),
+    ownerName: text(s.ownerName),
+    role: s.role,
+    team: text(s.team),
+    teamName: text(s.teamName),
+    editors: s.editors,
+    viewers: s.viewers,
+    teams: s.teams.map((t) => ({ key: t.key, name: t.name, role: t.role })),
   };
 }
 
@@ -102,6 +133,12 @@ export interface SpacesBackend {
   reportedHostname(id: string): string | null;
   add(url: string, token: string | null, name: string | null): Promise<void>;
   remove(id: string, removeOnly: boolean): Promise<void>;
+  /** Deletes several Spaces (the SDK turns running ones off first); one result per id. */
+  deleteMany(ids: string[]): Promise<BulkResult[]>;
+  /** Takes you off Spaces shared with you; one result per id. */
+  leave(ids: string[]): Promise<BulkResult[]>;
+  /** Gives a Space a new name (the SDK's `Spaces.rename`); its id stays the same. */
+  rename(id: string, name: string): Promise<void>;
   /** Takes one of your machines off the relay directory (`relay:<machine>`), refused while it is online. */
   relayUnregister(machineId: string): Promise<void>;
   /** A machine's health as its own cua daemon checks it (the SDK's `Spaces.machine_health`): null for this one, else another of yours by id. */
@@ -117,6 +154,14 @@ export interface SpacesBackend {
   loggedIn(): Promise<boolean>;
   runningMacosVms(): Promise<number | null>;
   usage(id: string): Promise<AppSpaceUsage | null>;
+  /**
+   * Processor, memory and disk (the SDK's `Spaces.resources`, the daemon's
+   * one sampler): this computer, its Spaces, your other computers'
+   * summaries and what your Spaces there take on them. `visible` says a
+   * window shows them. Null when the daemon can't say; absent in a backend
+   * without the SDK.
+   */
+  resources?(visible: boolean): Promise<ResourcesSnapshot | null>;
   /** The Space's coding-agent runs as rows (the core's mapping of the runs, attention first). */
   agentRuns(id: string): Promise<AppSpaceAgentRun[]>;
   /** The Space's windows that can be streamed (its Stream section; throws when they can't be read). */
@@ -220,11 +265,12 @@ export function osOf(native: Native, word: string): AppSpaceOs | undefined {
 export function kindOf(native: Native, word: string): AppSpaceKind | undefined {
   if (word === "container") return native.AppSpaceKind.Container;
   if (word === "vm") return native.AppSpaceKind.Vm;
+  if (word === "microvm") return native.AppSpaceKind.Microvm;
   return undefined;
 }
 
 /** The engines built into the SDK, by the word a create passes. */
-const BUILT_IN_RUNTIMES = ["auto", "gvisor", "runc", "qemu", "lume"] as const;
+const BUILT_IN_RUNTIMES = ["auto", "gvisor", "runc", "qemu", "lume", "firecracker", "vz", "containerization"] as const;
 
 /** A runtime word the app core accepts (its `valid_runtime_word`): a built-in engine or an external provider's name. */
 export function isRuntimeWord(word: string): boolean {
@@ -245,6 +291,12 @@ export function runtimeOf(native: Native, word: string): AppRuntime | undefined 
       return new native.AppRuntime.Qemu();
     case "lume":
       return new native.AppRuntime.Lume();
+    case "firecracker":
+      return new native.AppRuntime.Firecracker();
+    case "vz":
+      return new native.AppRuntime.Vz();
+    case "containerization":
+      return new native.AppRuntime.Containerization();
     default:
       return new native.AppRuntime.Other(word);
   }
@@ -328,6 +380,7 @@ export class LiveSpacesBackend implements SpacesBackend {
         const row: AppSpaceRow = {
           id: info.id,
           name: info.name,
+          displayName: text(info.displayName),
           provider: info.provider,
           spacesdVersion: info.spacesdVersion,
           features: info.features,
@@ -349,6 +402,7 @@ export class LiveSpacesBackend implements SpacesBackend {
           cloudPlace: text(info.cloudPlace),
           cloudDelete: text(info.cloudDelete),
           stopReason: text(info.stopReason),
+          sharing: sharingFacts(info.sharing),
         };
         // Turned off on purpose: no probe (it would only time out).
         if (info.powerState === "suspended" || info.powerState === "stopped") return row;
@@ -440,6 +494,18 @@ export class LiveSpacesBackend implements SpacesBackend {
     else await this.cua.spaces().delete_(id);
   }
 
+  async deleteMany(ids: string[]): Promise<BulkResult[]> {
+    return (await this.cua.spaces().deleteMany(ids)).map(bulkResult);
+  }
+
+  async leave(ids: string[]): Promise<BulkResult[]> {
+    return (await this.cua.spaces().leaveMany(ids)).map(bulkResult);
+  }
+
+  async rename(id: string, name: string): Promise<void> {
+    await this.cua.spaces().rename(id, name);
+  }
+
   async relayUnregister(machineId: string): Promise<void> {
     await this.cua.spaces().relayUnregister(`relay:${machineId}`);
   }
@@ -461,9 +527,10 @@ export class LiveSpacesBackend implements SpacesBackend {
     const report = await bounded(PROBE_SECONDS, () => this.cua.local().doctor());
     if (!report) return null;
     const ok = this.native.RuntimeCheckStatus.Ok;
-    // Lume and the built-in Linux runtime count as ready when cua sets them
-    // up by itself on the first create that needs them.
-    const setsUpItself = new Set(["lume", "managed"]);
+    // Lume, the built-in Linux runtime and Apple's container (microVMs)
+    // count as ready when cua sets them up by itself on the first create
+    // that needs them.
+    const setsUpItself = new Set(["lume", "managed", "containerization", "firecracker"]);
     const ready = report.checks
       .filter((c) => c.status === ok || (c.status === this.native.RuntimeCheckStatus.Installable && setsUpItself.has(c.name.toLowerCase())))
       .map((c) => c.name.toLowerCase());
@@ -520,6 +587,10 @@ export class LiveSpacesBackend implements SpacesBackend {
   async usage(id: string): Promise<AppSpaceUsage | null> {
     const u = await bounded(5, async () => (await this.cua.spaces().space(id)).usage());
     return u ? { cpuCount: u.cpuCount, cpuPercent: u.cpuPercent, loadAverage1m: u.loadAverage1m, memoryUsed: u.memoryUsed, memoryTotal: u.memoryTotal, memoryLimited: u.memoryLimited, diskUsed: u.diskUsed, diskTotal: u.diskTotal, diskLimited: u.diskLimited } : null;
+  }
+
+  async resources(visible: boolean): Promise<ResourcesSnapshot | null> {
+    return bounded(PROBE_SECONDS, () => this.cua.spaces().resources(visible));
   }
 
   async agentRuns(id: string): Promise<AppSpaceAgentRun[]> {

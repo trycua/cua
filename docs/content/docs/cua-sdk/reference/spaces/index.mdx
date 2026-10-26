@@ -36,9 +36,8 @@ Returned by [`Cua.spaces`](/cua-sdk/reference/cua#cua).
 | [`list`](#spaceslist) | Registered Spaces. |
 | [`list_known`](#spaceslist_known) | The Spaces known now: this machine's at once, and the account's other computers as far as they answered within a moment (`SpaceList` says how far the read got). |
 | [`list_tools_json`](#spaceslist_tools_json) | The Spaces MCP `tools/list` result as JSON (the contract). |
-| [`relay_register`](#spacesrelay_register) | Publishes `space` on the cua.ai relay as a machine of the signed-in account, the way `cua host setup` publishes this computer: the Space's own driver dials out, so the account's other devices (a phone off this network) reach it as `relay:<machine>`, and nobody else until it is shared. |
-| [`relay_unregister`](#spacesrelay_unregister) | Takes `space` off the relay (its driver leaves; every share goes). |
 | [`remove`](#spacesremove) | Unregisters a Space (the sandbox is not touched). |
+| [`rename`](#spacesrename) | Gives a Space a new name; its id stays the same. |
 | [`resolve`](#spacesresolve) | Resolves an id, legacy id, URL or display name. |
 | [`space`](#spacesspace) | A connected handle to a registered Space. |
 | [`start`](#spacesstart) | Turns a Space on again: resumes a suspended one, boots a stopped one (a Space one of your machines provides joins the relay again), and leaves a running one as it is. |
@@ -51,9 +50,11 @@ Returned by [`Cua.spaces`](/cua-sdk/reference/cua#cua).
 | [`build_with_progress`](/cua-sdk/reference/spaces/build#spacesbuild_with_progress) | `Spaces.build`, reporting each step and the lines it prints to `listener` as they happen. |
 | [`builds`](/cua-sdk/reference/spaces/build#spacesbuilds) | The builds on this machine, oldest first, with their tags. |
 | [`cloud_add_host`](/cua-sdk/reference/spaces/elastic#spacescloud_add_host) | Adds `count` hosts of `instance_type` in a linked cloud by hand (the scaler never removes them); each ends at its TTL. |
+| [`cloud_approve`](/cua-sdk/reference/spaces/persistent-agents#spacescloud_approve) | Approves what an agent asked for on `provider` (its link, or a raise of its limits), or with `deny` declines it. |
 | [`cloud_audit`](/cua-sdk/reference/spaces/persistent-agents#spacescloud_audit) | What Cua did in your clouds, newest last (default the newest 50). |
 | [`cloud_budget`](/cua-sdk/reference/spaces/elastic#spacescloud_budget) | The elastic pool's budget and autoscale switch, after setting the fields `update` gives. |
 | [`cloud_connect`](/cua-sdk/reference/spaces/persistent-agents#spacescloud_connect) | Connects a cloud account (after the checks `cloud_test` runs). |
+| [`cloud_cost`](/cua-sdk/reference/spaces/persistent-agents#spacescloud_cost) | What the machines Cua created cost (an estimate: list price times runtime), grouped `by` `space`, `agent`, `day` or `cloud`, since `since` (`YYYY-MM-DD`; default the first of this month), for one `provider` or every cloud. |
 | [`cloud_disconnect`](/cua-sdk/reference/spaces/persistent-agents#spacescloud_disconnect) | Forgets a connected cloud. |
 | [`cloud_hosts`](/cua-sdk/reference/spaces/elastic#spacescloud_hosts) | The hosts the elastic pool added in your clouds, with their cost. |
 | [`cloud_plan`](/cua-sdk/reference/spaces/elastic#spacescloud_plan) | What the elastic pool would do for some Spaces: where each goes (your devices first, then hosts with room, then new cloud machines at the least cost) and what that costs. |
@@ -67,8 +68,10 @@ Returned by [`Cua.spaces`](/cua-sdk/reference/cua#cua).
 | [`computer_access_revoke`](/cua-sdk/reference/spaces/persistent-agents#spacescomputer_access_revoke) | Takes a persistent agent's computer access back (every machine when `machine` is empty). |
 | [`create_volume`](/cua-sdk/reference/spaces/volume#spacescreate_volume) | Creates the empty named volume `name` (1 to 63 of `a-z`, `0-9`, `.`, `_`, `-`). |
 | [`delete_build`](/cua-sdk/reference/spaces/build#spacesdelete_build) | Deletes a build: its tags and the layer checkpoints no other build uses. |
+| [`delete_many`](/cua-sdk/reference/spaces/sharing#spacesdelete_many) | Deletes several Spaces (`Spaces.delete` each), at most three at a time, turning running ones off first. |
 | [`delete_volume`](/cua-sdk/reference/spaces/volume#spacesdelete_volume) | Deletes the named volume `name` and its files (their history stays in the Cua Volume). |
 | [`fork`](/cua-sdk/reference/sandbox/checkpoints#spacesfork) | Starts Space `name` from `source` (a Space id such as `local:<name>`, a sandbox name, a checkpoint name, or the tag of a build (`Spaces.build`) or its checkpoint; a sandbox wins) and returns it connected. |
+| [`leave_many`](/cua-sdk/reference/spaces/sharing#spacesleave_many) | Takes this account off Spaces shared with it (through the relay): a direct share ends, a team's Space leaves this account's list. |
 | [`machine_health`](/cua-sdk/reference/spaces/host#spacesmachine_health) | A machine's health as its own cua daemon checks it: Local Network access (and which app macOS holds responsible), free disk, virtualization, memory left by running Spaces, the permissions sharing its desktop needs. |
 | [`notifications`](/cua-sdk/reference/spaces/persistent-agents#spacesnotifications) | The notifications feed, newest first. |
 | [`notifications_ack`](/cua-sdk/reference/spaces/persistent-agents#spacesnotifications_ack) | Marks notifications read (every one when `ids` is empty). |
@@ -80,6 +83,8 @@ Returned by [`Cua.spaces`](/cua-sdk/reference/cua#cua).
 | [`persistent_agents`](/cua-sdk/reference/spaces/persistent-agents#spacespersistent_agents) | Every persistent agent. |
 | [`prewarm`](/cua-sdk/reference/spaces/elastic#spacesprewarm) | Keeps Spaces of `image` ready where the elastic pool puts them (the same solve as `on` `auto`, under the budget and pins), so the next creates of that shape start in a fraction of a second. |
 | [`prewarms`](/cua-sdk/reference/spaces/elastic#spacesprewarms) | The prewarms, with how many each keeps ready now. |
+| [`relay_register`](/cua-sdk/reference/spaces/sharing#spacesrelay_register) | Publishes `space` on the cua.ai relay as a machine of the signed-in account, the way `cua host setup` publishes this computer: the Space's own driver dials out, so the account's other devices (a phone off this network) reach it as `relay:<machine>`, and nobody else until it is shared. |
+| [`relay_unregister`](/cua-sdk/reference/spaces/sharing#spacesrelay_unregister) | Takes `space` off the relay (its driver leaves; every share goes). |
 | [`remove_prewarm`](/cua-sdk/reference/spaces/elastic#spacesremove_prewarm) | Ends prewarm `id` (its ready Spaces go). |
 | [`resize`](/cua-sdk/reference/spaces/resize#spacesresize) | Gives a local VM Space another shape: `cpus` vCPUs, `memory_mb` MiB of memory, a disk grown to `disk_gb` GiB (each `None` keeps it). |
 | [`resources`](/cua-sdk/reference/spaces/resources#spacesresources) | What this Mac, its extra Spaces and your other computers use now: processor, memory and disk, as one snapshot (a few seconds old at most). |
@@ -733,7 +738,7 @@ pub async fn list_known(&self) -> Result<SpaceList, CuaError>
 </Tab>
 </Tabs>
 
-**Returns** [`SpaceList`](#spacelist-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
+**Returns** [`SpaceList`](/cua-sdk/reference/spaces/list-watch#spacelist-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
 
 ### `Spaces.list_tools_json`
 
@@ -779,109 +784,6 @@ pub async fn list_tools_json(&self) -> Result<String, CuaError>
 </Tabs>
 
 **Returns** `String` · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
-
-### `Spaces.relay_register`
-
-Publishes `space` on the cua.ai relay as a machine of the signed-in
-account, the way `cua host setup` publishes this computer: the
-Space's own driver dials out, so the account's other devices (a
-phone off this network) reach it as `relay:<machine>`, and nobody
-else until it is shared. Idempotent.
-
-<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
-<Tab value="Python">
-
-```python
-async def relay_register(self, space: str) -> SpaceRelayRegistration
-```
-
-</Tab>
-<Tab value="TypeScript">
-
-```ts
-relayRegister(space: string, asyncOpts_?: { signal: AbortSignal }): Promise<SpaceRelayRegistration>
-```
-
-</Tab>
-<Tab value="Swift">
-
-```swift
-func relayRegister(space: String) async throws -> SpaceRelayRegistration
-```
-
-</Tab>
-<Tab value="Kotlin">
-
-```kotlin
-@Throws(CuaException::class)
-suspend fun relayRegister(space: String): SpaceRelayRegistration
-```
-
-</Tab>
-<Tab value="Rust">
-
-```rust
-pub async fn relay_register(&self, space: String) -> Result<SpaceRelayRegistration, CuaError>
-```
-
-</Tab>
-</Tabs>
-
-| Parameter | Type | Default |
-| --- | --- | --- |
-| `space` | `String` | required |
-
-**Returns** [`SpaceRelayRegistration`](/cua-sdk/reference/spaces/space#spacerelayregistration-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
-
-### `Spaces.relay_unregister`
-
-Takes `space` off the relay (its driver leaves; every share goes).
-Returns false when it was not on the relay.
-
-<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
-<Tab value="Python">
-
-```python
-async def relay_unregister(self, space: str) -> bool
-```
-
-</Tab>
-<Tab value="TypeScript">
-
-```ts
-relayUnregister(space: string, asyncOpts_?: { signal: AbortSignal }): Promise<boolean>
-```
-
-</Tab>
-<Tab value="Swift">
-
-```swift
-func relayUnregister(space: String) async throws -> Bool
-```
-
-</Tab>
-<Tab value="Kotlin">
-
-```kotlin
-@Throws(CuaException::class)
-suspend fun relayUnregister(space: String): Boolean
-```
-
-</Tab>
-<Tab value="Rust">
-
-```rust
-pub async fn relay_unregister(&self, space: String) -> Result<bool, CuaError>
-```
-
-</Tab>
-</Tabs>
-
-| Parameter | Type | Default |
-| --- | --- | --- |
-| `space` | `String` | required |
-
-**Returns** `bool` · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
 
 ### `Spaces.remove`
 
@@ -931,6 +833,66 @@ pub async fn remove(&self, space: String) -> Result<(), CuaError>
 | `space` | `String` | required |
 
 **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
+
+### `Spaces.rename`
+
+Gives a Space a new name; its id stays the same. Returns the Space
+as it is listed now (`display_name`, or `name` for a Space that is a
+machine on the relay).
+
+The name follows the rule a create's does (lowercase letters,
+digits and dashes, starting and ending with a letter or digit, at
+most 63) and may not be another of your Spaces' names
+(`InvalidArgument`). Only its owner renames a Space: one shared with
+you is refused (`PermissionDenied`). A Space you shared, or one of
+your computers provides, is renamed on the relay too, so your other
+devices and the people it is shared with see the new name.
+
+<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Python">
+
+```python
+async def rename(self, space: str, name: str) -> SpaceInfo
+```
+
+</Tab>
+<Tab value="TypeScript">
+
+```ts
+rename(space: string, name: string, asyncOpts_?: { signal: AbortSignal }): Promise<SpaceInfo>
+```
+
+</Tab>
+<Tab value="Swift">
+
+```swift
+func rename(space: String, name: String) async throws -> SpaceInfo
+```
+
+</Tab>
+<Tab value="Kotlin">
+
+```kotlin
+@Throws(CuaException::class)
+suspend fun rename(space: String, name: String): SpaceInfo
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub async fn rename(&self, space: String, name: String) -> Result<SpaceInfo, CuaError>
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `space` | `String` | required |
+| `name` | `String` | required |
+
+**Returns** [`SpaceInfo`](#spaceinfo-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors) ([`InvalidArgument`](/cua-sdk/reference/errors#invalidargument), [`PermissionDenied`](/cua-sdk/reference/errors#permissiondenied))
 
 ### `Spaces.resolve`
 
@@ -1079,7 +1041,7 @@ pub async fn start(&self, space: String) -> Result<SpacePowerReport, CuaError>
 | --- | --- | --- |
 | `space` | `String` | required |
 
-**Returns** [`SpacePowerReport`](#spacepowerreport-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
+**Returns** [`SpacePowerReport`](/cua-sdk/reference/spaces/resize#spacepowerreport-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
 
 ### `Spaces.stop`
 
@@ -1134,7 +1096,7 @@ pub async fn stop(&self, space: String) -> Result<SpacePowerReport, CuaError>
 | --- | --- | --- |
 | `space` | `String` | required |
 
-**Returns** [`SpacePowerReport`](#spacepowerreport-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
+**Returns** [`SpacePowerReport`](/cua-sdk/reference/spaces/resize#spacepowerreport-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
 
 ### `Spaces.suspend`
 
@@ -1185,18 +1147,19 @@ pub async fn suspend(&self, space: String) -> Result<SpacePowerReport, CuaError>
 | --- | --- | --- |
 | `space` | `String` | required |
 
-**Returns** [`SpacePowerReport`](#spacepowerreport-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
+**Returns** [`SpacePowerReport`](/cua-sdk/reference/spaces/resize#spacepowerreport-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
 
 ## `SpaceInfo` record
 
 A registered Space.
 
-Returned by [`Space.info`](/cua-sdk/reference/spaces/space#space), [`Spaces.add`](#spacesadd), [`Spaces.add_with_service`](#spacesadd_with_service), [`Spaces.list`](#spaceslist), [`Spaces.resolve`](#spacesresolve).
+Returned by [`Space.info`](/cua-sdk/reference/spaces/space#space), [`Spaces.add`](#spacesadd), [`Spaces.add_with_service`](#spacesadd_with_service), [`Spaces.list`](#spaceslist), [`Spaces.rename`](#spacesrename), [`Spaces.resolve`](#spacesresolve).
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `id` | `String` |  | Id, for example `direct:10.0.0.5:3211` or `cloud:<name>` (the sandbox ref scheme). |
 | `name` | `String` |  | Display name. |
+| `display_name` / `displayName` | `String` | `""` | The name it was given with `Spaces.rename`, which apps show in place of `name`; empty when it keeps the one it was created with. A Space that is a machine on the relay is renamed there, so its `name` changes instead. |
 | `provider` | `String` |  | `cloud`, `local`, `direct` or `relay` (the location words). |
 | `spacesd_version` / `spacesdVersion` | `String` |  | spacesd version at the last handshake. |
 | `features` | `Vec<String>` |  | Supported features at the last handshake. |
@@ -1205,7 +1168,7 @@ Returned by [`Space.info`](/cua-sdk/reference/spaces/space#space), [`Spaces.add`
 | `os_pretty_name` / `osPrettyName` | `String` |  | The guest's full OS string at the last handshake ("Ubuntu 24.04.3 LTS", "macOS 26.5.2 (25F84)"), or empty from older drivers. |
 | `image` | `String` |  | The image the sandbox runs ("ghcr.io/trycua/linux:24.04"), or empty when unknown (a Space added by address). |
 | `image_digest` / `imageDigest` | `String` |  | The digest of the variant that runs ("sha256:..."), or empty. |
-| `kind` | `String` |  | `container` or `vm`, or empty when unknown. |
+| `kind` | `String` |  | `container`, `vm` or `microvm`, or empty when unknown. |
 | `arch` | `String` |  | The guest's CPU architecture (`arm64`, `amd64`), or empty when unknown. |
 | `services` | `Vec<String>` |  | Declared services (never `env`), reachable with `list_tools` / `call_tool` (`service`). A Space without cua-spacesd has an empty `features` list and only these. |
 | `added_at` / `addedAt` | `Option<String>` |  | When it was added (RFC 3339). |
@@ -1225,33 +1188,7 @@ Returned by [`Space.info`](/cua-sdk/reference/spaces/space#space), [`Spaces.add`
 | `egress` | [`EgressPolicy`](#egresspolicy-record) |  | The egress policy last set on the Space; empty when it has none. |
 | `egress_enforced` / `egressEnforced` | [`Option<EgressEnforcement>`](/cua-sdk/reference/spaces/space#egressenforcement-enum) |  | Where `egress` is enforced; `None` without one. |
 | `volumes` | [`Vec<VolumeMount>`](/cua-sdk/reference/spaces/volume#volumemount-record) |  | Named volumes mounted in the Space (see `SpaceCreateOptions.volumes`). |
-
-## `SpaceList` record
-
-The Spaces known now (`Spaces.list_known`) and how far the read got.
-
-Returned by [`Spaces.list_known`](#spaceslist_known).
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `spaces` | [`Vec<SpaceInfo>`](#spaceinfo-record) |  | This machine's Spaces, and the account's other computers' as far as they answered (the last known ones meanwhile). |
-| `incomplete` | `bool` |  | Some of the account's computers have not answered yet: the list may grow, and an empty one is not "no Spaces". Always false from a daemon that predates it (it answers once every computer did). |
-| `reaching` | `u32` |  | How many computers are still being reached (0 when unknown). |
-| `stale` | `bool` |  | The other computers' rows are the last known ones, not yet confirmed by the relay. |
-| `notice` | `String` |  | Why the account's computers could not be read, when they could not. |
-
-## `SpacePowerReport` record
-
-What `Spaces.stop` or `Spaces.start` did.
-
-Returned by [`Spaces.start`](#spacesstart), [`Spaces.stop`](#spacesstop), [`Spaces.suspend`](#spacessuspend).
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `space` | `String` |  | The Space. |
-| `state` | `String` |  | `running`, `suspended` or `stopped`: the state it is in now. |
-| `power` | `String` |  | How it was turned off: `suspend` (its memory is kept, and still in use) or `stop` (its disk is kept; its memory is freed). |
-| `message` | `String` |  | What happened, for people. |
+| `sharing` | [`Option<SpaceSharing>`](/cua-sdk/reference/spaces/sharing#spacesharing-record) | `None` | A Space that is a machine on the relay: who owns it and who else has it, as this account sees it. `None` for other Spaces. |
 
 ## `spaces_tool_methods`
 
@@ -1322,7 +1259,7 @@ as sandboxes.
 | --- | --- | --- | --- |
 | `image` | `Option<String>` | `None` | Image (default: the canonical Linux image). `checkpoint:<name>` starts a fork of that checkpoint, on whichever of your machines holds it (`CheckpointSummary.host`): its disk, memory and processes, so no command, environment, services, GPU or disk size. |
 | `on` | `Option<String>` | `None` | Where: `local` (free), a connected cloud account (`aws`, `gcp`, `modal`) or `host:<name>`. `None`: the user default (`default.on`, `CUA_DEFAULT_ON`, else `local`); for a `checkpoint:` image, where the checkpoint is. A checkpoint also starts on `host:<machine>` or `auto`, copied there first when that machine lacks it. |
-| `kind` | `Option<String>` | `None` | `auto` (default), `container` or `vm`. |
+| `kind` | `Option<String>` | `None` | `auto` (default), `container`, `vm` or `microvm`. |
 | `runtime` | `Option<String>` | `None` | `auto` (default) or an engine the location offers for the kind. |
 | `name` | `Option<String>` | `None` | Name (default `space-<hex>`). |
 | `cpus` | `Option<u32>` | `None` | vCPUs. Local default 2. |

@@ -123,8 +123,28 @@ describe("the demo host's numbers", () => {
   it("cover This Mac's Spaces and sum what they use", () => {
     const snap = demoResources(demoSpaceRows(0), 0, DEMO_DISK_FREE.low);
     expect([snap.thisMac.id, ...snap.computers.map((c) => c.id)]).toEqual(["this-mac", "mac-mini"]);
-    expect(snap.spaces.every((s) => s.id.startsWith("local:"))).toBe(true);
+    const here = snap.spaces.filter((s) => s.id.startsWith("local:"));
+    expect(here.map((s) => s.id)).toEqual(["local:design-review", "local:agent-sandbox"]);
     expect(snap.thisMac.spacesDiskBytes).toBe(25 * GB);
     expect(snap.warning.level).toBe("low");
+  });
+
+  it("give every Space of yours on another online computer a size there, stopped ones too", () => {
+    const snap = demoResources(demoSpaceRows(0), 0);
+    const remote = snap.spaces.filter((s) => !s.id.startsWith("local:"));
+    expect(remote.map((s) => [s.id, s.powerState, s.diskOnHost?.bytes])).toEqual([
+      ["relay:mac-mini/release-checks", "suspended", 21 * GB],
+      ["relay:mac-mini/qa-windows", "running", 25 * GB],
+      ["relay:linux-box/ubuntu-build", "running", 5 * GB],
+      ["relay:linux-box/windows-legacy", "suspended", 31 * GB],
+    ]);
+    // Only the disk is known there; this Mac's totals leave them out.
+    expect(remote.every((s) => s.usage === null && s.cpuAllocated === 0)).toBe(true);
+    expect(snap.thisMac.spacesCount).toBe(2);
+  });
+
+  it("give a Space on an offline computer no size", () => {
+    const rows = [...demoSpaceRows(0), { ...demoSpaceRows(0)[2]!, id: "relay:studio-pc/render", host: "studio-pc" }];
+    expect(demoResources(rows, 0).spaces.some((s) => s.id === "relay:studio-pc/render")).toBe(false);
   });
 });

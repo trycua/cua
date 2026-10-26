@@ -68,13 +68,13 @@ export type SpaceProvider = "local" | "direct" | "relay";
 export type Location = "local" | "yours" | "host";
 
 /** What kind of machine a Space is. */
-export type SpaceKind = "container" | "vm";
+export type SpaceKind = "container" | "vm" | "microvm";
 
 /**
  * Which engine runs it. Local: `gvisor`, `runc` (containers), `qemu`, `lume`
  * (VMs). `auto` lets the SDK pick for the location and image.
  */
-export type Runtime = "auto" | "gvisor" | "runc" | "qemu" | "lume";
+export type Runtime = "auto" | "gvisor" | "runc" | "qemu" | "lume" | "firecracker" | "vz" | "containerization";
 
 export interface Space {
   id: string;
@@ -123,6 +123,59 @@ export interface Space {
   cloud?: string;
   cloudPlace?: string;
   cloudDelete?: string;
+  /** Whose it is, who else has it and what you may do with it (the app
+   * core's `spaces::access`). Absent: yours, nobody else, every action. */
+  access?: SpaceAccess;
+}
+
+/** Someone (or a whole team) a Space of yours is shared with. */
+export interface SpacePerson {
+  /** An email or account id as shared, or `team:<key>`. */
+  who: string;
+  name?: string | null;
+  role: "editor" | "viewer";
+  team?: boolean;
+}
+
+/** Whose a Space is and what you may do with it (the core's `model::SpaceAccess`). */
+export interface SpaceAccess {
+  /** `mine`: you own it (shared or not). */
+  kind: "mine" | "withMe" | "team";
+  role: "owner" | "editor" | "viewer";
+  /** Shared with you or a team's: the owner's name (display name, else email local part). */
+  ownerName?: string | null;
+  ownerEmail?: string | null;
+  /** A team's: the team's name (its key when not known). */
+  teamName?: string | null;
+  /** The meta line: "This Mac", "Sam's Mac mini", "QA". */
+  place: string;
+  /** Yours: who has it. */
+  people: SpacePerson[];
+  canPower: boolean;
+  canTeleport: boolean;
+  canShare: boolean;
+  canRename: boolean;
+  /** Yours, or a team's you made. */
+  canDelete: boolean;
+  /** Shared with you, or a team's you did not make. */
+  canLeave: boolean;
+}
+
+/** What the SDK says about who owns a relay Space and who else has it
+ * (the core's `model::SpaceSharingFacts`, on a `SpaceRow`). */
+export interface SpaceSharingFacts {
+  ownerId: string;
+  ownerEmail?: string | null;
+  ownerName?: string | null;
+  /** `owner`, `editor` or `viewer`. */
+  role: string;
+  /** The team you reach it through (its key) and its name. */
+  team?: string | null;
+  teamName?: string | null;
+  /** Owner view: who may use it, who may only watch, and the teams it is shared with. */
+  editors?: string[];
+  viewers?: string[];
+  teams?: { key: string; name: string; role: string }[];
 }
 
 /** A Space's power (the app core's `model::SpacePower`). */
@@ -198,8 +251,8 @@ export interface SpaceRow {
   /** The image it runs and its digest, when known. */
   image?: string;
   imageDigest?: string;
-  /** `container` or `vm`, and the guest's CPU architecture, when known. */
-  kind?: "container" | "vm";
+  /** `container`, `vm` or `microvm`, and the guest's CPU architecture, when known. */
+  kind?: SpaceKind;
   arch?: string;
   reachable: boolean;
   error?: string;
@@ -218,6 +271,8 @@ export interface SpaceRow {
   cloud?: string;
   cloudPlace?: string;
   cloudDelete?: string;
+  /** A relay Space: who owns it and who else has it (the SDK's `sharing`). */
+  sharing?: SpaceSharingFacts;
 }
 
 export interface PendingCreate {
@@ -233,7 +288,7 @@ export interface PendingCreate {
   error?: string | null;
   spaceId?: string | null;
   image?: string | null;
-  kind?: "container" | "vm" | null;
+  kind?: SpaceKind | null;
   arch?: string | null;
   emulated?: boolean;
   phaseAt?: number | null;
@@ -306,7 +361,7 @@ export type CreateAction =
       /** The image (its catalog entry names the distribution, kind and
        * platforms), the kind asked for, and this Mac's CPU architecture. */
       image?: string | null;
-      kind?: "container" | "vm" | null;
+      kind?: SpaceKind | null;
       hostArch?: string | null;
       /** GPU acceleration was asked for (the create's `gpu` option). */
       gpu?: boolean;

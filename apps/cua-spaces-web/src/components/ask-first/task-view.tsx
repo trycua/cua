@@ -5,7 +5,7 @@ import { Link } from "@tanstack/react-router";
 import { ArrowLeftIcon, ArrowUpIcon, CheckIcon, ChevronDownIcon, EyeIcon, HandIcon, Loader2Icon, Maximize2Icon, Minimize2Icon, RotateCwIcon, Trash2Icon, TriangleAlertIcon, UserPlusIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
-import { useAgents, useAgentTimeline, useSession, useShareSheet, useSpaceDetail, useSpaces, type AgentTimeline, type Space } from "@/bridge";
+import { useAgents, useAgentTimeline, useBridge, useSession, useShareSheet, useSpaceDetail, useSpaces, type AgentTimeline, type Space } from "@/bridge";
 import { Timeline } from "@/components/agents/timeline";
 import { CuaKey } from "@/components/cua-key";
 import { OsIcon } from "@/components/os-icon";
@@ -13,7 +13,7 @@ import { StreamSurface } from "@/components/space-detail/stream-surface";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { toastError } from "@/components/ui/toast";
-import { keepTranscript, retryTarget, startErrorView, taskState, TASK_STATE_TEXT, taskTitle, updateAskTask, useAskTasks, type AskTask, type TaskState, type TaskWhere } from "@/lib/ask-first";
+import { keepTranscript, postToSpaceThread, retryTarget, startErrorView, taskState, TASK_STATE_TEXT, taskTitle, updateAskTask, useAskTasks, type AskTask, type TaskState, type TaskWhere } from "@/lib/ask-first";
 import { createProgress, spaceState } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
 
@@ -51,6 +51,7 @@ export function AskFirstTask({ taskId }: { taskId: string }) {
 }
 
 function TaskView({ task }: { task: AskTask }) {
+  const { data } = useBridge();
   const { data: spaces, deleteSpace } = useSpaces();
   const { data: agents, sendMessage } = useAgents();
   const { data: session } = useSession();
@@ -98,6 +99,7 @@ function TaskView({ task }: { task: AskTask }) {
     if (!ref || !text.trim()) return;
     setReply("");
     setSentMs(Date.now());
+    void postToSpaceThread(data, task.spaceId, text);
     await sendMessage(ref, text.trim()).catch(toastError(`Couldn't send that to ${name}`));
   };
   const takeOver = () => {
@@ -300,7 +302,7 @@ export function StartFailed({ error, name, host, onRetry }: { error: string; nam
             </Button>
           ) : null}
           {view.action === "add-key" ? (
-            <Button className="h-10 px-4" render={<Link to="/settings/connected-apps" />}>
+            <Button className="h-10 px-4" render={<Link to="/settings/connectors" />}>
               Add your key
             </Button>
           ) : null}

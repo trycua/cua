@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * Screen checks for the `agent-keys` flow (Settings, Connected apps, Account keys): each section,
+ * Screen checks for the `agent-keys` flow (Settings, Connectors, Account keys): each section,
  * sheet and Remove question the replay reached goes on the real screen
  * through `window.__cuaParity.showAgentKeys`, and the screen must show the
  * core's words. Then a key is added and removed for real on the demo host,
@@ -39,7 +39,7 @@ export async function checkAgentKeys(page: Page, checkpoints: ParityCheckpoint[]
 
   for (const { input, view } of unique(checkpoints, "agent-keys")) {
     await page.evaluate((i) => window.__cuaParity!.showAgentKeys(i), input);
-    const step = `Settings, Connected apps with ${input.keys.map((k) => k.env).join(", ") || "no keys"}${view.notice ? " (notice)" : ""}`;
+    const step = `Settings, Connectors with ${input.keys.map((k) => k.env).join(", ") || "no keys"}${view.notice ? " (notice)" : ""}`;
     const rows = page.locator("[data-agent-key-row]");
     await expect.poll(() => attrs(rows, "data-agent-key-row"), { message: step }).toEqual(view.rows.map((r) => r.env));
     expect(await texts(page.locator("[data-agent-key-title]")), step).toEqual(view.rows.map((r) => r.title));
@@ -109,7 +109,7 @@ export async function checkAgentKeys(page: Page, checkpoints: ParityCheckpoint[]
   }
 
   // For real on the demo host: add an Anthropic key, then remove it.
-  await page.goto("/settings/connected-apps?bridge=demo");
+  await page.goto("/settings/connectors?bridge=demo");
   const anthropic = page.locator('[data-agent-key-row="ANTHROPIC_API_KEY"]');
   await expect(anthropic.locator("[data-agent-key-status]")).toHaveText("Not set");
   await anthropic.locator("[data-agent-key-action]").click();

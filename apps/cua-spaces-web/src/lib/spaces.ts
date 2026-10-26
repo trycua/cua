@@ -220,4 +220,4 @@ export function locationLabel(space: Pick<Space, "provider" | "cloudPlace">): st
   return provider === "local" ? thisComputerLabel() : PROVIDER[provider];
 }
 
-export const KIND_LABEL: Record<NonNullable<Space["kind"]>, string> = { vm: "Virtual machine", container: "Container" };
+export const KIND_LABEL: Record<NonNullable<Space["kind"]>, string> = { vm: "Virtual machine", container: "Container", microvm: "MicroVM" };

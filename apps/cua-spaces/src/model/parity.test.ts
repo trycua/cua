@@ -213,6 +213,7 @@ describe('app core parity flows (webview)', () => {
       'create-space',
       'create-resources',
       'create-gpu',
+      'create-microvm',
       'create-cancel',
       'teleport-review',
       'teleport-sign-ins',
@@ -245,10 +246,13 @@ describe('app core parity flows (webview)', () => {
       'experiments',
       'placement-picker',
       'machines',
-      'checklist',
       'create-stages',
       'first-run',
       'create-retry',
+      'spaces-menu',
+      'bulk-confirm',
+      'tips',
+      'pro-banner',
     ]);
   });
 

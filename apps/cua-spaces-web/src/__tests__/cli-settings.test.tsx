@@ -14,7 +14,7 @@ stubBrowserApis();
 describe.skipIf(!wasmBuilt)("Settings, Terminal", () => {
   it("names the file, installs on Install, then says where it is", { timeout: 20_000 }, async () => {
     const calls: { op: string; args: unknown }[] = [];
-    await mountApp("/settings/connected-apps", {
+    await mountApp("/settings/connectors", {
       failsCreates: false,
       listsGhost: false,
       demo: { cli: "missing" },
@@ -36,7 +36,7 @@ describe.skipIf(!wasmBuilt)("Settings, Terminal", () => {
   });
 
   it("shows where a Local build's CLI is", { timeout: 20_000 }, async () => {
-    await mountApp("/settings/connected-apps", { failsCreates: false, listsGhost: false, demo: { cli: "local" } });
+    await mountApp("/settings/connectors", { failsCreates: false, listsGhost: false, demo: { cli: "local" } });
     await waitFor(() => expect(document.querySelector('[data-settings-cli="installed"]')?.textContent).toMatch(/~\/\.local\/bin\/cua-local.*cua-local spaces ls/), { timeout: 8000 });
   });
 });

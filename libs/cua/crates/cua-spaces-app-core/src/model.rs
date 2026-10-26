@@ -273,6 +273,132 @@ pub struct Space {
     /// (that machine created it) or `elsewhere` (another device did).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cloud_delete: Option<String>,
+    /// Who it belongs to, who else has it and what you may do with it
+    /// ([`crate::spaces::access`]). Absent reads as yours with nobody else.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access: Option<SpaceAccess>,
+}
+
+/// Whose a Space is, as the Spaces page groups it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SpaceAccessKind {
+    /// You own it (shared or not).
+    Mine,
+    /// Someone shared it with you.
+    WithMe,
+    /// A team's Space.
+    Team,
+}
+
+/// What someone may do in a Space.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SpaceAccessRole {
+    /// It is theirs.
+    Owner,
+    /// Full use.
+    Editor,
+    /// Watch only.
+    Viewer,
+}
+
+/// Someone (or a team) a Space of yours is shared with.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpacePerson {
+    /// An email or account id as shared, or `team:<key>`.
+    pub who: String,
+    /// A name to show, when known (a team's name).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Editor or viewer.
+    pub role: SpaceAccessRole,
+    /// A whole team.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub team: bool,
+}
+
+/// Who a Space belongs to, who else has it, and what you may do with it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpaceAccess {
+    /// Yours, shared with you, or a team's.
+    pub kind: SpaceAccessKind,
+    /// What you may do.
+    pub role: SpaceAccessRole,
+    /// Shared with you or a team's: the owner's name (display name, else
+    /// the email's local part).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_name: Option<String>,
+    /// The owner's email, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_email: Option<String>,
+    /// A team's: the team's name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team_name: Option<String>,
+    /// The meta line: "This Mac", "Sam's Mac mini", "QA".
+    pub place: String,
+    /// Yours: who has it.
+    #[serde(default)]
+    pub people: Vec<SpacePerson>,
+    /// Turn it on and off.
+    pub can_power: bool,
+    /// Teleport an app into it.
+    pub can_teleport: bool,
+    /// Share it.
+    pub can_share: bool,
+    /// Rename it.
+    pub can_rename: bool,
+    /// Delete it (yours, or a team's you made).
+    pub can_delete: bool,
+    /// Leave it (shared with you, or a team's you did not make).
+    pub can_leave: bool,
+}
+
+/// What the SDK says about who owns a relay Space and who else has it
+/// ([`SpaceRow::sharing`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpaceSharingFacts {
+    /// The owner's account id.
+    #[serde(default)]
+    pub owner_id: String,
+    /// The owner's email, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_email: Option<String>,
+    /// The owner's display name, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_name: Option<String>,
+    /// `owner`, `editor` or `viewer`.
+    pub role: String,
+    /// The team you reach it through (its key).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team: Option<String>,
+    /// That team's name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team_name: Option<String>,
+    /// Owner view: who may use it.
+    #[serde(default)]
+    pub editors: Vec<String>,
+    /// Owner view: who may only watch.
+    #[serde(default)]
+    pub viewers: Vec<String>,
+    /// Owner view: the teams it is shared with.
+    #[serde(default)]
+    pub teams: Vec<SpaceTeamFact>,
+}
+
+/// A team a Space is shared with ([`SpaceSharingFacts::teams`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpaceTeamFact {
+    /// The team's key.
+    pub key: String,
+    /// Its name.
+    pub name: String,
+    /// `editor` or `viewer`.
+    pub role: String,
 }
 
 /// How a Space turns off: the SDK's `power` words.
@@ -389,6 +515,10 @@ pub struct SpaceRow {
     pub id: String,
     /// Name spacesd reported.
     pub name: String,
+    /// The name it was given with Rename (the SDK's
+    /// `SpaceInfo.display_name`): shown in place of `name` when set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
     /// Location word.
     pub provider: String,
     /// spacesd version.
@@ -457,6 +587,9 @@ pub struct SpaceRow {
     /// recorded it; absent otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stop_reason: Option<String>,
+    /// A relay Space: who owns it and who else has it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sharing: Option<SpaceSharingFacts>,
 }
 
 /// `arm64` or `amd64` for any spelling of a CPU architecture (`aarch64`,
@@ -596,7 +729,7 @@ impl Location {
     }
 }
 
-/// Container or virtual machine.
+/// Container, virtual machine or microVM.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SpaceKind {
@@ -604,14 +737,19 @@ pub enum SpaceKind {
     Container,
     /// A virtual machine.
     Vm,
+    /// A microVM: a container image booted with its own kernel
+    /// (Firecracker on Linux with KVM; on a Mac, Virtualization.framework
+    /// through cua-vz or Apple's Containerization).
+    Microvm,
 }
 
 impl SpaceKind {
-    /// "Container" / "Virtual machine".
+    /// "Container" / "Virtual machine" / "MicroVM".
     pub fn label(self) -> &'static str {
         match self {
             SpaceKind::Container => "Container",
             SpaceKind::Vm => "Virtual machine",
+            SpaceKind::Microvm => "MicroVM",
         }
     }
 
@@ -620,6 +758,7 @@ impl SpaceKind {
         match self {
             SpaceKind::Container => "container",
             SpaceKind::Vm => "vm",
+            SpaceKind::Microvm => "microvm",
         }
     }
 }
@@ -640,6 +779,13 @@ pub enum Runtime {
     Qemu,
     /// Lume.
     Lume,
+    /// Firecracker: a microVM on Linux with KVM.
+    Firecracker,
+    /// Virtualization.framework through cua's own monitor (`cua-vz`): a
+    /// microVM on an Apple silicon Mac.
+    Vz,
+    /// Apple's Containerization: a microVM on a Mac with macOS 26.
+    Containerization,
     /// An external runtime provider installed on this machine, by its name
     /// (the `<name>` of its `cua-runtime-<name>` executable).
     Other(String),
@@ -666,6 +812,9 @@ impl Runtime {
             Runtime::Runc => "runc".into(),
             Runtime::Qemu => "QEMU".into(),
             Runtime::Lume => "Lume".into(),
+            Runtime::Firecracker => "Firecracker".into(),
+            Runtime::Vz => "Virtualization.framework".into(),
+            Runtime::Containerization => "Apple Containerization".into(),
             Runtime::Other(n) => crate::wizard::external_runtime_label(n),
         }
     }
@@ -678,6 +827,9 @@ impl Runtime {
             Runtime::Runc => "runc",
             Runtime::Qemu => "qemu",
             Runtime::Lume => "lume",
+            Runtime::Firecracker => "firecracker",
+            Runtime::Vz => "vz",
+            Runtime::Containerization => "containerization",
             Runtime::Other(n) => n,
         }
     }
@@ -691,6 +843,9 @@ impl Runtime {
             "runc" => Runtime::Runc,
             "qemu" => Runtime::Qemu,
             "lume" => Runtime::Lume,
+            "firecracker" => Runtime::Firecracker,
+            "vz" => Runtime::Vz,
+            "containerization" => Runtime::Containerization,
             w if valid_runtime_word(w) => Runtime::Other(w.to_string()),
             _ => return None,
         })
@@ -723,6 +878,9 @@ mod runtime_tests {
             ("runc", Runtime::Runc),
             ("qemu", Runtime::Qemu),
             ("lume", Runtime::Lume),
+            ("firecracker", Runtime::Firecracker),
+            ("vz", Runtime::Vz),
+            ("containerization", Runtime::Containerization),
             ("acme", Runtime::Other("acme".into())),
             ("acme-2", Runtime::Other("acme-2".into())),
         ] {

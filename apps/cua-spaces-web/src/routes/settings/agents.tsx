@@ -3,9 +3,9 @@
 
 import { createFileRoute, redirect } from "@tanstack/react-router";
 
-/** Settings, Agents became Connected apps. */
+/** Settings, Agents became Connectors. */
 export const Route = createFileRoute("/settings/agents")({
   beforeLoad: () => {
-    throw redirect({ to: "/settings/connected-apps", replace: true });
+    throw redirect({ to: "/settings/connectors", replace: true });
   },
 });

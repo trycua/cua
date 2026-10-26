@@ -167,14 +167,14 @@ export function ViewerView({ params }: { params: ViewerParams }) {
 
   return (
     <div data-viewer={params.spaceId} className="flex h-screen w-screen flex-col overflow-hidden bg-black select-none">
-      <div data-viewer-toolbar className="flex h-11 shrink-0 items-center gap-2.5 border-b bg-background px-3 text-foreground">
+      <div data-viewer-toolbar className="flex h-11 shrink-0 items-center gap-2.5 bg-background px-3 text-foreground">
         <SourcePicker source={source} windows={windows} onChoose={choose} onRefresh={() => void refresh()} />
         <span className="flex-1" />
         <span data-viewer-size className="font-mono text-[11px] text-muted-foreground tabular-nums">
           {dimensionsLabel(size.width, size.height)}
         </span>
         <Button
-          variant="outline"
+          variant="secondary"
           size="sm"
           data-viewer-pip=""
           aria-pressed={poppedOut}
@@ -190,7 +190,7 @@ export function ViewerView({ params }: { params: ViewerParams }) {
           <div data-viewer-popped-out className="absolute inset-0 flex flex-col items-center justify-center gap-2">
             <PictureInPicture2Icon className="size-7 text-white/50" />
             <p className="text-xs text-white/60">Playing in a floating window</p>
-            <button type="button" onClick={togglePip} className="h-6 cursor-default rounded-md bg-white/10 px-2.5 text-xs text-white/90 outline-none hover:bg-white/15">
+            <button type="button" onClick={togglePip} className="h-6 cursor-default rounded-lg bg-white/10 px-2.5 text-xs text-white/90 outline-none hover:bg-white/15">
               Bring it back
             </button>
           </div>
@@ -198,7 +198,7 @@ export function ViewerView({ params }: { params: ViewerParams }) {
           <div ref={ref} data-viewer-stream className="absolute inset-0" />
         )}
         {badge ? (
-          <div data-viewer-status={badge.tone} className="absolute top-2.5 left-2.5 flex items-center gap-1.5 rounded-full bg-black/65 px-2 py-1 text-[11px] font-medium">
+          <div data-viewer-status={badge.tone} className="absolute top-2.5 left-2.5 flex items-center gap-1.5 rounded-lg bg-black/65 px-2 py-1 text-[11px] font-medium">
             <span className={cn("size-[7px] rounded-full", badge.tone === "red" ? "bg-red-500" : "bg-yellow-400")} />
             {badge.text}
             {slot?.phase === "failed" ? (
@@ -225,13 +225,13 @@ function SourcePicker({
   onChoose: (s: ViewerSource) => void;
   onRefresh: () => void;
 }) {
-  const item = "flex cursor-default items-center gap-2 rounded-md px-2 py-1 text-[13px] outline-none data-highlighted:bg-brand data-highlighted:text-white";
+  const item = "flex cursor-default items-center gap-2 rounded-lg px-2 py-1 text-[13px] outline-none data-highlighted:bg-brand data-highlighted:text-white";
   const Icon = source.kind === "desktop" ? MonitorIcon : AppWindowIcon;
   return (
     <MenuPrimitive.Root onOpenChange={(open) => open && onRefresh()}>
       <MenuPrimitive.Trigger
         data-viewer-source=""
-        className="inline-flex h-7 max-w-80 min-w-0 cursor-default items-center gap-1.5 rounded-md px-1.5 text-[13px] outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/60"
+        className="inline-flex h-7 max-w-80 min-w-0 cursor-default items-center gap-1.5 rounded-lg px-1.5 text-[13px] outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/60"
       >
         <Icon className="size-3.5 shrink-0" />
         <span className="truncate">{sourceLabel(source)}</span>
@@ -239,7 +239,7 @@ function SourcePicker({
       </MenuPrimitive.Trigger>
       <MenuPrimitive.Portal>
         <MenuPrimitive.Positioner sideOffset={4} align="start" className="z-50 outline-none">
-          <MenuPrimitive.Popup className="glass max-w-96 min-w-44 rounded-lg border p-1 text-popover-foreground shadow-float outline-none">
+          <MenuPrimitive.Popup className="glass max-w-96 min-w-44 rounded-lg p-1 text-popover-foreground shadow-float outline-none">
             <MenuPrimitive.Item className={item} onClick={() => onChoose({ kind: "desktop" })}>
               <MonitorIcon className="size-3.5" /> Full desktop
             </MenuPrimitive.Item>

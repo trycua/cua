@@ -8,7 +8,7 @@ import Foundation
 import SwiftUI
 import Testing
 
-/// An in-memory daemon for Settings → Agents: `agent_keys.*` as the daemon
+/// An in-memory daemon for Settings → Connectors: `agent_keys.*` as the daemon
 /// answers them (never a value).
 final class FakeAgentKeysTools: AgentsToolRunning, @unchecked Sendable {
     var calls: [(String, [String: Any])] = []
@@ -36,7 +36,7 @@ final class FakeAgentKeysTools: AgentsToolRunning, @unchecked Sendable {
 }
 
 @MainActor
-@Suite("Settings → Agents")
+@Suite("Settings → Connectors")
 struct AgentKeysTests {
     init() { _ = NSApplication.shared }
 

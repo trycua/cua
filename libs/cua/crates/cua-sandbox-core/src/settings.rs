@@ -46,7 +46,7 @@ pub const KEYS: [Key; 13] = [
         name: "default.kind",
         env: "CUA_DEFAULT_KIND",
         default: "auto",
-        description: "the kind when --kind is not given (auto, container, vm)",
+        description: "the kind when --kind is not given (auto, container, vm, microvm)",
     },
     Key {
         name: "default.runtime",

@@ -7,9 +7,11 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useBridge, useConnectCloud, useNewSpaceWizard, useSpaces, type CreateSpaceArgs, type RuntimeSwitch, type WizardAction, type WizardField, type WizardTile, type WizardView } from "@/bridge";
 import { CliHintBlock, useCliName } from "@/components/cli-hint";
 import { Button } from "@/components/ui/button";
+import { GroupedSection } from "@/components/ui/grouped";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { PromptLine } from "@/components/prompt-line";
 import { toastError } from "@/components/ui/toast";
 import { createCommand, openCommand } from "@/lib/cli-commands";
 import { macosLimitText } from "@/lib/spaces";
@@ -85,7 +87,7 @@ function WizardBody({ view: v }: { view: WizardView }) {
         if (address ? v.address.canSubmit : !macosLimit && (v.step >= 3 || v.canContinue)) primary();
       }}
     >
-      <header className="flex items-center justify-between gap-4 border-b px-6 pt-5 pb-4">
+      <header /* design-ok: full-width dialog header rule */ className="flex items-center justify-between gap-4 border-b px-6 pt-5 pb-4">
         <DialogTitle className="text-[15px] font-semibold" data-wizard-title="">
           {v.title}
         </DialogTitle>
@@ -111,14 +113,14 @@ function WizardBody({ view: v }: { view: WizardView }) {
         ) : null}
       </div>
 
-      <footer className="flex items-center gap-2 border-t px-6 py-3">
-        <Button variant="outline" data-wizard-cancel="" onClick={wizard.close}>
+      <footer /* design-ok: full-width dialog footer */ className="flex items-center gap-2 border-t px-6 py-3">
+        <Button variant="secondary" data-wizard-cancel="" onClick={wizard.close}>
           {v.labels.cancel}
         </Button>
         <span className="flex-1" />
         {address ? (
           <>
-            <Button variant="outline" data-wizard-back="" onClick={() => send({ type: "hide-address" })}>
+            <Button variant="secondary" data-wizard-back="" onClick={() => send({ type: "hide-address" })}>
               {v.labels.back}
             </Button>
             <Button type="submit" data-wizard-primary="" disabled={!v.address.canSubmit}>
@@ -128,7 +130,7 @@ function WizardBody({ view: v }: { view: WizardView }) {
         ) : (
           <>
             {v.showBack ? (
-              <Button variant="outline" data-wizard-back="" onClick={() => send({ type: "back" })}>
+              <Button variant="secondary" data-wizard-back="" onClick={() => send({ type: "back" })}>
                 {v.labels.back}
               </Button>
             ) : null}
@@ -167,9 +169,9 @@ function Steps({ steps }: { steps: WizardView["steps"] }) {
 
 function Group({ children, className, ...rest }: { children: ReactNode; className?: string } & Record<`data-${string}`, string>) {
   return (
-    <div className={cn("divide-y rounded-xl border bg-card shadow-xs", className)} {...rest}>
+    <GroupedSection className={className} {...rest}>
       {children}
-    </div>
+    </GroupedSection>
   );
 }
 
@@ -197,7 +199,7 @@ function RuntimeSwitchButton({ change }: { change: RuntimeSwitch }) {
     <span title={change.detail} className="mt-1 inline-flex shrink-0">
       <Button
         size="sm"
-        variant="outline"
+        variant="secondary"
         data-runtime-switch={change.setting}
         disabled={switching}
         onClick={() => {
@@ -232,7 +234,7 @@ function Note({ children, ...rest }: { children: ReactNode } & Record<`data-${st
 
 function Tiles({ id, label, tiles, onPick }: { id: string; label: string; tiles: WizardTile[]; onPick: (id: string) => void }) {
   return (
-    <div role="group" aria-label={label} className="inline-flex h-7 items-center gap-0.5 rounded-md bg-muted p-0.5">
+    <div role="group" aria-label={label} className="inline-flex h-7 items-center gap-0.5 rounded-lg bg-muted p-0.5">
       {tiles.map((t) => (
         <button
           key={t.id}
@@ -244,7 +246,7 @@ function Tiles({ id, label, tiles, onPick }: { id: string; label: string; tiles:
           onClick={() => onPick(t.id)}
           // The chosen tile is filled (the native segmented control's
           // selection), not only outlined by focus.
-          className="inline-flex h-6 items-center rounded-[5px] px-2.5 text-xs font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 disabled:opacity-40 disabled:hover:text-muted-foreground aria-pressed:bg-primary aria-pressed:text-primary-foreground aria-pressed:shadow-xs aria-pressed:hover:text-primary-foreground"
+          className="inline-flex h-6 items-center rounded-lg px-2.5 text-xs font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 disabled:opacity-40 disabled:hover:text-muted-foreground aria-pressed:bg-primary aria-pressed:text-primary-foreground aria-pressed:shadow-xs aria-pressed:hover:text-primary-foreground"
         >
           {t.title}
         </button>
@@ -361,6 +363,7 @@ function SystemRow({ field: f, v }: { field: WizardField; v: WizardView }) {
               ) : (
                 error
               )}
+              {error && v.placementPrompt ? <PromptLine id="add-machine" label="Or ask your agent" text={v.placementPrompt} /> : null}
               {error && !v.runtimeSwitch && v.plan.placement === "local" ? <RuntimeFixRow /> : null}
               {v.placementHint ? <Note data-placement-hint="">{v.placementHint}</Note> : null}
             </>
@@ -377,7 +380,20 @@ function SystemRow({ field: f, v }: { field: WizardField; v: WizardView }) {
       );
     case "kind":
       return (
-        <Row id="kind" label={f.label} below={error}>
+        <Row
+          id="kind"
+          label={f.label}
+          below={
+            <>
+              {error}
+              {v.kindHelp ? (
+                <p data-kind-help="" className="mt-1 text-xs text-muted-foreground">
+                  {v.kindHelp}
+                </p>
+              ) : null}
+            </>
+          }
+        >
           <Tiles id="kind" label={f.label} tiles={v.kindTiles} onPick={(kind) => send({ type: "choose-kind", kind })} />
         </Row>
       );
@@ -434,7 +450,7 @@ function SliderValue({ id, label, text, edit }: { id: "cpus" | "memory" | "disk"
           }
         }}
         onBlur={() => send({ type: "commit-resource" })}
-        className="h-6 w-16 rounded-md border border-input bg-transparent px-1.5 text-right text-[13px] tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-ring/60 aria-invalid:border-destructive"
+        className="h-6 w-16 rounded-lg border border-input bg-transparent px-1.5 text-right text-[13px] tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-ring/60 aria-invalid:border-destructive" // design-ok: inline number field outline, matches Input
       />
     );
   }
@@ -444,7 +460,7 @@ function SliderValue({ id, label, text, edit }: { id: "cpus" | "memory" | "disk"
       data-value-text={id}
       title={`Type a value for ${label.toLowerCase()}`}
       onClick={() => send({ type: "edit-resource", field: id })}
-      className="w-16 cursor-text rounded-md px-1.5 text-right text-[13px] tabular-nums hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:outline-none"
+      className="w-16 cursor-text rounded-lg px-1.5 text-right text-[13px] tabular-nums hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:outline-none"
     >
       {text}
     </button>
@@ -557,7 +573,7 @@ function ResourcesStep({ v }: { v: WizardView }) {
                       <span />
                     )}
                     {v.diskResetLabel ? (
-                      <Button variant="outline" size="sm" data-disk-reset="" onClick={() => send({ type: "reset-disk" })}>
+                      <Button variant="secondary" size="sm" data-disk-reset="" onClick={() => send({ type: "reset-disk" })}>
                         {v.diskResetLabel}
                       </Button>
                     ) : null}

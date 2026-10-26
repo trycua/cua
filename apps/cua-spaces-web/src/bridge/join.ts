@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * "Join with a code": sets this computer up with a one-time pairing code
+ * "Enter a code" (Have a code? Enter it): sets this computer up with a one-time pairing code
  * (or the add-machine link) made on another device, the in-app way of
  * `cua host setup --pair <code>`. The host runs the bundled `cua`
  * (`host.joinWithCode`) and answers once the machine has joined.

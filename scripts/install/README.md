@@ -14,14 +14,14 @@ The Cua Spaces app is the graphical path. Its first run installs the bundled `cu
 
 ## Choose what to install
 
-In a terminal, install.sh first says what Cua Spaces is, then lists what to add to the command-line tools (the `cua` CLI; arrow or number keys to move or toggle, space to select, Enter to install; install.ps1 asks for numbers to toggle, with a line under each row). The command-line tools are always installed, so they are not a row. Letting your other devices use this computer (`cua host setup`) is not a row either: the app's first run asks (`--mode host|client` preselects the answer). Without a terminal, with `--yes`, or with `CUA_INSTALL_NONINTERACTIVE=1`, the defaults plus `--select` are installed without asking. `--only` installs exactly the listed items plus the CLI and never shows the list.
+In a terminal, install.sh first says what Cua Spaces is, then lists what to add to the command-line tools (the `cua` CLI; arrow or number keys to move or toggle, space to select, Enter to install; install.ps1 asks for numbers to toggle, with a line under each row). The command-line tools are always installed, so they are not a row. Adding this computer to your account (`cua host setup`) is not a row either: signing in adds it. After `cua auth login` succeeds, the installer runs `cua host setup --no-desktop --provide-spaces`: the computer provides Spaces and keeps its screen private (a computer set up before keeps its settings). `--no-host` signs in only. Over ssh, or on Linux without a display, the sign-in uses a device code (`cua auth login --remote`). Without a terminal, with `--yes`, or with `CUA_INSTALL_NONINTERACTIVE=1`, the defaults plus `--select` are installed without asking. `--only` installs exactly the listed items plus the CLI and never shows the list.
 
 | Item | What it does | In the list | Default |
 |---|---|---|---|
 | `cli` | The `cua` CLI | No, always installed (not with `--app-only`) | Always |
 | `spaces` | The Cua Spaces app | "Cua Spaces app: lets your AI agents use computers" | On for macOS (the SwiftUI app), Linux (the Electron app) and Windows (the Electron app). `--app-only` and `--mode` imply it |
 | `cua-driver` | Installs Cua Driver with its own release installer (`cua.ai/driver/install.sh` / `install.ps1`, which verify SHA256SUMS and the Sigstore bundle), then `cua agents setup --cua-driver --agents all --yes` registers its skill and MCP server for your agents | "Cua Driver: lets AI agents use your apps while you keep working" | Off |
-| `host` | Runs `cua host setup` after sign-in, so your other devices can use this computer through the relay | No: a script flag (`--select host`, `--only host`, `--pair`). Interactively, the app's first run asks | Off |
+| `host` | Runs `cua host setup`, so your other devices can use this computer through the relay | No: signing in adds it. `--select host` and `--only host` run it without a sign-in here (kept for scripts); `--pair` adds it with a code | On after a sign-in (off with `--no-host`) |
 
 The Cua Spaces app registers the cua-driver skill and MCP server with your agents in its first run, but it does not install or update the Cua Driver program yet (CUA-1440). Until it does, the `cua-driver` item is how the installer puts Cua Driver on this computer.
 
@@ -45,7 +45,9 @@ For cua-driver, `--prefix DIR` becomes `--bin-dir DIR/bin`, `--require-signature
 | `--prefix DIR` | `-Prefix DIR` | Install under `DIR/bin` (and `DIR/Applications` on macOS) |
 | `--modify-path` | `-ModifyPath` | Add the bin dir to your shell profile or user PATH without asking |
 | `--no-modify-path` | `-NoModifyPath` | Never edit the profile or user PATH; print the command instead |
-| `--no-onboarding` | `-NoOnboarding` | Skip `cua auth login` |
+| `--no-onboarding` | `-NoOnboarding` | Skip `cua auth login` (and so adding this computer) |
+| `--no-host` | `-NoHost` | Sign in only; do not add this computer to your account |
+| `--no-provide-spaces` | `-NoProvideSpaces` | Add this computer without creating Spaces for your other devices on it |
 | `-v`, `--verbose` | `-Verbose` | Print every step: platform, manifest, each download, signature checks. Also `CUA_INSTALL_VERBOSE=1` |
 | `--require-signature` | `-RequireSignature` | Fail unless minisign or cosign verifies |
 | `--dry-run` | `-DryRun` | Print the plan, change nothing |

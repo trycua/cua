@@ -139,7 +139,7 @@ struct DriveTests {
         #expect(s.section.rows.first?.options.map(\.label) == ["This Mac", "S3-compatible"])
         #expect(s.section.rows.allSatisfy { !$0.options.contains { $0.id == "cloud" } })
         await s.choose("backend", "s3")
-        #expect(s.section.rows.first { $0.id == "s3-prompt" }?.value?.contains("cua volume config set-keys") == true)
+        #expect(s.section.rows.first { $0.id == "s3-prompt" }?.value?.contains("cua.ai/docs/agents/volume-s3") == true)
         await s.press("s3-manual")
         #expect(!s.section.rows.contains { $0.id == "s3-prompt" })
         s.edit("s3-endpoint", "http://127.0.0.1:9000")

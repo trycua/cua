@@ -54,6 +54,19 @@ public final class AppModel {
     public private(set) var roster: AppRosterState
     public var query = ""
     public var selection: MainSelection?
+    /// Several Spaces picked in the sidebar (⌘- or ⇧-click, ⌘A): the
+    /// detail says how many and offers what they can do together. Empty
+    /// while one item (`selection`) is selected.
+    public var pickedSpaceIds: Set<String> = []
+    /// The delete-and-leave confirm on screen (the core's
+    /// `spaces.bulkConfirm`), with the Spaces it asks about.
+    public var bulkAsk: BulkAsk?
+    /// The Spaces a confirmed bulk delete or leave is working through.
+    public internal(set) var bulkRunItems: [AppBulkItem]?
+    /// The ids of that run with their result in, so far.
+    public internal(set) var bulkFinished: [String] = []
+    /// The bulk delete or leave's done toast ("Deleted 3 Spaces.").
+    public var bulkToast: AppBulkDone?
     public var rosterError: String?
     /// Another app keeps its own daemon running and this app uses it (the
     /// supervisor yields to it after replacing it once): one line above
@@ -64,9 +77,9 @@ public final class AppModel {
     public var showingNewSpace = false
     /// The command palette (⌘K).
     public var showingPalette = false
-    /// Run by the Space's detail when it shows (`DetailRequest`).
-    public var detailRequest: DetailRequest?
     public var confirmDeleteId: String?
+    /// A Space menu's action, run by that Space's detail when it shows.
+    public var detailRequest: DetailRequest?
     /// A teleport the notch started: the Space and the dropped app.
     public var pendingTeleport: PendingTeleport?
     public private(set) var loaded = false
@@ -99,7 +112,7 @@ public final class AppModel {
     public let checklist: ChecklistModel
     /// Settings, Storage: the Cua Volume's store, Finder volume and cache.
     public internal(set) var storage: StorageModel
-    /// Settings, Agents: the provider keys agents get (kept by the daemon).
+    /// Settings, Connectors: the provider keys agents get (kept by the daemon).
     public let agentKeys: AgentKeysModel
     /// The user's own clouds: the "Your cloud" tile and "Connect a cloud".
     public let cloud: CloudModel
@@ -229,6 +242,11 @@ public final class AppModel {
             self.saveSettings()
         }
         self.host.onChange = { [weak self] in self?.recompose() }
+        // Providing Spaces turned on: ask for Local Network access now, on
+        // this Mac's screen (the same steps as before a macOS Space is
+        // created here), so a macOS Space another device creates here
+        // connects instead of failing with "No route to host".
+        self.host.onStartedProvidingSpaces = { [weak self] in self?.askLocalNetworkForHosting() }
         followChecklist()
         // No notification prompt before the first run is done.
         PermissionRequester.firstRunDone = { [weak onboarding] in onboarding?.completed ?? false }
@@ -393,7 +411,8 @@ public final class AppModel {
         return appMachinesView(input: AppMachinesViewInput(
             page: machinesPageInput, relay: relay, host: host.state, about: Self.machinesAbout, rows: nil,
             health: machineHealth.keys.sorted().compactMap { machineHealth[$0] },
-            appUpdate: found, appUpdateReady: !found.isEmpty && update.status == .downloaded))
+            appUpdate: found, appUpdateReady: !found.isEmpty && update.status == .downloaded,
+            clouds: cloud.cloudsInput))
     }
 
     /// What each machine's own daemon last reported of its health, by
@@ -504,6 +523,16 @@ public final class AppModel {
         await refresh(fresh: true)
     }
 
+    /// Forgets a cloud (`cloud_disconnect`); with `deleteResources`, deletes what Cua created there first.
+    public func disconnectCloud(_ provider: String, deleteResources: Bool) async throws {
+        try await cloud.disconnect(provider, deleteResources: deleteResources)
+    }
+
+    /// Approves or denies what an agent set up in a cloud (`cloud_approve`).
+    public func approveCloud(_ provider: String, approve: Bool) async throws {
+        try await cloud.approve(provider, approve: approve)
+    }
+
     /// What each machine sharing its desktop (`relay:<machine>`) reported
     /// as its hostname, by machine id: the page lists it and the device on
     /// it once.
@@ -520,6 +549,9 @@ public final class AppModel {
         spaces.filter { !$0.id.hasPrefix("relay:") && !detail($0).isHost }
     }
 
+    /// Where "Add a computer" opens: the New UI's sheet (one row per way to
+    /// add a computer, and Have a code? Enter it).
+    public static let addComputerRoute = MainUIRoute.path("/machines?add=1")
     /// Agent runs seen in any Space (a Space's detail, the web UI's
     /// Agents page): the checklist's "Run an agent".
     public private(set) var agentRunsSeen = 0
@@ -529,6 +561,7 @@ public final class AppModel {
         if count > agentRunsSeen { agentRunsSeen = count }
     }
 
+    /// "Add a computer": the New UI's sheet, whichever UI is up.
     /// Whether the persistent agents were read for the checklist.
     private var checklistReadAgents = false
 
@@ -551,8 +584,7 @@ public final class AppModel {
 
     /// "Add a machine": New Space's "Connect by address".
     public func openAddMachine() async {
-        await openNativeNewSpace()
-        wizard.send(.showAddress)
+        openWebRoute?(Self.addComputerRoute)
     }
 
     /// Getting started (the palette, Help): opens the checklist again.
@@ -946,6 +978,7 @@ public final class AppModel {
     static let incompleteFollowMs = 500
 
     public func select(_ id: String) {
+        pickedSpaceIds = []
         selection = .space(id)
         send(.select(id: id, now: Int64(Date().timeIntervalSince1970 * 1000)))
     }
@@ -959,6 +992,9 @@ public final class AppModel {
     /// window (the web onboarding), which nothing else would while only
     /// Settings is up.
     public var openOnboarding: (() -> Void)?
+    /// Opens the New UI window at a route (set at launch). "Add a computer"
+    /// uses it: the sheet lives in the New UI, whichever UI is up.
+    public var openWebRoute: ((MainUIRoute) -> Void)?
 
     /// New Space with "Run on" set to `on` (`host:<machine>`): a machine's
     /// "New Space on <name>…".
@@ -1225,6 +1261,23 @@ public final class AppModel {
     /// set one).
     public var localNetworkGate: LocalNetworkGate?
 
+    /// The Local Network steps run when this Mac started providing Spaces
+    /// (tests await it).
+    @ObservationIgnored var hostingLocalNetworkCheck: Task<Void, Never>?
+
+    /// Runs the Local Network steps for a Mac that just started providing
+    /// Spaces: the explanation, then macOS's own prompt (the person answers
+    /// it), or the fix when access was turned off. Setup already finished,
+    /// so Cancel or a refusal changes nothing else; the next local macOS
+    /// create asks again.
+    func askLocalNetworkForHosting() {
+        guard let gate = localNetworkGate,
+              appLocalNetworkApplies(provider: .local, os: .macos, hostIsMac: true) else { return }
+        hostingLocalNetworkCheck = Task { @MainActor in
+            try? await gate.check()
+        }
+    }
+
     /// What the daemon found when it last tried this Mac's local network:
     /// true allowed, false blocked, nil not known yet. The daemon is the
     /// process that reaches the macOS VMs, and macOS decides Local Network
@@ -1359,7 +1412,7 @@ public final class AppModel {
             sendCreate(.cancelDone(id: pendingId))
             throw error
         } catch {
-            devices.noteRefusal(LiveSpacesBackend.words(error))
+            devices.noteRefusal(LiveSpacesBackend.words(error), surface: "app_create")
             sendCreate(.fail(id: pendingId, error: LiveSpacesBackend.words(error),
                              errorVariant: Self.errorVariant(error), now: Self.nowMs()))
             throw error
@@ -1453,6 +1506,69 @@ public final class AppModel {
         }
     }
 
+    /// Bulk delete or leave (after the page's confirmation): every row says
+    /// Deleting at once and goes when its own result comes back, at most
+    /// three at a time; one failure never stops the rest. One result per
+    /// id, in order; an id that is not listed answers not found.
+    public func bulk(ids: [String], leave: Bool,
+                     onResult: ((SpaceBulkResult) -> Void)? = nil) async -> [SpaceBulkResult] {
+        confirmDeleteId = nil
+        var results: [String: SpaceBulkResult] = [:]
+        var todo: [AppSpace] = []
+        for id in ids {
+            guard let space = spaces.first(where: { $0.id == id }) else {
+                results[id] = SpaceBulkResult(id: id, ok: false, error: "No Space \(id).")
+                continue
+            }
+            if isDeleting(id) {
+                results[id] = SpaceBulkResult(id: id, ok: false, error: "\(space.name) is already going.")
+                continue
+            }
+            todo.append(space)
+        }
+        if !todo.isEmpty, !leave { recordFeature("space_delete") }
+        for space in todo {
+            sendCreate(.deleteStart(id: space.id, now: Self.nowMs()))
+            usage[space.id] = nil
+            notch.thumbnails[space.id] = nil
+        }
+        let backend = backend
+        var queue = todo.map(\.id)
+        await withTaskGroup(of: SpaceBulkResult.self) { group in
+            func next() {
+                guard !queue.isEmpty else { return }
+                let id = queue.removeFirst()
+                group.addTask {
+                    let r = leave ? await backend.leave(ids: [id]) : await backend.deleteMany(ids: [id])
+                    return r.first ?? SpaceBulkResult(id: id, ok: false, error: "No answer.")
+                }
+            }
+            for _ in 0..<min(3, queue.count) { next() }
+            for await r in group {
+                results[r.id] = r
+                sendCreate(r.ok ? .deleteDone(id: r.id) : .deleteFail(id: r.id))
+                onResult?(r)
+                next()
+            }
+        }
+        if !todo.isEmpty { await refresh(fresh: true) }
+        return ids.map { results[$0] ?? SpaceBulkResult(id: $0, ok: false, error: "No answer.") }
+    }
+
+    /// Gives a Space a new name (its id stays the same), then reads the list
+    /// again so every view shows it. A refusal (a Space shared with you, a
+    /// name taken or against the rule) throws in plain words; nothing
+    /// changes.
+    public func rename(_ space: AppSpace, to name: String) async throws {
+        do {
+            try await backend.rename(id: space.id, name: name)
+        } catch {
+            // The SDK's sentence without its kind ("permission denied: ...").
+            throw FixtureError(message: KeyvaultModel.words(error))
+        }
+        await refresh(fresh: true)
+    }
+
     /// The power button next to Delete: turns the Space off (`on` false:
     /// suspended or stopped, as its provider can) or back on. The row and
     /// the detail say Suspending (and the like) at once and the button
@@ -1482,6 +1598,30 @@ public final class AppModel {
 
     public func saveSettings() {
         try? appSettingsSave(path: settingsPath, settings: settings)
+    }
+
+    // MARK: - Tips
+
+    /// Applies a tips event (the core's `tips::reduce`) and saves the tips.
+    public func sendTips(_ event: AppTipsEvent) {
+        let next = appTipsReduce(state: settings.tips, event: event)
+        guard next != settings.tips else { return }
+        settings.tips = next
+        saveSettings()
+    }
+
+    /// The tip at the sidebar's foot (the core's `tips::view`, place
+    /// sidebar): it belongs to no page of this UI, so nothing suppresses it.
+    public var sidebarTip: AppTip? {
+        Self.sidebarTip(machinesOnline: machinePageRows.filter(\.online).count, tips: settings.tips)
+    }
+
+    /// The sidebar's tip for `machinesOnline` of your computers online.
+    public static func sidebarTip(machinesOnline: Int, tips: AppTipsState) -> AppTip? {
+        appTipsView(place: .sidebar, facts: AppTipFacts(
+            newestRunning: nil, spacePage: nil, agentsConnected: [], agentsInstalled: [],
+            hasStopped: false, deletableStopped: 0, diskNearlyFull: false,
+            secondComputerOnline: machinesOnline >= 2, sharedAny: false, pageTipShown: false), state: tips)
     }
 
     public func show(error: String) {
@@ -1585,6 +1725,8 @@ public final class AppModel {
             // Relay sharing paused while signed out comes back for its
             // owner (another account is asked to set it up again).
             await host.reconcileAccount()
+            // Signing in adds this computer (a computer set up before keeps its settings).
+            await host.addAfterSignIn()
             await reloadTeams()
             await reloadShareRemovals()
         } catch {
@@ -1656,7 +1798,7 @@ public final class AppModel {
             keyvaultUnlockPrompt: keyvault.unlockPromptShows,
             keyvaultSiteIcons: settings.keyvaultSiteIcons, keyvaultProtection: keyvault.page.protection,
             autoConnect: settings.autoConnect, lumeSource: lumeSource, linuxSource: linuxSource,
-            overflow: placementOverflow))
+            overflow: placementOverflow, showTips: !settings.tips.off))
     }
 
     /// Teams for Settings: the account's organizations with their people
@@ -1903,6 +2045,10 @@ public final class AppModel {
             // "Never ask again".
             await keyvault.setSkipUnlockPrompt(option != "on")
             if let error = keyvault.error { show(error: error) }
+        case "tips", "reset-tips":
+            // General's Show tips and Reset tips: the core's rule (`settings::choose`).
+            settings = appSettingsChoose(settings: settings, row: row, option: option)
+            saveSettings()
         case "telemetry":
             do {
                 telemetryInput = try telemetry?.setEnabled(option == "on")
@@ -1926,6 +2072,8 @@ public final class AppModel {
         case "account": await signOut()
         case "sign-in": await beginSignIn()
         case "sign-in-code": cancelSignIn()
+        case "reset-tips":
+            await choose(row: row, option: "press")
         case "welcome":
             onboarding.restart()
             openOnboarding?()

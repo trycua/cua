@@ -9,8 +9,10 @@
  *   and the stored experiments (the wizard's `WizardEnv` beyond Spaces,
  *   machines, settings and the session).
  * - `spaces.add`: `add_space` ("Connect by address").
- * - `clouds.status`, `clouds.test`, `clouds.connect`: `cloud_tool` with
- *   `cloud_status`, `cloud_test` (creates nothing) and `cloud_connect`.
+ * - `clouds.status`, `clouds.test`, `clouds.connect`, `clouds.disconnect`:
+ *   `cloud_tool` with `cloud_status`, `cloud_test` (creates nothing),
+ *   `cloud_connect` (also with a budget, a largest machine and Cua's own
+ *   AWS sign-in) and `cloud_disconnect`.
  *
  * The SwiftUI host answers `spaces.createOptions` with the env its native
  * sheet opens with (`NewSpaceOptions.env`, from `AppModel.newSpaceEnv`), so
@@ -30,6 +32,7 @@
 
 import type {
   CloudConnectWire,
+  CloudDisconnectedWire,
   CloudStatusWire,
   CloudTarget,
   CloudTestWire,
@@ -47,6 +50,8 @@ export interface NewSpaceOperations {
   "clouds.status": { args: Record<string, never>; result: CloudStatusWire };
   "clouds.test": { args: { target: CloudTarget }; result: CloudTestWire };
   "clouds.connect": { args: { target: CloudTarget; makeDefault: boolean }; result: CloudConnectWire };
+  /** Forgets a cloud; with `deleteResources`, deletes what Cua created there first. */
+  "clouds.disconnect": { args: { provider: string; deleteResources: boolean }; result: CloudDisconnectedWire };
 }
 
 type Name = keyof NewSpaceOperations;
@@ -58,6 +63,7 @@ export const NEW_SPACE_OPERATIONS = [
   "clouds.status",
   "clouds.test",
   "clouds.connect",
+  "clouds.disconnect",
 ] as const satisfies readonly Name[];
 
 /** `coverage.ts` rows. */
@@ -70,6 +76,7 @@ export const NEW_SPACE_COVERAGE = {
   "clouds.status": { webkit: { methods: ["clouds.status"] }, tauri: ["cloud_tool"] },
   "clouds.test": { webkit: { methods: ["clouds.test"] }, tauri: ["cloud_tool"] },
   "clouds.connect": { webkit: { methods: ["clouds.connect"] }, tauri: ["cloud_tool"] },
+  "clouds.disconnect": { webkit: { methods: ["clouds.disconnect"] }, tauri: ["cloud_tool"] },
 } as const;
 
 /** Arguments that take each operation down its usual path (coverage tests). */
@@ -79,6 +86,7 @@ export const NEW_SPACE_ARGS: { [K in Name]: NewSpaceOperations[K]["args"] } = {
   "clouds.status": {},
   "clouds.test": { target: { provider: "aws", region: "us-west-2" } },
   "clouds.connect": { target: { provider: "aws", region: "us-west-2" }, makeDefault: false },
+  "clouds.disconnect": { provider: "aws", deleteResources: false },
 };
 
 /** The Tauri app keeps its experiments in UI storage (`model/experiments.ts`). */
@@ -101,6 +109,8 @@ export function newSpaceTauriOps(invoke: Invoke, readUi: (key: string) => string
     "clouds.status": async () => (await tool<CloudStatusWire | null>("cloud_status", {})) ?? { providers: [] },
     "clouds.test": ({ target }) => tool<CloudTestWire>("cloud_test", { ...target }),
     "clouds.connect": ({ target, makeDefault }) => tool<CloudConnectWire>("cloud_connect", { ...target, make_default: makeDefault }),
+    "clouds.disconnect": ({ provider, deleteResources }) =>
+      tool<CloudDisconnectedWire>("cloud_disconnect", { provider, delete: deleteResources }),
   };
 }
 

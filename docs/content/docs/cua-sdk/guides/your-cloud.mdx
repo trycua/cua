@@ -1,13 +1,13 @@
 ---
 title: Use your own cloud
-description: Run sandboxes and Spaces in your own AWS, Google Cloud, Hetzner or Modal account. Connect it, create on it, what Cua creates there, costs and cleanup.
+description: Run sandboxes and Spaces in your own AWS, Google Cloud, Azure, Hetzner or Modal account. Connect it, create on it, what Cua creates there, costs and cleanup.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
 Sandboxes and Spaces can run in a cloud account you own: `--on aws` (EC2),
-`--on gcp` (Compute Engine), `--on hetzner` (Hetzner Cloud servers) or
-`--on modal` (Modal Sandboxes). The same images,
+`--on gcp` (Compute Engine), `--on azure` (Azure Virtual Machines),
+`--on hetzner` (Hetzner Cloud servers) or `--on modal` (Modal Sandboxes). The same images,
 SDK calls and `cua-bench` runs work there, and you pay the cloud directly.
 
 Each sandbox dials out to the cua.ai relay as a machine of your account, so
@@ -32,10 +32,19 @@ sandbox uses one until you delete it.
   - **Google Cloud**: `gcloud auth login` and a project with the Compute Engine
     API enabled.
   - **Hetzner**: a project API token with Read & Write access. Hetzner has no
-    sign-in, so Cua keeps the token itself. See [Notes for each cloud](#notes-for-each-cloud).
-  - **Modal**: a profile in `~/.modal.toml` (`modal token new`).
+    sign-in, so Cua seals the token to your devices (see
+    [Hetzner and Modal tokens](#hetzner-and-modal-tokens-sealed-to-your-devices)).
+  - **Modal**: a profile in `~/.modal.toml` (`modal token new`), or its token
+    sealed to your devices.
+  - **Azure**: nothing on this machine. Azure is always linked through Cua's
+    sign-in, with no key. See
+    [Link a cloud without a key](/cua-sdk/guides/your-cloud-without-a-key#azure).
 - A cua.ai sign-in (`cua auth login`). Each cloud sandbox joins the relay as a
   machine of your account.
+
+AWS and Google Cloud can also be linked with no key at all, through Cua's
+sign-in. See [Link AWS without a key](#link-aws-without-a-key) and
+[Link a cloud without a key](/cua-sdk/guides/your-cloud-without-a-key).
 
 ## Connect a cloud
 
@@ -75,6 +84,99 @@ cua cloud connect aws --ttl-hours 2
 
 The Cua Spaces app does the same from **New Space**, **Your cloud**,
 **Connect a cloud**. Hetzner asks for the API token there.
+
+### Limits for one cloud
+
+`--budget` sets the most Cua may spend in that cloud per calendar month (US
+dollars), and `--max-size` the largest machine (vCPUs x GB). Once the budget
+is reached, new machines there are refused before any cloud call; stopping and
+deleting always work. A larger machine is refused the same way, and the
+elastic pool never picks one. These limits come on top of the pool's own
+budget (`cua cloud budget`):
+
+```bash test="cli-shape" id="cua-cloud-connect-limits"
+cua cloud connect aws --region us-west-2 --budget 200 --max-size 4x16
+```
+
+`cua cloud status` shows each cloud's budget, what was spent this month and
+how many machines run there.
+
+### Link AWS without a key
+
+With `--oidc`, Cua stores no AWS credentials, on this machine or anywhere
+else. Cua's issuer (`oidc.cua.ai`) signs a 15-minute token for your Cua
+account each time a device needs AWS, and your AWS account trusts those tokens
+through one CloudFormation stack, `cua-spaces`. Every signed-in device, and
+every agent on those devices, can then use the link, so you link the account
+once:
+
+```bash test="cli-shape" id="cua-cloud-connect-oidc"
+cua cloud connect aws --oidc --region us-west-2 --budget 200 --max-size 4x16
+```
+
+The first run returns `needs-trust` and a link to AWS CloudShell with one
+command to paste. That command creates the stack: an OIDC provider for your
+Cua account's issuer and the `cua-spaces` role. The role has the
+[least-privilege policy](/cua-sdk/guides/your-cloud-safety#least-privilege-access)
+plus a read of Cost Explorer. Then run the command again with the account id
+and `--check`. It gets a check token, exchanges it with AWS STS and dry-runs a
+machine:
+
+```bash test="cli-shape" id="cua-cloud-connect-oidc-check"
+cua cloud connect aws --oidc --region us-west-2 --budget 200 --max-size 4x16 --account-id 123456789012 --check
+```
+
+Every run ends with a status, the next step and the command that verifies
+it, so an agent can do this for you. See
+[Connect a cloud (for agents)](/spaces/guides/connect-a-cloud). When an agent makes
+the link or raises a limit, a person approves it in the Cua Spaces app first.
+`cua cloud disconnect aws` stops new tokens at once. To remove the trust as
+well, delete the `cua-spaces` stack.
+
+### Google Cloud and Azure without a key
+
+Google Cloud (`--oidc`) and Azure (always) link the same way, through workload
+identity federation. The first run gives a Cloud Shell link or a Deploy to
+Azure link that sets up the trust. See
+[Link a cloud without a key](/cua-sdk/guides/your-cloud-without-a-key).
+
+```bash test="cli-shape" id="cua-cloud-connect-gcp-oidc-start"
+cua cloud connect gcp --oidc --project my-project --region us-central1 --budget 200 --max-size 4x16
+```
+
+```bash test="cli-shape" id="cua-cloud-connect-azure-start"
+cua cloud connect azure --region westus2 --budget 200 --max-size 4x16
+```
+
+### Already connected?
+
+Clouds you linked with an earlier cua keep working after an update, with no
+step to take: the profile, project or environment names, the budget, the
+machines Cua created and their cleanup all carry over. An AWS link through
+the AWS CLI can switch to `--oidc` when you choose; until the check passes,
+the old link stays in force, and its region and limits carry over. If the
+cua daemon that runs is older than the cua you call it from, a link with
+`--oidc` or a budget is refused with a message to update and restart the
+daemon, instead of falling back to the CLI sign-in.
+
+### Hetzner and Modal tokens, sealed to your devices
+
+Hetzner and Modal have no OIDC, so they need an API token. Cua seals it to
+your devices, and you give it once for all of them:
+
+```bash test="cli-shape" id="cua-cloud-connect-hetzner-sealed"
+cua cloud connect hetzner --token-stdin --region fsn1 --budget 50 --max-size 4x8
+cua cloud connect modal --token-stdin --budget 50
+```
+
+Cua checks the token first and creates nothing. Your device encrypts it with
+your account's pool key, so Cua's servers keep only ciphertext, and any of
+your devices opens it in memory when it calls the cloud. `cua cloud status
+hetzner` lists the devices that can open it. On another device, `cua cloud
+connect hetzner --sealed --budget 50` links the same token without pasting
+it. `--no-sealed` keeps the Hetzner token on this device only. Replacing,
+revoking and removed devices are covered in
+[Connect a cloud](/spaces/guides/connect-a-cloud#hetzner-and-modal).
 
 ## Create sandboxes and Spaces
 
@@ -124,6 +226,7 @@ Agents use the same `create_space` tool with `on="aws"`, and `cloud_status`,
 |---|---|---|
 | AWS | One EC2 instance and its disk. Docker runs the image on it. | One security group with no inbound rules, in the region's default VPC. |
 | Google Cloud | One Compute Engine instance and its disk. Docker runs the image on it. | A network with no inbound rules, so the project's default firewall rules never apply to it. |
+| Azure | One VM (Ubuntu 24.04, no SSH key, no managed identity) with its disk, network interface and public IPv4 address, in the connection's resource group. Docker runs the image on it. | A virtual network and a network security group, `cua-sb-<owner>`, with no rules of their own: Azure's defaults deny inbound traffic from the internet. |
 | Hetzner | One server with an IPv4 address and Docker (Ubuntu 24.04), and no SSH key. Docker runs the image on it. | One firewall, `cua-sb-<owner>`, with no rules: Hetzner drops all inbound traffic. Your project's other firewalls are never used or changed. |
 | Modal | One Modal sandbox running the image. | Nothing. |
 
@@ -148,7 +251,8 @@ Agents use the same `create_space` tool with `on="aws"`, and `cloud_status`,
   when. Names and ids only, never a secret.
 
 Cua creates no IAM users, roles or keys, so it acts as whatever identity you
-connect. [Least privilege in your cloud](/cua-sdk/guides/your-cloud-safety)
+connect (with `--oidc`, the `cua-spaces` role your own CloudFormation stack
+creates). [Least privilege in your cloud](/cua-sdk/guides/your-cloud-safety)
 has the AWS policy and Google Cloud permissions for a dedicated identity, and
 what Cua keeps when a machine does not come online.
 
@@ -162,6 +266,7 @@ its disk.
 |---|---|---|
 | AWS | `t4g.medium` (arm64), about $0.04/hour | `t4g.small`, about $0.03/hour |
 | Google Cloud | `e2-medium`, about $0.04/hour | `e2-small`, about $0.03/hour |
+| Azure | `Standard_B2s`, about $0.05/hour | `Standard_B1ms`, about $0.03/hour |
 | Hetzner | `cx23`, about $0.0114/hour | the same |
 | Modal | 1 core (2 vCPU) and 4 GiB, about $0.24/hour | the same |
 
@@ -190,6 +295,19 @@ its disk.
   - The instance has no service account, so nothing on it can call Google
     APIs. Its containers reach the metadata server only for DNS.
   - `cua cloud test gcp` says when the Compute Engine API is disabled.
+- **Azure**:
+  - One subscription, resource group and region per connection. The roles
+    reach only that group, and Cua creates nothing outside it.
+  - The VM has a random password that is never stored or shown, and no SSH
+    key; nothing can reach it from outside, since the network security group
+    has no rules of its own. It has no managed identity, so nothing on it can
+    call Azure.
+  - Azure cannot end a VM at a deadline. The `cua-expires` tag and the sweep
+    do (`cua cloud sweep azure --delete`, and the daemon every 15 minutes).
+  - Stopping a Space deallocates the VM, so only its disk and address are
+    billed. A shutdown from inside the VM keeps it allocated and billed.
+  - The OS disk is created by Azure from the VM and is not tagged; it is
+    deleted with the VM.
 - **Hetzner**:
   - One location per connection (`--region`, default `fsn1`; also `nbg1`,
     `hel1`, `ash`, `hil`, `sin`). Cua picks the cheapest shared-vCPU type of
@@ -197,10 +315,12 @@ its disk.
   - Create a project API token in the Hetzner Cloud Console under **Security**,
     **API tokens**, with **Read & Write** access. A read-only token is refused.
   - Give the token to `cua cloud connect hetzner` on standard input
-    (`--token-stdin`) or in `HCLOUD_TOKEN`; the `hcloud` CLI's active context also works. Cua saves a
-    token you give it only after the checks pass, in its credential store (the
-    system vault on a Cua-signed Mac, a private file in the cua home
-    elsewhere), never in `config.toml`.
+    (`--token-stdin`) or in `HCLOUD_TOKEN`; the `hcloud` CLI's active context
+    also works. Only a token that passes the checks is used. It is
+    [sealed to your devices](#hetzner-and-modal-tokens-sealed-to-your-devices),
+    or with `--no-sealed` saved in this device's credential store (the system
+    vault on a Cua-signed Mac, a private file in the cua home elsewhere),
+    never in `config.toml`.
   - **Container images only.** Hetzner Cloud servers have no `/dev/kvm`, so
     VM images (Windows, Omarchy) are refused with that reason.
   - **Primary IPv4 limit.** Every server takes one primary IPv4 address, and a
@@ -218,7 +338,9 @@ its disk.
     when Hetzner answers 429.
 - **Modal**:
   - One environment per connection (`--environment`) and a `~/.modal.toml`
-    profile (`--profile`).
+    profile (`--profile`), or a token
+    [sealed to your devices](#hetzner-and-modal-tokens-sealed-to-your-devices)
+    (`--token-stdin`, given as `<token id>:<token secret>`).
   - Sandboxes run under gVisor by default. `--runtime microvm` uses Modal's VM
     runtime. Neither has `/dev/kvm`, so only Linux images run.
   - A sandbox cannot be stopped and started, and lives at most 24 hours.

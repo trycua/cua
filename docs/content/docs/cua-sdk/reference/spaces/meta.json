@@ -4,6 +4,7 @@
     "resize",
     "lifetime",
     "space",
+    "sharing",
     "elastic",
     "build",
     "channel",

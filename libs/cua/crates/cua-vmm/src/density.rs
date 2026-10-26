@@ -339,7 +339,13 @@ pub fn estimate_mb(usage: &Usage, pending: &[Pending], req: &Request) -> u64 {
         .and_then(|f| like(&|v: &VmUse| v.shared_file.as_ref() == Some(f)))
         .or_else(|| like(&|v: &VmUse| v.memory_mb == req.memory_mb))
         .unwrap_or(req.memory_mb);
-    est.clamp(64, req.memory_mb + req.memory_mb / 10 + 64)
+    est.clamp(64, vm_ceiling_mb(req.memory_mb))
+}
+
+/// The most one VM of `memory_mb` guest RAM can hold: its RAM plus QEMU's
+/// own (~10% and 64 MiB).
+fn vm_ceiling_mb(memory_mb: u64) -> u64 {
+    memory_mb + memory_mb / 10 + 64
 }
 
 /// What pending VMs hold that `usage` does not show yet.
@@ -1142,6 +1148,74 @@ mod tests {
         let mut r = req("n", Some("/w2/mem.ram"));
         r.shared_file_mb = 4096;
         assert!(decide(&c, &u, &[], &r).is_err());
+    }
+
+    /// The bake in `libs/images/linux/tests/bake-world.sh`: a 4 GiB
+    /// forkable VM restored from its golden snapshot maps its own 4 GiB
+    /// `mem.ram` on an empty 7.8 GiB runner (cap 6.2 GiB). Its RAM file is
+    /// its guest RAM, so it needs about 4.5 GiB, not 8 (RAM file + guest RAM
+    /// again).
+    #[test]
+    fn a_vm_alone_on_its_ram_file_counts_its_guest_ram_once() {
+        let c = DensityConfig {
+            max_rss_fraction: 0.8,
+            vcpu_overcommit: 8.0,
+            min_available_mb: 1024,
+            enabled: true,
+        };
+        let u = Usage {
+            host: host(7_990, 7_400),
+            host_cpus: 2,
+            ..Default::default()
+        };
+        let r = Request {
+            name: "bake-world".into(),
+            vcpus: 2,
+            memory_mb: 4096,
+            shared_file: Some("/vms/bake-world/mem.ram".into()),
+            shared_file_mb: 4096,
+        };
+        let a = decide(&c, &u, &[], &r).expect("a 4 GiB VM fits an empty 6.2 GiB cap");
+        // The file (4096) plus QEMU's own: the ceiling of one 4 GiB VM.
+        assert_eq!(a.expected_mb + r.shared_file_mb, vm_ceiling_mb(4096));
+        assert_eq!(a.expected_mb, 4096 / 10 + 64);
+        // While it launches it reserves that ceiling, not 8 GiB.
+        let p = Pending {
+            name: r.name.clone(),
+            vcpus: 2,
+            expected_mb: a.expected_mb,
+            at: Instant::now(),
+            shared_file: r.shared_file.clone(),
+            shared_file_mb: r.shared_file_mb,
+        };
+        assert_eq!(pending_totals(&u, &[p]).mb, vm_ceiling_mb(4096));
+        // Anonymous RAM of the same size is estimated as before.
+        let anon = Request {
+            shared_file: None,
+            shared_file_mb: 0,
+            ..r.clone()
+        };
+        assert_eq!(decide(&c, &u, &[], &anon).unwrap().expected_mb, 4096);
+        // A 6 GiB VM on its own file still does not fit a 6.2 GiB cap with
+        // QEMU's share on top.
+        let big = Request {
+            memory_mb: 6144,
+            shared_file_mb: 6144,
+            ..r.clone()
+        };
+        let e = decide(&c, &u, &[], &big).unwrap_err().0;
+        assert!(e.contains("needs about 6.7 GiB"), "{e}");
+        // Once its file is counted (a running fork maps it), a sibling needs
+        // only what siblings use privately.
+        let u = Usage {
+            vms: vec![VmUse {
+                memory_mb: 4096,
+                ..vm("f0", 300, Some("/vms/bake-world/mem.ram"))
+            }],
+            shared: vec![("/vms/bake-world/mem.ram".into(), 2000)],
+            ..u
+        };
+        assert_eq!(decide(&c, &u, &[], &r).unwrap().expected_mb, 300);
     }
 
     #[test]

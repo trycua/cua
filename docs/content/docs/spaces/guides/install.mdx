@@ -53,7 +53,14 @@ app for each system, and every installer is attached to the
 At a console the installer shows a checklist first. Add `--cli-only`
 (`-CliOnly` on Windows) to install the CLI alone. Other flags are `--select`,
 `--only`, `--app-only`, `--mode host|client`, `--version`, `--no-onboarding`,
-`--dry-run` and `--yes` (`-Select`, `-CliOnly` and so on on Windows).
+`--no-host`, `--dry-run` and `--yes` (`-Select`, `-CliOnly` and so on on Windows).
+
+In a terminal the installer then signs you in. Over ssh, or on Linux without a
+display, it shows a code to approve in a browser on another device. Signing in
+adds this computer to your account, so it shows up in Cua Spaces on your other
+devices. It provides Spaces and keeps its screen private; a computer set up
+before keeps its settings. Add `--no-host` (`-NoHost`) to sign in without
+adding it.
 
 ## First run
 

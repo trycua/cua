@@ -675,6 +675,8 @@ fn mint(ctx: &Ctx, grant: &Grant) -> String {
         exp: now + cua_relay::assertion::MAX_ASSERTION_TTL_SECS,
         jti: os_random_hex(16),
         teams: Vec::new(),
+        space: None,
+        space_role: None,
     })
 }
 

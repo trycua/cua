@@ -456,3 +456,20 @@ async fn a_current_daemon_cuts_the_network_and_says_so() {
     .await
     .expect("timed out");
 }
+
+/// A daemon that predates renaming says so (nothing was renamed).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_old_daemon_says_it_cannot_rename() {
+    let (_old, cua) = old_daemon().await;
+    match cua
+        .spaces()
+        .rename("local:ruled".into(), "ruled-2".into())
+        .await
+    {
+        Err(CuaError::CapabilityMissing(m)) => {
+            assert!(m.contains("too old to rename"), "{m}");
+            assert!(m.contains("update cua"), "{m}");
+        }
+        other => panic!("expected CapabilityMissing, got {other:?}"),
+    }
+}

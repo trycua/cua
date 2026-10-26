@@ -5,6 +5,11 @@
 //! [`cua_spaces::host_spaces::CALLER_METADATA`]; a call without it is this
 //! machine's own (the owner).
 //!
+//! `cua.env.v1.HostThreadService` (the threads of the Spaces this machine
+//! provides, for the people it is shared with) arrives the same way and
+//! runs the tool as the forwarded caller
+//! ([`cua_spaces::host_spaces::HostSpacesServer::call_thread_tool`]).
+//!
 //! `cua.env.v1.HostJobsService` (cluster jobs, [`cua_spaces::host_jobs`])
 //! arrives the same way and is answered by the host's job runner
 //! ([`cua_spaces::host_spaces::HostSpacesServer::jobs_for`]).
@@ -16,7 +21,7 @@ use std::time::Duration;
 use cua_proto::env::v1::{
     self as pb, host_jobs_service_server::HostJobsService,
     host_snapshots_service_server::HostSnapshotsService,
-    host_spaces_service_server::HostSpacesService,
+    host_spaces_service_server::HostSpacesService, host_thread_service_server::HostThreadService,
 };
 use cua_spaces::host_spaces::{HostCaller, to_status};
 
@@ -25,8 +30,16 @@ use crate::server::Shared;
 /// The service, over the daemon's shared state.
 pub(crate) struct HostSvc(pub(crate) Arc<Shared>);
 
+/// The forwarded caller of a host call. A Space thread grant reaches only
+/// `HostThreadService` ([`HostThreadSvc`] reads its caller itself).
 fn caller<T>(req: &tonic::Request<T>) -> Result<HostCaller, tonic::Status> {
-    HostCaller::from_grpc_metadata(req.metadata()).map_err(|e| to_status(&e))
+    let who = HostCaller::from_grpc_metadata(req.metadata()).map_err(|e| to_status(&e))?;
+    if who.space.is_some() {
+        return Err(tonic::Status::permission_denied(
+            "a Space shared with you reaches only its thread on this machine",
+        ));
+    }
+    Ok(who)
 }
 
 #[tonic::async_trait]
@@ -36,12 +49,16 @@ impl HostSpacesService for HostSvc {
         req: tonic::Request<pb::GetHostSpacesRequest>,
     ) -> Result<tonic::Response<pb::GetHostSpacesResponse>, tonic::Status> {
         let who = caller(&req)?;
-        self.0
+        let mut answer = self
+            .0
             .host_spaces
             .get(&who)
             .await
-            .map(tonic::Response::new)
-            .map_err(|e| to_status(&e))
+            .map_err(|e| to_status(&e))?;
+        if req.get_ref().disk {
+            self.0.host_spaces.with_disks(&mut answer.spaces).await;
+        }
+        Ok(tonic::Response::new(answer))
     }
 
     async fn create_host_space(
@@ -168,6 +185,36 @@ impl HostSpacesService for HostSvc {
             .await
             .map(tonic::Response::new)
             .map_err(|e| to_status(&e))
+    }
+}
+
+/// `HostThreadService`, over the same shared state.
+pub(crate) struct HostThreadSvc(pub(crate) Arc<Shared>);
+
+#[tonic::async_trait]
+impl HostThreadService for HostThreadSvc {
+    async fn call_thread_tool(
+        &self,
+        req: tonic::Request<pb::CallThreadToolRequest>,
+    ) -> Result<tonic::Response<pb::CallThreadToolResponse>, tonic::Status> {
+        let who = HostCaller::from_grpc_metadata(req.metadata()).map_err(|e| to_status(&e))?;
+        let r = req.into_inner();
+        let out = match self
+            .0
+            .host_spaces
+            .call_thread_tool(&who, &r.space, &r.name, &r.arguments_json)
+            .await
+        {
+            Ok(out) => out,
+            // A refusal is a tool result, as the MCP server answers it.
+            Err(e) => cua_spaces::mcp::ToolOutcome::error(&e),
+        };
+        Ok(tonic::Response::new(pb::CallThreadToolResponse {
+            content_json: serde_json::Value::Array(out.content).to_string(),
+            structured_json: out.structured.map(|s| s.to_string()).unwrap_or_default(),
+            is_error: out.is_error,
+            meta_json: out.meta.map(|m| m.to_string()).unwrap_or_default(),
+        }))
     }
 }
 

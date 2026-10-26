@@ -68,9 +68,9 @@ export function createArgs(native: Native, c: BridgeArgs, defaultOn: string): Ap
   const image = c.image;
   if (typeof image !== "string" || image === "") throw Failure.badArgs("config.image: string");
   const kind = kindOf(native, typeof c.kind === "string" ? c.kind : "");
-  if (!kind) throw Failure.badArgs("config.kind: container | vm");
+  if (!kind) throw Failure.badArgs("config.kind: container | vm | microvm");
   const runtime = runtimeOf(native, typeof c.runtime === "string" ? c.runtime : "auto");
-  if (!runtime) throw Failure.badArgs("config.runtime: auto | gvisor | runc | qemu | lume | an external runtime's name");
+  if (!runtime) throw Failure.badArgs("config.runtime: auto | gvisor | runc | qemu | lume | firecracker | vz | containerization | an external runtime's name");
   const count = (k: string) => (typeof c[k] === "number" && Number.isFinite(c[k]) && (c[k] as number) >= 0 ? Math.floor(c[k] as number) : undefined);
   const text = (k: string) => (typeof c[k] === "string" && c[k] !== "" ? (c[k] as string) : undefined);
   return {
@@ -103,6 +103,12 @@ export function progress(p: SpaceCreateProgress, pendingId: string) {
 export function spacesMethods(ctx: BridgeContext): Handlers {
   const { model, events, ui, system, platform } = ctx;
   const native = model.native;
+
+  const ids = (args: BridgeArgs): string[] => {
+    const v = args.ids;
+    if (!Array.isArray(v) || v.some((x) => typeof x !== "string")) throw Failure.badArgs("ids: string[]");
+    return v as string[];
+  };
 
   const space = (args: BridgeArgs): AppSpace => {
     const id = string(args, "id");
@@ -173,6 +179,17 @@ export function spacesMethods(ctx: BridgeContext): Handlers {
       const s = space(args);
       model.delete(s, args.removeOnly === true);
       return spacesState(model);
+    },
+    // `{ids}`: each row shows Deleting until its own result; `{results}` once all are done.
+    "spaces.deleteMany": async (args) => ({ results: await model.bulk(ids(args), false) }),
+    "spaces.leave": async (args) => ({ results: await model.bulk(ids(args), true) }),
+    // `{spaceId, name}` -> `{}`: the new name comes with the next `spaces.list`.
+    "spaces.rename": async (args) => {
+      const id = string(args, "spaceId");
+      const s = model.spaces.find((x) => x.id === id);
+      if (!s) throw Failure.notFound(`no Space ${id}`);
+      await model.rename(s, string(args, "name"));
+      return {};
     },
     "spaces.cancelCreate": (args) => {
       const id = string(args, "pendingId");

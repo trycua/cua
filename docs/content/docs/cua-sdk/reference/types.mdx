@@ -48,7 +48,7 @@ Renamed members: in Kotlin, objects implement `AutoCloseable`, whose `close()` f
 
 ## All items
 
-311 items. Methods are listed on their object.
+320 items. Methods are listed on their object.
 
 The 10 items of Batched forks are listed on [its page](/cua-sdk/reference/sandbox/fork-batch#all-items).
 
@@ -94,6 +94,7 @@ The 11 items of Processor, memory and disk are listed on [its page](/cua-sdk/ref
 | [`BakeOptions`](/cua-sdk/reference/sandbox/bake#bakeoptions-record) | record | Options for `Sandboxes.bake`. |
 | [`BakeSummary`](/cua-sdk/reference/sandbox/bake#bakesummary-record) | record | What `Sandboxes.bake` did and how long each step took (seconds). |
 | [`BuildFile`](/cua-sdk/reference/image#buildfile-record) | record | A local file copied into a built image. |
+| [`BulkResult`](/cua-sdk/reference/spaces/sharing#bulkresult-record) | record | The outcome for one Space of `Spaces.delete_many` or `Spaces.leave_many`. |
 | [`BundledSkill`](/cua-sdk/reference/agent-setup#bundledskill-record) | record | A skill bundled with the SDK. |
 | [`canonical_image`](/cua-sdk/reference/image#canonical_image) | function | The canonical image for `os` (`linux`, `windows`, `macos`) and `version` (`None` = default:… |
 | [`canonical_image_tier`](/cua-sdk/reference/image#canonical_image_tier) | function | The canonical image for `os`, `version` and `tier`: `slim` (the minimum that passes `cua-spacesd doctor --strict`; CI and benchmarks use it),… |
@@ -101,10 +102,14 @@ The 11 items of Processor, memory and disk are listed on [its page](/cua-sdk/ref
 | [`CheckpointSummary`](/cua-sdk/reference/sandbox/checkpoints#checkpointsummary-record) | record | A named checkpoint of a sandbox, and the machine that holds it. |
 | [`CloudAuditEntry`](/cua-sdk/reference/spaces/persistent-agents#cloudauditentry-record) | record | One line of the cloud audit log (`cloud_audit`). |
 | [`CloudCheck`](/cua-sdk/reference/spaces/persistent-agents#cloudcheck-record) | record | One check `cloud_test` ran. |
-| [`CloudConnected`](/cua-sdk/reference/spaces/persistent-agents#cloudconnected-record) | record | `cloud_connect`: the connected cloud and the checks it passed. |
+| [`CloudConnected`](/cua-sdk/reference/spaces/persistent-agents#cloudconnected-record) | record | `cloud_connect`: the cloud (its `status` is the outcome), the checks it ran, the next step and the command that verifies it. |
+| [`CloudConnectOptions`](/cua-sdk/reference/spaces/persistent-agents#cloudconnectoptions-record) | record | How `cloud_connect` links a cloud, beyond where. |
+| [`CloudCostReport`](/cua-sdk/reference/spaces/persistent-agents#cloudcostreport-record) | record | `cloud_cost`: an estimate from list price times runtime. |
+| [`CloudCostRow`](/cua-sdk/reference/spaces/persistent-agents#cloudcostrow-record) | record | One row of `cloud_cost`. |
 | [`CloudCredentials`](/cua-sdk/reference/spaces/persistent-agents#cloudcredentials-record) | record | Where a cloud's credentials were found on this machine (never a secret). |
 | [`CloudDisconnected`](/cua-sdk/reference/spaces/persistent-agents#clouddisconnected-record) | record | `cloud_disconnect`. |
 | [`CloudKind`](/cua-sdk/reference/spaces/persistent-agents#cloudkind-record) | record | What a cloud can run for one image family, and the estimated cost. |
+| [`CloudNext`](/cua-sdk/reference/spaces/persistent-agents#cloudnext-record) | record | The next step of a `cloud_connect`: a command for the agent, or a page for a person (and what to paste there), and why. |
 | [`CloudProvider`](/cua-sdk/reference/spaces/persistent-agents#cloudprovider-record) | record | One cloud as `cloud_status` lists it. |
 | [`CloudResource`](/cua-sdk/reference/spaces/persistent-agents#cloudresource-record) | record | One thing Cua created in a cloud. |
 | [`CloudStatus`](/cua-sdk/reference/spaces/persistent-agents#cloudstatus-record) | record | `cloud_status`. |
@@ -295,8 +300,8 @@ The 11 items of Processor, memory and disk are listed on [its page](/cua-sdk/ref
 | [`SpaceDisplay`](/cua-sdk/reference/spaces/space#spacedisplay-record) | record | One of a Space's displays (`Space.displays`). |
 | [`SpaceHotspotStatus`](/cua-sdk/reference/spaces/space#spacehotspotstatus-record) | record | Hotspot state. |
 | [`SpaceInfo`](/cua-sdk/reference/spaces#spaceinfo-record) | record | A registered Space. |
-| [`SpaceList`](/cua-sdk/reference/spaces#spacelist-record) | record | The Spaces known now (`Spaces.list_known`) and how far the read got. |
-| [`SpacePowerReport`](/cua-sdk/reference/spaces#spacepowerreport-record) | record | What `Spaces.stop` or `Spaces.start` did. |
+| [`SpaceList`](/cua-sdk/reference/spaces/list-watch#spacelist-record) | record | The Spaces known now (`Spaces.list_known`) and how far the read got. |
+| [`SpacePowerReport`](/cua-sdk/reference/spaces/resize#spacepowerreport-record) | record | What `Spaces.stop` or `Spaces.start` did. |
 | [`SpacePresence`](/cua-sdk/reference/spaces/streams#spacepresence) | object | A joined presence session. |
 | [`SpaceRelayRegistration`](/cua-sdk/reference/spaces/space#spacerelayregistration-record) | record | A Space published on the relay (`Spaces.relay_register`). |
 | [`SpaceResizeReport`](/cua-sdk/reference/spaces/resize#spaceresizereport-record) | record | What `Spaces.resize` did: the shape the Space has now. |
@@ -317,6 +322,7 @@ The 11 items of Processor, memory and disk are listed on [its page](/cua-sdk/ref
 | [`SpaceSentFile`](/cua-sdk/reference/spaces/space#spacesentfile-record) | record | One file placed by `Space.send_file`. |
 | [`SpaceShareEntry`](/cua-sdk/reference/spaces/space#spaceshareentry-record) | record | One account a Space is shared with. |
 | [`SpaceShares`](/cua-sdk/reference/spaces/space#spaceshares-record) | record | Who a Space is shared with. |
+| [`SpaceSharing`](/cua-sdk/reference/spaces/sharing#spacesharing-record) | record | Who a Space belongs to and who else has it, as this account sees it (`SpaceInfo.sharing`). |
 | [`SpacesHost`](/cua-sdk/reference/spaces/host#spaceshost-record) | record | One of your machines that provides Spaces (`Spaces.hosts`). |
 | [`SpacesHostLimit`](/cua-sdk/reference/spaces/host#spaceshostlimit-record) | record | One limit of a host that provides Spaces and how much of it is used. |
 | [`SpacesHostLoad`](/cua-sdk/reference/spaces/host#spaceshostload-record) | record | How busy one of your machines is (its job runner's view). |
@@ -327,6 +333,7 @@ The 11 items of Processor, memory and disk are listed on [its page](/cua-sdk/ref
 | [`SpaceStreamSession`](/cua-sdk/reference/spaces/streams#spacestreamsession) | object | A live Space media session (see `Space.stream_session`). |
 | [`SpaceStreamStats`](/cua-sdk/reference/spaces/streams#spacestreamstats-record) | record | Delivery counters of a `SpaceStreamSession`. |
 | [`SpaceStreamTicket`](/cua-sdk/reference/spaces/streams#spacestreamticket-record) | record | A minted media session. |
+| [`SpaceTeamShare`](/cua-sdk/reference/spaces/sharing#spaceteamshare-record) | record | A team a Space is shared with (`SpaceSharing.teams`). |
 | [`SpaceThumbnail`](/cua-sdk/reference/spaces/space#spacethumbnail-record) | record | A Space's latest thumbnail, from the cache every client on this machine shares (`crate.native.spaces.Space.thumbnail`). |
 | [`SpaceToolInfo`](/cua-sdk/reference/spaces/space#spacetoolinfo-record) | record | A tool of a Space's MCP service. |
 | [`SpaceToolResult`](/cua-sdk/reference/spaces/space#spacetoolresult-record) | record | The result of a tool call (MCP content as JSON). |
@@ -363,6 +370,8 @@ The 11 items of Processor, memory and disk are listed on [its page](/cua-sdk/ref
 | [`TeleportItem`](/cua-sdk/reference/spaces/space#teleportitem-record) | record | One item a teleport would move. |
 | [`TeleportManifest`](/cua-sdk/reference/spaces/space#teleportmanifest-record) | record | Exactly what would leave this machine. |
 | [`TeleportReceipt`](/cua-sdk/reference/spaces/space#teleportreceipt-record) | record | What a teleport moved, or how to retry a pending Keyvault approval. |
+| [`thread_view_of`](/cua-sdk/reference/spaces/persistent-agents#thread_view_of) | function | The `view` of one thread entry or task, given as JSON (an element of `thread_read`'s `entries` or `tasks`, or `thread_inbox`'s `tasks`): none when it… |
+| [`ThreadView`](/cua-sdk/reference/spaces/persistent-agents#threadview-record) | record | What a person was looking at in a Space as they posted to its thread: the Space's desktop, or one of its windows. |
 | [`TransferResult`](/cua-sdk/reference/spacesd/files#transferresult-record) | record | Result of an upload or download. |
 | [`UploadOptions`](/cua-sdk/reference/spacesd/files#uploadoptions-record) | record | Upload options. |
 | [`VideoFrame`](/cua-sdk/reference/spacesd/computer#videoframe-record) | record | One encoded video access unit. |

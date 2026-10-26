@@ -107,7 +107,11 @@ pub const HARNESSES: &[Harness] = &[
         installs: &["codex-acp"],
         acp: &["codex-acp"],
         cli: Some("codex"),
-        keys: &["OPENAI_API_KEY", "CODEX_API_KEY"],
+        // CODEX_AUTH_JSON: the ChatGPT sign-in Connect copied from the
+        // person's Mac (their `~/.codex/auth.json`, OpenAI's documented
+        // headless route). A run writes it to the guest's
+        // `~/.codex/auth.json` when the guest has none ([`crate::runs`]).
+        keys: &["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_AUTH_JSON"],
         logins: Some(&["[ -s \"$HOME/.codex/auth.json\" ]"]),
         auth_method: None,
         wires: &[Wire::OpenaiResponses],
@@ -305,13 +309,13 @@ pub enum Auth {
 /// What the guest probe found: `env:<NAME>`, `login`, or `none`.
 pub const PROBE_NONE: &str = "none";
 
-/// Where the Cua Spaces app takes a key named `env` (Settings, Agents):
+/// Where the Cua Spaces app takes a key named `env` (Settings, Connectors):
 /// Anthropic and OpenAI have their own rows, any other key goes under Other.
 pub fn settings_hint(env: &str) -> String {
     match env {
-        "ANTHROPIC_API_KEY" => "Add an Anthropic API key in Cua Spaces → Settings → Agents".into(),
-        "OPENAI_API_KEY" => "Add an OpenAI API key in Cua Spaces → Settings → Agents".into(),
-        other => format!("Add {other} under Other in Cua Spaces → Settings → Agents"),
+        "ANTHROPIC_API_KEY" => "Add an Anthropic API key in Cua Spaces → Settings → Connectors".into(),
+        "OPENAI_API_KEY" => "Add an OpenAI API key in Cua Spaces → Settings → Connectors".into(),
+        other => format!("Add {other} under Other in Cua Spaces → Settings → Connectors"),
     }
 }
 

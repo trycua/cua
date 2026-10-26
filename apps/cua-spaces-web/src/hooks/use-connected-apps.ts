@@ -51,20 +51,25 @@ async function readRows(data: DataAdapter): Promise<AgentSetupRow[] | null> {
   }
 }
 
-/** Cua in `agent`'s settings: on adds it (with Background computer use, best effort), off takes out only what Cua added. */
+/**
+ * Cua in `agent`'s settings, through the same Connect and Disconnect as
+ * onboarding, the CLI and MCP (`agents.connect` / `agents.disconnect`, one
+ * honest status): on adds Cua and copies the app's sign-in to Keyvault (with
+ * Background computer use, best effort); off takes out only what Cua added,
+ * the copied sign-in too.
+ */
 async function setApp(data: DataAdapter, row: AgentSetupRow, on: boolean): Promise<AgentSetupRow[]> {
   if (on) {
-    const rows = await data.call("agents.configure", { agents: [row.agent] });
+    await data.call("agents.connect", { agents: [row.agent], signIn: true });
     try {
       // One switch, one consent: the same apps may also use the computer in the background.
       await data.call("agents.setupDriver", { agents: [row.agent] });
     } catch {
       // Cua Driver is its own install; without it the app still has Cua.
     }
-    return rows;
+  } else {
+    await data.call("agents.disconnect", { agents: [row.agent], signIn: true });
   }
-  // The host's own Settings row: removes what Cua added, nothing else.
-  await data.call("settings.choose", { row: `agent:${row.agent}`, option: "press" });
   return (await readRows(data)) ?? [];
 }
 
@@ -82,7 +87,7 @@ export interface ConnectedApps {
   reload(): Promise<void>;
 }
 
-/** Settings, Connected apps. */
+/** Settings, Connectors. */
 export function useConnectedApps(): ConnectedApps {
   const { data } = useBridge();
   const app = useConnectedAppsState();
@@ -162,7 +167,9 @@ export function useAgentSync(): void {
         const plan = planSync(rows, connectedAppsState());
         setConnectedAppsState(plan.state);
         if (plan.setUp.length === 0) return;
-        const after = await data.call("agents.configure", { agents: plan.setUp });
+        // Cua's tools only: copying a sign-in waits for the person's own Connect.
+        await data.call("agents.connect", { agents: plan.setUp, signIn: false });
+        const after = (await readRows(data)) ?? [];
         for (const id of plan.setUp) {
           const row = after.find((r) => r.agent === id);
           if (!row?.configured) continue;
@@ -174,7 +181,7 @@ export function useAgentSync(): void {
               label: "Undo",
               onClick: () => {
                 setConnectedAppsState(withSwitch(connectedAppsState(), id, false));
-                void data.call("settings.choose", { row: `agent:${id}`, option: "press" }).catch(toastError(`Couldn't undo ${row.name}`));
+                void data.call("agents.disconnect", { agents: [id], signIn: false }).catch(toastError(`Couldn't undo ${row.name}`));
               },
             },
           });

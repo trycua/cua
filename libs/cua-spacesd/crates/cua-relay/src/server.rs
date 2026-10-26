@@ -1026,6 +1026,21 @@ fn refuse(
     code: GrpcCode,
     message: impl Into<String>,
 ) -> Response {
+    refuse_as(headers, status, code, message, None)
+}
+
+/// The `ErrorInfo.metadata["kind"]` of a refused thread grant
+/// ([`thread_grant`]): clients tell it from any other refusal by it.
+pub const THREAD_GRANT_REFUSED: &str = "thread_grant_refused";
+
+/// [`refuse`], typed with `kind` (`ErrorInfo.metadata["kind"]`) when given.
+fn refuse_as(
+    headers: &HeaderMap,
+    status: StatusCode,
+    code: GrpcCode,
+    message: impl Into<String>,
+    kind: Option<&str>,
+) -> Response {
     let message = message.into();
     let content_type = headers
         .get(header::CONTENT_TYPE)
@@ -1044,7 +1059,8 @@ fn refuse(
     let encoded = percent_encode_grpc(&message);
     let details = {
         use base64::Engine as _;
-        base64::engine::general_purpose::STANDARD_NO_PAD.encode(status_details(code, &message))
+        base64::engine::general_purpose::STANDARD_NO_PAD
+            .encode(status_details(code, &message, kind))
     };
     Response::builder()
         .status(StatusCode::OK)
@@ -1078,7 +1094,7 @@ fn put_bytes(out: &mut Vec<u8>, field: u64, bytes: &[u8]) {
 /// `google.rpc.Status{code, message, details: [Any(cua.env.v1.ErrorInfo)]}`,
 /// encoded by hand so the relay needs no protobuf toolchain. `ErrorInfo`
 /// reasons follow `cua.env.v1.ErrorReason`.
-fn status_details(code: GrpcCode, message: &str) -> Vec<u8> {
+fn status_details(code: GrpcCode, message: &str, kind: Option<&str>) -> Vec<u8> {
     let reason: u64 = match code {
         GrpcCode::Unauthenticated => 1,  // ERROR_REASON_UNAUTHENTICATED
         GrpcCode::PermissionDenied => 3, // ERROR_REASON_PERMISSION_DENIED
@@ -1092,6 +1108,13 @@ fn status_details(code: GrpcCode, message: &str) -> Vec<u8> {
         put_varint(&mut info, reason);
     }
     put_bytes(&mut info, 2, message.as_bytes());
+    if let Some(kind) = kind {
+        // `map<string, string> metadata = 4`: one {key, value} entry.
+        let mut entry = Vec::new();
+        put_bytes(&mut entry, 1, b"kind");
+        put_bytes(&mut entry, 2, kind.as_bytes());
+        put_bytes(&mut info, 4, &entry);
+    }
     let mut any = Vec::new();
     put_bytes(&mut any, 1, b"type.googleapis.com/cua.env.v1.ErrorInfo");
     put_bytes(&mut any, 2, &info);
@@ -1768,14 +1791,33 @@ async fn authorize_account_client(
                     _ => {}
                 }
             }
-            let Some((role, teams)) = relay.machine_role(&record, who) else {
-                shadow(false);
-                return Err(refuse(
-                    headers,
-                    StatusCode::FORBIDDEN,
-                    GrpcCode::PermissionDenied,
-                    "this computer is not shared with your account",
-                ));
+            // Not shared with them: a person a Space this computer provides
+            // is shared with reaches that Space's thread here, and nothing
+            // else ([`thread_grant`]).
+            let (role, teams, thread_space) = match relay.machine_role(&record, who) {
+                Some((role, teams)) => (role, teams, None),
+                None => match thread_grant(relay, id, forwarded, headers, who) {
+                    ThreadGrant::NotAsked => {
+                        shadow(false);
+                        return Err(refuse(
+                            headers,
+                            StatusCode::FORBIDDEN,
+                            GrpcCode::PermissionDenied,
+                            "this computer is not shared with your account",
+                        ));
+                    }
+                    ThreadGrant::Refused(message) => {
+                        shadow(false);
+                        return Err(refuse_as(
+                            headers,
+                            StatusCode::FORBIDDEN,
+                            GrpcCode::PermissionDenied,
+                            message,
+                            Some(THREAD_GRANT_REFUSED),
+                        ));
+                    }
+                    ThreadGrant::Granted { space, role, teams } => (role, teams, Some(space)),
+                },
             };
             match device_gate {
                 Ok(g) => {
@@ -1806,7 +1848,11 @@ async fn authorize_account_client(
                         shadow(false);
                     }
                     crate::device_api::record_access(relay, &g, who, &record, role);
-                    relay.grants.record(id, who, role, authorized_at);
+                    // A thread grant mints nothing on the machine that
+                    // outlives it (its calls are limited there).
+                    if thread_space.is_none() {
+                        relay.grants.record(id, who, role, authorized_at);
+                    }
                     gate = Some(g);
                 }
                 Err(message) => {
@@ -1827,12 +1873,21 @@ async fn authorize_account_client(
                 email: who.email.clone(),
                 name: who.name.clone(),
                 mid: id.to_owned(),
-                role: role.as_str().to_owned(),
+                // A thread grant's role is one no machine that predates it
+                // accepts (it refuses the call); its share role rides in
+                // `space_role`.
+                role: if thread_space.is_some() {
+                    assertion::THREAD_ROLE.to_owned()
+                } else {
+                    role.as_str().to_owned()
+                },
                 scope: "env".into(),
                 iat: now,
                 exp: now + assertion::MAX_ASSERTION_TTL_SECS,
                 jti: uuid::Uuid::new_v4().simple().to_string(),
                 teams: teams.clone(),
+                space_role: thread_space.as_ref().map(|_| role.as_str().to_owned()),
+                space: thread_space,
             };
             Some(relay.key.sign(&claims))
         }
@@ -1888,6 +1943,93 @@ async fn authorize_account_client(
         ticket_user,
         at: authorized_at,
     })
+}
+
+/// Asks a machine for the thread of a Space it provides (its relay
+/// machine id; `relay:` optional), on behalf of a person that Space is
+/// shared with but the machine is not.
+pub const THREAD_SPACE_HEADER: &str = "x-cua-thread-space";
+
+/// What a thread grant reaches on the machine: the thread call and the
+/// capability probe a client makes first.
+pub const THREAD_GRANT_PATHS: &[&str] = &[
+    "/cua.env.v1.HostThreadService/CallThreadTool",
+    "/cua.env.v1.SystemService/GetCapabilities",
+    "/cua.env.v1.SystemService/Health",
+];
+
+/// [`thread_grant`]'s answer.
+enum ThreadGrant {
+    /// No [`THREAD_SPACE_HEADER`]: not a thread call.
+    NotAsked,
+    /// Asked, and refused, saying why.
+    Refused(String),
+    /// The person's role on the Space (`Viewer` or `Shared`; owning the
+    /// Space counts as `Shared`), and the teams it came through.
+    Granted {
+        space: String,
+        role: crate::directory::Role,
+        teams: Vec<String>,
+    },
+}
+
+/// A person machine `host` is not shared with may reach the thread of a
+/// Space it provides when that Space is shared with them: only
+/// [`THREAD_GRANT_PATHS`], only that Space (the machine and its daemon
+/// check both again), with the Space's role. Read from the directory on
+/// every call, so revoking the Space's share ends it at once.
+fn thread_grant(
+    relay: &Relay,
+    host: &str,
+    forwarded: &str,
+    headers: &HeaderMap,
+    who: &crate::oidc::Identity,
+) -> ThreadGrant {
+    let Some(asked) = headers
+        .get(THREAD_SPACE_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    else {
+        return ThreadGrant::NotAsked;
+    };
+    let space = asked.strip_prefix("relay:").unwrap_or(asked);
+    let path = forwarded.split('?').next().unwrap_or(forwarded);
+    if !THREAD_GRANT_PATHS.contains(&path) {
+        return ThreadGrant::Refused(format!(
+            "this computer is not shared with your account; relay:{space} being shared with \
+             you reaches only its thread here, not {path}"
+        ));
+    }
+    let not_shared = || {
+        ThreadGrant::Refused(format!(
+            "relay:{space} is not shared with your account, so its thread is not either"
+        ))
+    };
+    let Some(record) = relay.directory.get(space) else {
+        return not_shared();
+    };
+    if record.host.as_deref() != Some(host) {
+        return ThreadGrant::Refused(format!(
+            "relay:{space} is not a Space this computer provides"
+        ));
+    }
+    if !record.sharing {
+        return ThreadGrant::Refused(format!("relay:{space} stopped sharing"));
+    }
+    use crate::directory::Role;
+    match relay.machine_role(&record, who) {
+        Some((role, teams)) => ThreadGrant::Granted {
+            space: space.to_owned(),
+            role: if role == Role::Viewer {
+                Role::Viewer
+            } else {
+                Role::Shared
+            },
+            teams,
+        },
+        None => not_shared(),
+    }
 }
 
 async fn proxy(state: State<Relay>, request: Request) -> Response {

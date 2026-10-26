@@ -70,6 +70,20 @@ service SpaceService {
   // Deletes a Space's sandbox and forgets it. A Space added by address
   // (`direct:`, `relay:`) is only forgotten: cua did not create it.
   rpc DeleteSpace(DeleteSpaceRequest) returns (DeleteSpaceResponse);
+  // Deletes several Spaces (at most 3 at a time), turning running ones off
+  // first. One result per Space, in order; one failure never stops the
+  // rest.
+  rpc DeleteSpaces(DeleteSpacesRequest) returns (DeleteSpacesResponse);
+  // Takes this account off Spaces shared with it (through the relay): a
+  // direct share ends, a team's Space leaves this account's list. One
+  // result per Space, in order.
+  rpc LeaveSpaces(LeaveSpacesRequest) returns (LeaveSpacesResponse);
+  // Gives a Space a new name; its id stays the same. Only its owner can:
+  // a Space shared with you is refused. A Space that is a machine on the
+  // relay (shared, or one of your computers provides it) is renamed there
+  // too, so your other devices and the people it is shared with see the
+  // new name.
+  rpc RenameSpace(RenameSpaceRequest) returns (RenameSpaceResponse);
   // Starts Space `name`, a fork of local sandbox or checkpoint `source`
   // (with its memory when it is running; a QEMU checkpoint's forks share
   // its RAM copy-on-write), once its cua-spacesd answers. The one fork path:
@@ -252,6 +266,48 @@ message Space {
   repeated cua.env.v1.VolumeMount volumes = 30;
   // JSON image configuration of a Space made from a build.
   string image_config = 28;
+  // A Space that is a machine on the relay: who owns it and who else has
+  // it, as this account sees it. Unset for other Spaces. Filled in when
+  // listed, not stored.
+  SpaceSharing sharing = 32;
+  // The name it was given with `RenameSpace`; empty when it keeps the one
+  // it was created with (`name`). Apps show this one when it is set. A
+  // Space that is a machine on the relay is renamed there, so its `name`
+  // changes instead.
+  string display_name = 33;
+}
+
+// Who a Space belongs to and who else has it (`Space.sharing`).
+message SpaceSharing {
+  // The owner's account id.
+  string owner_id = 1;
+  // The owner's email, when known.
+  string owner_email = 2;
+  // The owner's display name, when known.
+  string owner_name = 3;
+  // What this account may do: "owner", "editor" or "viewer".
+  string role = 4;
+  // The team this account reaches it through (its key), when it is a
+  // team's and not shared with this account directly.
+  string team = 5;
+  // That team's display name (its key when the name is not known).
+  string team_name = 6;
+  // Owner view: accounts (emails or ids) that may use it.
+  repeated string editors = 7;
+  // Owner view: accounts that may only watch.
+  repeated string viewers = 8;
+  // Owner view: the teams it is a machine of.
+  repeated SpaceTeamShare teams = 9;
+}
+
+// A team a Space is shared with.
+message SpaceTeamShare {
+  // The team's key (org id).
+  string key = 1;
+  // Its display name.
+  string name = 2;
+  // "editor" or "viewer".
+  string role = 3;
 }
 
 // Request for `SpaceService.AddSpace`.
@@ -576,6 +632,57 @@ message DeleteSpaceRequest {
 message DeleteSpaceResponse {
   // What happened, for humans.
   string message = 1;
+}
+
+// Request for `SpaceService.DeleteSpaces`.
+message DeleteSpacesRequest {
+  // Space ids or names.
+  repeated string spaces = 1;
+}
+
+// The outcome for one Space of `DeleteSpaces` or `LeaveSpaces`.
+message SpaceBulkResult {
+  // The Space as asked.
+  string space = 1;
+  // It went through.
+  bool ok = 2;
+  // Why not, in plain words; empty when ok.
+  string error = 3;
+  // What happened, for humans.
+  string message = 4;
+}
+
+// Response for `SpaceService.DeleteSpaces`.
+message DeleteSpacesResponse {
+  // One per Space asked, in order.
+  repeated SpaceBulkResult results = 1;
+}
+
+// Request for `SpaceService.LeaveSpaces`.
+message LeaveSpacesRequest {
+  // Space ids or names.
+  repeated string spaces = 1;
+}
+
+// Response for `SpaceService.LeaveSpaces`.
+message LeaveSpacesResponse {
+  // One per Space asked, in order.
+  repeated SpaceBulkResult results = 1;
+}
+
+// Request for `SpaceService.RenameSpace`.
+message RenameSpaceRequest {
+  // Space id or name.
+  string space = 1;
+  // The new name: lowercase letters, digits and dashes, starting and
+  // ending with a letter or digit, at most 63.
+  string name = 2;
+}
+
+// Response for `SpaceService.RenameSpace`.
+message RenameSpaceResponse {
+  // The Space as it is listed now.
+  Space space = 1;
 }
 
 // Request for `SpaceService.ListHosts`.

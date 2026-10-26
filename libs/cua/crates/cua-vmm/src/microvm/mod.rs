@@ -1109,18 +1109,9 @@ impl MicroVmRuntime {
         for f in ["api.sock", "v.sock", "fc.pid"] {
             let _ = std::fs::remove_file(dir.join(f));
         }
-        let fc = assets::firecracker_bin().ok_or_else(|| {
-            VmmError::missing(
-                "firecracker",
-                "run `cua runtime setup firecracker` (installs the pinned release into ~/.cua/bin)",
-            )
-        })?;
-        let pasta = host::which("pasta").ok_or_else(|| {
-            VmmError::missing(
-                "pasta",
-                "install passt (Ubuntu: sudo apt-get install passt)",
-            )
-        })?;
+        // Firecracker installs on first use; passt is the host's to install.
+        let pasta = assets::pasta_bin().ok_or_else(assets::pasta_missing)?;
+        let fc = assets::ensure_firecracker().await?;
         let link = dir.join(st.base_format.link());
         let _ = std::fs::remove_file(&link);
         std::os::unix::fs::symlink(self.base_dir(&st.base).join(st.base_format.file()), &link)?;
@@ -1573,6 +1564,12 @@ impl MicroVmRuntime {
         golden: Option<String>,
         timeout: Duration,
     ) -> Result<()> {
+        // What the host must have comes first, before anything downloads:
+        // a host without passt is told what to install, not a raw error.
+        if self.cfg.vmm == Vmm::Firecracker {
+            assets::pasta_bin().ok_or_else(assets::pasta_missing)?;
+            assets::ensure_firecracker().await?;
+        }
         let kernel = assets::ensure_kernel(&self.cfg.root).await?;
         crate::progress::report(crate::progress::Progress::phase(
             crate::progress::Phase::Booting,

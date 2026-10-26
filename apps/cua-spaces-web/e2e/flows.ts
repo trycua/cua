@@ -46,6 +46,7 @@ export const FLOW_PLAN: Record<string, FlowPlan> = {
   "create-space": { status: "run", screen: "new-space" },
   "create-resources": { status: "run", screen: "new-space" },
   "create-gpu": { status: "run", screen: "new-space" },
+  "create-microvm": { status: "run", screen: "new-space" },
   "create-cancel": { status: "run", screen: "spaces" },
   "teleport-review": { status: "run", screen: "teleport" },
   "teleport-sign-ins": { status: "run", screen: "teleport" },
@@ -87,8 +88,22 @@ export const FLOW_PLAN: Record<string, FlowPlan> = {
     status: "skip",
     reason: "The page draws firstRun.view as is; src/__tests__/first-run-parity.test.ts replays this flow on the wasm core and src/__tests__/first-run.test.tsx drives the screen",
   },
-  checklist: {
+  // The Spaces page (CUA-2204): bridge/__tests__/spaces-page.test.ts replays these flows through
+  // bridge/spaces-page.ts on the wasm core; page tests drive the menus and bulk actions.
+  "spaces-menu": {
     status: "skip",
-    reason: "The host app keeps the checklist and reads what it shows (checklist.observeFrom); the page only draws checklist.view of the host's copy (bridge/__tests__/checklist.test.ts)",
+    reason: "The page draws spaces.menu as is for each Space (components/spaces/space-menu.tsx); bridge/__tests__/spaces-page.test.ts replays this flow on the wasm core and src/__tests__/spaces-page-bulk.test.tsx drives the menus",
+  },
+  "bulk-confirm": {
+    status: "skip",
+    reason: "The page draws spaces.bulkConfirm, bulkProgress and bulkDone as is (components/spaces/bulk-remove.tsx); bridge/__tests__/spaces-page.test.ts replays this flow on the wasm core and src/__tests__/spaces-page-bulk.test.tsx drives the confirm, count and toast",
+  },
+  tips: {
+    status: "skip",
+    reason: "The page draws tips.view as is (components/tips.tsx); src/__tests__/tips.test.tsx drives it, and bridge/__tests__/spaces-page.test.ts replays this flow through bridge/spaces-page.ts",
+  },
+  "pro-banner": {
+    status: "skip",
+    reason: "The Pro banner and account menu are not drawn yet; bridge/__tests__/spaces-page.test.ts replays this flow through bridge/spaces-page.ts",
   },
 };

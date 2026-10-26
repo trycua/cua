@@ -57,9 +57,11 @@ if [ "\${1:-}" = --version ]; then echo "cua $version ($2)"; exit 0; fi
 if [ "\${1:-} \${2:-} \${3:-}" = "host setup --help" ]; then
     echo "Usage: cua host setup [OPTIONS]"
     [ -n "\${CUA_FAKE_NO_PAIR:-}" ] || echo "      --pair <CODE>  add this machine with a code"
+    [ -z "\${CUA_FAKE_HAS_NO_DESKTOP:-}" ] || echo "      --no-desktop  do not share this desktop"
     exit 0
 fi
 echo "\$*" >>"\${CUA_FAKE_LOG:-/dev/null}"
+if [ "\$*" = "host status --json" ] && [ -n "\${CUA_FAKE_CONFIGURED:-}" ]; then echo '{"configured":true}'; exit 0; fi
 if [ "\$*" = "runtime doctor" ]; then
     echo 'runtime doctor diagnostic'
     exit "\${CUA_FAKE_DOCTOR_STATUS:-0}"
@@ -215,7 +217,7 @@ check "quiet default: the PATH hint comes last" sh -c "tail -4 '$work/out' | gre
 inst CUA_INSTALL_VERBOSE=1 -- --yes --no-onboarding --cli-only --prefix "$work/q2"
 check "CUA_INSTALL_VERBOSE=1 is --verbose" has_out "^cua-install: platform "
 inst -- --yes --no-onboarding --cli-only --prefix "$work/q3"
-check "--cli-only: summary points at sign-in, agents and hosting" sh -c "grep -q '^Installed the command-line tools (downloads checked)' '$work/out' && grep -q '^Next: run \"cua auth login\" to sign in, then \"cua agents setup\" to connect your AI agents.' '$work/out' && grep -q 'No web browser on this computer? Run \"cua auth login --remote\"' '$work/out' && grep -q 'To let your other devices use this computer, run \"cua host setup\".' '$work/out'"
+check "--cli-only: summary points at sign-in, agents and hosting" sh -c "grep -q '^Installed the command-line tools (downloads checked)' '$work/out' && grep -q '^Next: run \"cua auth login\" to sign in, then \"cua agents setup\" to connect your AI agents.' '$work/out' && grep -q 'No web browser on this computer? Run \"cua auth login --remote\"' '$work/out' && grep -q 'To add this computer to your account, run \"cua host setup\" after signing in.' '$work/out'"
 inst -- --yes --no-onboarding --app-only --prefix "$work/q4"
 check "--app-only: summary names the app, not the CLI" sh -c "grep -q '^Installed the Cua Spaces app (downloads checked)' '$work/out' && ! grep -q 'cua auth login' '$work/out'"
 inst -- --no-onboarding --cli-only --prefix "$work/q5"
@@ -291,6 +293,14 @@ fi
 inst CUA_INSTALL_DRIVER_URL="http://example.invalid/install.sh" -- --yes --only cua-driver --prefix "$work/d2"
 check "a plain-HTTP driver installer URL is refused before installing" sh -c "[ $status != 0 ] && grep -q 'non-HTTPS' '$work/out' && [ ! -e '$work/d2/bin/cua' ]"
 
+inst -- --yes --cli-only --no-host --pair K7QM-4XPB-2RHD --prefix "$work/nh1"
+check "--no-host with --pair: refused" sh -c "[ $status != 0 ] && grep -q -- '--no-host and --pair contradict' '$work/out'"
+inst -- --yes --no-host --only host --prefix "$work/nh2"
+check "--no-host with --only host: refused" sh -c "[ $status != 0 ] && grep -q -- '--no-host and --select host contradict' '$work/out'"
+inst -- --yes --cli-only --no-host --no-provide-spaces --prefix "$work/nh3"
+check "--no-provide-spaces with --no-host: refused" sh -c "[ $status != 0 ] && grep -q -- '--no-provide-spaces goes with adding this computer' '$work/out'"
+inst -- --yes --no-onboarding --only host --no-provide-spaces --prefix "$work/nh4"
+check "--select host --no-provide-spaces: passes it to cua host setup" sh -c "[ $status = 0 ] && grep -qx 'host setup --no-provide-spaces' '$home/cua.log' && grep -q 'This computer is added to your account.' '$work/out'"
 inst CUA_INSTALL_NONINTERACTIVE=1 -- --select host --no-onboarding --prefix "$work/h1"
 check "CUA_INSTALL_NONINTERACTIVE + --select host: runs 'cua host setup'" sh -c "[ $status = 0 ] && grep -qx 'host setup' '$home/cua.log'"
 
@@ -305,6 +315,8 @@ check "--pair: a CLI without 'host setup --pair' fails early with a clear messag
 
 inst -- --pair K7QM-4XPB-2RHD --relay https://relay.example.com --cli-only --prefix "$work/pr2"
 check "--pair --relay --cli-only: passes the relay on" sh -c "[ $status = 0 ] && grep -qx 'host setup --pair K7QM-4XPB-2RHD --relay https://relay.example.com' '$home/cua.log'"
+inst CUA_FAKE_HAS_NO_DESKTOP=1 -- --yes --cli-only --pair K7QM-4XPB-2RHD --prefix "$work/pnd"
+check "--pair: keeps the screen private when the CLI can (--no-desktop)" sh -c "[ $status = 0 ] && grep -qx 'host setup --pair K7QM-4XPB-2RHD --no-desktop --provide-spaces' '$home/cua.log'"
 
 inst -- --pair 'K7QM;rm -rf /' --prefix "$work/pr3"
 check "--pair: refuses a code with shell characters before installing" sh -c "[ $status != 0 ] && grep -q 'not a pairing code' '$work/out' && [ ! -e '$work/pr3/bin/cua' ]"
@@ -581,6 +593,7 @@ cat >"$work/stage/linux-x64/cua" <<EOF
 #!/bin/sh
 if [ "\${1:-}" = --version ]; then echo "cua $version (linux-x64)"; exit 0; fi
 echo "\$*" >>"\${CUA_FAKE_LOG:-/dev/null}"
+if [ "\$*" = "host status --json" ] && [ -n "\${CUA_FAKE_CONFIGURED:-}" ]; then echo '{"configured":true}'; fi
 EOF
 tar -czf "$tag_dir/cua-cli-$version-linux-x64.tar.gz" -C "$work/stage/linux-x64" cua
 python3 "$manifest_tool" --component cli --version "$version" --dir "$tag_dir" \
@@ -608,12 +621,26 @@ if script --version 2>/dev/null | grep -q util-linux; then
     env -i PATH="$PATH" HOME="$home" SHELL=/bin/sh CUA_INSTALL_BASE_URL="$base" CUA_INSTALL_OS=linux \
         CUA_INSTALL_ARCH=x86_64 CUA_FAKE_LOG="$home/cua.log" \
         script -qec "$sh_bin '$installer' --yes --cli-only --prefix '$work/p14'" /dev/null >"$work/out" 2>&1 </dev/null
-    check "interactive: runs 'cua auth login'" sh -c "grep -qx 'auth login' '$home/cua.log'"
+    check "interactive: runs 'cua auth login' (a device code: no display here)" sh -c "grep -qx 'auth login --remote' '$home/cua.log'"
     check "interactive: after sign-in, the closing line points at agents setup" sh -c "grep -q 'Signing in to Cua' '$work/out' && grep -q 'Next: run \"cua agents setup\" to connect your AI agents.' '$work/out' && ! grep -q 'Next: run \"cua auth login\"' '$work/out'"
+    check "interactive: signing in adds this computer (cua host setup after auth login)" sh -c "grep -qx 'host setup --no-desktop --provide-spaces' '$home/cua.log' && [ \"\$(grep -n -x 'auth login --remote' '$home/cua.log' | cut -d: -f1)\" -lt \"\$(grep -n -x 'host setup --no-desktop --provide-spaces' '$home/cua.log' | cut -d: -f1)\" ] && grep -q 'This computer is added to your account.' '$work/out'"
     env -i PATH="$PATH" HOME="$home" SHELL=/bin/sh CUA_INSTALL_BASE_URL="$base" CUA_INSTALL_OS=linux \
         CUA_INSTALL_ARCH=x86_64 CUA_FAKE_LOG="$home/cua2.log" \
         script -qec "$sh_bin '$installer' --yes --cli-only --no-onboarding --prefix '$work/p14'" /dev/null >"$work/out" 2>&1 </dev/null
-    check "interactive + --no-onboarding: no login" sh -c "! grep -qx 'auth login' '$home/cua2.log' 2>/dev/null"
+    check "interactive + --no-onboarding: no login" sh -c "! grep -q 'auth login' '$home/cua2.log' 2>/dev/null"
+    check "interactive + --no-onboarding: does not add this computer" sh -c "! grep -q 'host setup' '$home/cua2.log' 2>/dev/null"
+    env -i PATH="$PATH" HOME="$home" SHELL=/bin/sh CUA_INSTALL_BASE_URL="$base" CUA_INSTALL_OS=linux \
+        CUA_INSTALL_ARCH=x86_64 CUA_FAKE_LOG="$home/cua3.log" \
+        script -qec "$sh_bin '$installer' --yes --cli-only --no-host --prefix '$work/p14'" /dev/null >"$work/out" 2>&1 </dev/null
+    check "interactive + --no-host: signs in, does not add this computer" sh -c "grep -q '^auth login' '$home/cua3.log' && ! grep -q 'host setup' '$home/cua3.log'"
+    env -i PATH="$PATH" HOME="$home" SHELL=/bin/sh CUA_INSTALL_BASE_URL="$base" CUA_INSTALL_OS=linux \
+        CUA_INSTALL_ARCH=x86_64 CUA_FAKE_LOG="$home/cua4.log" \
+        script -qec "$sh_bin '$installer' --yes --cli-only --no-provide-spaces --prefix '$work/p14'" /dev/null >"$work/out" 2>&1 </dev/null
+    check "interactive + --no-provide-spaces: adds this computer without providing Spaces" sh -c "grep -qx 'host setup --no-provide-spaces' '$home/cua4.log'"
+    env -i PATH="$PATH" HOME="$home" SHELL=/bin/sh CUA_INSTALL_BASE_URL="$base" CUA_INSTALL_OS=linux \
+        CUA_INSTALL_ARCH=x86_64 CUA_FAKE_LOG="$home/cua5.log" CUA_FAKE_CONFIGURED=1 \
+        script -qec "$sh_bin '$installer' --yes --cli-only --prefix '$work/p14'" /dev/null >"$work/out" 2>&1 </dev/null
+    check "interactive: a computer already set up keeps its settings (no second setup)" sh -c "grep -qx 'host status --json' '$home/cua5.log' && ! grep -q 'host setup' '$home/cua5.log' && grep -q 'This computer is added to your account.' '$work/out'"
 
     env -i PATH="$PATH" HOME="$home" SHELL=/bin/sh CUA_INSTALL_BASE_URL="$base" CUA_INSTALL_OS=linux \
         CUA_INSTALL_ARCH=x86_64 CUA_FAKE_LOG="$home/cua3.log" CUA_INSTALL_DRIVER_URL="$driver_url" \

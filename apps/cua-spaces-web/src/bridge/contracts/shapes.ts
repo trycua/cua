@@ -22,7 +22,7 @@
  * contract test fails when it is out of date.
  */
 
-import type { AgentDetailInput, AgentEventsPage, AgentOpenFile, AgentSetupRow, PersistentAgent, SpaceAgentRun } from "./agents";
+import type { AgentDetailInput, AgentEventsPage, AgentOpenFile, AgentSetupRow, ConnectionReport, ConnectionRow, ConnectResult, PersistentAgent, SpaceAgentRun } from "./agents";
 import type { DeviceInput, DevicesInput, EnrollResult, MachineAccessNotice, PairingCode, TeamChoice, TeamsList } from "./devices";
 import type {
   CancelOutcome,
@@ -40,6 +40,7 @@ import type {
 import type { KeyvaultOverview, KvGrant } from "./keyvault";
 import type {
   CloudCheckWire,
+  CloudDisconnectedWire,
   CloudProviderWire,
   CloudTestWire,
   ConnectedCloud,
@@ -54,7 +55,8 @@ import type {
 import type { NotificationInput } from "./notifications";
 import type { AboutInput, DriveCheckInput, DriveStorageInput, LoginItemReport, StorageInput, UpdateState } from "./settings";
 import type { ShareEntry, ShareRemoval } from "./share";
-import type { CreateFix, SpaceProgress, SpaceRow } from "./spaces";
+import type { BulkResult } from "./spaces-page";
+import type { CreateFix, SpaceAccess, SpaceProgress, SpaceRow, SpaceSharingFacts } from "./spaces";
 import type { CatalogEntry, ConsentItem, KvDomainCount, KvInventory, OpenWindow, PlanStep, RemoteWindow, RunReport, TeleportPlan } from "./teleport";
 import type { AgentSetupOutcome, DriveGrantInput, DriveMountInput, DriveRequestInput, Experiments, VolumeOverview } from "./volume";
 import type { AgentKeysReport } from "../ops/agent-keys";
@@ -64,8 +66,10 @@ import type { RelayUsage } from "../ops/relay-usage";
 import type { RiskyRequest } from "../ops/nudges";
 import type { ComputerResources, DiskOnHost, DiskWarning, GuestUsage, ResourcesSnapshot, SpaceResources } from "../ops/resources";
 import type { HostChecklistState } from "../ops/checklist";
+import type { TipsState } from "./spaces-page";
 import type { ShareLink } from "../ops/links";
 import type { CliInstallPlan } from "./first-run";
+import type { AgentMember, JoinCode, JoinCodeRow, MemberIdentity, ThreadAttachment, ThreadAuthor, ThreadEntry, ThreadPage } from "../ops/thread";
 import type { PresenceCursorWire, PresenceJoinInfo, PresenceParticipantWire } from "../ops/presence";
 import type { StartupState } from "../ops/startup";
 import type { StreamTicket } from "../ops/stream";
@@ -148,6 +152,45 @@ const SpaceProgressShape = ref(
   }),
 );
 
+const SpaceSharingShape = ref(
+  "SpaceSharingFacts",
+  obj<SpaceSharingFacts>()({
+    ownerId: str,
+    ownerEmail: optNull(str),
+    ownerName: optNull(str),
+    role: str,
+    team: optNull(str),
+    teamName: optNull(str),
+    editors: opt(strings),
+    viewers: opt(strings),
+    teams: opt(list(object({ key: str, name: str, role: str }))),
+  }),
+);
+
+const SpaceAccessShape = ref(
+  "SpaceAccess",
+  obj<SpaceAccess>()({
+    kind: oneOf("mine", "withMe", "team"),
+    role: oneOf("owner", "editor", "viewer"),
+    ownerName: optNull(str),
+    ownerEmail: optNull(str),
+    teamName: optNull(str),
+    place: str,
+    people: list(object({ who: str, name: optNull(str), role: oneOf("editor", "viewer"), team: opt(bool) })),
+    canPower: bool,
+    canTeleport: bool,
+    canShare: bool,
+    canRename: bool,
+    canDelete: bool,
+    canLeave: bool,
+  }),
+);
+
+const BulkResultsShape = ref(
+  "BulkResults",
+  object({ results: list(obj<BulkResult>()({ id: str, ok: bool, error: opt(str) })) }),
+);
+
 const SpaceRowShape = ref(
   "SpaceRow",
   obj<SpaceRow>()({
@@ -175,6 +218,7 @@ const SpaceRowShape = ref(
     cloud: opt(str),
     cloudPlace: opt(str),
     cloudDelete: opt(str),
+    sharing: opt(SpaceSharingShape),
   }),
 );
 
@@ -271,6 +315,9 @@ const SessionShape = ref(
   }),
 );
 
+/** `AppSettings.tips` (`tips::TipsState`). */
+const TipsStateShape = obj<TipsState>()({ off: bool, done: strings });
+
 const SettingsShape = ref(
   "SettingsSnapshot",
   obj<SettingsSnapshot>()({
@@ -283,6 +330,7 @@ const SettingsShape = ref(
       launchAtLogin: nullable(bool),
       updateChannel: nullable(oneOf("stable", "beta")),
       autoConnect: opt(bool),
+      tips: opt(TipsStateShape),
     }),
     defaultLocation: nullable(obj<DefaultLocation>()({ value: str, source: oneOf("env", "config", "default"), env: opt(str), path: str })),
     telemetry: nullable(
@@ -591,6 +639,21 @@ const CloudProviderShape = ref(
     label: opt(str),
     ttl_hours: opt(num),
     kinds: opt(list(object({ image: str, kind: str, supported: bool }))),
+    // What `cloud_connect` with limits adds (per-connection budget and size).
+    auth: opt(str),
+    status: opt(str),
+    budget_usd_month: opt(num),
+    max_size: opt(str),
+    spent_month: opt(num),
+    running: opt(num),
+    approval: opt(str),
+    holders: opt(strings),
+    approval_agent: opt(str),
+    pending_budget_usd_month: opt(nullable(num)),
+    pending_max_size: opt(str),
+    can_approve: opt(bool),
+    suggest_auth: opt(str),
+    issue: opt(str),
   }),
 );
 
@@ -695,6 +758,52 @@ const KvGrantShape = ref(
 
 const hostStatusOrNull = HostStatusShape;
 const agentSetupRows = list(AgentSetupRowShape);
+/** `agents.status` (CONTRACT §4; snake_case, as the core serializes it). */
+const ConnectionReportShape = ref(
+  "ConnectionReport",
+  obj<ConnectionReport>()({
+    agents: list(
+      ref(
+        "ConnectionRow",
+        obj<ConnectionRow>()({
+          id: str,
+          name: str,
+          installed: bool,
+          version: nullable(str),
+          previous_version: nullable(str),
+          signed_in: oneOf("yes", "no", "unknown", "expired"),
+          sign_in: nullable(str),
+          mcp: oneOf("ok", "missing", "broken", "stale", "unsupported"),
+          mcp_config: nullable(str),
+          signin_imported: bool,
+          signin_import: oneOf("ok", "expired", "missing", "unsupported"),
+          state: oneOf("connected", "attention", "not_connected", "not_installed"),
+          problem: nullable(object({ line: str, action: oneOf("reconnect", "sign_in", "install", "disconnect", "none") })),
+          checked_at_ms: num,
+        }),
+      ),
+    ),
+    checked_at_ms: num,
+  }),
+);
+const ConnectResultsShape = list(
+  ref(
+    "ConnectResult",
+    obj<ConnectResult>()({
+      agent: str,
+      tools_ok: bool,
+      tools_line: nullable(str),
+      sign_in: nullable(
+        object({
+          imported: nullable(object({ source: str, env: str, label: str, expires_ms: nullable(num), added_ms: num })),
+          refused: nullable(str),
+          line: nullable(str),
+        }),
+      ),
+    }),
+  ),
+);
+const DisconnectShape = object({ removed_sign_ins: list(str) });
 const AgentDetailShape = ref(
   "AgentDetailInput",
   obj<AgentDetailInput>()({
@@ -754,6 +863,95 @@ const ShareLinkShape = obj<ShareLink>()({
   createdAtUnix: nullable(num),
   expiresAtUnix: nullable(num),
 });
+
+/** An agent member's identity (CUA-2262, `ops/thread.ts`). */
+const memberRef = object({ id: str, name: str });
+const MemberIdentityShape = ref(
+  "MemberIdentity",
+  obj<MemberIdentity>()({
+    origin: oneOf("space", "external"),
+    handle: str,
+    displayName: str,
+    collides: bool,
+    icon: nullable(str),
+    harness: object({ id: str, version: nullable(str), reported: bool }),
+    owner: memberRef,
+    device: nullable(memberRef),
+    joined: object({ method: oneOf("started", "prompt", "setup"), atMs: nullable(num), by: nullable(memberRef) }),
+    state: oneOf("active", "pending"),
+    lastSeenMs: nullable(num),
+  }),
+);
+
+/** One Space thread entry as the page reads it (`ops/thread.ts`, DESIGN §3.2). */
+const taskState = oneOf("queued", "claimed", "working", "done", "failed");
+const ThreadEntryShape = ref(
+  "ThreadEntry",
+  obj<ThreadEntry>()({
+    seq: num,
+    id: str,
+    tsMs: num,
+    author: obj<ThreadAuthor>()({ kind: oneOf("person", "agent", "system"), id: str, name: str, identity: opt(nullable(MemberIdentityShape)) }),
+    kind: oneOf("message", "task_update", "approval", "answer", "system", "join_request"),
+    text: str,
+    mentions: strings,
+    replyTo: nullable(num),
+    task: nullable(object({ to: str, session: nullable(num) })),
+    attachments: list(obj<ThreadAttachment>()({ path: str, name: str, size: nullable(num), mime: nullable(str) })),
+    approval: nullable(object({ action: str, details: str, state: str })),
+    answer: nullable(object({ approval: num, approve: bool, note: nullable(str) })),
+    noteFor: nullable(num),
+    update: nullable(object({ task: num, state: taskState, session: nullable(num), note: nullable(str) })),
+    runsOnKeysOf: nullable(object({ id: str, name: str })),
+    event: nullable(object({ kind: oneOf("member_joined", "member_removed", "name_refused", "rate_limited"), member: nullable(MemberIdentityShape), by: nullable(memberRef) })),
+    joinRequest: opt(
+      nullable(
+        object({ member: nullable(MemberIdentityShape), canTask: oneOf("owner", "members"), state: str, codeId: str, youCanAnswer: bool }),
+      ),
+    ),
+    view: opt(nullable(object({ kind: oneOf("desktop", "window"), app: nullable(str), title: nullable(str), windowId: nullable(str) }))),
+  }),
+);
+
+/** A join code (CUA-2263): its plaintext only on create; the list never has it. */
+const JoinCodeShape = obj<JoinCode>()({ id: str, code: str, url: str, line: str, expiresAtMs: num });
+const JoinCodeRowShape = obj<JoinCodeRow>()({
+  id: str,
+  createdAtMs: num,
+  expiresAtMs: num,
+  state: oneOf("open", "pending_approval", "redeemed", "denied", "expired", "cancelled"),
+  canTask: oneOf("owner", "members"),
+  askBeforeJoin: bool,
+  createdBy: nullable(memberRef),
+  memberHandle: nullable(str),
+});
+const ThreadPageShape = obj<ThreadPage>()({
+  entries: list(ThreadEntryShape),
+  cursor: num,
+  caughtUp: bool,
+  unread: num,
+  readSeq: nullable(num),
+  me: nullable(str),
+  hasMoreBefore: bool,
+  role: nullable(oneOf("owner", "admin", "member", "guest", "agent")),
+});
+const rightHolders = union(oneOf("owner", "admins", "members"), strings);
+const AgentMemberShape = ref(
+  "AgentMember",
+  obj<AgentMember>()({
+    name: str,
+    harness: str,
+    status: str,
+    activity: nullable(str),
+    sessions: num,
+    rights: nullable(object({ task: rightHolders, control: rightHolders, approve: rightHolders })),
+    youCan: nullable(object({ task: bool, control: bool, approve: bool })),
+    heldBy: nullable(str),
+    identity: nullable(MemberIdentityShape),
+    dm: opt(nullable(object({ unread: num, last: nullable(object({ seq: num, tsMs: num, text: str, author: object({ kind: oneOf("person", "agent", "system"), id: str, name: str, identity: opt(nullable(MemberIdentityShape)) }) })) }))),
+    needsYou: opt(list(object({ seq: num, kind: oneOf("approval", "question"), text: str, tsMs: num }))),
+  }),
+);
 
 /** One Machines row as the core lists it (`machines::MachinePageRow`). */
 const MachinePageRowShape = ref(
@@ -859,6 +1057,57 @@ const MachinesViewShape = ref(
         remove: optNull(MachinesViewRemoveShape),
       }),
     ),
+    order: opt(strings),
+    // The Clouds group (`cloud_page`); a host that predates it sends none.
+    clouds: opt(
+      object({
+        group: object({
+          title: str,
+          rows: list(object({ id: str, name: str, logo: str, line: str, health: str })),
+          connectLabel: str,
+        }),
+        pages: list(
+          object({
+            id: str,
+            name: str,
+            logo: str,
+            status: str,
+            health: str,
+            issuesTitle: str,
+            issues: list(object({ id: str, level: str, text: str, action: optNull(object({ id: str, label: str, url: optNull(str) })) })),
+            spend: optNull(object({ amount: str, ofBudget: str, resets: str, percent: num, tone: str, note: str })),
+            running: optNull(object({ title: str, machines: list(object({ id: str, name: str, by: str, cost: str })) })),
+            token: optNull(
+              object({
+                title: str,
+                lock: str,
+                note: str,
+                holdersLabel: str,
+                holders: str,
+                revokeLabel: str,
+                revokeHelp: str,
+                replace: object({ id: str, label: str, url: optNull(str) }),
+              }),
+            ),
+            settingsTitle: str,
+            settings: list(object({ id: str, label: str, help: str, value: str })),
+            limits: optNull(object({ id: str, label: str, url: optNull(str) })),
+            switchAuth: optNull(object({ id: str, label: str, url: optNull(str) })),
+            approval: optNull(
+              object({
+                title: str,
+                intro: str,
+                rows: list(object({ label: str, value: str })),
+                note: str,
+                approveLabel: str,
+                denyLabel: str,
+              }),
+            ),
+            disconnect: optNull(object({ label: str, confirm: HostConfirmShape, delete: bool })),
+          }),
+        ),
+      }),
+    ),
   }),
 );
 
@@ -868,6 +1117,9 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "spaces.cancelCreate": obj<CancelOutcome>()({ id: str, state: oneOf("cancelled", "not_creating", "already_created"), message: str }),
   "spaces.setPower": obj<SpacePowerReport>()({ space: str, state: str, power: str, message: str }),
   "spaces.delete": str,
+  "spaces.deleteMany": BulkResultsShape,
+  "spaces.leave": BulkResultsShape,
+  "spaces.rename": nul,
   "spaces.open": nul,
   "machines.list": list(MachineRowShape),
   "host.status": hostStatusOrNull,
@@ -931,6 +1183,9 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "agents.setup": agentSetupRows,
   "agents.configure": agentSetupRows,
   "agents.signIn": agentSetupRows,
+  "agents.status": ConnectionReportShape,
+  "agents.connect": ConnectResultsShape,
+  "agents.disconnect": DisconnectShape,
   "agents.detail": AgentDetailShape,
   "agents.readFile": AgentOpenFileShape,
   "agents.restoreFile": nul,
@@ -942,9 +1197,16 @@ export const OP_SHAPES: Record<OpName, Schema> = {
 
   "spaces.createOptions": NewSpaceOptionsShape,
   "spaces.add": SpaceRowShape,
-  "clouds.status": object({ default_on: opt(str), providers: list(CloudProviderShape) }),
+  "clouds.status": object({
+    default_on: opt(str),
+    can_approve: opt(bool),
+    providers: list(CloudProviderShape),
+    resources: opt(list(object({ provider: str, id: str, type: str, sandbox: opt(str), state: opt(str), started_by: opt(str), cost_usd: opt(num) }))),
+  }),
   "clouds.test": obj<CloudTestWire>()({ provider: str, ok: bool, account: opt(str), checks: list(CloudCheckShape) }),
   "clouds.connect": CloudProviderShape,
+  "clouds.disconnect": obj<CloudDisconnectedWire>()({ provider: str, disconnected: bool }),
+  "clouds.approve": nul,
 
   "teleport.catalog": list(CatalogEntryShape),
   "teleport.entryForPath": CatalogEntryShape,
@@ -1082,6 +1344,16 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "links.stop": object({ stopped: strings }),
   "cli.plan": nullable(CliInstallPlanShape),
   "cli.install": CliInstallPlanShape,
+  "thread.read": ThreadPageShape,
+  "thread.post": nullable(ThreadEntryShape),
+  "thread.members": object({ members: list(AgentMemberShape) }),
+  "thread.setRights": nullable(AgentMemberShape),
+  "thread.agentAdd": nullable(AgentMemberShape),
+  "thread.agentRemove": nul,
+  "thread.joinCodeCreate": JoinCodeShape,
+  "thread.joinCodeList": object({ codes: list(JoinCodeRowShape) }),
+  "thread.joinCodeCancel": nul,
+  "thread.settings": object({ askBeforeJoin: bool }),
   "presence.join": obj<PresenceJoinInfo>()({
     handle: str,
     me: PresenceParticipantShape,
@@ -1202,6 +1474,7 @@ const WkSpaceShape = ref(
     cloud: optNull(str),
     cloudPlace: optNull(str),
     cloudDelete: optNull(str),
+    access: optNull(SpaceAccessShape),
     progress: optNull(SpaceProgressShape),
   }),
 );
@@ -1251,6 +1524,7 @@ const WkSettingsShape = ref(
     globalShortcut: optNull(object({ label: str, registered: bool })),
     accountUrl: optNull(str),
     cli: optNull(object({ name: str, installed: bool })),
+    tips: opt(TipsStateShape),
   }),
 );
 
@@ -1363,6 +1637,10 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "spaces.list": WkSpacesShape,
   "spaces.setPower": WkSpacesShape,
   "spaces.delete": WkSpacesShape,
+  "spaces.deleteMany": BulkResultsShape,
+  "spaces.leave": BulkResultsShape,
+  // `{}`: the new name comes with the next `spaces.list`.
+  "spaces.rename": object({}),
   "spaces.open": nul,
   // The page's wizard runs on `env`, and reads `local`.
   "spaces.createOptions": ref("WkCreateOptions", createOptions(true)),
@@ -1384,6 +1662,9 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "agents.setup": agentSetupRows,
   "agents.configure": agentSetupRows,
   "agents.signIn": agentSetupRows,
+  "agents.status": ConnectionReportShape,
+  "agents.connect": ConnectResultsShape,
+  "agents.disconnect": DisconnectShape,
   "agents.setupDriver": OP_SHAPES["agents.setupDriver"],
   "agents.detail": AgentDetailShape,
   "agents.readFile": AgentOpenFileShape,
@@ -1399,6 +1680,8 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "clouds.status": nullable(OP_SHAPES["clouds.status"]),
   "clouds.test": OP_SHAPES["clouds.test"],
   "clouds.connect": OP_SHAPES["clouds.connect"],
+  "clouds.disconnect": OP_SHAPES["clouds.disconnect"],
+  "clouds.approve": OP_SHAPES["clouds.approve"],
   "teleport.catalog": list(WkCatalogEntry),
   "teleport.entryForPath": WkCatalogEntry,
   "teleport.windows": OP_SHAPES["teleport.windows"],
@@ -1463,6 +1746,7 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "host.openSettings": nul,
   "settings.get": WkSettingsShape,
   "settings.choose": WkSettingsShape,
+  "settings.update": WkSettingsShape,
   "keyvault.get": WkKeyvaultShape,
   "keyvault.lock": WkKeyvaultShape,
   "keyvault.unlock": WkKeyvaultShape,
@@ -1497,9 +1781,21 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "cli.install": OP_SHAPES["cli.install"],
 };
 
-/** Methods whose answer has no shape here, and why (none today: keep the
- * table so a new method can say why before it gets one). */
-export const WEBKIT_UNSHAPED: Partial<Record<WebkitMethod, string>> = {};
+/** Methods whose answer has no shape here, and why. */
+const THREAD_TOOL_JSON =
+  "the daemon tool's JSON as-is (thread_read, thread_post, agent_members, agent_set_rights, agent_add, agent_remove, thread_join_code_create, thread_join_code_list, thread_join_code_cancel, thread_settings); ops/thread.ts maps it for every host";
+export const WEBKIT_UNSHAPED: Partial<Record<WebkitMethod, string>> = {
+  "thread.read": THREAD_TOOL_JSON,
+  "thread.post": THREAD_TOOL_JSON,
+  "thread.members": THREAD_TOOL_JSON,
+  "thread.setRights": THREAD_TOOL_JSON,
+  "thread.agentAdd": THREAD_TOOL_JSON,
+  "thread.agentRemove": THREAD_TOOL_JSON,
+  "thread.joinCodeCreate": THREAD_TOOL_JSON,
+  "thread.joinCodeList": THREAD_TOOL_JSON,
+  "thread.joinCodeCancel": THREAD_TOOL_JSON,
+  "thread.settings": THREAD_TOOL_JSON,
+};
 
 /** The exported document (`bridge-shapes.json`): `ops` and `webkit` map
  * each name to its shape; `$defs` holds the named ones. */

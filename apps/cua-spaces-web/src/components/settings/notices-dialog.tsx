@@ -62,11 +62,11 @@ export function NoticesDialog({ open, onOpenChange }: { open: boolean; onOpenCha
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogPopup className="top-[8vh] flex max-h-[80vh] w-[min(640px,calc(100vw-2rem))] flex-col" data-notices>
-        <DialogTitle className="border-b px-5 py-3 text-[15px] font-semibold">Acknowledgements</DialogTitle>
+        <DialogTitle /* design-ok: full-width dialog header rule */ className="border-b px-5 py-3 text-[15px] font-semibold">Acknowledgements</DialogTitle>
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 select-text">
           {text === null ? <p className="text-[13px] text-muted-foreground">Loading…</p> : <Markdown text={text} onOpenLink={(url) => void openExternal(url)} />}
         </div>
-        <div className="flex justify-end border-t bg-muted/60 px-5 py-3">
+        <div /* design-ok: full-width dialog footer */ className="flex justify-end border-t bg-muted/60 px-5 py-3">
           <Button onClick={() => onOpenChange(false)}>Done</Button>
         </div>
       </DialogPopup>

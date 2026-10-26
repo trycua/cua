@@ -1,5 +1,5 @@
 //! `cua agent keys`: the provider keys agents get, kept in the Keychain by
-//! the Cua daemon (what Cua Spaces → Settings → Agents shows).
+//! the Cua daemon (what Cua Spaces → Settings → Connectors shows).
 //!
 //! ```text
 //! cua agent keys                          # list (provider, variable, last 4, added)

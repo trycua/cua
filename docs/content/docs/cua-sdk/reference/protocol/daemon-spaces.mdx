@@ -45,6 +45,9 @@ without touching it.
 | [`CancelCreateSpace`](#spaceservicecancelcreatespace) | [`CancelCreateSpaceRequest`](#cancelcreatespacerequest) | [`CancelCreateSpaceResponse`](#cancelcreatespaceresponse) | unary |
 | [`GetGpuSupport`](#spaceservicegetgpusupport) | [`GetGpuSupportRequest`](#getgpusupportrequest) | [`GetGpuSupportResponse`](#getgpusupportresponse) | unary |
 | [`DeleteSpace`](#spaceservicedeletespace) | [`DeleteSpaceRequest`](#deletespacerequest) | [`DeleteSpaceResponse`](#deletespaceresponse) | unary |
+| [`DeleteSpaces`](#spaceservicedeletespaces) | [`DeleteSpacesRequest`](#deletespacesrequest) | [`DeleteSpacesResponse`](#deletespacesresponse) | unary |
+| [`LeaveSpaces`](#spaceserviceleavespaces) | [`LeaveSpacesRequest`](#leavespacesrequest) | [`LeaveSpacesResponse`](#leavespacesresponse) | unary |
+| [`RenameSpace`](#spaceservicerenamespace) | [`RenameSpaceRequest`](#renamespacerequest) | [`RenameSpaceResponse`](#renamespaceresponse) | unary |
 | [`ForkSpace`](#spaceserviceforkspace) | [`ForkSpaceRequest`](#forkspacerequest) | [`ForkSpaceResponse`](#forkspaceresponse) | unary |
 | [`BuildSpace`](#spaceservicebuildspace) | [`BuildSpaceRequest`](/cua-sdk/reference/protocol/daemon-builds#buildspacerequest) | [`BuildSpaceResponse`](/cua-sdk/reference/protocol/daemon-builds#buildspaceresponse) | server stream |
 | [`ListBuilds`](#spaceservicelistbuilds) | [`ListBuildsRequest`](/cua-sdk/reference/protocol/daemon-builds#listbuildsrequest) | [`ListBuildsResponse`](/cua-sdk/reference/protocol/daemon-builds#listbuildsresponse) | unary |
@@ -167,6 +170,32 @@ wizard's GPU row; `gpu` of `CreateSpace`).
 
 Deletes a Space's sandbox and forgets it. A Space added by address
 (`direct:`, `relay:`) is only forgotten: cua did not create it.
+
+### SpaceService.DeleteSpaces
+
+`/cua.daemon.v1.SpaceService/DeleteSpaces`, unary: [`DeleteSpacesRequest`](#deletespacesrequest) to [`DeleteSpacesResponse`](#deletespacesresponse).
+
+Deletes several Spaces (at most 3 at a time), turning running ones off
+first. One result per Space, in order; one failure never stops the
+rest.
+
+### SpaceService.LeaveSpaces
+
+`/cua.daemon.v1.SpaceService/LeaveSpaces`, unary: [`LeaveSpacesRequest`](#leavespacesrequest) to [`LeaveSpacesResponse`](#leavespacesresponse).
+
+Takes this account off Spaces shared with it (through the relay): a
+direct share ends, a team's Space leaves this account's list. One
+result per Space, in order.
+
+### SpaceService.RenameSpace
+
+`/cua.daemon.v1.SpaceService/RenameSpace`, unary: [`RenameSpaceRequest`](#renamespacerequest) to [`RenameSpaceResponse`](#renamespaceresponse).
+
+Gives a Space a new name; its id stays the same. Only its owner can:
+a Space shared with you is refused. A Space that is a machine on the
+relay (shared, or one of your computers provides it) is renamed there
+too, so your other devices and the people it is shared with see the
+new name.
 
 ### SpaceService.ForkSpace
 
@@ -392,6 +421,34 @@ A registered Space.
 | `egress_enforced` | 31 | `string` | Where `egress` is enforced: "host"; empty without one. |
 | `volumes` | 30 | repeated [`VolumeMount`](/cua-sdk/reference/protocol/env-stream#volumemount) | Named volumes mounted in the Space (`CreateSpaceRequest.volumes`). |
 | `image_config` | 28 | `string` | JSON image configuration of a Space made from a build. |
+| `sharing` | 32 | [`SpaceSharing`](#spacesharing) | A Space that is a machine on the relay: who owns it and who else has it, as this account sees it. Unset for other Spaces. Filled in when listed, not stored. |
+| `display_name` | 33 | `string` | The name it was given with `RenameSpace`; empty when it keeps the one it was created with (`name`). Apps show this one when it is set. A Space that is a machine on the relay is renamed there, so its `name` changes instead. |
+
+### SpaceSharing
+
+Who a Space belongs to and who else has it (`Space.sharing`).
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `owner_id` | 1 | `string` | The owner's account id. |
+| `owner_email` | 2 | `string` | The owner's email, when known. |
+| `owner_name` | 3 | `string` | The owner's display name, when known. |
+| `role` | 4 | `string` | What this account may do: "owner", "editor" or "viewer". |
+| `team` | 5 | `string` | The team this account reaches it through (its key), when it is a team's and not shared with this account directly. |
+| `team_name` | 6 | `string` | That team's display name (its key when the name is not known). |
+| `editors` | 7 | repeated `string` | Owner view: accounts (emails or ids) that may use it. |
+| `viewers` | 8 | repeated `string` | Owner view: accounts that may only watch. |
+| `teams` | 9 | repeated [`SpaceTeamShare`](#spaceteamshare) | Owner view: the teams it is a machine of. |
+
+### SpaceTeamShare
+
+A team a Space is shared with.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `key` | 1 | `string` | The team's key (org id). |
+| `name` | 2 | `string` | Its display name. |
+| `role` | 3 | `string` | "editor" or "viewer". |
 
 ### AddSpaceRequest
 
@@ -717,6 +774,66 @@ Response for `SpaceService.DeleteSpace`.
 | --- | --- | --- | --- |
 | `message` | 1 | `string` | What happened, for humans. |
 
+### DeleteSpacesRequest
+
+Request for `SpaceService.DeleteSpaces`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `spaces` | 1 | repeated `string` | Space ids or names. |
+
+### SpaceBulkResult
+
+The outcome for one Space of `DeleteSpaces` or `LeaveSpaces`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `space` | 1 | `string` | The Space as asked. |
+| `ok` | 2 | `bool` | It went through. |
+| `error` | 3 | `string` | Why not, in plain words; empty when ok. |
+| `message` | 4 | `string` | What happened, for humans. |
+
+### DeleteSpacesResponse
+
+Response for `SpaceService.DeleteSpaces`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `results` | 1 | repeated [`SpaceBulkResult`](#spacebulkresult) | One per Space asked, in order. |
+
+### LeaveSpacesRequest
+
+Request for `SpaceService.LeaveSpaces`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `spaces` | 1 | repeated `string` | Space ids or names. |
+
+### LeaveSpacesResponse
+
+Response for `SpaceService.LeaveSpaces`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `results` | 1 | repeated [`SpaceBulkResult`](#spacebulkresult) | One per Space asked, in order. |
+
+### RenameSpaceRequest
+
+Request for `SpaceService.RenameSpace`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `space` | 1 | `string` | Space id or name. |
+| `name` | 2 | `string` | The new name: lowercase letters, digits and dashes, starting and ending with a letter or digit, at most 63. |
+
+### RenameSpaceResponse
+
+Response for `SpaceService.RenameSpace`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `space` | 1 | [`Space`](#space) | The Space as it is listed now. |
+
 ### ListHostsRequest
 
 Request for `SpaceService.ListHosts`.
@@ -1019,3 +1136,4 @@ Why a daemon call failed. Packed as `DaemonErrorInfo` in the
 | `DAEMON_ERROR_REASON_CANCELLED` | 23 | The create was cancelled (`CancelCreateSpace`, or its caller went away); what it made is gone. The message says what was removed and what stays (finished image downloads stay cached). |
 | `DAEMON_ERROR_REASON_CLOUD` | 24 | Your own cloud account (AWS, Google Cloud, Hetzner, Modal) refused or failed a call Cua made there: a missing permission, a quota, a region without the machine type. The message names the cloud's own error. |
 | `DAEMON_ERROR_REASON_HOST_CAPACITY` | 25 | This host has no room for another Space now: its VMs are at their memory or CPU limit (`CUA_VM_MAX_RSS_FRACTION`, `CUA_VM_VCPU_OVERCOMMIT`) or the machine is low on memory. Nothing was started; the message says which limit, by how much, and what to do. |
+| `DAEMON_ERROR_REASON_PERMISSION_DENIED` | 26 | Signed in, but not allowed: the relay refused the call for this account (for example renaming a Space shared with you; only its owner can). Unlike UNAUTHENTICATED, signing in again does not help. Older daemons answered these as UNAUTHENTICATED. |

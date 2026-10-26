@@ -66,6 +66,9 @@ describe("relay.usage", () => {
       dismiss: "Dismiss",
       dismissKey: "2026-10:hours",
       level: "limit",
+      // For usage data (CUA-1881): which cap, which plan.
+      kind: "hours",
+      plan: "free",
     });
     expect(relayUsageView(noCore, demoRelayUsage())).toBeNull();
   });

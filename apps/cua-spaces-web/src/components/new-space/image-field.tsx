@@ -89,7 +89,7 @@ export function ImageField({
         // Keep the field's focus, so its blur does not close the list first.
         onMouseDown={(event) => event.preventDefault()}
         onClick={() => send(view.open ? { type: "dismiss-image-suggestions" } : { type: "open-image-suggestions" })}
-        className="absolute top-0 right-0 flex h-8 w-8 cursor-default items-center justify-center rounded-r-lg text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+        className="absolute top-0 right-0 flex h-8 w-8 cursor-default items-center justify-center rounded-lg text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
       >
         <ChevronsUpDownIcon className="size-3.5" />
       </button>
@@ -99,7 +99,7 @@ export function ImageField({
           role="listbox"
           aria-label={label}
           data-image-suggestions=""
-          className="absolute inset-x-0 top-full z-10 mt-1 bg-popover text-popover-foreground max-h-64 overflow-y-auto rounded-lg border p-1 shadow-float"
+          className="absolute inset-x-0 top-full z-10 mt-1 bg-popover text-popover-foreground max-h-64 overflow-y-auto rounded-lg p-1 shadow-float"
         >
           {view.groups.map((group) => (
             <div key={group.id} role="group" aria-label={group.label}>
@@ -113,7 +113,7 @@ export function ImageField({
                   data-image-row={row.ref}
                   data-current={row.selected || undefined}
                   className={cn(
-                    "flex cursor-default items-baseline justify-between gap-3 rounded-md px-2 py-1 text-[13px]",
+                    "flex cursor-default items-baseline justify-between gap-3 rounded-lg px-2 py-1 text-[13px]",
                     row.highlighted ? "bg-brand text-white" : "hover:bg-foreground/[0.06]",
                   )}
                   // Pick before the field's blur closes the list.

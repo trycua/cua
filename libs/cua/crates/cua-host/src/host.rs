@@ -92,9 +92,13 @@ pub struct SetupOptions {
     /// [`crate::HostProfile`]).
     pub share_desktop: bool,
     /// Accept Space create, list and delete requests and run them on this
-    /// machine's runtimes (default off): from the owner's enrolled devices
-    /// in relay mode, from the env token holder in direct mode.
-    pub provide_spaces: bool,
+    /// machine's runtimes: from the owner's enrolled devices in relay mode,
+    /// from the env token holder in direct mode. `None` (the default) is
+    /// [`default_provide_spaces`]: on for a new relay setup, off for a new
+    /// direct one, and what the machine already has when it was set up
+    /// before (an earlier choice, or an earlier version's default, is never
+    /// changed by setting up again).
+    pub provide_spaces: Option<bool>,
     /// Provided Spaces at once (`None`: [`crate::provided::DEFAULT_MAX_SPACES`]).
     pub max_spaces: Option<u32>,
     /// The `cua` CLI the driver starts the host's cua daemon with when it
@@ -151,7 +155,7 @@ impl SetupOptions {
             driver_bin: None,
             runner: RunnerKind::Auto,
             share_desktop: true,
-            provide_spaces: false,
+            provide_spaces: None,
             max_spaces: None,
             cua_bin: None,
             allow_any_address: false,
@@ -178,7 +182,7 @@ impl SetupOptions {
             driver_bin: None,
             runner: RunnerKind::Auto,
             share_desktop: true,
-            provide_spaces: false,
+            provide_spaces: None,
             max_spaces: None,
             cua_bin: None,
             allow_any_address: false,
@@ -188,6 +192,21 @@ impl SetupOptions {
             dedicated: false,
             device_session: None,
         }
+    }
+}
+
+/// Whether a setup that does not say provides Spaces
+/// ([`SetupOptions::provide_spaces`] `None`): a machine set up before keeps
+/// what it has (`existing`: its `config.json`, else its `host.json`, as
+/// read; one that could not be read counts as off), so neither an earlier
+/// choice nor an earlier version's default (off) ever flips. A new setup
+/// provides Spaces in relay mode, where the owner's devices reach it, and
+/// not in direct mode, where it is a plaintext listener to opt into.
+pub fn default_provide_spaces(mode: &HostMode, existing: Option<Result<bool>>) -> bool {
+    match existing {
+        Some(Ok(provide)) => provide,
+        Some(Err(_)) => false,
+        None => matches!(mode, HostMode::Relay { .. }),
     }
 }
 
@@ -1270,7 +1289,8 @@ impl Host {
             .clone()
             .filter(|n| !n.trim().is_empty())
             .unwrap_or_else(friendly_name);
-        if !opts.share_desktop && !opts.provide_spaces {
+        let provide_spaces = self.resolve_provide_spaces(&opts);
+        if !opts.share_desktop && !provide_spaces {
             return Err(Error::InvalidArgument(
                 "with neither the desktop nor Spaces there is nothing to share; turn on \
                  --desktop or --provide-spaces"
@@ -1293,7 +1313,7 @@ impl Host {
         // Hosting Spaces on the plaintext direct listener: never on a
         // public address without --allow-any-address.
         if let HostMode::Direct { listen } = &opts.mode
-            && opts.provide_spaces
+            && provide_spaces
             && let Some(warning) = crate::direct::check_listen(*listen, opts.allow_any_address)?
         {
             tracing::warn!("{warning}");
@@ -1311,7 +1331,7 @@ impl Host {
                 .unwrap_or_else(|| self.paths.driver_bin()),
             sharing: true,
             share_desktop: opts.share_desktop,
-            provide_spaces: opts.provide_spaces,
+            provide_spaces,
             mesh: mesh_env(),
             usd_per_hour: host_usd_per_hour(),
             ..Default::default()
@@ -1343,7 +1363,7 @@ impl Host {
                             name: name.clone(),
                             allow: opts.allow.clone(),
                             host: None,
-                            meta: host_meta(opts.provide_spaces),
+                            meta: host_meta(provide_spaces),
                         },
                     )
                     .await?;
@@ -1363,7 +1383,7 @@ impl Host {
                         trust_relay_allowlist: true,
                         sharing: true,
                         share_desktop: opts.share_desktop,
-                        provide_spaces: opts.provide_spaces,
+                        provide_spaces,
                         max_spaces: opts
                             .max_spaces
                             .unwrap_or(crate::provided::DEFAULT_MAX_SPACES),
@@ -1392,7 +1412,7 @@ impl Host {
                     d.allow_any_address = opts.allow_any_address;
                 }
                 policy.share_desktop = opts.share_desktop;
-                policy.provide_spaces = opts.provide_spaces;
+                policy.provide_spaces = provide_spaces;
                 policy.dedicated = opts.dedicated;
                 if let Some(m) = opts.max_spaces {
                     policy.max_spaces = m;
@@ -1458,6 +1478,31 @@ impl Host {
             },
         );
         self.status().await
+    }
+
+    /// Whether a setup with `opts` provides Spaces: what it says, else
+    /// [`default_provide_spaces`] for this machine (what it already has
+    /// when it was set up before; on for a new relay setup).
+    pub fn resolve_provide_spaces(&self, opts: &SetupOptions) -> bool {
+        if let Some(p) = opts.provide_spaces {
+            return p;
+        }
+        let existing = if self.paths.config().exists() {
+            Some(
+                self.config()
+                    .and_then(|c| c.ok_or_else(|| Error::NotFound("config.json".into())))
+                    .map(|c| c.provide_spaces),
+            )
+        } else if self.paths.policy().exists() {
+            Some(
+                self.policy()
+                    .and_then(|p| p.ok_or_else(|| Error::NotFound("host.json".into())))
+                    .map(|p| p.provide_spaces),
+            )
+        } else {
+            None
+        };
+        default_provide_spaces(&opts.mode, existing)
     }
 
     /// The policy of a host in direct mode listening on `listen`: the env

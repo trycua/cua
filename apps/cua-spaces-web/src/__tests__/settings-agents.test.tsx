@@ -41,7 +41,9 @@ describe("configured agents without binary evidence", () => {
     const mounted = render(<BridgeProvider adapter={adapter} core={noCore}><RouterProvider router={router} /></BridgeProvider>);
     if (dialog === "connect") {
       await waitFor(() => expect(document.querySelector("li")?.textContent).toContain("Set up"));
-      expect(document.querySelector("li")?.textContent).toContain("C:/Users/test/.claude.json");
+      // The file path stays out of the row; it is only in the closed Advanced section.
+      expect(document.querySelector("li")?.textContent).not.toContain(".claude.json");
+      expect(document.querySelector<HTMLDetailsElement>("[data-connect-advanced]")?.open).toBe(false);
       expect(document.querySelector("li")?.textContent).not.toContain("Not installed");
     } else {
       await waitFor(() => expect(document.querySelector("[data-run-agent]")?.getAttribute("data-run-agent")).toBe("ready"));
@@ -55,7 +57,7 @@ const app = (id: string) => document.querySelector<HTMLElement>(`[data-connected
 const switchOf = (id: string) => within(app(id)!).getByRole("switch");
 
 describe.skipIf(!wasmBuilt)("Settings, Connected apps", () => {
-  it("lists the coding apps on this computer with one switch each, and the rest behind Show all", { timeout: 20_000 }, async () => {
+  it("lists the coding apps on this computer with one switch each, file paths only under Advanced", { timeout: 20_000 }, async () => {
     await mountApp("/settings/connected-apps", { failsCreates: false, listsGhost: false });
     await waitFor(() => expect(app("hermes")).not.toBeNull(), { timeout: 8000 });
     expect(within(app("claude-code")!).getByText("Claude Code")).toBeTruthy();
@@ -66,8 +68,12 @@ describe.skipIf(!wasmBuilt)("Settings, Connected apps", () => {
     expect(document.querySelector('[data-connected-missing="gemini-cli"]')).toBeNull();
     fireEvent.click(document.querySelector("[data-connected-show-all]")!);
     await waitFor(() => expect(document.querySelector('[data-connected-missing="gemini-cli"]')).not.toBeNull());
-    expect(app("claude-code")!.textContent).toContain("~/.claude.json");
-    expect(document.querySelector("[data-connected-by-hand]")).not.toBeNull();
+    // Rows stay icon, name and switch; paths and Add it by hand wait in a closed Advanced.
+    expect(app("claude-code")!.textContent).not.toContain(".claude.json");
+    const advanced = document.querySelector<HTMLDetailsElement>("[data-connected-advanced]")!;
+    expect(advanced.open).toBe(false);
+    expect(advanced.querySelector('[data-connected-file="claude-code"]')!.textContent).toContain("~/.claude.json");
+    expect(advanced.querySelector("[data-connected-by-hand]")).not.toBeNull();
   });
 
   it("switches one app on and off, remembers an app turned off, and offers Undo", { timeout: 20_000 }, async () => {

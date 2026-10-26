@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, ChevronUpIcon } from "lucide-react";
 import { lazy, Suspense, useState } from "react";
 
 import type { AgentSetupRow } from "@/bridge";
@@ -22,8 +22,9 @@ const DriverSettingsCard = lazy(() => import("@/components/volume/driver-card").
 /**
  * Settings, Connected apps, "Coding apps": the coding apps on this computer,
  * one switch each for Cua being set up in it (with Background computer use),
- * and "Set up new apps automatically". "Show all" opens file paths, the apps
- * that aren't installed, and adding Cua by hand.
+ * and "Set up new apps automatically". Rows show only the app and its switch.
+ * "Show all" opens the apps that aren't installed, Background computer use,
+ * and a collapsed "Advanced" with each app's settings file and adding Cua by hand.
  */
 export function CodingAppsSection({ apps }: { apps: ConnectedApps }) {
   const { openExternal } = useExternal();
@@ -41,7 +42,7 @@ export function CodingAppsSection({ apps }: { apps: ConnectedApps }) {
             We didn't find a coding app yet. Install one and Cua will notice.
           </div>
         ) : (
-          shown.map((row) => <AppRow key={row.agent} row={row} apps={apps} showPath={all} />)
+          shown.map((row) => <AppRow key={row.agent} row={row} apps={apps} />)
         )}
         <SettingsRow
           label="Set up new apps automatically"
@@ -80,12 +81,12 @@ export function CodingAppsSection({ apps }: { apps: ConnectedApps }) {
       </button>
       {all ? (
         <>
-          <ByHand />
           <SettingsGroup title="Background computer use">
             <Suspense fallback={<div className="h-48" />}>
               <DriverSettingsCard />
             </Suspense>
           </SettingsGroup>
+          <Advanced rows={shown} />
         </>
       ) : null}
     </div>
@@ -97,12 +98,12 @@ function useExternal() {
   return { openExternal: async (url: string) => void (await data?.call("session.openExternal", { url }).catch(() => {})) };
 }
 
-function AppRow({ row, apps, showPath }: { row: AgentSetupRow; apps: ConnectedApps; showPath: boolean }) {
+function AppRow({ row, apps }: { row: AgentSetupRow; apps: ConnectedApps }) {
   const busy = apps.pending.includes(row.agent);
   const failure = apps.failures[row.agent];
   const on = row.configured && !failure;
   const justOff = !row.configured && apps.state.off.includes(row.agent);
-  const note = failure ? null : justOff ? "Off." : showPath && row.mcpConfig ? row.mcpConfig : null;
+  const note = failure ? null : justOff ? "Off." : null;
   return (
     <div data-connected-app={row.agent} data-on={String(on)} data-failed={failure ? "" : undefined} className={cn(failure && "bg-destructive/5")}>
       <div className="flex min-h-12 items-center gap-3 px-4 py-2.5">
@@ -111,7 +112,7 @@ function AppRow({ row, apps, showPath }: { row: AgentSetupRow; apps: ConnectedAp
           <label htmlFor={`app-${row.agent}`} className="block truncate text-[13px]">
             {row.name}
           </label>
-          {note ? <p className={cn("mt-0.5 truncate text-xs text-muted-foreground", showPath && !justOff && "font-mono")}>{note}</p> : null}
+          {note ? <p className="mt-0.5 truncate text-xs text-muted-foreground">{note}</p> : null}
         </div>
         <Switch id={`app-${row.agent}`} checked={on} disabled={busy} onCheckedChange={(next) => void apps.toggle(row, next)} />
       </div>
@@ -126,7 +127,6 @@ function Failure({ row, text, busy, onRetry }: { row: AgentSetupRow; text: strin
   const snippet = BY_HAND[row.agent];
   return (
     <div className="px-4 pb-4 pl-14" data-connected-failure={row.agent}>
-      {row.mcpConfig ? <p className="-mt-1 mb-1 font-mono text-xs text-muted-foreground">{row.mcpConfig}</p> : null}
       <p className="text-[13px] text-destructive">{text}</p>
       <div className="mt-3 flex gap-2">
         <Button size="sm" variant="outline" disabled={busy} onClick={onRetry}>
@@ -148,6 +148,36 @@ function Failure({ row, text, busy, onRetry }: { row: AgentSetupRow; text: strin
   );
 }
 
+/**
+ * "Advanced", closed by default: the file each app keeps its settings in, and
+ * adding Cua by hand. Most people never need either.
+ */
+function Advanced({ rows }: { rows: AgentSetupRow[] }) {
+  const files = rows.filter((r) => r.mcpConfig);
+  return (
+    <details className="group mb-8" data-connected-advanced="">
+      <summary className="flex cursor-default list-none items-center gap-1 px-1 text-[13px] text-muted-foreground outline-none hover:text-foreground focus-visible:text-foreground [&::-webkit-details-marker]:hidden">
+        <ChevronRightIcon className="size-3.5 transition-transform group-open:rotate-90" aria-hidden /> Advanced
+      </summary>
+      <div className="mt-4">
+        {files.length > 0 ? (
+          <SettingsGroup title="Settings files">
+            {files.map((r) => (
+              <div key={r.agent} data-connected-file={r.agent} className="flex min-h-11 items-center gap-3 px-4 py-2">
+                <span className="w-40 shrink-0 truncate text-[13px]">{r.name}</span>
+                <code className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground select-text" title={r.mcpConfig ?? undefined}>
+                  {r.mcpConfig}
+                </code>
+              </div>
+            ))}
+          </SettingsGroup>
+        ) : null}
+        <ByHand />
+      </div>
+    </details>
+  );
+}
+
 /** "Add it by hand": for an app in an unusual place, another computer, or a work laptop where Cua may not edit settings. */
 function ByHand() {
   const ids = Object.keys(BY_HAND);
@@ -155,7 +185,7 @@ function ByHand() {
   const entry = BY_HAND[id]!;
   const label: Record<string, string> = { "claude-code": "Claude Code", codex: "Codex", hermes: "Hermes", openclaw: "OpenClaw", cursor: "Cursor" };
   return (
-    <section className="mb-8" data-connected-by-hand="">
+    <section data-connected-by-hand="">
       <h2 className="mb-2 px-1 text-xs font-semibold text-muted-foreground">Add it by hand</h2>
       <div className="rounded-xl border bg-card p-4 shadow-xs">
         <Segmented aria-label="App" value={id} options={ids.map((value) => ({ value, label: label[value] ?? value }))} onValueChange={setId} />

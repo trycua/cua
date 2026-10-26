@@ -487,8 +487,17 @@ export const PAGES: PageSpec[] = [
     title: 'Spaces',
     description: 'The Spaces registry: create, add, resolve, delete and remove Spaces, their create options, and agent runs in a Space.',
     intro:
-      '`cua.spaces()` returns the `Spaces` registry. Create a Space where `on` says (local or cloud), or add an existing machine by URL, then open a [`Space`](/cua-sdk/reference/spaces/space).',
-    items: ['Spaces', 'SpaceInfo', 'SpacePowerReport', 'spaces_tool_methods', 'SpacesToolMethod'],
+      '`cua.spaces()` returns the `Spaces` registry. Create a Space where `on` says (local or cloud), or add an existing machine by URL, then open a [`Space`](/cua-sdk/reference/spaces/space). See [resize](/cua-sdk/reference/spaces/resize) to change a local VM\'s shape.',
+    items: ['Spaces', 'SpaceInfo', 'SpaceList', 'SpacePowerReport', 'spaces_tool_methods', 'SpacesToolMethod'],
+  },
+  {
+    slug: 'spaces/resize',
+    title: 'Resize a Space',
+    description: 'Change a local VM\'s CPU, memory or disk while keeping its files.',
+    intro:
+      '`Spaces.resize` boots a stopped local VM from its own disk after changing its shape. The disk can grow; its files stay in place.',
+    items: ['SpaceResizeReport'],
+    members: [{ object: 'Spaces', title: 'Resize', methods: ['resize'] }],
   },
   {
     slug: 'spaces/lifetime',
@@ -527,6 +536,24 @@ export const PAGES: PageSpec[] = [
       'SpaceHotspotStatus',
     ],
     modules: ['spaces'],
+  },
+  {
+    slug: 'spaces/sharing',
+    title: 'Share a Space',
+    description: 'Give another person access to a Space, list who has it and take it back.',
+    intro:
+      '`Space.share` gives a person access to a Space, `Space.shares` lists who has it, and `Space.unshare` takes it back.',
+    items: ['SpaceShareEntry', 'SpaceShares'],
+    members: [{ object: 'Space', title: 'Sharing', methods: ['share', 'shares', 'unshare'] }],
+  },
+  {
+    slug: 'spaces/relay-registration',
+    title: 'Relay registration',
+    description: 'Register a Space with the relay so other devices reach it, and unregister it.',
+    intro:
+      '`Spaces.relay_register` makes a Space reachable from your other devices through the relay; `Spaces.relay_unregister` stops that.',
+    items: ['SpaceRelayRegistration'],
+    members: [{ object: 'Spaces', title: 'Relay registration', methods: ['relay_register', 'relay_unregister'] }],
   },
   {
     slug: 'spaces/elastic',
@@ -729,6 +756,15 @@ export const PAGES: PageSpec[] = [
       'ResourcesWatch',
     ],
     catalog: true,
+  },
+  {
+    slug: 'spaces/list-watch',
+    title: 'List changes',
+    description: 'Hear when the Space list changed, so it is read again then instead of on a timer.',
+    intro:
+      '`Spaces.watch_list` calls a `SpacesListListener` once at the start and again whenever the list changes: this computer\'s Spaces within a second, your other computers on the mesh within about a second of connecting or going away, the others within 10 seconds. Read the list again (`Spaces.list`) when it is called. It reopens by itself after a daemon restart; `SpacesListWatch.stop` ends it.',
+    members: [{ object: 'Spaces', title: 'List changes', methods: ['watch_list'] }],
+    items: ['SpacesListListener', 'SpacesListWatch'],
   },
   {
     slug: 'spaces/agents',

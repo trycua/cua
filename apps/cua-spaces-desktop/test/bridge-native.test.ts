@@ -177,6 +177,7 @@ describe.skipIf(!built)("the bridge on the app core", () => {
       ["links.create", { target: "3000" }],
       ["links.stop", { id: "all" }],
       ["checklist.get", {}],
+      ["cli.plan", {}],
       ["checklist.send", { action: { type: "done", step: "teleport" } }],
       ["session.signOut", {}],
     ];
@@ -185,7 +186,7 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     expect(problems).toEqual([]);
     // Every ported method has its case (or is checked below).
     // (Teleport and the Keyvault: vault-native.test.ts; This machine, Devices, Settings and the rest: host-bridge.test.ts; the relay allowance: relay-usage.test.ts; resource numbers: resources.test.ts; presence: presence-bridge.test.ts; the Machines page's rename, remove and health checks: machines-view.test.ts; the Windows runtime fix: below.)
-    const elsewhere = new Set(["session.signIn", "spaces.create", "spaces.delete", "spaces.openStream", "relay.usage", "sharing.removals", "sharing.ackRemovals", "resources.get", "machines.rename", "machines.remove", "machines.checkHealth", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime", ...AGENT_METHODS, ...VAULT_METHODS, ...HOST_METHODS]);
+    const elsewhere = new Set(["session.signIn", "spaces.create", "spaces.delete", "spaces.openStream", "relay.usage", "sharing.removals", "sharing.ackRemovals", "resources.get", "machines.rename", "machines.remove", "machines.checkHealth", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime", "cli.install", ...AGENT_METHODS, ...VAULT_METHODS, ...HOST_METHODS]);
     const ported = bridge.registry.methods.filter((m) => !NOT_YET.includes(m) && !elsewhere.has(m));
     expect(ported.filter((m) => !cases.some(([c]) => c === m))).toEqual([]);
   });
@@ -217,7 +218,7 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     const list = (await call("spaces.list")) as { loaded: boolean; spaces: { space: { id: string; os: string; status: string }; detail: { title: string } }[] };
     expect(list.loaded).toBe(true);
     // In the core's order; This machine is there because this app manages a host.
-    expect(list.spaces.map((s) => s.space.id).sort()).toEqual(["cloud:builder", "direct:10.0.0.5:3211", "local:aurora", "this-mac"]);
+    expect(list.spaces.map((s) => s.space.id).sort()).toEqual(["direct:10.0.0.5:3211", "direct:builder", "local:aurora", "this-mac"]);
     const aurora = list.spaces.find((s) => s.space.id === "local:aurora")!;
     expect(aurora.space).toMatchObject({ os: "linux", status: "running" });
     expect(typeof aurora.detail.title).toBe("string");
@@ -593,7 +594,7 @@ describe.skipIf(!built)("the bridge on the app core", () => {
       "checklist.send": { action: { type: "done", step: "teleport" } },
     };
     // This machine, Devices, Settings and the rest: host-bridge.test.ts reads them with their arguments (the Machines page's rename and remove: machines-view.test.ts).
-    const skip = new Set<OpName>(["spaces.create", "spaces.delete", "session.signIn", "session.signOut", "session.openExternal", "spaces.openStream", "relay.usage", "sharing.removals", "sharing.ackRemovals", "resources.get", "machines.rename", "machines.remove", "machines.checkHealth", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime", ...VAULT_OPS, ...(HOST_OPS as OpName[])]);
+    const skip = new Set<OpName>(["spaces.create", "spaces.delete", "session.signIn", "session.signOut", "session.openExternal", "spaces.openStream", "relay.usage", "sharing.removals", "sharing.ackRemovals", "resources.get", "machines.rename", "machines.remove", "machines.checkHealth", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime", "cli.install", ...VAULT_OPS, ...(HOST_OPS as OpName[])]);
     const problems: string[] = [];
     const checked: string[] = [];
     for (const op of OPERATIONS) {

@@ -102,7 +102,7 @@ Docs: [Sandboxes](https://cua.ai/docs/cua-sdk).
 | `cua-daemon` | The SDK runtime and its host: `cua.daemon.v1` on the socket and loopback, env passthrough (`/v1/sandboxes/<name>/env/...`, `/v1/spaces/<key>/env/...`), the ticketed webview media bridge, the Spaces MCP server at `/mcp` and `cua daemon mcp`. Feature `test-fixtures` adds loopback fixtures; the `cua-test-fixtures` binary lives in `libs/cua-spacesd/tests/spaces-e2e` (build it with `scripts/build-test-fixtures.sh`). |
 | `cua-sdk` | The **only** `#[uniffi::export]` crate (UniFFI `=0.31.0`): `Cua.embedded` / `Cua.connect`, sandboxes, env (typed plus a proto3-JSON escape hatch over every `cua.env.v1` RPC), media sessions with `FrameSink`/`AudioSink`, local runtimes and images, Spaces, auth and agent setup; a wasm32 browser subset. |
 | `cua-bindgen` | The pinned UniFFI CLI used by `scripts/generate-uniffi-bindings.mjs`. |
-| `cua-cli` | The `cua` binary (shipped in the `cua` wheel, `@trycua/cua`, the install scripts and the Spaces app): `auth`, `agents`, `sandbox`, `config`, `do`, `mcp`, `skills`, `trajectory`, `image`, `env`, `daemon`, `runtime`, `host`, `spaces`, `teleport`. Reference: [docs.cua.ai/reference/cua-cli](https://cua.ai/docs/cua-cli/reference/cli). |
+| `cua-cli` | The `cua` binary (shipped in the `cua-cli` wheel, a dependency of the `cua` wheel, `@trycua/cua`, the install scripts and the Spaces app): `auth`, `agents`, `sandbox`, `config`, `do`, `mcp`, `skills`, `trajectory`, `image`, `env`, `daemon`, `runtime`, `host`, `spaces`, `teleport`. Reference: [docs.cua.ai/reference/cua-cli](https://cua.ai/docs/cua-cli/reference/cli). |
 
 Language packages generated from `cua-sdk` (drift-checked by
 `scripts/generate-uniffi-bindings.mjs --check`):

@@ -227,7 +227,7 @@ struct DaemonHost {
     home: PathBuf,
     runtime_host: Option<Arc<cua_spaces::host_spaces::HostSpacesServer>>,
     /// The pool per relay URL, once its account is known.
-    relays: Mutex<HashMap<String, RelayPool>>,
+    relays: Mutex<HashMap<String, (Option<String>, RelayPool)>>,
     /// Each machine's OS, once it answered.
     os: Arc<Mutex<HashMap<String, String>>>,
     /// Whether a machine whose setup said otherwise provides Spaces now,
@@ -240,7 +240,12 @@ struct DaemonHost {
 }
 
 /// A relay URL, when its device key was read, and the key.
-type CachedSigner = (String, std::time::Instant, Arc<dyn DeviceSigner>);
+type CachedSigner = (
+    String,
+    std::time::Instant,
+    Option<String>,
+    Arc<dyn DeviceSigner>,
+);
 
 /// The name of this device's pool key in the credential store (the OS
 /// vault for Cua-signed builds, else a 0600 file), next to its device key.
@@ -332,7 +337,12 @@ impl DaemonHost {
 impl Host for DaemonHost {
     async fn relay(&self) -> Option<RelayPool> {
         let account = self.spaces.relay_account()?;
-        if let Some(p) = self.relays.lock().expect("relays").get(&account.url) {
+        // Which account this is: the pool is the account's, so another
+        // sign-in needs its own (the relay says its id below).
+        let who = account.account_subject().await;
+        if let Some((started, p)) = self.relays.lock().expect("relays").get(&account.url)
+            && !cua_spaces::relay::account_changed(started, &who)
+        {
             return Some(p.clone());
         }
         let auth: Arc<dyn PoolAuth> = Arc::new(AccountAuth(account.clone()));
@@ -347,7 +357,7 @@ impl Host for DaemonHost {
         self.relays
             .lock()
             .expect("relays")
-            .insert(account.url.clone(), pool.clone());
+            .insert(account.url.clone(), (who, pool.clone()));
         Some(pool)
     }
 
@@ -438,15 +448,18 @@ impl Host for DaemonHost {
         if url != relay.base() {
             return None;
         }
-        if let Some((u, at, s)) = self.signer.lock().expect("signer").as_ref()
+        let who = account.account_subject().await;
+        if let Some((u, at, started, s)) = self.signer.lock().expect("signer").as_ref()
             && *u == url
             && at.elapsed() < std::time::Duration::from_secs(60)
+            && !cua_spaces::relay::account_changed(started, &who)
         {
             return Some(s.clone());
         }
         let key = account.device.as_ref()?.key().ok()??;
         let s: Arc<dyn DeviceSigner> = Arc::new(DeviceKeySigner(key));
-        *self.signer.lock().expect("signer") = Some((url, std::time::Instant::now(), s.clone()));
+        *self.signer.lock().expect("signer") =
+            Some((url, std::time::Instant::now(), who, s.clone()));
         Some(s)
     }
 

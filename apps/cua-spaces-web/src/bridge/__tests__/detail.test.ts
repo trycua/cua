@@ -34,7 +34,7 @@ describe("usage events", () => {
         { type: "space-create-started", location: "local", guestOs: "linux", kind: "container", gpu: false },
         { type: "space-create", location: "local", guestOs: "linux", kind: "vm", outcome: "ok", failedPhase: "none", stalled: false, elapsedMs: -1, gpu: false },
         { type: "space-create", location: "local", guestOs: "linux", kind: "vm", outcome: "ready", failedPhase: "none", stalled: false, elapsedMs: 10, gpu: false },
-        { type: "space-create", location: "cloud", guestOs: "windows", kind: "vm", outcome: "error", failedPhase: "booting", stalled: false, elapsedMs: 10, gpu: false, errorVariant: "InsufficientDisk" },
+        { type: "space-create", location: "yours", guestOs: "windows", kind: "vm", outcome: "error", failedPhase: "booting", stalled: false, elapsedMs: 10, gpu: false, errorVariant: "InsufficientDisk" },
         { type: "space-create", location: "local", guestOs: "linux", kind: "vm", outcome: "error", failedPhase: "booting", stalled: false, elapsedMs: 10, gpu: false, errorVariant: "need 52 GB" },
         { type: "space-create", location: "local", guestOs: "linux", kind: "vm", outcome: "ok", failedPhase: "none", stalled: false, elapsedMs: 10, gpu: false, errorVariant: "", retryAttempt: 1, errorSubclass: "runtime_start" },
         { type: "space-create", location: "local", guestOs: "linux", kind: "vm", outcome: "ok", failedPhase: "none", stalled: false, elapsedMs: 10, gpu: false, errorVariant: "", retryAttempt: 2, errorSubclass: "none" },
@@ -45,7 +45,7 @@ describe("usage events", () => {
     ).toEqual([
       { type: "step", step: "app_launched", ok: true },
       { type: "space-create-started", location: "local", guestOs: "linux", kind: "container", gpu: false },
-      { type: "space-create", location: "cloud", guestOs: "windows", kind: "vm", outcome: "error", failedPhase: "booting", stalled: false, elapsedMs: 10, gpu: false, errorVariant: "InsufficientDisk" },
+      { type: "space-create", location: "yours", guestOs: "windows", kind: "vm", outcome: "error", failedPhase: "booting", stalled: false, elapsedMs: 10, gpu: false, errorVariant: "InsufficientDisk" },
       { type: "space-create", location: "local", guestOs: "linux", kind: "vm", outcome: "ok", failedPhase: "none", stalled: false, elapsedMs: 10, gpu: false, errorVariant: "", retryAttempt: 1, errorSubclass: "runtime_start" },
     ]);
   });

@@ -980,7 +980,8 @@ public protocol AgentSetupProtocol: AnyObject, Sendable {
 
     /**
      * Configures the MCP server (default: `cua mcp`, `cua` resolved on
-     * PATH) for `agents`.
+     * PATH; `cua-local mcp` named `cua-local` for the Local app) for
+     * `agents`. A server without a name gets the channel's.
      */
     func configureMcp(agents: [String], server: AgentMcpServer?) async throws  -> [AgentSetupOutcome]
 
@@ -1104,7 +1105,8 @@ open class AgentSetup: AgentSetupProtocol, @unchecked Sendable {
 
     /**
      * Configures the MCP server (default: `cua mcp`, `cua` resolved on
-     * PATH) for `agents`.
+     * PATH; `cua-local mcp` named `cua-local` for the Local app) for
+     * `agents`. A server without a name gets the channel's.
      */
 open func configureMcp(agents: [String], server: AgentMcpServer?)async throws  -> [AgentSetupOutcome]  {
     return
@@ -11183,6 +11185,16 @@ public protocol SpacesProtocol: AnyObject, Sendable {
     func list() async throws  -> [SpaceInfo]
 
     /**
+     * The Spaces known now: this machine's at once, and the account's other
+     * computers as far as they answered within a moment ([`SpaceList`]
+     * says how far the read got). A slow or unreachable relay never holds
+     * up or fails this machine's own Spaces, so an app shows them right
+     * away and reads again while the list is incomplete. [`Spaces::list`]
+     * waits for every computer instead.
+     */
+    func listKnown() async throws  -> SpaceList
+
+    /**
      * The Spaces MCP `tools/list` result as JSON (the contract).
      */
     func listToolsJson() async throws  -> String
@@ -11217,6 +11229,15 @@ public protocol SpacesProtocol: AnyObject, Sendable {
      * Unregisters a Space (the sandbox is not touched).
      */
     func remove(space: String) async throws
+
+    /**
+     * Gives a local VM Space another shape: `cpus` vCPUs, `memory_mb` MiB
+     * of memory, a disk grown to `disk_gb` GiB (each `None` keeps it). It
+     * shuts down and boots again from its own disk (a stopped one boots),
+     * so its files stay and its memory and processes do not. Returns once
+     * it is ready again.
+     */
+    func resize(space: String, cpus: UInt32?, memoryMb: UInt64?, diskGb: UInt32?) async throws  -> SpaceResizeReport
 
     /**
      * Resolves an id, legacy id, URL or display name.
@@ -11264,12 +11285,21 @@ public protocol SpacesProtocol: AnyObject, Sendable {
 
     /**
      * Turns a Space off the way its provider can (`SpaceInfo.power`):
-     * suspends it, keeping its memory (a local container or QEMU VM), or
-     * stops it, keeping its disk (a local Lume VM; a Space one of your
-     * machines provides, which that machine stops). A cloud Space, a Space
-     * added by address and your own computers cannot be turned off.
+     * stops it, keeping its disk and freeing its memory (a local VM; a
+     * Space one of your machines provides, which that machine stops), or
+     * suspends it, keeping its memory (a local container that cannot
+     * stop). [`Spaces::suspend`] suspends a local container or QEMU VM on
+     * purpose. A Space added by address and your own computers cannot be
+     * turned off.
      */
     func stop(space: String) async throws  -> SpacePowerReport
+
+    /**
+     * Suspends a local Space (a container or a QEMU VM), keeping its
+     * memory: it resumes where it was, and its memory stays in use until
+     * then. [`Spaces::stop`] stops it instead and frees its memory.
+     */
+    func suspend(space: String) async throws  -> SpacePowerReport
 
     /**
      * `volume_approve`: the request becomes a grant (with presence).
@@ -11406,6 +11436,16 @@ public protocol SpacesProtocol: AnyObject, Sendable {
      * each. Needs Cua Spaces (the Cua Volume).
      */
     func volumes() async throws  -> [NamedVolume]
+
+    /**
+     * Tells `listener` when the Space list changed: once at the start, then
+     * on every change. This computer's Spaces within a second; your other
+     * computers on the mesh within about a second of connecting or going
+     * away; the others within 10 seconds. Reopens by itself if the daemon
+     * restarts (and then calls `listener` again). Stop it with
+     * [`SpacesListWatch::stop`].
+     */
+    func watchList(listener: SpacesListListener)  -> SpacesListWatch
 
     /**
      * The same numbers as events for `listener`: a snapshot first, then an
@@ -12490,6 +12530,31 @@ open func list()async throws  -> [SpaceInfo]  {
 }
 
     /**
+     * The Spaces known now: this machine's at once, and the account's other
+     * computers as far as they answered within a moment ([`SpaceList`]
+     * says how far the read got). A slow or unreachable relay never holds
+     * up or fails this machine's own Spaces, so an app shows them right
+     * away and reads again while the list is incomplete. [`Spaces::list`]
+     * waits for every computer instead.
+     */
+open func listKnown()async throws  -> SpaceList  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_list_known(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeSpaceList_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
      * The Spaces MCP `tools/list` result as JSON (the contract).
      */
 open func listToolsJson()async throws  -> String  {
@@ -12596,6 +12661,30 @@ open func remove(space: String)async throws   {
             completeFunc: ffi_cua_sdk_rust_future_complete_void,
             freeFunc: ffi_cua_sdk_rust_future_free_void,
             liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Gives a local VM Space another shape: `cpus` vCPUs, `memory_mb` MiB
+     * of memory, a disk grown to `disk_gb` GiB (each `None` keeps it). It
+     * shuts down and boots again from its own disk (a stopped one boots),
+     * so its files stay and its memory and processes do not. Returns once
+     * it is ready again.
+     */
+open func resize(space: String, cpus: UInt32?, memoryMb: UInt64?, diskGb: UInt32?)async throws  -> SpaceResizeReport  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_resize(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(space),FfiConverterOptionUInt32.lower(cpus),FfiConverterOptionUInt64.lower(memoryMb),FfiConverterOptionUInt32.lower(diskGb)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeSpaceResizeReport_lift,
             errorHandler: FfiConverterTypeCuaError_lift
         )
 }
@@ -12736,16 +12825,40 @@ open func start(space: String)async throws  -> SpacePowerReport  {
 
     /**
      * Turns a Space off the way its provider can (`SpaceInfo.power`):
-     * suspends it, keeping its memory (a local container or QEMU VM), or
-     * stops it, keeping its disk (a local Lume VM; a Space one of your
-     * machines provides, which that machine stops). A cloud Space, a Space
-     * added by address and your own computers cannot be turned off.
+     * stops it, keeping its disk and freeing its memory (a local VM; a
+     * Space one of your machines provides, which that machine stops), or
+     * suspends it, keeping its memory (a local container that cannot
+     * stop). [`Spaces::suspend`] suspends a local container or QEMU VM on
+     * purpose. A Space added by address and your own computers cannot be
+     * turned off.
      */
 open func stop(space: String)async throws  -> SpacePowerReport  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_cua_sdk_fn_method_spaces_stop(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(space)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeSpacePowerReport_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Suspends a local Space (a container or a QEMU VM), keeping its
+     * memory: it resumes where it was, and its memory stays in use until
+     * then. [`Spaces::stop`] stops it instead and frees its memory.
+     */
+open func suspend(space: String)async throws  -> SpacePowerReport  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_suspend(
                     self.uniffiCloneHandle(),
                     FfiConverterString.lower(space)
                 )
@@ -13285,6 +13398,23 @@ open func volumes()async throws  -> [NamedVolume]  {
 }
 
     /**
+     * Tells `listener` when the Space list changed: once at the start, then
+     * on every change. This computer's Spaces within a second; your other
+     * computers on the mesh within about a second of connecting or going
+     * away; the others within 10 seconds. Reopens by itself if the daemon
+     * restarts (and then calls `listener` again). Stop it with
+     * [`SpacesListWatch::stop`].
+     */
+open func watchList(listener: SpacesListListener) -> SpacesListWatch  {
+    return try!  FfiConverterTypeSpacesListWatch_lift(try! rustCall() {
+    uniffi_cua_sdk_fn_method_spaces_watch_list(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeSpacesListListener_lower(listener),$0
+    )
+})
+}
+
+    /**
      * The same numbers as events for `listener`: a snapshot first, then an
      * update with only the entries that changed by more than 1 point or
      * 256 MB, and `LowDisk` whenever the warning level changes. Reopens by
@@ -13437,6 +13567,335 @@ public func FfiConverterTypeSpaces_lift(_ handle: UInt64) throws -> Spaces {
 #endif
 public func FfiConverterTypeSpaces_lower(_ value: Spaces) -> UInt64 {
     return FfiConverterTypeSpaces.lower(value)
+}
+
+
+
+
+
+
+/**
+ * Hears that the Space list changed ([`Spaces::watch_list`]). Called on an
+ * SDK worker thread; return quickly (read the list on your own queue).
+ */
+public protocol SpacesListListener: AnyObject, Sendable {
+
+    /**
+     * The list changed (and once at the start): read it again.
+     * `generation` only increases while one daemon runs.
+     */
+    func onChanged(generation: UInt64)
+
+}
+/**
+ * Hears that the Space list changed ([`Spaces::watch_list`]). Called on an
+ * SDK worker thread; return quickly (read the list on your own queue).
+ */
+open class SpacesListListenerImpl: SpacesListListener, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_cua_sdk_fn_clone_spaceslistlistener(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_cua_sdk_fn_free_spaceslistlistener(handle, $0) }
+    }
+
+
+
+
+    /**
+     * The list changed (and once at the start): read it again.
+     * `generation` only increases while one daemon runs.
+     */
+open func onChanged(generation: UInt64)  {try! rustCall() {
+    uniffi_cua_sdk_fn_method_spaceslistlistener_on_changed(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(generation),$0
+    )
+}
+}
+
+
+
+}
+
+
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+fileprivate struct UniffiCallbackInterfaceSpacesListListener {
+
+    // Create the VTable using a series of closures.
+    // Swift automatically converts these into C callback functions.
+    //
+    // This creates 1-element array, since this seems to be the only way to construct a const
+    // pointer that we can pass to the Rust code.
+    static let vtable: [UniffiVTableCallbackInterfaceSpacesListListener] = [UniffiVTableCallbackInterfaceSpacesListListener(
+        uniffiFree: { (uniffiHandle: UInt64) -> () in
+            do {
+                try FfiConverterTypeSpacesListListener.handleMap.remove(handle: uniffiHandle)
+            } catch {
+                print("Uniffi callback interface SpacesListListener: handle missing in uniffiFree")
+            }
+        },
+        uniffiClone: { (uniffiHandle: UInt64) -> UInt64 in
+            do {
+                return try FfiConverterTypeSpacesListListener.handleMap.clone(handle: uniffiHandle)
+            } catch {
+                fatalError("Uniffi callback interface SpacesListListener: handle missing in uniffiClone")
+            }
+        },
+        onChanged: { (
+            uniffiHandle: UInt64,
+            generation: UInt64,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterTypeSpacesListListener.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.onChanged(
+                     generation: try FfiConverterUInt64.lift(generation)
+                )
+            }
+
+
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        }
+    )]
+}
+
+private func uniffiCallbackInitSpacesListListener() {
+    uniffi_cua_sdk_fn_init_callback_vtable_spaceslistlistener(UniffiCallbackInterfaceSpacesListListener.vtable)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSpacesListListener: FfiConverter {
+    fileprivate static let handleMap = UniffiHandleMap<SpacesListListener>()
+
+    typealias FfiType = UInt64
+    typealias SwiftType = SpacesListListener
+
+    public static func lift(_ handle: UInt64) throws -> SpacesListListener {
+        if ((handle & 1) == 0) {
+            // Rust-generated handle, construct a new class that uses the handle to implement the
+            // interface
+            return SpacesListListenerImpl(unsafeFromHandle: handle)
+        } else {
+            // Swift-generated handle, get the object from the handle map
+            return try handleMap.remove(handle: handle)
+        }
+    }
+
+    public static func lower(_ value: SpacesListListener) -> UInt64 {
+         if let rustImpl = value as? SpacesListListenerImpl {
+             // Rust-implemented object.  Clone the handle and return it
+            return rustImpl.uniffiCloneHandle()
+         } else {
+            // Swift object, generate a new vtable handle and return that.
+            return handleMap.insert(obj: value)
+         }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SpacesListListener {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: SpacesListListener, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpacesListListener_lift(_ handle: UInt64) throws -> SpacesListListener {
+    return try FfiConverterTypeSpacesListListener.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpacesListListener_lower(_ value: SpacesListListener) -> UInt64 {
+    return FfiConverterTypeSpacesListListener.lower(value)
+}
+
+
+
+
+
+
+/**
+ * A running [`Spaces::watch_list`]. Dropping it also stops it.
+ */
+public protocol SpacesListWatchProtocol: AnyObject, Sendable {
+
+    /**
+     * Ends the watch. No call is made after this returns.
+     */
+    func stop()
+
+}
+/**
+ * A running [`Spaces::watch_list`]. Dropping it also stops it.
+ */
+open class SpacesListWatch: SpacesListWatchProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_cua_sdk_fn_clone_spaceslistwatch(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_cua_sdk_fn_free_spaceslistwatch(handle, $0) }
+    }
+
+
+
+
+    /**
+     * Ends the watch. No call is made after this returns.
+     */
+open func stop()  {try! rustCall() {
+    uniffi_cua_sdk_fn_method_spaceslistwatch_stop(
+            self.uniffiCloneHandle(),$0
+    )
+}
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSpacesListWatch: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = SpacesListWatch
+
+    public static func lift(_ handle: UInt64) throws -> SpacesListWatch {
+        return SpacesListWatch(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: SpacesListWatch) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SpacesListWatch {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: SpacesListWatch, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpacesListWatch_lift(_ handle: UInt64) throws -> SpacesListWatch {
+    return try FfiConverterTypeSpacesListWatch.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpacesListWatch_lower(_ value: SpacesListWatch) -> UInt64 {
+    return FfiConverterTypeSpacesListWatch.lower(value)
 }
 
 
@@ -35820,6 +36279,125 @@ public func FfiConverterTypeSpaceCreateResult_lower(_ value: SpaceCreateResult) 
 
 
 /**
+ * A Space another of your computers is creating ([`SpaceList::creating`]).
+ */
+public struct SpaceCreatingElsewhere: Equatable, Hashable {
+    /**
+     * The computer's relay machine id.
+     */
+    public var machineId: String
+    /**
+     * The computer's name.
+     */
+    public var machineName: String
+    /**
+     * The Space's name.
+     */
+    public var name: String
+    /**
+     * `macos`, `linux`, `windows`, or empty when unknown.
+     */
+    public var os: String
+    /**
+     * The create's phase (`preparing`, `pulling`, `booting`, ...).
+     */
+    public var phase: String
+    /**
+     * How far along the whole create is, 0 to 100.
+     */
+    public var percent: UInt32
+    /**
+     * When the computer published it, unix ms.
+     */
+    public var updatedAtMs: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The computer's relay machine id.
+         */machineId: String,
+        /**
+         * The computer's name.
+         */machineName: String,
+        /**
+         * The Space's name.
+         */name: String,
+        /**
+         * `macos`, `linux`, `windows`, or empty when unknown.
+         */os: String,
+        /**
+         * The create's phase (`preparing`, `pulling`, `booting`, ...).
+         */phase: String,
+        /**
+         * How far along the whole create is, 0 to 100.
+         */percent: UInt32,
+        /**
+         * When the computer published it, unix ms.
+         */updatedAtMs: UInt64) {
+        self.machineId = machineId
+        self.machineName = machineName
+        self.name = name
+        self.os = os
+        self.phase = phase
+        self.percent = percent
+        self.updatedAtMs = updatedAtMs
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension SpaceCreatingElsewhere: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSpaceCreatingElsewhere: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SpaceCreatingElsewhere {
+        return
+            try SpaceCreatingElsewhere(
+                machineId: FfiConverterString.read(from: &buf),
+                machineName: FfiConverterString.read(from: &buf),
+                name: FfiConverterString.read(from: &buf),
+                os: FfiConverterString.read(from: &buf),
+                phase: FfiConverterString.read(from: &buf),
+                percent: FfiConverterUInt32.read(from: &buf),
+                updatedAtMs: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SpaceCreatingElsewhere, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.machineId, into: &buf)
+        FfiConverterString.write(value.machineName, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.os, into: &buf)
+        FfiConverterString.write(value.phase, into: &buf)
+        FfiConverterUInt32.write(value.percent, into: &buf)
+        FfiConverterUInt64.write(value.updatedAtMs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpaceCreatingElsewhere_lift(_ buf: RustBuffer) throws -> SpaceCreatingElsewhere {
+    return try FfiConverterTypeSpaceCreatingElsewhere.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpaceCreatingElsewhere_lower(_ value: SpaceCreatingElsewhere) -> RustBuffer {
+    return FfiConverterTypeSpaceCreatingElsewhere.lower(value)
+}
+
+
+/**
  * One of a Space's displays ([`Space::displays`]).
  */
 public struct SpaceDisplay: Equatable, Hashable {
@@ -36457,6 +37035,125 @@ public func FfiConverterTypeSpaceInfo_lower(_ value: SpaceInfo) -> RustBuffer {
 
 
 /**
+ * The Spaces known now ([`Spaces::list_known`]) and how far the read got.
+ */
+public struct SpaceList: Equatable, Hashable {
+    /**
+     * This machine's Spaces, and the account's other computers' as far as
+     * they answered (the last known ones meanwhile).
+     */
+    public var spaces: [SpaceInfo]
+    /**
+     * Some of the account's computers have not answered yet: the list may
+     * grow, and an empty one is not "no Spaces". Always false from a
+     * daemon that predates it (it answers once every computer did).
+     */
+    public var incomplete: Bool
+    /**
+     * How many computers are still being reached (0 when unknown).
+     */
+    public var reaching: UInt32
+    /**
+     * The other computers' rows are the last known ones, not yet
+     * confirmed by the relay.
+     */
+    public var stale: Bool
+    /**
+     * Why the account's computers could not be read, when they could not.
+     */
+    public var notice: String
+    /**
+     * Spaces your other computers are creating now, from what each
+     * published through the relay (empty from a daemon that predates it).
+     */
+    public var creating: [SpaceCreatingElsewhere]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * This machine's Spaces, and the account's other computers' as far as
+         * they answered (the last known ones meanwhile).
+         */spaces: [SpaceInfo],
+        /**
+         * Some of the account's computers have not answered yet: the list may
+         * grow, and an empty one is not "no Spaces". Always false from a
+         * daemon that predates it (it answers once every computer did).
+         */incomplete: Bool,
+        /**
+         * How many computers are still being reached (0 when unknown).
+         */reaching: UInt32,
+        /**
+         * The other computers' rows are the last known ones, not yet
+         * confirmed by the relay.
+         */stale: Bool,
+        /**
+         * Why the account's computers could not be read, when they could not.
+         */notice: String,
+        /**
+         * Spaces your other computers are creating now, from what each
+         * published through the relay (empty from a daemon that predates it).
+         */creating: [SpaceCreatingElsewhere]) {
+        self.spaces = spaces
+        self.incomplete = incomplete
+        self.reaching = reaching
+        self.stale = stale
+        self.notice = notice
+        self.creating = creating
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension SpaceList: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSpaceList: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SpaceList {
+        return
+            try SpaceList(
+                spaces: FfiConverterSequenceTypeSpaceInfo.read(from: &buf),
+                incomplete: FfiConverterBool.read(from: &buf),
+                reaching: FfiConverterUInt32.read(from: &buf),
+                stale: FfiConverterBool.read(from: &buf),
+                notice: FfiConverterString.read(from: &buf),
+                creating: FfiConverterSequenceTypeSpaceCreatingElsewhere.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SpaceList, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeSpaceInfo.write(value.spaces, into: &buf)
+        FfiConverterBool.write(value.incomplete, into: &buf)
+        FfiConverterUInt32.write(value.reaching, into: &buf)
+        FfiConverterBool.write(value.stale, into: &buf)
+        FfiConverterString.write(value.notice, into: &buf)
+        FfiConverterSequenceTypeSpaceCreatingElsewhere.write(value.creating, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpaceList_lift(_ buf: RustBuffer) throws -> SpaceList {
+    return try FfiConverterTypeSpaceList.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpaceList_lower(_ value: SpaceList) -> RustBuffer {
+    return FfiConverterTypeSpaceList.lower(value)
+}
+
+
+/**
  * What [`Spaces::stop`] or [`Spaces::start`] did.
  */
 public struct SpacePowerReport: Equatable, Hashable {
@@ -36469,8 +37166,8 @@ public struct SpacePowerReport: Equatable, Hashable {
      */
     public var state: String
     /**
-     * How it turns off: `suspend` (its memory is kept) or `stop` (its
-     * disk is kept).
+     * How it was turned off: `suspend` (its memory is kept, and still in
+     * use) or `stop` (its disk is kept; its memory is freed).
      */
     public var power: String
     /**
@@ -36488,8 +37185,8 @@ public struct SpacePowerReport: Equatable, Hashable {
          * `running`, `suspended` or `stopped`: the state it is in now.
          */state: String,
         /**
-         * How it turns off: `suspend` (its memory is kept) or `stop` (its
-         * disk is kept).
+         * How it was turned off: `suspend` (its memory is kept, and still in
+         * use) or `stop` (its disk is kept; its memory is freed).
          */power: String,
         /**
          * What happened, for people.
@@ -36643,6 +37340,105 @@ public func FfiConverterTypeSpaceRelayRegistration_lift(_ buf: RustBuffer) throw
 #endif
 public func FfiConverterTypeSpaceRelayRegistration_lower(_ value: SpaceRelayRegistration) -> RustBuffer {
     return FfiConverterTypeSpaceRelayRegistration.lower(value)
+}
+
+
+/**
+ * What [`Spaces::resize`] did: the shape the Space has now.
+ */
+public struct SpaceResizeReport: Equatable, Hashable {
+    /**
+     * The Space.
+     */
+    public var space: String
+    /**
+     * vCPUs (when changed).
+     */
+    public var cpus: UInt32?
+    /**
+     * Memory in MiB (when changed).
+     */
+    public var memoryMb: UInt64?
+    /**
+     * Disk in GiB (when grown).
+     */
+    public var diskGb: UInt32?
+    /**
+     * What happened, for people.
+     */
+    public var message: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The Space.
+         */space: String,
+        /**
+         * vCPUs (when changed).
+         */cpus: UInt32?,
+        /**
+         * Memory in MiB (when changed).
+         */memoryMb: UInt64?,
+        /**
+         * Disk in GiB (when grown).
+         */diskGb: UInt32?,
+        /**
+         * What happened, for people.
+         */message: String) {
+        self.space = space
+        self.cpus = cpus
+        self.memoryMb = memoryMb
+        self.diskGb = diskGb
+        self.message = message
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension SpaceResizeReport: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSpaceResizeReport: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SpaceResizeReport {
+        return
+            try SpaceResizeReport(
+                space: FfiConverterString.read(from: &buf),
+                cpus: FfiConverterOptionUInt32.read(from: &buf),
+                memoryMb: FfiConverterOptionUInt64.read(from: &buf),
+                diskGb: FfiConverterOptionUInt32.read(from: &buf),
+                message: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SpaceResizeReport, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.space, into: &buf)
+        FfiConverterOptionUInt32.write(value.cpus, into: &buf)
+        FfiConverterOptionUInt64.write(value.memoryMb, into: &buf)
+        FfiConverterOptionUInt32.write(value.diskGb, into: &buf)
+        FfiConverterString.write(value.message, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpaceResizeReport_lift(_ buf: RustBuffer) throws -> SpaceResizeReport {
+    return try FfiConverterTypeSpaceResizeReport.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpaceResizeReport_lower(_ value: SpaceResizeReport) -> RustBuffer {
+    return FfiConverterTypeSpaceResizeReport.lower(value)
 }
 
 
@@ -46830,6 +47626,31 @@ fileprivate struct FfiConverterSequenceTypeSpaceAppIconRequest: FfiConverterRust
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeSpaceCreatingElsewhere: FfiConverterRustBuffer {
+    typealias SwiftType = [SpaceCreatingElsewhere]
+
+    public static func write(_ value: [SpaceCreatingElsewhere], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeSpaceCreatingElsewhere.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [SpaceCreatingElsewhere] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [SpaceCreatingElsewhere]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeSpaceCreatingElsewhere.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeSpaceDisplay: FfiConverterRustBuffer {
     typealias SwiftType = [SpaceDisplay]
 
@@ -48225,7 +49046,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_func_telemetry_use_app_notice() != 17365) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_agentsetup_configure_mcp() != 62628) {
+    if (uniffi_cua_sdk_checksum_method_agentsetup_configure_mcp() != 53713) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_agentsetup_detect() != 59369) {
@@ -49158,6 +49979,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_spaces_list() != 27182) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_sdk_checksum_method_spaces_list_known() != 21083) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_sdk_checksum_method_spaces_list_tools_json() != 19259) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -49171,6 +49995,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spaces_remove() != 23086) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spaces_resize() != 2886) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spaces_resolve() != 9986) {
@@ -49191,7 +50018,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_spaces_start() != 32898) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_spaces_stop() != 64586) {
+    if (uniffi_cua_sdk_checksum_method_spaces_stop() != 59057) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spaces_suspend() != 23817) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spaces_volume_approve() != 8640) {
@@ -49272,6 +50102,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_spaces_volumes() != 15143) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_sdk_checksum_method_spaces_watch_list() != 1499) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_sdk_checksum_method_spaces_watch_resources() != 49660) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -49285,6 +50118,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spaces_delete_build() != 6500) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spaceslistlistener_on_changed() != 40063) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spaceslistwatch_stop() != 38223) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_teleportapprover_approve() != 36264) {
@@ -49506,6 +50345,7 @@ private let initializationResult: InitializationResult = {
     uniffiCallbackInitFrameSink()
     uniffiCallbackInitResourcesListener()
     uniffiCallbackInitSpaceCreateListener()
+    uniffiCallbackInitSpacesListListener()
     uniffiCallbackInitTeleportApprover()
     return InitializationResult.ok
 }()

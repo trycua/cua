@@ -49,6 +49,9 @@ pub(crate) struct Hub {
     wake: Notify,
     tx: watch::Sender<Option<Arc<Resources>>>,
     sampler: tokio::sync::Mutex<Sampler>,
+    /// The Spaces being created here, for the relay summary
+    /// ([`super::creates`]).
+    pub(crate) creates: super::creates::Board,
 }
 
 #[derive(Default)]
@@ -108,6 +111,7 @@ impl Hub {
             wake: Notify::new(),
             tx: watch::channel(None).0,
             sampler: tokio::sync::Mutex::new(Sampler::new()),
+            creates: Default::default(),
         })
     }
 

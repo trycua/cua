@@ -16,7 +16,7 @@ impl From<cua_host::Error> for CuaError {
             E::Unauthenticated(_) => CuaError::Unauthenticated(m),
             E::PermissionDenied(_) => CuaError::PermissionDenied(m),
             E::NotFound(_) => CuaError::NotFound(m),
-            E::Relay(_) | E::Download(_) => CuaError::Http(m),
+            E::Relay(_) | E::Download(_) | E::Throttled { .. } => CuaError::Http(m),
             // The plain sentence, then where to upgrade, as the CLI says it;
             // the Python and TypeScript SDKs read both back as `PlanLimitError`.
             E::PlanLimit(_) => {
@@ -221,6 +221,18 @@ impl Relay {
             .clone()
             .with_device_session(self.device_session().await)
     }
+}
+
+/// This device's session on the relay at `url`, when it is enrolled there
+/// (`None` otherwise: the relay then decides what it trusts).
+async fn own_device_session(url: &str) -> Option<String> {
+    let session = Arc::new(cua_auth::Session::from_env());
+    let store = session.store().clone();
+    let tokens = Arc::new(SessionTokens(session));
+    cua_host::DeviceAuth::new(url, tokens, Arc::new(store), cua_host::device_name())
+        .ok()?
+        .try_session()
+        .await
 }
 
 #[uniffi::export]
@@ -619,6 +631,13 @@ pub(crate) fn setup_token_state(mode: &str, token: Option<&str>) -> &'static str
     }
 }
 
+/// Where a direct host listens when the caller gives no address: every
+/// interface, on the channel's spacesd port (3211, or 3221 for Cua Spaces
+/// Local, so it runs beside a Stable host).
+fn direct_listen_default(channel: cua_home::channel::CuaChannel) -> String {
+    format!("0.0.0.0:{}", channel.ports().tcp)
+}
+
 /// Converts binding options to cua-host options.
 pub(crate) fn setup_options(o: HostSetupOptions) -> Result<cua_host::SetupOptions> {
     let mut opts = match o.mode.as_deref().unwrap_or("relay") {
@@ -628,7 +647,8 @@ pub(crate) fn setup_options(o: HostSetupOptions) -> Result<cua_host::SetupOption
                 .unwrap_or_else(cua_host::relay_url_from_env),
         ),
         "direct" => {
-            let listen = o.direct.as_deref().unwrap_or("0.0.0.0:3211");
+            let default = direct_listen_default(cua_home::channel::CuaChannel::current());
+            let listen = o.direct.as_deref().unwrap_or(&default);
             cua_host::SetupOptions::direct(listen.parse().map_err(|_| {
                 CuaError::InvalidArgument(format!("direct address {listen:?} is not ip:port"))
             })?)
@@ -698,6 +718,15 @@ impl Host {
         let (r, failed_stage, http_status) = match opts {
             Ok(opts) => {
                 let staged = run(async move {
+                    let mut opts = opts;
+                    // The Mac the user signed in on is enrolled by that
+                    // sign-in: registering with its session is the proof
+                    // the relay needs not to flag it as a new computer.
+                    if let (cua_host::HostMode::Relay { url }, Some(_)) =
+                        (&opts.mode, account_token.as_ref())
+                    {
+                        opts.device_session = own_device_session(url).await;
+                    }
                     let host = cua_host::Host::new(home);
                     let staged = match account_token {
                         Some(t) => host.setup_staged(opts, &cua_host::StaticToken(t)).await,
@@ -788,10 +817,15 @@ impl Host {
     pub async fn resume_signed_in(&self, account: String) -> Result<HostStatus> {
         let home = self.home.clone();
         run(async move {
-            Ok(cua_host::Host::new(home)
-                .resume_signed_in(&account)
-                .await?
-                .into())
+            // Another account is not refused here: the host registers again
+            // for it (same name and Provide Spaces setting), so a different
+            // sign-in needs no manual remove and set up.
+            let tokens = SessionTokens(Arc::new(cua_auth::Session::from_env()));
+            Ok(
+                Box::pin(cua_host::Host::new(home).resume_or_switch_account(&account, &tokens))
+                    .await?
+                    .into(),
+            )
         })
         .await
     }
@@ -1233,6 +1267,22 @@ impl Devices {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A direct host the caller gives no address listens on the channel's
+    /// spacesd port: Cua Spaces Local's is not Stable's 3211.
+    #[test]
+    fn a_direct_host_listens_on_the_channels_port_by_default() {
+        use cua_home::channel::CuaChannel;
+        assert_eq!(direct_listen_default(CuaChannel::Stable), "0.0.0.0:3211");
+        assert_eq!(direct_listen_default(CuaChannel::Local), "0.0.0.0:3221");
+        for channel in CuaChannel::ALL {
+            assert!(
+                direct_listen_default(channel)
+                    .parse::<std::net::SocketAddr>()
+                    .is_ok()
+            );
+        }
+    }
 
     /// The Machines page groups team machines and says whether a machine
     /// provides Spaces from what the relay recorded at registration.

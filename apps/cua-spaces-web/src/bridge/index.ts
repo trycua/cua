@@ -38,7 +38,7 @@ export { createAdapter, createDemoAdapter, createElectronAdapter, createTauriAda
 export { detectMode } from "./detect";
 export { loadCore, type CoreClient, type CoreParity, type CoreStatus, type ParityFlow } from "./core";
 export type { Machine, HostSetupGuide, KeyvaultAppGroup, KeyvaultViews } from "./derive";
-export { machineIdOf } from "./derive";
+export { listView, machineIdOf } from "./derive";
 export type {
   AgentRunSummary,
   AgentState,
@@ -52,6 +52,7 @@ export type {
   SessionData,
   SettingsData,
 } from "./store";
+export { newPendingId } from "./store";
 export type { TranscriptItem, TranscriptStep } from "./transcript";
 export { GRID_COLUMNS, iconKey, thumbnailKey, useTeleport, type TeleportHook, type TeleportSession, type TeleportStore } from "./teleport";
 export { useShareSheet, type ShareHook, type ShareSession } from "./share";
@@ -74,6 +75,7 @@ export {
   type AppearanceTheme,
   type HostEvent,
   type HostOperations,
+  type CliInfo,
   type GlobalShortcut,
   type HostSettings,
   type OpName,
@@ -169,26 +171,41 @@ export {
   resetUpsellMemory,
   useQuiet,
   useTrackPlanClick,
+  useUpsellCard,
+  useUpsellCardAvailable,
   useUpsellGate,
   useUpsellPrompt,
+  type UpsellCard,
+  type UpsellCardReason,
+  type UpsellCardState,
   type UpsellGate,
   type UpsellPrompt,
   type UpsellSurface,
 } from "./upsell";
+export { flagOn, setFlagOverride, setRemoteFlags, useFlag, type FlagName } from "./flags";
 export type { CreateReport, ReportPart, ReportSend } from "./diagnostic-report";
 export {
   FIRST_RUN_POLL_MS,
   TEAMMATES_KEY,
   UPSELL_DISMISSED_KEY,
+  firstRunPermissions,
   firstRunTodos,
   firstRunView,
+  firstRunCliView,
+  firstRunSteps,
+  cliMissing,
+  cliPresent,
+  useCliInstall,
+  type CliInstallHook,
   noteTeammates,
   readFirstRun,
   resetFirstRunCache,
   useFirstRun,
   useFirstRunSaved,
+  useScreenPermissions,
   writeFirstRun,
   type FirstRunHook,
+  type ScreenPermissions,
   type FirstRunUsage,
   type FirstRunSaved,
 } from "./first-run";

@@ -176,8 +176,8 @@ jobs:
         working-directory: libs/python/cua-e2b/tests
         run: |
           export CUA_HOME="$RUNNER_TEMP/cua-home" CUA_E2B_ON=local CONFORMANCE_SCHEME=http
-          WHEEL=$(ls ../../../cua/python/dist/*.whl)
-          uv run --no-project --isolated --python 3.12 --with "$WHEEL" --with-editable .. \
+          WHEEL=$(ls ../../../cua/python/dist/cua-[0-9]*.whl); CLI_WHEEL=$(ls ../../../cua/python/dist/cua_cli-*.whl)
+          uv run --no-project --isolated --python 3.12 --with "$WHEEL" --with "$CLI_WHEEL" --with-editable .. \
             python -m conformance.suite > "$RUNNER_TEMP/cua.json"
           uv run --no-project --python 3.12 python - <<'EOF'
           import json, os, sys

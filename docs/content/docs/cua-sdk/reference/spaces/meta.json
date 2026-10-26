@@ -1,14 +1,18 @@
 {
   "title": "Spaces",
   "pages": [
+    "resize",
     "lifetime",
     "space",
+    "sharing",
+    "relay-registration",
     "elastic",
     "build",
     "channel",
     "volume",
     "streams",
     "resources",
+    "list-watch",
     "agents",
     "persistent-agents",
     "host"

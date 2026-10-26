@@ -57,7 +57,6 @@
 pub mod about;
 pub mod agent_keys;
 pub mod agents;
-pub mod billing;
 pub mod checklist;
 pub mod cloud_connect;
 pub mod devices;

@@ -36,6 +36,13 @@ pub fn app_status_line(count: u32) -> String {
     core::spaces::status_line(count)
 }
 
+/// The Spaces page's empty state and "Reaching N computers…" line: the
+/// first-run page only for a complete list with no Space.
+#[uniffi::export]
+pub fn app_spaces_list_view(input: AppListViewInput) -> AppListView {
+    core::spaces::list_view(input)
+}
+
 /// The ambient status dots.
 #[uniffi::export]
 pub fn app_ambient_dots(spaces: Vec<AppSpace>) -> AppAmbientDots {
@@ -1824,18 +1831,23 @@ fn default_cua_home(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> PathBuf
     if let Some(h) = set("CUA_HOME") {
         return PathBuf::from(h);
     }
+    // The channel and environment come from the lookup too (`CUA_CHANNEL`,
+    // `CUA_ENV`): each has its own home, where its daemon serves the
+    // Keyvault (`~/.cua/envs/staging`, `~/.cua-local`,
+    // `~/.cua-local/envs/prod`).
+    let channel = cua_home::channel::CuaChannel::from_env_value(
+        var("CUA_CHANNEL")
+            .and_then(|v| v.into_string().ok())
+            .as_deref(),
+    );
+    let env_value = var("CUA_ENV").and_then(|v| v.into_string().ok());
+    let env = channel.env_or_fallback(env_value.as_deref());
     let base = set("HOME")
         .or_else(|| set("USERPROFILE"))
         .map(PathBuf::from)
         .unwrap_or_default()
-        .join(".cua");
-    // A non-production `CUA_ENV` has its own home, where its daemon serves
-    // the Keyvault (`~/.cua/envs/staging`).
-    let env = var("CUA_ENV").and_then(|v| v.into_string().ok());
-    match cua_home::env::CuaEnv::try_from_value(env.as_deref())
-        .unwrap_or_default()
-        .home_subdir()
-    {
+        .join(channel.home_dir_name());
+    match channel.home_subdir(env) {
         Some(sub) => base.join(sub),
         None => base,
     }
@@ -2329,10 +2341,24 @@ pub fn app_menu(input: AppMenuInput) -> Vec<AppMenuItem> {
     core::window::menu(&input)
 }
 
-/// The Spaces the user can open (the notch tab and the menu bar item).
+/// The Spaces the user can open (the open notch's tiles), on or not.
 #[uniffi::export]
 pub fn app_openable_count(spaces: Vec<AppSpace>) -> u32 {
     core::spaces::openable_count(&spaces)
+}
+
+/// The Spaces on or starting (the notch tab and the menu bar item); never
+/// This machine, a stopped Space or a failed one.
+#[uniffi::export]
+pub fn app_on_count(spaces: Vec<AppSpace>) -> u32 {
+    core::spaces::on_count(&spaces)
+}
+
+/// The menu bar item's status line for `count` Spaces on ("No Spaces
+/// running", "3 Spaces running").
+#[uniffi::export]
+pub fn app_on_status_line(count: u32) -> String {
+    core::spaces::on_status_line(count)
 }
 
 /// `volume_sync_status`'s JSON as the core takes it.
@@ -2544,6 +2570,7 @@ impl AppCliInstaller {
     ) -> Arc<Self> {
         Arc::new(Self {
             inner: core::installer::CliInstaller {
+                channel: cua_home::channel::CuaChannel::Stable,
                 bundled: bundled.map(PathBuf::from),
                 bin_dir: bin_dir.into(),
                 path_env,
@@ -2592,6 +2619,8 @@ pub fn app_telemetry_start(version: String, onboarding_eligible: Option<bool>) -
     cua_sdk::support::spawn(async {
         cua_sdk::telemetry_sync_account().await;
     });
+    // Crash reports for the core (no-op without CUA_CRASH_DSN or consent).
+    cua_crash::start_for_process("core");
     core::telemetry::start_with(t, onboarding_eligible)
 }
 
@@ -2600,7 +2629,11 @@ pub fn app_telemetry_start(version: String, onboarding_eligible: Option<bool>) -
 /// were queued.
 #[uniffi::export]
 pub fn app_telemetry_record(signals: Vec<AppTelemetrySignal>) -> u32 {
-    core::telemetry::record(cua_telemetry::global(), &signals) as u32
+    let queued = core::telemetry::record(cua_telemetry::global(), &signals) as u32;
+    // The "Share usage data" switch may have changed: close crash reporting
+    // when consent was withdrawn.
+    cua_crash::refresh_consent();
+    queued
 }
 
 /// The app started (`app_launched`).
@@ -2913,6 +2946,10 @@ pub(crate) fn setup_options_for_request(
     request: AppHostSetupRequest,
 ) -> Result<cua_sdk::HostSetupOptions> {
     let request = core::host::validate_setup(request).map_err(CuaError::InvalidArgument)?;
+    // The default choice is "let my other devices use this computer": its
+    // screen and Spaces. Pass what the core resolved, not the SDK's own
+    // (CLI) profile defaults, so both agree.
+    let (share_desktop, provide_spaces) = request.settings();
     Ok(cua_sdk::HostSetupOptions {
         mode: Some(request.mode),
         relay_url: request.relay_url,
@@ -2922,8 +2959,8 @@ pub(crate) fn setup_options_for_request(
         driver_bin: None,
         runner: None,
         profile: request.profile,
-        share_desktop: request.share_desktop,
-        provide_spaces: request.provide_spaces,
+        share_desktop: Some(share_desktop),
+        provide_spaces: Some(provide_spaces),
     })
 }
 
@@ -2977,6 +3014,31 @@ mod host_setup_tests {
         })
         .unwrap();
         assert_eq!(o.profile.as_deref(), Some("spare"));
+        assert_eq!(
+            (o.share_desktop, o.provide_spaces),
+            (Some(false), Some(true))
+        );
+        // The default choice, "let my other devices use this computer",
+        // turns on the screen and Spaces; a direct connection only the screen.
+        let o = setup_options_for_request(AppHostSetupRequest {
+            mode: "relay".into(),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(
+            (o.share_desktop, o.provide_spaces),
+            (Some(true), Some(true))
+        );
+        let o = setup_options_for_request(AppHostSetupRequest {
+            mode: "direct".into(),
+            direct: Some("10.0.0.2:4000".into()),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(
+            (o.share_desktop, o.provide_spaces),
+            (Some(true), Some(false))
+        );
     }
 }
 
@@ -3032,6 +3094,41 @@ mod keyvault_home_tests {
         assert_eq!(
             home(&[("CUA_HOME", "/srv/cua"), ("CUA_ENV", "staging")]),
             PathBuf::from("/srv/cua")
+        );
+    }
+
+    /// The Local channel's daemon (and so its Keyvault) lives in
+    /// `~/.cua-local` on staging and `~/.cua-local/envs/prod` on prod
+    /// (CUA-1776); `CUA_HOME` still wins.
+    #[test]
+    fn the_keyvault_follows_the_local_channel() {
+        let local = |vars: &[(&str, &str)]| {
+            let mut all = vec![("HOME", "/home/ada"), ("CUA_CHANNEL", "local")];
+            all.extend_from_slice(vars);
+            home(&all)
+        };
+        assert_eq!(local(&[]), PathBuf::from("/home/ada/.cua-local"));
+        assert_eq!(
+            local(&[("CUA_ENV", "staging")]),
+            PathBuf::from("/home/ada/.cua-local")
+        );
+        assert_eq!(
+            local(&[("CUA_ENV", "prod")]),
+            PathBuf::from("/home/ada/.cua-local/envs/prod")
+        );
+        // A mistyped environment is staging on Local, never production.
+        assert_eq!(
+            local(&[("CUA_ENV", "prd")]),
+            PathBuf::from("/home/ada/.cua-local")
+        );
+        assert_eq!(
+            local(&[("CUA_HOME", "/srv/cua"), ("CUA_ENV", "prod")]),
+            PathBuf::from("/srv/cua")
+        );
+        // Stable is untouched by a Local variable elsewhere.
+        assert_eq!(
+            home(&[("HOME", "/home/ada"), ("CUA_CHANNEL", "stable")]),
+            PathBuf::from("/home/ada/.cua")
         );
     }
 }

@@ -4,7 +4,7 @@
 /**
  * New Space and "Connect a cloud": the app core's wizard and sheet records
  * (`cua-spaces-app-core::wizard`, `::cloud_connect`) and what the hosts
- * report for them (`local_status`, `gpu_support`, `cloud_pricing`,
+ * report for them (`local_status`, `gpu_support`,
  * `cloud_status`, `cloud_test`, `cloud_connect`).
  *
  * Hand-written mirror of the Tauri app's `components/desktop/
@@ -19,7 +19,7 @@ import type { Experiments } from "./volume";
 /* ---- What the host knows (WizardEnv) ------------------------------------- */
 
 /** Where a new Space runs (`model::Location`). */
-export type WizardLocation = "cloud" | "local" | "yours" | "host";
+export type WizardLocation = "local" | "yours" | "host";
 
 /** Settings, Experiments (`experiments::Experiments`): one shape, defined with Volume. */
 export type { Experiments } from "./volume";
@@ -81,12 +81,6 @@ export interface GpuChoice {
   learnMore?: string | null;
 }
 
-/** This account's Cua Cloud rates (`cloud_pricing`). */
-export interface CloudPricing {
-  vcpuHourUsd: number;
-  memoryGibHourUsd: number;
-}
-
 /** What one connected cloud runs for an image family. */
 export interface CloudOffer {
   image: string;
@@ -120,14 +114,12 @@ export interface WizardHost {
 /** What the wizard knows about this machine and account (`wizard::WizardEnv`). */
 export interface WizardEnv {
   defaultLocation: WizardLocation;
-  cloudAvailable: boolean;
   localAvailable: boolean;
   localReason?: string | null;
   localBackends?: string[] | null;
   maxCpus: number;
   hostArch?: string | null;
   storage?: LocalStorage | null;
-  cloudPricing?: CloudPricing | null;
   clouds?: ConnectedCloud[];
   hosts?: WizardHost[];
   experiments?: Experiments;
@@ -143,7 +135,6 @@ export interface WizardEnv {
 export interface NewSpaceOptions {
   local: LocalStatus | null;
   gpus: GpuChoice[] | null;
-  cloudPricing: CloudPricing | null;
   experiments: Experiments;
   /** Upper bound for the CPU slider; null: the page's own count. */
   maxCpus: number | null;

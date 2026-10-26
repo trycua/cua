@@ -396,8 +396,11 @@ impl Spaces {
 
     /// A Space made from a build: a fork of the build's checkpoint with the
     /// image's environment, working directory and user (`image` is
-    /// `build:<tag, key or checkpoint>`). The machine is the build's, so
-    /// options that would resize or reshape it are refused.
+    /// `build:<tag, key or checkpoint>`). The machine is the build's: a VM
+    /// fork given other vCPUs, memory or a bigger disk is resized right
+    /// after the fork (it boots again from its own disk, which has every
+    /// build step on it); options that would reshape it otherwise are
+    /// refused.
     pub(crate) async fn create_from_build(
         &self,
         reference: &str,
@@ -415,15 +418,12 @@ impl Spaces {
                 opts.on.as_ref().map(|o| o.to_string()).unwrap_or_default()
             )));
         }
-        if opts.cpus.is_some() {
-            return refuse("cpus");
-        }
-        if opts.memory_mb.is_some() {
-            return refuse("memory");
-        }
-        if opts.disk_gb.is_some() {
-            return refuse("disk_gb");
-        }
+        let reshape = cua_sandbox_core::Resize {
+            cpus: opts.cpus,
+            memory_mb: opts.memory_mb,
+            disk_gb: opts.disk_gb,
+            probes: Vec::new(),
+        };
         if opts.gpu.is_some() {
             return refuse("gpu");
         }
@@ -448,6 +448,30 @@ impl Spaces {
         let create = async {
             report(Progress::phase(Phase::Creating));
             let info = self.fork_local(&checkpoint, opts.name.clone()).await?;
+            if !reshape.is_empty() {
+                let name = info
+                    .id
+                    .strip_prefix("local:")
+                    .unwrap_or(&info.id)
+                    .to_string();
+                let sized = async {
+                    let runtime = self.sandboxes().get(&name).await?.runtime_type;
+                    if runtime != "qemu" {
+                        return Err(Error::invalid(format!(
+                            "cpus, memory and disk_gb of a Space made from a build need a VM build \
+                             (this one runs on {runtime}); set them when you build instead"
+                        )));
+                    }
+                    self.sandboxes().resize(&name, &reshape).await?;
+                    Ok(())
+                }
+                .await;
+                if let Err(e) = sized {
+                    // Nothing half-made stays behind.
+                    let _ = self.delete(&info.id).await;
+                    return Err(e);
+                }
+            }
             let mut config = self.build_config(reference).unwrap_or_default();
             // `env` of the create is the Space's environment, over the image's.
             config.env.extend(opts.env.clone());

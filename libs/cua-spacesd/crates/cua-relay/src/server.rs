@@ -375,6 +375,8 @@ pub struct Relay {
     pub(crate) storage: Arc<crate::storage::Storage>,
     /// Allowance metering.
     pub(crate) meter: Arc<Meter>,
+    /// Connection outcome counters (`cua_relay_connections_total`).
+    pub(crate) conns: Arc<crate::conn_metrics::ConnMetrics>,
     /// When this relay started (the reconnect grace counts from it).
     started: Instant,
     /// Share links: browser sign-in state and public-link rate limits.
@@ -511,6 +513,7 @@ impl Relay {
             pool,
             storage,
             meter,
+            conns: Arc::default(),
             started: Instant::now(),
             share: Arc::default(),
         };
@@ -561,6 +564,10 @@ impl Relay {
             .layer(axum::middleware::from_fn_with_state(
                 self.clone(),
                 share_hosts,
+            ))
+            .layer(axum::middleware::from_fn_with_state(
+                self.clone(),
+                count_connections,
             ))
             .with_state(self.clone())
     }
@@ -971,7 +978,11 @@ pub(crate) fn account_token(headers: &HeaderMap) -> Option<&str> {
 }
 
 pub(crate) fn text(status: StatusCode, message: impl Into<String>) -> Response {
-    (status, message.into()).into_response()
+    let mut response = (status, message.into()).into_response();
+    response
+        .extensions_mut()
+        .insert(crate::conn_metrics::RelayStatus(status));
+    response
 }
 
 /// gRPC status codes the relay produces itself.
@@ -1023,6 +1034,13 @@ fn refuse(
     let Some(content_type) = content_type else {
         return text(status, message);
     };
+    // gRPC callers see HTTP 200; connection metrics keep the relay's status.
+    let mark = |mut response: Response| {
+        response
+            .extensions_mut()
+            .insert(crate::conn_metrics::RelayStatus(status));
+        response
+    };
     let encoded = percent_encode_grpc(&message);
     let details = {
         use base64::Engine as _;
@@ -1035,6 +1053,7 @@ fn refuse(
         .header("grpc-message", encoded)
         .header("grpc-status-details-bin", details)
         .body(Body::empty())
+        .map(mark)
         .unwrap_or_else(|_| text(status, message))
 }
 
@@ -1099,6 +1118,29 @@ fn percent_encode_grpc(message: &str) -> String {
 }
 
 async fn machine_connect(
+    state: State<Relay>,
+    headers: HeaderMap,
+    upgrade: Result<WebSocketUpgrade, axum::extract::ws::rejection::WebSocketUpgradeRejection>,
+) -> Response {
+    let mut response = match upgrade {
+        Ok(upgrade) => machine_connect_inner(state, headers, upgrade).await,
+        // Not a WebSocket handshake: refused before the relay looks at it.
+        Err(rejection) => {
+            let mut response = rejection.into_response();
+            let status = response.status();
+            response
+                .extensions_mut()
+                .insert(crate::conn_metrics::RelayStatus(status));
+            response
+        }
+    };
+    response
+        .extensions_mut()
+        .insert(crate::conn_metrics::Kind::Machine);
+    response
+}
+
+async fn machine_connect_inner(
     State(relay): State<Relay>,
     headers: HeaderMap,
     upgrade: WebSocketUpgrade,
@@ -1305,6 +1347,8 @@ async fn metrics(State(relay): State<Relay>) -> Response {
     let mut text = tokio::task::spawn_blocking(move || storage.metrics())
         .await
         .unwrap_or_default();
+    text.push_str(&relay.conns.render());
+    text.push_str(&relay.mesh.metrics());
     #[cfg(feature = "hosted")]
     {
         text.push_str(&relay.org.metrics());
@@ -1473,6 +1517,19 @@ fn client_ip(trusted: &crate::proxies::TrustedProxies, request: &Request) -> Str
         .iter()
         .filter_map(|v| v.to_str().ok());
     trusted.client_ip(peer, xff).to_string()
+}
+
+/// Counts each connection route's outcome (see `conn_metrics`).
+async fn count_connections(
+    State(relay): State<Relay>,
+    request: Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let response = next.run(request).await;
+    if let Some((kind, outcome)) = crate::conn_metrics::classify(&response) {
+        relay.conns.record(kind, outcome);
+    }
+    response
 }
 
 /// Share origins never fall through to the relay's own routes: every path
@@ -1833,7 +1890,15 @@ async fn authorize_account_client(
     })
 }
 
-async fn proxy(State(relay): State<Relay>, mut request: Request) -> Response {
+async fn proxy(state: State<Relay>, request: Request) -> Response {
+    let mut response = proxy_inner(state, request).await;
+    response
+        .extensions_mut()
+        .insert(crate::conn_metrics::Kind::Client);
+    response
+}
+
+async fn proxy_inner(State(relay): State<Relay>, mut request: Request) -> Response {
     let Some(Routed {
         id,
         forwarded,
@@ -1845,12 +1910,17 @@ async fn proxy(State(relay): State<Relay>, mut request: Request) -> Response {
             Some(domain) => format!("use <computer-id>.{domain}/…"),
             None => "use /m/<computer-id>/…".to_owned(),
         };
-        return refuse(
+        // Not a computer route (stray paths, scanners): not a connection.
+        let mut response = refuse(
             request.headers(),
             StatusCode::NOT_FOUND,
             GrpcCode::NotFound,
             message,
         );
+        response
+            .extensions_mut()
+            .insert(crate::conn_metrics::Uncounted);
+        return response;
     };
     use crate::share_web::{Cookie, ShareKind};
     // The session endpoint of a private share origin: trades a login code
@@ -1860,7 +1930,11 @@ async fn proxy(State(relay): State<Relay>, mut request: Request) -> Response {
             && sh.kind == ShareKind::Private
             && request.uri().path() == crate::share_web::SESSION_PATH
         {
-            return crate::share_web::session(&relay, &request);
+            let mut response = crate::share_web::session(&relay, &request);
+            response
+                .extensions_mut()
+                .insert(crate::conn_metrics::Uncounted);
+            return response;
         }
     }
     // Only the relay mints assertions; device sessions are for the relay
@@ -1956,7 +2030,11 @@ async fn proxy(State(relay): State<Relay>, mut request: Request) -> Response {
                                 .map(|p| p.as_str())
                                 .unwrap_or("/")
                         );
-                        return relay.share_login_redirect(&original);
+                        let mut response = relay.share_login_redirect(&original);
+                        response
+                            .extensions_mut()
+                            .insert(crate::conn_metrics::Uncounted);
+                        return response;
                     }
                 }
             },
@@ -2011,12 +2089,16 @@ async fn proxy(State(relay): State<Relay>, mut request: Request) -> Response {
         None => relay.await_reconnect(&id).await,
     };
     let Some(machine) = machine else {
-        return refuse(
+        let mut response = refuse(
             request.headers(),
             StatusCode::BAD_GATEWAY,
             GrpcCode::Unavailable,
             format!("computer {id:?} is not connected"),
         );
+        response
+            .extensions_mut()
+            .insert(crate::conn_metrics::Offline);
+        return response;
     };
     if machine.active.fetch_add(1, Ordering::SeqCst) >= relay.config.max_streams_per_machine {
         machine.active.fetch_sub(1, Ordering::SeqCst);

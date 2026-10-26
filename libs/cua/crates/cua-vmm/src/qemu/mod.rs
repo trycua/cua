@@ -745,12 +745,13 @@ impl QemuRuntime {
         boot: Boot,
         persist: bool,
     ) -> Result<()> {
-        let shared = match &boot.memory {
-            Memory::File { path, .. } => Some(path.clone()),
-            Memory::Ram => None,
-        };
-        self.admit_waiting(&st.name, spec.cpus, spec.memory_mb, shared)
-            .await?;
+        self.admit_waiting(
+            &st.name,
+            spec.cpus,
+            spec.memory_mb,
+            admission_file(&boot.memory),
+        )
+        .await?;
         let res = self.launch_admitted(st, spec, boot, persist).await;
         if res.is_err() {
             self.release(&st.name);
@@ -1508,6 +1509,63 @@ impl QemuRuntime {
 }
 
 impl QemuRuntime {
+    /// Stops the VM `name` (when it runs or is paused) and boots it again
+    /// from its own disk, with `shape`'s vCPUs, memory and disk where given
+    /// and its own otherwise, and the configuration it first started with.
+    /// The guest's disk, ports and token are kept; its memory and running
+    /// processes are not. A VM forked from a memory snapshot boots cold.
+    async fn boot_from_disk(&self, name: &str, shape: &Resize) -> Result<Instance> {
+        let mut st = self.load(name)?;
+        {
+            let _g = self.lock.lock().await;
+            // The guest is shut down, not cut off: what it wrote in its last
+            // seconds (host keys, the token file) must reach the disk. A
+            // paused VM runs again first so that it can.
+            if st.paused
+                && let Ok(mut q) = self.qmp(name).await
+            {
+                let _ = q.cont().await;
+            }
+            let graceful = self.cfg.graceful_stop.max(Duration::from_secs(30));
+            self.force_stop(&mut st, graceful).await?;
+            st.paused = false;
+            // A memory snapshot holds the old shape's machine.
+            st.restore_from = None;
+            self.save(&st)?;
+        }
+        let dir = self.dir(name);
+        let boot = Self::read_boot_config(&dir);
+        let mut spec = StartSpec::new(name, ImageSource::Existing);
+        spec.os = st.os;
+        spec.arch = Some(st.arch);
+        spec.cpus = shape.cpus.unwrap_or(st.cpus);
+        spec.memory_mb = shape.memory_mb.unwrap_or(st.memory_mb);
+        spec.disk_size_gb = shape.disk_gb;
+        // 22 is added again for managed SSH.
+        spec.ports = st
+            .ports
+            .keys()
+            .copied()
+            .filter(|p| !(*p == 22 && st.ssh.is_some()))
+            .collect();
+        spec.env = boot.env;
+        if let Some(t) = self.guest_token(&dir) {
+            spec.env
+                .entry(crate::cloudinit::ENV_TOKEN_VAR.into())
+                .or_insert(t);
+        }
+        spec.command = boot.command;
+        spec.cloud_init_user_data = boot.cloud_init_user_data;
+        spec.ssh = st.ssh.clone();
+        spec.restrict_network = st.restrict_network;
+        spec.extra_args = st.extra_args.clone();
+        spec.gpu = st.gpu.clone();
+        spec.probes = shape.probes.clone();
+        spec.labels.insert(KEEP_SEED_LABEL.into(), "1".into());
+        spec.labels.insert(KEEP_PORTS_LABEL.into(), "1".into());
+        self.start(&spec).await
+    }
+
     /// Readiness probes with a slirp-aware TCP check: user-mode NAT accepts
     /// host connections before the guest does, so a TCP probe connects and
     /// then asks QEMU (`info usernet`) whether *the guest side* of that
@@ -2264,7 +2322,14 @@ impl Runtime for QemuRuntime {
         self.save(&st)
     }
 
+    /// Runs a paused VM again over QMP. A VM that was stopped (its process
+    /// ended; its disk is kept) boots again from its own disk, in the shape
+    /// it had, as [`Self::resize`] boots it.
     async fn resume(&self, name: &str) -> Result<Instance> {
+        let st = self.load(name)?;
+        if st.kind == EntryKind::Instance && !Self::is_running(&st) {
+            return self.boot_from_disk(name, &Resize::default()).await;
+        }
         let mut q = self.qmp(name).await?;
         q.cont().await?;
         let mut st = self.load(name)?;
@@ -2280,7 +2345,7 @@ impl Runtime for QemuRuntime {
     /// running processes are not (a VM's shape is fixed while it runs).
     async fn resize(&self, name: &str, shape: &Resize) -> Result<Instance> {
         validate_name(name)?;
-        let mut st = self.load(name)?;
+        let st = self.load(name)?;
         if st.kind != EntryKind::Instance {
             return Err(VmmError::invalid(format!("'{name}' is not a VM instance")));
         }
@@ -2304,54 +2369,7 @@ impl Runtime for QemuRuntime {
                 )));
             }
         }
-        {
-            let _g = self.lock.lock().await;
-            // The guest is shut down, not cut off: what it wrote in its last
-            // seconds (host keys, the token file) must reach the disk. A
-            // paused VM runs again first so that it can.
-            if st.paused
-                && let Ok(mut q) = self.qmp(name).await
-            {
-                let _ = q.cont().await;
-            }
-            let graceful = self.cfg.graceful_stop.max(Duration::from_secs(30));
-            self.force_stop(&mut st, graceful).await?;
-            st.paused = false;
-            // A memory snapshot holds the old shape's machine.
-            st.restore_from = None;
-            self.save(&st)?;
-        }
-        let dir = self.dir(name);
-        let boot = Self::read_boot_config(&dir);
-        let mut spec = StartSpec::new(name, ImageSource::Existing);
-        spec.os = st.os;
-        spec.arch = Some(st.arch);
-        spec.cpus = shape.cpus.unwrap_or(st.cpus);
-        spec.memory_mb = shape.memory_mb.unwrap_or(st.memory_mb);
-        spec.disk_size_gb = shape.disk_gb;
-        // 22 is added again for managed SSH.
-        spec.ports = st
-            .ports
-            .keys()
-            .copied()
-            .filter(|p| !(*p == 22 && st.ssh.is_some()))
-            .collect();
-        spec.env = boot.env;
-        if let Some(t) = self.guest_token(&dir) {
-            spec.env
-                .entry(crate::cloudinit::ENV_TOKEN_VAR.into())
-                .or_insert(t);
-        }
-        spec.command = boot.command;
-        spec.cloud_init_user_data = boot.cloud_init_user_data;
-        spec.ssh = st.ssh.clone();
-        spec.restrict_network = st.restrict_network;
-        spec.extra_args = st.extra_args.clone();
-        spec.gpu = st.gpu.clone();
-        spec.probes = shape.probes.clone();
-        spec.labels.insert(KEEP_SEED_LABEL.into(), "1".into());
-        spec.labels.insert(KEEP_PORTS_LABEL.into(), "1".into());
-        self.start(&spec).await
+        self.boot_from_disk(name, shape).await
     }
 
     /// Renames running pool member `member` to `new_name` (QEMU keeps its
@@ -2870,6 +2888,23 @@ impl Runtime for QemuRuntime {
     }
 }
 
+/// The snapshot RAM file a VM shares with others, as admission counts it
+/// ([`crate::density`]): a file mapped copy-on-write (`share=off`, a
+/// restore or a fork) is counted once for every VM mapping it, on top of
+/// each VM's private pages. A file the VM writes itself (`share=on`, a
+/// golden snapshot being recorded) is that VM's own RAM, not shared with
+/// anyone: it is admitted like anonymous RAM, so its memory is not counted
+/// twice (once as the guest's RAM, again as the file).
+fn admission_file(memory: &Memory) -> Option<PathBuf> {
+    match memory {
+        Memory::File {
+            path,
+            shared: false,
+        } => Some(path.clone()),
+        Memory::File { shared: true, .. } | Memory::Ram => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -3273,6 +3308,25 @@ mod tests {
 
     /// Admission counts VMs admitted moments ago (pending) and refuses with
     /// HostCapacity, saying which limit; a failed launch gives its slot back.
+    #[test]
+    fn a_recording_vm_counts_its_own_ram_file_once() {
+        // A golden snapshot being recorded writes its RAM file (share=on):
+        // that file is its RAM, not a shared one, so admission must not add
+        // it on top of the guest's memory (a 4 GiB bake counted as 8 GiB
+        // did not fit a 7.8 GiB CI runner).
+        let rec = Memory::File {
+            path: "/g/mem.ram".into(),
+            shared: true,
+        };
+        assert_eq!(admission_file(&rec), None);
+        let restore = Memory::File {
+            path: "/g/mem.ram".into(),
+            shared: false,
+        };
+        assert_eq!(admission_file(&restore), Some(PathBuf::from("/g/mem.ram")));
+        assert_eq!(admission_file(&Memory::Ram), None);
+    }
+
     #[test]
     fn admission_counts_pending_vms_and_refuses_with_host_capacity() {
         let d = tempfile::tempdir().unwrap();

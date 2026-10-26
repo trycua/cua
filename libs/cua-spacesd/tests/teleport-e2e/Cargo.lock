@@ -1332,9 +1332,10 @@ dependencies = [
 
 [[package]]
 name = "cua-agent-setup"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "chrono",
+ "cua-home",
  "hex",
  "include_dir",
  "jsonc-parser",
@@ -1348,7 +1349,7 @@ dependencies = [
 
 [[package]]
 name = "cua-agents"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "base64 0.22.1",
  "cua-agent-setup",
@@ -1367,7 +1368,7 @@ dependencies = [
 
 [[package]]
 name = "cua-chromium-storage"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "base64 0.22.1",
  "cua-teleport-bundle",
@@ -1460,7 +1461,7 @@ dependencies = [
 
 [[package]]
 name = "cua-home"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
@@ -1468,7 +1469,7 @@ dependencies = [
 
 [[package]]
 name = "cua-hotspot"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "futures-util",
  "tokio",
@@ -1476,7 +1477,7 @@ dependencies = [
 
 [[package]]
 name = "cua-icon-cache"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "cua-home",
  "hex",
@@ -1488,7 +1489,7 @@ dependencies = [
 
 [[package]]
 name = "cua-machine-seal"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "chacha20poly1305 0.11.0",
  "cua-home",
@@ -1502,7 +1503,7 @@ dependencies = [
 
 [[package]]
 name = "cua-mesh"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "base64 0.22.1",
  "boringtun",
@@ -1533,7 +1534,7 @@ dependencies = [
 
 [[package]]
 name = "cua-proto"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "pbjson-build",
  "pbjson-types",
@@ -1581,7 +1582,7 @@ dependencies = [
 
 [[package]]
 name = "cua-snapshot-sync"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -1602,7 +1603,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-client"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -1639,7 +1640,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-html5"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "axum",
  "http",
@@ -1730,7 +1731,7 @@ dependencies = [
 
 [[package]]
 name = "cua-telemetry"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "hex",
  "rand 0.9.5",
@@ -1743,7 +1744,7 @@ dependencies = [
 
 [[package]]
 name = "cua-teleport"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "aes 0.8.4",
  "block2 0.6.2",
@@ -1782,7 +1783,7 @@ dependencies = [
 
 [[package]]
 name = "cua-teleport-bundle"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "aes 0.8.4",
  "aes-gcm",

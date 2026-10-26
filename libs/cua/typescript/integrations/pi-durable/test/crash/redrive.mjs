@@ -45,7 +45,7 @@
 // (self-test with fake-lab.mjs: drivers run on this machine against the stand-in Space).
 
 import { spawn, execFileSync } from "node:child_process"
-import { createConnection } from "node:net"
+import { createConnection, createServer } from "node:net"
 import { mkdtempSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
@@ -65,15 +65,41 @@ const POLL_MS = 100
 const LEASE_SUBS = (process.env.CRASH_LEASE_SUBS ?? "kill,space,spacelive,coordinator,race").split(",")
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
+/** A loopback port nothing listens on right now, from the OS (a guessed one can be taken: outbound sockets and other tests use the same range). */
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const probe = createServer()
+    probe.once("error", reject)
+    probe.listen(0, "127.0.0.1", () => {
+      const { port } = probe.address()
+      probe.close(() => resolve(port))
+    })
+  })
+}
+
 /** The lab coordinator process and its JSON-lines control connection. */
 class Lab {
+  /** `port` pins the control port (CRASH_LAB_PORT); without it the lab takes a free one and moves on if it is taken before the coordinator binds. */
   constructor(port, home) {
     this.port = port
+    this.pinned = port !== undefined
     this.home = home
     this.starts = 0
   }
 
   async start() {
+    // The only way a start fails for the port is another process binding it between the probe and the coordinator's bind: pick again.
+    for (let attempt = 1; ; attempt++) {
+      if (!this.pinned && (this.port === undefined || attempt > 1)) this.port = await freePort()
+      try {
+        return await this.startOnce()
+      } catch (error) {
+        if (this.pinned || attempt >= 5 || !/EADDRINUSE/.test(String(error?.message))) throw error
+      }
+    }
+  }
+
+  async startOnce() {
     const bin = process.env.CRASH_LAB_BIN
     const args = process.env.CRASH_LAB_ARGS ?? "--ignored --nocapture"
     this.starts++
@@ -91,16 +117,25 @@ class Lab {
     })
     this.proc.stderr.on("data", (d) => this.stderr.push(d.toString("utf8")))
     this.exited = new Promise((resolve) => this.proc.on("exit", resolve))
+    // "close" comes after the stderr stream is drained: an exit message that names EADDRINUSE must not be cut short.
+    const closed = new Promise((resolve) => this.proc.on("close", resolve))
+    // The coordinator says so on stderr once it has bound the port (the real lab and the stand-in both do). A connection that
+    // succeeds before that line may be some other process's listener on a port taken after the probe, so it does not count.
+    const announced = `lab control: 127.0.0.1:${this.port}`
     const deadline = Date.now() + Number(process.env.CRASH_LAB_START_S ?? 300) * 1000
     for (;;) {
-      if (this.proc.exitCode !== null) throw new Error(`the lab coordinator exited ${this.proc.exitCode}: ${this.stderr.join("").slice(-1500)}`)
-      try {
-        await this.connect()
-        return
-      } catch {
-        if (Date.now() > deadline) throw new Error(`the lab coordinator never listened on ${this.port}: ${this.stderr.join("").slice(-1500)}`)
-        await sleep(300)
+      if (this.proc.exitCode !== null) {
+        await closed
+        throw new Error(`the lab coordinator exited ${this.proc.exitCode}: ${this.stderr.join("").slice(-1500)}`)
       }
+      if (this.stderr.join("").includes(announced)) {
+        try {
+          await this.connect()
+          return
+        } catch {}
+      }
+      if (Date.now() > deadline) throw new Error(`the lab coordinator never listened on ${this.port}: ${this.stderr.join("").slice(-1500)}`)
+      await sleep(100)
     }
   }
 
@@ -485,7 +520,7 @@ export async function campaign({ runs, steps, out, seedBase }) {
   })
   const home = process.env.CRASH_LAB_HOME || mkdtempSync(join(tmpdir(), "pi-crash-lab-"))
   if (home === join(homedir(), ".cua")) throw new Error("CRASH_LAB_HOME must be a throwaway directory, never ~/.cua")
-  const lab = new Lab(Number(process.env.CRASH_LAB_PORT ?? 47200 + Math.floor(Math.random() * 400)), home)
+  const lab = new Lab(process.env.CRASH_LAB_PORT ? Number(process.env.CRASH_LAB_PORT) : undefined, home)
   await lab.start()
   const latencies = []
   const startLatencies = []

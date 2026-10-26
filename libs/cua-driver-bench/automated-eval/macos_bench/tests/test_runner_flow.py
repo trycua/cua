@@ -19,6 +19,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import pytest
+
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 
@@ -88,6 +90,7 @@ def test_browser_cli_auth_rejected_before_provisioning(tmp_path):
             rb.make_ctx(args)
 
 
+@pytest.mark.skipif(sys.platform != "darwin", reason="browser CLI arm is macOS-only")
 def test_browser_cli_run_fails_closed(tmp_path):
     with tempfile.TemporaryDirectory() as tmp:
         ctx = make_ctx(tmp, no_model_preflight=True, build_dir=None)
@@ -232,11 +235,16 @@ class CodexAuthPreflightTest(unittest.TestCase):
                 stack.enter_context(
                     mock.patch.dict(
                         "os.environ",
-                        {"CDB_CODEX_AUTH": "chatgpt", "CDB_CODEX_AUTH_FILE": str(source)},
+                        {
+                            "CDB_CODEX_AUTH": "chatgpt",
+                            "CDB_CODEX_AUTH_FILE": str(source),
+                            "DISPLAY": os.environ.get("DISPLAY") or ":99",
+                        },
                     )
                 )
                 ctx.versions["codex_native"] = rb.cxn.observed(Path("/nonexistent"))
                 for owner, name, result in (
+                    (rb.desktop, "capture_screenshot", None),
                     (rb, "task_spec", {}),
                     (rb, "kill_bench_apps", None),
                     (rb, "reset_needs_apps", None),
@@ -319,6 +327,132 @@ class CodexAuthPreflightTest(unittest.TestCase):
                     [label for label, status, _ in checks if status == "pass"],
                 )
                 fetch.assert_called_once()
+
+    def linux_evidence_trial(self, *, replace_link: bool, screenshot_error, copy_error=None):
+        with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as stack:
+            ctx = make_ctx(
+                tmp,
+                timeout_s=60,
+                max_turns=3,
+                effort="low",
+                idle_min=0,
+                no_sentinel=True,
+                build_dir=tmp,
+                check_occlusion=False,
+                tell_budget=False,
+            )
+            ctx.tasks["MB-01"] = argparse.Namespace(id="MB-01", tags=[], timeout_s=60)
+            arm = "cx-codex-cu"
+            entry = {**ENTRY, "arm": arm}
+            source = Path(tmp) / "shared-auth.json"
+            source.write_text("FAKE_TOKEN")
+            mcp = Path(tmp) / "mcp.json"
+            mcp.write_text(
+                json.dumps(
+                    {
+                        "mcpServers": {
+                            "sky": {
+                                "command": "node",
+                                "env": {"CUA_REPL_ENABLED_SURFACES": "computer"},
+                            }
+                        }
+                    }
+                )
+            )
+            ctx.mcp[arm] = (mcp, "cua_repl")
+            stack.enter_context(
+                mock.patch.dict(
+                    "os.environ",
+                    {
+                        "CDB_CODEX_AUTH": "chatgpt",
+                        "CDB_CODEX_AUTH_FILE": str(source),
+                        "DISPLAY": ":99",
+                    },
+                )
+            )
+            ctx.versions["codex_native"] = rb.cxn.observed(Path("/nonexistent"))
+            mocks = {}
+            for owner, name, result in (
+                (rb.desktop, "detect_platform", "linux"),
+                (rb, "task_spec", {}),
+                (rb, "kill_bench_apps", None),
+                (rb, "reset_needs_apps", None),
+                (rb.subprocess, "run", None),
+                (rb.pilot, "hid_idle_seconds", 1000),
+                (rb.pilot, "sweep_processes", 0),
+                (rb.pilot, "prepare_probe", ("BRIEF", {})),
+                (rb.pilot, "launch_lab", None),
+                (rb.ca, "prepare_cwd", Path(tmp)),
+                (rb, "apps_running", {}),
+                (rb, "evaluate_probe", {"passed": True}),
+                (rb, "FrontWatcher", None),
+            ):
+                mocks[name] = stack.enter_context(
+                    mock.patch.object(owner, name, return_value=result)
+                )
+            sentinel = stack.enter_context(mock.patch.object(rb.pilot, "Sentinel"))
+            sentinel.return_value.enabled = False
+            sentinel.return_value.summary.return_value = {}
+            stack.enter_context(mock.patch.object(rb.pilot, "IdleSampler"))
+
+            def capture(display, path):
+                if path.name == "startup.png":
+                    return None
+                if screenshot_error is not None:
+                    raise screenshot_error
+
+            stack.enter_context(
+                mock.patch.object(rb.desktop, "capture_screenshot", side_effect=capture)
+            )
+            log = Path(tmp) / "recorder.log"
+            log.write_text("log")
+            stack.enter_context(mock.patch.object(rb.ca, "RECORDER_STATE", Path(tmp)))
+            Path(tmp, "daemon.log").write_text("log")
+            if copy_error is not None:
+                stack.enter_context(
+                    mock.patch.object(rb.shutil, "copyfile", side_effect=copy_error)
+                )
+
+            def run_codex(cmd, env, *args, **kwargs):
+                link = Path(env["CODEX_HOME"]) / "auth.json"
+                self.assertTrue(link.is_symlink())
+                if replace_link:
+                    link.unlink()
+                    link.write_text("FAKE_TOKEN")
+                return {"returncode": 0, "result_seen": True, "wall_s": 0}
+
+            stack.enter_context(mock.patch.object(rb.cxn, "run_codex", side_effect=run_codex))
+            row = rb.run_attempt(ctx, entry, 1)
+            trial = ctx.run_dir / "trials" / entry["trial_id"] / "a1"
+            link = trial / "codex-home/.codex/auth.json"
+            self.assertFalse(link.is_symlink())
+            self.assertEqual(source.read_text(), "FAKE_TOKEN")
+            mocks["sweep_processes"].assert_called()
+            mocks["kill_bench_apps"].assert_called()
+            errors = trial / "artifacts" / "screenshot-error.txt"
+            return row, (errors.read_text() if errors.is_file() else None)
+
+    def test_linux_screenshot_failure_still_unlinks_auth(self) -> None:
+        row, errors = self.linux_evidence_trial(
+            replace_link=False, screenshot_error=AttributeError("secret /path")
+        )
+        self.assertNotEqual(row["infra_failure"], "harness_exception")
+        self.assertEqual(errors, "screenshot: AttributeError")
+
+    def test_linux_log_copy_failure_still_unlinks_auth(self) -> None:
+        row, errors = self.linux_evidence_trial(
+            replace_link=False, screenshot_error=None, copy_error=OSError("secret /path")
+        )
+        self.assertNotEqual(row["infra_failure"], "harness_exception")
+        self.assertIn("recorder log: OSError", errors)
+        self.assertNotIn("secret", errors)
+
+    def test_linux_evidence_failure_keeps_credential_integrity_error(self) -> None:
+        row, _ = self.linux_evidence_trial(
+            replace_link=True, screenshot_error=AttributeError("boom")
+        )
+        self.assertEqual(row["infra_failure"], "harness_exception")
+        self.assertIn("shared ChatGPT credential symlink replaced", row["infra_message"])
 
 
 def attempt_row(
@@ -631,6 +765,11 @@ class PreflightTest(unittest.TestCase):
 
 
 class ExecuteTrialTest(unittest.TestCase):
+    def setUp(self) -> None:
+        disk = mock.patch.object(rb.rec, "free_gb", return_value=100.0)
+        disk.start()
+        self.addCleanup(disk.stop)
+
     def test_daemon_setup_failure_retries_with_restart_then_excludes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ctx = make_ctx(tmp)
@@ -757,6 +896,11 @@ class ExecuteTrialTest(unittest.TestCase):
 
 
 class GateTest(unittest.TestCase):
+    def setUp(self) -> None:
+        disk = mock.patch.object(rb.rec, "free_gb", return_value=100.0)
+        disk.start()
+        self.addCleanup(disk.stop)
+
     def test_quota_stop_rule_blocks_new_trials(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ctx = make_ctx(tmp)
@@ -874,6 +1018,63 @@ class FinalizeTest(unittest.TestCase):
             {"trial_id": "c", "smoke": True, "final": True},
         ]
         self.assertEqual(core.completed_trial_ids(rows), {"a"})
+
+
+class LinuxSetupTest(unittest.TestCase):
+    def test_macos_arms_are_skipped_before_setup(self) -> None:
+        import contextlib
+        import io
+        import desktop_runtime as desktop
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        args = rb.build_parser().parse_args(
+            [
+                "dry-run",
+                "--ledger",
+                str(Path(tmp.name) / "ledger.jsonl"),
+                "--bench-v2",
+                "--arms",
+                "cc-cua-driver",
+                "cc-codex-cu",
+                "cc-claude-cu-helper",
+            ]
+        )
+        output = io.StringIO()
+        with (
+            mock.patch.object(desktop, "detect_platform", return_value="linux"),
+            contextlib.redirect_stderr(output),
+        ):
+            ctx = rb.make_ctx(args)
+        self.assertEqual(ctx.arm_names, ["cc-cua-driver"])
+        self.assertIn("unsupported-platform: cc-codex-cu requires macOS", output.getvalue())
+        self.assertIn(
+            "unsupported-platform: cc-claude-cu-helper requires macOS",
+            ctx.versions["unsupported_arms"],
+        )
+
+    def test_no_supported_arms_fails_clearly(self) -> None:
+        import desktop_runtime as desktop
+
+        args = rb.build_parser().parse_args(["dry-run", "--arms", "cc-codex-cu"])
+        with (
+            mock.patch.object(desktop, "detect_platform", return_value="linux"),
+            self.assertRaisesRegex(SystemExit, "no supported arms remain"),
+        ):
+            rb.make_ctx(args)
+
+    def test_linux_pack_descriptor_selection(self) -> None:
+        import cdb_adapter
+        import desktop_runtime as desktop
+
+        with mock.patch.object(desktop, "detect_platform", return_value="linux"):
+            descriptor = cdb_adapter._descriptor({"pack_task": "shared/cdb-s02"})
+        self.assertEqual(descriptor["platform"], "linux")
+        self.assertTrue(any("libreoffice" in " ".join(a["command"]) for a in descriptor["apps"]))
+        with mock.patch.object(desktop, "detect_platform", return_value="macos"):
+            self.assertEqual(
+                cdb_adapter._descriptor({"pack_task": "shared/cdb-s02"})["platform"], "macos"
+            )
 
 
 class MiscTest(unittest.TestCase):

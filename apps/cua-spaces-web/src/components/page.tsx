@@ -6,8 +6,11 @@ import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
 export function Page({ children, className }: { children: ReactNode; className?: string }) {
+  // The gutter is always reserved: otherwise a page that scrolls (Settings >
+  // General) is narrower than one that doesn't, and the centred column jumps
+  // sideways between them.
   return (
-    <div className="h-full overflow-y-auto">
+    <div className="h-full overflow-y-auto [scrollbar-gutter:stable]">
       <div className={cn("mx-auto w-full max-w-5xl px-8 pt-6 pb-16", className)}>{children}</div>
     </div>
   );

@@ -18,7 +18,7 @@ import type {
 } from "../native/generated/index";
 import type { LiveSpacesBackend, SpacesBackend } from "./backend";
 import type { AgentSetupRunning } from "./agents";
-import type { AccountProfile, AccountRunning, SignInAttempt } from "./services";
+import type { AccountProfile, AccountRunning, SignInAttempt, SignInOptions } from "./services";
 
 /** A value set once, which callers wait for. */
 export class LiveGate<T> {
@@ -91,6 +91,10 @@ export class PendingSpacesBackend implements SpacesBackend {
   }
 
   rows = async () => (await this.b()).rows();
+  listRead = async () => {
+    const b = await this.b();
+    return b.listRead ? b.listRead() : { rows: await b.rows(), incomplete: false, reaching: 0, stale: false, notice: "" };
+  };
   create = async (args: AppCreateSpaceArgs, createId: string, progress: (p: SpaceCreateProgress) => void) =>
     (await this.b()).create(args, createId, progress);
   cancelCreate = async (createId: string) => (await this.b()).cancelCreate(createId);
@@ -108,9 +112,8 @@ export class PendingSpacesBackend implements SpacesBackend {
   linuxSource = async () => (await this.b()).linuxSource();
   setLinuxSource = async (value: string) => (await this.b()).setLinuxSource(value);
   localStorage = async () => (await this.b()).localStorage();
-  cloudAvailable = async () => (await this.b()).cloudAvailable();
+  loggedIn = async () => (await this.b()).loggedIn();
   runningMacosVms = async () => (await this.b()).runningMacosVms();
-  cloudPricing = async () => (await this.b()).cloudPricing();
   usage = async (id: string) => (await this.b()).usage(id);
   agentRuns = async (id: string) => (await this.b()).agentRuns(id);
   windows = async (id: string) => (await this.b()).windows(id);
@@ -143,10 +146,10 @@ export class PendingAccount implements AccountRunning {
     return this.gate.current?.account?.profile() ?? null;
   }
 
-  async beginSignIn(): Promise<SignInAttempt> {
+  async beginSignIn(opts?: SignInOptions): Promise<SignInAttempt> {
     const account = (await this.gate.wait()).account;
     if (!account) throw new NotStarted("Signing in");
-    return account.beginSignIn();
+    return account.beginSignIn(opts);
   }
 
   async signOut(): Promise<void> {

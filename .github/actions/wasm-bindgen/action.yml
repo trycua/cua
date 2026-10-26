@@ -1,8 +1,10 @@
 name: "Install wasm-bindgen"
 description: >-
-  Install wasm-bindgen-cli at the version the cua crates pin. The binaries are
-  cached per OS and version (compiling the CLI takes 3-5 minutes on a hosted
-  runner), and a cache miss builds from source.
+  Install wasm-bindgen-cli at the version the cua crates pin, as the project's
+  prebuilt release binaries (wasm-bindgen, wasm-bindgen-test-runner and
+  wasm2es6js) with their checksums verified. A source build (`cargo install`)
+  takes 2 to 5 minutes on a hosted runner and whenever the Actions cache lost
+  its binary; the download takes seconds and has no cache entry to evict.
 inputs:
   version:
     description: "wasm-bindgen-cli version (must match the wasm-bindgen crate in Cargo.lock)."
@@ -10,21 +12,6 @@ inputs:
 runs:
   using: composite
   steps:
-    - id: paths
-      shell: bash
-      run: |
-        ext=""; [ "$RUNNER_OS" = Windows ] && ext=".exe"
-        echo "bin=$HOME/.cargo/bin/wasm-bindgen$ext" >> "$GITHUB_OUTPUT"
-        echo "runner=$HOME/.cargo/bin/wasm-bindgen-test-runner$ext" >> "$GITHUB_OUTPUT"
-        echo "es6=$HOME/.cargo/bin/wasm2es6js$ext" >> "$GITHUB_OUTPUT"
-    - id: cache
-      uses: actions/cache@v4
+    - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
       with:
-        path: |
-          ${{ steps.paths.outputs.bin }}
-          ${{ steps.paths.outputs.runner }}
-          ${{ steps.paths.outputs.es6 }}
-        key: wasm-bindgen-cli-${{ runner.os }}-${{ runner.arch }}-${{ inputs.version }}
-    - if: steps.cache.outputs.cache-hit != 'true'
-      shell: bash
-      run: cargo install wasm-bindgen-cli --version "${{ inputs.version }}" --locked
+        tool: wasm-bindgen@${{ inputs.version }}

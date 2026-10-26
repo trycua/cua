@@ -12,6 +12,7 @@ the gap.
 from __future__ import annotations
 
 import asyncio
+import sys
 
 import cua
 
@@ -19,11 +20,28 @@ MIB = 1024 * 1024
 SIZE = 16 * MIB
 LINE = b"0123456789abcdefghijklmnopqrstuvwxyz\n"
 
+# Writes SIZE bytes of LINE, over and over, to stdout as raw bytes (the same
+# stream `yes | head -c SIZE` makes, without needing a POSIX shell).
+PRODUCER = (
+    "import sys\n"
+    f"line, size = {LINE!r}, {SIZE}\n"
+    "out, chunk, n = sys.stdout.buffer, line * 1024, 0\n"
+    "while n < size:\n"
+    "    part = chunk[: size - n]\n"
+    "    out.write(part)\n"
+    "    n += len(part)\n"
+    "out.flush()\n"
+)
+
+
+def why(exit_info):
+    return (exit_info.code, exit_info.signal, exit_info.timed_out, exit_info.error)
+
 
 def producer(scrollback_bytes=None):
     return cua.SpacesdCommand(
-        program="sh",
-        args=["-c", f"yes 0123456789abcdefghijklmnopqrstuvwxyz | head -c {SIZE}"],
+        program=sys.executable,
+        args=["-c", PRODUCER],
         scrollback_bytes=scrollback_bytes,
     )
 
@@ -60,7 +78,7 @@ def test_large_output_read_slowly_arrives_whole(fixtures, tmp_path):
 
         proc = await env.spawn(producer(64 * MIB))
         data, gap, exit_info = await slow_read(proc)
-        assert exit_info.success
+        assert exit_info.success, why(exit_info)
         assert gap is None, f"offset gap {gap}"
         assert len(data) == SIZE
         assert data == (LINE * (SIZE // len(LINE) + 1))[:SIZE]
@@ -68,7 +86,7 @@ def test_large_output_read_slowly_arrives_whole(fixtures, tmp_path):
         # Control: a 1 MiB ring loses what the slow reader did not take in time.
         proc = await env.spawn(producer(MIB))
         data, gap, exit_info = await slow_read(proc)
-        assert exit_info.success
+        assert exit_info.success, why(exit_info)
         assert gap is not None and len(data) < SIZE
 
         # Over the server maximum is clamped, not refused.

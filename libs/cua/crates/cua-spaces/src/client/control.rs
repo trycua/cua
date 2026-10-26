@@ -638,10 +638,33 @@ impl Space {
         self.connection.delete_space(&self.info.id)
     }
 
-    /// `stop_space`: turns this Space off (suspended or stopped, as its
-    /// provider can). Returns `space`, `state`, `power` and `message`.
+    /// `stop_space`: turns this Space off (stopped, its memory freed, or
+    /// suspended where its provider cannot stop it). Returns `space`,
+    /// `state`, `power` and `message`.
     pub fn stop(&self) -> Result<Map<String, Value>> {
         self.call_object("stop_space", self.arguments(json!({})))
+    }
+
+    /// `stop_space` with `suspend`: suspends this Space, keeping its
+    /// memory (a local container or QEMU VM).
+    pub fn suspend(&self) -> Result<Map<String, Value>> {
+        self.call_object("stop_space", self.arguments(json!({ "suspend": true })))
+    }
+
+    /// `resize_space`: gives this local VM Space `cpus` vCPUs, `memory_mb`
+    /// MiB of memory or a disk grown to `disk_gb` GiB; it boots again from
+    /// its own disk. Returns `space`, `cpus`, `memory_mb`, `disk_gb` and
+    /// `message`.
+    pub fn resize(
+        &self,
+        cpus: Option<u32>,
+        memory_mb: Option<u64>,
+        disk_gb: Option<u32>,
+    ) -> Result<Map<String, Value>> {
+        self.call_object(
+            "resize_space",
+            self.arguments(json!({ "cpus": cpus, "memory_mb": memory_mb, "disk_gb": disk_gb })),
+        )
     }
 
     /// `start_space`: turns this Space on again (resumed or booted).

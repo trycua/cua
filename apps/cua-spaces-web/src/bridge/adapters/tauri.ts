@@ -22,7 +22,7 @@ import type {
   CreateProgress,
   DaemonStatus,
   DefaultLocation,
-  FleetStatus,
+  AccountStatus,
   HostStatus,
   LoginItemStatus,
   MachineRow,
@@ -62,6 +62,7 @@ import { RESOURCES_OPERATIONS } from "../ops/resources";
 import { MACHINES_OPERATIONS } from "../ops/machines";
 import { CHECKLIST_OPERATIONS } from "../ops/checklist";
 import { LINKS_OPERATIONS } from "../ops/links";
+import { CLI_OPERATIONS } from "../ops/cli";
 import { PRESENCE_OPERATIONS } from "../ops/presence";
 import { RUNTIME_FIX_OPERATIONS } from "../ops/runtime-fix";
 import { tauriTelemetryOps } from "../ops/telemetry";
@@ -88,6 +89,8 @@ export const TAURI_EVENTS = {
 export const TAURI_UNSUPPORTED: readonly OpName[] = [
   "settings.choose",
   "agents.events",
+  "agents.start",
+  "agents.message",
   "agents.setupDriver",
   "agents.signIn",
   "host.joinWithCode",
@@ -102,6 +105,8 @@ export const TAURI_UNSUPPORTED: readonly OpName[] = [
   ...MACHINES_OPERATIONS,
   ...CHECKLIST_OPERATIONS,
   ...LINKS_OPERATIONS,
+  ...CLI_OPERATIONS,
+  "crashReporting.config",
   ...PRESENCE_OPERATIONS,
   ...RUNTIME_FIX_OPERATIONS,
 ];
@@ -251,12 +256,12 @@ export function createTauriAdapter(win: HostWindow = globalThis.window as HostWi
     "keyvault.revokeGrant": ({ id }) => invoke("keyvault_revoke_grant", { id }),
 
     "session.get": async () => {
-      const [fleet, onboarding, daemon] = await Promise.all([
-        invoke<FleetStatus>("fleet_status", { probe: false }),
+      const [account, onboarding, daemon] = await Promise.all([
+        invoke<AccountStatus>("account_status", { probe: false }),
         invoke<OnboardingState>("onboarding_state").catch((): OnboardingState => ({ completed: true })),
         invoke<DaemonStatus>("daemon_status").catch(() => null),
       ]);
-      return { fleet, onboarding, daemon };
+      return { account, onboarding, daemon };
     },
     "session.signIn": () => invoke("begin_sign_in"),
     "session.signOut": async () => {

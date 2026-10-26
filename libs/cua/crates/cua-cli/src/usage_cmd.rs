@@ -258,4 +258,20 @@ mod tests {
         );
         assert!(m.contains("/buy/teams?from=plan_limit"), "{m}");
     }
+
+    #[test]
+    fn a_throttled_error_says_how_long_to_wait_in_plain_words() {
+        let e = crate::host::host_err(cua_host::Error::Throttled {
+            retry_after_secs: 3,
+        });
+        let m = e.to_string();
+        assert!(
+            m.contains("Too many attempts right now. Wait 3 seconds, then try again."),
+            "{m}"
+        );
+        assert!(
+            !m.contains("429") && !m.contains("Too Many Requests"),
+            "{m}"
+        );
+    }
 }

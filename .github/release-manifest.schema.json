@@ -80,6 +80,19 @@
       "type": "array",
       "items": { "$ref": "#/$defs/releaseContributor" }
     },
+    "unresolvedIdentities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sha", "name", "email"],
+        "properties": {
+          "sha": { "type": "string" },
+          "name": { "type": "string" },
+          "email": { "type": "string" }
+        }
+      }
+    },
     "assets": {
       "type": "array",
       "items": {
@@ -123,7 +136,8 @@
       "properties": {
         "login": { "type": "string", "minLength": 1 },
         "role": { "enum": ["author", "coauthor", "reporter"] },
-        "external": { "type": "boolean" }
+        "external": { "type": "boolean" },
+        "mention": { "type": "boolean" }
       }
     },
     "releaseContributor": {
@@ -138,7 +152,8 @@
           "minItems": 1,
           "uniqueItems": true
         },
-        "external": { "type": "boolean" }
+        "external": { "type": "boolean" },
+        "mention": { "type": "boolean" }
       }
     }
   }

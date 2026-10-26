@@ -12,7 +12,7 @@
  * does not name.
  */
 
-/** The page a flow opens on: `spaces`, `keyvault`, the Settings tabs,
+/** The page a flow opens on: `spaces`, `keyvault`, the Settings tabs (Account is `settings`),
  * `notifications`, `machines` (This machine), `agents`, `volume`,
  * `onboarding`, a Space's detail (`space-detail`, opened from Spaces), or a
  * sheet over Spaces (`new-space`, `teleport`, `share`). */
@@ -20,10 +20,11 @@ export type ParityScreen =
   | "spaces"
   | "keyvault"
   | "settings"
+  | "settings/general"
   | "settings/about"
-  | "settings/agents"
+  | "settings/advanced"
+  | "settings/connected-apps"
   | "settings/devices"
-  | "settings/experiments"
   | "notifications"
   | "machines"
   | "agents"
@@ -63,7 +64,7 @@ export const FLOW_PLAN: Record<string, FlowPlan> = {
   "create-stages": { status: "run", screen: "spaces" },
   "create-retry": { status: "run", screen: "spaces" },
   devices: { status: "run", screen: "settings/devices" },
-  "driver-card": { status: "run", screen: "settings" },
+  "driver-card": { status: "run", screen: "settings/connected-apps" },
   "share-sheet": { status: "run", screen: "share" },
   "agents-page": { status: "run", screen: "agents" },
   "drive-page": { status: "run", screen: "volume" },
@@ -72,14 +73,14 @@ export const FLOW_PLAN: Record<string, FlowPlan> = {
     status: "skip",
     reason: "The 0.10.0 first run has no Cua Volume page (connect the agent, then this computer); Cua Volume is set up from its own page (drive-page, drive-storage)",
   },
-  "drive-storage": { status: "run", screen: "settings" },
+  "drive-storage": { status: "run", screen: "volume" },
   notifications: { status: "run", screen: "notifications" },
   about: { status: "run", screen: "settings/about" },
-  "agent-keys": { status: "run", screen: "settings/agents" },
+  "agent-keys": { status: "run", screen: "settings/connected-apps" },
   "your-cloud": { status: "run", screen: "new-space" },
   "telemetry-funnel": { status: "run", screen: "spaces" },
-  "launch-at-login": { status: "run", screen: "settings" },
-  experiments: { status: "run", screen: "settings/experiments" },
+  "launch-at-login": { status: "run", screen: "settings/general" },
+  experiments: { status: "run", screen: "settings/advanced" },
   "placement-picker": { status: "run", screen: "new-space" },
   machines: { status: "run", screen: "machines" },
   "first-run": {

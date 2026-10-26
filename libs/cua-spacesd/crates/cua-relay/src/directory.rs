@@ -454,6 +454,12 @@ impl Directory {
         Ok(record)
     }
 
+    /// Holds the directory lock, as a slow write to disk would (tests).
+    #[cfg(test)]
+    pub(crate) fn hold_lock(&self) -> impl Sized + '_ {
+        self.records.lock().expect("directory")
+    }
+
     /// The machine a machine token belongs to.
     pub fn machine_for_token(&self, token: &str) -> Option<MachineRecord> {
         if !token.starts_with(MACHINE_TOKEN_PREFIX) {

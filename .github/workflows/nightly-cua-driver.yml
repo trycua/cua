@@ -19,11 +19,16 @@ permissions:
   # actions: read lets the reusable builder run its desktop E2E gate jobs.
   # Nightly builds run them against source_sha; a failed suite fails `build`,
   # so `publish` never runs. Nightly runs never publish a stable release.
+  # statuses: read is for the builder's `staging-gate` job. It never runs here
+  # (tag pushes only), but GitHub checks every called job's permissions when
+  # the run starts, so a missing scope ends the whole run as startup_failure
+  # (nightly runs 20 to 24 Oct 2026, after #5539 added that job).
   actions: read
   contents: write
   id-token: write
   issues: write
   pull-requests: read
+  statuses: read
 
 concurrency:
   group: nightly-cua-driver

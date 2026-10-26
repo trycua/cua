@@ -9,6 +9,8 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+# The channel (Stable, Local) names the MCP server, the skills and the state folder.
+cua-home.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

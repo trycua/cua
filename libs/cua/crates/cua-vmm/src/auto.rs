@@ -413,18 +413,21 @@ pub async fn doctor() -> DoctorReport {
     let mut lume = LumeReport {
         supported_host: host_os == HostOs::Macos && host_arch == Arch::Aarch64,
         binary: lume_binary(),
-        url: std::env::var("LUME_API").unwrap_or_else(|_| "http://127.0.0.1:7777".into()),
+        url: crate::local_network::lume_base(),
         ..Default::default()
     };
     #[cfg(feature = "lume")]
     if lume.supported_host {
         let c = crate::lume::LumeClient::new(lume.url.clone());
         lume.serving = c.reachable().await;
-        if let Some(b) = &lume.binary {
-            lume.version = host::run(b, &["--version"])
-                .await
-                .ok()
-                .map(|s| s.trim().to_string());
+        if lume.binary.is_some() {
+            // Run as Lume runs for this channel: a bare `lume --version`
+            // initialises the pinned Lume's settings and telemetry under
+            // Stable's `~/.config/lume` and `~/.lume`. (For Local this
+            // writes only its own config under its home.)
+            if let Ok(Some(l)) = crate::lume::lume_cmd() {
+                lume.version = crate::lume::version_text(&l).await;
+            }
         }
     }
     // Without any Lume, the built-in one is set up on first use unless the
@@ -922,7 +925,14 @@ pub fn select(req: &SelectRequest, report: &DoctorReport) -> Result<Selection> {
                         provisioning: l.provisioning,
                     });
                 }
-                Err(VmmError::missing("QEMU", q.missing.join(", ")))
+                Err(VmmError::missing(
+                    "QEMU",
+                    if host.os == HostOs::Windows {
+                        crate::preflight::QEMU_MISSING_WINDOWS.to_string()
+                    } else {
+                        q.missing.join(", ")
+                    },
+                ))
             }
         },
     }
@@ -948,7 +958,7 @@ fn lume_binary() -> Option<PathBuf> {
     }
     #[cfg(not(feature = "lume"))]
     {
-        host::which("lume")
+        host::which(cua_home::channel::CuaChannel::current().lume_bin_name())
     }
 }
 

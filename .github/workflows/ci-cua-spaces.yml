@@ -34,6 +34,10 @@ on:
       - "apps/cua-spaces/**"
       - "libs/cua/**"
       - ".github/workflows/ci-cua-spaces.yml"
+      - ".github/flaky/**"
+      - ".github/scripts/flaky/**"
+      - ".github/actions/nextest/**"
+      - ".github/actions/flaky-upload/**"
   push:
     branches: [main]
     paths:
@@ -142,12 +146,14 @@ jobs:
           node-version: 22
           cache: pnpm
           cache-dependency-path: apps/cua-spaces/pnpm-lock.yaml
-      - name: Install Rust, the wasm32 target and wasm-bindgen
+      - name: Install Rust and the wasm32 target
         shell: bash
         run: |
           rustup show active-toolchain || rustup toolchain install
           rustup target add wasm32-unknown-unknown
-          cargo install wasm-bindgen-cli --version 0.2.126 --locked
+      # The prebuilt release binary: `cargo install wasm-bindgen-cli` here took
+      # 1.7 minutes (median of 25 runs) on every run.
+      - uses: ./.github/actions/wasm-bindgen
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
       - name: Install Linux build dependencies
@@ -158,16 +164,28 @@ jobs:
             libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev \
             libx11-dev libxkbcommon-dev libwayland-dev libxcb1-dev libx11-xcb-dev \
             libxkbcommon-x11-dev libxrandr-dev libxi-dev libudev-dev
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
-          key: rust-tests
           workspaces: |
             apps/cua-spaces/src-tauri -> target
             libs/cua -> target
       - run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/nextest
+      # One retry; a test that passes only on it is reported and gets a `flaky`
+      # issue (.github/flaky/).
       - name: Rust command-layer tests (hermetic)
         shell: bash
-        run: cargo test --manifest-path src-tauri/Cargo.toml --locked --test host_commands --test commands --test installer_commands --test app_core_parity --lib -- --test-threads=4
+        run: >-
+          "$GITHUB_WORKSPACE/.github/scripts/flaky/flaky.sh" run --suite spaces-rust --format junit
+          --results src-tauri/target/nextest/ci/junit.xml --
+          cargo nextest run --manifest-path src-tauri/Cargo.toml --locked
+          --config-file "$GITHUB_WORKSPACE/.github/flaky/nextest.toml" --profile ci
+          --test host_commands --test commands --test installer_commands --test app_core_parity --lib
+          --test-threads 4
+      - uses: ./.github/actions/flaky-upload
+        if: always()
+        with:
+          suite: spaces-rust
 
   frontend:
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
@@ -182,9 +200,12 @@ jobs:
         run: |
           rustup show active-toolchain || rustup toolchain install
           rustup target add wasm32-unknown-unknown
+      # The wasm build is small: share the small family the web UI jobs use
+      # rather than restoring the multi-GB libs-cua family for it.
       - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua
+          shared-key: apps-cua-spaces-core-wasm
       - uses: ./.github/actions/wasm-bindgen
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
       - uses: actions/setup-node@v4
@@ -194,7 +215,17 @@ jobs:
           cache-dependency-path: apps/cua-spaces/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
-      - run: pnpm test
+      - name: Tests
+        env:
+          FLAKY_RESULTS_OUT: ${{ runner.temp }}/flaky-vitest/spaces.json
+        run: |
+          cp "$GITHUB_WORKSPACE/.github/flaky/vitest-reporter.mjs" ./.flaky-vitest-reporter.mjs
+          "$GITHUB_WORKSPACE/.github/scripts/flaky/flaky.sh" run --suite spaces-vitest --format vitest --results "$FLAKY_RESULTS_OUT" -- \
+            pnpm test -- --retry=1 --reporter=default --reporter=./.flaky-vitest-reporter.mjs
+      - uses: ./.github/actions/flaky-upload
+        if: always()
+        with:
+          suite: spaces-vitest
 
   bundle:
     name: bundle (${{ matrix.name }})
@@ -208,7 +239,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(needs.changes.outputs.native == 'true' && '[{"name":"macos-dmg","os":"macos-26","bundles":"app,dmg"},{"name":"windows-nsis-msi","os":"windows-latest","bundles":"nsis,msi"},{"name":"linux-deb-appimage","os":"ubuntu-22.04","bundles":"deb,appimage"}]' || '[{"name":"linux-deb-appimage","os":"ubuntu-22.04","bundles":"deb,appimage"}]') }}
+        include: ${{ fromJSON(needs.changes.outputs.native == 'true' && '[{"name":"macos-dmg","os":"macos-26-xlarge","bundles":"app,dmg"},{"name":"windows-nsis-msi","os":"cua-windows-8core","bundles":"nsis,msi"},{"name":"linux-deb-appimage","os":"ubuntu-22.04","bundles":"deb,appimage"}]' || '[{"name":"linux-deb-appimage","os":"ubuntu-22.04","bundles":"deb,appimage"}]') }}
     runs-on: ${{ matrix.os }}
     # A cold Windows bundle takes about 1 h 45 min (the sidecar release build
     # alone is ~50 min). Fail a real hang instead of holding a runner for the
@@ -224,7 +255,7 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: "0"
       # Two jobs on the 7 GB Linux runner: four rustc processes ran it out of
       # memory ("runner received a shutdown signal").
-      CARGO_BUILD_JOBS: ${{ matrix.os == 'ubuntu-22.04' && 2 || 4 }}
+      CARGO_BUILD_JOBS: ${{ matrix.os == 'ubuntu-22.04' && 2 || matrix.os == 'cua-windows-8core' && 8 || 4 }}
     steps:
       - uses: actions/checkout@v4
       # Linking the debug test binaries and the bundle exhausted the Linux
@@ -243,16 +274,15 @@ jobs:
         run: |
           rustup show active-toolchain || rustup toolchain install
           rustup target add wasm32-unknown-unknown
-      - uses: ./.github/actions/rust-cache
-        with:
-          workspaces: libs/cua
-      - uses: ./.github/actions/wasm-bindgen
-      - name: Install protoc
-        uses: ./.github/actions/setup-protoc
+      # One cache step: a second one on the same directory made both save a
+      # full copy.
       - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua
           shared-key: spaces-bundle-${{ matrix.name }}
+      - uses: ./.github/actions/wasm-bindgen
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         run: |
@@ -263,9 +293,22 @@ jobs:
             libx11-dev libxkbcommon-dev libwayland-dev libxcb1-dev libx11-xcb-dev \
             libxkbcommon-x11-dev libxrandr-dev libxi-dev libudev-dev
       - run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/nextest
+      # One retry; a test that passes only on it is reported and gets a `flaky`
+      # issue (.github/flaky/).
       - name: Rust command-layer tests (hermetic)
         shell: bash
-        run: cargo test --manifest-path src-tauri/Cargo.toml --locked --test host_commands --test commands --test installer_commands --test app_core_parity --lib -- --test-threads=4
+        run: >-
+          "$GITHUB_WORKSPACE/.github/scripts/flaky/flaky.sh" run --suite "spaces-rust-bundle-${{ matrix.name }}" --format junit
+          --results src-tauri/target/nextest/ci/junit.xml --
+          cargo nextest run --manifest-path src-tauri/Cargo.toml --locked
+          --config-file "$GITHUB_WORKSPACE/.github/flaky/nextest.toml" --profile ci
+          --test host_commands --test commands --test installer_commands --test app_core_parity --lib
+          --test-threads 4
+      - uses: ./.github/actions/flaky-upload
+        if: always()
+        with:
+          suite: spaces-rust-bundle-${{ matrix.name }}
       - name: Stage the cua CLI sidecar
         shell: bash
         # Not a hang: a cold release build of the CLI took 76-122 minutes on the

@@ -32,7 +32,7 @@ use cua_sdk::CuaError;
 use serde_json::{Value, json};
 
 use crate::runs::{request, target_of_run};
-use crate::util::line;
+use crate::util::{hint, hint_line, line};
 
 /// The jobs runtime every member runs with (`import cua`, `python -m
 /// _cua_entry`), by path inside `_cua_runtime/`.
@@ -723,7 +723,7 @@ pub async fn run(a: RunArgs, json: bool, out: &mut dyn Write) -> Result<i32, Cua
             line(out, json!({"run": run_id}).to_string());
         } else {
             line(out, format!("{what}: submitted"));
-            line(out, format!("Follow it: cua jobs logs -f {run_id}"));
+            hint_line(out, format!("Follow it: cua jobs logs -f {run_id}"));
         }
         return Ok(0);
     }
@@ -811,7 +811,6 @@ pub fn project_bundle(dir: &Path, files: &[String]) -> Result<Vec<u8>, CuaError>
     for f in files {
         let p = dir.join(f);
         let data = std::fs::read(&p).map_err(io)?;
-        #[cfg_attr(not(unix), allow(unused_mut))]
         let mut mode = 0o644;
         #[cfg(unix)]
         {
@@ -820,6 +819,14 @@ pub fn project_bundle(dir: &Path, files: &[String]) -> Result<Vec<u8>, CuaError>
                 .map(|m| m.permissions().mode() & 0o111 != 0)
                 .unwrap_or(false)
             {
+                mode = 0o755;
+            }
+        }
+        // A Windows file has no mode to keep, and the node that runs it does:
+        // a script (it starts with `#!`) stays executable.
+        #[cfg(not(unix))]
+        {
+            if data.starts_with(b"#!") {
                 mode = 0o755;
             }
         }
@@ -1103,7 +1110,7 @@ async fn run_command(a: RunArgs, json: bool, out: &mut dyn Write) -> Result<i32,
             line(out, json!({"run": run_id}).to_string());
         } else {
             line(out, format!("{what}: submitted"));
-            line(out, format!("Follow it: cua jobs logs -f {run_id}"));
+            hint_line(out, format!("Follow it: cua jobs logs -f {run_id}"));
         }
         return Ok(0);
     }
@@ -1123,7 +1130,9 @@ async fn run_command(a: RunArgs, json: bool, out: &mut dyn Write) -> Result<i32,
 fn follow_hint(run_id: &str) -> [String; 2] {
     [
         "Ctrl-C stops following; the run keeps going.".to_string(),
-        format!("(cancel: cua jobs cancel {run_id}; follow again: cua jobs logs -f {run_id})"),
+        hint(&format!(
+            "(cancel: cua jobs cancel {run_id}; follow again: cua jobs logs -f {run_id})"
+        )),
     ]
 }
 
@@ -1642,7 +1651,7 @@ pub fn runs_table(v: &Value) -> Vec<String> {
         ));
     }
     if runs.is_empty() {
-        rows.push("No runs yet: cua run train.py::finetune".into());
+        rows.push(hint("No runs yet: cua run train.py::finetune"));
     }
     rows
 }

@@ -224,7 +224,7 @@ export function createFakeHostBridge(
       const spare = request.profile === "spare";
       state.status = {
         shareDesktop: request.shareDesktop ?? !spare,
-        provideSpaces: request.provideSpaces ?? spare,
+        provideSpaces: request.provideSpaces ?? (request.mode !== "direct"),
         maxSpaces: 4,
         maxMacosVms: options.platform === "macos" ? 2 : 0,
         providedSpaces: [],

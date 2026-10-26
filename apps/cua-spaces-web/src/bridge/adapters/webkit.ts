@@ -30,8 +30,8 @@
 import { Emitter, HostError, type DataAdapter } from "../adapter";
 import { hostOs, THIS_MACHINE, type HostOs } from "../host-os";
 import { electronTransport, webkitTransport, type HostTransport } from "../transport";
-import type { AgentEventsPage, AgentSetupRow, PersistentAgent, SpaceAgentRun } from "../contracts/agents";
-import type { CancelOutcome, DefaultLocation, HostActionId, HostStatus, MachinePageRow, MachineRow, MachinesView, SpacePowerReport } from "../contracts/host";
+import type { AgentEventsPage, AgentMessageSent, AgentSetupRow, AgentStarted, PersistentAgent, SpaceAgentRun } from "../contracts/agents";
+import type { CancelOutcome, HostActionId, HostStatus, MachinePageRow, MachineRow, MachinesView, SpacePowerReport } from "../contracts/host";
 import type { HostWindow } from "../detect";
 import {
   DEFAULT_SETTINGS,
@@ -65,7 +65,8 @@ import type { HostChecklistState } from "../ops/checklist";
 import type { LinkCreate, ShareLink } from "../ops/links";
 import { unsupportedPresenceOps, type PresenceJoinInfo } from "../ops/presence";
 import { unsupportedRuntimeFixOps } from "../ops/runtime-fix";
-import type { SpaceRow } from "../contracts/spaces";
+import type { CliInstallPlan } from "../contracts/first-run";
+import type { CreatingElsewhere, ListStatus, SpaceRow } from "../contracts/spaces";
 import {
   isWebkitResponse,
   WEBKIT_EVENT,
@@ -108,7 +109,7 @@ export function spaceToRow(s: WkSpace): SpaceRow {
   return {
     id: s.id,
     name: s.name,
-    provider: s.provider ?? (here ? "local" : "cloud"),
+    provider: s.provider ?? (here ? "local" : "direct"),
     spacesdVersion: s.sdk?.spacesdVersion ?? "",
     features: s.sdk?.features ?? [],
     addedAt: added ? new Date(added).toISOString() : undefined,
@@ -266,13 +267,8 @@ const lockedBy = (r: WkSettingsRow | undefined) => (r && !r.enabled && r.help?.s
 /** The core's Settings page back to the values `useSettings` reads. */
 export function toSettingsSnapshot(s: WkSettings, page: Pick<SettingsValues, "theme" | "hotkey">): SettingsSnapshot {
   const rows = rowsById(s);
-  const location = rows.get("default-location");
   const telemetry = rows.get("telemetry");
   const loginRow = rows.get("launch-at-login");
-  const env = lockedBy(location);
-  const defaultLocation: DefaultLocation | null = location
-    ? { value: active(location) ?? "local", source: env ? "env" : "config", env, path: "" }
-    : null;
   const telemetryOn = telemetry ? active(telemetry) === "on" : DEFAULT_SETTINGS.telemetry;
   // The rows only this host lays out: what they show now, so the core lays
   // them out again on the page (null: the host has none).
@@ -287,14 +283,14 @@ export function toSettingsSnapshot(s: WkSettings, page: Pick<SettingsValues, "th
       hotkey: page.hotkey,
       menuBar: active(rows.get("notch")) === "hide",
       telemetry: telemetryOn,
-      defaultLocation: defaultLocation?.value ?? DEFAULT_SETTINGS.defaultLocation,
+      defaultLocation: DEFAULT_SETTINGS.defaultLocation,
       // The core lays out `launch-at-login` once the host read the login item.
       launchAtLogin: loginRow && loginRow.enabled ? active(loginRow) === "on" : null,
       updateChannel: s.updateChannel === "beta" || s.updateChannel === "stable" ? s.updateChannel : null,
       // The core's General row (`settings::auto_connect_row`), when the host lays it out.
       ...(rows.has("auto-connect") ? { autoConnect: active(rows.get("auto-connect")) === "on" } : {}),
     },
-    defaultLocation,
+    defaultLocation: null,
     telemetry: telemetry
       ? {
           enabled: telemetryOn,
@@ -316,16 +312,15 @@ export function toSettingsSnapshot(s: WkSettings, page: Pick<SettingsValues, "th
     },
     globalShortcut: s.globalShortcut ? { label: s.globalShortcut.label, registered: s.globalShortcut.registered } : null,
     accountUrl: s.accountUrl ?? null,
+    cli: s.cli && s.cli.name ? { name: s.cli.name, installed: Boolean(s.cli.installed) } : null,
   };
 }
 
 export function toSessionSnapshot(s: WkSession, onboarding: WkOnboarding | null = null): SessionSnapshot {
   return {
-    fleet: {
+    account: {
       configured: s.cloudConfigured || s.signedIn,
       authMode: s.signedIn ? "user" : "none",
-      baseUrl: "",
-      tokenUrl: "",
       identity: opt(s.identity),
     },
     // The SwiftUI app's first run is its own window; Electron's is the page's.
@@ -418,6 +413,7 @@ export function toHostStatus(h: WkHostState): HostStatus {
     ownerEmail: h.ownerEmail ?? null,
     account: h.account ?? null,
     progress: h.progress ?? null,
+    appName: h.appName ?? null,
   };
 }
 
@@ -533,12 +529,20 @@ export function createWebkitAdapter(
   let rosterError: string | null = null;
   // The host's standing notice (`hostNotice`).
   let daemonNotice: string | null = null;
+  // How far the host's last list read got (`listStatus`).
+  let listStatus: ListStatus = { loaded: false, incomplete: false, reaching: 0, stale: false };
+  // What your other computers are creating (`creatingElsewhere`).
+  let creatingElsewhere: CreatingElsewhere[] = [];
   // The Machines page the host's core drew (`machinesView`).
   let machinesView: MachinesView | null = null;
   const listSpaces = async () => {
     const answer = await request<WkSpaces>("spaces.list");
     rosterError = answer.rosterError ?? null;
     daemonNotice = answer.daemonNotice ?? null;
+    // Until the host's first read answers its list is no list at all (an
+    // app just updated, its daemon starting): never "no Spaces".
+    listStatus = { loaded: answer.loaded !== false, incomplete: answer.incomplete === true, reaching: answer.reaching ?? 0, stale: answer.stale === true };
+    creatingElsewhere = answer.creatingElsewhere ?? [];
     return answer;
   };
 
@@ -594,7 +598,6 @@ export function createWebkitAdapter(
           break;
         case "defaultLocation":
           if (value !== "local") throw new HostError("New Spaces can start on This Mac here", "unsupported");
-          await choose("default-location", value);
           break;
         case "launchAtLogin":
           await choose("launch-at-login", value ? "on" : "off");
@@ -631,8 +634,8 @@ export function createWebkitAdapter(
       const [s, onboarding] = await Promise.all([request<WkSession>("session.get"), request<WkOnboarding>("onboarding.get").catch(() => null)]);
       return toSessionSnapshot(s, onboarding);
     },
-    "session.signIn": async () => {
-      const s = await request<WkSession>("session.signIn");
+    "session.signIn": async (args) => {
+      const s = await request<WkSession>("session.signIn", args?.code ? { code: true } : {});
       const userCode = typeof s.signIn === "object" ? opt(s.signIn.userCode) : undefined;
       return { method: userCode ? "device" : "browser", userCode, verificationUri: opt(s.signInUrl) ?? "" };
     },
@@ -649,6 +652,8 @@ export function createWebkitAdapter(
     "agents.runs": async ({ spaceId }) => list(await request("agents.runs", { spaceId })) as SpaceAgentRun[],
     "agents.events": ({ spaceId, runId, cursor, max }) =>
       request<AgentEventsPage>("agents.events", max == null ? { spaceId, runId, cursor } : { spaceId, runId, cursor, max }),
+    "agents.start": (a) => request<AgentStarted>("agents.start", { ...a }),
+    "agents.message": (a) => request<AgentMessageSent>("agents.message", { ...a }),
     "agents.pause": async ({ name }) => {
       await request("agents.pause", { name });
       return null;
@@ -698,6 +703,9 @@ export function createWebkitAdapter(
     "links.list": () => request<{ links: ShareLink[] }>("links.list"),
     "links.create": (a: LinkCreate) => request<ShareLink>("links.create", a as unknown as Record<string, unknown>),
     "links.stop": ({ id }) => request<{ stopped: string[] }>("links.stop", { id }),
+    // The bundled CLI on PATH (the app core's installer in the host).
+    "cli.plan": () => request<CliInstallPlan | null>("cli.plan"),
+    "cli.install": ({ modifyPath }) => request<CliInstallPlan>("cli.install", { modifyPath }),
     // Presence over the page's own video: the Mac app draws it natively.
     ...(electron
       ? {
@@ -769,6 +777,8 @@ export function createWebkitAdapter(
     },
     subscribe: (l) => events.subscribe(l),
     listNotice: () => rosterError,
+    listStatus: () => listStatus,
+    creatingElsewhere: () => creatingElsewhere,
     hostNotice: () => daemonNotice,
     machinesView: () => machinesView,
     dispose() {

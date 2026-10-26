@@ -272,6 +272,11 @@
           "jsonpath": "$.project.version"
         },
         {
+          "type": "toml",
+          "path": "python/cli/pyproject.toml",
+          "jsonpath": "$.project.version"
+        },
+        {
           "type": "generic",
           "path": "python/src/cua/__init__.py"
         },

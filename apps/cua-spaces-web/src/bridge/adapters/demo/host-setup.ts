@@ -36,7 +36,8 @@ export function demoHostSetupHandlers({ state, now, wait, emit, stepMs }: DemoCo
         directUrl: direct ? `http://${request.direct ?? "0.0.0.0:3211"}` : null,
         name: request.name?.trim() || "This Mac",
         shareDesktop: request.shareDesktop ?? !spare,
-        provideSpaces: !direct && (request.provideSpaces ?? spare),
+        // The default choice turns on the screen and Spaces; a direct connection only the screen.
+        provideSpaces: !direct && (request.provideSpaces ?? true),
         permissions: state.host.permissions,
         clients: [],
         recentAccess: [],

@@ -135,7 +135,7 @@ let fixtureNow = Date(timeIntervalSince1970: 1_800_000_000)
 struct ViewModelTests {
     func makeModel(_ backend: SpacesBackend = FixtureSpacesBackend(), kv: KeyvaultClientProtocol? = nil,
                    host: HostRunning? = nil, account: AccountRunning? = nil,
-                   agents: AgentSetupRunning? = nil, billing: BillingRunning? = nil,
+                   agents: AgentSetupRunning? = nil,
                    loginItem: LoginItemControlling? = nil, telemetry: TelemetryRunning = FixtureTelemetry()) -> AppModel {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cua-mac-tests-\(UUID().uuidString)")
         return AppModel(backend: backend,
@@ -143,7 +143,7 @@ struct ViewModelTests {
                         onboarding: OnboardingModel(statePath: dir.appendingPathComponent("onboarding.json").path),
                         settingsPath: dir.appendingPathComponent("settings.json").path,
                         host: host, account: account, telemetry: telemetry, agentSetup: agents,
-                        billing: billing, loginItem: loginItem)
+                        loginItem: loginItem)
     }
 
     @Test func liveKeyvaultSharingShowsInTheNotchAndTheMenu() async throws {
@@ -399,6 +399,17 @@ struct ViewModelTests {
         #expect(model.host.formView?.canSubmit == true)
     }
 
+    /// The web page's usage signals (a sign-in's start, the "still waiting" hint)
+    /// wait for the usage-data switch in its Settings snapshot, and the page can
+    /// run signed out before any Settings view loaded it: reading the switch
+    /// alone fills the page's Settings with it.
+    @Test func refreshingTelemetryGivesTheSettingsItsSwitch() {
+        let model = makeModel(telemetry: FixtureTelemetry())
+        #expect(model.telemetryInput == nil)
+        model.refreshTelemetry()
+        #expect(model.telemetryInput?.enabled == true)
+    }
+
     /// Settings, Experiments: every switch off except Sharing and Your cloud
     /// (on by default); Cua Volume on shows Storage after General, is saved,
     /// recorded, and reaches the first run.
@@ -406,11 +417,9 @@ struct ViewModelTests {
         let telemetry = FixtureTelemetry()
         let model = makeModel(telemetry: telemetry)
         let toggles = model.experimentsPage.sections.flatMap(\.rows).filter { $0.kind == .toggle }
-        #expect(toggles.map(\.id) == ["experiment:cua_volume", "experiment:your_cloud", "experiment:sharing",
-                                    "experiment:classic_ui"])
-        // Off, the New UI shows as "Use classic UI" on (tests run with no app version: no default).
-        // Sharing and Your cloud are on unless turned off.
-        let onByDefault: Set<String> = ["experiment:classic_ui", "experiment:sharing", "experiment:your_cloud"]
+        #expect(toggles.map(\.id) == ["experiment:cua_volume", "experiment:your_cloud", "experiment:sharing"])
+        // Sharing and Your cloud are on unless turned off; no New UI row.
+        let onByDefault: Set<String> = ["experiment:sharing", "experiment:your_cloud"]
         #expect(toggles.allSatisfy { r in
             r.options.first { $0.id == (onByDefault.contains(r.id) ? "on" : "off") }?.active == true
         })
@@ -447,6 +456,27 @@ struct ViewModelTests {
         await model.beginSignIn()
         #expect(model.identity == "you@example.com")
         #expect(steps(telemetry) == ["signed_in"])
+    }
+
+    /// "Get a code instead": a sign-in that never came back from the browser
+    /// restarts with a code, and the account is asked for exactly that.
+    @Test func aSignInThatNeverComesBackCanRestartWithACode() async throws {
+        let account = CodeAskingAccount()
+        let model = makeModel(account: account)
+        let first = Task { await model.beginSignIn() }
+        try await waitUntil { account.starts == [false] }
+        first.cancel()
+        model.cancelSignIn()
+        let byCode = Task { await model.beginSignIn(code: true) }
+        try await waitUntil { account.starts == [false, true] }
+        try await waitUntil { if case .waiting = model.signIn { true } else { false } }
+        guard case let .waiting(userCode, _) = model.signIn else {
+            Issue.record("expected a waiting sign-in, got \(model.signIn)")
+            return
+        }
+        #expect(userCode == "ABCD-EFGH")
+        byCode.cancel()
+        model.cancelSignIn()
     }
 
     /// A sign-in that never finishes: Cancel stops it, a timeout fails it,
@@ -557,8 +587,11 @@ struct ViewModelTests {
         task.cancel()
     }
 
+    /// Waits for `done`, up to 30 s (it ends at once when it holds; the
+    /// bound only matters on a failure, and a loaded runner is slow).
     func waitUntil(_ done: @MainActor () -> Bool) async throws {
-        for _ in 0..<200 where !done() { try await Task.sleep(for: .milliseconds(10)) }
+        let deadline = ContinuousClock.now + .seconds(30)
+        while !done(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
         #expect(done())
     }
 
@@ -603,10 +636,13 @@ struct ViewModelTests {
     @Test func menuBarAndChromeAreTheCores() async {
         let model = makeModel()
         await model.refresh()
-        // The notch's count: This machine counts only while it is shared.
-        let open = appOpenableCount(spaces: model.spaces)
-        #expect(model.menuBar.map(\.label) == appMenuBar(spaces: open).map(\.label))
-        #expect(model.notch.view.tab.count == String(open))
+        // The notch's count: the Spaces on or starting (never This machine,
+        // never a stopped Space); the menu bar item says the same.
+        let on = appOnCount(spaces: model.spaces)
+        #expect(model.menuBar.first?.label == appOnStatusLine(count: on))
+        #expect(model.menuBar.dropFirst().map(\.label) == appMenuBar(spaces: on).dropFirst().map(\.label))
+        #expect(model.statusLine == appOnStatusLine(count: on))
+        #expect(model.notch.view.tab.count == String(on))
         #expect(model.chrome.emptyTitle == "No Spaces yet")
         #expect(model.chrome.signInLabel == nil, "no account: signing in is not offered")
     }
@@ -657,13 +693,13 @@ struct ViewModelTests {
         let model = makeModel()
         await model.refresh()
         let titles = model.sidebar.sections.map(\.title.code)
-        #expect(titles == ["spaces.sidebar.section.cloud", "spaces.sidebar.section.this_mac", "spaces.sidebar.section.connected"])
+        #expect(titles == ["spaces.sidebar.section.this_mac", "spaces.sidebar.section.connected"])
         // The container hostname defers to the name in the id.
         #expect(model.spaces.contains { $0.name == "aurora" })
         // An unreachable Space is dimmed and cannot stream.
-        let builder = model.spaces.first { $0.id == "cloud:builder" }!
+        let builder = model.spaces.first { $0.id == "direct:builder" }!
         #expect(model.detail(builder).canStream == false)
-        #expect(model.sidebar.sections[0].rows[0].dim)
+        #expect(model.sidebar.sections.flatMap(\.rows).first { $0.id == builder.id }?.dim == true)
     }
 
     @Test func searchFiltersThroughTheCore() async {
@@ -738,20 +774,17 @@ struct ViewModelTests {
     }
 
     /// Run on lists this Mac only while no cloud is connected (and with Your
-    /// cloud turned off, no cloud at all); Cua Cloud is never offered, and
-    /// New Space creates on this Mac. Your cloud is on by default, so
-    /// "Connect a cloud" is there until it is turned off.
+    /// cloud turned off, no cloud at all), and New Space creates on this Mac.
+    /// Your cloud is on by default, so "Connect a cloud" is there until it is
+    /// turned off.
     @Test func runOnIsThisMacUntilACloudIsConnected() async {
         let backend = FixtureSpacesBackend()
-        backend.fixtureCloud = true
-        backend.fixturePricing = AppCloudPricing(vcpuHourUsd: 0.044625, memoryGibHourUsd: 0.0223125)
         let model = makeModel(backend)
         await model.openNewSpace()
         let w = model.wizard
         #expect(w.view.placements.map(\.id) == ["local"])
         #expect(w.view.placementId == "local")
         #expect(w.view.fields.contains { $0.id == "connect-cloud" }, "Your cloud is on by default")
-        w.send(.setPlacement(placement: .cloud))
         w.send(.setPlacement(placement: .yours))
         #expect(w.view.plan.placement == .local)
         w.send(.next)
@@ -900,7 +933,7 @@ struct ViewModelTests {
         let model = makeModel(backend)
         var opened: [String] = []
         let previous = WebUIWindowController.actions
-        WebUIWindowController.actions = WebUIActions(openSpace: { if $0 == "local:fresh" { opened.append($0) } }, openMain: {})
+        WebUIWindowController.actions = WebUIActions(openSpace: { if $0 == "local:fresh" { opened.append($0) } })
         defer { WebUIWindowController.actions = previous }
         await model.refresh()
         await model.openNewSpace()
@@ -936,6 +969,8 @@ struct ViewModelTests {
         let ids = model.spaces.map(\.id)
         #expect(ids.contains("local:fresh") && !ids.contains(row.id), "\(ids)")
         #expect(model.creates.pending.isEmpty)
+        // The selection follows the hand-over a beat after the pending row leaves the list.
+        if plan.openDesktop { try await waitUntil { model.selectedSpaceId == "local:fresh" } }
         if plan.openDesktop { #expect(model.selectedSpaceId == "local:fresh") }
         try await waitUntil { opened == (openWhenReady ? ["local:fresh"] : []) }
         try await Task.sleep(for: .milliseconds(100))
@@ -1201,7 +1236,7 @@ struct ViewModelTests {
         let model = makeModel(backend)
         await model.refresh()
         let row = { (id: String) in model.sidebar.sections.flatMap(\.rows).first { $0.id == id } }
-        #expect(row("cloud:builder")?.power == nil, "a cloud Space cannot be turned off")
+        #expect(row("direct:builder")?.power == nil, "a cloud Space cannot be turned off")
         let aurora = try #require(model.spaces.first { $0.id == "local:aurora" })
         #expect(row(aurora.id)?.power?.help.code == "spaces.power.suspend")
         // Share before power (Sharing is on by default); none with Sharing turned off.
@@ -1476,7 +1511,8 @@ struct ViewModelTests {
         #expect(note.action.label == "Invite to your team")
         model.dismissShareRemovalNote()
         #expect(model.shareRemovalNote == nil)
-        try await Task.sleep(for: .milliseconds(100))
+        // The acknowledgement runs in a task the dismissal starts: wait for it.
+        try await waitUntil { teams.removals.isEmpty }
         #expect(teams.removals.isEmpty, "acknowledged, so it does not come back")
         await model.reloadShareRemovals()
         #expect(model.shareRemovalNote == nil)
@@ -1495,15 +1531,13 @@ struct ViewModelTests {
         #expect(model.gate?.action.label == "See Teams")
     }
 
-    /// Settings hides Cua Cloud billing and shows the real Teams section
+    /// Settings shows the real Teams section
     /// (the Spaces API: name with alias fallback, members, pending invites
-    /// marked "(Invited)", the account app for invites and billing); a cloud
-    /// create refused for want of credit shows one line and no Add credit.
-    @Test func billingIsHiddenAndTeamsComeFromTheSpacesAPI() async throws {
+    /// marked "(Invited)", the account app for invites and billing).
+    @Test func teamsComeFromTheSpacesAPI() async throws {
         var opened: [URL] = []
         BillingBrowser.open = { opened.append($0) }
-        let model = makeModel(account: FixtureAccount(identity: "you@example.com"),
-                              billing: FixtureBilling(balanceCents: 742))
+        let model = makeModel(account: FixtureAccount(identity: "you@example.com"))
         model.teamsReader = FixtureTeams([
             AppTeamInput(id: "o1", alias: "acme", name: "", role: "owner", plan: "teams", seats: 3,
                          members: [AppTeamPersonInput(email: "you@example.com", role: "owner"),
@@ -1524,16 +1558,6 @@ struct ViewModelTests {
         await model.press(row: "teams-billing")
         #expect(opened.map(\.absoluteString) == ["https://app.cua.ai/team", "https://app.cua.ai/billing"])
 
-        var creates = appCreatesReduce(state: AppCreatesState(pending: [], deleting: [], powering: [], streaks: []),
-                                       action: .start(id: "pending:1", name: "cloud", os: .linux, provider: .cloud,
-                                                      now: 0, image: nil, kind: nil, hostArch: nil, gpu: false,
-                                                      host: nil, hostName: nil))
-        creates = appCreatesReduce(state: creates, action: .fail(
-            id: "pending:1", error: "You're out of Cua Cloud credit. Add credit at https://app.cua.ai/billing",
-            errorVariant: "", now: nil))
-        let space = appCreatesCompose(spaces: [], state: creates)[0]
-        #expect(space.detail == "You're out of Cua Cloud credit.")
-        #expect(appSpaceDetail(space: space).creditNotice == nil)
     }
 }
 
@@ -1544,6 +1568,23 @@ final class StuckAccount: AccountRunning, @unchecked Sendable {
     func identity() -> String? { nil }
     func beginSignIn() async throws -> SignInAttempt {
         SignInAttempt(userCode: "ABCD-EFGH", url: URL(string: "https://cua.ai/device"), opened: opened) {
+            try await Task.sleep(for: .seconds(3600))
+            return nil
+        }
+    }
+    func signOut() async throws {}
+}
+
+/// An account that says which way each sign-in started.
+final class CodeAskingAccount: AccountRunning, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _starts: [Bool] = []
+    var starts: [Bool] { lock.withLock { _starts } }
+    func identity() -> String? { nil }
+    func beginSignIn() async throws -> SignInAttempt { try await beginSignIn(code: false) }
+    func beginSignIn(code: Bool) async throws -> SignInAttempt {
+        lock.withLock { _starts.append(code) }
+        return SignInAttempt(userCode: code ? "ABCD-EFGH" : nil, url: URL(string: "https://cua.ai/device"), opened: true) {
             try await Task.sleep(for: .seconds(3600))
             return nil
         }

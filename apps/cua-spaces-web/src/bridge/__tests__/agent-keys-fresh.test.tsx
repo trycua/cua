@@ -9,7 +9,7 @@ import { createDemoAdapter } from "../adapters/demo";
 import { AgentKeysStore, type FocusTarget } from "../agent-keys";
 import { BridgeProvider } from "../index";
 import type { HostEvent, OpArgs, OpName } from "../protocol";
-import { Route } from "../../routes/settings/agents";
+import { AccountKeysSection } from "../../components/settings/account-keys";
 import { testCore, wasmBuilt } from "./testCore";
 
 afterEach(cleanup);
@@ -54,7 +54,7 @@ function fakeTarget() {
   return { target, doc, fire: (t: string) => [...(on[t] ?? [])].forEach((l) => l()), count: () => Object.values(on).reduce((n, s) => n + s.size, 0) };
 }
 
-describe("Settings → Agents keeps its list fresh", () => {
+describe("Settings, Connected apps keeps its list fresh", () => {
   it("reads when watching starts, on focus, on a visible document and on agents.changed", async () => {
     const h = loggedDemo();
     const store = new AgentKeysStore(h.adapter);
@@ -134,8 +134,8 @@ describe("Settings → Agents keeps its list fresh", () => {
   });
 });
 
-describe.skipIf(!wasmBuilt)("the Settings → Agents page", () => {
-  const Page = Route.options.component as unknown as () => React.JSX.Element;
+describe.skipIf(!wasmBuilt)("the Settings, Connected apps account keys", () => {
+  const Page = AccountKeysSection;
   const status = (provider: string) => document.querySelector(`[data-agent-key-provider="${provider}"] [data-agent-key-status]`)?.textContent;
   const click = (provider: string, what: "action" | "remove") => {
     const b = document.querySelector(`[data-agent-key-provider="${provider}"] [data-agent-key-${what}]`);

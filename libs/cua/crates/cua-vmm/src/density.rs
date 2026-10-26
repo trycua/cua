@@ -398,15 +398,6 @@ pub fn decide(
     pending: &[Pending],
     req: &Request,
 ) -> Result<Admit, Refusal> {
-    let expected = estimate_mb(usage, pending, req);
-    if !cfg.enabled {
-        return Ok(Admit {
-            expected_mb: expected,
-        });
-    }
-    // Pending VMs: whatever their measurement does not show yet.
-    let totals = pending_totals(usage, pending);
-    let (pending_mb, pending_vcpus) = (totals.mb, totals.vcpus);
     // A shared RAM file already counted (mapped by a running VM, or reserved
     // by a pending one) costs nothing more.
     let new_shared = match &req.shared_file {
@@ -418,6 +409,15 @@ pub fn decide(
         }
         _ => 0,
     };
+    let expected = fork_private_mb(estimate_mb(usage, pending, req), new_shared, req);
+    if !cfg.enabled {
+        return Ok(Admit {
+            expected_mb: expected,
+        });
+    }
+    // Pending VMs: whatever their measurement does not show yet.
+    let totals = pending_totals(usage, pending);
+    let (pending_mb, pending_vcpus) = (totals.mb, totals.vcpus);
     let need = expected + new_shared;
 
     if let Some(hv) = usage.hypervisor {
@@ -462,6 +462,22 @@ pub fn decide(
         )));
     }
     let cap = cfg.rss_cap_mb(host.total_mb);
+    // One VM bigger than everything VMs may use here never fits, however
+    // many VMs are deleted: say what it asked for and the cap.
+    if need > cap {
+        return Err(Refusal(format!(
+            "'{}' needs about {} of memory ({} asked), more than this host's VM memory \
+             limit of {} (max_rss_fraction {} of {}); give it less memory (--memory), \
+             raise CUA_VM_MAX_RSS_FRACTION on this host, or create it on a machine with \
+             more memory (on=\"auto\")",
+            req.name,
+            gib(need),
+            gib(req.memory_mb),
+            gib(cap),
+            cfg.max_rss_fraction,
+            gib(host.total_mb)
+        )));
+    }
     let used = usage.vm_rss_mb() + pending_mb;
     if used + need > cap {
         return Err(Refusal(format!(
@@ -493,6 +509,23 @@ pub fn decide(
     Ok(Admit {
         expected_mb: expected,
     })
+}
+
+/// The private memory a VM is expected to need when it also brings a shared
+/// RAM file nobody maps yet (`new_shared_mb`, the first fork of a checkpoint
+/// or the first restore of a snapshot): each of its guest pages is either
+/// still the file's page or its own private copy, never both, so together
+/// they are at most its guest RAM plus QEMU's own (the same bound
+/// [`estimate_mb`] applies). Charging the full guest RAM as private on top
+/// of the whole file counted one VM's memory twice. Later VMs of the same
+/// file still get the full estimate until a sibling has settled, so a burst
+/// of forks is charged its honest worst case.
+fn fork_private_mb(estimate: u64, new_shared_mb: u64, req: &Request) -> u64 {
+    if new_shared_mb == 0 {
+        return estimate;
+    }
+    let ceiling = req.memory_mb + req.memory_mb / 10 + 64;
+    estimate.min(ceiling.saturating_sub(new_shared_mb)).max(64)
 }
 
 /// How much more VM memory (MiB) this host takes now: the least of what
@@ -909,6 +942,127 @@ mod tests {
             min_available_mb: 1024,
             enabled: true,
         }
+    }
+
+    /// The CI runner: 7.8 GiB, nothing running, default fraction (6.2 GiB
+    /// for VMs).
+    fn runner() -> (DensityConfig, Usage) {
+        let cfg = DensityConfig {
+            min_available_mb: 0,
+            ..DensityConfig::default()
+        };
+        let u = Usage {
+            host: host(7_990, 7_200),
+            host_cpus: 4,
+            ..Default::default()
+        };
+        (cfg, u)
+    }
+
+    fn fresh(name: &str, memory_mb: u64) -> Request {
+        Request {
+            name: name.into(),
+            vcpus: 2,
+            memory_mb,
+            shared_file: None,
+            shared_file_mb: 0,
+        }
+    }
+
+    #[test]
+    fn a_vm_under_the_cap_is_admitted_on_an_empty_host() {
+        let (cfg, u) = runner();
+        // A 4 GiB bake on the 7.8 GiB runner, nothing else running.
+        let a = decide(&cfg, &u, &[], &fresh("bake", 4096)).unwrap();
+        assert!(a.expected_mb >= 4096);
+        // Right at the cap still fits.
+        let cap = cfg.rss_cap_mb(7_990);
+        let at_cap = cap - cap / 11 - 64;
+        assert!(decide(&cfg, &u, &[], &fresh("edge", at_cap)).is_ok());
+    }
+
+    #[test]
+    fn a_vm_bigger_than_the_cap_says_what_it_asked_for_and_the_cap() {
+        let (cfg, u) = runner();
+        let e = decide(&cfg, &u, &[], &fresh("big", 8192)).unwrap_err().0;
+        assert!(
+            e.starts_with("'big' needs about 8.0 GiB of memory (8.0 GiB asked)"),
+            "{e}"
+        );
+        assert!(
+            e.contains("more than this host's VM memory limit of 6.2 GiB"),
+            "{e}"
+        );
+        assert!(e.contains("CUA_VM_MAX_RSS_FRACTION"), "{e}");
+        // Not the "its VMs use 0.0 GiB" message for a host that is empty.
+        assert!(!e.contains("its VMs use"), "{e}");
+    }
+
+    fn fork_of(name: &str, memory_mb: u64) -> Request {
+        Request {
+            name: name.into(),
+            vcpus: 2,
+            memory_mb,
+            shared_file: Some(PathBuf::from("/ck/mem.ram")),
+            shared_file_mb: memory_mb,
+        }
+    }
+
+    #[test]
+    fn the_first_fork_of_a_checkpoint_counts_its_ram_once() {
+        // The bake's fork: a 4 GiB checkpoint, nothing running, 7.8 GiB host.
+        let (cfg, u) = runner();
+        let a = decide(&cfg, &u, &[], &fork_of("fork", 4096)).unwrap();
+        // The file (4 GiB) plus what fits under guest RAM + QEMU's own, not
+        // the file plus another full 4 GiB.
+        assert_eq!(a.expected_mb, 4096 / 10 + 64);
+        assert!(4096 + a.expected_mb <= 4096 + 4096 / 10 + 64);
+    }
+
+    #[test]
+    fn a_burst_of_forks_is_still_charged_its_worst_case() {
+        let (cfg, u) = runner();
+        let first = decide(&cfg, &u, &[], &fork_of("f0", 4096)).unwrap();
+        let pending = [Pending {
+            name: "f0".into(),
+            vcpus: 2,
+            expected_mb: first.expected_mb,
+            at: Instant::now(),
+            shared_file: Some(PathBuf::from("/ck/mem.ram")),
+            shared_file_mb: 4096,
+        }];
+        // The file is counted once (by f0); a second fork whose sibling has
+        // not settled yet may still write all its RAM, so it is charged the
+        // full estimate, and on this host it does not fit.
+        let e = decide(&cfg, &u, &pending, &fork_of("f1", 4096))
+            .unwrap_err()
+            .0;
+        assert!(e.contains("VM memory limit"), "{e}");
+        // On a host with room it fits, charged the full guest RAM.
+        let big = Usage {
+            host: host(32_768, 30_000),
+            host_cpus: 8,
+            ..Default::default()
+        };
+        let a = decide(&cfg, &big, &pending, &fork_of("f1", 4096)).unwrap();
+        assert_eq!(a.expected_mb, 4096);
+    }
+
+    #[test]
+    fn later_forks_are_estimated_from_settled_siblings() {
+        // Once a fork has settled, the next ones are expected to use what it
+        // uses (its private pages), and the file is already counted.
+        let (cfg, mut u) = runner();
+        u.vms.push(VmUse {
+            name: "f0".into(),
+            vcpus: 2,
+            memory_mb: 4096,
+            private_mb: 300,
+            shared_file: Some(PathBuf::from("/ck/mem.ram")),
+        });
+        u.shared.push((PathBuf::from("/ck/mem.ram"), 1_500));
+        let a = decide(&cfg, &u, &[], &fork_of("f1", 4096)).unwrap();
+        assert_eq!(a.expected_mb, 300);
     }
 
     #[test]

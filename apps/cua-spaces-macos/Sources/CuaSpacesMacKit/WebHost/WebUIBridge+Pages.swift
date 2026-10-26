@@ -225,6 +225,13 @@ extension WebUIBridge {
         case "telemetry.acknowledgeLinkNotice":
             model.telemetrySink?.acknowledgeLinkNotice()
             return NSNull()
+        // The page's crash reporter (CUA-2343): its consent and build config.
+        case "crashReporting.config":
+            let status = model.telemetrySink?.status()
+            return CrashReporting.bridgeConfig(
+                info: Bundle.main.infoDictionary ?? [:],
+                allowed: status.map { CrashReporting.isAllowed(enabled: $0.enabled, noticeShown: $0.noticeShown) } ?? false,
+                env: ProcessInfo.processInfo.environment)
 
         // A Space's detail
         case "spaces.usage":
@@ -295,7 +302,19 @@ extension WebUIBridge {
             guard url.hasPrefix("x-apple.systempreferences:"), let u = URL(string: url) else {
                 throw Failure.badArgs("Only System Settings panes open here")
             }
-            NSWorkspace.shared.open(u)
+            // Local Network: the daemon connects (which makes macOS ask, in a
+            // dialog of its own); the pane opens only when it stays blocked
+            // and no macOS prompt is waiting for an answer.
+            if url.contains("Privacy_LocalNetwork") {
+                await model.checkLocalNetworkFromDaemon(every: 0)
+                if model.daemonLocalNetworkAllowed != true, LiveLocalNetworkProbe().promptsShowing() == 0 {
+                    NSWorkspace.shared.open(u)
+                }
+                return NSNull()
+            }
+            // Screen Recording and Accessibility: the app's guide to the
+            // pane (PermissionFlow), never macOS's bare prompt.
+            if !PermissionGuide.guide(url) { NSWorkspace.shared.open(u) }
             return NSNull()
 
         default:
@@ -455,7 +474,10 @@ extension WebUIBridge {
     static func leftWelcome(_ raw: Any) -> Bool {
         guard let s = raw as? [String: Any] else { return false }
         switch s["type"] as? String {
-        case "onboarding-page": return !(s["page"] as? String == "welcome" && s["action"] as? String == "shown")
+        case "onboarding-page":
+            // Welcome being shown (`shown`, or the funnel's `step_viewed`) is before the notice.
+            let action = s["action"] as? String
+            return !(s["page"] as? String == "welcome" && (action == "shown" || action == "step_viewed"))
         case "step": return s["step"] as? String == "onboarding_skipped"
         default: return false
         }

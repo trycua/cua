@@ -95,35 +95,27 @@ describe("the resources store", () => {
 });
 
 describe.skipIf(!wasmBuilt)("resources on Home and a Space's page", () => {
-  it("Home: This Mac's strip, the Mac mini's summary, and each Space's meters; no warning with room", async () => {
+  it("Home: no computer strips and no per-Space meters; nothing while there is room", async () => {
     await mountApp("/spaces", { failsCreates: false, listsGhost: false });
-    const mac = await waitFor(() => {
-      const el = document.querySelector<HTMLElement>('[data-computer-resources="this-mac"]');
-      if (!el) throw new Error("no This Mac strip");
-      return el;
-    });
-    expect(mac.textContent).toContain("Processor");
-    expect(mac.textContent).toContain("12 cores");
-    expect(mac.textContent).toContain("Space for files");
-    expect(mac.textContent).toContain("Your extra Spaces use 6 cores, 12 GB of memory and about 25 GB for files.");
-    expect(document.querySelector('[data-computer-resources="mac-mini"]')?.textContent).toMatch(/Updated .* ago\. Your extra Spaces there use/);
-    // The Linux box sent no summary.
-    expect(document.querySelector('[data-computer-resources="linux-box"]')).toBeNull();
-    expect(document.querySelector("[data-low-disk]")).toBeNull();
-    const tile = document.querySelector('[data-space-id="local:agent-sandbox"]')!;
-    await waitFor(() => expect(tile.querySelector("[data-space-meters]")?.textContent).toBe("StoppedOffAbout 6 GB"));
-    // Other computers' Spaces have no per-Space numbers.
-    expect(document.querySelector('[data-space-id="relay:mac-mini/qa-windows"] [data-space-meters]')).toBeNull();
+    await waitFor(() => expect(document.querySelector('[data-space-id="local:agent-sandbox"]')).not.toBeNull());
+    // Give the resources a moment to arrive: still nothing to say.
+    await act(() => new Promise((r) => setTimeout(r, 100)));
+    expect(document.querySelector("[data-computer-resources]")).toBeNull();
+    expect(document.querySelector("[data-computer-warnings]")).toBeNull();
+    expect(document.querySelector("[data-space-meters]")).toBeNull();
+    // A computer that is just offline is not a warning.
+    expect(document.body.textContent).not.toMatch(/is offline/);
   });
 
-  it("low disk: the warning on This Mac, and See what's using space lists the Spaces biggest first", async () => {
+  it("low disk: one quiet line for This Mac, and See what's using space lists the Spaces biggest first", async () => {
     const { router } = await mountApp("/spaces", { failsCreates: false, listsGhost: false, answer: lowDisk });
     const warning = await waitFor(() => {
-      const el = document.querySelector<HTMLElement>('[data-computer-resources="this-mac"] [data-low-disk="low"]');
+      const el = document.querySelector<HTMLElement>('[data-computer-warnings] [data-low-disk="low"]');
       if (!el) throw new Error("no warning");
       return el;
     });
-    expect(warning.textContent).toContain("This Mac is almost out of space. Delete old Spaces or snapshots.");
+    expect(warning.textContent).toMatch(/^Disk almost full on This Mac \(41 GB left\)/);
+    expect(document.querySelectorAll("[data-computer-warning]")).toHaveLength(1);
     fireEvent.click(warning.querySelector("[data-see-space-use]")!);
     await waitFor(() => expect(router.state.location.search).toEqual({ sort: "size" }));
     await waitFor(() => expect(document.querySelector("[data-sorted-by-size]")).not.toBeNull());

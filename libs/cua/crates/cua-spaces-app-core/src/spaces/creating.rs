@@ -53,9 +53,6 @@ pub struct PendingCreate {
     pub permille: u32,
     /// Why it failed.
     pub error: Option<String>,
-    /// It failed for want of Cua Cloud credit: the billing page.
-    #[serde(default)]
-    pub credit_url: Option<String>,
     /// The registered Space's id once it finished; the row goes when the
     /// registry lists it.
     pub space_id: Option<String>,
@@ -407,8 +404,6 @@ pub enum CreateFamily {
     Macos,
     /// A Windows VM (QEMU; emulated on Apple silicon).
     Windows,
-    /// A cloud Space.
-    Cloud,
 }
 
 /// What a create usually takes, in seconds per phase of [`PHASES`]: the
@@ -422,7 +417,7 @@ pub enum CreateFamily {
 /// - emulated VM, `omarchy:edge` (amd64 under QEMU TCG): 63 s pulling,
 ///   112 to 119 s waiting for cua-spacesd.
 ///
-/// macOS, Windows and cloud are estimates (not measured). A phase a family
+/// macOS and Windows are estimates (not measured). A phase a family
 /// does not report is 0.
 pub fn expected_seconds(family: CreateFamily) -> [f64; 6] {
     match family {
@@ -432,7 +427,6 @@ pub fn expected_seconds(family: CreateFamily) -> [f64; 6] {
         CreateFamily::EmulatedVm => [1.4, 63.0, 0.0, 0.2, 115.0, 0.5],
         CreateFamily::Macos => [2.0, 600.0, 10.0, 30.0, 60.0, 3.0],
         CreateFamily::Windows => [2.0, 300.0, 0.0, 1.0, 300.0, 1.0],
-        CreateFamily::Cloud => [2.0, 0.0, 3.0, 20.0, 0.0, 5.0],
     }
 }
 
@@ -440,7 +434,6 @@ pub fn expected_seconds(family: CreateFamily) -> [f64; 6] {
 pub fn family(p: &PendingCreate) -> CreateFamily {
     match (p.provider, p.os) {
         (_, SpaceOs::Unknown) => CreateFamily::Unknown,
-        (SpaceProvider::Cloud, _) => CreateFamily::Cloud,
         (_, SpaceOs::Macos) => CreateFamily::Macos,
         (_, SpaceOs::Windows) => CreateFamily::Windows,
         (_, SpaceOs::Linux) => match (p.kind, p.emulated) {
@@ -533,6 +526,61 @@ pub fn transfer_text(
     total: Option<u64>,
     per_second: Option<f64>,
 ) -> Option<String> {
+    transfer_text_with(done, total, per_second, Later::default())
+}
+
+/// What still has to happen after the download [`transfer_text_with`] shows,
+/// so its time left covers the whole create and not only the bytes in
+/// flight (the Linux runtime is followed by the image's download, and every
+/// download by unpacking and starting the Space).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Later {
+    /// Bytes still to download after this transfer.
+    pub bytes: u64,
+    /// Seconds of work that move no bytes after the downloads.
+    pub secs: f64,
+    /// The pace to assume until a rate is measured (a size and pace we
+    /// have measured, as for Linux); none promises no time before a rate.
+    pub pace: Option<f64>,
+}
+
+/// [`Later`] for `p`: the image's download while the runtime is being set
+/// up, then the measured start time ([`crate::wizard::CACHED_START_SECS`]),
+/// plus the runtime's own start while it is being set up.
+pub fn later_for(p: &PendingCreate) -> Later {
+    use crate::wizard::{CACHED_START_SECS, find_image, platform_size};
+    let runtime = setting_up_runtime(p);
+    let bytes = if runtime && p.os == SpaceOs::Linux {
+        p.image
+            .as_deref()
+            .and_then(find_image)
+            .and_then(|i| platform_size(&i, p.arch.as_deref()).map(|s| s.download))
+            .unwrap_or(0)
+    } else {
+        0
+    };
+    // The managed runtime boots its VM before the image can be pulled.
+    let boot = if runtime { RUNTIME_BOOT_SECS } else { 0.0 };
+    Later {
+        bytes,
+        secs: CACHED_START_SECS + boot,
+        pace: (p.os == SpaceOs::Linux).then_some(crate::wizard::FIRST_RUN_BYTES_PER_SEC),
+    }
+}
+
+/// Seconds the built-in Linux runtime's VM takes to boot after its download
+/// (part of the measured 25 Oct 2026 first run, CUA-2281).
+const RUNTIME_BOOT_SECS: f64 = 20.0;
+
+/// [`transfer_text`] with the work after the transfer counted in the time
+/// left. Without a measured rate the first-run pace is used, so a time
+/// left is always shown for a known size and is never short.
+pub fn transfer_text_with(
+    done: Option<u64>,
+    total: Option<u64>,
+    per_second: Option<f64>,
+    later: Later,
+) -> Option<String> {
     let done = done?;
     let total = total.unwrap_or(0);
     // Binary units labeled GB/MB/KB, as the wizard sizes downloads.
@@ -569,11 +617,11 @@ pub fn transfer_text(
         let u = unit(r as u64);
         out.push_str(&format!(" \u{b7} {} {}/s", scaled(r as u64, u, 10.0), u.1));
     }
-    if let (Some(r), true) = (rate, total > 0) {
-        out.push_str(&format!(
-            " \u{b7} {}",
-            time_left(total.saturating_sub(done) as f64 / r)
-        ));
+    // Without a rate nothing is promised, unless a measured pace stands in.
+    let pace = rate.or(later.pace);
+    if let (Some(r), true) = (pace, total > 0) {
+        let secs = (total.saturating_sub(done).saturating_add(later.bytes)) as f64 / r + later.secs;
+        out.push_str(&format!(" \u{b7} {}", time_left(secs)));
     }
     Some(out)
 }
@@ -615,9 +663,8 @@ pub fn phase_label(phase: &str) -> &'static str {
 /// macOS…", then "Starting Cua inside the Space…"; a Linux or Windows VM
 /// the same with its OS, a container "Creating the container…" and
 /// "Starting the container…". A step it has no words of its own for
-/// (preparing, connecting, a cloud claim) reads as [`phase_label`].
+/// (preparing, connecting) reads as [`phase_label`].
 pub fn stage_label(p: &PendingCreate) -> String {
-    let here = p.provider != SpaceProvider::Cloud;
     let vm = matches!(p.os, SpaceOs::Macos | SpaceOs::Windows) || p.kind == Some(SpaceKind::Vm);
     let container = !vm && p.kind == Some(SpaceKind::Container);
     let os = match p.os {
@@ -629,10 +676,10 @@ pub fn stage_label(p: &PendingCreate) -> String {
     match p.phase.as_str() {
         // Lume keeps the base image: later macOS Spaces clone it.
         "pulling" if p.os == SpaceOs::Macos => "Downloading macOS (first time only)\u{2026}".into(),
-        "creating" if here && vm => "Preparing the disk\u{2026}".into(),
-        "creating" if here && container => "Creating the container\u{2026}".into(),
-        "booting" if here && vm && !os.is_empty() => format!("Booting {os}\u{2026}"),
-        "booting" if here && container => "Starting the container\u{2026}".into(),
+        "creating" if vm => "Preparing the disk\u{2026}".into(),
+        "creating" if container => "Creating the container\u{2026}".into(),
+        "booting" if vm && !os.is_empty() => format!("Booting {os}\u{2026}"),
+        "booting" if container => "Starting the container\u{2026}".into(),
         "waiting_for_services" => "Starting Cua inside the Space\u{2026}".into(),
         other => phase_label(other).into(),
     }
@@ -930,15 +977,8 @@ pub fn failure_cause(raw: &str, phase: Option<&str>, gpu: bool) -> Option<Failur
 /// the SDK's text names (`image_pull_not_found`, `vm_boot_timeout`,
 /// `services_unreachable`, ...; [`cua_create_failure::create_failure_kind`]),
 /// else what the shell sent (`Runtime`, as most are), else `other`. Only
-/// the word leaves the process, never the text. `provider` is where it ran:
-/// a cloud create's "X is not available" is not this machine's runtime.
-pub fn failure_variant<'a>(
-    raw: &str,
-    phase: Option<&str>,
-    gpu: bool,
-    shell: &'a str,
-    provider: Option<SpaceProvider>,
-) -> &'a str {
+/// the word leaves the process, never the text.
+pub fn failure_variant<'a>(raw: &str, phase: Option<&str>, gpu: bool, shell: &'a str) -> &'a str {
     if failure_cause(raw, phase, gpu) == Some(FailureCause::Gpu) {
         return FailureCause::Gpu.variant();
     }
@@ -946,7 +986,7 @@ pub fn failure_variant<'a>(
         &crate::errors::plain_error(raw),
         phase.unwrap_or(""),
         shell,
-        provider != Some(SpaceProvider::Cloud),
+        true,
     )
 }
 
@@ -960,7 +1000,7 @@ pub struct FailDecision {
     /// The finer cause.
     pub subclass: Subclass,
     /// [`Retry::Once`] only for a first attempt that failed for a reason
-    /// that usually passes; never while cancelling, for a credit refusal, or
+    /// that usually passes; never while cancelling, or
     /// on the second attempt.
     pub retry: Retry,
 }
@@ -969,25 +1009,15 @@ pub struct FailDecision {
 /// enum case `error_variant`). One function for the reducer and for
 /// telemetry, so the event a failure sends matches what the row does.
 pub fn fail_decision(p: &PendingCreate, error: &str, error_variant: &str) -> FailDecision {
-    let kind = retry::snake(failure_variant(
-        error,
-        Some(&p.phase),
-        p.gpu,
-        error_variant,
-        Some(p.provider),
-    ));
+    let kind = retry::snake(failure_variant(error, Some(&p.phase), p.gpu, error_variant));
     let plain = crate::errors::plain_error(error);
     let subclass = retry::subclass(&kind, &plain);
-    let retry = if p.attempt == 0
-        && !p.cancelling
-        && p.space_id.is_none()
-        && !error.trim().is_empty()
-        && crate::billing::credit_notice(error).is_none()
-    {
-        retry::decide(&kind, subclass)
-    } else {
-        Retry::Never
-    };
+    let retry =
+        if p.attempt == 0 && !p.cancelling && p.space_id.is_none() && !error.trim().is_empty() {
+            retry::decide(&kind, subclass)
+        } else {
+            Retry::Never
+        };
     FailDecision {
         kind,
         subclass,
@@ -1242,13 +1272,9 @@ pub fn failure_text_on(
 
 /// The platform a create will run ([`crate::model::run_arch`] over the
 /// catalog's platforms for the image).
-fn running_arch(
-    image: Option<&str>,
-    provider: SpaceProvider,
-    host: Option<&str>,
-) -> Option<String> {
+fn running_arch(image: Option<&str>, host: Option<&str>) -> Option<String> {
     let platforms = image.map(crate::wizard::image_arch).unwrap_or_default();
-    crate::model::run_arch(&platforms, provider != SpaceProvider::Cloud, host)
+    crate::model::run_arch(&platforms, true, host)
 }
 
 /// Advances the pending creates.
@@ -1276,7 +1302,7 @@ pub fn reduce(state: &CreatesState, action: &CreateAction) -> CreatesState {
                 .or_else(|| image.as_deref().and_then(crate::wizard::image_kind))
                 .or((*os != SpaceOs::Linux).then_some(SpaceKind::Vm));
             let host = host_arch.as_deref();
-            let arch = running_arch(image.as_deref(), *provider, host);
+            let arch = running_arch(image.as_deref(), host);
             let mut p = PendingCreate {
                 id: id.clone(),
                 name: pending_name(name, *os),
@@ -1288,14 +1314,8 @@ pub fn reduce(state: &CreatesState, action: &CreateAction) -> CreatesState {
                 pulled: false,
                 permille: 0,
                 error: None,
-                credit_url: None,
                 space_id: None,
-                emulated: crate::model::emulation_warning(
-                    *provider != SpaceProvider::Cloud,
-                    host,
-                    arch.as_deref(),
-                )
-                .is_some(),
+                emulated: crate::model::emulation_warning(true, host, arch.as_deref()).is_some(),
                 image,
                 kind,
                 arch,
@@ -1463,7 +1483,6 @@ pub fn reduce(state: &CreatesState, action: &CreateAction) -> CreatesState {
                     p.retry_pending = true;
                     p.retried_subclass = Some(decision.subclass.as_str().into());
                     p.error = None;
-                    p.credit_url = None;
                     p.fix = None;
                     p.phase = "preparing".into();
                     p.fraction = None;
@@ -1475,28 +1494,18 @@ pub fn reduce(state: &CreatesState, action: &CreateAction) -> CreatesState {
                     p.permille = permille_at(p, *now);
                     return next;
                 }
-                // Out of credit: one plain line, and the billing page (the
-                // page only while the apps show billing).
-                let credit = crate::billing::credit_notice(error);
-                // The same failure again: its fix, not a plain Try again
-                // (out of credit has its own way out).
-                p.fix = (repeats >= 2 && credit.is_none())
-                    .then(|| fix_for(&decision.kind, p))
-                    .flatten();
-                p.credit_url = credit
-                    .as_ref()
-                    .filter(|_| crate::billing::BILLING_SHOWN)
-                    .map(|n| n.url.clone());
-                p.error = Some(match credit {
-                    Some(n) => n.text,
-                    None if error.trim().is_empty() => "Could not create the Space".into(),
-                    None => failure_text_on(
+                // The same failure again: its fix, not a plain Try again.
+                p.fix = (repeats >= 2).then(|| fix_for(&decision.kind, p)).flatten();
+                p.error = Some(if error.trim().is_empty() {
+                    "Could not create the Space".into()
+                } else {
+                    failure_text_on(
                         error,
                         Some(&p.phase),
                         Some(p.provider),
                         p.host_name.as_deref(),
                         p.gpu,
-                    ),
+                    )
                 });
             }
         }
@@ -1707,7 +1716,6 @@ fn setting_up_runtime(p: &PendingCreate) -> bool {
 pub fn pending_space(p: &PendingCreate) -> Space {
     let failed = p.error.is_some();
     let where_ = match p.provider {
-        SpaceProvider::Cloud => "Cua Cloud",
         SpaceProvider::Local => "This Mac",
         // Created on another of your machines: not this Mac.
         SpaceProvider::Relay | SpaceProvider::Direct => "Another computer",
@@ -1749,7 +1757,6 @@ pub fn pending_space(p: &PendingCreate) -> Space {
         last_used_at: p.started_at,
         started_at: Some(p.started_at),
         scene: scene_for_os(p.os),
-        fleet_id: None,
         size: None,
         region: None,
         provider: Some(p.provider),
@@ -1760,9 +1767,15 @@ pub fn pending_space(p: &PendingCreate) -> Space {
             permille: p.permille,
             label,
             error: p.error.clone(),
-            credit_url: p.credit_url.clone(),
             transfer: (!failed && !p.cancelling && (p.phase == "pulling" || setting_up_runtime(p)))
-                .then(|| transfer_text(p.bytes_done, p.bytes_total, p.bytes_per_second))
+                .then(|| {
+                    transfer_text_with(
+                        p.bytes_done,
+                        p.bytes_total,
+                        p.bytes_per_second,
+                        later_for(p),
+                    )
+                })
                 .flatten(),
             cancellable: !failed && !p.cancelling && p.space_id.is_none(),
             cancelling: p.cancelling,
@@ -1850,6 +1863,46 @@ mod tests {
     use super::*;
 
     #[test]
+    fn time_left_counts_the_downloads_and_starts_after_this_one() {
+        let mb = 1u64 << 20;
+        // 456 MB of runtime nearly done, at 20 MB/s: the bytes alone say
+        // seconds; the image still to come and the starts say minutes.
+        let alone = transfer_text(Some(440 * mb), Some(456 * mb), Some(20.0 * mb as f64)).unwrap();
+        assert!(alone.ends_with("less than a minute"), "{alone}");
+        let later = Later {
+            bytes: 1100 * mb,
+            secs: 26.0,
+            pace: None,
+        };
+        let whole = transfer_text_with(
+            Some(440 * mb),
+            Some(456 * mb),
+            Some(20.0 * mb as f64),
+            later,
+        )
+        .unwrap();
+        assert!(whole.ends_with("about 1 min"), "{whole}");
+        // No rate yet: the first-run pace stands in, never a bare "less than a minute".
+        let blind = transfer_text_with(
+            Some(0),
+            Some(1100 * mb),
+            None,
+            Later {
+                bytes: 0,
+                secs: 26.0,
+                pace: Some(crate::wizard::FIRST_RUN_BYTES_PER_SEC),
+            },
+        )
+        .unwrap();
+        assert!(blind.ends_with("about 3 min"), "{blind}");
+        // A stall message promises no time.
+        assert_eq!(
+            transfer_text(Some(mb), Some(10 * mb), None).unwrap(),
+            "1.0 of 10.0 MB"
+        );
+    }
+
+    #[test]
     fn preflight_issue_reads_the_daemons_report() {
         let report = r#"{"preflight":{
             "linux_container":[{"kind":"engine_missing",
@@ -1874,7 +1927,7 @@ mod tests {
         let raw = "Install Docker Desktop to run Linux computers.";
         assert_eq!(failure_text(raw, Some("preparing"), None, false), raw);
         assert_eq!(
-            failure_variant(raw, Some("preparing"), false, "Runtime", None),
+            failure_variant(raw, Some("preparing"), false, "Runtime"),
             "runtime_missing"
         );
     }
@@ -2279,18 +2332,6 @@ mod tests {
                 "Connecting...",
             ])
         );
-        // A cloud claim: no disk or boot of its own to name.
-        assert_eq!(
-            stages(SpaceOs::Linux, Some(SpaceKind::Vm), SpaceProvider::Cloud),
-            want([
-                "Starting...",
-                "Downloading image...",
-                "Creating...",
-                "Booting...",
-                "Starting Cua inside the Space...",
-                "Connecting...",
-            ])
-        );
 
         // The download: bytes, rate and time left under the bar, on the
         // row of a create on another machine too.
@@ -2621,7 +2662,7 @@ mod tests {
     #[test]
     fn bands_cover_the_bar_in_order_for_every_family() {
         use CreateFamily::*;
-        for f in [Container, Vm, EmulatedVm, Macos, Windows, Cloud] {
+        for f in [Container, Vm, EmulatedVm, Macos, Windows] {
             for pulled in [true, false] {
                 let b = bands(f, pulled);
                 assert_eq!(b[0].0, 10, "{f:?}");
@@ -2796,7 +2837,6 @@ mod tests {
             CreateFamily::EmulatedVm,
             CreateFamily::Macos,
             CreateFamily::Windows,
-            CreateFamily::Cloud,
         ] {
             for (i, phase) in PHASES.iter().enumerate() {
                 let l = stall_limit_secs(fam, i);
@@ -3004,62 +3044,6 @@ mod tests {
     }
 
     #[test]
-    fn out_of_credit_is_one_line_and_add_credit_only_while_billing_shows() {
-        let s = reduce(
-            &CreatesState::default(),
-            &start("pending:1", "demo", SpaceOs::Linux),
-        );
-        let s = reduce(
-            &s,
-            &CreateAction::Fail {
-                id: "pending:1".into(),
-                error: "You're out of Cua Cloud credit. Add credit at https://run.cua.ai/billing"
-                    .into(),
-                error_variant: String::new(),
-                now: None,
-            },
-        );
-        let space = pending_space(&s.pending[0]);
-        assert_eq!(space.detail, crate::billing::OUT_OF_CREDIT);
-        let notice = crate::spaces::sidebar::detail(&space).credit_notice;
-        if crate::billing::BILLING_SHOWN {
-            let n = notice.expect("notice");
-            assert_eq!(
-                (n.text.as_str(), n.button.as_str(), n.url.as_str()),
-                (
-                    crate::billing::OUT_OF_CREDIT,
-                    "Add credit",
-                    crate::billing::BILLING_URL
-                )
-            );
-        } else {
-            assert_eq!(notice, None, "no Add credit while the apps hide billing");
-        }
-        // Any other failure has no notice.
-        let s = reduce(
-            &s,
-            &CreateAction::Dismiss {
-                id: "pending:1".into(),
-            },
-        );
-        let s = reduce(&s, &start("pending:2", "b", SpaceOs::Linux));
-        let s = reduce(
-            &s,
-            &CreateAction::Fail {
-                id: "pending:2".into(),
-                error: "no local runtime".into(),
-                error_variant: String::new(),
-                now: None,
-            },
-        );
-        assert!(
-            crate::spaces::sidebar::detail(&pending_space(&s.pending[0]))
-                .credit_notice
-                .is_none()
-        );
-    }
-
-    #[test]
     fn a_stopped_download_says_how_far_it_got() {
         let s = reduce(
             &CreatesState::default(),
@@ -3181,7 +3165,7 @@ mod tests {
              Try again; it picks up where it stopped."
         );
         assert_eq!(
-            failure_variant(stopped, Some("pulling"), false, "Runtime", None),
+            failure_variant(stopped, Some("pulling"), false, "Runtime"),
             "image_pull"
         );
         // QEMU missing on a Windows PC: 0.9.2's after the pull, and the
@@ -3198,7 +3182,7 @@ mod tests {
                 "{raw}"
             );
             assert_eq!(
-                failure_variant(raw, Some("pulling"), false, "Other", None),
+                failure_variant(raw, Some("pulling"), false, "Other"),
                 "runtime_missing"
             );
         }

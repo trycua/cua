@@ -84,7 +84,9 @@ fn arrival_register(key: CursorKey, tx: tokio::sync::oneshot::Sender<()>) {
     }
 }
 
-fn arrival_fire(key: &CursorKey) {
+/// Arrival hook for the native Wayland renderer (`wayland::overlay`), which
+/// fires once the frame at the glide target is committed.
+pub(crate) fn arrival_fire(key: &CursorKey) {
     if let Ok(mut guard) = ARRIVAL_TX.lock() {
         if let Some(map) = guard.as_mut() {
             if let Some(tx) = map.remove(key) {
@@ -95,20 +97,6 @@ fn arrival_fire(key: &CursorKey) {
     }
 }
 
-/// Arrival hook for the native Wayland renderer (`wayland::overlay`), which
-/// fires once the frame at the glide target is committed.
-#[cfg(target_os = "linux")]
-pub(crate) fn fire_arrival(key: &CursorKey) {
-    arrival_fire(key);
-}
-
-/// Unblock every waiting pointer action; the renderer that would have fired
-/// their arrivals is gone.
-#[cfg(target_os = "linux")]
-pub(crate) fn release_arrivals() {
-    release_all_arrivals();
-}
-
 fn arrival_cancel(key: &CursorKey) {
     if let Ok(mut guard) = ARRIVAL_TX.lock() {
         if let Some(map) = guard.as_mut() {
@@ -117,7 +105,9 @@ fn arrival_cancel(key: &CursorKey) {
     }
 }
 
-fn release_all_arrivals() {
+/// Unblock every waiting pointer action; the renderer that would have fired
+/// their arrivals is gone.
+pub(crate) fn release_all_arrivals() {
     if let Ok(mut guard) = ARRIVAL_TX.lock() {
         clear_arrivals(&mut guard);
     }
@@ -620,10 +610,6 @@ fn dispatch_shell_helper_command(key: &str, cmd: &OverlayCommand, semantic: bool
     }
 }
 
-pub fn is_enabled() -> bool {
-    is_enabled_for("default")
-}
-
 pub fn is_enabled_for(key: &str) -> bool {
     RENDER
         .lock()
@@ -648,10 +634,6 @@ pub fn is_visible_for_session(key: &str) -> bool {
                 .map(|rs| rs.core.cfg.enabled && rs.core.is_revealed())
         })
         .unwrap_or(false)
-}
-
-pub fn current_position() -> Option<(f64, f64)> {
-    current_position_for("default")
 }
 
 pub fn current_position_for(key: &str) -> Option<(f64, f64)> {
@@ -704,10 +686,6 @@ fn seed_start_if_unplaced(key: &CursorKey, target_x: f64, target_y: f64) -> bool
         f64::from(map.platform.scr_h),
     );
     map.seed_start_if_unplaced(key, target_x, target_y, Some(frame))
-}
-
-pub async fn animate_cursor_to(x: f64, y: f64) {
-    animate_cursor_to_for("default".to_owned(), x, y).await;
 }
 
 pub async fn animate_cursor_to_for(key: CursorKey, x: f64, y: f64) {
@@ -3415,7 +3393,7 @@ mod tests {
         fn wait_for_cursor_move_from(x: f64, y: f64, phase: &str) -> anyhow::Result<()> {
             let deadline = Instant::now() + Duration::from_secs(3);
             while Instant::now() < deadline {
-                let position = current_position().expect("placed cursor");
+                let position = current_position_for("default").expect("placed cursor");
                 if (position.0 - x).hypot(position.1 - y) > 32.0 {
                     eprintln!(
                         "{phase}: cursor moved from ({x}, {y}) to ({}, {})",
@@ -3425,7 +3403,7 @@ mod tests {
                 }
                 std::thread::sleep(Duration::from_millis(10));
             }
-            let position = current_position().expect("placed cursor");
+            let position = current_position_for("default").expect("placed cursor");
             anyhow::bail!(
                 "cursor position remained ({}, {}) near ({x}, {y}) during {phase}",
                 position.0,

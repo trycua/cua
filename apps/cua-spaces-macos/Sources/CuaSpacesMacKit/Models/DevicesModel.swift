@@ -723,7 +723,6 @@ public final class DevicesModel {
 @MainActor
 final class DeviceNotifier: NSObject, UNUserNotificationCenterDelegate {
     static let shared = DeviceNotifier()
-    private var authorized: Bool?
     /// A notification was clicked (its identifier): the app opens its main UI.
     var onOpen: ((String) -> Void)?
 
@@ -739,10 +738,7 @@ final class DeviceNotifier: NSObject, UNUserNotificationCenterDelegate {
         content.sound = .default
         let request = UNNotificationRequest(identifier: "device-\(prompt.deviceId)", content: content, trigger: nil)
         Task {
-            if authorized == nil {
-                authorized = (try? await center.requestAuthorization(options: [.alert, .sound])) ?? false
-            }
-            guard authorized == true else { return }
+            guard await PermissionRequester.notificationsAuthorized(center) else { return }
             try? await center.add(request)
         }
     }

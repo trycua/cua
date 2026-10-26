@@ -72,6 +72,11 @@ const DOM_CLICK_READBACK: &str = r#"function() {
 }"#;
 
 const DOM_CLICK_READBACK_DEADLINE: Duration = Duration::from_millis(400);
+/// The pre-click baseline gets a larger budget than the post-click polls: a
+/// loaded Windows Edge can take longer than 400 ms to answer the first
+/// `Runtime.callFunctionOn`, and a missed baseline turns a verifiable click
+/// into "readback unavailable" for the whole action.
+const DOM_CLICK_BASELINE_DEADLINE: Duration = Duration::from_millis(1_000);
 const DOM_CLICK_READBACK_INTERVAL: Duration = Duration::from_millis(25);
 
 struct DomClickObservation {
@@ -1403,7 +1408,7 @@ impl Tool for BrowserClickTool {
                 }
             }
             let before =
-                read_dom_click_state(conn, cdp, &object_id, DOM_CLICK_READBACK_DEADLINE).await;
+                read_dom_click_state(conn, cdp, &object_id, DOM_CLICK_BASELINE_DEADLINE).await;
             return match conn
                 .call(
                     Some(cdp),

@@ -1,0 +1,129 @@
+{
+  "flow": "connectors",
+  "frames": [
+    {
+      "apps": [
+        "claude-code | not-connected | - | Connect | -",
+        "codex | not-connected | Needs a sign-in to OpenAI. | Connect | -",
+        "vscode | connected | - | - | Connected"
+      ],
+      "footer": "Sign-ins and keys stay on this Mac in the Keychain. Each one is only given to the apps that use it.",
+      "providers": [
+        "anthropic | not-connected | Not connected | Connect",
+        "openai | not-connected | Not connected | Connect",
+        "github | not-connected | Not connected | Connect"
+      ],
+      "step": "nothing connected"
+    },
+    {
+      "apps": [
+        "claude-code | connected | - | - | Connected",
+        "codex | connecting | Enter the code in your browser… | Connect | -"
+      ],
+      "footer": "Sign-ins and keys stay on this Mac in the Keychain. Each one is only given to the apps that use it.",
+      "providers": [
+        "anthropic | connected | Claude sign-in, for Claude Code | Sign out",
+        "openai | connected | API key •••• 3f9a | Sign out",
+        "github | not-connected | Not connected | Connect"
+      ],
+      "step": "Claude Code signed in, an OpenAI key pasted, Codex connecting"
+    },
+    {
+      "key": "anthropic | -",
+      "sheet": "anthropic",
+      "title": "Connect Anthropic",
+      "ways": [
+        "app-token | Sign in with Claude | Sign in",
+        "key | Paste an API key | Paste key",
+        "shell | Use ANTHROPIC_API_KEY from your shell | Use it"
+      ]
+    },
+    {
+      "key": "openai | -",
+      "sheet": "openai",
+      "title": "Connect OpenAI",
+      "ways": [
+        "app-device | Sign in with ChatGPT | Sign in",
+        "key | Paste an API key | Paste key"
+      ]
+    },
+    {
+      "key": "other | COPILOT_GITHUB_TOKEN",
+      "sheet": "github",
+      "title": "Connect GitHub",
+      "ways": [
+        "key | Paste an API key | Paste key"
+      ]
+    },
+    {
+      "does": "true | true | false | - | anthropic",
+      "plan": "claude-code"
+    },
+    {
+      "does": "false | false | true | - | openai",
+      "plan": "codex"
+    },
+    {
+      "does": "false | false | false | - | -",
+      "plan": "vscode"
+    },
+    {
+      "does": "false | false | false | github | -",
+      "plan": "copilot-cli"
+    },
+    {
+      "detail": "claude-code",
+      "note": null,
+      "signIn": "Signs in with Anthropic | Claude sign-in, for Claude Code | Sign out",
+      "status": "Connected",
+      "toggles": [
+        "skills | Cua skills | true",
+        "mcp | Cua tools (MCP) | true",
+        "auto | Keep it set up | true"
+      ]
+    },
+    {
+      "detail": "vscode",
+      "note": null,
+      "signIn": "- | - | -",
+      "status": null,
+      "toggles": []
+    },
+    {
+      "candidates": [
+        "hermes | Hermes | true | In this Space",
+        "claude | Claude Code | false | Not connected yet",
+        "codex | Codex | false | Starts in this Space",
+        "openclaw | OpenClaw | false | Starts in this Space"
+      ]
+    },
+    {
+      "send": "@claude fix the build",
+      "steps": [
+        "claude | blocked | Claude Code isn't connected yet | Connect Claude Code | Only visible to you"
+      ]
+    },
+    {
+      "send": "@codex bump the timeout, @hermes review it",
+      "steps": [
+        "codex | add | - | - | -",
+        "hermes | wake | - | - | -"
+      ]
+    },
+    {
+      "send": "cc @grace and @nobody",
+      "steps": []
+    },
+    {
+      "agents": [
+        "attempt | Claude Code | not-connected | Claude Code isn't connected yet | Connect Claude Code",
+        "agent | Claude Code | you | Waiting for you in ubuntu-build | -",
+        "agent | Hermes | working | Bumping the retry timeout in ubuntu-build | -",
+        "attempt | Codex | creating | Waiting for space-2 to be ready | -",
+        "attempt | Hermes | failed | Didn't start | Try again"
+      ],
+      "seeAll": "See all 5",
+      "summary": "1 working"
+    }
+  ]
+}

@@ -101,6 +101,17 @@ fn agent_script(version_line: &str, extra: &str) -> String {
     )
 }
 
+/// Codex's device-code login: the link and code in color, then the sign-in in `$CODEX_HOME`.
+const CODEX_EXTRA: &str = r#"  login)
+    if [ "$2" = "--device-auth" ]; then
+      printf '1. Open this link\n   \033[94mhttps://auth.openai.com/codex/device\033[0m\n2. Enter this one-time code\n   \033[94mABCD-12345\033[0m\n'
+      sleep 0.3
+      [ -f "$HOME/.fake-codex-cancel" ] && exit 1
+      printf '{"auth_mode":"chatgpt","tokens":{"refresh_token":"rt-for-cua"}}' > "$CODEX_HOME/auth.json"
+      exit 0
+    fi ;;
+"#;
+
 const CLAUDE_EXTRA: &str = r#"  auth)
     if [ -f "$HOME/.fake-claude-signed-in" ]; then echo '{"authMethod":"claude.ai"}'; exit 0; fi
     echo '{"authMethod":"none"}'; exit 1 ;;
@@ -147,7 +158,10 @@ impl World {
 
     fn install(&self, id: &str, version: &str) {
         match id {
-            "codex" => self.script("codex", &agent_script(&format!("codex-cli {version}"), "")),
+            "codex" => self.script(
+                "codex",
+                &agent_script(&format!("codex-cli {version}"), CODEX_EXTRA),
+            ),
             "claude-code" => self.script(
                 "claude",
                 &agent_script(&format!("{version} (Claude Code)"), CLAUDE_EXTRA),
@@ -190,6 +204,16 @@ impl World {
             }
             _ => {}
         }
+    }
+
+    /// Codex's sign-in made for Cua (its device-code login, approved at once by the fake).
+    fn device_sign_in(&self) {
+        let mut env = self.env.clone();
+        env.run_agent_clis = true;
+        let s = AgentSetup::new(env);
+        let login = s.start_device_sign_in("codex").unwrap();
+        s.finish_device_sign_in(login, &self.vault, Duration::from_secs(10))
+            .unwrap();
     }
 
     fn setup(&self) -> AgentSetup {
@@ -365,7 +389,8 @@ fn installed_signed_in_or_not_connected_or_not() {
         }
         assert_eq!(r.previous_version.as_deref(), Some("1.2.3"));
         let expect_import = match id {
-            "hermes" | "claude-code" | "codex" => ImportState::Missing,
+            // Hermes uses Settings' provider connections; it makes no sign-in of its own.
+            "claude-code" | "codex" => ImportState::Missing,
             _ => ImportState::Unsupported,
         };
         assert_eq!(r.signin_import, expect_import, "{id}");
@@ -395,22 +420,41 @@ fn connected_but_not_signed_in_says_so_and_offers_sign_in_where_cua_can_start_it
 }
 
 #[test]
-fn sign_ins_are_copied_to_keyvault_and_their_expiry_is_seen() {
-    // Codex: its auth.json, as is.
+fn sign_ins_are_made_for_cua_and_never_read_from_the_apps_own_files() {
+    // Codex: its own device-code login in a folder Cua owns; your auth.json is never read.
     let w = World::new();
     w.install("codex", "0.61.0");
     w.sign_in("codex");
-    w.connect("codex", true);
-    let r = check(&w, "codex", ConnectionState::Connected, None);
-    assert!(r.signin_imported);
-    assert_eq!(r.signin_import, ImportState::Ok);
-    assert_eq!(r.sign_in.as_deref(), Some("ChatGPT sign-in"));
+    let own = std::fs::read_to_string(w.home.join(".codex/auth.json")).unwrap();
+    w.connect("codex", false);
+    let mut env = w.env.clone();
+    env.run_agent_clis = true;
+    let s = AgentSetup::new(env);
+    let login = s.start_device_sign_in("codex").unwrap();
+    assert_eq!(login.url, "https://auth.openai.com/codex/device");
+    assert_eq!(login.code, "ABCD-12345");
+    let saved = s
+        .finish_device_sign_in(login, &w.vault, Duration::from_secs(10))
+        .unwrap();
+    assert_eq!(saved.env, "CODEX_AUTH_JSON");
+    assert_eq!(saved.label, "Codex · ChatGPT sign-in");
     let v: serde_json::Value = serde_json::from_str(&w.vault.value("codex").unwrap()).unwrap();
-    assert_eq!(v["tokens"]["refresh_token"], "rt-1");
-    let items = w.vault.imported().unwrap();
-    assert_eq!(items[0].label, "Codex · ChatGPT sign-in");
-    assert_eq!(items[0].env, "CODEX_AUTH_JSON");
-    // The copy expired: Reconnect copies it again.
+    assert_eq!(v["tokens"]["refresh_token"], "rt-for-cua");
+    // Your own sign-in is untouched, and Cua's folder is gone.
+    assert_eq!(
+        std::fs::read_to_string(w.home.join(".codex/auth.json")).unwrap(),
+        own
+    );
+    assert!(
+        !s.state_path()
+            .parent()
+            .unwrap()
+            .join("agent-sign-ins/codex")
+            .exists()
+    );
+    let r = check(&w, "codex", ConnectionState::Connected, None);
+    assert_eq!(r.signin_import, ImportState::Ok);
+    // Its expiry is seen: the row asks to reconnect.
     w.vault.expire("codex");
     let r = check(
         &w,
@@ -419,8 +463,42 @@ fn sign_ins_are_copied_to_keyvault_and_their_expiry_is_seen() {
         Some(ProblemAction::Reconnect),
     );
     assert_eq!(r.signin_import, ImportState::Expired);
-    w.connect("codex", true);
-    check(&w, "codex", ConnectionState::Connected, None);
+    // Connect alone never copies Codex's own file.
+    let r = w
+        .setup()
+        .connect(
+            &["codex".into()],
+            &w.server(),
+            ConnectParts::ALL,
+            Some(&FakeVault::default()),
+            Duration::from_secs(5),
+        )
+        .unwrap();
+    assert_eq!(
+        r[0].sign_in.as_ref().unwrap().refused.as_deref(),
+        Some("not_yet")
+    );
+
+    // A code never entered: cancelled, nothing saved, the folder gone.
+    let w2 = World::new();
+    w2.install("codex", "0.61.0");
+    w2.write(".fake-codex-cancel", "1");
+    let mut env = w2.env.clone();
+    env.run_agent_clis = true;
+    let s2 = AgentSetup::new(env);
+    let login = s2.start_device_sign_in("codex").unwrap();
+    let err = s2
+        .finish_device_sign_in(login, &w2.vault, Duration::from_secs(10))
+        .unwrap_err();
+    assert_eq!(err.kind(), "cancelled");
+    assert!(w2.vault.value("codex").is_none());
+    assert!(
+        !s2.state_path()
+            .parent()
+            .unwrap()
+            .join("agent-sign-ins/codex")
+            .exists()
+    );
 
     // Claude Code: the token `claude setup-token` prints.
     let w = World::new();
@@ -434,15 +512,14 @@ fn sign_ins_are_copied_to_keyvault_and_their_expiry_is_seen() {
         Some("sk-ant-oat01-FAKEtoken_0123456789abcdef")
     );
 
-    // Hermes: the provider key its config uses.
+    // Hermes: its .env is never copied; it uses the providers connected in Settings.
     let w = World::new();
     w.install("hermes", "0.22.5");
     w.sign_in("hermes");
     w.connect("hermes", true);
-    let r = check(&w, "hermes", ConnectionState::Connected, None);
-    assert_eq!(r.signin_import, ImportState::Ok);
+    let r = w.row("hermes");
     assert_eq!(r.sign_in.as_deref(), Some("OpenRouter key"));
-    assert_eq!(w.vault.value("hermes").as_deref(), Some("sk-or-v1-fake"));
+    assert!(w.vault.value("hermes").is_none());
 }
 
 #[test]
@@ -462,10 +539,12 @@ fn a_refused_sign_in_copy_leaves_the_tools_connected_with_one_line() {
         .unwrap();
     assert!(r[0].tools_ok);
     let s = r[0].sign_in.as_ref().unwrap();
-    assert_eq!(s.refused.as_deref(), Some("not_signed_in"));
-    assert_eq!(
-        s.line.as_deref(),
-        Some("No ChatGPT sign-in on This Mac yet.")
+    assert_eq!(s.refused.as_deref(), Some("not_yet"));
+    assert!(
+        s.line
+            .as_deref()
+            .unwrap()
+            .contains("Codex signs in with a code")
     );
     // Claude's browser approval cancelled.
     w.install("claude-code", "2.4.1");
@@ -511,10 +590,8 @@ fn a_refused_sign_in_copy_leaves_the_tools_connected_with_one_line() {
             Duration::from_secs(5),
         )
         .unwrap();
-    assert_eq!(
-        r[0].sign_in.as_ref().unwrap().refused.as_deref(),
-        Some("not_yet")
-    );
+    // Hermes makes no sign-in of its own.
+    assert!(r[0].sign_in.is_none());
     assert!(w.vault.value("hermes").is_none());
     // A config Cua can't write: the row names the file.
     w.install("cursor", "1.0.0");
@@ -686,7 +763,8 @@ fn uninstalled_after_connecting_offers_disconnect_which_undoes_both() {
         ".codex/config.toml",
         "# mine\n[mcp_servers.cua]\ncommand = \"/opt/mine/wrapper\"\nargs = [\"serve\"]\n",
     );
-    w.connect("codex", true);
+    w.connect("codex", false);
+    w.device_sign_in();
     w.uninstall("codex");
     let r = check(
         &w,

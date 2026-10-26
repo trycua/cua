@@ -157,6 +157,8 @@ export const HOST_COVERAGE = {
   "agents.status": { webkit: { methods: ["agents.status"] }, tauri: [], unsupported: { tauri: "the Tauri shell has no connection status command (cua connect status --json)" } },
   "agents.connect": { webkit: { methods: ["agents.connect"] }, tauri: [], unsupported: { tauri: "the Tauri shell can't copy an agent's sign-in to Keyvault" } },
   "agents.disconnect": { webkit: { methods: ["agents.disconnect"] }, tauri: [], unsupported: { tauri: "the Tauri shell can't delete a copied sign-in" } },
+  "agents.signInStart": { webkit: { methods: ["agents.signInStart"] }, tauri: [], unsupported: { tauri: "the Tauri shell can't start a device sign-in" } },
+  "agents.signInWait": { webkit: { methods: ["agents.signInWait"] }, tauri: [], unsupported: { tauri: "the Tauri shell can't start a device sign-in" } },
   ...AGENT_DETAIL_COVERAGE,
   ...NEW_SPACE_COVERAGE,
   ...TELEPORT_COVERAGE,

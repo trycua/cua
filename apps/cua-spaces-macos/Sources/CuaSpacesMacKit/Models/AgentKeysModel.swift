@@ -34,7 +34,8 @@ public final class AgentKeysModel {
     func call(_ method: String, _ args: [String: Any] = [:]) async throws -> Any {
         guard let tools else { throw AgentsToolError(message: "Agent keys need the cua daemon") }
         let r = try await tools.agentsTool(method, args)
-        if let r = r as? [String: Any] {
+        // Every method answers the list after it, except agent_keys.shell (names your shell has).
+        if method != "agent_keys.shell", let r = r as? [String: Any] {
             report = r
             error = nil
         }

@@ -617,7 +617,13 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_agentsetup_detect() != 59369:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_agentsetup_device_sign_in_start_json() != 18365:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_agentsetup_device_sign_in_wait_json() != 39143:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_agentsetup_disconnect_json() != 14363:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_agentsetup_disconnect_parts_json() != 37278:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_agentsetup_install_skills() != 40049:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -2567,12 +2573,30 @@ _UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_detect.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_detect.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_device_sign_in_start_json.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_device_sign_in_start_json.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_device_sign_in_wait_json.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_device_sign_in_wait_json.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_disconnect_json.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
     ctypes.c_int8,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_disconnect_json.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_disconnect_parts_json.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.c_int8,
+    ctypes.c_int8,
+    ctypes.c_int8,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_disconnect_parts_json.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_install_skills.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -5056,9 +5080,18 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_agentsetup_connection_status_json.rest
 _UniffiLib.uniffi_cua_sdk_checksum_method_agentsetup_detect.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_agentsetup_detect.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_agentsetup_device_sign_in_start_json.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_agentsetup_device_sign_in_start_json.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_agentsetup_device_sign_in_wait_json.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_agentsetup_device_sign_in_wait_json.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_agentsetup_disconnect_json.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_agentsetup_disconnect_json.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_agentsetup_disconnect_parts_json.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_agentsetup_disconnect_parts_json.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_agentsetup_install_skills.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_agentsetup_install_skills.restype = ctypes.c_uint16
@@ -29780,11 +29813,31 @@ class AgentSetupProtocol(typing.Protocol):
         Every supported agent, installed or not (read-only).
 """
         raise NotImplementedError
+    async def device_sign_in_start_json(self, agent: str) -> str:
+        """
+        Starts `agent`'s device-code sign-in made for Cua (Codex: `codex login
+        --device-auth` in a folder Cua owns). JSON `{id, url, code}`: show the
+        link and the code, then wait with [`Self::device_sign_in_wait_json`].
+"""
+        raise NotImplementedError
+    async def device_sign_in_wait_json(self, id: str) -> str:
+        """
+        Waits for a device sign-in to be approved and saves it into Keyvault on
+        This Mac. JSON: `{imported, refused, line}` (as Connect's `sign_in`).
+"""
+        raise NotImplementedError
     async def disconnect_json(self, agents: typing.List[str],sign_in: bool) -> str:
         """
         Disconnect: what Connect did, undone (the previous config entry back
         from Cua's record, the skills, and with `sign_in` the copy in
         Keyvault). JSON `{outcomes, removed_sign_ins}`.
+"""
+        raise NotImplementedError
+    async def disconnect_parts_json(self, agents: typing.List[str],skills: bool,mcp: bool,sign_in: bool) -> str:
+        """
+        Disconnect of some parts only (an app's page's switches): Cua's skills
+        and/or its MCP entry, and with `sign_in` the copy in Keyvault. JSON
+        `{outcomes, removed_sign_ins}`.
 """
         raise NotImplementedError
     async def install_skills(self, agents: typing.List[str],skills: typing.List[str],force: bool) -> typing.List[AgentSetupOutcome]:
@@ -29978,6 +30031,49 @@ class AgentSetup(AgentSetupProtocol):
             *_uniffi_lowered_args,
         )
         return _uniffi_lift_return(_uniffi_ffi_result)
+    async def device_sign_in_start_json(self, agent: str) -> str:
+        """
+        Starts `agent`'s device-code sign-in made for Cua (Codex: `codex login
+        --device-auth` in a folder Cua owns). JSON `{id, url, code}`: show the
+        link and the code, then wait with [`Self::device_sign_in_wait_json`].
+"""
+
+        _UniffiFfiConverterString.check_lower(agent)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(agent),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterString.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_device_sign_in_start_json(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def device_sign_in_wait_json(self, id: str) -> str:
+        """
+        Waits for a device sign-in to be approved and saves it into Keyvault on
+        This Mac. JSON: `{imported, refused, line}` (as Connect's `sign_in`).
+"""
+
+        _UniffiFfiConverterString.check_lower(id)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(id),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterString.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_device_sign_in_wait_json(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
     async def disconnect_json(self, agents: typing.List[str],sign_in: bool) -> str:
         """
         Disconnect: what Connect did, undone (the previous config entry back
@@ -29997,6 +30093,37 @@ class AgentSetup(AgentSetupProtocol):
         _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
         return await _uniffi_rust_call_async(
             _UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_disconnect_json(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def disconnect_parts_json(self, agents: typing.List[str],skills: bool,mcp: bool,sign_in: bool) -> str:
+        """
+        Disconnect of some parts only (an app's page's switches): Cua's skills
+        and/or its MCP entry, and with `sign_in` the copy in Keyvault. JSON
+        `{outcomes, removed_sign_ins}`.
+"""
+
+        _UniffiFfiConverterSequenceString.check_lower(agents)
+
+        _UniffiFfiConverterBoolean.check_lower(skills)
+
+        _UniffiFfiConverterBoolean.check_lower(mcp)
+
+        _UniffiFfiConverterBoolean.check_lower(sign_in)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterSequenceString.lower(agents),
+            _UniffiFfiConverterBoolean.lower(skills),
+            _UniffiFfiConverterBoolean.lower(mcp),
+            _UniffiFfiConverterBoolean.lower(sign_in),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterString.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_disconnect_parts_json(*_uniffi_lowered_args),
             _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,

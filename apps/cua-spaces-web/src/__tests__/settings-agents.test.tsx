@@ -8,7 +8,7 @@
 
 import { createMemoryHistory, createRootRoute, createRouter, RouterProvider } from "@tanstack/react-router";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BridgeProvider } from "@/bridge";
 import { createDemoAdapter } from "@/bridge/adapters/demo";
 import { noCore, wasmBuilt } from "@/bridge/__tests__/testCore";
@@ -17,7 +17,10 @@ import { RunAgentDialog } from "@/components/agents/run-agent-dialog";
 import { connectedAppsState, resetConnectedAppsState, setConnectedAppsState } from "@/hooks/use-connected-apps";
 import { mountApp, stubBrowserApis } from "./app-harness";
 
+// The Connectors page as it was (`spaces_redesign` off); the redesign's is connectors-redesign.test.tsx.
+beforeEach(() => vi.stubEnv("VITE_CUA_FLAG_SPACES_REDESIGN", "0"));
 afterEach(() => {
+  vi.unstubAllEnvs();
   cleanup();
   localStorage.clear();
   resetConnectedAppsState();

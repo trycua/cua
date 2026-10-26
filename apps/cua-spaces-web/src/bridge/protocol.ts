@@ -312,7 +312,11 @@ export interface HostOperations
   /** Connect and Reconnect: Cua's tools and, with `signIn`, the agent's sign-in copied to Keyvault on This Mac (`cua connect setup --sign-in`). */
   "agents.connect": { args: { agents: string[]; signIn: boolean; skills?: boolean; mcp?: boolean }; result: ConnectResult[] };
   /** Disconnect: Cua's entry out of the agent's config (the previous one back) and, with `signIn`, the copy in Keyvault (`cua connect remove --sign-in`). */
-  "agents.disconnect": { args: { agents: string[]; signIn: boolean }; result: { removed_sign_ins: string[] } };
+  "agents.disconnect": { args: { agents: string[]; signIn: boolean; skills?: boolean; mcp?: boolean }; result: { removed_sign_ins: string[] } };
+  /** Starts an agent's device-code sign-in made for Cua (Codex: `codex login --device-auth` in a folder Cua owns): the link and the code to show. */
+  "agents.signInStart": { args: { agent: string }; result: { id: string; url: string; code: string } };
+  /** Waits for that sign-in to be approved and saves it in Keyvault on This Mac (as Connect's `sign_in`). */
+  "agents.signInWait": { args: { id: string }; result: { imported: { source: string; env: string; label: string; expires_ms: number | null; added_ms: number } | null; refused: string | null; line: string | null } };
 }
 
 export type OpName = keyof HostOperations;
@@ -360,6 +364,8 @@ export const OPERATIONS = [
   "agents.status",
   "agents.connect",
   "agents.disconnect",
+  "agents.signInStart",
+  "agents.signInWait",
   ...AGENT_DETAIL_OPERATIONS,
   ...NEW_SPACE_OPERATIONS,
   ...TELEPORT_OPERATIONS,

@@ -5,8 +5,9 @@ import { Link } from "@tanstack/react-router";
 import { ChevronRightIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { useAgents, useSpaces, useSpaceThumbnail, type AgentRunSummary, type Space } from "@/bridge";
+import { useAgentChats, useAgents, useFlag, useSpaces, useSpaceThumbnail, type AgentRunSummary, type Space } from "@/bridge";
 import { CuaKey } from "@/components/cua-key";
+import { useAgentAttempts } from "@/hooks/use-agent-attempts";
 import { OsIcon } from "@/components/os-icon";
 import { SpaceCanvas } from "@/components/space-canvas";
 import { Button } from "@/components/ui/button";
@@ -15,6 +16,7 @@ import { realSpaces, spaceState } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
 
 import { agentName, AppMark, AskBox, TASK_AGENTS, type TaskWhere } from "./ask-box";
+import { YourAgents, YourSpaces as YourSpacesRow } from "./home-sections";
 import { useWherePick } from "./this-mac-confirm";
 import { useStartTask } from "./use-start-task";
 import { useWhereOptions } from "./where-options";
@@ -81,7 +83,12 @@ export function AskFirstHome() {
       return { task, run, state: taskState(task, run ? { status: run.status, needsYou: Boolean(run.needsYou), lastEventMs: null } : null) };
     }),
   );
-  const first = tasks.length === 0;
+  const redesign = useFlag("spaces_redesign");
+  // The redesign lists agents and Spaces, not tasks: with neither (a first run,
+  // or tasks whose Spaces are gone), Home is the welcome again.
+  const attempts = useAgentAttempts();
+  const { chats } = useAgentChats(attempts);
+  const first = redesign ? !chats?.length && realSpaces(spaces ?? []).length === 0 : tasks.length === 0;
 
   return (
     <div className="h-full overflow-y-auto [scrollbar-gutter:stable]" data-ask-first-home="">
@@ -128,10 +135,18 @@ export function AskFirstHome() {
               <CuaKey size={24} />A fresh computer does the work, so yours stays untouched. Watch it live, step in any time, and throw it away when you're done.
             </p>
           </>
-        ) : (
+        ) : redesign ? null : (
           <TaskList rows={rows} spaces={spaces ?? []} />
         )}
-        {!first && realSpaces(spaces ?? []).length > 0 ? <YourSpaces spaces={realSpaces(spaces ?? [])} /> : null}
+        {redesign ? (
+          // The redesign: the Agents page's own list, then the Spaces page's tiles.
+          <>
+            <YourAgents chats={chats} />
+            <YourSpacesRow />
+          </>
+        ) : !first && realSpaces(spaces ?? []).length > 0 ? (
+          <YourSpaces spaces={realSpaces(spaces ?? [])} />
+        ) : null}
       </div>
       {pick.dialog}
     </div>

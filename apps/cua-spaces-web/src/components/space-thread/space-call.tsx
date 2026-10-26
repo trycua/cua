@@ -9,7 +9,7 @@ import { Minimize2Icon } from "lucide-react";
 import { Tooltip } from "@/components/ui/tooltip";
 import { isMacPlatform } from "@/lib/utils";
 
-import { harnessName, useBridge, type SpaceFact, type SpaceThread, type StreamRow, type ThreadAttachment, type ThreadView as PostView } from "@/bridge";
+import { harnessName, queuedNote, summonPlan, useBridge, type SpaceFact, type SpaceThread, type StreamRow, type ThreadAttachment, type ThreadView as PostView } from "@/bridge";
 import { Dialog, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "@/components/ui/toast";
 
@@ -24,6 +24,9 @@ import type { SpaceLayout } from "./layout-mode";
 import { MiniPlayer } from "./mini-player";
 import { GUEST_COMPOSER } from "./rights";
 import { buildRoster } from "./roster";
+import { dismissWakeNote, OnlyYou, useSummon, useWakeNotes, WakeNoteView } from "./summon";
+import { ProfileScopeProvider } from "./profile-card";
+import { queuedItems, useQueued } from "./queued";
 import { ThreadView } from "./thread-view";
 
 
@@ -56,6 +59,7 @@ export function SpaceCall({
   smallStage,
   aspect = 16 / 10,
   stageLabel = "Desktop",
+  creating = false,
 }: {
   /** Call mode (the desktop is the main area) or thread mode (the thread is, and the desktop shrinks). */
   layout?: SpaceLayout;
@@ -93,6 +97,8 @@ export function SpaceCall({
   presence?: MemberPresence;
   /** Opens Share for this Space (Add an agent offers it; absent: sharing isn't offered here). */
   onShare?: () => void;
+  /** The Space is still being made: the composer queues, nothing joins yet (`thread` is `creatingThread`). */
+  creating?: boolean;
 }) {
   const { core, data } = useBridge();
   const [folded, setFolded] = useState(false);
@@ -103,9 +109,9 @@ export function SpaceCall({
     [thread.members, thread.shares, thread.entries, thread.me, thread.role, identity, core],
   );
   // Anyone who can post can add an agent; a guest only reads.
-  const canAddAgent = thread.status === "ready" && thread.role !== "guest";
+  const canAdd = !creating && thread.status === "ready" && thread.role !== "guest";
   // Share's "Add an agent" opens this page's sheet for this Space.
-  useEffect(() => (canAddAgent ? registerAddAgent(spaceId, () => setAddOpen(true)) : undefined), [canAddAgent, spaceId]);
+  useEffect(() => (canAdd ? registerAddAgent(spaceId, () => setAddOpen(true)) : undefined), [canAdd, spaceId]);
   const [reserve, setReserve] = useState(0);
   const threadMode = layout === "thread" && Boolean(smallStage);
   // ⌘⇧T (Ctrl+Shift+T): thread view and back.
@@ -121,7 +127,47 @@ export function SpaceCall({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [layout, onLayout]);
-  const harnessOf = (handle: string) => roster.agents.find((a) => a.name === handle)?.harness ?? "";
+  // @ any agent: those in the Space and those that can start in it; sending summons them (`summon.*`).
+  const summon = useSummon({ spaceId, thread, roster, canAdd: canAdd || creating });
+  const notes = useWakeNotes(spaceId);
+  const shown = useMemo(() => ({ ...roster, handles: summon.handles }), [roster, summon.handles]);
+  const noteView = (n: NonNullable<typeof notes>[number]) => (
+    <WakeNoteView
+      key={n.id}
+      note={n}
+      connected={(summonPlan(core, { members: [], people: [], canAdd: true, connectors: summon.connectors.input }, `@${n.cant.handle}`) ?? []).every((s) => s.action !== "blocked")}
+      onConnect={() => void summon.connectAndRetry(n, summon.connectors)}
+      onRetry={() => void summon.retry(n)}
+      onDismiss={() => dismissWakeNote(spaceId, n.id)}
+    />
+  );
+  // Messages written while the Space was being made: queued until it's ready, then sent in order.
+  const queued = useQueued(spaceId);
+  const myName = roster.people.find((p) => p.me)?.label ?? "";
+  const queuedLine = queuedNote(core, creating);
+  const items = useMemo(() => [...thread.items, ...queuedItems(queued, thread.me ?? "me", myName)], [thread.items, thread.me, queued, myName]);
+  const after = (seq: number) =>
+    seq < 0 ? (
+      <div data-queued-note="" data-only-you="" className="-mt-0.5 mb-1 ml-11 w-fit rounded-lg bg-brand-surface px-2.5 py-1.5">
+        <OnlyYou label={queuedLine?.onlyYouLabel ?? ""} />
+        <p className="text-xs text-muted-foreground">{queuedLine?.text}</p>
+      </div>
+    ) : (
+      notes?.filter((n) => n.seq === seq).map(noteView)
+    );
+  // The person and agent cards read the Space from here (names, avatars, mentions, the rail).
+  // The owner and admins change agents' rights (a daemon that does not say your role: you are its owner).
+  const scope = {
+    spaceId,
+    roster: shown,
+    shares: thread.shares,
+    members: thread.members,
+    role: thread.role,
+    identity,
+    onRemoveAgent: thread.removeAgent ?? undefined,
+    onSetRights: thread.role === null || thread.role === "owner" || thread.role === "admin" ? thread.setRights : undefined,
+  };
+  const harnessOf = (handle: string) => roster.agents.find((a) => a.name === handle)?.harness ?? summon.candidates.find((c) => c.handle === handle)?.harness ?? "";
   // Attachments are Cua Volume paths: show the file where the Volume is mounted.
   const openAttachment = (a: ThreadAttachment) => {
     if (!data) return;
@@ -133,8 +179,10 @@ export function SpaceCall({
     <ThreadView
       className="min-h-0 flex-1"
       endInset={endInset}
-      items={thread.items}
-      roster={roster}
+      items={items}
+      roster={shown}
+      after={after}
+      tail={notes?.filter((n) => n.seq === null).map(noteView)}
       onAnswer={thread.answer}
       onOpenAttachment={openAttachment}
       onRemoveAgent={thread.removeAgent ?? undefined}
@@ -154,10 +202,10 @@ export function SpaceCall({
       <div className="px-5 pb-4">
         <Composer
           placeholder={`Message ${spaceName}`}
-          candidates={roster.candidates}
-          handles={roster.handles}
+          candidates={summon.candidates}
+          handles={summon.handles}
           agentHarness={harnessOf}
-          onSend={(text) => thread.post(text, view ?? null)}
+          onSend={(text) => (creating ? thread.post(text).then(() => undefined) : summon.send(text, view ?? null))}
           disabled={thread.status !== "ready"}
           disabledReason={thread.role === "guest" ? GUEST_COMPOSER : null}
         />
@@ -165,6 +213,7 @@ export function SpaceCall({
     </>
   );
   return (
+    <ProfileScopeProvider value={scope}>
     <div data-call-layout="" className="flex h-full flex-col">
       {header}
       {notice}
@@ -219,10 +268,7 @@ export function SpaceCall({
           onStream={onStream}
           folded={folded}
           onFold={setFolded}
-          // The owner and admins change agents' rights (a daemon that does not say your role: you are its owner).
-          onSetRights={thread.role === null || thread.role === "owner" || thread.role === "admin" ? thread.setRights : undefined}
-          onRemoveAgent={thread.removeAgent ?? undefined}
-          onAddAgent={canAddAgent ? () => setAddOpen(true) : undefined}
+          onAddAgent={canAdd ? () => setAddOpen(true) : undefined}
         />
       </div>
       <AddAgentSheet open={addOpen} onOpenChange={setAddOpen} space={{ id: spaceId, name: spaceName }} role={thread.role} taken={roster.agents.map((a) => a.name)}
@@ -254,5 +300,6 @@ export function SpaceCall({
         </DialogPopup>
       </Dialog>
     </div>
+    </ProfileScopeProvider>
   );
 }

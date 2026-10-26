@@ -157,7 +157,7 @@ export {
 } from "./relay-usage";
 
 export { linkEnds, needsRelaySetup, useLinks, type LinksHook } from "./links";
-export { chatKey, mergeChats, useAgentChats, useAgentDm, type AgentChat, type AgentChats, type AgentChatSpace, type AgentDm, type ChatNeed, type ChatTone, type DmItem } from "./agents-dm";
+export { chatKey, mergeChats, useAgentChats, useAgentDm, type AgentChat, type AgentChats, type AgentChatSpace, type AgentDm, type ChatAttempt, type ChatNeed, type ChatTone, type DmItem } from "./agents-dm";
 export { foldThread, readSeqFrom, useSpaceThread, type SpaceThread, type SpaceThreadStatus, type ThreadAnswer, type ThreadItem } from "./thread";
 export {
   DEFAULT_AGENT_RIGHTS,
@@ -262,3 +262,5 @@ export {
   tipsView,
 } from "./spaces-page";
 export type * from "./contracts/spaces-page";
+export * from "./connectors";
+export * from "./profile-card";

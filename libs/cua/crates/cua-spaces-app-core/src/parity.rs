@@ -248,6 +248,11 @@ pub const FLOWS: &[(&str, &str, &str)] = &[
         include_str!("../parity/pro-banner.json"),
         include_str!("../parity/golden/pro-banner.json"),
     ),
+    (
+        "connectors",
+        include_str!("../parity/connectors.json"),
+        include_str!("../parity/golden/connectors.json"),
+    ),
 ];
 
 /// The core calls a flow makes, over JSON. A host implements it with its
@@ -1992,6 +1997,7 @@ pub fn run(name: &str, flow_json: &str, h: &dyn Host) -> Result<Value, String> {
         "bulk-confirm" => run_bulk_confirm(&flow, h),
         "tips" => run_tips(&flow, h),
         "pro-banner" => run_pro_banner(&flow, h),
+        "connectors" => run_connectors(&flow, h),
         other => Err(format!("unknown flow {other}")),
     }
 }
@@ -5021,4 +5027,128 @@ fn run_pro_banner(f: &Value, h: &dyn Host) -> Result<Value, String> {
         }));
     }
     Ok(json!({ "flow": "pro-banner", "frames": frames }))
+}
+
+/// Settings, Connectors (redesign), summoning agents and the one agent list.
+fn run_connectors(f: &Value, h: &dyn Host) -> Result<Value, String> {
+    let line = |parts: &[&Value]| {
+        parts
+            .iter()
+            .map(|v| match v {
+                Value::Null => "-".to_string(),
+                Value::String(s) => s.clone(),
+                other => other.to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join(" | ")
+    };
+    let mut frames = Vec::new();
+    let mut last = Value::Null;
+    for step in f["connectors"].as_array().into_iter().flatten() {
+        let v = c(h, "connectors.view", json!({ "input": step["input"] }))?;
+        let apps: Vec<String> = v["apps"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|a| {
+                line(&[
+                    &a["agent"],
+                    &a["state"],
+                    &a["line"],
+                    &a["button"]["label"],
+                    &a["connectedLabel"],
+                ])
+            })
+            .collect();
+        let providers: Vec<String> = v["providers"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|p| line(&[&p["id"], &p["state"], &p["status"], &p["button"]["label"]]))
+            .collect();
+        frames.push(json!({ "step": step["step"], "apps": apps, "providers": providers, "footer": v["providersFooter"] }));
+        last = step["input"].clone();
+    }
+    let first = &f["connectors"][0]["input"];
+    for p in f["sheets"].as_array().into_iter().flatten() {
+        let s = c(
+            h,
+            "connectors.providerSheet",
+            json!({ "input": first, "provider": p }),
+        )?;
+        let ways: Vec<String> = s["ways"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|w| line(&[&w["id"], &w["label"], &w["button"]]))
+            .collect();
+        frames.push(json!({ "sheet": p, "title": s["title"], "ways": ways, "key": line(&[&s["keyProvider"], &s["keyEnv"]]) }));
+    }
+    for a in f["plans"].as_array().into_iter().flatten() {
+        let p = c(
+            h,
+            "connectors.connectPlan",
+            json!({ "input": first, "agent": a }),
+        )?;
+        frames.push(json!({ "plan": a, "does": line(&[&p["tools"], &p["appToken"], &p["device"], &p["provider"], &p["tokenProvider"]]) }));
+    }
+    for a in f["details"].as_array().into_iter().flatten() {
+        let d = c(
+            h,
+            "connectors.appDetail",
+            json!({ "input": last, "agent": a }),
+        )?;
+        let toggles: Vec<String> = d["toggles"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|t| line(&[&t["id"], &t["label"], &t["on"]]))
+            .collect();
+        frames.push(json!({ "detail": a, "status": d["status"], "toggles": toggles, "signIn": line(&[&d["signIn"]["title"], &d["signIn"]["status"], &d["signIn"]["button"]["label"]]), "note": d["signInNote"] }));
+    }
+    let si = &f["summon"]["input"];
+    let cands = c(h, "summon.candidates", json!({ "input": si }))?;
+    let cands: Vec<String> = cands
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|x| line(&[&x["handle"], &x["label"], &x["member"], &x["detail"]]))
+        .collect();
+    frames.push(json!({ "candidates": cands }));
+    for t in f["summon"]["texts"].as_array().into_iter().flatten() {
+        let p = c(h, "summon.plan", json!({ "input": si, "text": t }))?;
+        let steps: Vec<String> = p["steps"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|s| {
+                line(&[
+                    &s["handle"],
+                    &s["action"],
+                    &s["cantWake"]["text"],
+                    &s["cantWake"]["connectLabel"],
+                    &s["cantWake"]["onlyYouLabel"],
+                ])
+            })
+            .collect();
+        frames.push(json!({ "send": t, "steps": steps }));
+    }
+    let list = c(h, "agentList.view", json!({ "input": f["agentList"] }))?;
+    let rows: Vec<String> = list["rows"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|r| {
+            line(&[
+                &r["kind"],
+                &r["label"],
+                &r["tone"],
+                &r["line"],
+                &r["action"]["label"],
+            ])
+        })
+        .collect();
+    frames
+        .push(json!({ "agents": rows, "summary": list["summary"], "seeAll": list["seeAllLabel"] }));
+    Ok(json!({ "flow": "connectors", "frames": frames }))
 }

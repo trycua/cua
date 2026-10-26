@@ -74,12 +74,14 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
         "agents.setup", "agents.configure", "agents.signIn",
         "agents.status", "agents.connect", "agents.disconnect",
+        // An agent's device-code sign-in made for Cua (Codex), started and waited in two calls.
+        "agents.signInStart", "agents.signInWait",
         // Start a run in a Space and reply to it (the daemon's agent_start, agent_message).
         "agents.start", "agents.message",
         // A persistent agent's Memory, Routines and Access (`PersistentModel`).
         "agents.detail", "agents.readFile", "agents.restoreFile", "agents.addRoutine", "agents.setRoutine",
         "agents.removeRoutine", "agents.allowComputer", "agents.revokeComputer",
-        "agentKeys.list", "agentKeys.set", "agentKeys.remove",
+        "agentKeys.list", "agentKeys.set", "agentKeys.remove", "agentKeys.shell", "agentKeys.fromShell",
         // New Space's address form and Connect a cloud, Teleport and Share,
         // Cua Volume, Settings and Notifications, a Space's detail and This
         // machine (WebUIBridge+Pages.swift).
@@ -345,7 +347,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
 
         case "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
              "agents.setup", "agents.configure", "agents.signIn",
-             "agents.status", "agents.connect", "agents.disconnect", "agents.start", "agents.message":
+             "agents.status", "agents.connect", "agents.disconnect", "agents.start", "agents.message",
+             "agents.signInStart", "agents.signInWait":
             return try await agents(method, args)
 
         case "checklist.get": return ["state": model.checklist.stored]
@@ -837,7 +840,29 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         case "agents.disconnect":
             guard let setup = model.agentSetup else { throw Failure.unsupported("Agent setup is not available in this build") }
             do {
-                let out = try await setup.disconnectJson(agents: try strings(args, "agents"), signIn: (args["signIn"] as? Bool) ?? false)
+                let agents = try strings(args, "agents")
+                let signIn = (args["signIn"] as? Bool) ?? false
+                // Some parts only (an app's page's switches), when the page says which.
+                let out: String
+                if args["skills"] is Bool || args["mcp"] is Bool {
+                    out = try await setup.disconnectPartsJson(agents: agents, skills: (args["skills"] as? Bool) ?? false,
+                                                              mcp: (args["mcp"] as? Bool) ?? false, signIn: signIn)
+                } else {
+                    out = try await setup.disconnectJson(agents: agents, signIn: signIn)
+                }
+                await model.reloadAgents()
+                return try json(out)
+            } catch let f as Failure { throw f }
+            catch { throw Failure(code: "failed", message: LiveSpacesBackend.words(error)) }
+        case "agents.signInStart":
+            guard let setup = model.agentSetup else { throw Failure.unsupported("Agent setup is not available in this build") }
+            do { return try json(try await setup.deviceSignInStartJson(agent: try string(args, "agent"))) }
+            catch let f as Failure { throw f }
+            catch { throw Failure(code: "failed", message: LiveSpacesBackend.words(error)) }
+        case "agents.signInWait":
+            guard let setup = model.agentSetup else { throw Failure.unsupported("Agent setup is not available in this build") }
+            do {
+                let out = try await setup.deviceSignInWaitJson(id: try string(args, "id"))
                 await model.reloadAgents()
                 return try json(out)
             } catch let f as Failure { throw f }

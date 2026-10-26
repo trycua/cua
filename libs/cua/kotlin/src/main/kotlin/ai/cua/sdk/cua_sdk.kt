@@ -919,7 +919,13 @@ external fun uniffi_cua_sdk_checksum_method_agentsetup_connection_status_json(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_agentsetup_detect(
 ): Short
+external fun uniffi_cua_sdk_checksum_method_agentsetup_device_sign_in_start_json(
+): Short
+external fun uniffi_cua_sdk_checksum_method_agentsetup_device_sign_in_wait_json(
+): Short
 external fun uniffi_cua_sdk_checksum_method_agentsetup_disconnect_json(
+): Short
+external fun uniffi_cua_sdk_checksum_method_agentsetup_disconnect_parts_json(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_agentsetup_install_skills(
 ): Short
@@ -1830,7 +1836,13 @@ external fun uniffi_cua_sdk_fn_method_agentsetup_connection_status_json(`ptr`: L
 ): RustBuffer.ByValue
 external fun uniffi_cua_sdk_fn_method_agentsetup_detect(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
+external fun uniffi_cua_sdk_fn_method_agentsetup_device_sign_in_start_json(`ptr`: Long,`agent`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cua_sdk_fn_method_agentsetup_device_sign_in_wait_json(`ptr`: Long,`id`: RustBuffer.ByValue,
+): Long
 external fun uniffi_cua_sdk_fn_method_agentsetup_disconnect_json(`ptr`: Long,`agents`: RustBuffer.ByValue,`signIn`: Byte,
+): Long
+external fun uniffi_cua_sdk_fn_method_agentsetup_disconnect_parts_json(`ptr`: Long,`agents`: RustBuffer.ByValue,`skills`: Byte,`mcp`: Byte,`signIn`: Byte,
 ): Long
 external fun uniffi_cua_sdk_fn_method_agentsetup_install_skills(`ptr`: Long,`agents`: RustBuffer.ByValue,`skills`: RustBuffer.ByValue,`force`: Byte,
 ): Long
@@ -3263,7 +3275,16 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_method_agentsetup_detect() != 59369.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_cua_sdk_checksum_method_agentsetup_device_sign_in_start_json() != 18365.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_agentsetup_device_sign_in_wait_json() != 39143.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cua_sdk_checksum_method_agentsetup_disconnect_json() != 14363.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_agentsetup_disconnect_parts_json() != 37278.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_agentsetup_install_skills() != 40049.toShort()) {
@@ -5722,11 +5743,31 @@ public interface AgentSetupInterface {
     fun `detect`(): List<AgentInfo>
 
     /**
+     * Starts `agent`'s device-code sign-in made for Cua (Codex: `codex login
+     * --device-auth` in a folder Cua owns). JSON `{id, url, code}`: show the
+     * link and the code, then wait with [`Self::device_sign_in_wait_json`].
+     */
+    suspend fun `deviceSignInStartJson`(`agent`: kotlin.String): kotlin.String
+
+    /**
+     * Waits for a device sign-in to be approved and saves it into Keyvault on
+     * This Mac. JSON: `{imported, refused, line}` (as Connect's `sign_in`).
+     */
+    suspend fun `deviceSignInWaitJson`(`id`: kotlin.String): kotlin.String
+
+    /**
      * Disconnect: what Connect did, undone (the previous config entry back
      * from Cua's record, the skills, and with `sign_in` the copy in
      * Keyvault). JSON `{outcomes, removed_sign_ins}`.
      */
     suspend fun `disconnectJson`(`agents`: List<kotlin.String>, `signIn`: kotlin.Boolean): kotlin.String
+
+    /**
+     * Disconnect of some parts only (an app's page's switches): Cua's skills
+     * and/or its MCP entry, and with `sign_in` the copy in Keyvault. JSON
+     * `{outcomes, removed_sign_ins}`.
+     */
+    suspend fun `disconnectPartsJson`(`agents`: List<kotlin.String>, `skills`: kotlin.Boolean, `mcp`: kotlin.Boolean, `signIn`: kotlin.Boolean): kotlin.String
 
     /**
      * Installs `skills` (empty: all bundled) for `agents`. Folders cua did
@@ -5977,6 +6018,57 @@ open class AgentSetup: Disposable, AutoCloseable, AgentSetupInterface
 
 
     /**
+     * Starts `agent`'s device-code sign-in made for Cua (Codex: `codex login
+     * --device-auth` in a folder Cua owns). JSON `{id, url, code}`: show the
+     * link and the code, then wait with [`Self::device_sign_in_wait_json`].
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `deviceSignInStartJson`(`agent`: kotlin.String) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_device_sign_in_start_json(
+                uniffiHandle,
+                FfiConverterString.lower(`agent`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * Waits for a device sign-in to be approved and saves it into Keyvault on
+     * This Mac. JSON: `{imported, refused, line}` (as Connect's `sign_in`).
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `deviceSignInWaitJson`(`id`: kotlin.String) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_device_sign_in_wait_json(
+                uniffiHandle,
+                FfiConverterString.lower(`id`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
      * Disconnect: what Connect did, undone (the previous config entry back
      * from Cua's record, the skills, and with `sign_in` the copy in
      * Keyvault). JSON `{outcomes, removed_sign_ins}`.
@@ -5989,6 +6081,32 @@ open class AgentSetup: Disposable, AutoCloseable, AgentSetupInterface
             UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_disconnect_json(
                 uniffiHandle,
                 FfiConverterSequenceString.lower(`agents`),FfiConverterBoolean.lower(`signIn`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * Disconnect of some parts only (an app's page's switches): Cua's skills
+     * and/or its MCP entry, and with `sign_in` the copy in Keyvault. JSON
+     * `{outcomes, removed_sign_ins}`.
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `disconnectPartsJson`(`agents`: List<kotlin.String>, `skills`: kotlin.Boolean, `mcp`: kotlin.Boolean, `signIn`: kotlin.Boolean) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_disconnect_parts_json(
+                uniffiHandle,
+                FfiConverterSequenceString.lower(`agents`),FfiConverterBoolean.lower(`skills`),FfiConverterBoolean.lower(`mcp`),FfiConverterBoolean.lower(`signIn`),
             )
         },
         { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },

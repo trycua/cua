@@ -9,17 +9,19 @@
 //!
 //! [`METHODS`] lists every method; `dispatch_covers_every_method` checks it.
 
+use crate::agent_list;
 use crate::keyvault::{approval, browse, vault, view as kv};
 use crate::model::*;
+use crate::profile_card;
 use crate::spaces::{self, creating, roster, sidebar, stream};
 use crate::teleport::{drag, flow, grid, transfer, windows};
 use crate::{
     CoreError, about, account, agent_keys, agents, bulk_confirm, checklist, cloud_connect,
-    cloud_page, cloud_sheet, devices, diagnostics, drive_mount_preview, drive_page, drive_settings,
-    driver_preview, experiments, host, local_network, login_item, machines, notch, notifications,
-    nudges, onboarding, onboarding_preview, palette, paths, persistent, presence, relay_usage,
-    resources, runtimes, settings, share, sign_in, space_menu, telemetry, tips, upsell, window,
-    wizard,
+    cloud_page, cloud_sheet, connectors, devices, diagnostics, drive_mount_preview, drive_page,
+    drive_settings, driver_preview, experiments, host, local_network, login_item, machines, notch,
+    notifications, nudges, onboarding, onboarding_preview, palette, paths, persistent, presence,
+    relay_usage, resources, runtimes, settings, share, sign_in, space_menu, summon, telemetry,
+    tips, upsell, window, wizard,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -194,6 +196,20 @@ pub const METHODS: &[&str] = &[
     "agentKeys.form",
     "agentKeys.removeConfirm",
     "agentKeys.nameProblem",
+    "connectors.view",
+    "connectors.connectPlan",
+    "connectors.providerSheet",
+    "connectors.appDetail",
+    "connectors.setupCard",
+    "summon.candidates",
+    "summon.plan",
+    "summon.failed",
+    "summon.firstMessage",
+    "summon.parseMentions",
+    "summon.queuedNote",
+    "profileCard.person",
+    "agentList.view",
+    "profileCard.agent",
     "about.view",
     "diagnostics.createReport",
     "diagnostics.reportMailto",
@@ -972,6 +988,50 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get("input")?,
             &a.get::<String>("env")?,
         )),
+        "connectors.view" => out(connectors::view_on(
+            &a.get("input")?,
+            a.get::<Option<SpaceOs>>("hostOs")?
+                .unwrap_or(SpaceOs::Macos),
+        )),
+        "connectors.connectPlan" => out(connectors::connect_plan(
+            &a.get("input")?,
+            &a.get::<String>("agent")?,
+        )),
+        "connectors.providerSheet" => out(connectors::provider_sheet_on(
+            &a.get("input")?,
+            &a.get::<String>("provider")?,
+            a.get::<Option<SpaceOs>>("hostOs")?
+                .unwrap_or(SpaceOs::Macos),
+        )),
+        "connectors.appDetail" => out(connectors::app_detail(
+            &a.get("input")?,
+            &a.get::<String>("agent")?,
+        )),
+        "connectors.setupCard" => out(connectors::setup_card(
+            &a.get("input")?,
+            &a.get::<String>("agent")?,
+            &a.get::<String>("name")?,
+        )),
+        "summon.candidates" => out(summon::candidates(&a.get("input")?)),
+        "summon.plan" => out(summon::plan(&a.get("input")?, &a.get::<String>("text")?)),
+        "summon.failed" => out(summon::failed(
+            &a.get("input")?,
+            &a.get::<String>("harness")?,
+            &a.get::<String>("handle")?,
+            &a.get::<String>("error")?,
+        )),
+        "summon.firstMessage" => out(summon::first_message(
+            &a.get("input")?,
+            &a.get::<String>("agent")?,
+            &a.get::<String>("prompt")?,
+        )),
+        "agentList.view" => out(agent_list::view(&a.get("input")?)),
+        "profileCard.person" => out(profile_card::person(&a.get("input")?)),
+        "profileCard.agent" => out(profile_card::agent(&a.get("input")?)),
+        "summon.queuedNote" => out(summon::queued_note(
+            a.get::<Option<bool>>("creating")?.unwrap_or(false),
+        )),
+        "summon.parseMentions" => out(summon::parse_mentions(&a.get::<String>("text")?)),
         "agentKeys.nameProblem" => out(agent_keys::name_problem(&a.get::<String>("name")?)),
         "about.view" => out(about::view(&a.get::<about::AboutInput>("input")?)),
         "diagnostics.createReport" => out(diagnostics::create_report(&a.get("input")?)),

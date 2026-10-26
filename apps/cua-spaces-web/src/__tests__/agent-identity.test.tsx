@@ -65,15 +65,14 @@ async function openCard(handle: string): Promise<HTMLElement> {
     return card!;
   });
 }
-/** Each row's value as read aloud (the owner's initial is decoration). */
-const facts = (card: HTMLElement) =>
-  Object.fromEntries(
-    [...card.querySelectorAll<HTMLElement>("[data-card-fact]")].map((f) => {
-      const v = f.lastElementChild!.cloneNode(true) as HTMLElement;
-      v.querySelectorAll("[aria-hidden]").forEach((n) => n.remove());
-      return [f.dataset.cardFact!, v.textContent];
-    }),
-  );
+/** The card's Details, opened: label to value. */
+async function details(card: HTMLElement): Promise<Record<string, string>> {
+  await act(async () => {
+    fireEvent.click(card.querySelector("[data-card-details]")!);
+  });
+  return Object.fromEntries([...card.querySelectorAll<HTMLElement>("[data-card-details-open] dt")].map((dt) => [dt.textContent!, dt.nextElementSibling!.textContent!]));
+}
+const line = (card: HTMLElement) => card.querySelector("[data-card-line='who']")?.textContent;
 
 describe("an agent's identity", () => {
   it("draws the harness's mark, the AI tag and the owner's badge in the thread and in In this Space", async () => {
@@ -143,37 +142,38 @@ describe("an agent's identity", () => {
     expect(memberIdentity({ handle: "x", owner: ADA, icon: "https://example.com/i.png" })?.icon).toBe("https://example.com/i.png");
   });
 
-  it("opens the card from the name: Grace's Claude Code, connected with a prompt", async () => {
+  it("opens the card from the name: Grace's Claude Code, in one line, with the rest under Details", async () => {
     await app();
     const card = await openCard("claude");
-    expect(facts(card)).toEqual({
-      Owner: "Grace",
-      "Posts from": "Grace's MacBook Pro",
-      Joined: "Connected by Grace with a prompt",
-      When: expect.stringMatching(/^Yesterday \d\d:\d\d$/),
-      Harness: "Claude Code 2.4.1",
-      "Can task": "Members",
-      "Can stop": "Admins",
-      "Can approve": "Grace",
+    expect(card.querySelector("[data-card-title]")?.textContent).toBe("Claude Code");
+    expect(card.querySelector("[data-card-badge]")?.textContent).toBe("Agent");
+    expect(line(card)).toBe("Run by Grace on Grace's MacBook Pro, uses Anthropic");
+    // Details is folded until asked.
+    expect(card.querySelector("[data-card-details-open]")).toBeNull();
+    expect(await details(card)).toMatchObject({
+      Handle: "@claude",
+      Runs: "Claude Code 2.4.1",
+      Joined: expect.stringMatching(/^Connected by Grace with a prompt, \d+ (hour|day)s? ago$/),
+      "Owner's id": "acct_grace",
     });
-    // Owner and computer carry Cua's check; nothing else does.
-    expect(card.querySelectorAll("[data-card-fact='Owner'] [aria-label='Checked by Cua'], [data-card-fact='Posts from'] [aria-label='Checked by Cua']")).toHaveLength(2);
-    expect(card.querySelectorAll("[aria-label='Checked by Cua']")).toHaveLength(2);
-    expect(card.textContent).toContain("Name, icon and harness are set by the agent. Owner and computer are checked by Cua.");
+    // The owner may change who can task, stop and approve it: the selects, under Details.
+    expect(card.querySelectorAll("[data-agent-right]")).toHaveLength(3);
+    // The old card's facts and fine print are gone.
+    expect(card.textContent).not.toContain("checked by Cua");
   });
 
-  it("the card of your own Hermes, started here: you, This Space, the harness Cua started", async () => {
+  it("the card of your own Hermes, started here: run by you in this Space", async () => {
     await app();
     const card = await openCard("hermes");
-    expect(facts(card)).toMatchObject({ Owner: "Ada (you)", "Posts from": "This Space", Joined: "Started in this Space", Harness: "Hermes Agent 0.9.2", "Can task": "Owner" });
-    expect(card.textContent).toContain("The name and icon are set by the agent.");
+    expect(line(card)).toBe("Run by you in this Space, uses Anthropic");
+    expect(await details(card)).toMatchObject({ Handle: "@hermes", Runs: "Hermes Agent 0.9.2", Joined: expect.stringMatching(/^Started in this Space/) });
   });
 
-  it("a look-alike's card: its own owner, its own handle, Harness not reported", async () => {
+  it("a look-alike's card: its own owner, its own handle, Runs not reported", async () => {
     await app({ threadLookalike: true });
     const card = await openCard("claude-2");
-    expect(card.textContent).toContain("@claude-2");
-    expect(facts(card)).toMatchObject({ Owner: "Linus", "Posts from": "linus-thinkpad", Harness: "Not reported", "Can task": "Linus", "Can approve": "Linus" });
+    expect(line(card)).toMatch(/^Run by Linus on linus-thinkpad/);
+    expect(await details(card)).toMatchObject({ Handle: "@claude-2", Runs: "Not reported" });
   });
 
   it("Remove from Space: the owner sees it and removing leaves its posts with their mark and owner", async () => {
@@ -213,7 +213,11 @@ describe("an agent's identity", () => {
     await app({ threadRole: "member" });
     const card = await openCard("claude");
     expect(card.querySelector("[data-remove-agent]")).toBeNull();
-    expect(facts(card).Owner).toBe("Grace");
+    expect(line(card)).toMatch(/^Run by Grace /);
+    // A member reads who may task it, stop it and approve it; only the owner and admins change it.
+    const d = await details(card);
+    expect(d).toMatchObject({ "Can give it tasks": "Members", "Can stop it": "Admins", "Can approve its steps": "Grace" });
+    expect(card.querySelectorAll("[data-agent-right]")).toHaveLength(0);
   });
 
   it("words the harness and when it joined", () => {

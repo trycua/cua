@@ -34,6 +34,7 @@ import { Route as SettingsGeneralRouteImport } from './routes/settings/general'
 import { Route as SpacesIndexRouteImport } from './routes/spaces/index'
 import { Route as SpacesSpaceIdRouteImport } from './routes/spaces/$spaceId'
 import { Route as VolumeIndexRouteImport } from './routes/volume/index'
+import { Route as SettingsConnectorsAppRouteImport } from './routes/settings/connectors.$app'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -145,6 +146,11 @@ const VolumeIndexRoute = VolumeIndexRouteImport.update({
   path: '/volume/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SettingsConnectorsAppRoute = SettingsConnectorsAppRouteImport.update({
+  id: '/$app',
+  path: '/$app',
+  getParentRoute: () => SettingsConnectorsRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -155,7 +161,7 @@ export interface FileRoutesByFullPath {
   '/settings/advanced': typeof SettingsAdvancedRoute
   '/settings/agents': typeof SettingsAgentsRoute
   '/settings/connected-apps': typeof SettingsConnectedAppsRoute
-  '/settings/connectors': typeof SettingsConnectorsRoute
+  '/settings/connectors': typeof SettingsConnectorsRouteWithChildren
   '/settings/devices': typeof SettingsDevicesRoute
   '/settings/experiments': typeof SettingsExperimentsRoute
   '/settings/general': typeof SettingsGeneralRoute
@@ -169,6 +175,7 @@ export interface FileRoutesByFullPath {
   '/settings/': typeof SettingsIndexRoute
   '/spaces/': typeof SpacesIndexRoute
   '/volume/': typeof VolumeIndexRoute
+  '/settings/connectors/$app': typeof SettingsConnectorsAppRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -178,7 +185,7 @@ export interface FileRoutesByTo {
   '/settings/advanced': typeof SettingsAdvancedRoute
   '/settings/agents': typeof SettingsAgentsRoute
   '/settings/connected-apps': typeof SettingsConnectedAppsRoute
-  '/settings/connectors': typeof SettingsConnectorsRoute
+  '/settings/connectors': typeof SettingsConnectorsRouteWithChildren
   '/settings/devices': typeof SettingsDevicesRoute
   '/settings/experiments': typeof SettingsExperimentsRoute
   '/settings/general': typeof SettingsGeneralRoute
@@ -192,6 +199,7 @@ export interface FileRoutesByTo {
   '/settings': typeof SettingsIndexRoute
   '/spaces': typeof SpacesIndexRoute
   '/volume': typeof VolumeIndexRoute
+  '/settings/connectors/$app': typeof SettingsConnectorsAppRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -203,7 +211,7 @@ export interface FileRoutesById {
   '/settings/advanced': typeof SettingsAdvancedRoute
   '/settings/agents': typeof SettingsAgentsRoute
   '/settings/connected-apps': typeof SettingsConnectedAppsRoute
-  '/settings/connectors': typeof SettingsConnectorsRoute
+  '/settings/connectors': typeof SettingsConnectorsRouteWithChildren
   '/settings/devices': typeof SettingsDevicesRoute
   '/settings/experiments': typeof SettingsExperimentsRoute
   '/settings/general': typeof SettingsGeneralRoute
@@ -217,6 +225,7 @@ export interface FileRoutesById {
   '/settings/': typeof SettingsIndexRoute
   '/spaces/': typeof SpacesIndexRoute
   '/volume/': typeof VolumeIndexRoute
+  '/settings/connectors/$app': typeof SettingsConnectorsAppRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -243,6 +252,7 @@ export interface FileRouteTypes {
     | '/settings/'
     | '/spaces/'
     | '/volume/'
+    | '/settings/connectors/$app'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -266,6 +276,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/spaces'
     | '/volume'
+    | '/settings/connectors/$app'
   id:
     | '__root__'
     | '/'
@@ -290,6 +301,7 @@ export interface FileRouteTypes {
     | '/settings/'
     | '/spaces/'
     | '/volume/'
+    | '/settings/connectors/$app'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -464,15 +476,33 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof VolumeIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/settings/connectors/$app': {
+      id: '/settings/connectors/$app'
+      path: '/$app'
+      fullPath: '/settings/connectors/$app'
+      preLoaderRoute: typeof SettingsConnectorsAppRouteImport
+      parentRoute: typeof SettingsConnectorsRoute
+    }
   }
 }
+
+interface SettingsConnectorsRouteChildren {
+  SettingsConnectorsAppRoute: typeof SettingsConnectorsAppRoute
+}
+
+const SettingsConnectorsRouteChildren: SettingsConnectorsRouteChildren = {
+  SettingsConnectorsAppRoute: SettingsConnectorsAppRoute,
+}
+
+const SettingsConnectorsRouteWithChildren =
+  SettingsConnectorsRoute._addFileChildren(SettingsConnectorsRouteChildren)
 
 interface SettingsRouteRouteChildren {
   SettingsAboutRoute: typeof SettingsAboutRoute
   SettingsAdvancedRoute: typeof SettingsAdvancedRoute
   SettingsAgentsRoute: typeof SettingsAgentsRoute
   SettingsConnectedAppsRoute: typeof SettingsConnectedAppsRoute
-  SettingsConnectorsRoute: typeof SettingsConnectorsRoute
+  SettingsConnectorsRoute: typeof SettingsConnectorsRouteWithChildren
   SettingsDevicesRoute: typeof SettingsDevicesRoute
   SettingsExperimentsRoute: typeof SettingsExperimentsRoute
   SettingsGeneralRoute: typeof SettingsGeneralRoute
@@ -484,7 +514,7 @@ const SettingsRouteRouteChildren: SettingsRouteRouteChildren = {
   SettingsAdvancedRoute: SettingsAdvancedRoute,
   SettingsAgentsRoute: SettingsAgentsRoute,
   SettingsConnectedAppsRoute: SettingsConnectedAppsRoute,
-  SettingsConnectorsRoute: SettingsConnectorsRoute,
+  SettingsConnectorsRoute: SettingsConnectorsRouteWithChildren,
   SettingsDevicesRoute: SettingsDevicesRoute,
   SettingsExperimentsRoute: SettingsExperimentsRoute,
   SettingsGeneralRoute: SettingsGeneralRoute,

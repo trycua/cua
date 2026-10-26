@@ -34,6 +34,12 @@ pub const TERMINAL_BUNDLE_IDS: &[&str] = &[
     "org.alacritty",          // Alacritty (older bundle id)
 ];
 
+/// Terminals whose text view types an `AXValue` write into the pty as
+/// committed input and needs no key window for it: kitty's
+/// `setAccessibilityValue:` commits the string as IME text. Key events reach
+/// kitty only while it has a key window.
+pub const AX_VALUE_INPUT_BUNDLE_IDS: &[&str] = &["net.kovidgoyal.kitty"];
+
 /// Returns `true` when `bundle_id` matches a known terminal emulator
 /// from [`TERMINAL_BUNDLE_IDS`]. Case-sensitive, exact match — bundle
 /// ids are reverse-DNS and case-significant per Apple's convention.
@@ -50,6 +56,25 @@ pub fn is_terminal_pid(pid: i32) -> bool {
         Some(bid) => is_terminal_bundle_id(&bid),
         None => false,
     }
+}
+
+/// Whether background `text` for an app with `bundle_id` goes in as an
+/// `AXValue` write. Control characters stay key presses: the pty would get a
+/// committed `\r` or `\n` as Enter and a `\t` as completion.
+pub fn takes_ax_value_input(bundle_id: &str, text: &str) -> bool {
+    commits_ax_value(bundle_id) && !text.chars().any(char::is_control)
+}
+
+/// Whether the app with `bundle_id` commits an `AXValue` write to its pty.
+pub fn commits_ax_value(bundle_id: &str) -> bool {
+    AX_VALUE_INPUT_BUNDLE_IDS.contains(&bundle_id)
+}
+
+/// Whether a terminal's text read-back proves nothing: empty or unreadable
+/// both before and after. kitty exposes no text while it is not focused, so
+/// an unchanged empty value there says nothing about what was delivered.
+pub fn read_back_is_blank(before: Option<&str>, after: Option<&str>) -> bool {
+    before.is_none_or(str::is_empty) && after.is_none_or(str::is_empty)
 }
 
 #[cfg(test)]
@@ -82,6 +107,25 @@ mod tests {
         assert!(is_terminal_bundle_id("com.mitchellh.ghostty"));
         assert!(is_terminal_bundle_id("com.googlecode.iterm2"));
         assert!(is_terminal_bundle_id("com.apple.Terminal"));
+    }
+
+    #[test]
+    fn only_kitty_takes_plain_text_as_an_ax_value() {
+        assert!(takes_ax_value_input("net.kovidgoyal.kitty", "git status"));
+        assert!(!takes_ax_value_input("net.kovidgoyal.kitty", "ls\n"));
+        assert!(!takes_ax_value_input("net.kovidgoyal.kitty", "ls\r"));
+        assert!(!takes_ax_value_input("net.kovidgoyal.kitty", "gi\t"));
+        assert!(!takes_ax_value_input("com.apple.Terminal", "git status"));
+        assert!(!takes_ax_value_input("com.googlecode.iterm2", "git status"));
+    }
+
+    #[test]
+    fn a_blank_read_back_proves_nothing() {
+        assert!(read_back_is_blank(Some(""), Some("")));
+        assert!(read_back_is_blank(None, Some("")));
+        assert!(read_back_is_blank(None, None));
+        assert!(!read_back_is_blank(Some(""), Some("ls")));
+        assert!(!read_back_is_blank(Some("$ "), Some("$ ")));
     }
 
     #[test]

@@ -148,10 +148,13 @@ fn resolve_onscreen_point_with_scroll(
     // authoritative for that case; without it a foreground tap can land on the
     // visible control covering the stale point (for example a bottom toolbar).
     if let Some(retained) = admitted.as_ref() {
+        // Geometry read while minimized is stale even when it happens to land
+        // inside the restored window rect.
+        let trust_cached = cached_center_in_window && !retained.read_while_minimized;
         if retained.is_uia() {
             let is_offscreen =
                 unsafe { crate::uia::scroll::element_is_offscreen(retained.as_ptr()) };
-            if cached_center_in_window && is_offscreen != Some(true) {
+            if trust_cached && is_offscreen != Some(true) {
                 return Ok((cx, cy));
             }
             if let Some((nx, ny)) = unsafe {
@@ -161,7 +164,7 @@ fn resolve_onscreen_point_with_scroll(
                     return Ok((nx, ny));
                 }
             }
-        } else if cached_center_in_window {
+        } else if trust_cached {
             return Ok((cx, cy));
         }
         // `retained` drops here → COM Release.
@@ -1440,6 +1443,7 @@ impl Tool for GetWindowStateTool {
             let tree_task = tokio::task::spawn_blocking(move || {
                 let mut budget =
                     cua_driver_core::walk_budget::WalkBudget::new(timeout_ms, max_elements);
+                let iconic_before = crate::input::window_is_iconic(hwnd);
                 let tree =
                     crate::uia::walk_tree_budgeted(hwnd, q.as_deref(), max_depth, &mut budget);
                 let kind = if tree.nodes.iter().any(|node| node.msaa_role.is_some()) {
@@ -1448,7 +1452,9 @@ impl Tool for GetWindowStateTool {
                     crate::uia::snapshot::SnapshotKind::Uia
                 };
                 let payload = crate::uia::snapshot::UiaSnapshot::from_nodes(&tree.nodes, kind)
-                    .with_read_while_minimized(crate::input::window_is_iconic(hwnd));
+                    .with_read_while_minimized(
+                        iconic_before || crate::input::window_is_iconic(hwnd),
+                    );
                 (tree, payload, budget.outcome())
             });
             let started = std::time::Instant::now();
@@ -3695,6 +3701,16 @@ impl Tool for ClickTool {
                         }
                     }
                 };
+                if admitted
+                    .as_ref()
+                    .is_some_and(|element| element.read_while_minimized)
+                {
+                    if let Err(refusal) =
+                        resolve_onscreen_point_with_scroll(&admitted, hwnd, idx, tx, ty, "clicking")
+                    {
+                        return refusal;
+                    }
+                }
                 pin_overlay_above(&cursor_key, hwnd);
                 overlay_glide_to_target(
                     &cursor_key,
@@ -4116,6 +4132,12 @@ impl Tool for ClickTool {
                     )
                     .map_err(|result| anyhow::anyhow!(tool_result_text(result)))?;
                     return Ok(BackgroundElementClick::Inject { x: cx, y: cy, failed_calls });
+                }
+                if admitted.as_ref().is_some_and(|element| element.read_while_minimized) {
+                    let (x, y) =
+                        resolve_onscreen_point_with_scroll(&admitted, hwnd, idx, cx, cy, "clicking")
+                            .map_err(|result| anyhow::anyhow!(tool_result_text(result)))?;
+                    return Ok(BackgroundElementClick::Post { x, y, failed_calls });
                 }
                 Ok(BackgroundElementClick::Post { x: cx, y: cy, failed_calls })
             } }).await;

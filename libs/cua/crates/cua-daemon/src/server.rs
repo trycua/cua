@@ -331,15 +331,78 @@ impl DaemonHandle {
         self.cleanup();
     }
 
+    /// [`wait`](Self::wait), with the shutdown bounded: once shutdown is
+    /// requested, the daemon's own wind-down (extensions, the warm pool, the
+    /// built-in Linux runtime) gets `grace`; past it the socket and discovery
+    /// file go and this returns `false`, so a stop signal always ends the
+    /// process (a supervisor that sees the daemon gone never waits on one
+    /// still winding down for minutes).
+    pub async fn wait_bounded(self, grace: Duration) -> bool {
+        let mut rx = self.shared.shutdown.subscribe();
+        while !*rx.borrow() {
+            if rx.changed().await.is_err() {
+                break;
+            }
+        }
+        let socket = self.socket_path.clone();
+        let discovery = self.discovery_path.clone();
+        if tokio::time::timeout(grace, self.wait()).await.is_ok() {
+            return true;
+        }
+        tracing::warn!(
+            ?grace,
+            "the daemon's shutdown took too long; exiting without it"
+        );
+        cleanup_paths(socket.as_deref(), discovery.as_deref());
+        false
+    }
+
     fn cleanup(&self) {
-        if let Some(p) = &self.socket_path {
-            let _ = std::fs::remove_file(p);
+        cleanup_paths(self.socket_path.as_deref(), self.discovery_path.as_deref());
+    }
+}
+
+/// Removes the daemon's socket, and its discovery file while it names this
+/// process.
+fn cleanup_paths(socket: Option<&std::path::Path>, discovery: Option<&std::path::Path>) {
+    if let Some(p) = socket {
+        let _ = std::fs::remove_file(p);
+    }
+    if let Some(p) = discovery
+        && Discovery::read(p).is_some_and(|d| d.pid == std::process::id())
+    {
+        let _ = std::fs::remove_file(p);
+    }
+}
+
+/// How long a stopped daemon may take to wind down before it exits anyway
+/// ([`DaemonHandle::wait_bounded`]).
+pub const SHUTDOWN_GRACE: Duration = Duration::from_secs(30);
+
+/// Resolves on the first stop signal: SIGTERM (`kill`, launchd, systemd, an
+/// app quitting) or SIGINT (Ctrl-C) on Unix, Ctrl-C elsewhere.
+pub async fn stop_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        match (
+            signal(SignalKind::terminate()),
+            signal(SignalKind::interrupt()),
+        ) {
+            (Ok(mut term), Ok(mut int)) => {
+                tokio::select! {
+                    _ = term.recv() => tracing::info!("SIGTERM: stopping the daemon"),
+                    _ = int.recv() => tracing::info!("SIGINT: stopping the daemon"),
+                }
+            }
+            _ => {
+                let _ = tokio::signal::ctrl_c().await;
+            }
         }
-        if let Some(p) = &self.discovery_path
-            && Discovery::read(p).is_some_and(|d| d.pid == std::process::id())
-        {
-            let _ = std::fs::remove_file(p);
-        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
     }
 }
 

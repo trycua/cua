@@ -2981,8 +2981,8 @@ public struct AppAboutInput: Equatable, Hashable {
      */
     public var checking: Bool
     /**
-     * The updater can follow the nightly appcast; the picker offers
-     * Nightly only then.
+     * The updater can follow the nightly appcast (the macOS app with the
+     * release feed); the picker offers Nightly only then.
      */
     public var nightly: Bool
 
@@ -3021,8 +3021,8 @@ public struct AppAboutInput: Equatable, Hashable {
          * A check is running.
          */checking: Bool,
         /**
-         * The updater can follow the nightly appcast; the picker offers
-         * Nightly only then.
+         * The updater can follow the nightly appcast (the macOS app with the
+         * release feed); the picker offers Nightly only then.
          */nightly: Bool) {
         self.platform = platform
         self.version = version
@@ -3208,15 +3208,18 @@ public struct AppAboutUpdates: Equatable, Hashable {
      */
     public var channelHelp: String
     /**
-     * A word about the version running on this channel; `None`: nothing.
+     * A word about the version running on this channel: Nightly may
+     * break, or this build is newer than the channel's latest release and
+     * stays until that channel passes it; `None`: nothing to say.
      */
     public var channelNote: String?
     /**
-     * "Download Stable": the way back to an older Stable right now.
+     * "Download Stable": the way back to an older Stable right now
+     * ([`DOWNLOAD_URL`]); `None` when no way back is needed.
      */
     public var downloadLabel: String?
     /**
-     * Where `download_label` goes.
+     * Where [`AboutUpdates::download_label`] goes.
      */
     public var downloadUrl: String?
     /**
@@ -3260,13 +3263,16 @@ public struct AppAboutUpdates: Equatable, Hashable {
          * What the chosen channel gets, in a line.
          */channelHelp: String,
         /**
-         * A word about the version running on this channel; `None`: nothing.
+         * A word about the version running on this channel: Nightly may
+         * break, or this build is newer than the channel's latest release and
+         * stays until that channel passes it; `None`: nothing to say.
          */channelNote: String?,
         /**
-         * "Download Stable": the way back to an older Stable right now.
+         * "Download Stable": the way back to an older Stable right now
+         * ([`DOWNLOAD_URL`]); `None` when no way back is needed.
          */downloadLabel: String?,
         /**
-         * Where `download_label` goes.
+         * Where [`AboutUpdates::download_label`] goes.
          */downloadUrl: String?,
         /**
          * "Check Now" (or "Checking…").
@@ -60085,7 +60091,8 @@ public enum AppUpdateChannel: Equatable, Hashable {
      */
     case beta
     /**
-     * A build of main most nights, from its own appcast. Untested.
+     * A build of main most nights (`X.Y.Z-nightly.YYYYMMDD+sha`), from its
+     * own appcast ([`nightly_feed_url`]). Untested.
      */
     case nightly
 

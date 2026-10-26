@@ -6371,7 +6371,8 @@ pub enum AppUpdateChannel {
     Stable,
     /// Releases and prereleases (`X.Y.Z-suffix`).
     Beta,
-    /// A build of main most nights, from its own appcast. Untested.
+    /// A build of main most nights (`X.Y.Z-nightly.YYYYMMDD+sha`), from its
+    /// own appcast ([`nightly_feed_url`]). Untested.
     Nightly,
 }
 
@@ -6400,8 +6401,8 @@ pub struct AppAboutInput {
     pub last_check: Option<String>,
     /// A check is running.
     pub checking: bool,
-    /// The updater can follow the nightly appcast; the picker offers
-    /// Nightly only then.
+    /// The updater can follow the nightly appcast (the macOS app with the
+    /// release feed); the picker offers Nightly only then.
     pub nightly: bool,
 }
 
@@ -6453,11 +6454,14 @@ pub struct AppAboutUpdates {
     pub channels: Vec<AppSettingsOption>,
     /// What the chosen channel gets, in a line.
     pub channel_help: String,
-    /// A word about the version running on this channel; `None`: nothing.
+    /// A word about the version running on this channel: Nightly may
+    /// break, or this build is newer than the channel's latest release and
+    /// stays until that channel passes it; `None`: nothing to say.
     pub channel_note: Option<String>,
-    /// "Download Stable": the way back to an older Stable right now.
+    /// "Download Stable": the way back to an older Stable right now
+    /// ([`DOWNLOAD_URL`]); `None` when no way back is needed.
     pub download_label: Option<String>,
-    /// Where `download_label` goes.
+    /// Where [`AboutUpdates::download_label`] goes.
     pub download_url: Option<String>,
     /// "Check Now" (or "Checking…").
     pub check_label: String,

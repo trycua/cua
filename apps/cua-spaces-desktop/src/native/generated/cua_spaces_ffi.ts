@@ -6775,7 +6775,8 @@ export enum AppUpdateChannel {
      */
     Beta = "beta",
     /**
-     * A build of main most nights, from its own appcast. Untested.
+     * A build of main most nights (`X.Y.Z-nightly.YYYYMMDD+sha`), from its
+     * own appcast ([`nightly_feed_url`]). Untested.
      */
     Nightly = "nightly"
 }
@@ -6849,8 +6850,8 @@ export type AppAboutInput = {
      */
     checking: boolean,
     /**
-     * The updater can follow the nightly appcast; the picker offers
-     * Nightly only then.
+     * The updater can follow the nightly appcast (the macOS app with the
+     * release feed); the picker offers Nightly only then.
      */
     nightly: boolean
 }
@@ -7119,15 +7120,18 @@ export type AppAboutUpdates = {
      */
     channelHelp: string,
     /**
-     * A word about the version running on this channel; `None`: nothing.
+     * A word about the version running on this channel: Nightly may
+     * break, or this build is newer than the channel's latest release and
+     * stays until that channel passes it; `None`: nothing to say.
      */
     channelNote?: string,
     /**
-     * "Download Stable": the way back to an older Stable right now.
+     * "Download Stable": the way back to an older Stable right now
+     * ([`DOWNLOAD_URL`]); `None` when no way back is needed.
      */
     downloadLabel?: string,
     /**
-     * Where `download_label` goes.
+     * Where [`AboutUpdates::download_label`] goes.
      */
     downloadUrl?: string,
     /**

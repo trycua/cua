@@ -223,17 +223,4 @@ struct DriveTests {
         #expect(v.mountPath == "/Volumes/Cua Volume")
     }
 
-    @Test func snapshots() async throws {
-        let snap = SnapshotTests()
-        let tools = FakeDriveTools()
-        tools.mount = "mounted"
-        tools.enabled = true
-        tools.backend = "s3"
-        tools.hasKeys = true
-        // The Drive page, mounted and syncing with a conflict.
-        let p = PersistentModel(tools: tools)
-        p.now = { Date(timeIntervalSince1970: 1_790_000_000) }
-        await p.sendDrive(nil)
-        try snap.assertSnapshot(DrivePageView(model: p), "drive-page-sync", size: CGSize(width: 720, height: 620))
-    }
 }

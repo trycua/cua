@@ -95,8 +95,7 @@ UI tests (XCUITest) need Xcode: `xcodegen generate` (project.yml), then
 
 Environment (debug builds only; release builds ignore every `CUA_SPACES_*` hook):
 `CUA_SPACES_FIXTURES=1` runs on fixtures (no daemon, no Space, an in-memory login item whose status `CUA_SPACES_LOGIN_ITEM` sets: `enabled`, `notRegistered`, `requiresApproval`, `notFound`; a relay allowance `CUA_SPACES_RELAY_USAGE` sets: `reached`, `team`, `none`, default the free plan within it);
-`CUA_SPACES_START_VIEW` opens `new-space`, `keyvault`, `approval`, `settings` (presses ⌘,), `device-approval` (with `CUA_SPACES_APPROVE_CODE`), `device-enroll`, `device-enroll-code`,
-`onboarding`, `stream` (the Space detail at its Stream section), `window-pip` (the same, with the first window popped out), `teleport-picker` (the Space's teleport picker; set `CUA_TELEPORT_APP_ROOTS` to fixture apps for images), `run-timeline` (an agent run's conversation from the Space's Agents section; fixtures give `local:aurora` two runs) or a notch state (`notch-open`, which springs
+`CUA_SPACES_START_VIEW` opens the web UI window at a page (`new-space`, `keyvault`, `approval`, `settings`, `settings-devices`, `settings-about`, `device-approval`, `device-enroll`, `onboarding`, `space`, `this-machine`; see `AppEnvironment.applyStartView`) or a notch state (`notch-open`, which springs
 open 1.5 s after launch, `notch-hover`, `notch-permission`,
 `notch-drag-target`, `notch-drop`); `CUA_SPACES_SELECT`
 selects a Space; `CUA_SPACES_CREATE=<image>[,<name>]` creates one on this

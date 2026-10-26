@@ -169,14 +169,14 @@ impl CapturedImage {
     /// `resize_png_if_needed(&self.into_png()?, max_dim)`: PNG is lossless, so
     /// resizing the raw pixels gives the same image as resizing the decoded
     /// PNG, and both encode through the same encoder.
-    pub fn encode(
-        &self,
-        max_dim: u32,
-        encoding: ScreenshotEncoding,
-    ) -> Result<(Vec<u8>, u32, u32)> {
-        let frame = match self {
+    pub fn encode(self, max_dim: u32, encoding: ScreenshotEncoding) -> Result<(Vec<u8>, u32, u32)> {
+        let RgbaFrame {
+            width: w,
+            height: h,
+            rgba,
+        } = match self {
             Self::Png(bytes) => {
-                let png = resize_png_if_needed(bytes, max_dim)?;
+                let png = resize_png_if_needed(&bytes, max_dim)?;
                 let (w, h) = png_dimensions(&png)?;
                 let out = match encoding {
                     ScreenshotEncoding::Png => png,
@@ -186,13 +186,11 @@ impl CapturedImage {
             }
             Self::Rgba(frame) => frame,
         };
-        let (w, h) = (frame.width, frame.height);
         if encoding == ScreenshotEncoding::Png && !needs_resize(w, h, max_dim) {
-            return Ok((encode_rgba_to_png(&frame.rgba, w, h)?, w, h));
+            return Ok((encode_rgba_to_png(&rgba, w, h)?, w, h));
         }
-        let buffer: ImageBuffer<image::Rgba<u8>, Vec<u8>> =
-            ImageBuffer::from_raw(w, h, frame.rgba.clone())
-                .ok_or_else(|| anyhow!("invalid RGBA buffer for w={w} h={h}"))?;
+        let buffer: ImageBuffer<image::Rgba<u8>, Vec<u8>> = ImageBuffer::from_raw(w, h, rgba)
+            .ok_or_else(|| anyhow!("invalid RGBA buffer for w={w} h={h}"))?;
         let mut img = DynamicImage::ImageRgba8(buffer);
         if needs_resize(w, h, max_dim) {
             let (new_w, new_h) = resized_dimensions(w, h, max_dim);
@@ -529,7 +527,10 @@ mod tests {
         let frame = CapturedImage::Rgba(gradient_frame(300, 200));
         let png = frame.clone().into_png().unwrap();
         for max_dim in [0, 300, 1366, 120, 77] {
-            let (bytes, w, h) = frame.encode(max_dim, ScreenshotEncoding::Png).unwrap();
+            let (bytes, w, h) = frame
+                .clone()
+                .encode(max_dim, ScreenshotEncoding::Png)
+                .unwrap();
             let expected = resize_png_if_needed(&png, max_dim).unwrap();
             assert_eq!(bytes, expected, "max_dim {max_dim}");
             assert_eq!((w, h), png_dimensions(&expected).unwrap());
@@ -574,11 +575,21 @@ mod tests {
             parse(Some(json!("jpeg")), Some(json!(60))),
             Ok(ScreenshotEncoding::Jpeg { quality: 60 })
         );
-        assert!(parse(Some(json!("webp")), None).is_err());
-        assert!(parse(Some(json!("jpeg")), Some(json!(0))).is_err());
-        assert!(parse(Some(json!("jpeg")), Some(json!(96))).is_err());
-        assert!(parse(None, Some(json!(60))).is_err());
-        assert!(parse(Some(json!("png")), Some(json!(60))).is_err());
+        assert_eq!(
+            parse(Some(json!("webp")), None),
+            Err("f must be \"png\" or \"jpeg\", got \"webp\"".to_string())
+        );
+        assert_eq!(
+            parse(Some(json!("jpeg")), Some(json!(0))),
+            Err("q must be an integer from 1 to 95, got 0".to_string())
+        );
+        assert_eq!(
+            parse(Some(json!("jpeg")), Some(json!(96))),
+            Err("q must be an integer from 1 to 95, got 96".to_string())
+        );
+        let only_jpeg = Err("q applies only with f: \"jpeg\"".to_string());
+        assert_eq!(parse(None, Some(json!(60))), only_jpeg);
+        assert_eq!(parse(Some(json!("png")), Some(json!(60))), only_jpeg);
     }
 
     #[test]

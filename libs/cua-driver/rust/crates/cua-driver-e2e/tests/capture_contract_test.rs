@@ -719,3 +719,184 @@ fn background_screenshot_preserves_desktop() {
         Observation::delivered(passed, Evidence::default())
     });
 }
+
+// ── JPEG screenshots (macOS) ────────────────────────────────────────────────
+
+/// `get_window_state` with `extra` merged into the request, retried until the
+/// `btn-increment` element and a screenshot are both present.
+#[cfg(target_os = "macos")]
+fn snapshot_with(
+    driver: &mut McpDriver,
+    pid: u32,
+    wid: u64,
+    extra: serde_json::Value,
+) -> ToolResponse {
+    let mut args = serde_json::json!({
+        "pid": pid as i64,
+        "window_id": wid,
+        "session": "jpeg-capture",
+        "tree_format": "both",
+    });
+    args.as_object_mut()
+        .unwrap()
+        .extend(extra.as_object().unwrap().clone());
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let resp = driver.call("get_window_state", args.clone());
+        let marker = resp.structured()["elements"]
+            .as_array()
+            .is_some_and(|e| e.iter().any(|e| e.to_string().contains(TREE_MARKER)));
+        if (marker && has_image(&resp)) || Instant::now() >= deadline {
+            return resp;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn image_parts(resp: &ToolResponse) -> Vec<serde_json::Value> {
+    resp.raw["result"]["content"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter(|c| c["type"].as_str() == Some("image"))
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[cfg(target_os = "macos")]
+fn assert_jpeg_at_screenshot_size(bytes: &[u8], resp: &ToolResponse) {
+    assert_eq!(&bytes[..3], &[0xFF, 0xD8, 0xFF], "JPEG SOI marker");
+    let decoded = image::load_from_memory_with_format(bytes, image::ImageFormat::Jpeg).unwrap();
+    let s = resp.structured();
+    assert_eq!(
+        (u64::from(decoded.width()), u64::from(decoded.height())),
+        (
+            s["screenshot_width"].as_u64().unwrap(),
+            s["screenshot_height"].as_u64().unwrap()
+        )
+    );
+}
+
+/// The `screenshot_frame` of the `btn-increment` element, as `[x, y, w, h]`.
+#[cfg(target_os = "macos")]
+fn marker_frames(resp: &ToolResponse) -> ([f64; 4], [f64; 4]) {
+    let element = resp.structured()["elements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e.to_string().contains(TREE_MARKER))
+        .expect("btn-increment element")
+        .clone();
+    let get = |v: &serde_json::Value, keys: [&str; 4]| {
+        keys.map(|k| {
+            v[k].as_f64()
+                .unwrap_or_else(|| panic!("{k} is not a number: {v}"))
+        })
+    };
+    (
+        get(&element["frame"], ["x", "y", "w", "h"]),
+        get(&element["screenshot_frame"], ["x", "y", "w", "h"]),
+    )
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore]
+fn jpeg_screenshot_keeps_pixel_mapping_and_mints_no_capture_id() {
+    run_capture_case(
+        "jpeg_pixel_mapping",
+        vec![OracleKind::AxState, OracleKind::Pixels],
+        |pid, wid, driver| {
+            use base64::Engine as _;
+            let png = snapshot_with(driver, pid, wid, serde_json::json!({}));
+            assert!(!png.is_error(), "PNG read errored: {}", png.text());
+            let p = png.structured();
+            assert_eq!(p["screenshot_mime_type"], "image/png");
+            assert!(
+                p["capture_id"].as_str().is_some_and(|id| !id.is_empty()),
+                "a PNG read must mint a capture_id: {p}"
+            );
+
+            let jpeg = snapshot_with(
+                driver,
+                pid,
+                wid,
+                serde_json::json!({ "screenshot_format": "jpeg" }),
+            );
+            assert!(!jpeg.is_error(), "JPEG read errored: {}", jpeg.text());
+            let j = jpeg.structured();
+            let parts = image_parts(&jpeg);
+            assert_eq!(parts.len(), 1, "exactly one image part");
+            assert_eq!(parts[0]["mimeType"], "image/jpeg");
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(parts[0]["data"].as_str().unwrap())
+                .unwrap();
+            assert_jpeg_at_screenshot_size(&bytes, &jpeg);
+            assert_eq!(j["screenshot_mime_type"], "image/jpeg");
+            assert!(j.get("capture_id").is_none(), "JPEG minted a capture_id");
+            assert!(j.get("snapshot_id").is_some(), "snapshot_id missing");
+
+            for key in [
+                "screenshot_width",
+                "screenshot_height",
+                "screenshot_scale",
+                "window_bounds",
+            ] {
+                assert!(!j[key].is_null(), "{key} missing");
+                assert_eq!(p[key], j[key], "{key} differs between PNG and JPEG");
+            }
+
+            let (png_frame, png_shot) = marker_frames(&png);
+            let (jpeg_frame, jpeg_shot) = marker_frames(&jpeg);
+            assert_eq!(png_shot, jpeg_shot, "screenshot_frame differs");
+            assert_eq!(png_frame, jpeg_frame, "frame differs");
+            let bounds = &j["window_bounds"];
+            let scale = j["screenshot_width"].as_f64().unwrap() / bounds["width"].as_f64().unwrap();
+            let (ox, oy) = (bounds["x"].as_f64().unwrap(), bounds["y"].as_f64().unwrap());
+            let [x, y, w, h] = jpeg_frame;
+            let expected = [
+                ((x - ox) * scale).round(),
+                ((y - oy) * scale).round(),
+                (w * scale).round(),
+                (h * scale).round(),
+            ];
+            assert_eq!(jpeg_shot, expected, "screenshot_frame mapping");
+        },
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore]
+fn jpeg_screenshot_out_file_contains_jpeg() {
+    run_capture_case(
+        "jpeg_out_file",
+        vec![OracleKind::AxState, OracleKind::Pixels],
+        |pid, wid, driver| {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("shot.jpg");
+            let resp = snapshot_with(
+                driver,
+                pid,
+                wid,
+                serde_json::json!({
+                    "screenshot_format": "jpeg",
+                    "screenshot_out_file": path.to_str().unwrap(),
+                }),
+            );
+            assert!(!resp.is_error(), "JPEG read errored: {}", resp.text());
+            assert!(
+                image_parts(&resp).is_empty(),
+                "out file must omit the image part"
+            );
+            let s = resp.structured();
+            assert_eq!(s["screenshot_file_path"], path.to_str().unwrap());
+            assert_jpeg_at_screenshot_size(&std::fs::read(&path).unwrap(), &resp);
+            assert_eq!(s["screenshot_mime_type"], "image/jpeg");
+            assert!(s.get("capture_id").is_none(), "JPEG minted a capture_id");
+        },
+    );
+}

@@ -106,7 +106,7 @@
       "type": "string"
      },
      "screenshot_format": {
-      "description": "Encoding of the returned screenshot. Default \"png\". \"jpeg\" is smaller and faster to encode, drops alpha, and mints no capture_id (capture_id-bound tools need a PNG read); pixel coordinates are unchanged.",
+      "description": "Encoding of the returned screenshot. Default \"png\". \"jpeg\" is smaller, drops alpha, and mints no capture_id (capture_id-bound tools need a PNG read); pixel coordinates are unchanged.",
       "enum": [
        "png",
        "jpeg"

@@ -214,15 +214,14 @@ impl Drop for SecureCapturePath {
 /// On non-empty native success, returns those bytes without invoking
 /// fallback. When both paths fail, the error message preserves both
 /// contexts. Closures are not required to be `Send`/`Sync`.
-fn capture_window_with_backends<T, N, F>(
+fn capture_window_with_backends<N, F>(
     window_id: u32,
     native: N,
     fallback: F,
-) -> anyhow::Result<T>
+) -> anyhow::Result<CapturedImage>
 where
-    T: CaptureOutput,
-    N: FnOnce(u32) -> anyhow::Result<T>,
-    F: FnOnce(u32) -> anyhow::Result<T>,
+    N: FnOnce(u32) -> anyhow::Result<CapturedImage>,
+    F: FnOnce(u32) -> anyhow::Result<CapturedImage>,
 {
     match native(window_id) {
         Ok(bytes) if !bytes.is_empty() => Ok(bytes),
@@ -240,24 +239,6 @@ where
                  shell fallback: {fallback_err:#}"
             )),
         },
-    }
-}
-
-/// What a window capture backend returns: PNG bytes, or a
-/// [`CapturedImage`] that may still hold raw pixels.
-trait CaptureOutput {
-    fn is_empty(&self) -> bool;
-}
-
-impl CaptureOutput for Vec<u8> {
-    fn is_empty(&self) -> bool {
-        self.as_slice().is_empty()
-    }
-}
-
-impl CaptureOutput for CapturedImage {
-    fn is_empty(&self) -> bool {
-        CapturedImage::is_empty(self)
     }
 }
 
@@ -625,21 +606,21 @@ fn cgimage_to_rgba(
     })
 }
 
-enum CaptureIdentityValidation<T = CapturedImage> {
-    Matched(T),
+enum CaptureIdentityValidation {
+    Matched(CapturedImage),
     Changed(WindowCaptureIdentity),
 }
 
 /// Do not release bytes until WindowServer confirms that the window still has
 /// the identity the plan was built for. The injected form keeps the TOCTOU
 /// contract deterministic and independently testable.
-fn capture_then_validate_identity<T, C, I>(
+fn capture_then_validate_identity<C, I>(
     expected_identity: WindowCaptureIdentity,
     capture: C,
     current_identity: I,
-) -> anyhow::Result<CaptureIdentityValidation<T>>
+) -> anyhow::Result<CaptureIdentityValidation>
 where
-    C: FnOnce() -> anyhow::Result<T>,
+    C: FnOnce() -> anyhow::Result<CapturedImage>,
     I: FnOnce() -> anyhow::Result<WindowCaptureIdentity>,
 {
     let bytes = capture()?;
@@ -831,16 +812,15 @@ pub fn screenshot_window_image(window_id: u32) -> anyhow::Result<CapturedImage> 
 /// SkyLight capture goes first and the public chain is the fallback. On the
 /// current Space the public chain goes first and SkyLight is the last resort.
 /// When everything fails the error keeps every backend's context.
-fn capture_window_with_space_route<T, P, S>(
+fn capture_window_with_space_route<P, S>(
     window_id: u32,
     off_space: bool,
     public: P,
     skylight: S,
-) -> anyhow::Result<T>
+) -> anyhow::Result<CapturedImage>
 where
-    T: CaptureOutput,
-    P: FnOnce(u32) -> anyhow::Result<T>,
-    S: FnOnce(u32) -> anyhow::Result<T>,
+    P: FnOnce(u32) -> anyhow::Result<CapturedImage>,
+    S: FnOnce(u32) -> anyhow::Result<CapturedImage>,
 {
     if off_space {
         let skylight_err = match skylight(window_id) {
@@ -1208,6 +1188,10 @@ mod tests {
     use std::rc::Rc;
     use std::sync::Arc;
 
+    fn png(bytes: Vec<u8>) -> CapturedImage {
+        CapturedImage::Png(bytes)
+    }
+
     /// Regression for trycua/cua#5476: with the pointer outside the window,
     /// a pointer-showing window capture came back scaled and offset while
     /// still sized like the window, so clicks aimed from it missed by ~37 px.
@@ -1228,10 +1212,10 @@ mod tests {
                 public_calls.set(public_calls.get() + 1);
                 anyhow::bail!("public backends must not run when SkyLight succeeds off-Space")
             },
-            |window_id| Ok(format!("sky-{window_id}").into_bytes()),
+            |window_id| Ok(png(format!("sky-{window_id}").into_bytes())),
         )
         .expect("off-Space SkyLight capture should succeed");
-        assert_eq!(got, b"sky-7");
+        assert_eq!(got, png(b"sky-7".to_vec()));
         assert_eq!(public_calls.get(), 0);
     }
 
@@ -1240,20 +1224,20 @@ mod tests {
         let got = capture_window_with_space_route(
             7,
             true,
-            |_| Ok(b"public".to_vec()),
+            |_| Ok(png(b"public".to_vec())),
             |_| anyhow::bail!("SPI missing"),
         )
         .expect("public fallback should run");
-        assert_eq!(got, b"public");
+        assert_eq!(got, png(b"public".to_vec()));
 
         let got = capture_window_with_space_route(
             7,
             true,
-            |_| Ok(b"public".to_vec()),
-            |_| Ok(Vec::new()),
+            |_| Ok(png(b"public".to_vec())),
+            |_| Ok(png(Vec::new())),
         )
         .expect("empty SkyLight bytes fall back");
-        assert_eq!(got, b"public");
+        assert_eq!(got, png(b"public".to_vec()));
     }
 
     #[test]
@@ -1262,14 +1246,14 @@ mod tests {
         let got = capture_window_with_space_route(
             7,
             false,
-            |_| Ok(b"public".to_vec()),
+            |_| Ok(png(b"public".to_vec())),
             |_| {
                 sky_calls.set(sky_calls.get() + 1);
-                Ok(b"sky".to_vec())
+                Ok(png(b"sky".to_vec()))
             },
         )
         .expect("public capture should succeed");
-        assert_eq!(got, b"public");
+        assert_eq!(got, png(b"public".to_vec()));
         assert_eq!(
             sky_calls.get(),
             0,
@@ -1280,15 +1264,15 @@ mod tests {
             7,
             false,
             |_| anyhow::bail!("sck and shell failed"),
-            |_| Ok(b"sky".to_vec()),
+            |_| Ok(png(b"sky".to_vec())),
         )
         .expect("SkyLight is the last resort");
-        assert_eq!(got, b"sky");
+        assert_eq!(got, png(b"sky".to_vec()));
     }
 
     #[test]
     fn space_route_errors_keep_every_backend_context() {
-        let off = capture_window_with_space_route::<Vec<u8>, _, _>(
+        let off = capture_window_with_space_route(
             7,
             true,
             |_| anyhow::bail!("public denied"),
@@ -1303,7 +1287,7 @@ mod tests {
             "{off}"
         );
 
-        let on = capture_window_with_space_route::<Vec<u8>, _, _>(
+        let on = capture_window_with_space_route(
             7,
             false,
             |_| anyhow::bail!("public denied"),
@@ -1388,7 +1372,7 @@ mod tests {
             move |window_id| {
                 native_calls_n.set(native_calls_n.get() + 1);
                 native_window_id_n.set(Some(window_id));
-                Ok(png_n)
+                Ok(CapturedImage::Png(png_n))
             },
             move |_window_id| {
                 fallback_calls_f.set(fallback_calls_f.get() + 1);
@@ -1404,24 +1388,28 @@ mod tests {
             "native backend receives window id 42"
         );
         assert_eq!(fallback_calls.get(), 0, "shell fallback must not run");
-        assert_eq!(got, png, "helper returns native PNG bytes verbatim");
+        assert_eq!(
+            got,
+            CapturedImage::Png(png),
+            "helper returns native PNG bytes verbatim"
+        );
     }
 
     #[test]
     fn empty_native_capture_uses_shell_fallback() {
         let got = capture_window_with_backends(
             42,
-            |_| Ok(Vec::new()),
-            |window_id| Ok(format!("fallback-{window_id}").into_bytes()),
+            |_| Ok(png(Vec::new())),
+            |window_id| Ok(png(format!("fallback-{window_id}").into_bytes())),
         )
         .expect("empty native capture should fall back");
 
-        assert_eq!(got, b"fallback-42");
+        assert_eq!(got, png(b"fallback-42".to_vec()));
     }
 
     #[test]
     fn capture_error_preserves_native_and_fallback_contexts() {
-        let error = capture_window_with_backends::<Vec<u8>, _, _>(
+        let error = capture_window_with_backends(
             42,
             |_| anyhow::bail!("native denied"),
             |_| anyhow::bail!("fallback denied"),
@@ -1520,8 +1508,9 @@ mod tests {
         let before = WindowCaptureIdentity::new(10, 0, 1.0, 2.0, 800.0, 600.0);
         let after = WindowCaptureIdentity::new(10, 0, 5.0, 2.0, 800.0, 600.0);
 
-        let outcome = capture_then_validate_identity(before, || Ok(vec![1, 2, 3]), || Ok(after))
-            .expect("capture and identity read succeed");
+        let outcome =
+            capture_then_validate_identity(before, || Ok(png(vec![1, 2, 3])), || Ok(after))
+                .expect("capture and identity read succeed");
 
         assert!(matches!(
             outcome,
@@ -1535,14 +1524,15 @@ mod tests {
         let second = WindowCaptureIdentity::new(10, 0, 5.0, 2.0, 800.0, 600.0);
         let third = WindowCaptureIdentity::new(10, 0, 5.0, 2.0, 900.0, 600.0);
 
-        let first_attempt = capture_then_validate_identity(first, || Ok(vec![1]), || Ok(second))
-            .expect("first attempt completes");
+        let first_attempt =
+            capture_then_validate_identity(first, || Ok(png(vec![1])), || Ok(second))
+                .expect("first attempt completes");
         assert!(matches!(
             first_attempt,
             CaptureIdentityValidation::Changed(identity) if identity == second
         ));
 
-        let retry = capture_then_validate_identity(second, || Ok(vec![2]), || Ok(third))
+        let retry = capture_then_validate_identity(second, || Ok(png(vec![2])), || Ok(third))
             .expect("retry completes");
         assert!(matches!(
             retry,

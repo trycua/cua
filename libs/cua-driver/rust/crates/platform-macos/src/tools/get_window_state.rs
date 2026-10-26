@@ -60,7 +60,7 @@ fn def() -> &'static ToolDef {
                 "screenshot_format": {
                     "type": "string",
                     "enum": ["png", "jpeg"],
-                    "description": "Encoding of the returned screenshot. Default \"png\". \"jpeg\" is smaller and faster to encode, drops alpha, and mints no capture_id (capture_id-bound tools need a PNG read); pixel coordinates are unchanged."
+                    "description": "Encoding of the returned screenshot. Default \"png\". \"jpeg\" is smaller, drops alpha, and mints no capture_id (capture_id-bound tools need a PNG read); pixel coordinates are unchanged."
                 },
                 "screenshot_quality": {
                     "type": "integer",
@@ -1496,6 +1496,48 @@ mod tests {
             assert_eq!(frame, (valid.clone(), 4, 4, 1.0));
             assert_eq!(calls.get(), expected_calls);
         }
+        let raw = |w: u32, h: u32| {
+            CapturedImage::Rgba(cua_driver_core::image_utils::RgbaFrame {
+                width: w,
+                height: h,
+                rgba: vec![0; (w * h * 4) as usize],
+            })
+        };
+        let calls = Cell::new(0);
+        let frame = verified_capture(7, Some(Ok(raw(4, 4))), &bounds, || {
+            calls.set(calls.get() + 1);
+            Ok(valid.clone())
+        })
+        .unwrap();
+        assert_eq!(frame, (raw(4, 4), 4, 4, 1.0));
+        assert_eq!(calls.get(), 0);
+        let calls = Cell::new(0);
+        let frame = verified_capture(7, Some(Ok(raw(3, 4))), &bounds, || {
+            calls.set(calls.get() + 1);
+            Ok(valid.clone())
+        })
+        .unwrap();
+        assert_eq!(frame, (valid.clone(), 4, 4, 1.0));
+        assert_eq!(calls.get(), 1);
+        let calls = Cell::new(0);
+        let error = verified_capture(7, Some(Ok(raw(3, 4))), &bounds, || {
+            calls.set(calls.get() + 1);
+            Ok(raw(3, 4))
+        })
+        .unwrap_err();
+        assert_eq!(
+            error,
+            PxFrameError::FrameMismatch {
+                window_id: 7,
+                bounds_width: 4.0,
+                bounds_height: 4.0,
+                capture_width: 3,
+                capture_height: 4,
+                scale_x: 0.75,
+                scale_y: 1.0,
+            }
+        );
+        assert_eq!(calls.get(), 1);
         for prefetched in [Some(Err(anyhow::anyhow!("old error"))), None] {
             let calls = Cell::new(0);
             let error = verified_capture(7, prefetched, &bounds, || {

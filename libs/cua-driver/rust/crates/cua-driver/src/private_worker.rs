@@ -115,6 +115,10 @@ async fn run_async(
         )?;
         return Ok(());
     }
+    // A host app owns this runtime even without `--embedded`, so screencapture
+    // takes the embedded default (off unless the host allows it; #5938).
+    #[cfg(target_os = "macos")]
+    platform_macos::capture::treat_as_host_owned();
     let driver = match CuaDriver::try_create_configured_for_host(
         initialization.configured_driver,
         DriverHostOptions {

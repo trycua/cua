@@ -878,6 +878,7 @@ pub(crate) fn allowed_environment_name(name: &str) -> bool {
                 | "CUA_LOG"
                 | "CUA_DRIVER_RS_HOME"
                 | "CUA_DRIVER_RS_TELEMETRY_ENABLED"
+                | "CUA_DRIVER_DISABLE_SCREENCAPTURE"
                 | "CUA_TELEMETRY_ENABLED"
                 | "CUA_DRIVER_RS_UPDATE_CHECK"
         )
@@ -1593,6 +1594,21 @@ mod tests {
         assert!(merged
             .iter()
             .any(|v| v.name.eq_ignore_ascii_case("CUA_DRIVER_KEY_GAP_MS") && v.value == "3"));
+    }
+
+    /// A host that turns `screencapture` off (#5938) must reach the embedded
+    /// child, or the driver would still start the tool.
+    #[test]
+    fn disable_screencapture_env_propagates() {
+        assert!(allowed_environment_name("CUA_DRIVER_DISABLE_SCREENCAPTURE"));
+        let overrides = vec![EmbeddedEnvironmentVariable {
+            name: "CUA_DRIVER_DISABLE_SCREENCAPTURE".to_owned(),
+            value: "1".to_owned(),
+        }];
+        let merged = merge_safe_environment(std::iter::empty(), &overrides);
+        assert!(merged
+            .iter()
+            .any(|v| v.name == "CUA_DRIVER_DISABLE_SCREENCAPTURE" && v.value == "1"));
     }
 
     /// `CUA_DRIVER_BATCH_PACING` must reach an embedded child, or a host that

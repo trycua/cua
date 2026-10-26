@@ -96,6 +96,8 @@ const DENY_FOR: Duration = Duration::from_secs(30);
 /// relay: the node's own backoff keeps well under this).
 const MAX_CONNECTS_PER_WINDOW: usize = 10;
 const CONNECT_WINDOW: Duration = Duration::from_secs(60);
+/// How long a refused connect is held open before the refusal is sent.
+const LIMITED_HOLD_S: u64 = 5;
 /// A node that keeps being refused is logged on its first refusal, then once
 /// per this interval with the count since (a client stuck in a reconnect loop
 /// would otherwise flood the logs).
@@ -1162,9 +1164,15 @@ pub(crate) async fn connect(
         Ok(o) => o,
         Err(r) => return r,
     };
+    // The client's own name and version (cua-mesh/x.y.z; older clients send
+    // none), for the logs of a loop.
+    let agent = headers
+        .get(header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .map_or_else(|| "none".to_owned(), |ua| ua.chars().take(80).collect());
     upgrade
         .max_message_size(proto::MAX_RELAY_PACKET + 64)
-        .on_upgrade(move |socket| async move { session(relay, owner, socket).await })
+        .on_upgrade(move |socket| async move { session(relay, owner, agent, socket).await })
 }
 
 #[allow(clippy::result_large_err)]
@@ -1250,7 +1258,7 @@ async fn authenticate(relay: &Relay, headers: &HeaderMap) -> Result<Owner, Respo
     }
 }
 
-async fn session(relay: Relay, owner: Owner, socket: WebSocket) {
+async fn session(relay: Relay, owner: Owner, agent: String, socket: WebSocket) {
     let (mut sink, mut stream) = socket.split();
     let server = SecretKey::generate();
     let nonce = hex::encode(rand::random::<[u8; 16]>());
@@ -1323,17 +1331,22 @@ async fn session(relay: Relay, owner: Owner, socket: WebSocket) {
     if let Err(wait) = mesh.admit(&node_key, Instant::now()) {
         match mesh.limited_log(&node_key, Instant::now()) {
             LimitedLog::First => {
-                tracing::warn!(node = %node_key.short(), ?kind, retry_after_s = wait, "mesh node connects too often");
+                tracing::warn!(node = %node_key.short(), ?kind, %agent, retry_after_s = wait, "mesh node connects too often");
             }
             LimitedLog::Summary(refused) => {
                 tracing::warn!(
-                    node = %node_key.short(), ?kind, refused,
+                    node = %node_key.short(), ?kind, %agent, refused,
                     interval_s = LIMITED_LOG_INTERVAL.as_secs(),
                     "mesh node still connects too often"
                 );
             }
             LimitedLog::Quiet => {}
         }
+        // Clients before the 0.16 backoff ignore the retry-after and come
+        // straight back: holding the socket open for a few seconds first
+        // slows them to a fraction of the pace, and costs the relay a
+        // parked task.
+        tokio::time::sleep(Duration::from_secs(wait.min(LIMITED_HOLD_S))).await;
         let _ = sink
             .send(close(
                 proto::CLOSE_RATE_LIMITED,
@@ -1463,7 +1476,7 @@ async fn session(relay: Relay, owner: Owner, socket: WebSocket) {
         // The same node reconnected: the newer connection wins. A live old
         // connection means a second process holds this node key; it is told
         // so, and a node that keeps hearing it stops reconnecting.
-        tracing::info!(node = %node_key.short(), "mesh node replaced its older connection");
+        tracing::info!(node = %node_key.short(), %agent, "mesh node replaced its older connection");
         let _ = old.tx.try_send(close(
             proto::CLOSE_REPLACED,
             "replaced: another connection with the same node key took over",

@@ -344,6 +344,7 @@ impl Mesh {
                 approved,
                 ephemeral: cfg.identity_path.is_none(),
                 reconnect_speedup: cfg.reconnect_speedup.max(1),
+                identity_path: cfg.identity_path.clone(),
             },
             control,
             engine.clone(),

@@ -96,6 +96,10 @@ pub(crate) struct ControlConfig {
     pub ephemeral: bool,
     /// Divides the reconnect wait (tests).
     pub reconnect_speedup: u32,
+    /// The node identity file, when the identity is persistent: replaced by
+    /// a new identity when other connections keep taking this one over (see
+    /// [`MAX_TAKEOVERS`]).
+    pub identity_path: Option<std::path::PathBuf>,
 }
 
 impl Control {
@@ -274,6 +278,21 @@ struct Ended {
     /// The coordinator ended the session (a close or a dropped
     /// connection after the welcome), as opposed to a failure on this side.
     by_relay: bool,
+    /// The `Retry-After` of an HTTP 429 that refused the connection.
+    http_retry_after: Option<Duration>,
+}
+
+/// The seconds of a `Retry-After` header (the delay form; a date is ignored),
+/// capped so a bad header cannot park a node for long.
+fn retry_after_header(headers: &http::HeaderMap) -> Option<Duration> {
+    let secs: u64 = headers
+        .get(http::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .trim()
+        .parse()
+        .ok()?;
+    Some(Duration::from_secs(secs.min(3600)))
 }
 
 impl Ended {
@@ -297,6 +316,9 @@ impl Ended {
     }
 
     fn retry_after(&self) -> Option<Duration> {
+        if let Some(wait) = self.http_retry_after {
+            return Some(wait);
+        }
         let (code, reason) = self.close.as_ref()?;
         (*code == proto::CLOSE_RATE_LIMITED)
             .then(|| proto::parse_retry_after(reason))
@@ -311,6 +333,17 @@ const MAX_TAKEOVERS: u32 = 3;
 
 const TAKEN_OVER: &str = "another copy of Spaces keeps taking over this computer's connection \
     (two copies share one identity). Quit the other copy, then reopen Spaces here.";
+
+/// Removes the identity file at `path` if it still holds `identity`.
+fn retire_identity(path: &std::path::Path, identity: &NodeIdentity) {
+    let ours = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|raw| NodeIdentity::from_json(&raw).ok())
+        .is_some_and(|on_disk| on_disk.public() == identity.public());
+    if ours && let Err(e) = std::fs::remove_file(path) {
+        tracing::warn!(error = %e, "could not retire the mesh identity");
+    }
+}
 
 pub(crate) async fn run(
     cfg: ControlConfig,
@@ -382,6 +415,12 @@ pub(crate) async fn run(
         );
         if gave_up {
             tracing::error!("{TAKEN_OVER} Not reconnecting.");
+            // A copy of this identity file on another computer (a cloned
+            // disk or image) would keep fighting for the key, so the next
+            // node on this computer starts with a new one.
+            if let Some(path) = &cfg.identity_path {
+                retire_identity(path, &identity);
+            }
             return;
         }
         tokio::select! {
@@ -413,6 +452,14 @@ async fn session(
         value.set_sensitive(true);
         request.headers_mut().insert(name, value);
     }
+    // The version in the relay's logs: who loops is then one grep. A
+    // credential provider may set its own.
+    if !request.headers().contains_key(http::header::USER_AGENT) {
+        request.headers_mut().insert(
+            http::header::USER_AGENT,
+            http::HeaderValue::from_static(concat!("cua-mesh/", env!("CARGO_PKG_VERSION"))),
+        );
+    }
     // An explicit TLS setup (ring, the web PKI roots): never the
     // process-wide default provider, which a host process may leave
     // ambiguous. No Nagle: relayed packets and control frames are small.
@@ -426,6 +473,10 @@ async fn session(
         Ok(Ok(v)) => v,
         Ok(Err(tokio_tungstenite::tungstenite::Error::Http(resp))) => {
             let status = resp.status();
+            if status.as_u16() == 429 {
+                // Too many connections: wait what the relay says, at least.
+                ended.http_retry_after = retry_after_header(resp.headers());
+            }
             let body = resp
                 .body()
                 .as_ref()
@@ -702,6 +753,44 @@ mod tests {
         let mut bare = Ended::default();
         bare.closed(None);
         assert!(bare.by_relay && bare.close.is_none());
+    }
+
+    #[test]
+    fn an_http_429_retry_after_is_honoured_and_capped() {
+        let mut h = http::HeaderMap::new();
+        assert_eq!(retry_after_header(&h), None);
+        h.insert(http::header::RETRY_AFTER, "42".parse().unwrap());
+        assert_eq!(retry_after_header(&h), Some(Duration::from_secs(42)));
+        h.insert(http::header::RETRY_AFTER, "999999".parse().unwrap());
+        assert_eq!(retry_after_header(&h), Some(Duration::from_secs(3600)));
+        h.insert(
+            http::header::RETRY_AFTER,
+            "Wed, 21 Oct 2026 07:28:00 GMT".parse().unwrap(),
+        );
+        assert_eq!(retry_after_header(&h), None);
+        let ended = Ended {
+            http_retry_after: Some(Duration::from_secs(9)),
+            ..Ended::default()
+        };
+        assert_eq!(ended.retry_after(), Some(Duration::from_secs(9)));
+    }
+
+    #[test]
+    fn a_node_that_gave_up_retires_its_own_identity_file_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("client.json");
+        let mine = NodeIdentity::load_or_create(&path).unwrap();
+        // Someone else's identity on disk is left alone.
+        let other = NodeIdentity::generate().unwrap();
+        retire_identity(&path, &other);
+        assert!(path.exists());
+        retire_identity(&path, &mine);
+        assert!(!path.exists());
+        // The next start gets a new key.
+        assert_ne!(
+            NodeIdentity::load_or_create(&path).unwrap().public(),
+            mine.public()
+        );
     }
 
     #[test]

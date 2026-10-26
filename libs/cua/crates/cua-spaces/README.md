@@ -143,8 +143,8 @@ All on by default: `spaces-files`, `spaces-stream`, `spaces-presence`,
 
 ```sh
 cargo test -p cua-spaces                     # unit + in-process env-server + fakes + MCP conformance
-tests/e2e/run-docker-e2e.sh [--runtime runsc] [--driver PATH]   # live linux, --memory=4g
-tests/e2e/run-relay-account-e2e.sh                               # host joins cua-relay, client lists and streams it
+libs/cua/tests/e2e/run-docker-e2e.sh [--runtime runsc] [--driver PATH]   # live linux, --memory=4g
+libs/cua/tests/e2e/run-relay-account-e2e.sh                               # host joins cua-relay, client lists and streams it
 cargo run -p cua-spaces --bin cua-spaces-control-fixtures -- --check
 ```
 

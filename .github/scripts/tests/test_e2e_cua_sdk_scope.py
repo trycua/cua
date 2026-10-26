@@ -170,9 +170,9 @@ def test_docs_files_that_are_not_pages_skip(path):
         "libs/cua-driver/rust/Skills/cua-driver/SKILL.md",
         "libs/cua-driver/rust/include/cua_driver_abi.h",
         "libs/cua-driver/wayland-helper/winrects@cua/extension.js",
-        "tests/e2e/cua-sdk/run.py",
-        "tests/e2e/cua-sdk/rust/Cargo.lock",
-        "tests/e2e/browse/server.py",
+        "libs/cua/tests/e2e/cua-sdk/run.py",
+        "libs/cua/tests/e2e/cua-sdk/rust/Cargo.lock",
+        "libs/cua/tests/e2e/browse/server.py",
         "docs/code-block-policy.json",
         "scripts/images/install-gvisor.sh",
         ".github/actions/linux-rust-prep/action.yml",
@@ -348,7 +348,6 @@ def test_every_path_matches_itself_and_nothing_wider():
     assert not scope.is_input("libs/cua-driver/rust/crates/platform-macos/src/lib.rs")
     assert not scope.is_input("libs/cua-driver/rust/crates/cua-driver-core-extras/a.rs")
     assert not scope.is_input("libs/cuax/a.rs")
-    assert not scope.is_input("tests/e2e/cua-sdk-other/a.py")
 
 
 def test_workflow_wiring():

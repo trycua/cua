@@ -4,7 +4,7 @@ name: "CI: cua-compat E2B SDK surface and coverage"
 #
 #   coverage   every public symbol of every claimed e2b SDK (Python and
 #              TypeScript) is mapped to a tested case or an E2B-shaped error
-#              (tests/compat/e2b/coverage.json); a symbol no row covers fails
+#              (libs/cua/tests/compat/e2b/coverage.json); a symbol no row covers fails
 #   surface    each claimed SDK version reproduces its committed surface
 #              snapshot (a snapshot that no longer matches means the snapshot
 #              tool or the release changed, not the gateway)
@@ -19,13 +19,13 @@ name: "CI: cua-compat E2B SDK surface and coverage"
 on:
   pull_request:
     paths:
-      - "tests/compat/e2b/**"
-      - "tests/compat/SDK_VERSIONS.json"
+      - "libs/cua/tests/compat/e2b/**"
+      - "libs/cua/tests/compat/SDK_VERSIONS.json"
       - ".github/workflows/ci-cua-compat-e2b.yml"
   push:
     branches: [main]
     paths:
-      - "tests/compat/e2b/**"
+      - "libs/cua/tests/compat/e2b/**"
   workflow_dispatch:
 
 permissions:
@@ -46,18 +46,18 @@ jobs:
         with:
           python-version: "3.13"
       - name: Every public symbol is mapped, every named case exists
-        run: python tests/compat/e2b/coverage.py --check
+        run: python libs/cua/tests/compat/e2b/coverage.py --check
       - name: The published matrix is current
         run: |
-          python tests/compat/e2b/coverage.py --markdown "$RUNNER_TEMP/e2b-coverage.md" >/dev/null
+          python libs/cua/tests/compat/e2b/coverage.py --markdown "$RUNNER_TEMP/e2b-coverage.md" >/dev/null
           diff -u libs/cua/crates/cua-compat/maps/e2b-coverage.md "$RUNNER_TEMP/e2b-coverage.md" \
-            || { echo "::error::maps/e2b-coverage.md is stale: python tests/compat/e2b/coverage.py --markdown libs/cua/crates/cua-compat/maps/e2b-coverage.md"; exit 1; }
+            || { echo "::error::maps/e2b-coverage.md is stale: python libs/cua/tests/compat/e2b/coverage.py --markdown libs/cua/crates/cua-compat/maps/e2b-coverage.md"; exit 1; }
       - name: Case files are well formed and the runners agree on them
         run: |
           python - <<'PY'
           import json, pathlib
           names = []
-          for f in sorted(pathlib.Path("tests/compat/e2b/cases").glob("*.json")):
+          for f in sorted(pathlib.Path("libs/cua/tests/compat/e2b/cases").glob("*.json")):
               d = json.loads(f.read_text())
               names += [c["name"] for c in d["cases"]]
               for c in d["cases"]:
@@ -65,9 +65,9 @@ jobs:
           assert len(names) == len(set(names)), "duplicate case names"
           print(len(names), "cases")
           PY
-          for py in tests/compat/e2b/fixtures/cases-py-*.json; do
-            ver="${py##*cases-py-}"; ts="tests/compat/e2b/fixtures/cases-ts-$ver"
-            python tests/compat/drift/crosslang.py "$py" "$ts" --allow tests/compat/drift/crosslang-allow-e2b.json
+          for py in libs/cua/tests/compat/e2b/fixtures/cases-py-*.json; do
+            ver="${py##*cases-py-}"; ts="libs/cua/tests/compat/e2b/fixtures/cases-ts-$ver"
+            python libs/cua/tests/compat/drift/crosslang.py "$py" "$ts" --allow libs/cua/tests/compat/drift/crosslang-allow-e2b.json
           done
 
   surface:
@@ -89,11 +89,11 @@ jobs:
       - name: Python e2b reproduces its snapshot
         run: |
           python -m venv "$RUNNER_TEMP/py" && "$RUNNER_TEMP/py/bin/pip" install -q "e2b==${{ matrix.sdk }}"
-          "$RUNNER_TEMP/py/bin/python" tests/compat/e2b/surface.py --diff "tests/compat/e2b/fixtures/surface-${{ matrix.sdk }}.json"
+          "$RUNNER_TEMP/py/bin/python" libs/cua/tests/compat/e2b/surface.py --diff "libs/cua/tests/compat/e2b/fixtures/surface-${{ matrix.sdk }}.json"
       - name: "npm e2b reproduces its snapshot (read as data, no install scripts)"
         run: |
           mkdir -p "$RUNNER_TEMP/ts" && cd "$RUNNER_TEMP/ts"
           npm init -y >/dev/null
           npm install --ignore-scripts --no-audit --no-fund --silent "e2b@${{ matrix.sdk }}" typescript@5
           cd "$GITHUB_WORKSPACE"
-          node tests/compat/e2b/surface_ts.mjs --diff "tests/compat/e2b/fixtures/surface-ts-${{ matrix.sdk }}.json" "$RUNNER_TEMP/ts/node_modules/e2b" "$RUNNER_TEMP/ts/node_modules/typescript"
+          node libs/cua/tests/compat/e2b/surface_ts.mjs --diff "libs/cua/tests/compat/e2b/fixtures/surface-ts-${{ matrix.sdk }}.json" "$RUNNER_TEMP/ts/node_modules/e2b" "$RUNNER_TEMP/ts/node_modules/typescript"

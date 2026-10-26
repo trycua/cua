@@ -10,13 +10,13 @@ on:
     paths:
       - "libs/cua/crates/cua-compat/**"
       - "libs/cua/crates/cua-spacesd-client/**"
-      - "tests/compat/daytona/**"
+      - "libs/cua/tests/compat/daytona/**"
       - ".github/workflows/ci-cua-compat-daytona.yml"
   push:
     branches: [main]
     paths:
       - "libs/cua/crates/cua-compat/**"
-      - "tests/compat/daytona/**"
+      - "libs/cua/tests/compat/daytona/**"
   schedule:
     - cron: "43 4 * * 1"
   workflow_dispatch:
@@ -59,11 +59,11 @@ jobs:
       - name: Coverage matrix matches the SDK surface and the case catalogue
         run: |
           python -m venv /tmp/cov
-          /tmp/cov/bin/pip install -q "daytona==$(cat tests/compat/daytona/PINNED)"
-          (cd tests/compat/daytona/ts && npm ci --no-audit --no-fund -q)
-          /tmp/cov/bin/python tests/compat/daytona/surface.py --check
-          /tmp/cov/bin/python tests/compat/daytona/catalogue.py
-          /tmp/cov/bin/python tests/compat/daytona/surface.py --markdown /tmp/matrix.md
+          /tmp/cov/bin/pip install -q "daytona==$(cat libs/cua/tests/compat/daytona/PINNED)"
+          (cd libs/cua/tests/compat/daytona/ts && npm ci --no-audit --no-fund -q)
+          /tmp/cov/bin/python libs/cua/tests/compat/daytona/surface.py --check
+          /tmp/cov/bin/python libs/cua/tests/compat/daytona/catalogue.py
+          /tmp/cov/bin/python libs/cua/tests/compat/daytona/surface.py --markdown /tmp/matrix.md
           diff -u libs/cua/crates/cua-compat/maps/daytona-coverage.md /tmp/matrix.md
       - name: Wire tests, unit tests and property tests (bounded)
         working-directory: libs/cua
@@ -76,7 +76,7 @@ jobs:
       - name: Python sync, Python async and TypeScript over mock Spaces, with hypothesis
         env:
           HYPOTHESIS_MAX_EXAMPLES: "25"
-        run: tests/compat/daytona/run_hermetic.sh
+        run: libs/cua/tests/compat/daytona/run_hermetic.sh
 
   drift:
     name: latest SDK (drift)
@@ -104,12 +104,12 @@ jobs:
         run: |
           python -m venv /tmp/latest
           /tmp/latest/bin/pip install -q -U daytona
-          mkdir -p /tmp/tslatest && cp tests/compat/daytona/ts/package.json /tmp/tslatest/
+          mkdir -p /tmp/tslatest && cp libs/cua/tests/compat/daytona/ts/package.json /tmp/tslatest/
           (cd /tmp/tslatest && npm install --no-audit --no-fund -q @daytonaio/sdk@latest)
           # the surface script reads node_modules next to it
-          rm -rf tests/compat/daytona/ts/node_modules && cp -r /tmp/tslatest/node_modules tests/compat/daytona/ts/node_modules
-          /tmp/latest/bin/python tests/compat/daytona/surface.py --check
+          rm -rf libs/cua/tests/compat/daytona/ts/node_modules && cp -r /tmp/tslatest/node_modules libs/cua/tests/compat/daytona/ts/node_modules
+          /tmp/latest/bin/python libs/cua/tests/compat/daytona/surface.py --check
       - name: Latest SDKs over mock Spaces
-        run: tests/compat/daytona/run_hermetic.sh --latest
+        run: libs/cua/tests/compat/daytona/run_hermetic.sh --latest
       - name: Overhead guard (1.5x the committed baseline)
-        run: PERF_CHECK=1 tests/compat/daytona/run_hermetic.sh
+        run: PERF_CHECK=1 libs/cua/tests/compat/daytona/run_hermetic.sh

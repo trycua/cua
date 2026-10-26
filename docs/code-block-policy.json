@@ -1,9 +1,9 @@
 {
-  "$comment": "Dispositions for fenced code blocks in docs/content/docs (enforced by tests/e2e/cua-sdk/docs/extract.py --lint). Every fence carries exactly one of test=\"<lane>[,<lane>]\" id=\"<id>\", skip=\"<reason>\" or output. A lane is listed here only once a runner executes it; a skip reason names its owner and, optionally, an expiry date after which the linter rejects it. Each lane names the e2e lane (tests/e2e/cua-sdk/scenarios.json) whose run must produce a result for every block tagged with it (docs-coverage).",
+  "$comment": "Dispositions for fenced code blocks in docs/content/docs (enforced by libs/cua/tests/e2e/cua-sdk/docs/extract.py --lint). Every fence carries exactly one of test=\"<lane>[,<lane>]\" id=\"<id>\", skip=\"<reason>\" or output. A lane is listed here only once a runner executes it; a skip reason names its owner and, optionally, an expiry date after which the linter rejects it. Each lane names the e2e lane (libs/cua/tests/e2e/cua-sdk/scenarios.json) whose run must produce a result for every block tagged with it (docs-coverage).",
   "lanes": {
     "docs": {
       "e2e": "docs",
-      "what": "Python and TypeScript blocks run hermetically by tests/e2e/cua-sdk/python/test_docs_blocks.py (sessions, hidden preludes such as fakefleet)"
+      "what": "Python and TypeScript blocks run hermetically by libs/cua/tests/e2e/cua-sdk/python/test_docs_blocks.py (sessions, hidden preludes such as fakefleet)"
     },
     "container": {
       "e2e": "container",
@@ -27,7 +27,7 @@
     },
     "config": {
       "e2e": "config",
-      "what": "JSON, JSONC, YAML and TOML blocks parse, and validate against schema=<name> when given (tests/e2e/cua-sdk/docs/config_lane.py)"
+      "what": "JSON, JSONC, YAML and TOML blocks parse, and validate against schema=<name> when given (libs/cua/tests/e2e/cua-sdk/docs/config_lane.py)"
     },
     "excerpt": {
       "e2e": null,
@@ -35,23 +35,23 @@
     },
     "lume": {
       "e2e": "lume",
-      "what": "bash blocks run on a disposable macOS CI machine (tests/e2e/cua-sdk/docs/shell_lane.py --lane lume; nightly)"
+      "what": "bash blocks run on a disposable macOS CI machine (libs/cua/tests/e2e/cua-sdk/docs/shell_lane.py --lane lume; nightly)"
     },
     "windows": {
       "e2e": "windows",
-      "what": "PowerShell blocks run on a disposable Windows CI machine (tests/e2e/cua-sdk/docs/shell_lane.py --lane windows; nightly)"
+      "what": "PowerShell blocks run on a disposable Windows CI machine (libs/cua/tests/e2e/cua-sdk/docs/shell_lane.py --lane windows; nightly)"
     },
     "swift": {
       "e2e": "swift",
-      "what": "Swift blocks compile against libs/cua/swift (tests/e2e/cua-sdk/docs/compile_lane.py --lane swift; compile-only)"
+      "what": "Swift blocks compile against libs/cua/swift (libs/cua/tests/e2e/cua-sdk/docs/compile_lane.py --lane swift; compile-only)"
     },
     "kotlin": {
       "e2e": "kotlin",
-      "what": "Kotlin blocks compile against libs/cua/kotlin (tests/e2e/cua-sdk/docs/compile_lane.py --lane kotlin; compile-only)"
+      "what": "Kotlin blocks compile against libs/cua/kotlin (libs/cua/tests/e2e/cua-sdk/docs/compile_lane.py --lane kotlin; compile-only)"
     },
     "rust": {
       "e2e": "rust",
-      "what": "Rust blocks type-check against libs/cua/crates/cua-sdk (tests/e2e/cua-sdk/docs/compile_lane.py --lane rust; cargo check, nothing runs)"
+      "what": "Rust blocks type-check against libs/cua/crates/cua-sdk (libs/cua/tests/e2e/cua-sdk/docs/compile_lane.py --lane rust; cargo check, nothing runs)"
     }
   },
   "skip": {
@@ -128,7 +128,7 @@
     }
   },
   "schemas": {
-    "mcp-client-config": "tests/e2e/cua-sdk/docs/schemas/mcp-client-config.schema.json",
+    "mcp-client-config": "libs/cua/tests/e2e/cua-sdk/docs/schemas/mcp-client-config.schema.json",
     "cua-image": "libs/cua/crates/cua-image/schema/image-v1alpha1.schema.json"
   }
 }

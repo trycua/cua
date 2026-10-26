@@ -35,7 +35,7 @@
       "id": "e2e/{arch}", "phase": "gate", "per_arch": true, "requires": ["accel-{arch}"],
       "description": "the cua CLI and both cua-driver MCPs drive Hyprland; the 12 fps floor fits software-rendered Hyprland on a GPU-less KVM runner (13-16 fps under load)",
       "env": { "CUA_E2E_OMARCHY": "1" },
-      "run": ["python3", "{root}/tests/e2e/omarchy/omarchy_e2e.py", "--disk", "{out}/{name}/{arch}/disk.img",
+      "run": ["python3", "{root}/libs/cua/tests/e2e/omarchy/omarchy_e2e.py", "--disk", "{out}/{name}/{arch}/disk.img",
               "--cua", "{cua}", "--evidence", "{evidence}/e2e", "--min-fps", "12"]
     },
     {

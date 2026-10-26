@@ -16,7 +16,6 @@ import pytest
 from cua_sandbox import Sandbox, SpacesdNotAvailable
 from cua_sandbox.transport.base import Transport
 from cua_sandbox.transport.env import EnvTransport, env_url, key_input
-
 from tests._fake_env import FakeEnv
 
 

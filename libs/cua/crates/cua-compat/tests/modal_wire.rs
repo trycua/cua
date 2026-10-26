@@ -3,7 +3,7 @@
 //! authentication, the error codes the Modal client maps to its exceptions,
 //! the reasons given for RPCs that are not served, the command router's JWT
 //! rules, and the V2 sandbox flow. The unmodified Python, JavaScript and Go
-//! SDKs are driven against the same gateway by tests/compat/modal.
+//! SDKs are driven against the same gateway by libs/cua/tests/compat/modal.
 
 use cua_compat::backend::mock::MockBackend;
 use cua_compat::modal::pb::api as pb;

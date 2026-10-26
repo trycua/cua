@@ -48,7 +48,7 @@ jobs:
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6
       - name: Build cua (Cua Spaces build), the reference images and disks
         run: |
-          tests/e2e/cua-sdk/ci-setup.sh --images --disks
+          libs/cua/tests/e2e/cua-sdk/ci-setup.sh --images --disks
           (cd libs/cua && cargo build --locked -p cua-spaces-cli)
           echo "CUA=$PWD/libs/cua/target/debug/cua" >>"$GITHUB_ENV"
           arch=$(uname -m); case "$arch" in aarch64|arm64) a=arm64;; *) a=amd64;; esac
@@ -58,9 +58,9 @@ jobs:
           "$CUA" daemon start --foreground >"$RUNNER_TEMP/daemon.log" 2>&1 &
           for i in $(seq 100); do "$CUA" daemon status >/dev/null 2>&1 && break; sleep 0.3; done
       - name: E2B SDK conformance (pinned and latest) on QEMU Spaces
-        run: OUT="$RUNNER_TEMP/compat-e2b" tests/compat/run_space.sh e2b --on local --kind vm --image "vm:$LINUX_DISK"
+        run: OUT="$RUNNER_TEMP/compat-e2b" libs/cua/tests/compat/run_space.sh e2b --on local --kind vm --image "vm:$LINUX_DISK"
       - name: Daytona SDK conformance (pinned and latest) on QEMU Spaces
-        run: OUT="$RUNNER_TEMP/compat-daytona" tests/compat/run_space.sh daytona --on local --kind vm --image "vm:$LINUX_DISK"
+        run: OUT="$RUNNER_TEMP/compat-daytona" libs/cua/tests/compat/run_space.sh daytona --on local --kind vm --image "vm:$LINUX_DISK"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:

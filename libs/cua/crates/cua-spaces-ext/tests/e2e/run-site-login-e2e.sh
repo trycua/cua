@@ -6,7 +6,7 @@
 #
 # Starts the Spaces image under docker (--memory=4g), maps
 # login.example.test to the container's own loopback, serves a tiny login
-# site inside the Space (tests/e2e/login-site.py, credentials known only to
+# site inside the Space (libs/cua/tests/e2e/login-site.py, credentials known only to
 # the site and the synthetic Chrome profile the test writes), publishes the
 # spacesd on a loopback port and runs `cargo test -p cua-spaces-ext --test
 # site_login_e2e`:

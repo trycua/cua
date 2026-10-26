@@ -11,7 +11,7 @@ name: "CI: microVMs"
 #   vz-e2e     nightly, on a self-hosted Apple silicon Mac
 #              (vars.CUA_E2E_LUME_RUNNER; hosted runners cannot nest VMs):
 #              a real microVM Space checkpointed, restored and forked 8
-#              times (tests/e2e/local-runtimes/tests/microvm_vz.rs), then the
+#              times (libs/cua/tests/e2e/local-runtimes/tests/microvm_vz.rs), then the
 #              perf guard (libs/cua/bench/microvm-fork) through the CLI
 #              against its committed baseline.
 
@@ -23,7 +23,7 @@ on:
       - "libs/cua/crates/cua-sandbox-core/src/placement.rs"
       - "libs/cua/vz/**"
       - "libs/cua/bench/microvm-fork/**"
-      - "tests/e2e/local-runtimes/tests/microvm_vz.rs"
+      - "libs/cua/tests/e2e/local-runtimes/tests/microvm_vz.rs"
       - ".github/workflows/ci-cua-microvm.yml"
   push:
     branches: [main]
@@ -164,7 +164,7 @@ jobs:
             echo "CUA_BIN=$bin/cua"
           } >> "$GITHUB_ENV"
       - name: Checkpoint, restore and 8 independent forks (real VMs)
-        working-directory: tests/e2e/local-runtimes
+        working-directory: libs/cua/tests/e2e/local-runtimes
         env:
           CUA_E2E_VZ: "1"
           CUA_E2E_VZ_REPORT: ${{ runner.temp }}/vz-e2e.json

@@ -3,7 +3,7 @@
 //! cursors, the lifecycle rules, snapshots, volumes, secrets, warm pools,
 //! network settings, the build-context object store and Dockerfile builds.
 //! The unmodified Python and TypeScript SDKs are driven against the same
-//! gateway by tests/compat/daytona.
+//! gateway by libs/cua/tests/compat/daytona.
 
 use cua_compat::backend::mock::MockBackend;
 use cua_compat::{Gateway, GatewayOptions, Provider};

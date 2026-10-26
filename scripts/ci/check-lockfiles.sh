@@ -30,7 +30,7 @@ cd "$ROOT" || exit 2
 ALLOWLIST="scripts/ci/lockfile-drift-allowlist.txt"
 REQUIRED=(
   examples/streaming/rust/Cargo.lock
-  tests/e2e/cua-sdk/rust/Cargo.lock
+  libs/cua/tests/e2e/cua-sdk/rust/Cargo.lock
 )
 
 list_only=0

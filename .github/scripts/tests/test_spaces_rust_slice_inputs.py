@@ -127,7 +127,7 @@ def test_the_files_outside_the_hashed_tree_are_derived_from_the_code(extra):
         "scripts/images/check-tag-safety.sh",
         "scripts/images/manifests/macos-26.json",
         "libs/images/runtime-gvisor/versions.env",
-        "tests/compat/e2b/fixtures/signature-vectors.json",
+        "libs/cua/tests/compat/e2b/fixtures/signature-vectors.json",
     ):
         assert test_only not in extra
     for path in extra:

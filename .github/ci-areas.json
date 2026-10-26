@@ -144,8 +144,7 @@
   },
   "cua": {
    "paths": [
-    "libs/cua/**",
-    "tests/e2e/**"
+    "libs/cua/**"
    ],
    "workflows": [
     "cd-image-linux.yml",
@@ -156,6 +155,7 @@
     "ci-check-docs.yml",
     "ci-cua-byoc.yml",
     "ci-cua-compat-daytona.yml",
+    "ci-cua-compat-e2b.yml",
     "ci-cua-compat-modal.yml",
     "ci-cua-compat.yml",
     "ci-cua-contrib.yml",
@@ -177,11 +177,13 @@
     "ci-spdx-headers.yml",
     "ci-test-python.yml",
     "ci-vm-density.yml",
+    "compat-drift.yml",
     "docs-compile-lanes.yml",
     "docs-nightly.yml",
     "docs-page-tests.yml",
     "e2b-bindings.yml",
     "e2b-core-nightly.yml",
+    "e2e-compat-examples.yml",
     "e2e-cua-sdk.yml",
     "license-check.yml",
     "nightly-build.yml",
@@ -213,6 +215,7 @@
     "ci-images-chromium-pin.yml",
     "ci-images-spacesd-lag.yml",
     "ci-lockfiles.yml",
+    "ci-public-containerdisk-refs.yml",
     "ci-spdx-headers.yml",
     "e2b-core-nightly.yml",
     "e2e-cua-sdk.yml",
@@ -358,8 +361,7 @@
   },
   "docs": {
    "paths": [
-    "docs/**",
-    "skills/**"
+    "docs/**"
    ],
    "workflows": [
     "ci-check-docs-image-refs.yml",
@@ -383,19 +385,26 @@
   },
   "compat": {
    "paths": [
-    "tests/compat/**"
+    "libs/cua/tests/compat/**"
    ],
    "workflows": [
     "chaos-cua-compat.yml",
+    "ci-check-docs-image-refs.yml",
     "ci-check-docs-links.yml",
+    "ci-check-docs.yml",
     "ci-cua-compat-daytona.yml",
     "ci-cua-compat-e2b.yml",
     "ci-cua-compat-modal.yml",
     "ci-cua-compat.yml",
+    "ci-cua-sdk.yml",
+    "ci-cua-spaces.yml",
     "ci-lockfiles.yml",
+    "ci-openkoalabot-example-tauri.yml",
     "ci-spdx-headers.yml",
+    "ci-test-python.yml",
     "compat-drift.yml",
     "e2e-compat-examples.yml",
+    "e2e-cua-sdk.yml",
     "license-check.yml"
    ]
   },

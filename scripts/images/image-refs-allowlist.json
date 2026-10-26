@@ -83,7 +83,7 @@
         "libs/typescript/playground/src/constants/sandboxPresets.ts",
         "libs/xfce/README.md",
         "scripts/images/docs-image-refs-baseline.json",
-        "tests/test_image_builder.py"
+        "libs/python/cua-sandbox/tests/integration/test_image_builder.py"
       ]
     },
     "docker.io/trycua/cua-xfce:v2": {
@@ -252,8 +252,8 @@
     "ghcr.io/trycua/cua-xfce:latest": {
       "reason": "legacy XFCE image of the local-registry VM integration tests",
       "paths": [
-        "tests/integration/sandbox_cli/test_linux_local_registry_vm.py",
-        "tests/integration/sandbox_sdk/test_linux_local_registry_vm.py"
+        "libs/python/cua-sandbox/tests/integration/sandbox_cli/test_linux_local_registry_vm.py",
+        "libs/python/cua-sandbox/tests/integration/sandbox_sdk/test_linux_local_registry_vm.py"
       ]
     },
     "ghcr.io/trycua/example:1.0": {
@@ -380,8 +380,8 @@
       "paths": [
         "libs/cua/crates/cua-vmm/src/lume/mod.rs",
         "libs/python/cua-sandbox/tests/test_runtime.py",
-        "tests/integration/sandbox_cli/test_macos_local_registry_vm.py",
-        "tests/integration/sandbox_sdk/test_macos_local_registry_vm.py"
+        "libs/python/cua-sandbox/tests/integration/sandbox_cli/test_macos_local_registry_vm.py",
+        "libs/python/cua-sandbox/tests/integration/sandbox_sdk/test_macos_local_registry_vm.py"
       ]
     },
     "ghcr.io/trycua/minecraft-workspace:1.20.1": {

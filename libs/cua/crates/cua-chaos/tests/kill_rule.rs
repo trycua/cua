@@ -26,7 +26,7 @@ fn no_pattern_kills_in_chaos_scripts_or_tooling() {
     let me = Path::new(env!("CARGO_MANIFEST_DIR"));
     let root = me.join("../../../..");
     let mut all = Vec::new();
-    files(&root.join("tests/compat/chaos"), &mut all);
+    files(&root.join("libs/cua/tests/compat/chaos"), &mut all);
     files(&me.join("src"), &mut all);
     files(&root.join("libs/cua/crates/cua-compat/tests"), &mut all);
     all.push(root.join(".github/workflows/chaos-cua-compat.yml"));

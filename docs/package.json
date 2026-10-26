@@ -34,7 +34,7 @@
     "docs:check-links": "tsx scripts/check-links.ts",
     "docs:check-links:external": "tsx scripts/check-links.ts --external",
     "docs:check-hygiene": "tsx scripts/check-hygiene.ts",
-    "docs:check-blocks": "python3 ../tests/e2e/cua-sdk/docs/extract.py --lint && python3 ../tests/e2e/cua-sdk/docs/cli_shape.py && uv run -q --no-project --python 3.12 --with pyyaml==6.0.2 --with jsonschema==4.23.0 python3 ../tests/e2e/cua-sdk/docs/config_lane.py",
+    "docs:check-blocks": "python3 ../libs/cua/tests/e2e/cua-sdk/docs/extract.py --lint && python3 ../libs/cua/tests/e2e/cua-sdk/docs/cli_shape.py && uv run -q --no-project --python 3.12 --with pyyaml==6.0.2 --with jsonschema==4.23.0 python3 ../libs/cua/tests/e2e/cua-sdk/docs/config_lane.py",
     "docs:check-em-dash": "bash ../scripts/check-no-em-dash.sh",
     "docs:check-image-refs": "python3 ../scripts/images/check-image-refs.py && python3 ../scripts/images/gen-image-constants.py --check",
     "docs:check-structure": "tsx --test scripts/product-structure.test.ts scripts/page-budget.test.ts",

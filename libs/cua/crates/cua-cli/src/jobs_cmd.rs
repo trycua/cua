@@ -870,7 +870,7 @@ pub fn member_command(command: &[String], files: &[String]) -> Vec<String> {
 
 /// The SDK a `--compat` run adds when the project does not list it: the
 /// Python package and the exact version Cua tests (the newest in
-/// `tests/compat/SDK_VERSIONS.json`, which a test here keeps equal), and the
+/// `libs/cua/tests/compat/SDK_VERSIONS.json`, which a test here keeps equal), and the
 /// npm package where there is one.
 pub struct CompatSdk {
     pub py: &'static str,
@@ -1976,7 +1976,7 @@ mod tests {
     #[test]
     fn the_added_sdk_versions_are_the_newest_claimed() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../../tests/compat/SDK_VERSIONS.json");
+            .join("../../tests/compat/SDK_VERSIONS.json");
         let Ok(text) = std::fs::read_to_string(&path) else {
             return; // a packaged crate has no repo tests dir
         };

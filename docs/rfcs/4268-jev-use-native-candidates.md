@@ -733,7 +733,7 @@ TypeScript parity in the same change.
    `visual-only-canvas` harness as the view without an accessibility tree
    (OmniParser fallback).
 4. **Documentation and skill.** Update the jev-use README, decision-models
-   guide, and `skills/jev-use`.
+   guide, and `libs/cua-driver/skills/jev-use`.
 
 ## Test and acceptance plan
 
@@ -864,7 +864,7 @@ Implementation:
   [#4301](https://github.com/trycua/cua/pull/4301) retargets the canvas task
   to Cancel.
 - Phase 4, [#4299](https://github.com/trycua/cua/pull/4299): the native
-  apps guide and the `skills/jev-use` update.
+  apps guide and the `libs/cua-driver/skills/jev-use` update.
 - S1 reliability, [#4324](https://github.com/trycua/cua/pull/4324) for
   [#4313](https://github.com/trycua/cua/issues/4313): each built-in task
   declares its ordered steps. The request's `progress` reports how often this

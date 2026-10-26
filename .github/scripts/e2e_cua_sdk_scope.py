@@ -4,7 +4,7 @@
 The workflow's `paths:` filter (e2e-cua-sdk.yml) decides whether the workflow
 starts at all. Every entry in it is an input of the suite except one:
 `docs/content/docs/**`. The suite reads the docs only through the fenced code
-blocks of the pages (tests/e2e/cua-sdk/docs/extract.py: the `docs` lane runs
+blocks of the pages (libs/cua/tests/e2e/cua-sdk/docs/extract.py: the `docs` lane runs
 the blocks tagged test="..." and the coverage check joins them back to the
 tags), so a page edit can change a result only if it changes a fence. This
 script keeps the docs entry in the filter, so a PR that does change a tagged
@@ -40,7 +40,7 @@ from pathlib import Path
 from typing import Callable, Optional, Sequence
 
 REPO = Path(__file__).resolve().parents[2]
-EXTRACT = REPO / "tests" / "e2e" / "cua-sdk" / "docs" / "extract.py"
+EXTRACT = REPO / "libs" / "cua" / "tests" / "e2e" / "cua-sdk" / "docs" / "extract.py"
 
 DOCS_ROOT = "docs/content/docs/"
 DOCS_GLOB = DOCS_ROOT + "**"
@@ -78,9 +78,7 @@ PATHS = (
     "libs/cua-driver/rust/Skills/**",  # include_str! in cua-driver-core
     "libs/cua-driver/rust/include/**",  # include_str! in cua-driver-sdk
     "libs/cua-driver/wayland-helper/**",  # include_str! in platform-linux
-    "tests/e2e/cua-sdk/**",
-    # The browse-the-web scenario's MCP client session.
-    "tests/e2e/browse/**",
+    # libs/cua/** above already covers libs/cua/tests/e2e/{cua-sdk,browse}.
     # The docs lane's tag policy.
     "docs/code-block-policy.json",
     # What the job runs around the suite: gVisor, the toolchain, the cache, the scope script.

@@ -109,8 +109,8 @@ Other defaults that keep builds small:
 `node libs/cua/scripts/generate-uniffi-bindings.mjs` builds `cua-sdk` without
 the cloud SDKs, and caches the generated bindings by a fingerprint of the
 interface sources: when the `cua-sdk` crate has not changed, a rerun from any
-worktree writes them without compiling. `--from-ci` reads CI's build of the
-current commit instead, and `--library=PATH` any built `libcua_sdk`.
+worktree writes them without compiling. `--library=PATH` reads a
+`libcua_sdk` you already built instead.
 
 ## Root Formatting Hooks
 

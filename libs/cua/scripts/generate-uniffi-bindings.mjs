@@ -31,10 +31,9 @@
  *
  * Avoiding the build altogether:
  *
- *  - `--library=PATH` (or `CUA_SDK_LIBRARY=PATH`) reads an already built
- *    library: any platform's, e.g. CI's `sdk-linux` artifact, since the
- *    interface metadata is the same in every object format;
- *  - `--from-ci` downloads that artifact for the current commit (`gh`);
+ *  - `--library=PATH` (or `CUA_SDK_LIBRARY=PATH`) reads an already built,
+ *    unstripped library (UniFFI reads the interface from its symbol table,
+ *    so CI's stripped release artifacts do not work);
  *  - otherwise the generated files are cached by a fingerprint of everything
  *    the interface is made from (the cua-sdk crate, VERSION, the pinned UniFFI
  *    and UBRN, these scripts). A later run with the same fingerprint, from
@@ -44,7 +43,7 @@
  *
  * Usage: node generate-uniffi-bindings.mjs [--check] [--skip-build]
  *        [--release] [--only=python,swift,kotlin,typescript]
- *        [--library=PATH | --from-ci] [--no-cache]
+ *        [--library=PATH] [--no-cache]
  */
 
 import { spawnSync } from "node:child_process"
@@ -83,7 +82,6 @@ const languages = new Set(
     .filter(Boolean),
 )
 const libraryArgument = process.argv.find((argument) => argument.startsWith("--library="))
-const fromCi = process.argv.includes("--from-ci")
 const useCache = !process.argv.includes("--no-cache") && !process.env.CI
 const INVENTORY = ".cua-uniffi-generated-files"
 const CRATE = "cua_sdk"
@@ -274,30 +272,10 @@ function buildFeatures() {
   return [...match[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]).filter((f) => f !== "byoc")
 }
 
-// CI's `sdk-linux` artifact (a release libcua_sdk.so) for the current commit.
-function downloadCiLibrary(into) {
-  const sha = spawnSync("git", ["rev-parse", "HEAD"], { cwd: cuaRoot, encoding: "utf8" }).stdout.trim()
-  const listed = spawnSync(
-    "gh",
-    ["run", "list", "-R", "trycua/cua", "-w", "ci-cua-sdk.yml", "-c", sha, "--json", "databaseId", "-q", ".[].databaseId"],
-    { cwd: cuaRoot, encoding: "utf8" },
-  )
-  for (const id of (listed.stdout ?? "").split("\n").filter(Boolean)) {
-    const result = spawnSync("gh", ["run", "download", id, "-R", "trycua/cua", "-n", "sdk-linux", "-D", into], {
-      cwd: cuaRoot,
-      stdio: "ignore",
-    })
-    if (result.status !== 0) continue
-    run("tar", ["-xf", join(into, "sdk-linux.tar"), "-C", into], cuaRoot)
-    return join(into, "release", "libcua_sdk.so")
-  }
-  throw new Error(`no CI sdk-linux artifact for ${sha} (artifacts are kept one day; build locally instead)`)
-}
-
 const external = Boolean(libraryArgument || process.env.CUA_SDK_LIBRARY)
 // A library someone else built (or an old one) may not match the sources:
-// only a library built here or CI's artifact for this commit fills the cache.
-const key = useCache && (fromCi || (!skipBuild && !external)) ? fingerprint() : null
+// only a library built here fills the cache.
+const key = useCache && !skipBuild && !external ? fingerprint() : null
 const cached = key ? join(cacheDirectory(key), "files.json") : null
 const temporaryRoot = mkdtempSync(join(tmpdir(), "cua-uniffi-"))
 try {
@@ -312,8 +290,7 @@ try {
       : process.env.CUA_SDK_LIBRARY
         ? resolve(process.env.CUA_SDK_LIBRARY)
         : null
-    if (!library && fromCi) library = downloadCiLibrary(temporaryRoot)
-    if (!library && !skipBuild) {
+      if (!library && !skipBuild) {
       run(
         "cargo",
         [

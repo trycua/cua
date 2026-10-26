@@ -218,9 +218,10 @@ jobs:
       - name: Tests
         env:
           FLAKY_RESULTS_OUT: ${{ runner.temp }}/flaky-vitest/spaces.json
-        run: >-
-          "$GITHUB_WORKSPACE/.github/scripts/flaky/flaky.sh" run --suite spaces-vitest --format vitest --results "$FLAKY_RESULTS_OUT" --
-          pnpm test -- --retry=1 --reporter=default --reporter="$GITHUB_WORKSPACE/.github/flaky/vitest-reporter.mjs"
+        run: |
+          cp "$GITHUB_WORKSPACE/.github/flaky/vitest-reporter.mjs" ./.flaky-vitest-reporter.mjs
+          "$GITHUB_WORKSPACE/.github/scripts/flaky/flaky.sh" run --suite spaces-vitest --format vitest --results "$FLAKY_RESULTS_OUT" -- \
+            pnpm test -- --retry=1 --reporter=default --reporter=./.flaky-vitest-reporter.mjs
       - uses: ./.github/actions/flaky-upload
         if: always()
         with:

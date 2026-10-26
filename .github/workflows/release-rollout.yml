@@ -64,7 +64,7 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       TAG: cua-spaces-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Check the rollout script
         run: python3 .github/scripts/tests/test_release_rollout.py
       - name: Record who and why

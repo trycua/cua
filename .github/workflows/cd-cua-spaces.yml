@@ -254,7 +254,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Check the baked cua-spacesd release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -286,7 +286,7 @@ jobs:
           - { arch: arm64, triple: aarch64-apple-darwin }
           - { arch: x86_64, triple: x86_64-apple-darwin }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       # One definition with the main-branch producer
       # (ci-cua-spaces-rust-slice.yml): same key, restore or build.
       - uses: ./.github/actions/spaces-rust-slice
@@ -307,7 +307,7 @@ jobs:
           init=target/aarch64-unknown-linux-musl/release/cua-microvm-init
           file "$init" | grep -q "statically linked" || { echo "::error::cua-microvm-init is not static"; exit 1; }
           cp "$init" "target/${{ matrix.triple }}/release/"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: macos-rust-${{ matrix.arch }}
           path: |
@@ -340,7 +340,7 @@ jobs:
       signed: ${{ steps.signing.outputs.apple }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Resolve version
         id: version
@@ -432,7 +432,7 @@ jobs:
 
       # The Rust slices come from macos-rust (build-release.sh --skip-cargo).
       - name: Download the Rust slices
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: macos-rust-*
           path: ${{ runner.temp }}/macos-rust
@@ -480,7 +480,7 @@ jobs:
       # Contents/Resources/WebUI; without it the window is a placeholder. The
       # electron-web job builds it once for every job.
       - name: Download the web UI
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: spaces-web-dist
           path: apps/cua-spaces-web/dist
@@ -515,7 +515,7 @@ jobs:
       # The symbols build-app.sh strips out of the shipped binaries, for
       # symbolicating crash reports. Not a release asset.
       - name: Keep the macOS dSYMs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: cua-spaces-darwin-universal-dSYMs
           path: ${{ runner.temp }}/spaces-app/cua-spaces-*-dSYMs.zip
@@ -659,7 +659,7 @@ jobs:
 
       - name: Keep the Sparkle appcast (published by the last job)
         if: steps.appcast.outputs.made == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: sparkle-appcast
           path: appcast/cua-spaces-appcast.xml
@@ -668,13 +668,13 @@ jobs:
 
       # For verify-release, and a manual run from a branch publishes nothing.
       - name: Keep the macOS build
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: cua-spaces-darwin-universal
           path: installer-assets/
           retention-days: 7
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: signing-darwin-universal
           path: signing-darwin-universal.txt
@@ -713,9 +713,9 @@ jobs:
       CARGO_BUILD_JOBS: 4
       TAGGED: ${{ startsWith(github.ref, 'refs/tags/') }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 20
           cache: pnpm
@@ -915,7 +915,7 @@ jobs:
               ;;
           esac
           gh release upload "cua-spaces-v${VERSION}" installer-assets/* --clobber --repo "${GITHUB_REPOSITORY}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: signing-${{ matrix.name }}
           path: apps/cua-spaces/signing-${{ matrix.name }}.txt
@@ -948,7 +948,7 @@ jobs:
       platforms: ${{ steps.plan.outputs.platforms }}
       native_matrix: ${{ steps.plan.outputs.native_matrix }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # The path diff against the previous release tag.
           fetch-depth: 0
@@ -1087,15 +1087,15 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@59a558e8c538bf4a23bbffa19e5a278b703f2920 # 1.97.1
         with:
           targets: wasm32-unknown-unknown
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
       - name: Restore wasm-bindgen
         id: wasm-bindgen
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cargo/bin/wasm-bindgen
@@ -1108,7 +1108,7 @@ jobs:
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           package_json_file: apps/cua-spaces-desktop/package.json
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
       - name: Build the web UI
@@ -1116,7 +1116,7 @@ jobs:
         run: |
           pnpm install --ignore-workspace --frozen-lockfile
           pnpm build
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: spaces-web-dist
           path: apps/cua-spaces-web/dist/
@@ -1145,12 +1145,12 @@ jobs:
         working-directory: apps/cua-spaces-desktop
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: ./.github/actions/spaces-native
         with:
           label: ${{ matrix.label }}
           target: ${{ matrix.target }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: electron-native-${{ matrix.label }}
           path: apps/cua-spaces-desktop/native/${{ matrix.label }}/
@@ -1176,21 +1176,21 @@ jobs:
         working-directory: apps/cua-spaces-desktop
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: ./.github/actions/spaces-native
         with:
           label: ${{ matrix.label }}
           target: ${{ matrix.target }}
           # The bindings check (electron-mac) reads the arm64 library here.
           extra-paths: ${{ matrix.label == 'darwin-arm64' && 'libs/cua/target/aarch64-apple-darwin/release/libcua_spaces_ffi.dylib' || '' }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: electron-native-${{ matrix.label }}
           path: apps/cua-spaces-desktop/native/${{ matrix.label }}/
           if-no-files-found: error
           retention-days: 3
       - if: matrix.label == 'darwin-arm64'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: electron-native-darwin-arm64-lib
           path: libs/cua/target/aarch64-apple-darwin/release/libcua_spaces_ffi.dylib
@@ -1213,7 +1213,7 @@ jobs:
       CARGO_BUILD_JOBS: 4
       VERSION: ${{ needs.electron-plan.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Signing configuration
         id: signing
         env:
@@ -1247,12 +1247,12 @@ jobs:
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           package_json_file: apps/cua-spaces-desktop/package.json
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
       # The web UI is built once, by electron-web.
       - name: Download the web UI
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: spaces-web-dist
           path: apps/cua-spaces-web/dist
@@ -1268,16 +1268,16 @@ jobs:
         run: |
           pnpm install --frozen-lockfile
           pnpm notch
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: electron-native-darwin-arm64
           path: apps/cua-spaces-desktop/native/darwin-arm64
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: electron-native-darwin-x64
           path: apps/cua-spaces-desktop/native/darwin-x64
       # The bindings check reads the arm64 library where cargo left it.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: electron-native-darwin-arm64-lib
           path: libs/cua/target/aarch64-apple-darwin/release
@@ -1412,7 +1412,7 @@ jobs:
             echo "electron-darwin: UNSIGNED (Electron app, ad-hoc signed, not notarized)" > electron-assets/signing-electron-darwin.txt
           fi
           shasum -a 256 electron-assets/*
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: electron-darwin
           path: apps/cua-spaces-desktop/electron-assets/
@@ -1451,7 +1451,7 @@ jobs:
           echo "made=true" >> "$GITHUB_OUTPUT"
       - name: Keep the Sparkle appcast (published by the last job)
         if: steps.appcast.outputs.made == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: sparkle-appcast
           path: appcast/cua-spaces-appcast.xml
@@ -1492,7 +1492,7 @@ jobs:
       # Pack this architecture only (packaging/archs.cjs).
       CUA_SPACES_ARCHS: ${{ matrix.arch }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Signing configuration
         id: signing
         env:
@@ -1510,16 +1510,16 @@ jobs:
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           package_json_file: apps/cua-spaces-desktop/package.json
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
       - name: Download the web UI
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: spaces-web-dist
           path: apps/cua-spaces-web/dist
       - name: Native library
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: electron-native-win32-${{ matrix.arch }}
           path: apps/cua-spaces-desktop/native/win32-${{ matrix.arch }}
@@ -1606,14 +1606,14 @@ jobs:
             }
           }
           Get-FileHash electron-assets/* | Format-Table -AutoSize
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: electron-windows-${{ matrix.arch }}
           path: apps/cua-spaces-desktop/electron-assets/
           if-no-files-found: error
           retention-days: 7
       # Each arch's own feed; electron-windows joins them.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: winfeed-${{ matrix.arch }}
           path: apps/cua-spaces-desktop/electron-feed/
@@ -1637,11 +1637,11 @@ jobs:
       run:
         working-directory: .
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: winfeed-*
           path: winfeed
@@ -1659,7 +1659,7 @@ jobs:
           done
           ls merged-feed
           test -n "$(ls merged-feed)" || { echo "::error::no Windows feed"; exit 1; }
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: electron-windows-feed
           path: merged-feed/
@@ -1667,7 +1667,7 @@ jobs:
           retention-days: 7
       # Installers, blockmaps and the signing note of both architectures, and
       # the joined feed, as electron-windows (merged without downloading).
-      - uses: actions/upload-artifact/merge@v4
+      - uses: actions/upload-artifact/merge@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: electron-windows
           pattern: electron-windows-*
@@ -1692,20 +1692,20 @@ jobs:
       # Pack this architecture only (packaging/archs.cjs).
       CUA_SPACES_ARCHS: ${{ matrix.arch }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           package_json_file: apps/cua-spaces-desktop/package.json
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
       - name: Download the web UI
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: spaces-web-dist
           path: apps/cua-spaces-web/dist
       - name: Native library
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: electron-native-linux-${{ matrix.arch }}
           path: apps/cua-spaces-desktop/native/linux-${{ matrix.arch }}
@@ -1736,7 +1736,7 @@ jobs:
       - name: Check the deb ships the static cua-spacesd next to cua
         working-directory: .
         run: .github/scripts/check_static_spacesd_packaged.sh apps/cua-spaces-desktop/electron-assets
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: electron-linux-${{ matrix.arch }}
           path: apps/cua-spaces-desktop/electron-assets/
@@ -1752,7 +1752,7 @@ jobs:
     steps:
       # Both architectures' installers, feeds and the signing note as
       # electron-linux (merged without downloading).
-      - uses: actions/upload-artifact/merge@v4
+      - uses: actions/upload-artifact/merge@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: electron-linux
           pattern: electron-linux-*
@@ -1778,22 +1778,22 @@ jobs:
       run:
         working-directory: .
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
       - if: needs.electron-mac.result == 'success'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: electron-darwin
           path: electron
       - if: needs.electron-plan.outputs.windows == 'true'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: electron-windows
           path: electron
       - if: needs.electron-plan.outputs.linux == 'true'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: electron-linux
           path: electron
@@ -1850,14 +1850,14 @@ jobs:
           fi
           ls -la electron feed
           gh release upload "$tag" electron/* --clobber --repo "$GITHUB_REPOSITORY"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: electron-feed
           path: feed/
           if-no-files-found: error
           retention-days: 7
       # The release notes' signing lines (installer-manifest reads signing-*).
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: signing-electron
           path: signing/
@@ -1888,11 +1888,11 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Mint a token to dispatch on trycua/cloud
         id: app-token
         continue-on-error: true
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
         with:
           app-id: ${{ secrets.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
@@ -1928,7 +1928,7 @@ jobs:
       promotable: ${{ steps.verify.outputs.promotable }}
       manifest_digest: ${{ steps.verify.outputs.manifest_digest }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Find and verify the main-built set for this commit
         id: verify
         env:
@@ -1975,7 +1975,7 @@ jobs:
       contents: read
       statuses: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Require a green staging smoke for this commit
         env:
           GH_TOKEN: ${{ github.token }}
@@ -2013,30 +2013,30 @@ jobs:
       ELECTRON_WINDOWS_SIGNED: ${{ needs.electron-windows.outputs.signed }}
       APPCAST: ${{ needs.build-macos.outputs.appcast == 'true' || needs.electron-mac.outputs.appcast == 'true' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - if: needs.electron-plan.outputs.macos == 'true'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: cua-spaces-darwin-universal
           path: release
       - if: needs.electron-plan.outputs.build == 'true'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: electron-darwin
           path: release
       - if: needs.electron-plan.outputs.windows == 'true'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: electron-windows
           path: release
       # The published feed (absolute URLs) replaces the build's.
       - if: needs.electron-publish.result == 'success'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: electron-feed
           path: release
       - if: env.APPCAST == 'true'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: sparkle-appcast
           path: release
@@ -2115,7 +2115,7 @@ jobs:
       run:
         working-directory: .
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159 # v3.9.2
       - name: Resolve version
         id: version
@@ -2124,7 +2124,7 @@ jobs:
         run: |
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=cua-spaces-v$VERSION" >> "$GITHUB_OUTPUT"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: signing-*
           path: signing
@@ -2250,7 +2250,7 @@ jobs:
       # cutover). A trycua/cua prerelease never moves the stable feed.
       - name: Fetch the Electron feed
         if: needs.electron-publish.result == 'success'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: electron-feed
           path: electron-feed
@@ -2277,7 +2277,7 @@ jobs:
       # Stable never see them).
       - name: Publish the Sparkle appcast (macOS updates)
         if: needs.build-macos.outputs.appcast == 'true' || needs.electron-mac.outputs.appcast == 'true'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: sparkle-appcast
           path: sparkle

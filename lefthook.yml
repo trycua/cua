@@ -1,0 +1,13 @@
+# Optional local git hooks, shared by people and agents.
+#   brew install lefthook gitleaks
+#   scripts/hooks/install.sh
+# Install with the script, not `lefthook install`: it never writes into a global
+# core.hooksPath (never run `lefthook install --force` or `--reset-hooks-path`).
+# The hooks only check what you are about to push; CI is still the gate.
+pre-push:
+  commands:
+    push-guard:
+      use_stdin: true
+      run: bash scripts/hooks/pre-push-guard.sh {1} {2}
+    actions-pinned:
+      run: bash .github/scripts/check_actions_pinned.sh

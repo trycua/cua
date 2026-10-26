@@ -51,7 +51,7 @@ jobs:
       reason: ${{ steps.plan.outputs.reason }}
       attribution_issues: ${{ steps.plan.outputs.attributionIssues }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ inputs.source_sha }}
           fetch-depth: 0
@@ -120,7 +120,7 @@ jobs:
           cat "$RUNNER_TEMP/nightly-plan.json"
 
       - name: Preserve plan
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: nightly-plan-${{ inputs.component }}
           path: ${{ runner.temp }}/nightly-plan.json
@@ -138,7 +138,7 @@ jobs:
       # A warning only: attribution never holds a nightly or a stable release.
       # Unresolved identities go to the one rolling maintainer issue.
       - name: Check out trusted reporter
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           sparse-checkout: .github
           persist-credentials: false

@@ -46,7 +46,7 @@ runs:
         } >> "$GITHUB_OUTPUT"
     - name: Restore downloaded packages
       id: restore
-      uses: actions/cache/restore@v4
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
         path: ${{ steps.plan.outputs.dir }}
         key: ${{ steps.plan.outputs.key }}
@@ -74,7 +74,7 @@ runs:
         sudo chown -R "$(id -u):$(id -g)" "$DIR"
     - name: Save downloaded packages
       if: inputs.save != 'false' && steps.restore.outputs.cache-hit != 'true'
-      uses: actions/cache/save@v4
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
         path: ${{ steps.plan.outputs.dir }}
         key: ${{ steps.plan.outputs.key }}

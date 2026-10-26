@@ -140,7 +140,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install protoc
         run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends protobuf-compiler libprotobuf-dev
-      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: dtolnay/rust-toolchain@59a558e8c538bf4a23bbffa19e5a278b703f2920 # 1.97.1
       - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua

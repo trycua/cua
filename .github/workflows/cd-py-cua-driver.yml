@@ -248,7 +248,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: refs/tags/${{ needs.get-version.outputs.tag }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
           cache: npm
@@ -324,7 +324,7 @@ jobs:
           cd "$RUNNER_TEMP/cua-driver-npm-smoke"
           node --input-type=module -e \
             "const sdk = await import('@trycua/cua-driver'); const driver = sdk.CuaDriver.connect(undefined); console.log(driver.socketPath()); driver.uniffiDestroy(); if (typeof sdk.EmbeddedCuaDriverHost !== 'function') process.exit(1)"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: cua-driver-npm-${{ needs.get-version.outputs.version }}
           path: ${{ runner.temp }}/cua-driver-npm/*.tgz
@@ -337,11 +337,11 @@ jobs:
       contents: write
       id-token: write
     steps:
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: cua-driver-npm-${{ needs.get-version.outputs.version }}
           path: dist

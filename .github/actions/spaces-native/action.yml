@@ -44,7 +44,7 @@ runs:
         echo "key=spaces-native-v1-${LABEL}-${TARGET}-rust1.97.1-${repo}-${inputs_hash}" >> "$GITHUB_OUTPUT"
     - name: Restore the native layer
       id: cache
-      uses: actions/cache@v4
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
         path: |
           apps/cua-spaces-desktop/native/${{ inputs.label }}
@@ -57,7 +57,7 @@ runs:
         LABEL: ${{ inputs.label }}
       run: echo "native ${LABEL} cache hit = ${HIT}"
     - if: steps.cache.outputs.cache-hit != 'true'
-      uses: dtolnay/rust-toolchain@1.97.1
+      uses: dtolnay/rust-toolchain@59a558e8c538bf4a23bbffa19e5a278b703f2920 # 1.97.1
       with:
         targets: ${{ inputs.target }}
     - if: steps.cache.outputs.cache-hit != 'true'
@@ -83,7 +83,7 @@ runs:
       with:
         package_json_file: apps/cua-spaces-desktop/package.json
     - if: steps.cache.outputs.cache-hit != 'true'
-      uses: actions/setup-node@v4
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
       with:
         node-version: 22
     # The library, its N-API runtime and the bundled cua; Windows links the

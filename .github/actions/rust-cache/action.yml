@@ -116,7 +116,7 @@ runs:
     - name: Restore the sccache directory
       id: restore
       if: steps.plan.outputs.save != 'true'
-      uses: actions/cache/restore@v4
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
         path: ${{ steps.plan.outputs.dir }}
         key: ${{ steps.plan.outputs.key }}
@@ -124,7 +124,7 @@ runs:
     - name: Restore and later save the sccache directory
       id: restore-save
       if: steps.plan.outputs.save == 'true'
-      uses: actions/cache@v4
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
         path: ${{ steps.plan.outputs.dir }}
         key: ${{ steps.plan.outputs.key }}

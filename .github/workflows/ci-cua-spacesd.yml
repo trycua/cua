@@ -173,7 +173,7 @@ jobs:
       # cua-proto (the cua.env.v1 contract) is generated at build time.
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           components: rustfmt, clippy
       - uses: ./.github/actions/rust-cache
@@ -280,7 +280,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - uses: ./.github/actions/rust-cache
         with:
           workspaces: "libs/cua-spacesd -> target"

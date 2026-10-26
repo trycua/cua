@@ -62,7 +62,7 @@ jobs:
           - { arch: arm64, triple: aarch64-apple-darwin }
           - { arch: x86_64, triple: x86_64-apple-darwin }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: ./.github/actions/spaces-rust-slice
         with:
           triple: ${{ matrix.triple }}

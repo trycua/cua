@@ -126,7 +126,7 @@ jobs:
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
       - name: Install pinned Rust toolchain
-        uses: dtolnay/rust-toolchain@1.97.1
+        uses: dtolnay/rust-toolchain@59a558e8c538bf4a23bbffa19e5a278b703f2920 # 1.97.1
         with:
           components: clippy, rustfmt
           targets: wasm32-unknown-unknown
@@ -210,7 +210,7 @@ jobs:
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
       - name: Install pinned Rust toolchain
-        uses: dtolnay/rust-toolchain@1.97.1
+        uses: dtolnay/rust-toolchain@59a558e8c538bf4a23bbffa19e5a278b703f2920 # 1.97.1
         with:
           components: clippy, rustfmt
           targets: wasm32-unknown-unknown
@@ -275,7 +275,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: ./.github/actions/linux-rust-prep
       - name: Install pinned Rust toolchain
-        uses: dtolnay/rust-toolchain@1.97.1
+        uses: dtolnay/rust-toolchain@59a558e8c538bf4a23bbffa19e5a278b703f2920 # 1.97.1
       - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua
@@ -307,7 +307,7 @@ jobs:
       - uses: ./.github/actions/linux-rust-prep
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
-      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: dtolnay/rust-toolchain@59a558e8c538bf4a23bbffa19e5a278b703f2920 # 1.97.1
         with:
           components: clippy, rustfmt
       - uses: ./.github/actions/rust-cache
@@ -343,12 +343,12 @@ jobs:
       - uses: ./.github/actions/linux-rust-prep
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
-      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: dtolnay/rust-toolchain@59a558e8c538bf4a23bbffa19e5a278b703f2920 # 1.97.1
       - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua
           key: cua-sdk-bindings
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
           cache: npm
@@ -397,7 +397,7 @@ jobs:
       - uses: ./.github/actions/linux-rust-prep
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
-      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: dtolnay/rust-toolchain@59a558e8c538bf4a23bbffa19e5a278b703f2920 # 1.97.1
       - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua
@@ -405,7 +405,7 @@ jobs:
       - name: Build
         run: cargo build --locked --release -p cua-sdk
       - run: tar -C target -cf "$RUNNER_TEMP/sdk-linux.tar" release/libcua_sdk.so
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: sdk-linux
           path: ${{ runner.temp }}/sdk-linux.tar
@@ -427,7 +427,7 @@ jobs:
       - uses: ./.github/actions/linux-rust-prep
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
-      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: dtolnay/rust-toolchain@59a558e8c538bf4a23bbffa19e5a278b703f2920 # 1.97.1
       - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua
@@ -435,7 +435,7 @@ jobs:
       - name: Build
         run: scripts/build-test-fixtures.sh
       - run: tar -C target -cf "$RUNNER_TEMP/fixtures-linux.tar" debug/cua-test-fixtures
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: fixtures-linux
           path: ${{ runner.temp }}/fixtures-linux.tar
@@ -457,7 +457,7 @@ jobs:
       - uses: ./.github/actions/linux-rust-prep
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
-      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: dtolnay/rust-toolchain@59a558e8c538bf4a23bbffa19e5a278b703f2920 # 1.97.1
       - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua
@@ -465,7 +465,7 @@ jobs:
       - name: Build
         run: cargo build --locked -p cua-cli -p cua-spaces-cli
       - run: tar -C target -cf "$RUNNER_TEMP/cli-linux.tar" debug/cua debug/cua-spaces-cli
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: cli-linux
           path: ${{ runner.temp }}/cli-linux.tar
@@ -495,7 +495,7 @@ jobs:
       - uses: ./.github/actions/linux-rust-prep
       - name: Fetch the shared Linux builds
         if: runner.os == 'Linux'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: '*-linux'
           path: ${{ runner.temp }}/sdk
@@ -509,7 +509,7 @@ jobs:
       - name: Install protoc
         if: runner.os != 'Linux'
         uses: ./.github/actions/setup-protoc
-      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: dtolnay/rust-toolchain@59a558e8c538bf4a23bbffa19e5a278b703f2920 # 1.97.1
         if: runner.os != 'Linux'
       - uses: ./.github/actions/rust-cache
         if: runner.os != 'Linux'
@@ -572,19 +572,19 @@ jobs:
       - uses: ./.github/actions/linux-rust-prep
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
-      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: dtolnay/rust-toolchain@59a558e8c538bf4a23bbffa19e5a278b703f2920 # 1.97.1
       - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua
           key: cua-sdk-node
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: libs/cua/typescript/package-lock.json
       - name: Fetch the shared Linux builds
         if: runner.os == 'Linux'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: '*-linux'
           path: ${{ runner.temp }}/sdk
@@ -627,14 +627,14 @@ jobs:
       - uses: ./.github/actions/linux-rust-prep
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
-      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: dtolnay/rust-toolchain@59a558e8c538bf4a23bbffa19e5a278b703f2920 # 1.97.1
         with:
           targets: wasm32-unknown-unknown
       - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua
           key: cua-sdk-browser
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
           cache: npm
@@ -645,7 +645,7 @@ jobs:
       - name: Build @trycua/cua/browser
         run: node scripts/build-wasm.mjs
       - name: Fetch the shared fixture server
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: fixtures-linux
           path: ${{ runner.temp }}/sdk
@@ -669,7 +669,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
-      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: dtolnay/rust-toolchain@59a558e8c538bf4a23bbffa19e5a278b703f2920 # 1.97.1
       - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua

@@ -16,12 +16,14 @@ on:
       - ".github/workflows/**"
       - ".github/actions/**"
       - ".github/actionlint.yaml"
+      - ".github/scripts/check_actions_pinned.sh"
   push:
     branches: [main]
     paths:
       - ".github/workflows/**"
       - ".github/actions/**"
       - ".github/actionlint.yaml"
+      - ".github/scripts/check_actions_pinned.sh"
   workflow_dispatch:
 
 permissions:
@@ -31,7 +33,7 @@ jobs:
   actionlint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Run actionlint
         run: |
           set -euo pipefail
@@ -42,3 +44,5 @@ jobs:
           # shellcheck findings inside `run:` blocks are advisory here; the
           # expression/context errors that kill a workflow outright are not.
           ./actionlint -shellcheck= -pyflakes=
+      - name: Require actions pinned to commit SHAs
+        run: bash .github/scripts/check_actions_pinned.sh

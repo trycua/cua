@@ -26,6 +26,8 @@ use std::path::PathBuf;
 
 #[cfg(feature = "client")]
 pub mod client;
+#[cfg(feature = "byoc")]
+mod cloud_sweep;
 mod convert;
 pub mod doctor;
 /// Extension points for the Keyvault, the Cua Volume and teleport (Cua
@@ -34,6 +36,8 @@ pub mod doctor;
 pub mod extension;
 #[cfg(feature = "test-fixtures")]
 pub mod fixtures;
+pub mod guard;
+pub mod guest_identity;
 #[cfg(all(feature = "server", feature = "spaces"))]
 mod host_svc;
 pub mod identity;
@@ -43,10 +47,21 @@ pub mod machine_doctor;
 pub mod maintenance;
 #[cfg(feature = "server")]
 mod passthrough;
+pub mod pool;
+#[cfg(all(feature = "server", feature = "spaces"))]
+mod prewarm_pools;
 mod runtime;
 #[cfg(feature = "server")]
 pub mod server;
+pub mod share_types;
 pub mod shares;
+pub use share_types::{ShareAccess, ShareCheck, ShareInfo, ShareTarget};
+#[cfg(feature = "spaces")]
+pub mod share_hub;
+#[cfg(feature = "spaces")]
+mod share_link;
+#[cfg(feature = "server")]
+mod share_svc;
 #[cfg(feature = "server")]
 mod spaces_svc;
 pub mod storage;
@@ -60,8 +75,8 @@ pub use cua_spaces;
 #[cfg(feature = "server")]
 pub use passthrough::space_key;
 pub use runtime::{
-    CreateRequest, ForwardInfo, LIST_CLOUD_TIMEOUT, Listing, Runtime, RuntimeConfig, SandboxRecord,
-    SpacesdAttachment, contrib_provider_names, location_of,
+    CreateRequest, ForwardInfo, LIST_CLOUD_TIMEOUT, Listing, PoolInfo, Runtime, RuntimeConfig,
+    SandboxRecord, SpacesdAttachment, contrib_provider_names, location_of,
 };
 
 /// The released cua SDK version this daemon was built as (reported by
@@ -147,6 +162,10 @@ pub enum Error {
     /// Not enough free disk space for a pull, build or VM create.
     #[error("insufficient disk: {0}")]
     InsufficientDisk(String),
+    /// This host has no room for another Space now (VM memory or CPU
+    /// limit, or the machine is low on memory).
+    #[error("host capacity: {0}")]
+    HostCapacity(String),
     /// The create was cancelled; what it made is gone.
     #[error("cancelled: {0}")]
     Cancelled(String),
@@ -180,6 +199,7 @@ impl Error {
             Error::HostCapabilityMissing(_) => R::HostCapabilityMissing,
             Error::TeleportRefused(_) => R::TeleportRefused,
             Error::InsufficientDisk(_) => R::InsufficientDisk,
+            Error::HostCapacity(_) => R::HostCapacity,
             Error::Cancelled(_) => R::Cancelled,
             Error::Transport(_) | Error::DaemonNotRunning(_) | Error::Internal(_) => R::Internal,
         }
@@ -205,6 +225,7 @@ impl Error {
             | Error::HostCapabilityMissing(m)
             | Error::TeleportRefused(m)
             | Error::InsufficientDisk(m)
+            | Error::HostCapacity(m)
             | Error::Cancelled(m)
             | Error::Internal(m)
             | Error::AmbiguousSandbox { message: m, .. }
@@ -270,6 +291,7 @@ impl Error {
             R::HostCapabilityMissing => Error::HostCapabilityMissing(m),
             R::TeleportRefused => Error::TeleportRefused(m),
             R::InsufficientDisk => Error::InsufficientDisk(m),
+            R::HostCapacity => Error::HostCapacity(m),
             R::Cancelled => Error::Cancelled(m),
             R::Internal | R::Unspecified => Error::Internal(m),
         }
@@ -291,7 +313,7 @@ impl Error {
                 Code::FailedPrecondition
             }
             Error::TeleportRefused(_) => Code::PermissionDenied,
-            Error::InsufficientDisk(_) => Code::ResourceExhausted,
+            Error::InsufficientDisk(_) | Error::HostCapacity(_) => Code::ResourceExhausted,
             Error::Cancelled(_) => Code::Cancelled,
             Error::Cloud(_) | Error::Runtime(_) | Error::Env(_) | Error::Http(_) => Code::Aborted,
             Error::Transport(_) | Error::DaemonNotRunning(_) | Error::Internal(_) => Code::Internal,
@@ -390,6 +412,7 @@ impl From<cua_sandbox_core::Error> for Error {
             E::Runtime(cua_sandbox_core::RuntimeError::InsufficientDisk(d)) => {
                 Error::InsufficientDisk(d)
             }
+            E::Runtime(cua_sandbox_core::RuntimeError::HostCapacity(m)) => Error::HostCapacity(m),
             E::Runtime(r @ cua_sandbox_core::RuntimeError::Unsupported { .. }) => {
                 Error::Unsupported(r.to_string())
             }
@@ -438,9 +461,9 @@ impl From<cua_spaces::Error> for Error {
             E::InvalidArgument(a) => Error::InvalidArgument(a),
             E::NotFound(_) => Error::NotFound(m),
             E::SpacesdNotAvailable { .. } => Error::SpacesdNotAvailable(m),
-            E::CapabilityMissing { .. } => Error::CapabilityMissing(m),
+            E::CapabilityMissing { .. } | E::HostTooOld(_) => Error::CapabilityMissing(m),
             E::HostCapabilityMissing { .. } => Error::HostCapabilityMissing(m),
-            E::WrongProvider { .. } => Error::Unsupported(m),
+            E::WrongProvider { .. } | E::Unsupported(_) => Error::Unsupported(m),
             // Both are a consent gate saying no; the message names which (a
             // teleport's own words: this error says "teleport refused:" itself).
             E::TeleportRefused(why) => Error::TeleportRefused(why),
@@ -450,6 +473,9 @@ impl From<cua_spaces::Error> for Error {
             E::Env(env) => Error::from(env),
             E::Sandbox(s) => Error::from(s),
             E::Transfer(_) | E::Agent(_) | E::Stream(_) => Error::Env(m),
+            // A build step failed: the message has its command, exit code
+            // and last output.
+            E::Build { .. } => Error::Runtime(m),
             E::Io(_) | E::Json(_) => Error::Internal(m),
             E::Mcp(_) => Error::Http(m),
             E::Relay(r) => match r {
@@ -496,6 +522,98 @@ pub fn default_socket_path() -> PathBuf {
 /// loopback URL and token of the running daemon.
 pub fn default_discovery_path() -> PathBuf {
     cua_home().join("daemon.json")
+}
+
+/// One daemon per home: an exclusive lock on `daemon.lock` next to the
+/// discovery file, held for the life of the process (the OS drops it when
+/// the process ends, however it ends). A daemon started while another still
+/// runs for the same home (an app restarting its daemon while the old one
+/// winds down) waits for it, then refuses: two daemons would serve the same
+/// Spaces, state and Keyvault socket.
+#[derive(Debug)]
+pub struct InstanceLock {
+    _file: Option<std::fs::File>,
+}
+
+/// The daemon holding an [`InstanceLock`] (its pid, when it wrote one).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstanceHeld {
+    /// The lock file.
+    pub path: PathBuf,
+    /// The pid written in it.
+    pub pid: Option<u32>,
+}
+
+impl std::fmt::Display for InstanceHeld {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.pid {
+            Some(pid) => write!(f, "another cua daemon (pid {pid}) runs for this home"),
+            None => write!(f, "another cua daemon runs for this home"),
+        }?;
+        write!(
+            f,
+            " (it holds {}); stop it with `cua daemon stop` first",
+            self.path.display()
+        )
+    }
+}
+
+impl InstanceLock {
+    /// The lock of the default home.
+    pub fn path() -> PathBuf {
+        cua_home().join("daemon.lock")
+    }
+
+    /// Takes the lock at `path`, waiting up to `wait` for a daemon that
+    /// holds it to exit.
+    pub fn acquire(
+        path: &std::path::Path,
+        wait: std::time::Duration,
+    ) -> std::result::Result<Self, InstanceHeld> {
+        use std::io::{Seek, Write};
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let held = || InstanceHeld {
+            path: path.to_path_buf(),
+            pid: std::fs::read_to_string(path)
+                .ok()
+                .and_then(|s| s.trim().parse().ok()),
+        };
+        let mut file = match std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(path)
+        {
+            Ok(f) => f,
+            // A home it cannot write: no guard rather than no daemon.
+            Err(e) => {
+                tracing::warn!(path = %path.display(), error = %e, "no single-instance lock");
+                return Ok(Self { _file: None });
+            }
+        };
+        let deadline = std::time::Instant::now() + wait;
+        loop {
+            match file.try_lock() {
+                Ok(()) => break,
+                Err(std::fs::TryLockError::WouldBlock) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                Err(std::fs::TryLockError::WouldBlock) => return Err(held()),
+                Err(std::fs::TryLockError::Error(e)) => {
+                    tracing::warn!(path = %path.display(), error = %e, "no single-instance lock");
+                    return Ok(Self { _file: Some(file) });
+                }
+            }
+        }
+        let _ = file.set_len(0);
+        let _ = file.rewind();
+        let _ = write!(file, "{}", std::process::id());
+        let _ = file.flush();
+        Ok(Self { _file: Some(file) })
+    }
 }
 
 /// What every caller shows when no daemon listens: [`Error::DaemonNotRunning`].
@@ -915,6 +1033,7 @@ mod tests {
             Error::ProviderNotConfigured("local".into()),
             Error::Timeout("t".into()),
             Error::InsufficientDisk("needs 3 GiB".into()),
+            Error::HostCapacity("this machine has no room".into()),
             Error::AmbiguousSandbox {
                 message: "\"box\" names 2 sandboxes; use one of: local:box, cloud:box".into(),
                 candidates: vec!["local:box".into(), "cloud:box".into()],
@@ -922,6 +1041,23 @@ mod tests {
         ] {
             assert_eq!(Error::from_status(&e.to_status()), e);
         }
+    }
+
+    #[cfg(feature = "spaces")]
+    #[test]
+    fn a_full_machine_is_resource_exhausted_not_not_found() {
+        let err = Error::from(cua_spaces::Error::Sandbox(
+            cua_sandbox_core::Error::Runtime(cua_sandbox_core::RuntimeError::HostCapacity(
+                "this machine has no room for a 2-CPU, 4 GiB Space now. fix: delete a Space".into(),
+            )),
+        ));
+        assert!(matches!(err, Error::HostCapacity(_)), "{err:?}");
+        let status = err.to_status();
+        assert_eq!(status.code(), tonic::Code::ResourceExhausted);
+        assert!(matches!(
+            Error::from_status(&status),
+            Error::HostCapacity(m) if m.contains("no room")
+        ));
     }
 
     #[test]
@@ -937,5 +1073,42 @@ mod tests {
         let (a, b) = (random_token(), random_token());
         assert_ne!(a, b);
         assert!(a.len() >= 43);
+    }
+}
+
+#[cfg(test)]
+mod instance_lock_tests {
+    use super::*;
+    use std::time::Duration;
+
+    /// One daemon per home: a second one waits for the first, then
+    /// refuses naming its pid; once the first is gone the lock is free.
+    #[test]
+    fn a_second_daemon_for_the_same_home_is_refused() {
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("daemon.lock");
+        let first = InstanceLock::acquire(&path, Duration::ZERO).unwrap();
+        let started = std::time::Instant::now();
+        let held = InstanceLock::acquire(&path, Duration::from_millis(300)).unwrap_err();
+        assert!(started.elapsed() >= Duration::from_millis(300));
+        assert_eq!(held.pid, Some(std::process::id()));
+        assert!(held.to_string().contains("cua daemon stop"), "{held}");
+        drop(first);
+        InstanceLock::acquire(&path, Duration::ZERO).unwrap();
+    }
+
+    /// A daemon waiting for the lock gets it when the old one exits within
+    /// the wait (an app restarting its daemon).
+    #[test]
+    fn the_lock_is_taken_once_the_old_daemon_exits() {
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("daemon.lock");
+        let first = InstanceLock::acquire(&path, Duration::ZERO).unwrap();
+        let t = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(200));
+            drop(first);
+        });
+        InstanceLock::acquire(&path, Duration::from_secs(5)).unwrap();
+        t.join().unwrap();
     }
 }

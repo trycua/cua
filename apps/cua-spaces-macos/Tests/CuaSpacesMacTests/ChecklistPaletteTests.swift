@@ -41,6 +41,25 @@ struct ChecklistPaletteTests {
         #expect(!ChecklistModel(path: path).view.visible)
     }
 
+    @Test func aSkippedStepIsKeptAndCountsAsDone() throws {
+        let path = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cua-checklist-\(UUID().uuidString)/checklist.json").path
+        let checklist = ChecklistModel(path: path)
+        checklist.send(.skip(step: .teleport))
+        #expect(checklist.view.progress == "1 of 5")
+        #expect(checklist.stored["skipped"] as? [String] == ["teleport"])
+        let again = ChecklistModel(path: path)
+        #expect(again.state.skipped == [.teleport])
+        #expect(again.view.rows.first { $0.step == .teleport }?.skipped == true)
+        // A file from an older app has no skips.
+        let old = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cua-checklist-\(UUID().uuidString).json")
+        try Data(#"{"done":["share"],"dismissed":false,"shown":true}"#.utf8).write(to: old)
+        let read = ChecklistModel(path: old.path)
+        #expect(read.state.done == [.share])
+        #expect(read.state.skipped.isEmpty)
+    }
+
     @Test func theLastStepCompletesIt() {
         let telemetry = FixtureTelemetry()
         let checklist = ChecklistModel(path: nil)

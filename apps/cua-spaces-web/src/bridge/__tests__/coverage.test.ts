@@ -19,6 +19,8 @@ import { NUDGES_ARGS } from "../ops/nudges";
 import { RESOURCES_ARGS } from "../ops/resources";
 import { MACHINES_ARGS } from "../ops/machines";
 import { CHECKLIST_ARGS } from "../ops/checklist";
+import { LINKS_ARGS } from "../ops/links";
+import { CLI_ARGS } from "../ops/cli";
 import { PRESENCE_ARGS } from "../ops/presence";
 import { RUNTIME_FIX_ARGS } from "../ops/runtime-fix";
 import type { HostWindow } from "../detect";
@@ -54,6 +56,8 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "agents.list": {},
   "agents.runs": { spaceId: "s1" },
   "agents.events": { spaceId: "s1", runId: "r1", cursor: 0 },
+  "agents.start": { spaceId: "s1", agent: "claude-code", prompt: "Run the tests" },
+  "agents.message": { spaceId: "s1", runId: "r1", text: "Use Python 3.13" },
   "agents.pause": { name: "ada" },
   "agents.resume": { name: "ada" },
   "agents.setup": {},
@@ -120,6 +124,7 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "telemetry.track": { signals: [{ type: "step", step: "app_launched", ok: true }] },
   "telemetry.linkNotice": {},
   "telemetry.acknowledgeLinkNotice": {},
+  "crashReporting.config": {},
   "spaces.usage": { spaceId: "s1" },
   "spaces.windows": { spaceId: "s1" },
   "stream.pip": { spaceId: "s1", command: { type: "open", row: "desktop" } },
@@ -139,6 +144,8 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   ...RESOURCES_ARGS,
   ...MACHINES_ARGS,
   ...CHECKLIST_ARGS,
+  ...LINKS_ARGS,
+  ...CLI_ARGS,
   ...PRESENCE_ARGS,
   ...RUNTIME_FIX_ARGS,
 };

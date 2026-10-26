@@ -89,6 +89,10 @@ jobs:
           done
           ls -l feed
           [ -n "$(ls feed)" ] || { echo "::error::no feed files on $TAG"; exit 1; }
+      - name: Install xmllint
+        run: |
+          command -v xmllint >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq libxml2-utils; }
+          xmllint --version
       - name: Edit the feeds
         run: |
           set -euo pipefail

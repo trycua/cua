@@ -76,7 +76,17 @@ EOF
 
 for platform in linux-x64 linux-arm64 darwin-arm64 darwin-x64; do
     make_cua "$work/stage/$platform" "$platform"
-    tar -czf "$tag_dir/cua-cli-$version-$platform.tar.gz" -C "$work/stage/$platform" cua
+    extra=""
+    # Apple silicon: the microVM monitor and guest init, and the static
+    # cua-spacesd injected into OCI images, travel with `cua`.
+    if [ "$platform" = darwin-arm64 ]; then
+        for f in cua-vz cua-microvm-init cua-spacesd-linux-aarch64; do
+            printf '#!/bin/sh\necho %s\n' "$f" >"$work/stage/$platform/$f"
+        done
+        extra="cua-vz cua-microvm-init cua-spacesd-linux-aarch64"
+    fi
+    # shellcheck disable=SC2086
+    tar -czf "$tag_dir/cua-cli-$version-$platform.tar.gz" -C "$work/stage/$platform" cua $extra
 done
 for arch in x64 arm64; do
     printf '#!/bin/sh\necho cua-spaces %s\n' "$arch" >"$tag_dir/cua-spaces-$version-linux-$arch.AppImage"
@@ -257,6 +267,14 @@ if command -v bash >/dev/null 2>&1; then
     check "--select cua-driver: registers the skill and MCP server" sh -c "grep -qx -- 'agents setup --cua-driver --agents all --yes --mcp-command $work/d1/bin/cua-driver' '$home/cua.log'"
     check "--select cua-driver: no host setup" sh -c "! grep -q 'host setup' '$home/cua.log'"
     check "--select cua-driver: adds the skill by default (no --no-skills)" sh -c "! grep -q -- '--no-skills' '$home/cua.log'"
+    check "--select cua-driver: does not install the Cua Spaces app" sh -c "[ ! -e '$work/d1/bin/cua-spaces' ] && ! grep -q 'Cua Spaces' '$work/out'"
+    check "--select cua-driver: registers nothing but cua-driver" sh -c "grep -c 'agents setup' '$home/cua.log' | grep -qx 1 && ! grep -q 'auth login' '$home/cua.log'"
+
+    inst -- --yes --no-onboarding --select cli --prefix "$work/d1c"
+    check "--select cli: CLI only, no app" sh -c "[ $status = 0 ] && [ -x '$work/d1c/bin/cua' ] && [ ! -e '$work/d1c/bin/cua-spaces' ]"
+
+    inst CUA_INSTALL_DRIVER_URL="$driver_url" -- --yes --no-onboarding --select cua-driver,spaces --prefix "$work/d1b"
+    check "--select cua-driver,spaces: installs both" sh -c "[ $status = 0 ] && [ -x '$work/d1b/bin/cua-spaces' ] && [ -x '$work/d1b/bin/cua-driver' ]"
 
     inst CUA_INSTALL_DRIVER_URL="$driver_url" -- --no-onboarding --select cua-driver --no-skills --prefix "$work/d1s"
     check "--no-skills: still registers the MCP server, without the skill" sh -c "[ $status = 0 ] && grep -qx -- 'agents setup --cua-driver --agents all --yes --no-skills --mcp-command $work/d1s/bin/cua-driver' '$home/cua.log'"
@@ -305,6 +323,11 @@ inst CUA_INSTALL_DRIVER_URL="$driver_url" -- --dry-run --select cua-driver,host 
 check "--dry-run prints the driver, agents and host steps" sh -c "grep -q 'dry-run. download $driver_url' '$work/out' && grep -q 'dry-run. bash cua-driver-install.sh --bin-dir' '$work/out' && grep -q 'dry-run. .* agents setup --cua-driver --agents all --yes' '$work/out' && grep -q 'dry-run. .* host setup' '$work/out'"
 inst CUA_INSTALL_DRIVER_URL="$driver_url" -- --dry-run --select cua-driver --no-skills --prefix "$work/drs"
 check "--dry-run --no-skills: the planned agent setup leaves the skill out" sh -c "grep -q 'dry-run. .* agents setup --cua-driver --agents all --yes --no-skills' '$work/out'"
+check "--dry-run --select cua-driver: lists only the CLI and Cua Driver" sh -c "grep -q 'dry-run. would install: the cua command-line tools, Cua Driver' '$work/out' && ! grep -q 'Cua Spaces app' '$work/out'"
+inst CUA_INSTALL_OS=Darwin CUA_INSTALL_DRIVER_URL="$driver_url" -- --dry-run --select cua-driver --prefix "$work/drm"
+check "--dry-run --select cua-driver (macOS): no app download" sh -c "[ $status = 0 ] && ! grep -q 'darwin-universal.dmg' '$work/out' && grep -q 'agents setup --cua-driver' '$work/out'"
+inst -- --dry-run --prefix "$work/drd"
+check "--dry-run with no --select: the app is still a default" sh -c "grep -q 'dry-run. would install: .*Cua Spaces app' '$work/out'"
 check "--dry-run runs nothing" sh -c "[ ! -e '$home/cua.log' ] && [ ! -e '$home/driver.log' ] && [ ! -e '$work/dr' ]"
 
 inst -- --yes --select bogus
@@ -324,11 +347,37 @@ inst CUA_INSTALL_ARCH=aarch64 -- --yes --cli-only --prefix "$work/p2"
 check "arch aarch64 maps to linux-arm64" sh -c "'$work/p2/bin/cua' --version | grep -q linux-arm64"
 check "--cli-only skips the app" absent "$work/p2/bin/cua-spaces"
 
+# Never a downgrade (UL2): a newer cua already installed stays; an older one
+# is upgraded; --version asks for a rollback on purpose.
+fake_cua() { # dir version
+    mkdir -p "$1/bin"
+    # shellcheck disable=SC2016 # the single quotes are deliberate: the body expands when the stub runs
+    printf '#!/bin/sh\nif [ "${1:-}" = --version ]; then echo "cua %s"; exit 0; fi\n' "$2" >"$1/bin/cua"
+    chmod +x "$1/bin/cua"
+}
+fake_cua "$work/nd1" 9.9.9
+inst -- --yes --cli-only --prefix "$work/nd1"
+check "a newer installed cua is kept" sh -c "[ $status = 0 ] && '$work/nd1/bin/cua' --version | grep -qx 'cua 9.9.9' && grep -q 'kept .*cua 9.9.9 is newer' '$work/out'"
+fake_cua "$work/nd2" 0.1.0
+inst -- --yes --cli-only --prefix "$work/nd2"
+check "an older installed cua is upgraded" sh -c "[ $status = 0 ] && '$work/nd2/bin/cua' --version | grep -q 'cua $version'"
+fake_cua "$work/nd3" 9.9.9
+inst -- --yes --cli-only --version "$version" --prefix "$work/nd3"
+check "--version rolls back a newer cua on purpose" sh -c "[ $status = 0 ] && '$work/nd3/bin/cua' --version | grep -q 'cua $version'"
+fake_cua "$work/nd4" 1.2.3-dev
+inst -- --yes --cli-only --prefix "$work/nd4"
+check "a dev build installed counts as older" sh -c "[ $status = 0 ] && '$work/nd4/bin/cua' --version | grep -q 'cua $version ('"
+
 inst CUA_INSTALL_ARCH=mips -- --yes --prefix "$work/p3"
 check "unsupported arch fails" sh -c "[ $status != 0 ] && grep -q 'unsupported CPU architecture' '$work/out'"
 
 inst CUA_INSTALL_OS=MINGW64_NT-10.0 -- --yes
 check "Windows shells point at install.ps1" sh -c "[ $status != 0 ] && grep -q install.ps1 '$work/out'"
+
+inst CUA_INSTALL_OS=Darwin CUA_INSTALL_ARCH=arm64 -- --yes --no-onboarding --cli-only --prefix "$work/mvz"
+check "darwin arm64: cua-vz, the microVM guest init and the static cua-spacesd land next to cua" sh -c "[ $status = 0 ] && [ -x '$work/mvz/bin/cua' ] && [ -x '$work/mvz/bin/cua-vz' ] && [ -x '$work/mvz/bin/cua-microvm-init' ] && [ -x '$work/mvz/bin/cua-spacesd-linux-aarch64' ]"
+inst -- --yes --no-onboarding --cli-only --prefix "$work/nvz"
+check "linux: no microVM monitor in the archive, none installed" sh -c "[ $status = 0 ] && [ -e '$work/nvz/bin/cua' ] && [ ! -e '$work/nvz/bin/cua-vz' ]"
 
 inst CUA_INSTALL_OS=Darwin CUA_INSTALL_ARCH=x86_64 -- --yes --dry-run --cli-only --prefix "$work/p4"
 check "darwin x86_64 maps to darwin-x64" has_out "cua-cli-$version-darwin-x64.tar.gz"
@@ -517,6 +566,37 @@ inst CUA_INSTALL_MANIFEST_URL="$base/sig2/release-artifacts.json" -- --yes --no-
 check "unverifiable signatures, default output: plain checksum line only" sh -c "[ $status = 0 ] && grep -q '(downloads checked)' '$work/out' && ! grep -qi 'cosign\|minisign\|signatures were not\|checksum' '$work/out'"
 inst CUA_INSTALL_MANIFEST_URL="$base/sig2/release-artifacts.json" -- --yes --no-onboarding --select spaces --require-signature --prefix "$work/sg2"
 check "--require-signature still fails without minisign or cosign" sh -c "[ $status != 0 ] && grep -q 'no verifiable signature' '$work/out'"
+# Upgrade over a running older daemon: the new cua stops it (never a broad
+# kill) and starts the new one. A fake old cua reports a running 0.0.9 daemon.
+mkdir -p "$work/up/bin"
+cat >"$work/oldcua" <<'EOF'
+#!/bin/sh
+if [ "${1:-}" = --version ]; then echo "cua 0.0.9 (old)"; exit 0; fi
+if [ "${1:-} ${2:-}" = "daemon status" ]; then echo "cua daemon 0.0.9 (pid 4242) socket=/x loopback=http://127.0.0.1:1"; exit 0; fi
+exit 0
+EOF
+cp "$work/oldcua" "$work/up/bin/cua"
+chmod +x "$work/up/bin/cua"
+cat >"$work/stage/linux-x64/cua" <<EOF
+#!/bin/sh
+if [ "\${1:-}" = --version ]; then echo "cua $version (linux-x64)"; exit 0; fi
+echo "\$*" >>"\${CUA_FAKE_LOG:-/dev/null}"
+EOF
+tar -czf "$tag_dir/cua-cli-$version-linux-x64.tar.gz" -C "$work/stage/linux-x64" cua
+python3 "$manifest_tool" --component cli --version "$version" --dir "$tag_dir" \
+    --base-url "$base/cua-sdk-v$version" --out "$work/cli-abs.json" || exit 1
+python3 "$manifest_tool" --component app --version "$version" --dir "$tag_dir" \
+    --base-url "$base/cua-sdk-v$version" --merge "$work/cli-abs.json" \
+    --out "$latest_dir/release-artifacts.json" || exit 1
+inst -- --yes --no-onboarding --cli-only --prefix "$work/up"
+check "upgrade over a running older daemon: stops it with the new cua, then starts the new one" sh -c "[ $status = 0 ] && grep -qx 'daemon stop' '$home/cua.log' && grep -qx 'daemon start' '$home/cua.log' && grep -q 'restarted the cua daemon (0.0.9 -> $version)' '$work/out'"
+inst -- --yes --no-onboarding --cli-only --prefix "$work/up2"
+check "fresh install (no daemon): no daemon stop or start" sh -c "[ $status = 0 ] && ! grep -q 'daemon' '$home/cua.log' 2>/dev/null"
+mkdir -p "$work/up3/bin"
+sed 's/0.0.9/1.2.3/g' "$work/oldcua" >"$work/up3/bin/cua"
+chmod +x "$work/up3/bin/cua"
+inst -- --yes --no-onboarding --cli-only --prefix "$work/up3"
+check "same-version daemon is left alone" sh -c "[ $status = 0 ] && ! grep -q 'daemon' '$home/cua.log' 2>/dev/null"
 
 inst -- --help
 check "--help prints usage" sh -c "[ $status = 0 ] && grep -q -- '--cli-only' '$work/out'"
@@ -533,7 +613,12 @@ if script --version 2>/dev/null | grep -q util-linux; then
     env -i PATH="$PATH" HOME="$home" SHELL=/bin/sh CUA_INSTALL_BASE_URL="$base" CUA_INSTALL_OS=linux \
         CUA_INSTALL_ARCH=x86_64 CUA_FAKE_LOG="$home/cua2.log" \
         script -qec "$sh_bin '$installer' --yes --cli-only --no-onboarding --prefix '$work/p14'" /dev/null >"$work/out" 2>&1 </dev/null
-    check "interactive + --no-onboarding: no login" absent "$home/cua2.log"
+    check "interactive + --no-onboarding: no login" sh -c "! grep -qx 'auth login' '$home/cua2.log' 2>/dev/null"
+
+    env -i PATH="$PATH" HOME="$home" SHELL=/bin/sh CUA_INSTALL_BASE_URL="$base" CUA_INSTALL_OS=linux \
+        CUA_INSTALL_ARCH=x86_64 CUA_FAKE_LOG="$home/cua3.log" CUA_INSTALL_DRIVER_URL="$driver_url" \
+        script -qec "$sh_bin '$installer' --yes --select cua-driver --prefix '$work/p15'" /dev/null >"$work/out" 2>&1 </dev/null
+    check "interactive + --select cua-driver: no sign-in, so no Cua MCP or skills" sh -c "! grep -qx 'auth login' '$home/cua3.log' 2>/dev/null && grep -q 'agents setup --cua-driver' '$home/cua3.log'"
 
     # PATH prompt on a terminal: Enter adds it to the profile, n leaves it.
     # `script` runs its command through $SHELL, so zsh (absent from the CI

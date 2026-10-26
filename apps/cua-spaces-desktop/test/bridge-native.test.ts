@@ -18,6 +18,7 @@ import { OP_SHAPES, SHAPE_DEFS } from "../../cua-spaces-web/src/bridge/contracts
 import { HOST_COVERAGE } from "../../cua-spaces-web/src/bridge/coverage";
 import { OPERATIONS, type OpArgs, type OpName } from "../../cua-spaces-web/src/bridge/protocol";
 import { createBridge, type Bridge } from "../src/bridge";
+import { runtimeWord } from "../src/model/backend";
 import type { BridgeEvent } from "../src/bridge/host";
 import { createOptions } from "../src/bridge/spaces";
 import { hostRecorded, telemetrySignal } from "../src/bridge/telemetry";
@@ -170,7 +171,13 @@ describe.skipIf(!built)("the bridge on the app core", () => {
       ["clouds.status", {}],
       ["clouds.test", { target: { provider: "aws", region: "us-west-2" } }],
       ["clouds.connect", { target: { provider: "aws", region: "us-west-2" }, makeDefault: false }],
+      ["nudges.pending", {}],
+      ["nudges.answer", { id: "none", choice: "separate" }],
+      ["links.list", {}],
+      ["links.create", { target: "3000" }],
+      ["links.stop", { id: "all" }],
       ["checklist.get", {}],
+      ["cli.plan", {}],
       ["checklist.send", { action: { type: "done", step: "teleport" } }],
       ["session.signOut", {}],
     ];
@@ -179,7 +186,7 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     expect(problems).toEqual([]);
     // Every ported method has its case (or is checked below).
     // (Teleport and the Keyvault: vault-native.test.ts; This machine, Devices, Settings and the rest: host-bridge.test.ts; the relay allowance: relay-usage.test.ts; resource numbers: resources.test.ts; presence: presence-bridge.test.ts; the Machines page's rename, remove and health checks: machines-view.test.ts; the Windows runtime fix: below.)
-    const elsewhere = new Set(["session.signIn", "spaces.create", "spaces.delete", "spaces.openStream", "relay.usage", "sharing.removals", "sharing.ackRemovals", "resources.get", "machines.rename", "machines.remove", "machines.checkHealth", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime", ...AGENT_METHODS, ...VAULT_METHODS, ...HOST_METHODS]);
+    const elsewhere = new Set(["session.signIn", "spaces.create", "spaces.delete", "spaces.openStream", "relay.usage", "sharing.removals", "sharing.ackRemovals", "resources.get", "machines.rename", "machines.remove", "machines.checkHealth", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime", "cli.install", ...AGENT_METHODS, ...VAULT_METHODS, ...HOST_METHODS]);
     const ported = bridge.registry.methods.filter((m) => !NOT_YET.includes(m) && !elsewhere.has(m));
     expect(ported.filter((m) => !cases.some(([c]) => c === m))).toEqual([]);
   });
@@ -211,7 +218,7 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     const list = (await call("spaces.list")) as { loaded: boolean; spaces: { space: { id: string; os: string; status: string }; detail: { title: string } }[] };
     expect(list.loaded).toBe(true);
     // In the core's order; This machine is there because this app manages a host.
-    expect(list.spaces.map((s) => s.space.id).sort()).toEqual(["cloud:builder", "direct:10.0.0.5:3211", "local:aurora", "this-mac"]);
+    expect(list.spaces.map((s) => s.space.id).sort()).toEqual(["direct:10.0.0.5:3211", "direct:builder", "local:aurora", "this-mac"]);
     const aurora = list.spaces.find((s) => s.space.id === "local:aurora")!;
     expect(aurora.space).toMatchObject({ os: "linux", status: "running" });
     expect(typeof aurora.detail.title).toBe("string");
@@ -221,7 +228,8 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     const config = { image: "ghcr.io/trycua/linux:24.04", kind: "container", on: "local", name: "dev" };
     const made = (await call("spaces.create", { pendingId: "pending:1", config, os: "linux" })) as { id: string; name: string };
     expect(made).toMatchObject({ id: "local:dev", name: "dev" });
-    expect(backend.created[0]).toMatchObject({ image: config.image, on: "local", kind: "container", runtime: "auto", name: "dev", spacesd: true });
+    expect(backend.created[0]).toMatchObject({ image: config.image, on: "local", kind: "container", name: "dev", spacesd: true });
+    expect(runtimeWord(backend.created[0]!.runtime)).toBe("auto");
     const progress = events.filter((e) => e.event === "spaces.createProgress").map((e) => e.payload as { pendingId: string; phase: string; bytesTotal: number | null });
     expect(progress.map((p) => p.phase)).toEqual(["preparing", "pulling", "ready"]);
     expect(progress[1]).toMatchObject({ pendingId: "pending:1", bytesTotal: 10 });
@@ -256,7 +264,8 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     expect(await code("spaces.create", { pendingId: "nope", config: { image: "x", kind: "container" } })).toBe("bad_args");
     expect(await code("spaces.create", { pendingId: "pending:2", config: { image: "x", kind: "box" } })).toBe("bad_args");
     expect(await code("spaces.create", { pendingId: "pending:2", config: { kind: "vm" } })).toBe("bad_args");
-    expect(await code("spaces.create", { pendingId: "pending:2", config: { image: "x", kind: "vm", runtime: "xen" } })).toBe("bad_args");
+    // Not a runtime word (an external provider's name is lowercase letters, digits and dashes).
+    expect(await code("spaces.create", { pendingId: "pending:2", config: { image: "x", kind: "vm", runtime: "Xen VM" } })).toBe("bad_args");
   });
 
   it("cancels a create still running: the row goes and the create answers cancelled", async () => {
@@ -579,10 +588,13 @@ describe.skipIf(!built)("the bridge on the app core", () => {
       "spaces.add": { url: "http://studio.local:7400", token: null, name: "studio" },
       "clouds.test": { target: { provider: "aws", region: "us-west-2" } },
       "clouds.connect": { target: { provider: "aws", region: "us-west-2" }, makeDefault: false },
+      "nudges.answer": { id: "none", choice: "separate" },
+      "links.create": { target: "3000" },
+      "links.stop": { id: "all" },
       "checklist.send": { action: { type: "done", step: "teleport" } },
     };
     // This machine, Devices, Settings and the rest: host-bridge.test.ts reads them with their arguments (the Machines page's rename and remove: machines-view.test.ts).
-    const skip = new Set<OpName>(["spaces.create", "spaces.delete", "session.signIn", "session.signOut", "session.openExternal", "spaces.openStream", "relay.usage", "sharing.removals", "sharing.ackRemovals", "resources.get", "machines.rename", "machines.remove", "machines.checkHealth", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime", ...VAULT_OPS, ...(HOST_OPS as OpName[])]);
+    const skip = new Set<OpName>(["spaces.create", "spaces.delete", "session.signIn", "session.signOut", "session.openExternal", "spaces.openStream", "relay.usage", "sharing.removals", "sharing.ackRemovals", "resources.get", "machines.rename", "machines.remove", "machines.checkHealth", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime", "cli.install", ...VAULT_OPS, ...(HOST_OPS as OpName[])]);
     const problems: string[] = [];
     const checked: string[] = [];
     for (const op of OPERATIONS) {

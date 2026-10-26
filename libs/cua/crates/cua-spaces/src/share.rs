@@ -842,6 +842,20 @@ impl Spaces {
     /// network, the Cua app elsewhere) reach it as `relay:<machine>`, and
     /// nobody else until it is shared. Idempotent; re-attaches after the
     /// Space restarted. Returns the relay Space id.
+    /// After a local Space booted again (a start of a stopped VM, a
+    /// resize), attaches it to the relay again when it was on it: its
+    /// guest forgot the attachment when it shut down. Best effort; a Space
+    /// that was never on the relay is left alone.
+    pub(crate) async fn reattach_relay_after_boot(&self, id: &SpaceId) {
+        let canonical = id.to_string();
+        if !self.attached().contains_key(&canonical) {
+            return;
+        }
+        if let Err(e) = self.relay_register(&canonical).await {
+            tracing::warn!(space = %canonical, error = %e, "re-attaching to the relay after a boot failed");
+        }
+    }
+
     pub async fn relay_register(&self, space: &str) -> Result<RelayRegistration> {
         let canonical = self.resolve(space)?.to_string();
         let machine = self.ensure_shared_machine(&canonical).await?;

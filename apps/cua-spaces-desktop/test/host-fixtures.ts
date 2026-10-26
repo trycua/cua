@@ -28,6 +28,8 @@ export class FixtureHost {
   script: Error[] = [];
   /** The next `configure` fails with this (once). */
   failConfigure: string | null = null;
+  /** The next resume for another account fails with this (once), after pausing the host as the real one does. */
+  failResume: string | null = null;
   owner = "user-1";
   ownerEmail = "ada@example.com";
 
@@ -103,10 +105,20 @@ export class FixtureHost {
 
   async resumeSignedIn(account: string) {
     this.calls.push(`resume:${account}`);
-    if (!this.current.pausedSignedOut) return this.current;
-    if (account !== this.owner && account.toLowerCase() !== this.ownerEmail.toLowerCase()) {
-      throw sdkError("InvalidArgument", "this machine is shared with another Cua account");
+    const isOwner = account === this.owner || account.toLowerCase() === this.ownerEmail.toLowerCase();
+    // Another account: the host registers again for it, paused or not.
+    if (!isOwner && this.failResume) {
+      const why = this.failResume;
+      this.failResume = null;
+      this.current = { ...this.current, pausedSignedOut: true, sharing: false, online: false, serviceRunning: false };
+      throw sdkError("InvalidArgument", why);
     }
+    if (!isOwner) {
+      this.owner = account;
+      this.ownerEmail = "";
+      this.current = { ...this.current, owner: account, ownerEmail: undefined };
+    }
+    if (!this.current.pausedSignedOut && isOwner) return this.current;
     this.current = { ...this.current, pausedSignedOut: false, sharing: true, online: true, serviceInstalled: true, serviceRunning: true };
     return this.current;
   }
@@ -288,6 +300,14 @@ export class FixtureSystem implements SystemServices {
   shortcut: { label: string; registered: boolean } | null = { label: "\u2318\u21e7Space", registered: false };
   constructor(readonly home: string) {}
   globalShortcut() {
+    return this.shortcut;
+  }
+  /** Settings, General, Change: the keys asked for; "Command+K" is held by another app. */
+  readonly shortcutChanges: string[] = [];
+  setGlobalShortcut(accelerator: string) {
+    if (accelerator === "Command+K") throw new Error("Another app is using \u2318K. Pick other keys.");
+    this.shortcutChanges.push(accelerator);
+    this.shortcut = { label: accelerator, registered: true };
     return this.shortcut;
   }
   async openExternal(url: string) {

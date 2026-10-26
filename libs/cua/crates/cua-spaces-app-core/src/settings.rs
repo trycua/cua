@@ -30,6 +30,11 @@ pub enum SwitcherTheme {
     Glass,
 }
 
+fn location_or_local<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Location, D::Error> {
+    let word = String::deserialize(d)?;
+    Ok(serde_json::from_value(serde_json::Value::String(word)).unwrap_or(Location::Local))
+}
+
 /// Settings.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -40,7 +45,10 @@ pub struct AppSettings {
     pub menu_bar: bool,
     /// Switcher theme.
     pub theme: SwitcherTheme,
-    /// Where New Space starts.
+    /// Where New Space starts. A word this build does not know (the
+    /// retired `cloud`) reads as this Mac, so an old file keeps its other
+    /// settings.
+    #[serde(deserialize_with = "location_or_local")]
     pub default_location: Location,
     /// Hide the notch over full-screen apps.
     pub hide_in_full_screen: bool,
@@ -56,15 +64,14 @@ pub struct AppSettings {
     /// Settings); `None`: never chosen ([`crate::login_item::launch_plan`]).
     pub launch_at_login: Option<bool>,
     /// Settings, Experiments: every switch off unless turned on
-    /// ([`crate::experiments`]). Its `webUi` is the New UI as this launch
-    /// shows it ([`resolve_new_ui`]); the file keeps only [`Self::new_ui`]'s
+    /// ([`crate::experiments`]). Its `webUi` is always on in the macOS
+    /// shell ([`resolve_new_ui`]); the file keeps only [`Self::new_ui`]'s
     /// "on" there, the value older builds read.
     pub experiments: Experiments,
-    /// The New UI as the user chose it (Settings, Experiments, "Use classic
-    /// UI"); `None`: never chosen, so
-    /// [`crate::experiments::new_ui_default`] decides. An older build's
-    /// saved `webUi: true` reads as `Some(true)`; its `false` was only the
-    /// saved default, so it reads as never chosen ([`load`]).
+    /// The New UI as an older build's "Use classic UI" saved it. Read and
+    /// kept for those builds, never acted on: the web UI is the only UI
+    /// ([`resolve_new_ui`]). An older build's saved `webUi: true` reads as
+    /// `Some(true)`; its `false` was only the saved default ([`load`]).
     pub new_ui: Option<bool>,
     /// Keyvault copies (import ids) the user dismissed from the notch: it no
     /// longer shows them, nothing is revoked or wiped
@@ -122,7 +129,7 @@ pub fn load(path: &Path) -> AppSettings {
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default();
-    migrate_sharing(path, &mut s);
+    migrate_defaults(path, &mut s);
     if s.new_ui.is_none() && s.experiments.web_ui {
         s.new_ui = Some(true);
     }
@@ -137,45 +144,72 @@ fn migrations_path(path: &Path) -> std::path::PathBuf {
     path.with_file_name("settings-migrations.json")
 }
 
-/// Sharing became on by default in 0.9.1 (CUA-1668). 0.9.0 saved
-/// `sharing: false` for anyone who toggled any experiment, without them
-/// choosing it, and left no record of an explicit choice. The first load
-/// without the marker turns a stored `false` on once and writes the marker
-/// (also on a fresh install, so a later "off" is never overridden); from then
-/// on the stored value is the user's. Best effort: a failed write only
-/// repeats the migration on the next load.
-fn migrate_sharing(path: &Path, s: &mut AppSettings) {
+/// Defaults that turned on after releases saved them as off, and switches
+/// that were retired (Settings, Advanced no longer has a Sharing or a Your
+/// cloud switch). Each one has a key in the migration marker.
+const MIGRATIONS: [&str; 4] = [
+    "sharingDefaultOn",
+    "yourCloudDefaultOn",
+    "sharingSwitchRetired",
+    "yourCloudSwitchRetired",
+];
+
+/// Sharing became on by default in 0.9.1 (CUA-1668) and Your cloud later
+/// (a linked cloud showed under Run on only after digging into Settings).
+/// Earlier builds saved `false` for anyone who toggled any experiment,
+/// without them choosing it, and left no record of an explicit choice. The
+/// first load without a switch's marker turns a stored `false` on once and
+/// writes the marker (also on a fresh install, so a later "off" is never
+/// overridden); from then on the stored value is the user's. A missing key
+/// already reads as on. Best effort: a failed write only repeats the
+/// migration on the next load.
+fn migrate_defaults(path: &Path, s: &mut AppSettings) {
     let marker = migrations_path(path);
-    if marker.exists() {
+    let mut done: serde_json::Map<String, serde_json::Value> = std::fs::read_to_string(&marker)
+        .ok()
+        .and_then(|m| serde_json::from_str(&m).ok())
+        .unwrap_or_default();
+    let pending = |k: &str| done.get(k) != Some(&serde_json::Value::Bool(true));
+    if !MIGRATIONS.iter().any(|k| pending(k)) {
         return;
     }
-    if !s.experiments.sharing {
-        s.experiments.sharing = true;
+    // The retired switches: with no switch to turn them back on, a stored
+    // `false` (a choice nobody can make or undo any more) reads as on, once.
+    // The plan decides who can share or use a cloud, on the server.
+    let turn_sharing_on =
+        (pending(MIGRATIONS[0]) || pending(MIGRATIONS[2])) && !s.experiments.sharing;
+    let turn_cloud_on =
+        (pending(MIGRATIONS[1]) || pending(MIGRATIONS[3])) && !s.experiments.your_cloud;
+    if turn_sharing_on || turn_cloud_on {
+        s.experiments.sharing |= turn_sharing_on;
+        s.experiments.your_cloud |= turn_cloud_on;
         if path.exists() && save(path, s).is_err() {
             return;
         }
     }
+    for k in MIGRATIONS {
+        done.insert(k.into(), true.into());
+    }
     if let Some(dir) = marker.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    let _ = std::fs::write(&marker, r#"{"sharingDefaultOn":true}"#);
+    let _ = std::fs::write(&marker, serde_json::Value::Object(done).to_string());
 }
 
-/// `settings` with the New UI as this launch shows it: the user's choice,
-/// else [`crate::experiments::new_ui_default`] for the update channel and
-/// the running app's `version`. Again after the channel changes.
-pub fn resolve_new_ui(settings: &AppSettings, version: &str) -> AppSettings {
+/// `settings` with the New UI as this launch shows it: always on. The shared
+/// web UI is the only UI of the macOS app (the SwiftUI views are gone), so an
+/// older build's "Use classic UI" choice ([`AppSettings::new_ui`] `false`)
+/// no longer applies: that install opens the web UI like every other one.
+/// `version` is unused, kept for the shells' binding.
+pub fn resolve_new_ui(settings: &AppSettings, _version: &str) -> AppSettings {
     let mut s = settings.clone();
-    s.experiments.web_ui = s
-        .new_ui
-        .unwrap_or_else(|| crate::experiments::new_ui_default(s.update_channel, version));
+    s.experiments.web_ui = true;
     s
 }
 
 /// The update channel of an install's first launch, from the one in the
 /// settings file (`channel`): Beta for a prerelease (someone who installed
-/// a beta keeps getting betas, and the New UI default that comes with
-/// them), else unchanged.
+/// a beta keeps getting betas), else unchanged.
 pub fn first_launch_channel(channel: UpdateChannel, version: &str) -> UpdateChannel {
     if version.split('+').next().unwrap_or("").contains('-') {
         UpdateChannel::Beta
@@ -184,16 +218,11 @@ pub fn first_launch_channel(channel: UpdateChannel, version: &str) -> UpdateChan
     }
 }
 
-/// The settings after a Settings, Experiments row's choice: the switches
-/// ([`crate::experiments::choose`]) and, for the New UI's row ("Use classic
-/// UI"), the user's choice ([`AppSettings::new_ui`]), which later launches
-/// keep whatever the default becomes.
+/// The settings after a Settings, Experiments row's choice
+/// ([`crate::experiments::choose`]).
 pub fn choose_experiment(settings: &AppSettings, row: &str, option: &str) -> AppSettings {
     let mut s = settings.clone();
     s.experiments = crate::experiments::choose(&s.experiments, row, option);
-    if let Some(on) = crate::experiments::new_ui_choice(row, option) {
-        s.new_ui = Some(on);
-    }
     s
 }
 
@@ -343,7 +372,7 @@ pub struct TelemetryInput {
 pub struct SettingsInput {
     /// The signed-in account.
     pub identity: Option<String>,
-    /// Cua Cloud through client credentials (an API key): its client id.
+    /// The Cua account through client credentials (an API key): its client id.
     pub api_key_client: Option<String>,
     /// The sign-in in progress.
     pub sign_in: SignInPhase,
@@ -352,10 +381,6 @@ pub struct SettingsInput {
     /// The Spaces tab is hidden from the notch (the menu bar item is the
     /// entry point).
     pub menu_bar: bool,
-    /// Where New Space starts.
-    pub default_location: Location,
-    /// The environment sets the default location: which variable.
-    pub location_locked_by: Option<String>,
     /// The telemetry switch (none until read).
     pub telemetry: Option<TelemetryInput>,
     /// Coding agents (none while detecting).
@@ -369,8 +394,6 @@ pub struct SettingsInput {
     /// app's links only.
     #[serde(default)]
     pub teams: Option<crate::teams::TeamsInput>,
-    /// The account's Cua Cloud billing, once read (signed in).
-    pub billing: Option<crate::billing::BillingStatus>,
     /// Launch at login, once the system was asked (none: no rows).
     pub login_item: Option<crate::login_item::LoginItemInput>,
     /// Settings, Experiments (what the page mentions follows them).
@@ -400,6 +423,10 @@ pub struct SettingsInput {
     /// `builtin`, `system`); none: no Linux row.
     #[serde(default)]
     pub linux_source: Option<String>,
+    /// Overflow into your clouds when this machine is full
+    /// (`placement.overflow`); none: no row.
+    #[serde(default)]
+    pub overflow: Option<bool>,
 }
 
 impl Default for SettingsInput {
@@ -410,14 +437,11 @@ impl Default for SettingsInput {
             sign_in: SignInPhase::Idle,
             can_sign_out: false,
             menu_bar: false,
-            default_location: Location::Local,
-            location_locked_by: None,
             telemetry: None,
             agents: None,
             agents_busy: false,
             agents_pending: vec![],
             teams: None,
-            billing: None,
             login_item: None,
             experiments: Experiments::default(),
             keyvault_auto_wipe: None,
@@ -427,6 +451,7 @@ impl Default for SettingsInput {
             auto_connect: None,
             lume_source: None,
             linux_source: None,
+            overflow: None,
         }
     }
 }
@@ -453,6 +478,27 @@ pub fn auto_connect_row(on: bool) -> SettingsRow {
         "Opening a running Space shows its live desktop".into()
     } else {
         "Opening a running Space shows a preview and a Connect button".into()
+    });
+    r
+}
+
+/// The overflow switch's label.
+pub const OVERFLOW_LABEL: &str = "Overflow into your clouds when this Mac is full";
+
+/// Settings, General: whether Spaces created without a location go to your
+/// linked clouds once this machine is full (`placement.overflow`; only with
+/// a budget set on the Machines page).
+pub fn overflow_row(on: bool) -> SettingsRow {
+    let mut r = row(
+        "placement-overflow",
+        SettingsRowKind::Toggle,
+        OVERFLOW_LABEL,
+    );
+    r.options = vec![opt("on", "On", on), opt("off", "Off", !on)];
+    r.help = Some(if on {
+        "With a linked cloud and a budget, new Spaces go there when this Mac is full".into()
+    } else {
+        "New Spaces stay on this Mac".into()
     });
     r
 }
@@ -675,21 +721,6 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
             r.button = Some("Sign out".into());
         }
         account.push(r);
-        // Billing: the credit left, and the website's billing page (the
-        // apps take no payment details). Row id `billing`; the button
-        // opens `link_url`. Not shown while the apps do not offer Cua Cloud.
-        if let Some(b) = input
-            .billing
-            .as_ref()
-            .filter(|b| b.billing_enabled && crate::billing::BILLING_SHOWN)
-        {
-            let mut r = row("billing", Text, "Billing");
-            r.value = Some(crate::billing::billing_line(b));
-            r.button = Some(crate::billing::MANAGE_BILLING.into());
-            r.link_url = Some(crate::billing::BILLING_URL.into());
-            r.enabled = true;
-            account.push(r);
-        }
     } else if let SignInPhase::Waiting { user_code, .. } = &input.sign_in {
         let mut r = row(
             "sign-in-code",
@@ -739,26 +770,8 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
     if let Some(on) = input.auto_connect {
         general.push(auto_connect_row(on));
     }
-    // Where New Space starts: only a choice while the apps offer Cua Cloud.
-    if crate::model::CLOUD_SPACES_OFFERED {
-        let mut location = row("default-location", Choice, "New Spaces run on");
-        location.options = vec![
-            opt(
-                "local",
-                Location::Local.label(),
-                input.default_location == Location::Local,
-            ),
-            opt(
-                "cloud",
-                Location::Cloud.label(),
-                input.default_location == Location::Cloud,
-            ),
-        ];
-        if let Some(var) = input.location_locked_by.clone().filter(|v| !v.is_empty()) {
-            location.enabled = false;
-            location.help = Some(format!("Set by {var}"));
-        }
-        general.push(location);
+    if let Some(on) = input.overflow {
+        general.push(overflow_row(on));
     }
     let mut welcome = row("welcome", Text, "Welcome");
     welcome.button = Some("Show again".into());
@@ -1055,7 +1068,7 @@ mod tests {
         let path = dir.join("settings.json");
         let s = AppSettings {
             menu_bar: true,
-            default_location: Location::Cloud,
+            default_location: Location::Yours,
             last_seen_version: Some("0.2.0 (0.2.0.1)".into()),
             update_channel: UpdateChannel::Beta,
             launch_at_login: Some(false),
@@ -1070,6 +1083,11 @@ mod tests {
         assert_eq!(old.last_seen_version, None);
         assert_eq!(old.update_channel, UpdateChannel::Stable);
         assert_eq!(old.launch_at_login, None, "never chosen");
+        // The retired `cloud` default reads as this Mac; the rest is kept.
+        std::fs::write(&path, r#"{"menuBar":true,"defaultLocation":"cloud"}"#).unwrap();
+        let retired = load(&path);
+        assert!(retired.menu_bar);
+        assert_eq!(retired.default_location, Location::Local);
         std::fs::write(&path, "{nope").unwrap();
         assert_eq!(load(&path), AppSettings::default());
         let _ = std::fs::remove_dir_all(dir);
@@ -1233,6 +1251,18 @@ mod tests {
                 .iter()
                 .any(|r| r.id == "auto-connect")
         );
+        // The overflow switch shows when the app passes it, with its state.
+        assert!(
+            !general(&SettingsInput::default())
+                .iter()
+                .any(|r| r.id == "placement-overflow")
+        );
+        let rows = general(&SettingsInput {
+            overflow: Some(false),
+            ..Default::default()
+        });
+        let o = rows.iter().find(|r| r.id == "placement-overflow").unwrap();
+        assert!(o.options.iter().any(|x| x.id == "off" && x.active));
         let rows = general(&SettingsInput {
             auto_connect: Some(true),
             ..Default::default()
@@ -1311,119 +1341,43 @@ mod tests {
     }
 
     #[test]
-    fn an_older_builds_saved_new_ui_migrates_once() {
-        let (dir, path) = temp_settings("migrate");
-        let beta = "0.8.1-beta.1";
-        // Every older install saved `webUi: false` without anyone choosing it:
-        // never chosen, so Beta gets the New UI.
-        std::fs::write(
-            &path,
-            r#"{"updateChannel":"beta","experiments":{"cuaVolume":true,"webUi":false}}"#,
-        )
-        .unwrap();
-        let s = load(&path);
-        assert_eq!(s.new_ui, None);
-        assert!(s.experiments.cua_volume);
-        assert!(!s.experiments.web_ui, "on only by choice until resolved");
-        assert!(resolve_new_ui(&s, beta).experiments.web_ui);
-        assert!(!resolve_new_ui(&s, "0.8.0").experiments.web_ui);
-        // Saving the resolved settings keeps it unchosen: the default is
-        // never written as a choice.
-        save(&path, &resolve_new_ui(&s, beta)).unwrap();
-        let raw: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(raw["experiments"]["webUi"], false, "what older builds read");
-        assert!(raw["newUi"].is_null());
-        assert_eq!(load(&path).new_ui, None);
-
-        // A saved `webUi: true` was chosen: kept, on any channel.
-        std::fs::write(&path, r#"{"experiments":{"webUi":true}}"#).unwrap();
-        let s = load(&path);
-        assert_eq!(s.new_ui, Some(true));
-        assert!(s.experiments.web_ui);
-        assert!(resolve_new_ui(&s, "0.7.2").experiments.web_ui);
-        save(&path, &s).unwrap();
-        assert_eq!(load(&path).new_ui, Some(true));
-
-        // No experiments at all (or no file): never chosen.
-        std::fs::write(&path, r#"{"menuBar":true}"#).unwrap();
-        assert_eq!(load(&path).new_ui, None);
-        std::fs::remove_file(&path).unwrap();
-        let fresh = load(&path);
-        assert_eq!(fresh.new_ui, None);
-        assert!(!resolve_new_ui(&fresh, beta).experiments.web_ui, "Stable");
-        let _ = std::fs::remove_dir_all(dir);
-    }
-
-    #[test]
-    fn use_classic_ui_survives_later_launches() {
-        let (dir, path) = temp_settings("classic");
-        let beta = "0.8.1-beta.1";
-        let s = resolve_new_ui(
-            &AppSettings {
-                update_channel: UpdateChannel::Beta,
-                ..Default::default()
-            },
-            beta,
-        );
-        assert!(s.experiments.web_ui);
-        // "Use classic UI" on: saved as the user's choice.
-        let row = crate::experiments::CLASSIC_UI_ROW;
-        let s = choose_experiment(&s, row, "on");
-        assert_eq!(s.new_ui, Some(false));
-        assert!(!s.experiments.web_ui);
-        // Another row leaves the choice alone.
-        assert_eq!(
-            choose_experiment(&s, "experiment:sharing", "on").new_ui,
-            Some(false)
-        );
-        save(&path, &s).unwrap();
-        // Later launches, later versions, either channel: still classic.
-        for version in [beta, "0.8.1-beta.2", "0.8.1", "0.9.0"] {
-            let again = resolve_new_ui(&load(&path), version);
-            assert_eq!(again.new_ui, Some(false));
-            assert!(!again.experiments.web_ui, "{version}");
-            save(&path, &again).unwrap();
+    fn the_web_ui_is_on_for_every_install_whatever_an_older_build_saved() {
+        let (dir, path) = temp_settings("web-only");
+        // "Use classic UI" on (an older build's choice), a never-chosen
+        // `webUi: false`, a chosen `true`, no file: the web UI every time,
+        // on either channel and any version.
+        for raw in [
+            Some(r#"{"updateChannel":"stable","newUi":false,"experiments":{"webUi":false}}"#),
+            Some(r#"{"updateChannel":"beta","experiments":{"cuaVolume":true,"webUi":false}}"#),
+            Some(r#"{"experiments":{"webUi":true}}"#),
+            None,
+        ] {
+            match raw {
+                Some(raw) => std::fs::write(&path, raw).unwrap(),
+                None => {
+                    let _ = std::fs::remove_file(&path);
+                }
+            }
+            for version in ["0.7.2", "0.8.0", "0.16.1", "dev", ""] {
+                assert!(
+                    resolve_new_ui(&load(&path), version).experiments.web_ui,
+                    "{raw:?} {version}"
+                );
+            }
         }
-        // Off again: the New UI, kept as chosen even on Stable before 0.8.1.
-        let mut s = choose_experiment(&load(&path), row, "off");
-        assert_eq!(s.new_ui, Some(true));
-        s.update_channel = UpdateChannel::Stable;
-        save(&path, &s).unwrap();
-        assert!(resolve_new_ui(&load(&path), "0.7.3").experiments.web_ui);
-        let _ = std::fs::remove_dir_all(dir);
-    }
-
-    #[test]
-    fn switching_channel_moves_the_default_not_a_choice() {
-        let beta = AppSettings {
-            update_channel: UpdateChannel::Beta,
+        // The retired rows change nothing, and leave the old choice alone.
+        let s = AppSettings {
+            new_ui: Some(false),
             ..Default::default()
         };
-        let stable = AppSettings {
-            update_channel: UpdateChannel::Stable,
-            ..beta.clone()
-        };
-        let v = "0.8.1-beta.1";
-        assert!(resolve_new_ui(&beta, v).experiments.web_ui);
-        assert!(!resolve_new_ui(&stable, v).experiments.web_ui);
-        // Back to Beta: on again.
-        let back = AppSettings {
-            update_channel: UpdateChannel::Beta,
-            ..resolve_new_ui(&stable, v)
-        };
-        assert!(resolve_new_ui(&back, v).experiments.web_ui);
-        // A choice holds on either channel.
-        for (choice, channel) in [(false, UpdateChannel::Beta), (true, UpdateChannel::Stable)] {
-            let s = AppSettings {
-                update_channel: channel,
-                new_ui: Some(choice),
-                ..Default::default()
-            };
-            assert_eq!(resolve_new_ui(&s, v).experiments.web_ui, choice);
+        for row in ["experiment:classic_ui", "experiment:web_ui"] {
+            for option in ["on", "off"] {
+                let after = choose_experiment(&s, row, option);
+                assert_eq!(after.new_ui, Some(false));
+                assert_eq!(after.experiments, s.experiments);
+            }
         }
-        // From 0.8.1, Stable too.
-        assert!(resolve_new_ui(&stable, "0.8.1").experiments.web_ui);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -1435,12 +1389,6 @@ mod tests {
         assert_eq!(first_launch_channel(Stable, "0.8.0+build-7"), Stable);
         // A release keeps a channel already in the file.
         assert_eq!(first_launch_channel(Beta, "0.7.2"), Beta);
-        // With it, a fresh beta opens the New UI.
-        let fresh = AppSettings {
-            update_channel: first_launch_channel(Stable, "0.8.1-beta.1"),
-            ..Default::default()
-        };
-        assert!(resolve_new_ui(&fresh, "0.8.1-beta.1").experiments.web_ui);
     }
 
     #[test]
@@ -1478,6 +1426,92 @@ mod tests {
         let (dir, path) = temp_settings("sharing-true");
         std::fs::write(&path, r#"{"experiments":{"sharing":true}}"#).unwrap();
         assert!(load(&path).experiments.sharing);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn your_cloud_on_by_default_migrates_a_stored_false_once() {
+        // Fresh install: on, and an "off" afterwards survives restarts.
+        let (dir, path) = temp_settings("cloud-fresh");
+        let s = load(&path);
+        assert!(s.experiments.your_cloud);
+        save(
+            &path,
+            &choose_experiment(&s, "experiment:your_cloud", "off"),
+        )
+        .unwrap();
+        assert!(!load(&path).experiments.your_cloud);
+        assert!(!load(&path).experiments.your_cloud, "and again");
+        let _ = std::fs::remove_dir_all(dir);
+
+        // No value stored: on. An older build's saved false (no marker for
+        // it, though the sharing marker exists): on once, then the user's.
+        let (dir, path) = temp_settings("cloud-old");
+        std::fs::write(&path, r#"{"experiments":{"cuaVolume":true}}"#).unwrap();
+        std::fs::write(
+            path.with_file_name("settings-migrations.json"),
+            r#"{"sharingDefaultOn":true,"sharingSwitchRetired":true}"#,
+        )
+        .unwrap();
+        assert!(load(&path).experiments.your_cloud, "never set reads as on");
+        std::fs::write(
+            &path,
+            r#"{"experiments":{"yourCloud":false,"sharing":false}}"#,
+        )
+        .unwrap();
+        std::fs::remove_file(path.with_file_name("settings-migrations.json")).unwrap();
+        std::fs::write(
+            path.with_file_name("settings-migrations.json"),
+            r#"{"sharingDefaultOn":true,"sharingSwitchRetired":true}"#,
+        )
+        .unwrap();
+        let s = load(&path);
+        assert!(s.experiments.your_cloud, "the saved default, not a choice");
+        assert!(
+            !s.experiments.sharing,
+            "sharing's own marker kept its choice"
+        );
+        save(
+            &path,
+            &choose_experiment(&s, "experiment:your_cloud", "off"),
+        )
+        .unwrap();
+        assert!(!load(&path).experiments.your_cloud);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_retired_sharing_and_cloud_switches_turn_a_stored_off_on_once() {
+        // Both default-on migrations already ran; the switches were still
+        // there, and someone turned both off.
+        let (dir, path) = temp_settings("retired");
+        std::fs::write(
+            &path,
+            r#"{"experiments":{"cuaVolume":true,"sharing":false,"yourCloud":false},"menuBar":true}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            path.with_file_name("settings-migrations.json"),
+            r#"{"sharingDefaultOn":true,"yourCloudDefaultOn":true}"#,
+        )
+        .unwrap();
+        let s = load(&path);
+        assert!(s.experiments.sharing && s.experiments.your_cloud);
+        // Everything else the person set is kept.
+        assert!(s.experiments.cua_volume && s.menu_bar);
+        let raw: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(raw["experiments"]["sharing"], true);
+        assert_eq!(raw["menuBar"], true);
+        // It runs once: the markers say so, and a later load changes nothing.
+        let marks: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(path.with_file_name("settings-migrations.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(marks["sharingSwitchRetired"], true);
+        assert_eq!(marks["yourCloudSwitchRetired"], true);
+        let again = load(&path);
+        assert_eq!(again.experiments, s.experiments);
         let _ = std::fs::remove_dir_all(dir);
     }
 }

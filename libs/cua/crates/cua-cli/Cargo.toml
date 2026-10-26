@@ -18,7 +18,7 @@ path = "src/main.rs"
 
 [features]
 default = []
-byoc = ["cua-sdk/byoc", "cua-daemon/byoc"]
+byoc = ["cua-sdk/byoc", "cua-daemon/byoc", "dep:cua-byoc"]
 # Contrib sandbox providers (`--on e2b`, `--on daytona`, `--on modal`),
 # off by default: `contrib` for every one, `contrib-<name>` for one.
 contrib = ["cua-sdk/contrib", "cua-daemon/contrib"]
@@ -28,10 +28,13 @@ contrib-modal = ["cua-sdk/contrib-modal", "cua-daemon/contrib-modal"]
 
 [dependencies]
 cua-home.workspace = true
+cua-agents.workspace = true
 cua-sdk = { workspace = true, features = ["local", "spaces", "media"] }
 # `cua auth provider ...`: the contrib catalog and credential store (no
 # provider is compiled in unless a `contrib` feature is on).
 cua-contrib.workspace = true
+# `cua compat`: other providers' SDKs, unchanged, on Cua Spaces.
+cua-compat.workspace = true
 cua-daemon = { workspace = true, features = ["server", "client"] }
 cua-spacesd-client.workspace = true
 # `cua doctor`: resolve the image under test (registry facts).
@@ -45,13 +48,18 @@ pbjson-types.workspace = true
 humantime.workspace = true
 # `cua host …` (unattended access) and `cua spaces ls` (registry + relay machines).
 cua-host.workspace = true
+# `cua cloud add aws`: EC2 pool hosts through the AWS provider of the sandbox layer.
+cua-byoc = { workspace = true, optional = true, features = ["aws"] }
+# The `cluster_*` MCP tools: a client of the cluster coordinator's API.
 # Anonymous usage telemetry (`cua telemetry`, the first-run notice).
 cua-telemetry.workspace = true
+cua-crash.workspace = true
 async-trait.workspace = true
 cua-proto = { workspace = true, features = ["client", "serde"] }
-cua-spaces = { path = "../cua-spaces", default-features = false, features = ["mcp"] }
+cua-spaces = { path = "../cua-spaces", default-features = false, features = ["mcp", "spaces-hotspot"] }
 clap.workspace = true
 tokio = { workspace = true }
+tonic = { workspace = true }
 tokio-tungstenite.workspace = true
 futures-util.workspace = true
 serde.workspace = true
@@ -69,6 +77,11 @@ tracing-subscriber.workspace = true
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "json"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 flate2 = "1"
+# `cua run`: the job bundle and the result (gzip tars).
+tar = "0.4"
+tempfile.workspace = true
+# `cua host setup`: the accelerators this machine has.
+cua-cluster.workspace = true
 crc32fast = "1"
 
 [target.'cfg(unix)'.dependencies]
@@ -86,6 +99,8 @@ cua-host = { workspace = true, features = ["testing"] }
 cua-daemon = { workspace = true, features = ["server", "client", "test-fixtures"] }
 cua-spacesd-client = { workspace = true, features = ["testing"] }
 cua-sandbox-core = { workspace = true, features = ["testing"] }
+# The scripted cloud for `cua cloud add aws`'s create-all-or-none tests.
+cua-byoc = { workspace = true, features = ["aws", "testing"] }
 tempfile.workspace = true
 # The default log filter test emits events.
 tracing.workspace = true

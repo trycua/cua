@@ -10,11 +10,11 @@
 import { randomUUID } from "node:crypto";
 import type { Native } from "../native/load";
 import type {
+  AppCliInstallPlan,
   AppCreateAction,
   AppCreatesState,
   AppCreateSpaceArgs,
   AppGpuChoice,
-  AppCloudPricing,
   AppLocalStorage,
   AppMachinePageRow,
   AppMachinesPageInput,
@@ -36,7 +36,7 @@ import type {
   LocalStorage,
   SpaceCreateProgress,
 } from "../native/generated/index";
-import type { LocalRuntimes, SpacesBackend } from "./backend";
+import type { ListRead, LocalRuntimes, SpacesBackend } from "./backend";
 import { AgentsModel, type AgentSetupRunning, type ToolRunner } from "./agents";
 import { ChecklistModel } from "./checklist";
 import type { CloudModel } from "./cloud";
@@ -46,7 +46,7 @@ import { NotchActivity } from "./activity";
 import { createErrorVariant, daemonAnswered, isCancelled, sdkErrorKind, words } from "./errors";
 import type { HostModel } from "./host";
 import { KeyvaultModel } from "./keyvault";
-import type { AccountRunning, TelemetryRunning } from "./services";
+import type { AccountRunning, SignInOptions, TelemetryRunning } from "./services";
 import type { StartupModel } from "./startup";
 import { SignInRuns, type SignInEnd } from "./sign-in";
 import { SpaceThumbnails } from "./thumbnails";
@@ -130,6 +130,8 @@ export class AppModel {
   roster: AppRosterState;
   /** The selected Space (the sidebar's selection). */
   selectedSpaceId: string | null = null;
+  /** The bundled CLI's install plan as last read (`cli.plan`, `settings.get`'s `cli`). */
+  cliPlan: AppCliInstallPlan | null = null;
   loaded = false;
   /** The last list read failed: the page says so above every page, and the
    * rows already listed stay (the SwiftUI app's `rosterError`). Never the
@@ -145,7 +147,7 @@ export class AppModel {
   bannerIsError = false;
   /** The signed-in account. */
   identity: string | null;
-  /** Cua Cloud can be used. */
+  /** A Cua account is signed in (or client credentials are set). */
   cloudConfigured = false;
   signIn: AppSignInPhase;
   /** The page a waiting sign-in finishes on. */
@@ -160,7 +162,7 @@ export class AppModel {
   readonly thumbnails: SpaceThumbnails;
   /** The notch's indicator: the hotspot, a transfer running (a teleport, files dropped on the notch). */
   readonly activity = new NotchActivity();
-  creates: AppCreatesState = { pending: [], deleting: [], powering: [] };
+  creates: AppCreatesState = { pending: [], deleting: [], powering: [], streaks: [] };
   /** macOS VMs running on this Mac, as New Space last read them. */
   runningMacosVms: number | null = null;
   lumeSource: string | null = null;
@@ -191,7 +193,7 @@ export class AppModel {
   readonly servicesInNow: () => boolean;
 
   private listWatchedSince = Date.now();
-  private rowsInFlight: Promise<import("../native/generated/index").AppSpaceRow[]> | null = null;
+  private rowsInFlight: Promise<ListRead> | null = null;
   private hostInFlight: Promise<void> | null = null;
   private createTicker: NodeJS.Timeout | null = null;
   private readonly listeners = new Set<(change: ModelChange) => void>();
@@ -531,8 +533,10 @@ export class AppModel {
     if (done.ok && this.hostInFlight === task) this.hostInFlight = null;
   }
 
-  private async readRows() {
-    const task = this.rowsInFlight ?? this.backend.rows();
+  private async readRows(): Promise<ListRead> {
+    const b = this.backend;
+    const task: Promise<ListRead> =
+      this.rowsInFlight ?? (b.listRead ? b.listRead() : b.rows().then((rows) => ({ rows, incomplete: false, reaching: 0, stale: false, notice: "" })));
     this.rowsInFlight = task;
     const result = await withTimeout(this.listTimeout, () => task);
     // Still running after the timeout: the next refresh waits on the same read.
@@ -543,21 +547,64 @@ export class AppModel {
 
   /** Re-reads the registry (and the host). Bounded: a daemon that stopped answering leaves the list as it was. */
   async refresh(): Promise<void> {
-    await this.refreshHost();
-    const cloud = await this.backend.cloudAvailable().catch(() => false);
-    if (cloud !== this.cloudConfigured) {
-      this.cloudConfigured = cloud;
-      this.changed("session");
-    }
+    // The host's reads run beside the list, never ahead of it: this machine's
+    // Spaces show as soon as the daemon lists them ("This machine" joins
+    // them once the host answered).
+    const hostRead = this.refreshHost().then(() => {
+      if (this.loaded) {
+        this.recompose();
+        this.changed("spaces");
+      }
+    });
+    const cloudRead = this.backend
+      .loggedIn()
+      .catch(() => false)
+      .then((cloud) => {
+        if (cloud !== this.cloudConfigured) {
+          this.cloudConfigured = cloud;
+          this.changed("session");
+        }
+      });
     try {
-      const rows = await this.readRows();
+      await this.readList();
+    } finally {
+      await Promise.all([hostRead, cloudRead]);
+      this.followIncompleteList();
+    }
+  }
+
+  /** Some of your computers have not answered the last read yet (`Spaces.list_known`). */
+  listIncomplete = false;
+  /** How many computers are still being reached (0 when unknown). */
+  listReaching = 0;
+  /** Your other computers' rows are the last known ones, not yet confirmed. */
+  listStale = false;
+  private incompleteFollow: ReturnType<typeof setTimeout> | null = null;
+
+  /** While some of your computers have not answered, the list is read again
+   * soon (each read waits a moment for them in the daemon), not at the next poll. */
+  private followIncompleteList(): void {
+    if (!this.listIncomplete || this.incompleteFollow) return;
+    this.incompleteFollow = setTimeout(() => {
+      this.incompleteFollow = null;
+      void this.refresh();
+    }, 500);
+  }
+
+  private async readList(): Promise<void> {
+    try {
+      const list = await this.readRows();
       this.lastListOk = Date.now();
       this.lastListAnswer = this.lastListOk;
-      this.registrySpaces = this.native.appRowsToSpaces(rows, AppModel.nowMs());
+      this.registrySpaces = this.native.appRowsToSpaces(list.rows, AppModel.nowMs());
       this.creates = this.native.appCreatesSettle(this.creates, this.registrySpaces);
       this.recompose();
       this.loaded = true;
-      this.rosterError = null;
+      this.listIncomplete = list.incomplete;
+      this.listReaching = list.reaching;
+      this.listStale = list.stale;
+      // Your other computers could not be read: their rows are the last known ones.
+      this.rosterError = list.notice ? "Could not reach your other computers. Their Spaces may be out of date." : null;
       if (this.selectedSpaceId === null) {
         const first = this.sidebar.selectedId;
         if (first) this.selectedSpaceId = first;
@@ -587,13 +634,11 @@ export class AppModel {
   /** What New Space knows, freshly probed; every probe runs at once and each is bounded. */
   async newSpaceEnv(): Promise<AppWizardEnv> {
     const b = this.backend;
-    const [runtimes, storage, pricing, gpus, hosts, cloud, lume, linux, vms] = await Promise.all([
+    const [runtimes, storage, gpus, hosts, lume, linux, vms] = await Promise.all([
       b.localRuntimes(),
       b.localStorage(),
-      b.cloudPricing(),
       b.gpuChoices(),
       b.hosts(),
-      b.cloudAvailable(),
       b.lumeSource(),
       b.linuxSource(),
       b.runningMacosVms(),
@@ -605,7 +650,7 @@ export class AppModel {
     // Lume did not answer this time: keep what it said last.
     this.runningMacosVms = vms ?? this.runningMacosVms;
     await this.readRuntimeAdvice(runtimes);
-    return this.wizardEnv(cloud, runtimes, storage, pricing, gpus);
+    return this.wizardEnv(runtimes, storage, gpus);
   }
 
   /** Windows: what is missing for local Spaces and what the app can do about it. */
@@ -639,20 +684,13 @@ export class AppModel {
 
   /** What New Space knows without asking anything: the env while the live services are still starting. */
   knownNewSpaceEnv(): AppWizardEnv {
-    return this.wizardEnv(false, null, null, null, null);
+    return this.wizardEnv(null, null, null);
   }
 
-  private wizardEnv(
-    available: boolean,
-    runtimes: LocalRuntimes | null,
-    storage: LocalStorage | null,
-    pricing: AppCloudPricing | null,
-    gpus: AppGpuChoice[] | null,
-  ): AppWizardEnv {
+  private wizardEnv(runtimes: LocalRuntimes | null, storage: LocalStorage | null, gpus: AppGpuChoice[] | null): AppWizardEnv {
     const backends = runtimes?.ready;
     const env: AppWizardEnv = {
       defaultLocation: this.settings.defaultLocation,
-      cloudAvailable: available,
       localAvailable: backends ? backends.length > 0 : true,
       localReason:
         backends && backends.length === 0
@@ -665,7 +703,6 @@ export class AppModel {
       lumeSource: this.lumeSource ?? undefined,
       linuxSource: this.linuxSource ?? undefined,
       storage: storage ? wizardStorage(storage) : undefined,
-      cloudPricing: available ? (pricing ?? undefined) : undefined,
       clouds: this.cloud.clouds,
       hosts: this.hosts,
       experiments: this.settings.experiments,
@@ -682,9 +719,29 @@ export class AppModel {
    * registry's row when it is ready; returns its id. A failure stays on its
    * row; a cancelled create only leaves the list. Either way it throws.
    */
-  async runCreate(args: AppCreateSpaceArgs, os: AppSpaceOs, pendingId: string, progress?: (p: SpaceCreateProgress) => void): Promise<string> {
+  async runCreate(
+    args: AppCreateSpaceArgs,
+    os: AppSpaceOs,
+    pendingId: string,
+    progress?: (p: SpaceCreateProgress) => void,
+    retrying?: (error: string, errorVariant: string) => void,
+  ): Promise<string> {
     this.startCreate(args, os, pendingId);
-    return this.followCreate(args, pendingId, progress);
+    // A failure that usually passes (the core's `fail_decision`: a runtime
+    // that did not start this time, a network drop during the download, a
+    // VM that did not answer in time) runs the create once more by itself,
+    // the row saying "Retrying…"; `retrying` hears of it first (the page
+    // applies the same failure). Only the final outcome throws.
+    for (;;) {
+      try {
+        return await this.followCreate(args, pendingId, progress);
+      } catch (error) {
+        if (isCancelled(error)) throw error;
+        const row = this.creates.pending.find((p) => p.id === pendingId);
+        if (!row?.retryPending || row.cancelling) throw error;
+        retrying?.(words(error), createErrorVariant(error));
+      }
+    }
   }
 
   /** A new pending id (`pending:<uuid>`). */
@@ -697,7 +754,7 @@ export class AppModel {
     // on vmnet): ask now, while the person who pressed Create is here.
     if (args.on === "local") this.host.requestLocalNetwork();
     const machine = args.on.startsWith("host:") ? args.on.slice("host:".length) : undefined;
-    const provider = args.on === "cloud" ? this.native.AppSpaceProvider.Cloud : args.on === "local" ? this.native.AppSpaceProvider.Local : this.native.AppSpaceProvider.Relay;
+    const provider = args.on === "local" ? this.native.AppSpaceProvider.Local : this.native.AppSpaceProvider.Relay;
     this.sendCreate(
       new this.native.AppCreateAction.Start({
         id: pendingId,
@@ -747,7 +804,7 @@ export class AppModel {
       return id;
     } catch (error) {
       if (isCancelled(error)) this.sendCreate(new this.native.AppCreateAction.CancelDone({ id: pendingId }));
-      else this.sendCreate(new this.native.AppCreateAction.Fail({ id: pendingId, error: words(error), errorVariant: createErrorVariant(error) }));
+      else this.sendCreate(new this.native.AppCreateAction.Fail({ id: pendingId, error: words(error), errorVariant: createErrorVariant(error), now: AppModel.nowMs() }));
       throw error;
     }
   }
@@ -867,7 +924,7 @@ export class AppModel {
 
   /** The count the menu bar item and the notch show. */
   get statusLine(): string {
-    return this.native.appStatusLine(this.native.appOpenableCount(this.spaces));
+    return this.native.appOnStatusLine(this.native.appOnCount(this.spaces));
   }
 
   /** The window chrome (account line, New Space, empty state). */
@@ -885,9 +942,9 @@ export class AppModel {
   /** "Sign in": the browser flow (opened by the account), the code while it
    * waits. Starting again while it waits is a retry: a new attempt, and
    * whichever attempt the browser finishes signs the app in. */
-  async beginSignIn(): Promise<void> {
+  async beginSignIn(opts?: SignInOptions): Promise<void> {
     if (!this.account || this.signInPhase() === "Starting") return;
-    await this.signIns.begin();
+    await this.signIns.begin(opts);
   }
 
   /** A session is stored (by a sign-in here or `cua auth login`). */

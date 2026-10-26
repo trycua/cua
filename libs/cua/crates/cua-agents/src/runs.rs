@@ -121,6 +121,10 @@ pub struct RunOptions {
     /// Give the agent the host bridge (MCP server `cua`: a pipe the host
     /// answers as the persistent agent, see `runner/bridge.mjs`).
     pub bridge: bool,
+    /// Make the run durable (see [`crate::durable`]): an epoch-fenced
+    /// journal, a tool ledger, resume with a recovery note. Implies
+    /// `exit_when_idle`.
+    pub durable: Option<crate::durable::DurableOptions>,
 }
 
 /// `meta.json`.
@@ -345,7 +349,7 @@ fn credential_check(h: &Harness, probe: Option<&str>) -> Result<Option<String>> 
     )))
 }
 
-fn valid_env_name(k: &str) -> Result<()> {
+pub(crate) fn valid_env_name(k: &str) -> Result<()> {
     if k.is_empty()
         || !k.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
         || k.as_bytes()[0].is_ascii_digit()
@@ -633,6 +637,8 @@ impl Agents {
             app_dirs: vec![],
             os: cua_agent_setup::Os::Linux,
             run_agent_clis: false,
+            // The guest's own cua: the bundled names, whatever the host is.
+            channel: cua_agent_setup::CuaChannel::Stable,
         };
         let dir = loc.resolve(&env).to_string_lossy().replace('\\', "/");
         let mut done = vec![];
@@ -844,7 +850,7 @@ impl Agents {
             }
             e
         });
-        let launch = harness::launch_with_home(
+        let mut launch = harness::launch_with_home(
             h,
             endpoint.as_ref(),
             opts.model.as_deref(),
@@ -852,6 +858,9 @@ impl Agents {
             &cwd,
             home_dir.as_deref(),
         )?;
+        if opts.durable.as_ref().is_some_and(|d| d.guard) {
+            launch.env.extend(crate::durable::guard_env(h));
+        }
         for f in &launch.files {
             let path = if f.rel.starts_with('/') {
                 f.rel.clone()
@@ -956,13 +965,16 @@ impl Agents {
             "prompt": prompt,
             "files": files,
             "mcpServers": mcp,
-            "exitWhenIdle": opts.exit_when_idle,
+            "exitWhenIdle": opts.exit_when_idle || opts.durable.is_some(),
             "idleExitSecs": opts.idle_exit_secs.unwrap_or(1800),
             "authMethod": h.auth_method,
             "authHint": h.auth_hint(),
             "keyCheck": harness::key_check(h, &opts.env, endpoint.is_some()),
             "mcpBridge": format!("{}/.cua/bin/mcp-remote", self.home),
             "modeKinds": h.mode_kinds,
+            "guardModeKinds": crate::durable::guard_mode_kinds(h),
+            "secretEnv": opts.durable.as_ref().map(|_| opts.env.keys().collect::<Vec<_>>()),
+            "durable": opts.durable.as_ref().map(|d| d.run_section(Some(&rdir))),
         });
         self.write(
             &format!("{rdir}/run.json"),
@@ -1014,6 +1026,36 @@ impl Agents {
             cwd,
             run_dir: rdir,
             notes,
+        })
+    }
+
+    /// Starts a durable run again at a higher `epoch`: the same run
+    /// directory and journal, a new runner. The new runner raises the epoch
+    /// fence first, so a runner that is still alive somewhere is cut off; it
+    /// resumes the agent's session and sends it a recovery note. The caller
+    /// (a re-driver) owns the epoch counter; the run's secrets are still in
+    /// the run directory.
+    pub async fn redrive(&self, run_id: &str, epoch: u64) -> Result<Started> {
+        let rdir = self.run_dir(run_id);
+        let raw = self
+            .read(&format!("{rdir}/run.json"), 0, 0)
+            .await?
+            .ok_or_else(|| Error::NotFound(format!("run {run_id}")))?;
+        let next = crate::durable::redrive_run_json(&raw, epoch)?;
+        self.write(&format!("{rdir}/run.json"), next, 0o600).await?;
+        let meta: RunMeta = self
+            .json_file(&format!("{rdir}/meta.json"))
+            .await?
+            .and_then(|v| serde_json::from_value(v).ok())
+            .ok_or_else(|| Error::NotFound(format!("run {run_id} metadata")))?;
+        let tag = self.spawn_run(run_id).await?;
+        Ok(Started {
+            run_id: run_id.into(),
+            harness: meta.harness,
+            process_tag: tag,
+            cwd: meta.cwd,
+            run_dir: rdir,
+            notes: vec![],
         })
     }
 

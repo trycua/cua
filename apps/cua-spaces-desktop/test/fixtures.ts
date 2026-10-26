@@ -21,7 +21,7 @@ import type {
   SpacePresenceLike,
   TeleportLike,
 } from "../src/native/generated/index";
-import type { LocalRuntimes, MachineHealthReport, SpaceThumbnailData, SpacesBackend } from "../src/model/backend";
+import type { LocalRuntimes, MachineHealthReport, ShareLinkRow, SpaceThumbnailData, SpacesBackend } from "../src/model/backend";
 import type { StreamWindow } from "../src/model/streams";
 import type { AccountProfile, AccountRunning, LinkNoticeView, SignInAttempt, TelemetryRunning } from "../src/model/services";
 
@@ -64,7 +64,7 @@ export function sampleRows(n: Native): AppSpaceRow[] {
       power: "suspend",
       powerState: "running",
     }),
-    row({ id: "cloud:builder", name: "builder", provider: "cloud", features: ["desktop_stream"], addedAt: "2026-09-24T08:00:00Z", os: n.AppSpaceOs.Linux, osName: "Arch Linux", reachable: false, error: "timed out" }),
+    row({ id: "direct:builder", name: "builder", provider: "direct", features: ["desktop_stream"], addedAt: "2026-09-24T08:00:00Z", os: n.AppSpaceOs.Linux, osName: "Arch Linux", reachable: false, error: "timed out" }),
     row({ id: "direct:10.0.0.5:3211", name: "10.0.0.5:3211", provider: "direct", addedAt: "2026-09-23T08:00:00Z", os: n.AppSpaceOs.Windows, osName: "Windows" }),
   ];
 }
@@ -167,14 +167,11 @@ export class FixtureSpacesBackend implements SpacesBackend {
   async localStorage() {
     return null;
   }
-  async cloudAvailable() {
+  async loggedIn() {
     return false;
   }
   async runningMacosVms() {
     return 1;
-  }
-  async cloudPricing() {
-    return null;
   }
   async usage() {
     return null;
@@ -220,6 +217,31 @@ export class FixtureSpacesBackend implements SpacesBackend {
     const rows = (this.sharesNow.get(id) ?? []).filter((r) => r.who !== who);
     this.sharesNow.set(id, [...rows, { who, role, connected: false }]);
     return this.shares(id);
+  }
+  linksNow: ShareLinkRow[] = [];
+  async links() {
+    return [...this.linksNow];
+  }
+  async createLink(target: string, access: string | null, ttlSeconds: number | null, name: string | null) {
+    const id = `share-${String(this.linksNow.length + 1).padStart(12, "0")}`;
+    const row: ShareLinkRow = {
+      id,
+      url: `https://s${id}.m.relay.example/`,
+      name,
+      access: access === "team" || access === "public" ? access : "private",
+      kind: target.startsWith("space:") ? "space_port" : /^\d+$/.test(target) ? "port" : "file",
+      target,
+      owner: "ada@example.com",
+      createdAtUnix: 1_000,
+      expiresAtUnix: ttlSeconds ? 1_000 + ttlSeconds : null,
+    };
+    this.linksNow = [row, ...this.linksNow];
+    return row;
+  }
+  async stopLink(id: string) {
+    const gone = this.linksNow.filter((l) => id === "all" || l.id === id).map((l) => l.id);
+    this.linksNow = this.linksNow.filter((l) => !gone.includes(l.id));
+    return gone;
   }
   async unshare(id: string, who: string) {
     this.sharesNow.set(id, (this.sharesNow.get(id) ?? []).filter((r) => r.who !== who));

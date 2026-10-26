@@ -6,10 +6,10 @@
 // delete and cancel (the SwiftUI host's `spaces`, `createOptions`, `create`
 // and `cancelCreate`).
 import type { Native } from "../native/load";
-import type { AppCreateSpaceArgs, AppRuntime, AppSpace, AppWizardEnv, SpaceCreateProgress } from "../native/generated/index";
+import type { AppCreateSpaceArgs, AppSpace, AppWizardEnv, SpaceCreateProgress } from "../native/generated/index";
 import { AppModel } from "../model/app-model";
 import type { RuntimeFix } from "../model/windows-runtime";
-import { kindOf, osOf } from "../model/backend";
+import { kindOf, osOf, runtimeOf } from "../model/backend";
 import { isCancelled } from "../model/errors";
 import { bool, string } from "./args";
 import type { BridgeContext } from "./context";
@@ -28,6 +28,12 @@ export function spacesState(model: AppModel) {
     rosterError: model.rosterError,
     // Another app keeps its own daemon and this app uses it (null otherwise).
     daemonNotice: model.daemonNotice,
+    // Some of your computers have not answered yet (`Spaces.list_known`): the
+    // page shows what is known and "Reaching N computers…", never the empty home.
+    incomplete: model.listIncomplete,
+    reaching: model.listReaching,
+    // Your other computers' rows are the last known ones, not yet confirmed.
+    stale: model.listStale,
   };
 }
 
@@ -48,7 +54,6 @@ export function createOptions(env: AppWizardEnv, macosVmsRunning: number | null,
       storage: encode(env.storage),
     },
     gpus: encode(env.gpus),
-    cloudPricing: encode(env.cloudPricing),
     experiments: encode(env.experiments),
     maxCpus: env.maxCpus,
     env: encode(env),
@@ -58,23 +63,21 @@ export function createOptions(env: AppWizardEnv, macosVmsRunning: number | null,
   return out;
 }
 
-const RUNTIMES = ["auto", "gvisor", "runc", "qemu", "lume", "kubevirt"] as const;
-
 /** The page's `SpaceCreateConfig` (the core's `CreateSpaceArgs`) as the FFI record. */
 export function createArgs(native: Native, c: BridgeArgs, defaultOn: string): AppCreateSpaceArgs {
   const image = c.image;
   if (typeof image !== "string" || image === "") throw Failure.badArgs("config.image: string");
   const kind = kindOf(native, typeof c.kind === "string" ? c.kind : "");
   if (!kind) throw Failure.badArgs("config.kind: container | vm");
-  const runtime = (c.runtime ?? "auto") as string;
-  if (!(RUNTIMES as readonly string[]).includes(runtime)) throw Failure.badArgs("config.runtime: auto | gvisor | runc | qemu | lume | kubevirt");
+  const runtime = runtimeOf(native, typeof c.runtime === "string" ? c.runtime : "auto");
+  if (!runtime) throw Failure.badArgs("config.runtime: auto | gvisor | runc | qemu | lume | an external runtime's name");
   const count = (k: string) => (typeof c[k] === "number" && Number.isFinite(c[k]) && (c[k] as number) >= 0 ? Math.floor(c[k] as number) : undefined);
   const text = (k: string) => (typeof c[k] === "string" && c[k] !== "" ? (c[k] as string) : undefined);
   return {
     image,
     on: text("on") ?? defaultOn,
     kind,
-    runtime: runtime as AppRuntime,
+    runtime,
     name: text("name"),
     cpus: count("cpus"),
     memoryMb: count("memoryMb"),
@@ -140,7 +143,14 @@ export function spacesMethods(ctx: BridgeContext): Handlers {
       const os = (typeof args.os === "string" ? osOf(native, args.os) : undefined) ?? native.AppSpaceOs.Unknown;
       let id: string;
       try {
-        id = await model.runCreate(a, os, pendingId, (p) => events.emit("spaces.createProgress", progress(p, pendingId)));
+        id = await model.runCreate(
+          a,
+          os,
+          pendingId,
+          (p) => events.emit("spaces.createProgress", progress(p, pendingId)),
+          // The model runs it once more: the page shows "Retrying…".
+          (error, errorVariant) => events.emit("spaces.createProgress", { pendingId, phase: "preparing", detail: "", retry: { error, errorVariant } }),
+        );
       } catch (error) {
         if (isCancelled(error)) throw new Failure("cancelled", "cancelled");
         throw error;

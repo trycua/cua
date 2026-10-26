@@ -5,12 +5,13 @@ import { CheckIcon, ChevronRightIcon, CopyIcon, ExternalLinkIcon, LoaderCircleIc
 import { useEffect, useState, type ReactNode } from "react";
 import { encode } from "uqr";
 
-import { expiresInText, FINISHING_SETUP, teamName, useMachines, useTeamChoices, usePairingCode, useSession, type HostFormField, type HostSetupGuide, type Machine, type PairingHook } from "@/bridge";
+import { expiresInText, FINISHING_SETUP, teamName, useFlag, useMachines, useTeamChoices, usePairingCode, useSession, type HostFormField, type HostSetupGuide, type Machine, type PairingHook } from "@/bridge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogDescription, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { Segmented } from "@/components/ui/segmented";
 import { Select } from "@/components/ui/select";
 import { toast } from "@/components/ui/toast";
+import { UpgradeCard } from "@/components/upgrade-card";
 import { cn } from "@/lib/utils";
 
 /** Where Cua Spaces is downloaded (`teleport::flow::CUA_INSTALL_URL`). */
@@ -143,6 +144,7 @@ function Notice({ children }: { children: ReactNode }) {
 
 /** The link, its QR code, the commands, and how long it lasts. */
 function PairingPanel({ pairing, machines }: { pairing: PairingHook; machines: Machine[] }) {
+  const cards = useFlag("upsell_cards");
   const [shell, setShell] = useState<Shell>("sh");
   const { openExternal } = useSession();
   const { phase, code } = pairing;
@@ -165,7 +167,12 @@ function PairingPanel({ pairing, machines }: { pairing: PairingHook; machines: M
         </div>
       );
     }
+    // Only a team owner gets the checkout link, so only an owner gets the card.
+    const failedText = team?.phase === "failed" ? (team.error ?? "") : "";
+    const cardReason = !team?.upgradeUrl ? null : /no free seats/.test(failedText) ? "seats" : /as many computers as it has seats/.test(failedText) ? "machines" : null;
+    const asCard = cards && cardReason !== null;
     return (
+      <>
       <div className="mt-5 flex items-center gap-2.5 rounded-lg border bg-card px-3 py-3 text-[13px]" data-pairing-added data-pairing-team={team?.phase}>
         <CheckIcon className="size-4 shrink-0 text-success" aria-hidden />
         <span className="min-w-0 flex-1">
@@ -176,12 +183,14 @@ function PairingPanel({ pairing, machines }: { pairing: PairingHook; machines: M
               ? `It isn't on your team yet. ${team.error ?? "Something went wrong."}`
               : "It shows in your computers."}
         </span>
-        {team?.phase === "failed" && team.upgradeUrl ? (
+        {team?.phase === "failed" && team.upgradeUrl && !asCard ? (
           <Button size="sm" data-pairing-upgrade="" onClick={() => void openExternal(team.upgradeUrl!).catch(() => {})}>
             Upgrade
           </Button>
         ) : null}
       </div>
+      {asCard ? <UpgradeCard reason={cardReason} className="mt-3" /> : null}
+      </>
     );
   }
 

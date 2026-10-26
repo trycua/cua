@@ -60,7 +60,7 @@ struct NotchTests {
     /// The debug start's highlight names one control.
     @Test func highlightParses() {
         #expect(NotchHighlight.parse("tile", firstTile: "local:aurora") == NotchHighlight(.tile("local:aurora")))
-        #expect(NotchHighlight.parse("tile=cloud:x:pressed", firstTile: nil) == NotchHighlight(.tile("cloud:x"), pressed: true))
+        #expect(NotchHighlight.parse("tile=direct:x:pressed", firstTile: nil) == NotchHighlight(.tile("direct:x"), pressed: true))
         #expect(NotchHighlight.parse("settings:pressed", firstTile: nil) == NotchHighlight(.button(.settings), pressed: true))
         #expect(NotchHighlight.parse("list", firstTile: nil) == NotchHighlight(.button(.list)))
         #expect(NotchHighlight.parse("search", firstTile: nil) == NotchHighlight(.search))
@@ -467,6 +467,38 @@ struct NotchTests {
         #expect(notch.view.phase == .closed)
     }
 
+    // MARK: - The count
+
+    /// The tab counts only the Spaces on or starting: with every Space
+    /// stopped there is no tab at all (no "0"), the stopped Spaces are
+    /// still tiles that take drops, and one starting brings the tab back.
+    @Test func theTabCountsOnlySpacesOnAndGoesAtZero() async throws {
+        let notch = NotchModel(scheduler: ManualScheduler())
+        let roster = await spaces()
+        let stopped = roster.map { s -> AppSpace in
+            var s = s
+            if s.id != "this-mac" { s.status = .suspended }
+            return s
+        }
+        notch.spaces = stopped
+        #expect(appOnCount(spaces: stopped) == 0)
+        #expect(notch.view.phase == .closed && !notch.view.showTab)
+        #expect(appOnStatusLine(count: 0) == "No Spaces running")
+        notch.send(.click)
+        let tiles = notch.view.tiles
+        #expect(!tiles.isEmpty && tiles.allSatisfy { $0.dim })
+        #expect(tiles.contains { $0.dropTarget }, "a reachable stopped Space still takes drops")
+        notch.send(.click)
+
+        var starting = stopped
+        let i = try #require(starting.firstIndex { $0.id != "this-mac" })
+        starting[i].status = .provisioning
+        notch.spaces = starting
+        #expect(notch.view.showTab)
+        #expect(notch.view.tab.count == "1" && notch.view.tab.word == "Space")
+        #expect(notch.view.countLabel == "1 Space")
+    }
+
     // MARK: - The notch setting
 
     @Test func hidingTheNotchStopsHoverAndDragsAndShowingRestoresIt() async {
@@ -560,14 +592,5 @@ struct LaunchTests {
         #expect(!defaults.bool(forKey: "ApplePersistenceIgnoreState"))
         CuaSpacesMacApp.ignoreSavedWindowState(defaults)
         #expect(defaults.bool(forKey: "ApplePersistenceIgnoreState"))
-    }
-
-    /// With New UI on, or the first run due (it is the web UI's onboarding),
-    /// a launch opens the New UI window, not the native main window.
-    @Test func newUIOrAFirstRunOpensItsWindowAtLaunchInsteadOfTheMainWindow() {
-        #expect(CuaSpacesMacApp.opensWebUIAtLaunch(webUi: true, onboarded: true))
-        #expect(CuaSpacesMacApp.opensWebUIAtLaunch(webUi: true, onboarded: false))
-        #expect(!CuaSpacesMacApp.opensWebUIAtLaunch(webUi: false, onboarded: true))
-        #expect(CuaSpacesMacApp.opensWebUIAtLaunch(webUi: false, onboarded: false))
     }
 }

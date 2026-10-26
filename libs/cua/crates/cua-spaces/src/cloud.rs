@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-//! Spaces in your own cloud account (`on="aws"`, `"gcp"`, `"modal"`).
+//! Spaces in your own cloud account (`on="aws"`, `"gcp"`, `"hetzner"`, `"modal"`).
 //!
 //! A cloud Space is a sandbox from that provider (the sandbox layer owns
 //! the cloud: provisioning, tags, records, stop and start, cleanup; see
@@ -19,8 +19,8 @@ use cua_sandbox_core::placement::Kind;
 use cua_sandbox_core::{CreateOptions, ProviderKind};
 
 pub use cua_sandbox_core::byoc::{
-    CloudCheck, CloudConnected, CloudCredentials, CloudDisconnected, CloudKind, CloudProvider,
-    CloudResource, CloudStatusReport, CloudSweepItem, CloudSweepReport, CloudTarget,
+    CloudAuditEntry, CloudCheck, CloudConnected, CloudCredentials, CloudDisconnected, CloudKind,
+    CloudProvider, CloudResource, CloudStatusReport, CloudSweepItem, CloudSweepReport, CloudTarget,
     CloudTestReport,
 };
 

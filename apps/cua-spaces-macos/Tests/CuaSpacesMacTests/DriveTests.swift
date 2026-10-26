@@ -223,24 +223,4 @@ struct DriveTests {
         #expect(v.mountPath == "/Volumes/Cua Volume")
     }
 
-    @Test func snapshots() async throws {
-        let snap = SnapshotTests()
-        let tools = FakeDriveTools()
-        // Settings with the Storage section (S3, the volume mounted).
-        tools.mount = "mounted"
-        tools.enabled = true
-        tools.backend = "s3"
-        tools.hasKeys = true
-        let m = try await snap.model()
-        m.storage = StorageModel(tools: tools)
-        await m.loadSettings()
-        // Storage shows only with the Cua Volume experiment on.
-        m.settings.experiments = AppExperiments(cuaVolume: true, yourCloud: false, sharing: false, webUi: false)
-        try snap.assertSnapshot(SettingsView(model: m), "settings-storage", size: CGSize(width: 520, height: 900))
-        // The Drive page, mounted and syncing with a conflict.
-        let p = PersistentModel(tools: tools)
-        p.now = { Date(timeIntervalSince1970: 1_790_000_000) }
-        await p.sendDrive(nil)
-        try snap.assertSnapshot(DrivePageView(model: p), "drive-page-sync", size: CGSize(width: 720, height: 620))
-    }
 }

@@ -1,36 +1,38 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { createFileRoute } from "@tanstack/react-router";
-import { InfoIcon } from "lucide-react";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { ChevronRightIcon } from "lucide-react";
 import { useState } from "react";
 
-import { useAbout, useBridge, useSession, type AboutLink, type AboutUpdates, type UpdateChannel } from "@/bridge";
+import { useAbout, useBridge, useSession, useSettings, type AboutLink, type AboutUpdates } from "@/bridge";
+import { writeSavedOnboarding } from "@/bridge/onboarding";
 import { aboutView } from "@/bridge/settings-derive";
-import { CuaLogo } from "@/components/cua-logo";
+import { SettingsGroup, SettingsRow } from "@/components/settings-group";
 import { NoticesDialog } from "@/components/settings/notices-dialog";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Select } from "@/components/ui/select";
-import { toastError } from "@/components/ui/toast";
-import { Tooltip } from "@/components/ui/tooltip";
+import { Switch } from "@/components/ui/switch";
+import { toast, toastError } from "@/components/ui/toast";
+import { lastChecked } from "@/lib/settings-copy";
 
 export const Route = createFileRoute("/settings/about")({ component: AboutPage });
 
 /** What the update controls say in a build that can't update itself. */
-const UPDATES_UNAVAILABLE = "Updates aren\u2019t available in this build";
+const UPDATES_UNAVAILABLE = "Updates aren’t available in this build";
 
 /**
- * Settings, About: the name and version, the links, the copyright, then the
- * update controls where the app updates itself. Everything shown is the
- * app core's `about::view`, as in the SwiftUI app's `AboutSettingsView`.
- * The Electron app keeps the controls in a build with no update feed (a
- * local build), greyed out, and says that this build doesn't update.
+ * Settings, About: the name and version (with Copy version), the links, then
+ * the update controls where the app updates itself, and the welcome again.
+ * Everything shown is the app core's `about::view`; the update channel
+ * (Beta) lives in Advanced. The Electron app keeps the controls in a build
+ * with no update feed (a local build), greyed out, and says so.
  */
 function AboutPage() {
   const { data, setAbout, checkNow } = useAbout();
   const { openExternal } = useSession();
   const { mode, core } = useBridge();
+  const navigate = useNavigate();
+  const { chooseSetting } = useSettings();
   const [notices, setNotices] = useState(false);
   const view = data?.view;
   if (!view) return null;
@@ -40,106 +42,88 @@ function AboutPage() {
     if (link.url) void openExternal(link.url).catch(toastError(`Couldn't open ${link.label}`));
     else setNotices(true);
   };
+  const copyVersion = () => {
+    void navigator.clipboard?.writeText(view.versionLine.replace(/^Version /, "")).then(() => toast("Version copied"));
+  };
+  const showWelcome = () => {
+    // The SwiftUI app shows its own welcome window; elsewhere it is this UI's first run, from the start.
+    if (mode === "webkit") return void chooseSetting("welcome", "show").catch(toastError("Couldn't show the welcome"));
+    writeSavedOnboarding(null);
+    void navigate({ to: "/onboarding" });
+  };
+  const updates = view.updates ?? (unavailable ? { ...unavailable, checkEnabled: false, lastCheck: UPDATES_UNAVAILABLE } : null);
 
   return (
-    <section className="rounded-xl border bg-card px-8 py-8 shadow-xs" data-about>
-      <div className="flex flex-col items-center text-center">
-        <CuaLogo className="size-14" />
-        <h2 className="mt-4 text-[17px] font-semibold" data-about-title>
-          {view.title}
-        </h2>
-        <p className="mt-1 text-[13px] text-muted-foreground select-text" data-about-version>
-          {view.versionLine}
-        </p>
-        <div className="mt-5 flex flex-col items-center gap-1.5">
-          {view.links.map((link) => (
-            <button
-              key={link.id}
-              type="button"
-              data-about-link={link.id}
-              onClick={() => open(link)}
-              className="text-[13px] text-brand-strong outline-none hover:underline focus-visible:underline"
-            >
-              {link.label}
-            </button>
-          ))}
-        </div>
-        <p className="mt-5 text-xs text-muted-foreground" data-about-copyright>
-          {view.copyright}
-        </p>
-      </div>
-      {view.updates ? (
-        <UpdateControls
-          updates={view.updates}
-          canChange={data.canChange}
-          onChange={(patch) => void setAbout(patch).catch(toastError("Couldn't change the update settings"))}
-          onCheck={() => void checkNow().catch(toastError("Couldn't check for updates"))}
+    <div data-about="">
+      <SettingsGroup title="Cua Spaces">
+        <SettingsRow
+          label={<span data-about-title>{view.title}</span>}
+          description={
+            <span className="select-text" data-about-version>
+              {view.versionLine}
+            </span>
+          }
+          control={
+            <Button size="sm" variant="outline" onClick={copyVersion} data-about-copy-version>
+              Copy version
+            </Button>
+          }
         />
-      ) : unavailable ? (
-        <UpdateControls updates={{ ...unavailable, checkEnabled: false, lastCheck: UPDATES_UNAVAILABLE }} canChange={false} unavailable onChange={() => {}} onCheck={() => {}} />
-      ) : null}
+        {view.links.map((link) => (
+          <button
+            key={link.id}
+            type="button"
+            data-about-link={link.id}
+            onClick={() => open(link)}
+            className="flex min-h-12 w-full items-center justify-between gap-6 px-4 py-2.5 text-left text-[13px] outline-none hover:bg-accent/50 focus-visible:bg-accent/50"
+          >
+            <span data-about-link-label="">{link.label}</span>
+            <span className="flex items-center text-xs text-muted-foreground">
+              Open <ChevronRightIcon className="size-3.5" />
+            </span>
+          </button>
+        ))}
+      </SettingsGroup>
+      <p className="-mt-4 mb-8 px-1 text-xs text-muted-foreground" data-about-copyright>
+        {view.copyright}
+      </p>
+
+      <SettingsGroup title="Updates">
+        {updates ? (
+          <div data-about-updates="" className="divide-y" {...(unavailable ? { "data-about-unavailable": "" } : {})}>
+            <UpdateRows
+              updates={updates}
+              canChange={data.canChange && !unavailable}
+              onChange={(on) => void setAbout({ autoCheck: on, autoInstall: on }).catch(toastError("Couldn't change the update settings"))}
+              onCheck={() => void checkNow().catch(toastError("Couldn't check for updates"))}
+            />
+          </div>
+        ) : null}
+        <SettingsRow label="Show the welcome again" control={<Button size="sm" variant="outline" onClick={showWelcome} data-about-welcome="">Show</Button>} />
+      </SettingsGroup>
       <NoticesDialog open={notices} onOpenChange={setNotices} />
-    </section>
+    </div>
   );
 }
 
-function UpdateControls({
-  updates: u,
-  canChange,
-  unavailable = false,
-  onChange,
-  onCheck,
-}: {
-  updates: AboutUpdates;
-  canChange: boolean;
-  /** This build can't update itself: every control greyed out, and why in place of the last check. */
-  unavailable?: boolean;
-  onChange: (patch: { autoCheck?: boolean; autoInstall?: boolean; channel?: UpdateChannel }) => void;
-  onCheck: () => void;
-}) {
-  const channel = (u.channels.find((c) => c.active)?.id ?? "stable") as UpdateChannel;
+/** "Keep Cua Spaces up to date": one switch for checking, downloading and installing when you quit. */
+function UpdateRows({ updates: u, canChange, onChange, onCheck }: { updates: AboutUpdates; canChange: boolean; onChange: (on: boolean) => void; onCheck: () => void }) {
   return (
-    <div className="mt-7 border-t pt-6" data-about-updates {...(unavailable ? { "data-about-unavailable": "" } : {})}>
-      <div className="mx-auto grid w-fit grid-cols-[auto_auto] items-center gap-x-3 gap-y-3">
-        <span />
-        <label className="flex items-center gap-2 text-[13px]">
-          <Checkbox checked={u.autoCheck} disabled={!canChange} onCheckedChange={(on) => onChange({ autoCheck: on })} data-about-auto-check />
-          {u.autoCheckLabel}
-        </label>
-        <span />
-        <label className="flex items-center gap-2 text-[13px]">
-          <Checkbox
-            checked={u.autoInstall}
-            disabled={!canChange || !u.autoInstallEnabled}
-            onCheckedChange={(on) => onChange({ autoInstall: on })}
-            data-about-auto-install
-          />
-          <span className={u.autoInstallEnabled ? undefined : "text-muted-foreground"}>{u.autoInstallLabel}</span>
-        </label>
-        <span className="text-right text-[13px]">{u.channelLabel}</span>
-        <span className="flex items-center gap-2">
-          <Select
-            aria-label={u.channelLabel}
-            className="min-w-28"
-            value={channel}
-            disabled={!canChange}
-            options={u.channels.map((c) => ({ value: c.id as UpdateChannel, label: c.label }))}
-            onValueChange={(v) => onChange({ channel: v })}
-          />
-          <Tooltip content={<span className="block max-w-64">{u.channelHelp}</span>}>
-            <InfoIcon className="size-4 text-muted-foreground" aria-label={u.channelHelp} />
-          </Tooltip>
-        </span>
-        <span />
-        <span className="flex items-center gap-3">
+    <>
+      <SettingsRow
+        label="Keep Cua Spaces up to date"
+        description="Updates download in the background and install when you quit."
+        htmlFor="about-auto-update"
+        control={<Switch id="about-auto-update" data-about-auto-check="" checked={u.autoCheck} disabled={!canChange} onCheckedChange={onChange} />}
+      />
+      <SettingsRow
+        label={<span data-about-last-check>{lastChecked(u.lastCheck)}</span>}
+        control={
           <Button size="sm" variant="outline" disabled={!u.checkEnabled || !canChange} onClick={onCheck} data-about-check>
-            {u.checkLabel}
+            Check now
           </Button>
-          <span className="text-xs text-muted-foreground" data-about-last-check>
-            {u.lastCheck}
-          </span>
-        </span>
-      </div>
-    </div>
+        }
+      />
+    </>
   );
 }

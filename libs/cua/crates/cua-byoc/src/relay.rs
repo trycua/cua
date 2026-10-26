@@ -124,6 +124,13 @@ fn relay_err(e: cua_host::Error) -> Error {
     }
 }
 
+/// A relay answer that waiting will not fix: the sign-in stopped working,
+/// or this device is not enrolled for the account.
+pub fn is_fatal(e: &Error) -> bool {
+    let m = e.to_string();
+    m.contains("cua.ai sign-in") || m.contains("not enrolled")
+}
+
 impl RelayAccess {
     /// `url` with `tokens` (tests, fixtures).
     pub fn new(url: impl Into<String>, tokens: Arc<dyn AccountTokens>) -> Self {
@@ -245,7 +252,7 @@ impl RelayAccess {
                 // A relay that is restarting (502, 503) is not a verdict on
                 // the machine: keep waiting. A sign-in that stopped working
                 // is.
-                Err(e) if e.to_string().contains("cua.ai sign-in") => return Err(e),
+                Err(e) if is_fatal(&e) => return Err(e),
                 Err(e) => Some(e.to_string()),
             };
             if tokio::time::Instant::now() >= deadline {
@@ -267,6 +274,76 @@ impl RelayAccess {
             }
             tokio::time::sleep(Duration::from_secs(5)).await;
         }
+    }
+
+    /// Mints a one-time pairing code for a machine named `name`, valid
+    /// `ttl_secs`: `(id, code)`. Needs this device enrolled on the relay.
+    pub async fn mint_pairing_code(&self, name: &str, ttl_secs: u64) -> Result<(String, String)> {
+        let (client, token) = self.client().await?;
+        let minted = client
+            .create_pairing_code(
+                &token,
+                &cua_host::PairingCodeRequest {
+                    name: Some(name.to_string()),
+                    team: None,
+                    ttl_secs: Some(ttl_secs.clamp(60, 86_400)),
+                },
+            )
+            .await
+            .map_err(relay_err)?;
+        let code = minted
+            .code
+            .clone()
+            .filter(|c| cua_host::normalize_pairing_code(c).is_some())
+            .ok_or_else(|| Error::Cloud("cua.ai relay: it returned no pairing code".into()))?;
+        Ok((minted.id, code))
+    }
+
+    /// The machine each used pairing code added: `code id -> machine id`.
+    pub async fn paired_machines(&self) -> Result<BTreeMap<String, String>> {
+        let (client, token) = self.client().await?;
+        Ok(client
+            .pairing_codes(&token)
+            .await
+            .map_err(relay_err)?
+            .into_iter()
+            .filter(|c| c.state == "used")
+            .filter_map(|c| Some((c.id, c.machine?)))
+            .collect())
+    }
+
+    /// Revokes an unused pairing code (gone or used already is fine).
+    pub async fn revoke_pairing_code(&self, id: &str) -> Result<()> {
+        let (client, token) = self.client().await?;
+        match client.revoke_pairing_code(&token, id).await {
+            Ok(()) | Err(cua_host::Error::NotFound(_)) => Ok(()),
+            Err(cua_host::Error::InvalidArgument(_)) => Ok(()),
+            Err(e) => Err(relay_err(e)),
+        }
+    }
+
+    /// The account's machines, by id: `(online, sharing)`.
+    pub async fn machine_states(&self) -> Result<BTreeMap<String, (bool, bool)>> {
+        let (client, token) = self.client().await?;
+        Ok(client
+            .machines(&token)
+            .await
+            .map_err(relay_err)?
+            .into_iter()
+            .map(|m| (m.id, (m.online, m.sharing)))
+            .collect())
+    }
+
+    /// Stops (or starts again) sharing machine `id`: a host that stops
+    /// sharing takes no new Spaces (it drains).
+    pub async fn set_sharing(&self, id: &str, sharing: bool) -> Result<()> {
+        let (client, token) = self.client().await?;
+        let r = if sharing {
+            client.start_sharing(&token, id).await
+        } else {
+            client.stop_sharing(&token, id).await
+        };
+        r.map(|_| ()).map_err(relay_err)
     }
 
     /// `<relay>/m/<machine>`: where the machine's cua-spacesd answers.

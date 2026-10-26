@@ -64,6 +64,8 @@ export const WEBKIT_METHODS = [
   "agents.list",
   "agents.runs",
   "agents.events",
+  "agents.start",
+  "agents.message",
   "agents.pause",
   "agents.resume",
   "agents.setup",
@@ -132,6 +134,7 @@ export const WEBKIT_METHODS = [
   "telemetry.track",
   "telemetry.linkNotice",
   "telemetry.acknowledgeLinkNotice",
+  "crashReporting.config",
   "spaces.usage",
   "spaces.windows",
   "stream.pip",
@@ -167,6 +170,11 @@ export const WEBKIT_METHODS = [
   "machines.checkHealth",
   "checklist.get",
   "checklist.send",
+  "links.list",
+  "links.create",
+  "links.stop",
+  "cli.plan",
+  "cli.install",
 ] as const;
 
 export type WebkitMethod = (typeof WEBKIT_METHODS)[number];
@@ -238,7 +246,7 @@ export interface WkSpace {
   detail: string;
   lastUsedAt: number;
   startedAt?: number | null;
-  provider?: "cloud" | "local" | "direct" | "relay" | null;
+  provider?: "local" | "direct" | "relay" | null;
   sdk?: { features: string[]; spacesdVersion: string; reachable: boolean; error?: string | null } | null;
   osName?: string | null;
   osPrettyName?: string | null;
@@ -267,6 +275,15 @@ export interface WkSpaces {
   /** Another app keeps its own daemon running and this app uses it
    * (`AppModel.daemonNotice`): a line above every page. Null otherwise. */
   daemonNotice?: string | null;
+  /** Some of the account's computers have not answered the last read yet
+   * (`Spaces.list_known`): the list may grow, and is not "no Spaces".
+   * Absent from a host that lists complete lists only. */
+  incomplete?: boolean;
+  /** How many computers are still being reached (0 when unknown). */
+  reaching?: number;
+  /** Your other computers' rows are the last known ones (kept across a
+   * daemon restart), not yet confirmed by the relay. */
+  stale?: boolean;
 }
 
 /** `machines.list`: the sidebar and the account's devices. */
@@ -334,6 +351,9 @@ export interface WkSettings {
   globalShortcut?: { label: string; registered: boolean } | null;
   /** The host's account app (`app_account_app_url`); absent or null: none named. */
   accountUrl?: string | null;
+  /** The CLI the app installs (its install plan's file name) and whether it
+   * is on this computer; absent or null: not known. */
+  cli?: { name: string; installed: boolean } | null;
 }
 
 /** `keyvault.*`: the core's page views, plus the overview (camelCase records). */
@@ -379,4 +399,6 @@ export interface WkHostState {
   account?: { id?: string | null; email?: string | null; display?: string | null } | null;
   /** `HostModel.progress`: what a running setup or Sign In waits for. */
   progress?: string | null;
+  /** The app's name as System Settings lists it ("Cua Spaces Local"). */
+  appName?: string | null;
 }

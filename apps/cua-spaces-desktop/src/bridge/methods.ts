@@ -17,6 +17,7 @@ export const METHODS = [
   "machines.list", "host.status",
   "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
   "agents.setup", "agents.configure", "agents.signIn",
+  "agents.start", "agents.message",
   "agents.detail", "agents.readFile", "agents.restoreFile", "agents.addRoutine", "agents.setRoutine",
   "agents.removeRoutine", "agents.allowComputer", "agents.revokeComputer",
   "agentKeys.list", "agentKeys.set", "agentKeys.remove",
@@ -33,7 +34,7 @@ export const METHODS = [
   "devices.revoke", "devices.confirmMachine", "devices.createPairingCode", "devices.pairingCodes",
   "devices.revokePairingCode", "teams.list", "storage.get", "storage.run",
   "notifications.list", "notifications.markAllRead", "notifications.markRead",
-  "telemetry.track", "telemetry.linkNotice", "telemetry.acknowledgeLinkNotice", "spaces.usage", "spaces.windows", "stream.pip",
+  "telemetry.track", "telemetry.linkNotice", "telemetry.acknowledgeLinkNotice", "crashReporting.config", "spaces.usage", "spaces.windows", "stream.pip",
   "spaces.thumbnail",
   "spaces.chooseFiles", "spaces.droppedFiles", "spaces.sendFiles",
   "host.setUp", "host.joinWithCode", "host.action", "host.openSettings",
@@ -49,6 +50,8 @@ export const METHODS = [
   "resources.get",
   "machines.rename", "machines.remove", "machines.checkHealth",
   "checklist.get", "checklist.send",
+  "links.list", "links.create", "links.stop",
+  "cli.plan", "cli.install",
 ] as const;
 
 /** A live desktop's media ticket for the page's WebCodecs player,

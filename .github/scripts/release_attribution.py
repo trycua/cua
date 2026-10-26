@@ -21,7 +21,7 @@ import re
 import subprocess
 import sys
 import textwrap
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
 from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -150,6 +150,53 @@ class GitHubClient:
         except HTTPError as error:
             detail = error.read().decode("utf-8", errors="replace")
             raise ReleaseError(f"GitHub API GET {path} failed: {error.code} {detail}") from error
+
+    def send(self, method: str, path: str, payload: Mapping[str, Any]) -> Any:
+        request = Request(
+            f"{self.api_url}/{path.lstrip('/')}",
+            data=json.dumps(payload).encode(),
+            method=method,
+            headers={
+                "Accept": "application/vnd.github+json",
+                "Authorization": f"Bearer {self.token}",
+                "Content-Type": "application/json",
+                "User-Agent": "trycua-release-attribution",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+        )
+        try:
+            with urlopen(request, timeout=30) as response:
+                return json.load(response)
+        except HTTPError as error:
+            detail = error.read().decode("utf-8", errors="replace")
+            raise ReleaseError(
+                f"GitHub API {method} {path} failed: {error.code} {detail}"
+            ) from error
+
+    def login_for_email(self, email: str) -> str | None:
+        """The one GitHub account whose public profile email is ``email``, if any."""
+        key = email.strip().lower()
+        if not key or "@" not in key:
+            return None
+        cache = self.__dict__.setdefault("_email_logins", {})
+        if key not in cache:
+            login = None
+            try:
+                payload = self.get(f"search/users?q={quote(key + ' in:email', safe='')}&per_page=2")
+                items = list(payload.get("items") or [])
+                if (
+                    not payload.get("incomplete_results")
+                    and len(items) == 1
+                    and items[0].get("type") == "User"
+                ):
+                    # Trust the match only when the profile's public email is exactly this one.
+                    profile = self.get(f"users/{quote(str(items[0].get('login') or ''), safe='')}")
+                    if str(profile.get("email") or "").strip().lower() == key:
+                        login = str(profile.get("login") or "") or None
+            except (ReleaseError, OSError, ValueError, AttributeError):
+                login = None
+            cache[key] = login
+        return cache[key]
 
     def pulls_for_commit(self, repository: str, commit_sha: str) -> list[dict[str, Any]]:
         return list(self.get(f"repos/{repository}/commits/{commit_sha}/pulls?per_page=100"))
@@ -445,6 +492,48 @@ def login_from_email(email: str, overrides: Mapping[str, str]) -> str | None:
     return match.group("login") if match else None
 
 
+def lookup_email_login(github: Any, email: str) -> str | None:
+    """Best-effort GitHub account lookup by public email; never raises."""
+    lookup = getattr(github, "login_for_email", None)
+    if lookup is None:
+        return None
+    try:
+        return lookup(email) or None
+    except (ReleaseError, OSError, ValueError):
+        return None
+
+
+def pull_commit_email_logins(github: Any, repository: str, number: int) -> dict[str, str]:
+    """Map each commit email GitHub links to an account, from the commits API.
+
+    Uses ``author.login`` for the author email and ``committer.login`` for the
+    committer email of every commit in the pull request. Best effort.
+    """
+    fetch = getattr(github, "pull_commits", None)
+    if fetch is None or not number:
+        return {}
+    try:
+        commits = fetch(repository, number)
+    except (ReleaseError, OSError, ValueError):
+        return {}
+    logins: dict[str, str] = {}
+    for item in commits:
+        commit = item.get("commit") or {}
+        for role in ("author", "committer"):
+            email = str((commit.get(role) or {}).get("email") or "").strip().lower()
+            login = str((item.get(role) or {}).get("login") or "").strip()
+            if email and login:
+                logins.setdefault(email, login)
+    return logins
+
+
+def display_name_credit(name: str) -> str:
+    """A safe plain-text display name: never an @-mention, no markup."""
+    cleaned = re.sub(r"[\r\n\t]+", " ", name)
+    cleaned = re.sub(r"[@<>\[\]`*|\\]", "", cleaned)
+    return re.sub(r"\s+", " ", cleaned).strip()[:80]
+
+
 def is_bot(login: str, configured_bots: set[str]) -> bool:
     lowered = login.lower()
     return lowered.endswith("[bot]") or lowered in configured_bots
@@ -588,6 +677,7 @@ def validate_pr_attribution(
             linked_login
             or coauthor_overrides.get(f"{name.strip()} <{email}>".lower())
             or login_from_email(email, base_overrides)
+            or lookup_email_login(github, email)
         )
         return login or None
 
@@ -873,21 +963,30 @@ def merge_contributors(items: Iterable[Mapping[str, Any]]) -> list[dict[str, Any
     by_login: dict[str, dict[str, Any]] = {}
     for item in items:
         login = str(item["login"])
-        key = login.lower()
+        mention = bool(item.get("mention", True))
+        key = login.lower() if mention else f"name:{login.lower()}"
         existing = by_login.setdefault(
             key,
-            {"login": login, "roles": set(), "external": bool(item.get("external", True))},
+            {
+                "login": login,
+                "roles": set(),
+                "external": bool(item.get("external", True)),
+                "mention": mention,
+            },
         )
         existing["roles"].add(str(item["role"]))
         existing["external"] = existing["external"] and bool(item.get("external", True))
-    return [
-        {
+    merged = []
+    for item in by_login.values():
+        row = {
             "login": item["login"],
             "roles": sorted(item["roles"], key=lambda role: ROLE_ORDER.get(role, 99)),
             "external": item["external"],
         }
-        for item in sorted(by_login.values(), key=lambda value: value["login"].lower())
-    ]
+        if not item["mention"]:
+            row["mention"] = False
+        merged.append(row)
+    return sorted(merged, key=lambda value: (value.get("mention") is False, value["login"].lower()))
 
 
 def asset_checksums(asset_dir: Path | None) -> list[dict[str, Any]]:
@@ -963,7 +1062,17 @@ def _change_contributors(
     github: GitHubClient,
     repository: str,
     config: Mapping[str, Any],
+    unresolved: list[dict[str, str]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[int], bool]:
+    """Credit everyone behind one change; attribution is best effort and never raises.
+
+    A trailer resolves, in order, through ``coauthorOverrides``/``identityOverrides``
+    or a noreply email, the merging maintainer's squash trailer, the commits API
+    ``author.login``/``committer.login`` of the pull request's commits, and a
+    GitHub search by public email. Whatever stays unresolved is credited by
+    display name without an @-mention and appended to ``unresolved`` for the
+    rolling maintainer issue.
+    """
     bots = {str(item).lower() for item in config.get("bots", [])}
     overrides = {
         str(email).lower(): str(login)
@@ -979,6 +1088,7 @@ def _change_contributors(
     internal = {str(item).lower() for item in config.get("internalHandles", [])}
     opt_out = {str(item).lower() for item in config.get("optOutHandles", [])}
     items: list[dict[str, Any]] = []
+    pull_logins: dict[str, str] | None = None
 
     author_login = str((pull.get("user") or {}).get("login") or "")
     if author_login and not is_bot(author_login, bots) and author_login.lower() not in opt_out:
@@ -1001,11 +1111,26 @@ def _change_contributors(
                 pull, match.group("name"), github, repository, internal
             )
         if not login:
-            raise ReleaseError(
-                f"commit {commit.sha} has unresolved human coauthor {email}; "
-                "link that email to GitHub, amend the commit with a recognized email, "
-                "or add a verified identityOverrides entry"
-            )
+            if pull_logins is None:
+                pull_logins = pull_commit_email_logins(
+                    github, repository, int(pull.get("number") or 0)
+                )
+            login = pull_logins.get(email) or lookup_email_login(github, email)
+        if not login:
+            display = display_name_credit(match.group("name"))
+            if unresolved is not None:
+                unresolved.append(
+                    {
+                        "sha": commit.sha,
+                        "name": match.group("name").strip() or "unknown",
+                        "email": email,
+                    }
+                )
+            if display and display.lower() != "unknown":
+                items.append(
+                    {"login": display, "role": "coauthor", "external": True, "mention": False}
+                )
+            continue
         if is_bot(login, bots) or login.lower() in opt_out:
             continue
         items.append(contributor(login, "coauthor", login.lower() not in internal))
@@ -1045,9 +1170,13 @@ def _change_contributors(
 
 
 def _dedupe_change_contributors(items: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    unique: dict[tuple[str, str], dict[str, Any]] = {}
+    unique: dict[tuple[str, str, str], dict[str, Any]] = {}
     for item in items:
-        key = (str(item["login"]).lower(), str(item["role"]))
+        key = (
+            str(item["login"]).lower(),
+            str(item["role"]),
+            str(item.get("mention", True)),
+        )
         unique[key] = dict(item)
     return sorted(
         unique.values(),
@@ -1125,6 +1254,7 @@ def build_manifest(
     pull_commits: dict[int, set[str]] = defaultdict(set)
     all_contributors: list[dict[str, Any]] = []
     visual_requested = False
+    unresolved_identities: list[dict[str, str]] = []
 
     for commit in commits_in_range(
         repo_root,
@@ -1177,7 +1307,12 @@ def build_manifest(
             continue
         try:
             contributors, issues, pull_visual = _change_contributors(
-                pull, commit, github, repository, attribution_config
+                pull,
+                commit,
+                github,
+                repository,
+                attribution_config,
+                unresolved=unresolved_identities,
             )
         except ReleaseError as error:
             raise ReleaseError(f"pull request #{pull_number}: {error}") from error
@@ -1257,7 +1392,16 @@ def build_manifest(
     }
     if channel == "nightly":
         manifest["channel"] = "nightly"
+    deduped = _dedupe_identities(unresolved_identities)
+    if deduped:
+        manifest["unresolvedIdentities"] = deduped
     return manifest
+
+
+def credit(item: Mapping[str, Any]) -> str:
+    """``@login`` for a resolved account, the plain display name otherwise."""
+    login = str(item["login"])
+    return f"@{login}" if item.get("mention", True) else login
 
 
 def format_change_thanks(change: Mapping[str, Any]) -> str:
@@ -1267,7 +1411,7 @@ def format_change_thanks(change: Mapping[str, Any]) -> str:
         if not item.get("external"):
             continue
         login = str(item["login"])
-        key = login.lower()
+        key = login.lower() if item.get("mention", True) else f"name:{login.lower()}"
         if item.get("role") in {"author", "coauthor"}:
             external.setdefault(key, item)
         elif item.get("role") == "reporter":
@@ -1277,9 +1421,9 @@ def format_change_thanks(change: Mapping[str, Any]) -> str:
 
     parts: list[str] = []
     if external:
-        parts.append("Thanks " + ", ".join(f"@{item['login']}" for item in external.values()))
+        parts.append("Thanks " + ", ".join(credit(item) for item in external.values()))
     if reporters:
-        parts.append("reported by " + ", ".join(f"@{item['login']}" for item in reporters.values()))
+        parts.append("reported by " + ", ".join(credit(item) for item in reporters.values()))
     return "; ".join(parts)
 
 
@@ -1335,7 +1479,7 @@ def render_body(manifest: Mapping[str, Any], footer: str = "") -> str:
     if external:
         lines.append(
             "Thanks to "
-            + ", ".join(f"@{item['login']}" for item in external)
+            + ", ".join(credit(item) for item in external)
             + " for contributing to this release."
         )
     else:
@@ -1411,6 +1555,122 @@ def render_card_alt_text(manifest: Mapping[str, Any]) -> str:
     )
 
 
+def _dedupe_identities(items: Iterable[Mapping[str, str]]) -> list[dict[str, str]]:
+    unique: dict[str, dict[str, str]] = {}
+    for item in items:
+        email = str(item.get("email") or "").strip().lower()
+        if email:
+            unique.setdefault(
+                email,
+                {
+                    "sha": str(item.get("sha") or ""),
+                    "name": str(item.get("name") or "unknown"),
+                    "email": email,
+                },
+            )
+    return sorted(unique.values(), key=lambda value: value["email"])
+
+
+UNRESOLVED_ISSUE_TITLE = "Contributor attribution: unresolved identities"
+UNRESOLVED_ENTRY_RE = re.compile(r"^- `(?P<email>[^`\s]+)`: (?P<rest>.+)$")
+UNRESOLVED_ISSUE_INTRO = (
+    "Contributor attribution is best effort and never blocks a pull request, nightly or "
+    "stable release. These commit identities could not be linked to a GitHub account, so "
+    "release notes credit them by display name without an @-mention.\n\n"
+    "To credit one by handle, link the email to the GitHub account or add a verified "
+    "`identityOverrides` entry in `.github/release-attribution-config.json` (no wildcard or "
+    "human-email ignores). Resolved entries drop off this list on the next refresh.\n\n"
+    "Unresolved identities:\n"
+)
+
+
+def merge_unresolved_issue_body(
+    existing_body: str,
+    identities: Sequence[Mapping[str, str]],
+    config: Mapping[str, Any],
+    source: str,
+    resolves: Callable[[str], str | None] | None = None,
+) -> str:
+    """The rolling issue body: deduplicated by email, minus identities now resolved.
+
+    ``resolves`` re-checks every stored email (for example through a GitHub
+    lookup); overrides, coauthor overrides and noreply emails always apply.
+    """
+    overrides = _normalized_map(config, "identityOverrides")
+    coauthor_emails = {
+        key.rsplit("<", 1)[-1].rstrip(">").strip()
+        for key in _normalized_map(config, "coauthorOverrides")
+    }
+    entries: dict[str, str] = {}
+    for line in existing_body.splitlines():
+        match = UNRESOLVED_ENTRY_RE.match(line.strip())
+        if match:
+            entries[match.group("email").lower()] = match.group("rest")
+    for item in identities:
+        email = str(item["email"]).strip().lower()
+        name = display_name_credit(str(item.get("name") or "unknown")) or "unknown"
+        entries.setdefault(email, f"{name} (commit `{item.get('sha', '')}`, {source})")
+    lines = [
+        f"- `{email}`: {rest}"
+        for email, rest in sorted(entries.items())
+        if login_from_email(email, overrides) is None
+        and email not in coauthor_emails
+        and not (resolves and resolves(email))
+    ]
+    return UNRESOLVED_ISSUE_INTRO + ("\n".join(lines) if lines else "_None right now._") + "\n"
+
+
+def report_unresolved_identities(
+    github: GitHubClient,
+    repository: str,
+    identities: Sequence[Mapping[str, str]],
+    config: Mapping[str, Any],
+    source: str,
+) -> int | None:
+    """Create or refresh the one rolling maintainer issue. Best effort, never raises."""
+    try:
+        pending = [
+            item
+            for item in _dedupe_identities(identities)
+            if not lookup_email_login(github, item["email"])
+        ]
+        found = github.get(
+            "search/issues?q="
+            + quote(f'repo:{repository} is:issue is:open in:title "{UNRESOLVED_ISSUE_TITLE}"')
+            + "&per_page=20"
+        )
+        existing = next(
+            (
+                issue
+                for issue in found.get("items") or []
+                if issue.get("title") == UNRESOLVED_ISSUE_TITLE
+            ),
+            None,
+        )
+        if not existing and not pending:
+            return None
+        body = merge_unresolved_issue_body(
+            str((existing or {}).get("body") or ""),
+            pending,
+            config,
+            source,
+            resolves=lambda email: lookup_email_login(github, email),
+        )
+        if existing:
+            if body != str(existing.get("body") or ""):
+                github.send("PATCH", f"repos/{repository}/issues/{existing['number']}", {"body": body})
+            return int(existing["number"])
+        created = github.send(
+            "POST",
+            f"repos/{repository}/issues",
+            {"title": UNRESOLVED_ISSUE_TITLE, "body": body},
+        )
+        return int(created["number"])
+    except Exception as error:  # noqa: BLE001 - reporting must never fail a release
+        print(f"::warning::could not update the unresolved attribution issue: {error}")
+        return None
+
+
 def write_json(path: Path, value: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
@@ -1445,6 +1705,25 @@ def collect_command(args: argparse.Namespace) -> None:
     )
     write_json(args.output, manifest)
     print(f"wrote {args.output} with {len(manifest['changes'])} changes")
+    unresolved = manifest.get("unresolvedIdentities") or []
+    if unresolved:
+        print(
+            f"::warning::{len(unresolved)} contributor identities could not be linked to "
+            "GitHub; they are credited by display name without an @-mention"
+        )
+    if args.report_issue:
+        # Also refreshes the rolling issue when nothing is unresolved, so resolved entries drop off.
+        report_unresolved_identities(client, args.repository, unresolved, config, args.tag)
+
+
+
+def report_unresolved_command(args: argparse.Namespace) -> None:
+    identities = json.loads(args.identities.read_text())
+    config = json.loads(args.config.read_text())
+    client = GitHubClient(
+        os.environ.get("GH_TOKEN", ""), os.environ.get("GITHUB_API_URL", "https://api.github.com")
+    )
+    report_unresolved_identities(client, args.repository, identities, config, args.source)
 
 
 def validate_pr_command(args: argparse.Namespace) -> None:
@@ -1494,6 +1773,33 @@ def validate_pr_command(args: argparse.Namespace) -> None:
         main_sha=trusted_sha,
     )
     print(f"contributor attribution is merge-ready for pull request #{number}")
+
+
+def report_pr_attribution(args: argparse.Namespace) -> None:
+    """Run the PR attribution validation as information only.
+
+    Attribution is best effort: every finding, and any error while checking,
+    becomes a warning annotation and step summary. The check always passes so
+    the required ``contributor-attribution`` status never blocks a merge.
+    """
+    try:
+        validate_pr_command(args)
+        return
+    except Exception as error:  # noqa: BLE001 - informational check must never fail
+        message = str(error)
+    warning = (
+        "Contributor attribution warning (informational, this check still passes). "
+        "Unresolved contributors are credited by display name without an @-mention in release "
+        "notes. To credit by handle, use a GitHub-linked or noreply commit email, or add a "
+        "verified `identityOverrides` entry.\n" + message
+    )
+    for line in message.splitlines() or [message]:
+        print(f"::warning title=Contributor attribution::{line}")
+    print(warning)
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        with open(summary, "a", encoding="utf-8") as handle:
+            handle.write(f"### Contributor attribution (informational)\n\n{warning}\n")
 
 
 def render_command(args: argparse.Namespace) -> None:
@@ -1562,6 +1868,19 @@ def build_parser() -> argparse.ArgumentParser:
     collect.add_argument("--asset-dir", type=Path)
     collect.add_argument("--channel", choices=("stable", "nightly"), default="stable")
     collect.add_argument("--output", type=Path, required=True)
+    collect.add_argument(
+        "--report-issue",
+        action="store_true",
+        help="record unresolved identities in the rolling maintainer issue (best effort)",
+    )
+
+    report = subparsers.add_parser("report-unresolved")
+    report.add_argument("--repository", required=True)
+    report.add_argument("--identities", type=Path, required=True, help="JSON list of identities")
+    report.add_argument("--source", default="nightly")
+    report.add_argument(
+        "--config", type=Path, default=Path(".github/release-attribution-config.json")
+    )
 
     render = subparsers.add_parser("render")
     render.add_argument("--manifest", type=Path, required=True)
@@ -1589,9 +1908,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.command == "classify-perception-diff":
             print("true" if is_perception_only_diff(args.path) else "false")
         elif args.command == "validate-pr":
-            validate_pr_command(args)
+            report_pr_attribution(args)
         elif args.command == "collect":
             collect_command(args)
+        elif args.command == "report-unresolved":
+            report_unresolved_command(args)
         elif args.command == "render":
             render_command(args)
         else:

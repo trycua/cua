@@ -1,0 +1,47 @@
+# A world shaped like an RL rollout's: an agent container the agent's shell
+# runs in (docker exec), an MCP server the coordinator calls over a
+# published port, and a grader on an internal network, on an IPv4+IPv6
+# bridge. The docker tier's integration test bakes it (cua sb bake), forks
+# the checkpoint and checks the stack is still live and serving.
+name: world
+services:
+  agent:
+    image: mirror.gcr.io/library/python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
+    container_name: agent
+    command: ["sleep", "infinity"]
+    working_dir: /workspace
+    volumes: ["workspace:/workspace"]
+    networks: [world]
+  mcp:
+    build: ./mcp
+    container_name: mcp
+    ports: ["0.0.0.0:18000:8000"]
+    volumes: ["workspace:/workspace"]
+    networks: [world]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8000), 2)"]
+      interval: 1s
+      timeout: 3s
+      retries: 60
+  verifier:
+    image: mirror.gcr.io/library/python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
+    container_name: verifier
+    command: ["python", "-m", "http.server", "9000", "--bind", "0.0.0.0", "--directory", "/workspace"]
+    volumes: ["workspace:/workspace:ro"]
+    networks: [world, grading]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9000/', timeout=2)"]
+      interval: 1s
+      timeout: 3s
+      retries: 60
+volumes:
+  workspace: {}
+networks:
+  world:
+    enable_ipv6: true
+    ipam:
+      config:
+        - subnet: 172.30.10.0/24
+        - subnet: fd00:c0a:10::/64
+  grading:
+    internal: true

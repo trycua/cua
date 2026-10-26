@@ -49,6 +49,8 @@ pub struct VolumeGuestStatus {
     pub detail: String,
     pub bytes_in: u64,
     pub bytes_out: u64,
+    /// Where the named volumes' folders are bound.
+    pub binds: Vec<String>,
 }
 
 impl VolumeAttachment {
@@ -140,13 +142,36 @@ impl Space {
         D: Fn(String, u16) -> F + Send + Sync + 'static,
         F: std::future::Future<Output = std::io::Result<tokio::net::TcpStream>> + Send + 'static,
     {
+        self.attach_volume_with(dial, mount_path, Vec::new()).await
+    }
+
+    /// [`Space::attach_volume`] with `binds`: folders of the volume made
+    /// available at other paths once it is mounted (named volumes, see
+    /// [`crate::named_volumes`]). The guest reports the volume mounted only
+    /// when they are in place; a guest that cannot bind (no
+    /// `volume.binds`) refuses with `capability_missing` instead of
+    /// ignoring them.
+    pub async fn attach_volume_with<D, F>(
+        &self,
+        dial: D,
+        mount_path: Option<String>,
+        binds: Vec<pb::VolumeBind>,
+    ) -> Result<VolumeAttachment>
+    where
+        D: Fn(String, u16) -> F + Send + Sync + 'static,
+        F: std::future::Future<Output = std::io::Result<tokio::net::TcpStream>> + Send + 'static,
+    {
         self.require(VOLUME_FEATURE)?;
+        if !binds.is_empty() {
+            self.require(crate::named_volumes::BINDS_FEATURE)?;
+        }
         let resp = self
             .spacesd()?
             .volume()
             .attach_volume(pb::AttachVolumeRequest {
                 mount_path: mount_path.unwrap_or_default(),
                 ticket_ttl: None,
+                binds,
             })
             .await
             .map_err(cua_spacesd_client::Error::from)?
@@ -246,6 +271,7 @@ impl Space {
             detail: s.detail,
             bytes_in: s.bytes_in,
             bytes_out: s.bytes_out,
+            binds: s.binds,
         })
     }
 }

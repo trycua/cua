@@ -7,7 +7,60 @@
  * Rust is the source of truth.
  */
 
-export type FirstRunStep = "connect" | "setup";
+/** Welcome, Pick your agent (`connect`), Install the Cua CLI (`cli`, only
+ * while it is missing), Add your other computers, Share this Mac's screen
+ * (`permissions`, only on a signed-in Mac that shares it), Try it (`setup`). */
+export type FirstRunStep = "welcome" | "connect" | "cli" | "devices" | "permissions" | "setup";
+
+/** What installing the app's bundled CLI would do (`installer::CliInstallPlan`). */
+export interface CliInstallPlan {
+  /** The bundled CLI, when this build carries one. */
+  source?: string | null;
+  /** The exact file Install writes (`~/.local/bin/cua`, or `cua-local`). */
+  target: string;
+  binDir: string;
+  method?: "symlink" | "copy" | null;
+  installed: boolean;
+  upToDate: boolean;
+  installedVersion?: string | null;
+  bundledVersion?: string | null;
+  shadowedBy?: string | null;
+  onPath: boolean;
+  pathProfile?: string | null;
+  pathLine?: string | null;
+  /** A working CLI of this channel already on this computer. */
+  found?: string | null;
+}
+
+/** The app's bundled CLI on the Command line screen (`first_run::FirstRunCli`). */
+export interface FirstRunCli {
+  plan: CliInstallPlan | null;
+  installing: boolean;
+  /** Installed from this screen: the file written. */
+  installed: string | null;
+  error: string | null;
+}
+
+/** "Installs", "~/.local/bin/cua". */
+export interface FirstRunCliFact {
+  label: string;
+  value: string;
+}
+
+/** Install the Cua CLI (`first_run::CliView`): the first run's screen and Settings' row. */
+export interface FirstRunCliView {
+  title: string;
+  lede: string;
+  name: string;
+  facts: FirstRunCliFact[];
+  status: string;
+  installed: boolean;
+  busy: boolean;
+  tryCommand: string | null;
+  error: string | null;
+  primary: FirstRunButton | null;
+  secondary: FirstRunButton | null;
+}
 
 export interface FirstRunAgent {
   agent: string;
@@ -17,6 +70,8 @@ export interface FirstRunAgent {
   /** The account it signs in with on its own (`ChatGPT` for Codex). */
   signIn?: string | null;
   signedIn?: boolean;
+  /** The settings file Cua adds itself to. */
+  mcpConfig?: string | null;
 }
 
 export interface FirstRunPermission {
@@ -31,6 +86,10 @@ export interface FirstRunHost {
   online?: boolean | null;
   permissions: FirstRunPermission[];
   error?: string | null;
+  /** People it is shared with see and use its screen (null: not known). */
+  shareDesktop?: boolean | null;
+  /** The name System Settings lists the app under ("Cua Spaces Local"). */
+  appName?: string | null;
 }
 
 export interface FirstRunOffer {
@@ -66,7 +125,7 @@ export interface FirstRunInput {
   hostOs: string;
   agents: FirstRunAgent[] | null;
   agent: string | null;
-  /** Step 1: the ticks (null: not changed, so the installed ones). Step 2: the agents connected. */
+  /** The agents connected on Pick your agent (an agent the setup reports configured counts either way). */
   picked: string[] | null;
   /** The provider keys saved on this computer (null: not read, or this app can't). */
   keys: { keys: { provider: string; env: string; last4: string; addedMs: number }[]; unavailable?: string | null; error?: string | null } | null;
@@ -74,6 +133,8 @@ export interface FirstRunInput {
   agentSigningIn: string | null;
   agentSignInError: string | null;
   connecting: boolean;
+  /** The agent being connected. */
+  connectingAgent?: string | null;
   connectError: string | null;
   agentOpenBeforeSetup: boolean | null;
   agentUsedAt: string | null;
@@ -84,6 +145,10 @@ export interface FirstRunInput {
   offers: FirstRunOffer[];
   extra: FirstRunExtra;
   plan: FirstRunPlan | null;
+  /** The app's bundled CLI (absent: not read). */
+  cli?: FirstRunCli;
+  /** The CLI's name (`SettingsSnapshot.cli`); null: the plan's file name, else `cua`. */
+  cliName?: string | null;
 }
 
 export interface FirstRunButton {
@@ -95,14 +160,25 @@ export interface FirstRunButton {
 export interface FirstRunAgentPick {
   agent: string;
   name: string;
-  checked: boolean;
-  installed: boolean;
-  /** Cua is in its settings already: it stays ticked. */
-  locked: boolean;
+  /** The file Connect changes (`~/.claude.json`). */
+  file: string | null;
+  /** Cua is in its settings. */
+  connected: boolean;
+  /** "Connect" (`connect`), none once connected or while it runs. */
+  action: FirstRunButton | null;
+  /** "Connected", "Connecting…". */
   note: string | null;
 }
 
-/** A sign-in or a provider key on step 1. */
+/** No agent found: install one, or use the CLI. */
+export interface FirstRunAlternative {
+  id: "install" | "cli";
+  title: string;
+  note: string;
+  url: string | null;
+  command: string | null;
+}
+
 export interface FirstRunCredential {
   /** `sign-in:codex`, `key:anthropic`, `key:openai`. */
   id: string;
@@ -118,30 +194,59 @@ export interface FirstRunCredential {
   error: string | null;
 }
 
+export interface FirstRunWelcomeView {
+  title: string;
+  lede: string;
+  primary: FirstRunButton;
+}
+
 export interface FirstRunConnectView {
   title: string;
-  accent: string;
   lede: string;
-  intro: string;
-  agentsLabel: string;
+  /** The agents found here, most preferred first. */
   agents: FirstRunAgentPick[];
-  moreLabel: string;
-  more: FirstRunAgentPick[];
-  agentsNote: string;
-  credentialsLabel: string;
-  credentialsNote: string;
+  alternatives: FirstRunAlternative[];
+  /** The connected agents' sign-ins and keys, in the agents' order. */
   credentials: FirstRunCredential[];
+  credentialsNote: string;
   primary: FirstRunButton;
-  /** The agents Continue connects. */
-  connects: string[];
-  busy: string | null;
+  /** "Skip", until an agent is connected. */
+  secondary: FirstRunButton | null;
   error: string | null;
+}
+
+export interface FirstRunDevicesView {
+  title: string;
+  lede: string;
+  rows: { title: string; note: string }[];
+  /** The sign-in waiting, or this computer being added to the account. */
+  status: FirstRunRow | null;
+  /** "Sign in" (`sign-in`), or "Continue" once signed in. */
+  primary: FirstRunButton;
+  /** "Not now" (`not-now`). */
+  secondary: FirstRunButton | null;
+  note: string | null;
+}
+
+/** Share this Mac's screen: Screen Recording and Accessibility, each with
+ * Allow (the app's guide to its System Settings pane) and a check once
+ * granted (`first_run::PermissionsView`). */
+export interface FirstRunPermissionsView {
+  title: string;
+  lede: string;
+  /** `screen-recording`, `accessibility`, `local-network`: `ok`, `fix` (Allow), `checking`. */
+  rows: FirstRunRow[];
+  note: string;
+  /** "Continue" once both are granted. */
+  primary: FirstRunButton | null;
+  /** "Not now" while one is missing. */
+  secondary: FirstRunButton | null;
 }
 
 export type FirstRunRowState = "checking" | "ok" | "fix";
 
 export interface FirstRunRow {
-  id: "agent" | "computer";
+  id: "agent" | "computer" | "account" | "screen-recording" | "accessibility" | "local-network";
   state: FirstRunRowState;
   title: string;
   note: string;
@@ -149,11 +254,24 @@ export interface FirstRunRow {
   settingsUrl: string | null;
 }
 
+export interface FirstRunPromptTab {
+  /** `macos`, `linux`, `omarchy`. */
+  id: string;
+  /** "macOS", "Linux", "Omarchy". */
+  label: string;
+  text: string;
+}
+
 export interface FirstRunPromptView {
   heading: string;
+  /** The selected tab's request (or the only one). */
   text: string;
   note: string;
   copy: string | null;
+  /** The request per system a first Space can run here (macOS only on a Mac). */
+  tabs?: FirstRunPromptTab[];
+  /** The tab `text` shows. */
+  selected?: string | null;
 }
 
 export interface FirstRunExtraChoice {
@@ -174,30 +292,23 @@ export interface FirstRunExtraView {
   footnote: string | null;
 }
 
-export interface FirstRunUpsell {
-  plan: "pro" | "teams";
-  title: string;
-  lines: string[];
-  price: string;
-  cta: FirstRunButton;
-  url: string;
-  dismiss: string;
-}
-
 export interface FirstRunPrimary {
-  id: "done" | "finish-later";
+  id: "done";
   label: string;
   enabled: boolean;
   note: string | null;
 }
 
 export interface FirstRunSetupView {
+  /** "Try it in Hermes.", "Try a first Space." */
   title: string;
-  rows: FirstRunRow[];
-  /** None when no agent was picked. */
+  lede: string;
+  /** None with no connected agent. */
   prompt: FirstRunPromptView | null;
-  extra: FirstRunExtraView;
-  upsell: FirstRunUpsell | null;
+  /** "Waiting for Hermes…", then "Hermes used Cua at 18:12." */
+  status: FirstRunRow | null;
+  /** The one-click first Space, with no connected agent. */
+  extra: FirstRunExtraView | null;
   primary: FirstRunPrimary;
 }
 
@@ -210,9 +321,16 @@ export interface FirstRunArt {
 export interface FirstRunView {
   step: FirstRunStep;
   later: string;
+  welcome: FirstRunWelcomeView | null;
   connect: FirstRunConnectView | null;
+  devices: FirstRunDevicesView | null;
+  /** Only on a signed-in Mac that shares its screen. */
+  permissions?: FirstRunPermissionsView | null;
   setup: FirstRunSetupView | null;
+  cli: FirstRunCliView | null;
   art: FirstRunArt;
+  /** The screens this run shows, in order (Back and Continue follow them). */
+  steps: FirstRunStep[];
   dots: number;
   current: number;
 }

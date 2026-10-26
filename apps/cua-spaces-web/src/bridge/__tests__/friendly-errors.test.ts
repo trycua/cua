@@ -3,7 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { limitsFor, plainJoinError, plainPairingError, stripInternalPrefixes } from "../friendly-errors";
+import { throttleSeconds, limitsFor, plainJoinError, plainThrottleError, plainPairingError, stripInternalPrefixes } from "../friendly-errors";
 
 let warn: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
@@ -28,6 +28,25 @@ describe("plain host errors", () => {
   it("joins: other failures lose the prefixes", () => {
     expect(plainJoinError(new Error("cua: host setup failed at install: disk is full"))).toBe("Disk is full");
     expect(plainJoinError(new Error("cua host setup timed out"))).toMatch(/took too long/);
+  });
+
+  it("joining and pairing say how long to wait when the server is throttling, never the raw 429", () => {
+    const own = "http: Too many attempts right now. Wait 4 seconds, then try again.";
+    expect(plainJoinError(new Error(own))).toBe("Too many attempts right now. Wait 4 seconds, then try again.");
+    expect(plainPairingError(new Error(own))).toBe("Too many attempts right now. Wait 4 seconds, then try again.");
+    const old = new Error("http: relay: HTTP 429: Too Many Requests");
+    expect(plainJoinError(old)).toBe("Too many attempts right now. Wait a few seconds, then try again.");
+    expect(plainPairingError(old)).not.toMatch(/429|relay/i);
+  });
+
+  it("reads the wait to count down from", () => {
+    expect(throttleSeconds("http: Too many attempts right now. Wait 12 seconds, then try again.")).toBe(12);
+    expect(throttleSeconds("http: relay: HTTP 429: Too Many Requests")).toBeNull();
+  });
+
+  it("a 429 the relay explains is not a throttle and keeps its reason", () => {
+    expect(plainThrottleError("relay: HTTP 429: computer limit for this token reached")).toBeNull();
+    expect(plainPairingError(new Error("relay: HTTP 429: at most 5 unused pairing codes"))).toContain("at most 5 unused pairing codes");
   });
 
   it("pairing: an unregistered computer is told to set up first", () => {

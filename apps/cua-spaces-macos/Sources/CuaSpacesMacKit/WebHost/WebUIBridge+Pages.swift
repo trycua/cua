@@ -37,6 +37,15 @@ extension WebUIBridge {
              "teleport.icon", "teleport.thumbnail", "teleport.plan", "teleport.run", "teleport.sites", "teleport.remembered",
              "teleport.streamWindow":
             return try await teleport(method, args)
+        // Links to things you run (`cua share`): the daemon's shares.
+        case "links.list":
+            return ["links": try await model.backend.links().map { BridgeValue.encode($0) }] as [String: Any]
+        case "links.create":
+            let ttl = (args["ttlSeconds"] as? NSNumber).map { $0.uint32Value }
+            return BridgeValue.encode(try await model.backend.createLink(
+                target: try string(args, "target"), access: args["access"] as? String, ttlSeconds: ttl, name: args["name"] as? String))
+        case "links.stop":
+            return ["stopped": try await model.backend.stopLink(id: try string(args, "id"))] as [String: Any]
         case "sharing.list":
             return BridgeValue.encode(try await model.backend.shares(id: try spaceId(args)))
         case "sharing.share":
@@ -216,6 +225,13 @@ extension WebUIBridge {
         case "telemetry.acknowledgeLinkNotice":
             model.telemetrySink?.acknowledgeLinkNotice()
             return NSNull()
+        // The page's crash reporter (CUA-2343): its consent and build config.
+        case "crashReporting.config":
+            let status = model.telemetrySink?.status()
+            return CrashReporting.bridgeConfig(
+                info: Bundle.main.infoDictionary ?? [:],
+                allowed: status.map { CrashReporting.isAllowed(enabled: $0.enabled, noticeShown: $0.noticeShown) } ?? false,
+                env: ProcessInfo.processInfo.environment)
 
         // A Space's detail
         case "spaces.usage":
@@ -286,7 +302,19 @@ extension WebUIBridge {
             guard url.hasPrefix("x-apple.systempreferences:"), let u = URL(string: url) else {
                 throw Failure.badArgs("Only System Settings panes open here")
             }
-            NSWorkspace.shared.open(u)
+            // Local Network: the daemon connects (which makes macOS ask, in a
+            // dialog of its own); the pane opens only when it stays blocked
+            // and no macOS prompt is waiting for an answer.
+            if url.contains("Privacy_LocalNetwork") {
+                await model.checkLocalNetworkFromDaemon(every: 0)
+                if model.daemonLocalNetworkAllowed != true, LiveLocalNetworkProbe().promptsShowing() == 0 {
+                    NSWorkspace.shared.open(u)
+                }
+                return NSNull()
+            }
+            // Screen Recording and Accessibility: the app's guide to the
+            // pane (PermissionFlow), never macOS's bare prompt.
+            if !PermissionGuide.guide(url) { NSWorkspace.shared.open(u) }
             return NSNull()
 
         default:
@@ -446,7 +474,10 @@ extension WebUIBridge {
     static func leftWelcome(_ raw: Any) -> Bool {
         guard let s = raw as? [String: Any] else { return false }
         switch s["type"] as? String {
-        case "onboarding-page": return !(s["page"] as? String == "welcome" && s["action"] as? String == "shown")
+        case "onboarding-page":
+            // Welcome being shown (`shown`, or the funnel's `step_viewed`) is before the notice.
+            let action = s["action"] as? String
+            return !(s["page"] as? String == "welcome" && (action == "shown" || action == "step_viewed"))
         case "step": return s["step"] as? String == "onboarding_skipped"
         default: return false
         }
@@ -500,8 +531,13 @@ extension WebUIBridge {
             guard let location = word("location"), let os = word("guestOs"), let kind = word("kind"),
                   let outcome = word("outcome"), let phase = word("failedPhase"), let stalled = flag("stalled"),
                   let elapsed = ms("elapsedMs"), let gpu = flag("gpu"), let errorVariant = variant("errorVariant") else { return nil }
+            // A retried create's final outcome (pages before it send neither).
+            let attempt = (s["retryAttempt"] as? NSNumber).map { CFGetTypeID($0) == CFBooleanGetTypeID() ? 2 : $0.intValue } ?? 0
+            guard attempt == 0 || attempt == 1,
+                  let subclass = s["errorSubclass"] == nil ? "none" : word("errorSubclass") else { return nil }
             return .spaceCreate(location: location, guestOs: os, kind: kind, outcome: outcome, failedPhase: phase,
-                                stalled: stalled, elapsedMs: elapsed, gpu: gpu, errorVariant: errorVariant)
+                                stalled: stalled, elapsedMs: elapsed, gpu: gpu, errorVariant: errorVariant,
+                                retryAttempt: UInt32(attempt), errorSubclass: subclass)
         case "space-create-started":
             guard let location = word("location"), let os = word("guestOs"), let kind = word("kind"),
                   let gpu = flag("gpu") else { return nil }

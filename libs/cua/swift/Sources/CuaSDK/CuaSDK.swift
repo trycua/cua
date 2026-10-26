@@ -980,7 +980,8 @@ public protocol AgentSetupProtocol: AnyObject, Sendable {
 
     /**
      * Configures the MCP server (default: `cua mcp`, `cua` resolved on
-     * PATH) for `agents`.
+     * PATH; `cua-local mcp` named `cua-local` for the Local app) for
+     * `agents`. A server without a name gets the channel's.
      */
     func configureMcp(agents: [String], server: AgentMcpServer?) async throws  -> [AgentSetupOutcome]
 
@@ -1104,7 +1105,8 @@ open class AgentSetup: AgentSetupProtocol, @unchecked Sendable {
 
     /**
      * Configures the MCP server (default: `cua mcp`, `cua` resolved on
-     * PATH) for `agents`.
+     * PATH; `cua-local mcp` named `cua-local` for the Local app) for
+     * `agents`. A server without a name gets the channel's.
      */
 open func configureMcp(agents: [String], server: AgentMcpServer?)async throws  -> [AgentSetupOutcome]  {
     return
@@ -2237,6 +2239,208 @@ public func FfiConverterTypeAuth_lower(_ value: Auth) -> UInt64 {
 
 
 /**
+ * Receives [`BuildProgress`] while [`Spaces::build_with_progress`] runs, in
+ * order, ending with `finished`. Called on an SDK worker thread; return
+ * quickly.
+ */
+public protocol BuildListener: AnyObject, Sendable {
+
+    /**
+     * The build moved on.
+     */
+    func onProgress(progress: BuildProgress)
+
+}
+/**
+ * Receives [`BuildProgress`] while [`Spaces::build_with_progress`] runs, in
+ * order, ending with `finished`. Called on an SDK worker thread; return
+ * quickly.
+ */
+open class BuildListenerImpl: BuildListener, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_cua_sdk_fn_clone_buildlistener(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_cua_sdk_fn_free_buildlistener(handle, $0) }
+    }
+
+
+
+
+    /**
+     * The build moved on.
+     */
+open func onProgress(progress: BuildProgress)  {try! rustCall() {
+    uniffi_cua_sdk_fn_method_buildlistener_on_progress(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeBuildProgress_lower(progress),$0
+    )
+}
+}
+
+
+
+}
+
+
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+fileprivate struct UniffiCallbackInterfaceBuildListener {
+
+    // Create the VTable using a series of closures.
+    // Swift automatically converts these into C callback functions.
+    //
+    // This creates 1-element array, since this seems to be the only way to construct a const
+    // pointer that we can pass to the Rust code.
+    static let vtable: [UniffiVTableCallbackInterfaceBuildListener] = [UniffiVTableCallbackInterfaceBuildListener(
+        uniffiFree: { (uniffiHandle: UInt64) -> () in
+            do {
+                try FfiConverterTypeBuildListener.handleMap.remove(handle: uniffiHandle)
+            } catch {
+                print("Uniffi callback interface BuildListener: handle missing in uniffiFree")
+            }
+        },
+        uniffiClone: { (uniffiHandle: UInt64) -> UInt64 in
+            do {
+                return try FfiConverterTypeBuildListener.handleMap.clone(handle: uniffiHandle)
+            } catch {
+                fatalError("Uniffi callback interface BuildListener: handle missing in uniffiClone")
+            }
+        },
+        onProgress: { (
+            uniffiHandle: UInt64,
+            progress: RustBuffer,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterTypeBuildListener.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.onProgress(
+                     progress: try FfiConverterTypeBuildProgress_lift(progress)
+                )
+            }
+
+
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        }
+    )]
+}
+
+private func uniffiCallbackInitBuildListener() {
+    uniffi_cua_sdk_fn_init_callback_vtable_buildlistener(UniffiCallbackInterfaceBuildListener.vtable)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeBuildListener: FfiConverter {
+    fileprivate static let handleMap = UniffiHandleMap<BuildListener>()
+
+    typealias FfiType = UInt64
+    typealias SwiftType = BuildListener
+
+    public static func lift(_ handle: UInt64) throws -> BuildListener {
+        if ((handle & 1) == 0) {
+            // Rust-generated handle, construct a new class that uses the handle to implement the
+            // interface
+            return BuildListenerImpl(unsafeFromHandle: handle)
+        } else {
+            // Swift-generated handle, get the object from the handle map
+            return try handleMap.remove(handle: handle)
+        }
+    }
+
+    public static func lower(_ value: BuildListener) -> UInt64 {
+         if let rustImpl = value as? BuildListenerImpl {
+             // Rust-implemented object.  Clone the handle and return it
+            return rustImpl.uniffiCloneHandle()
+         } else {
+            // Swift object, generate a new vtable handle and return that.
+            return handleMap.insert(obj: value)
+         }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> BuildListener {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: BuildListener, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBuildListener_lift(_ handle: UInt64) throws -> BuildListener {
+    return try FfiConverterTypeBuildListener.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBuildListener_lower(_ value: BuildListener) -> UInt64 {
+    return FfiConverterTypeBuildListener.lower(value)
+}
+
+
+
+
+
+
+/**
  * The entry point of the SDK: create one with `Cua::embedded` or
  * `Cua::connect`, then reach sandboxes, Spaces and the rest through its
  * accessors.
@@ -2291,6 +2495,39 @@ public protocol CuaProtocol: AnyObject, Sendable {
      * relay URL) without a sandbox.
      */
     func spacesd(url: String, token: String?) async throws  -> SpacesdClient
+
+    /**
+     * Opens a share's link once, as its owner, so a link is known to work
+     * before it is handed to anyone. `path` is below the link.
+     */
+    func checkShare(id: String, path: String?) async throws  -> ShareCheck
+
+    /**
+     * Shares `target` and returns a link that opens on the owner's other
+     * signed-in devices, never a localhost link: a port (`"3000"`), a port in
+     * a Space (`"space:dev:3000"`), or a file or folder (`"./report.html"`,
+     * read-only; relative paths resolve against this process's directory).
+     * `access` defaults to private; a public share lasts one hour unless
+     * `ttl_seconds` (60 to 86400) says otherwise. The cua daemon owns the
+     * share, so it keeps working after this process exits.
+     */
+    func share(target: String, access: ShareAccess?, ttlSeconds: UInt32?, name: String?) async throws  -> Share
+
+    /**
+     * The active shares, newest first.
+     */
+    func shares() async throws  -> [Share]
+
+    /**
+     * Stops every share. Returns the ids stopped.
+     */
+    func stopAllShares() async throws  -> [String]
+
+    /**
+     * Stops a share (its id or its name). The link stops working at once.
+     * Returns the ids stopped.
+     */
+    func stopShare(id: String) async throws  -> [String]
 
 }
 /**
@@ -2532,6 +2769,114 @@ open func spacesd(url: String, token: String?)async throws  -> SpacesdClient  {
             completeFunc: ffi_cua_sdk_rust_future_complete_u64,
             freeFunc: ffi_cua_sdk_rust_future_free_u64,
             liftFunc: FfiConverterTypeSpacesdClient_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Opens a share's link once, as its owner, so a link is known to work
+     * before it is handed to anyone. `path` is below the link.
+     */
+open func checkShare(id: String, path: String? = nil)async throws  -> ShareCheck  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_cua_check_share(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(id),FfiConverterOptionString.lower(path)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeShareCheck_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Shares `target` and returns a link that opens on the owner's other
+     * signed-in devices, never a localhost link: a port (`"3000"`), a port in
+     * a Space (`"space:dev:3000"`), or a file or folder (`"./report.html"`,
+     * read-only; relative paths resolve against this process's directory).
+     * `access` defaults to private; a public share lasts one hour unless
+     * `ttl_seconds` (60 to 86400) says otherwise. The cua daemon owns the
+     * share, so it keeps working after this process exits.
+     */
+open func share(target: String, access: ShareAccess? = nil, ttlSeconds: UInt32? = nil, name: String? = nil)async throws  -> Share  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_cua_share(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(target),FfiConverterOptionTypeShareAccess.lower(access),FfiConverterOptionUInt32.lower(ttlSeconds),FfiConverterOptionString.lower(name)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeShare_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * The active shares, newest first.
+     */
+open func shares()async throws  -> [Share]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_cua_shares(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeShare.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Stops every share. Returns the ids stopped.
+     */
+open func stopAllShares()async throws  -> [String]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_cua_stop_all_shares(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceString.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Stops a share (its id or its name). The link stops working at once.
+     * Returns the ids stopped.
+     */
+open func stopShare(id: String)async throws  -> [String]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_cua_stop_share(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(id)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceString.lift,
             errorHandler: FfiConverterTypeCuaError_lift
         )
 }
@@ -3035,6 +3380,178 @@ public func FfiConverterTypeDevices_lift(_ handle: UInt64) throws -> Devices {
 #endif
 public func FfiConverterTypeDevices_lower(_ value: Devices) -> UInt64 {
     return FfiConverterTypeDevices.lower(value)
+}
+
+
+
+
+
+
+/**
+ * A running batch of forks. Its events as they happen
+ * ([`ForkBatch::next`]), or all of it ([`ForkBatch::collect`]).
+ */
+public protocol ForkBatchProtocol: AnyObject, Sendable {
+
+    /**
+     * Waits for the whole batch: every fork (ready or failed), by index,
+     * and the summary. After some or all of the events were read with
+     * [`ForkBatch::next`], it still returns the whole batch: the forks
+     * already read plus the rest, with the summary.
+     */
+    func collect() async throws  -> ForkBatchResult
+
+    /**
+     * The next event: a placement, a copy's progress, a fork that is ready
+     * (or failed), and last the summary. `None` after the summary.
+     */
+    func next() async throws  -> ForkBatchEvent?
+
+}
+/**
+ * A running batch of forks. Its events as they happen
+ * ([`ForkBatch::next`]), or all of it ([`ForkBatch::collect`]).
+ */
+open class ForkBatch: ForkBatchProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_cua_sdk_fn_clone_forkbatch(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_cua_sdk_fn_free_forkbatch(handle, $0) }
+    }
+
+
+
+
+    /**
+     * Waits for the whole batch: every fork (ready or failed), by index,
+     * and the summary. After some or all of the events were read with
+     * [`ForkBatch::next`], it still returns the whole batch: the forks
+     * already read plus the rest, with the summary.
+     */
+open func collect()async throws  -> ForkBatchResult  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_forkbatch_collect(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeForkBatchResult_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * The next event: a placement, a copy's progress, a fork that is ready
+     * (or failed), and last the summary. `None` after the summary.
+     */
+open func next()async throws  -> ForkBatchEvent?  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_forkbatch_next(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterOptionTypeForkBatchEvent.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeForkBatch: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = ForkBatch
+
+    public static func lift(_ handle: UInt64) throws -> ForkBatch {
+        return ForkBatch(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: ForkBatch) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ForkBatch {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: ForkBatch, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeForkBatch_lift(_ handle: UInt64) throws -> ForkBatch {
+    return try FfiConverterTypeForkBatch.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeForkBatch_lower(_ value: ForkBatch) -> UInt64 {
+    return FfiConverterTypeForkBatch.lower(value)
 }
 
 
@@ -5175,10 +5692,10 @@ public func FfiConverterTypePortForward_lower(_ value: PortForward) -> UInt64 {
 
 
 /**
- * The shared presence netcode model: who is present and what to draw,
- * with remote cursors interpolated (render delay, Catmull-Rom,
+ * The shared presence netcode model: who is present and what to draw.
+ * Remote cursors are interpolated (render delay, Catmull-Rom,
  * extrapolation cap), idle cursors faded, stale participants dropped and
- * your own cursor at the local pointer (libs/cua/proto/PRESENCE.md
+ * your own cursor kept at the local pointer (libs/cua/proto/PRESENCE.md
  * section 4). Feed it every presence event; call `drawables` each frame.
  */
 public protocol PresenceViewProtocol: AnyObject, Sendable {
@@ -5228,10 +5745,10 @@ public protocol PresenceViewProtocol: AnyObject, Sendable {
 
 }
 /**
- * The shared presence netcode model: who is present and what to draw,
- * with remote cursors interpolated (render delay, Catmull-Rom,
+ * The shared presence netcode model: who is present and what to draw.
+ * Remote cursors are interpolated (render delay, Catmull-Rom,
  * extrapolation cap), idle cursors faded, stale participants dropped and
- * your own cursor at the local pointer (libs/cua/proto/PRESENCE.md
+ * your own cursor kept at the local pointer (libs/cua/proto/PRESENCE.md
  * section 4). Feed it every presence event; call `drawables` each frame.
  */
 open class PresenceView: PresenceViewProtocol, @unchecked Sendable {
@@ -6095,6 +6612,12 @@ public protocol SandboxProtocol: AnyObject, Sendable {
     func delete() async throws
 
     /**
+     * When this sandbox's lifetime ends ([`Sandbox::set_lifetime`]), as
+     * Unix seconds; `None` when it has none.
+     */
+    func expiresAtUnix() async throws  -> Int64?
+
+    /**
      * Forwards a loopback port to guest `port`: a TCP forward locally (and
      * over cua-spacesd's tunnel when the image has it). `url()` is a
      * loopback URL.
@@ -6209,6 +6732,16 @@ public protocol SandboxProtocol: AnyObject, Sendable {
     func refresh() async throws  -> SandboxInfo
 
     /**
+     * Gives a local VM another shape: `cpus` vCPUs, `memory_mb` MiB of
+     * memory and a disk grown to `disk_gb` GiB (each `None` keeps it). The
+     * VM stops and boots again from its own disk, so its memory and
+     * running processes do not survive; its files do. Returns once it is
+     * ready again. A disk never shrinks. Containers, Fleet and other
+     * providers' sandboxes are refused (`Unsupported`).
+     */
+    func resize(cpus: UInt32?, memoryMb: UInt64?, diskGb: UInt32?) async throws
+
+    /**
      * Restarts.
      */
     func restart() async throws
@@ -6243,6 +6776,15 @@ public protocol SandboxProtocol: AnyObject, Sendable {
      * Declared services.
      */
     func services()  -> [String: UInt16]
+
+    /**
+     * Gives this local sandbox a lifetime of `seconds` from now, replacing
+     * any earlier one: the cua daemon then deletes it (`on_expire`
+     * `"delete"`, the default) or suspends it (`"suspend"`), whether or
+     * not this process is still running. Needs the cua daemon (an
+     * embedded runtime records the lifetime; the next daemon enforces it).
+     */
+    func setLifetime(seconds: UInt32, onExpire: String?) async throws
 
     /**
      * Attaches to cua-spacesd inside the sandbox (the `env` service or
@@ -6391,6 +6933,27 @@ open func delete()async throws   {
             completeFunc: ffi_cua_sdk_rust_future_complete_void,
             freeFunc: ffi_cua_sdk_rust_future_free_void,
             liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * When this sandbox's lifetime ends ([`Sandbox::set_lifetime`]), as
+     * Unix seconds; `None` when it has none.
+     */
+open func expiresAtUnix()async throws  -> Int64?  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_sandbox_expires_at_unix(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterOptionInt64.lift,
             errorHandler: FfiConverterTypeCuaError_lift
         )
 }
@@ -6708,6 +7271,31 @@ open func refresh()async throws  -> SandboxInfo  {
 }
 
     /**
+     * Gives a local VM another shape: `cpus` vCPUs, `memory_mb` MiB of
+     * memory and a disk grown to `disk_gb` GiB (each `None` keeps it). The
+     * VM stops and boots again from its own disk, so its memory and
+     * running processes do not survive; its files do. Returns once it is
+     * ready again. A disk never shrinks. Containers, Fleet and other
+     * providers' sandboxes are refused (`Unsupported`).
+     */
+open func resize(cpus: UInt32?, memoryMb: UInt64?, diskGb: UInt32?)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_sandbox_resize(
+                    self.uniffiCloneHandle(),
+                    FfiConverterOptionUInt32.lower(cpus),FfiConverterOptionUInt64.lower(memoryMb),FfiConverterOptionUInt32.lower(diskGb)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_void,
+            completeFunc: ffi_cua_sdk_rust_future_complete_void,
+            freeFunc: ffi_cua_sdk_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
      * Restarts.
      */
 open func restart()async throws   {
@@ -6811,6 +7399,30 @@ open func services() -> [String: UInt16]  {
             self.uniffiCloneHandle(),$0
     )
 })
+}
+
+    /**
+     * Gives this local sandbox a lifetime of `seconds` from now, replacing
+     * any earlier one: the cua daemon then deletes it (`on_expire`
+     * `"delete"`, the default) or suspends it (`"suspend"`), whether or
+     * not this process is still running. Needs the cua daemon (an
+     * embedded runtime records the lifetime; the next daemon enforces it).
+     */
+open func setLifetime(seconds: UInt32, onExpire: String?)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_sandbox_set_lifetime(
+                    self.uniffiCloneHandle(),
+                    FfiConverterUInt32.lower(seconds),FfiConverterOptionString.lower(onExpire)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_void,
+            completeFunc: ffi_cua_sdk_rust_future_complete_void,
+            freeFunc: ffi_cua_sdk_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
 }
 
     /**
@@ -6955,6 +7567,17 @@ public func FfiConverterTypeSandbox_lower(_ value: Sandbox) -> UInt64 {
 public protocol SandboxesProtocol: AnyObject, Sendable {
 
     /**
+     * Bakes a Docker Compose project into a checkpoint that forks start
+     * from with its containers already running: a local VM (by default
+     * the docker tier, dockerd up at boot), the project uploaded, `docker
+     * compose up --wait`, the stack checked (every service running or
+     * healthy, none restarted) and `health` commands passed, `run`
+     * commands, then a live memory checkpoint. The bake Space is deleted
+     * afterwards unless `keep`. Fork it with `fork(checkpoint, name)`.
+     */
+    func bake(options: BakeOptions) async throws  -> BakeSummary
+
+    /**
      * Cancels the create of the named sandbox `name` that is still
      * running (in this process or the daemon): the work in flight stops
      * (an image download, a boot) and what the create made is
@@ -6964,6 +7587,25 @@ public protocol SandboxesProtocol: AnyObject, Sendable {
      * create itself fails with `Cancelled`.
      */
     func cancelCreate(name: String) async throws  -> String?
+
+    /**
+     * Saves sandbox `name`'s state as `checkpoint` (memory and disk on a
+     * microVM or a QEMU VM; a container's filesystem). It keeps running.
+     * `pin` (default false) pins the new checkpoint (see
+     * [`Sandboxes::pin_checkpoint`]). A QEMU checkpoint's forks share its
+     * RAM copy-on-write ([`CheckpointSummary::shared_memory`]). `name` may
+     * also be a Space another machine of yours provides (its name or id):
+     * that machine takes the checkpoint and keeps it
+     * ([`CheckpointSummary::host`]).
+     */
+    func checkpoint(name: String, checkpoint: String, pin: Bool) async throws  -> CheckpointSummary
+
+    /**
+     * Every checkpoint: this machine's (oldest first), then those your
+     * machines that provide Spaces hold, each name once
+     * ([`CheckpointSummary::host`]).
+     */
+    func checkpoints() async throws  -> [CheckpointSummary]
 
     /**
      * Reattaches to a sandbox by ref (`local:<name>`, `cloud:<name>`,
@@ -6986,14 +7628,80 @@ public protocol SandboxesProtocol: AnyObject, Sendable {
     func create(options: SandboxCreateOptions) async throws  -> Sandbox
 
     /**
+     * Creates a pool: sandboxes of `image` (and `options`' shape) kept
+     * ready on this machine by `cua daemon`, so that a create from the
+     * pool (`SandboxCreateOptions.pool`) takes one in about 0.1 s.
+     *
+     * - `min`: kept ready at all times; one starts again as soon as one is
+     * created from the pool.
+     * - `max`: the most kept ready (not counting those created from the
+     * pool); above `min` only while creates come faster than sandboxes
+     * start. Default: `min`.
+     * - `idle_ms`: after this long without a create from the pool it keeps
+     * none ready, until the next create (which starts on the default tier
+     * and refills it). Default: never.
+     *
+     * Pools run on this machine (`on = "local"`, the default). Without a
+     * pool, the daemon keeps sandboxes ready only where repeated creates of
+     * a shape pay for it; a pool asks for them explicitly. Creating a pool
+     * with the name of an existing one updates it.
+     */
+    func createPool(image: String, options: PoolCreateOptions) async throws  -> SandboxPool
+
+    /**
      * Deletes a sandbox by ref or unique name.
      */
     func delete(name: String) async throws
 
     /**
+     * Deletes a checkpoint, here and on every machine of yours that holds
+     * a copy (forks made from it keep running). A pinned checkpoint is
+     * refused until it is unpinned.
+     */
+    func deleteCheckpoint(name: String) async throws
+
+    /**
+     * Deletes pool `name`: its ready sandboxes go; sandboxes created from
+     * it stay. `false` when there was none.
+     */
+    func deletePool(name: String) async throws  -> Bool
+
+    /**
+     * Starts `name` from a sandbox (running or stopped) or a checkpoint.
+     */
+    func fork(source: String, name: String) async throws  -> Sandbox
+
+    /**
+     * [`Sandboxes::fork_many`] for several checkpoints at once: each group
+     * (the forks of one checkpoint that belong together) goes to one
+     * machine, and groups of different checkpoints spread.
+     */
+    func forkGroups(groups: [ForkGroup], options: ForkManyOptions?) async throws  -> ForkBatch
+
+    /**
+     * Forks checkpoint `source` `count` times at once and returns the
+     * running batch: each fork is reported as soon as it is ready (or
+     * failed: one failure does not stop the others). `source` may also be
+     * a local sandbox, running or stopped: it is checkpointed once (memory
+     * saved once, shared copy-on-write by the forks on QEMU) and that
+     * checkpoint is deleted with the last of its forks. With `on = "auto"`
+     * the forks go to your machines that provide Spaces: each group
+     * (`group_size` forks) to one machine, groups spread over the least
+     * loaded ones, the checkpoint copied (and verified) to a machine that
+     * lacks it first; a machine that fails has its forks placed again on
+     * another.
+     */
+    func forkMany(source: String, count: UInt32, options: ForkManyOptions?) async throws  -> ForkBatch
+
+    /**
      * One sandbox's info, by ref or unique name.
      */
     func get(name: String) async throws  -> SandboxInfo
+
+    /**
+     * Pool `name`, with what it holds now.
+     */
+    func getPool(name: String) async throws  -> SandboxPool
 
     /**
      * Sandboxes, each tagged with its `location`. `None` (the default):
@@ -7009,9 +7717,35 @@ public protocol SandboxesProtocol: AnyObject, Sendable {
     func listAll() async throws  -> [SandboxInfo]
 
     /**
+     * Every pool, with what each holds now.
+     */
+    func listPools() async throws  -> [SandboxPool]
+
+    /**
      * [`Sandboxes::list`] with what the listing left out.
      */
     func listWithWarnings(location: String?) async throws  -> SandboxListing
+
+    /**
+     * Pins (`pinned`) or unpins a checkpoint. A pinned checkpoint is a
+     * fork source to keep: `delete_checkpoint` refuses it and
+     * `prune_checkpoints` leaves it until it is unpinned.
+     */
+    func pinCheckpoint(name: String, pinned: Bool) async throws  -> CheckpointSummary
+
+    /**
+     * Deletes every checkpoint that is not pinned (forks made from them
+     * keep running); returns their names.
+     */
+    func pruneCheckpoints() async throws  -> [String]
+
+    /**
+     * Uploads checkpoint `name` to `fallback` (S3, or a folder every
+     * machine mounts), so batches on your other machines copy it from
+     * there when this machine cannot be reached. Files already there are
+     * not uploaded again. Returns the bytes uploaded.
+     */
+    func publishCheckpoint(name: String, fallback: SnapshotFallbackOptions) async throws  -> UInt64
 
 }
 /**
@@ -7071,6 +7805,32 @@ open class Sandboxes: SandboxesProtocol, @unchecked Sendable {
 
 
     /**
+     * Bakes a Docker Compose project into a checkpoint that forks start
+     * from with its containers already running: a local VM (by default
+     * the docker tier, dockerd up at boot), the project uploaded, `docker
+     * compose up --wait`, the stack checked (every service running or
+     * healthy, none restarted) and `health` commands passed, `run`
+     * commands, then a live memory checkpoint. The bake Space is deleted
+     * afterwards unless `keep`. Fork it with `fork(checkpoint, name)`.
+     */
+open func bake(options: BakeOptions)async throws  -> BakeSummary  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_sandboxes_bake(
+                    self.uniffiCloneHandle(),
+                    FfiConverterTypeBakeOptions_lower(options)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeBakeSummary_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
      * Cancels the create of the named sandbox `name` that is still
      * running (in this process or the daemon): the work in flight stops
      * (an image download, a boot) and what the create made is
@@ -7092,6 +7852,55 @@ open func cancelCreate(name: String)async throws  -> String?  {
             completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
             freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
             liftFunc: FfiConverterOptionString.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Saves sandbox `name`'s state as `checkpoint` (memory and disk on a
+     * microVM or a QEMU VM; a container's filesystem). It keeps running.
+     * `pin` (default false) pins the new checkpoint (see
+     * [`Sandboxes::pin_checkpoint`]). A QEMU checkpoint's forks share its
+     * RAM copy-on-write ([`CheckpointSummary::shared_memory`]). `name` may
+     * also be a Space another machine of yours provides (its name or id):
+     * that machine takes the checkpoint and keeps it
+     * ([`CheckpointSummary::host`]).
+     */
+open func checkpoint(name: String, checkpoint: String, pin: Bool = false)async throws  -> CheckpointSummary  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_sandboxes_checkpoint(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(name),FfiConverterString.lower(checkpoint),FfiConverterBool.lower(pin)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeCheckpointSummary_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Every checkpoint: this machine's (oldest first), then those your
+     * machines that provide Spaces hold, each name once
+     * ([`CheckpointSummary::host`]).
+     */
+open func checkpoints()async throws  -> [CheckpointSummary]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_sandboxes_checkpoints(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeCheckpointSummary.lift,
             errorHandler: FfiConverterTypeCuaError_lift
         )
 }
@@ -7162,6 +7971,42 @@ open func create(options: SandboxCreateOptions)async throws  -> Sandbox  {
 }
 
     /**
+     * Creates a pool: sandboxes of `image` (and `options`' shape) kept
+     * ready on this machine by `cua daemon`, so that a create from the
+     * pool (`SandboxCreateOptions.pool`) takes one in about 0.1 s.
+     *
+     * - `min`: kept ready at all times; one starts again as soon as one is
+     * created from the pool.
+     * - `max`: the most kept ready (not counting those created from the
+     * pool); above `min` only while creates come faster than sandboxes
+     * start. Default: `min`.
+     * - `idle_ms`: after this long without a create from the pool it keeps
+     * none ready, until the next create (which starts on the default tier
+     * and refills it). Default: never.
+     *
+     * Pools run on this machine (`on = "local"`, the default). Without a
+     * pool, the daemon keeps sandboxes ready only where repeated creates of
+     * a shape pay for it; a pool asks for them explicitly. Creating a pool
+     * with the name of an existing one updates it.
+     */
+open func createPool(image: String, options: PoolCreateOptions)async throws  -> SandboxPool  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_sandboxes_create_pool(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(image),FfiConverterTypePoolCreateOptions_lower(options)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeSandboxPool_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
      * Deletes a sandbox by ref or unique name.
      */
 open func delete(name: String)async throws   {
@@ -7182,6 +8027,121 @@ open func delete(name: String)async throws   {
 }
 
     /**
+     * Deletes a checkpoint, here and on every machine of yours that holds
+     * a copy (forks made from it keep running). A pinned checkpoint is
+     * refused until it is unpinned.
+     */
+open func deleteCheckpoint(name: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_sandboxes_delete_checkpoint(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(name)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_void,
+            completeFunc: ffi_cua_sdk_rust_future_complete_void,
+            freeFunc: ffi_cua_sdk_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Deletes pool `name`: its ready sandboxes go; sandboxes created from
+     * it stay. `false` when there was none.
+     */
+open func deletePool(name: String)async throws  -> Bool  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_sandboxes_delete_pool(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(name)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_i8,
+            completeFunc: ffi_cua_sdk_rust_future_complete_i8,
+            freeFunc: ffi_cua_sdk_rust_future_free_i8,
+            liftFunc: FfiConverterBool.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Starts `name` from a sandbox (running or stopped) or a checkpoint.
+     */
+open func fork(source: String, name: String)async throws  -> Sandbox  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_sandboxes_fork(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(source),FfiConverterString.lower(name)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_u64,
+            completeFunc: ffi_cua_sdk_rust_future_complete_u64,
+            freeFunc: ffi_cua_sdk_rust_future_free_u64,
+            liftFunc: FfiConverterTypeSandbox_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * [`Sandboxes::fork_many`] for several checkpoints at once: each group
+     * (the forks of one checkpoint that belong together) goes to one
+     * machine, and groups of different checkpoints spread.
+     */
+open func forkGroups(groups: [ForkGroup], options: ForkManyOptions?)async throws  -> ForkBatch  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_sandboxes_fork_groups(
+                    self.uniffiCloneHandle(),
+                    FfiConverterSequenceTypeForkGroup.lower(groups),FfiConverterOptionTypeForkManyOptions.lower(options)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_u64,
+            completeFunc: ffi_cua_sdk_rust_future_complete_u64,
+            freeFunc: ffi_cua_sdk_rust_future_free_u64,
+            liftFunc: FfiConverterTypeForkBatch_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Forks checkpoint `source` `count` times at once and returns the
+     * running batch: each fork is reported as soon as it is ready (or
+     * failed: one failure does not stop the others). `source` may also be
+     * a local sandbox, running or stopped: it is checkpointed once (memory
+     * saved once, shared copy-on-write by the forks on QEMU) and that
+     * checkpoint is deleted with the last of its forks. With `on = "auto"`
+     * the forks go to your machines that provide Spaces: each group
+     * (`group_size` forks) to one machine, groups spread over the least
+     * loaded ones, the checkpoint copied (and verified) to a machine that
+     * lacks it first; a machine that fails has its forks placed again on
+     * another.
+     */
+open func forkMany(source: String, count: UInt32, options: ForkManyOptions?)async throws  -> ForkBatch  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_sandboxes_fork_many(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(source),FfiConverterUInt32.lower(count),FfiConverterOptionTypeForkManyOptions.lower(options)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_u64,
+            completeFunc: ffi_cua_sdk_rust_future_complete_u64,
+            freeFunc: ffi_cua_sdk_rust_future_free_u64,
+            liftFunc: FfiConverterTypeForkBatch_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
      * One sandbox's info, by ref or unique name.
      */
 open func get(name: String)async throws  -> SandboxInfo  {
@@ -7197,6 +8157,26 @@ open func get(name: String)async throws  -> SandboxInfo  {
             completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
             freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeSandboxInfo_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Pool `name`, with what it holds now.
+     */
+open func getPool(name: String)async throws  -> SandboxPool  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_sandboxes_get_pool(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(name)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeSandboxPool_lift,
             errorHandler: FfiConverterTypeCuaError_lift
         )
 }
@@ -7245,6 +8225,26 @@ open func listAll()async throws  -> [SandboxInfo]  {
 }
 
     /**
+     * Every pool, with what each holds now.
+     */
+open func listPools()async throws  -> [SandboxPool]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_sandboxes_list_pools(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeSandboxPool.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
      * [`Sandboxes::list`] with what the listing left out.
      */
 open func listWithWarnings(location: String?)async throws  -> SandboxListing  {
@@ -7260,6 +8260,72 @@ open func listWithWarnings(location: String?)async throws  -> SandboxListing  {
             completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
             freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeSandboxListing_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Pins (`pinned`) or unpins a checkpoint. A pinned checkpoint is a
+     * fork source to keep: `delete_checkpoint` refuses it and
+     * `prune_checkpoints` leaves it until it is unpinned.
+     */
+open func pinCheckpoint(name: String, pinned: Bool)async throws  -> CheckpointSummary  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_sandboxes_pin_checkpoint(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(name),FfiConverterBool.lower(pinned)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeCheckpointSummary_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Deletes every checkpoint that is not pinned (forks made from them
+     * keep running); returns their names.
+     */
+open func pruneCheckpoints()async throws  -> [String]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_sandboxes_prune_checkpoints(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceString.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Uploads checkpoint `name` to `fallback` (S3, or a folder every
+     * machine mounts), so batches on your other machines copy it from
+     * there when this machine cannot be reached. Files already there are
+     * not uploaded again. Returns the bytes uploaded.
+     */
+open func publishCheckpoint(name: String, fallback: SnapshotFallbackOptions)async throws  -> UInt64  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_sandboxes_publish_checkpoint(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(name),FfiConverterTypeSnapshotFallbackOptions_lower(fallback)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_u64,
+            completeFunc: ffi_cua_sdk_rust_future_complete_u64,
+            freeFunc: ffi_cua_sdk_rust_future_free_u64,
+            liftFunc: FfiConverterUInt64.lift,
             errorHandler: FfiConverterTypeCuaError_lift
         )
 }
@@ -7698,6 +8764,18 @@ public protocol SpaceProtocol: AnyObject, Sendable {
     func capabilitiesJson() throws  -> String
 
     /**
+     * Saves this Space's state as checkpoint `checkpoint` (the sandbox
+     * API's `Sandboxes.checkpoint`): it keeps running, and
+     * `Spaces.fork(checkpoint, name)` (this machine) or `Spaces.create`
+     * with image `checkpoint:<name>` (any of your machines) starts new
+     * Spaces from it. `pin` (default false) keeps it until it is unpinned
+     * (`Sandboxes.pin_checkpoint`). A Space another machine of yours
+     * provides is checkpointed on that machine, which keeps the checkpoint
+     * ([`CheckpointSummary::host`]).
+     */
+    func checkpoint(checkpoint: String, pin: Bool) async throws  -> CheckpointSummary
+
+    /**
      * Closes a media session opened with [`Space::open_stream`].
      */
     func closeStream(mediaSessionId: String) async throws
@@ -7715,6 +8793,26 @@ public protocol SpaceProtocol: AnyObject, Sendable {
      * `download_file` on the Space's environment to write one exact path.
      */
     func download(remotePath: String, destDir: String) async throws  -> SpaceTransferReport
+
+    /**
+     * Starts Space `name`, a fork of this one (with its memory when it is
+     * running), and returns it connected. To fork from a checkpoint, use
+     * `Spaces.fork(checkpoint, name)`. Local Spaces only.
+     */
+    func fork(name: String) async throws  -> Space
+
+    /**
+     * Forwards a free loopback port on this machine to guest `port` over
+     * this Space's own connection (cua-spacesd's tunnel): the same path its
+     * calls take, so a Space one of your machines provides on your LAN is
+     * reached directly, and never through a port opened on that machine's
+     * network. `local_addr()` is the address to connect to; the forward
+     * stops on `close()` or when dropped. `bind` is the local address to
+     * listen on (default `127.0.0.1:0`, a free loopback port; for example
+     * `0.0.0.0:0` serves your LAN, so only do that on a network you trust:
+     * whoever reaches it reaches the guest port).
+     */
+    func forward(port: UInt16, bind: String?) async throws  -> PortForward
 
     /**
      * The Space user's home directory.
@@ -7765,6 +8863,14 @@ public protocol SpaceProtocol: AnyObject, Sendable {
      * declined request is an error. The password never reaches the caller.
      */
     func requestSiteLogin(url: String, options: SiteLoginOptions?) async throws  -> SiteLoginReport
+
+    /**
+     * Which way this Space's calls go now (see [`super::spacesd::SpacesdClient::route`]):
+     * `local …`, `direct …`, `relay …`, `mesh direct <ip:port> rtt <ms> ms`,
+     * `mesh relayed` or `cloud`; empty when the Space runs no cua-spacesd.
+     * In daemon mode it is the daemon's connection to the Space.
+     */
+    func route() async throws  -> String
 
     /**
      * Captures the Space's display: PNG at full size on the primary
@@ -7868,6 +8974,14 @@ public protocol SpaceProtocol: AnyObject, Sendable {
      * thumbnails in the background for a while (about every 90 s).
      */
     func thumbnail(maxAgeMs: UInt64?) async throws  -> SpaceThumbnail
+
+    /**
+     * What carries this Space's calls, for a badge: `mesh` (end to end) or
+     * `relay_https` (the relay can read the session in transit; with
+     * `fallback_reason` when the mesh was wanted), or `local`, `direct`,
+     * `cloud`. In daemon mode it is the daemon's connection to the Space.
+     */
+    func transport() async throws  -> SpaceTransport
 
     /**
      * Stops sharing this Space with `who` at once, or with everyone when
@@ -8236,6 +9350,33 @@ open func capabilitiesJson()throws  -> String  {
 }
 
     /**
+     * Saves this Space's state as checkpoint `checkpoint` (the sandbox
+     * API's `Sandboxes.checkpoint`): it keeps running, and
+     * `Spaces.fork(checkpoint, name)` (this machine) or `Spaces.create`
+     * with image `checkpoint:<name>` (any of your machines) starts new
+     * Spaces from it. `pin` (default false) keeps it until it is unpinned
+     * (`Sandboxes.pin_checkpoint`). A Space another machine of yours
+     * provides is checkpointed on that machine, which keeps the checkpoint
+     * ([`CheckpointSummary::host`]).
+     */
+open func checkpoint(checkpoint: String, pin: Bool = false)async throws  -> CheckpointSummary  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_space_checkpoint(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(checkpoint),FfiConverterBool.lower(pin)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeCheckpointSummary_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
      * Closes a media session opened with [`Space::open_stream`].
      */
 open func closeStream(mediaSessionId: String)async throws   {
@@ -8295,6 +9436,56 @@ open func download(remotePath: String, destDir: String)async throws  -> SpaceTra
             completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
             freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeSpaceTransferReport_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Starts Space `name`, a fork of this one (with its memory when it is
+     * running), and returns it connected. To fork from a checkpoint, use
+     * `Spaces.fork(checkpoint, name)`. Local Spaces only.
+     */
+open func fork(name: String)async throws  -> Space  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_space_fork(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(name)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_u64,
+            completeFunc: ffi_cua_sdk_rust_future_complete_u64,
+            freeFunc: ffi_cua_sdk_rust_future_free_u64,
+            liftFunc: FfiConverterTypeSpace_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Forwards a free loopback port on this machine to guest `port` over
+     * this Space's own connection (cua-spacesd's tunnel): the same path its
+     * calls take, so a Space one of your machines provides on your LAN is
+     * reached directly, and never through a port opened on that machine's
+     * network. `local_addr()` is the address to connect to; the forward
+     * stops on `close()` or when dropped. `bind` is the local address to
+     * listen on (default `127.0.0.1:0`, a free loopback port; for example
+     * `0.0.0.0:0` serves your LAN, so only do that on a network you trust:
+     * whoever reaches it reaches the guest port).
+     */
+open func forward(port: UInt16, bind: String? = nil)async throws  -> PortForward  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_space_forward(
+                    self.uniffiCloneHandle(),
+                    FfiConverterUInt16.lower(port),FfiConverterOptionString.lower(bind)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_u64,
+            completeFunc: ffi_cua_sdk_rust_future_complete_u64,
+            freeFunc: ffi_cua_sdk_rust_future_free_u64,
+            liftFunc: FfiConverterTypePortForward_lift,
             errorHandler: FfiConverterTypeCuaError_lift
         )
 }
@@ -8447,6 +9638,29 @@ open func requestSiteLogin(url: String, options: SiteLoginOptions?)async throws 
             completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
             freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeSiteLoginReport_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Which way this Space's calls go now (see [`super::spacesd::SpacesdClient::route`]):
+     * `local …`, `direct …`, `relay …`, `mesh direct <ip:port> rtt <ms> ms`,
+     * `mesh relayed` or `cloud`; empty when the Space runs no cua-spacesd.
+     * In daemon mode it is the daemon's connection to the Space.
+     */
+open func route()async throws  -> String  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_space_route(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterString.lift,
             errorHandler: FfiConverterTypeCuaError_lift
         )
 }
@@ -8734,6 +9948,29 @@ open func thumbnail(maxAgeMs: UInt64?)async throws  -> SpaceThumbnail  {
             completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
             freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeSpaceThumbnail_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * What carries this Space's calls, for a badge: `mesh` (end to end) or
+     * `relay_https` (the relay can read the session in transit; with
+     * `fallback_reason` when the mesh was wanted), or `local`, `direct`,
+     * `cloud`. In daemon mode it is the daemon's connection to the Space.
+     */
+open func transport()async throws  -> SpaceTransport  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_space_transport(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeSpaceTransport_lift,
             errorHandler: FfiConverterTypeCuaError_lift
         )
 }
@@ -9656,6 +10893,11 @@ public func FfiConverterTypeSpaceStreamSession_lower(_ value: SpaceStreamSession
 public protocol SpacesProtocol: AnyObject, Sendable {
 
     /**
+     * What Cua did in your clouds, newest last (default the newest 50).
+     */
+    func cloudAudit(limit: UInt32?) async throws  -> [CloudAuditEntry]
+
+    /**
      * Connects a cloud account (after the checks `cloud_test` runs). With
      * `make_default`, Spaces are created there when no location is given.
      * `ttl_hours` (default 8, 0: never) deletes each Space there after
@@ -9664,9 +10906,11 @@ public protocol SpacesProtocol: AnyObject, Sendable {
     func cloudConnect(target: CloudTarget, makeDefault: Bool, ttlHours: UInt32?) async throws  -> CloudConnected
 
     /**
-     * Forgets a connected cloud (nothing in it is deleted).
+     * Forgets a connected cloud. Refused (listing them) while Cua
+     * resources still run there; with `delete_resources`, deletes everything Cua
+     * created there first and disconnects once the cloud confirms.
      */
-    func cloudDisconnect(provider: String) async throws  -> CloudDisconnected
+    func cloudDisconnect(provider: String, deleteResources: Bool) async throws  -> CloudDisconnected
 
     /**
      * Your clouds: found credentials, the connected account and region,
@@ -9687,6 +10931,60 @@ public protocol SpacesProtocol: AnyObject, Sendable {
      * Checks a cloud account without creating anything.
      */
     func cloudTest(target: CloudTarget) async throws  -> CloudTestReport
+
+    /**
+     * Adds `count` hosts of `instance_type` in a linked cloud by hand
+     * (the scaler never removes them); each ends at its TTL.
+     */
+    func cloudAddHost(provider: String, instanceType: String, region: String?, count: UInt32?, ttlHours: UInt32?) async throws  -> [ElasticHost]
+
+    /**
+     * The elastic pool's budget and autoscale switch, after setting the
+     * fields `update` gives.
+     */
+    func cloudBudget(update: ElasticBudgetUpdate) async throws  -> ElasticBudget
+
+    /**
+     * The hosts the elastic pool added in your clouds, with their cost.
+     */
+    func cloudHosts() async throws  -> [ElasticHost]
+
+    /**
+     * What the elastic pool would do for some Spaces: where each goes
+     * (your devices first, then hosts with room, then new cloud machines
+     * at the least cost) and what that costs. With `apply`, it adds the
+     * machines (create the Spaces with `on` `auto`).
+     */
+    func cloudPlan(request: ElasticPlanRequest) async throws  -> ElasticPlan
+
+    /**
+     * One scale-in pass now: idle hosts go at the end of their paid time,
+     * the least-used one is cordoned when the others have room.
+     */
+    func cloudReconcile() async throws  -> [ElasticDecision]
+
+    /**
+     * Removes hosts this home added to the pool.
+     */
+    func cloudRemoveHost(names: [String]) async throws  -> ElasticRemoved
+
+    /**
+     * Keeps Spaces of `image` ready where the elastic pool puts them (the
+     * same solve as `on` `auto`, under the budget and pins), so the next
+     * creates of that shape start in a fraction of a second. Refused, and
+     * nothing bought, when the budget or pins cannot fit it.
+     */
+    func prewarm(image: String, options: PrewarmOptions) async throws  -> Prewarm
+
+    /**
+     * The prewarms, with how many each keeps ready now.
+     */
+    func prewarms() async throws  -> [Prewarm]
+
+    /**
+     * Ends prewarm `id` (its ready Spaces go). `false`: no such prewarm.
+     */
+    func removePrewarm(id: String) async throws  -> Bool
 
     /**
      * Pauses a persistent agent: run, routines and (local) Space.
@@ -9826,6 +11124,14 @@ public protocol SpacesProtocol: AnyObject, Sendable {
     func create(options: SpaceCreateOptions) async throws  -> SpaceCreateResult
 
     /**
+     * Creates the empty named volume `name` (1 to 63 of `a-z`, `0-9`, `.`,
+     * `_`, `-`). Fails when it exists. Mount it with
+     * [`SpaceCreateOptions::volumes`]; read and write its files with
+     * [`Spaces::volume_ls`] and friends under `volumes/<name>/`.
+     */
+    func createVolume(name: String) async throws  -> NamedVolume
+
+    /**
      * [`Spaces::create`], reporting what it does to `listener` (pulling
      * the image, booting, waiting for cua-spacesd, connecting) until the
      * Space is ready. Always waits (`options.wait` is ignored). Through a
@@ -9838,6 +11144,24 @@ public protocol SpacesProtocol: AnyObject, Sendable {
      * is only forgotten). Returns what happened.
      */
     func delete(space: String) async throws  -> String
+
+    /**
+     * Deletes the named volume `name` and its files (their history stays
+     * in the Cua Volume). Refused while Spaces mount it unless `force`.
+     * Returns how many files went.
+     */
+    func deleteVolume(name: String, force: Bool) async throws  -> UInt64
+
+    /**
+     * Starts Space `name` from `source` (a Space id such as
+     * `local:<name>`, a sandbox name, a checkpoint name, or the tag of a
+     * build ([`Spaces::build`]) or its checkpoint; a sandbox wins) and returns it
+     * connected.
+     * A running source is forked with its memory; a QEMU checkpoint's
+     * forks share its RAM copy-on-write. A fork of a build has the build's
+     * environment, working directory and user. Local sandboxes only.
+     */
+    func fork(source: String, name: String) async throws  -> Space
 
     /**
      * The GPU options each runtime of `on` (`local` by default, or
@@ -9859,6 +11183,16 @@ public protocol SpacesProtocol: AnyObject, Sendable {
      * Registered Spaces.
      */
     func list() async throws  -> [SpaceInfo]
+
+    /**
+     * The Spaces known now: this machine's at once, and the account's other
+     * computers as far as they answered within a moment ([`SpaceList`]
+     * says how far the read got). A slow or unreachable relay never holds
+     * up or fails this machine's own Spaces, so an app shows them right
+     * away and reads again while the list is incomplete. [`Spaces::list`]
+     * waits for every computer instead.
+     */
+    func listKnown() async throws  -> SpaceList
 
     /**
      * The Spaces MCP `tools/list` result as JSON (the contract).
@@ -9897,6 +11231,15 @@ public protocol SpacesProtocol: AnyObject, Sendable {
     func remove(space: String) async throws
 
     /**
+     * Gives a local VM Space another shape: `cpus` vCPUs, `memory_mb` MiB
+     * of memory, a disk grown to `disk_gb` GiB (each `None` keeps it). It
+     * shuts down and boots again from its own disk (a stopped one boots),
+     * so its files stay and its memory and processes do not. Returns once
+     * it is ready again.
+     */
+    func resize(space: String, cpus: UInt32?, memoryMb: UInt64?, diskGb: UInt32?) async throws  -> SpaceResizeReport
+
+    /**
      * Resolves an id, legacy id, URL or display name.
      */
     func resolve(space: String) async throws  -> SpaceInfo
@@ -9912,6 +11255,23 @@ public protocol SpacesProtocol: AnyObject, Sendable {
     func resources(visible: Bool) async throws  -> ResourcesSnapshot
 
     /**
+     * Replaces a Space's egress policy; an empty one removes it (see
+     * [`EgressPolicy`]). Its host enforces it at once. A bad entry is
+     * `InvalidArgument`, a Space that cannot take one `Unsupported`.
+     */
+    func setEgress(space: String, policy: EgressPolicy) async throws
+
+    /**
+     * Gives a Space a lifetime of `seconds` from now, replacing any earlier
+     * one: when it passes, the cua daemon deletes the Space (`on_expire`
+     * `"delete"`, the default) or turns it off (`"suspend"`), whether or
+     * not this process is still running. Works for a Space on this machine
+     * or one of your machines. Returns when it ends (Unix seconds).
+     * Embedded: recorded; the cua daemon on this machine enforces it.
+     */
+    func setLifetime(space: String, seconds: UInt64, onExpire: String?) async throws  -> Int64
+
+    /**
      * A connected handle to a registered Space.
      */
     func space(space: String) async throws  -> Space
@@ -9925,12 +11285,21 @@ public protocol SpacesProtocol: AnyObject, Sendable {
 
     /**
      * Turns a Space off the way its provider can (`SpaceInfo.power`):
-     * suspends it, keeping its memory (a local container or QEMU VM), or
-     * stops it, keeping its disk (a local Lume VM; a Space one of your
-     * machines provides, which that machine stops). A cloud Space, a Space
-     * added by address and your own computers cannot be turned off.
+     * stops it, keeping its disk and freeing its memory (a local VM; a
+     * Space one of your machines provides, which that machine stops), or
+     * suspends it, keeping its memory (a local container that cannot
+     * stop). [`Spaces::suspend`] suspends a local container or QEMU VM on
+     * purpose. A Space added by address and your own computers cannot be
+     * turned off.
      */
     func stop(space: String) async throws  -> SpacePowerReport
+
+    /**
+     * Suspends a local Space (a container or a QEMU VM), keeping its
+     * memory: it resumes where it was, and its memory stays in use until
+     * then. [`Spaces::stop`] stops it instead and frees its memory.
+     */
+    func suspend(space: String) async throws  -> SpacePowerReport
 
     /**
      * `volume_approve`: the request becomes a grant (with presence).
@@ -10063,6 +11432,22 @@ public protocol SpacesProtocol: AnyObject, Sendable {
     func volumeWrite(path: String, content: Data, ifEtag: String?, createOnly: Bool, view: DriveView?) async throws  -> DriveObject
 
     /**
+     * The named volumes of Cua Volume, by name, with the Spaces that mount
+     * each. Needs Cua Spaces (the Cua Volume).
+     */
+    func volumes() async throws  -> [NamedVolume]
+
+    /**
+     * Tells `listener` when the Space list changed: once at the start, then
+     * on every change. This computer's Spaces within a second; your other
+     * computers on the mesh within about a second of connecting or going
+     * away; the others within 10 seconds. Reopens by itself if the daemon
+     * restarts (and then calls `listener` again). Stop it with
+     * [`SpacesListWatch::stop`].
+     */
+    func watchList(listener: SpacesListListener)  -> SpacesListWatch
+
+    /**
      * The same numbers as events for `listener`: a snapshot first, then an
      * update with only the entries that changed by more than 1 point or
      * 256 MB, and `LowDisk` whenever the warning level changes. Reopens by
@@ -10070,6 +11455,39 @@ public protocol SpacesProtocol: AnyObject, Sendable {
      * with [`ResourcesWatch::stop`].
      */
     func watchResources(visible: Bool, listener: ResourcesListener)  -> ResourcesWatch
+
+    /**
+     * Builds an image from a Dockerfile or steps in a Space, as pinned
+     * layer checkpoints on this machine. Layers already built are reused (a
+     * rebuild of the same recipe is a cache hit that runs nothing; a
+     * changed step rebuilds from it on), and identical builds in flight
+     * share one run. The result's `checkpoint` is a fork source:
+     * `Spaces.fork(result.tag or result.checkpoint, name)` starts a Space
+     * from it in well under a second, with the image's environment,
+     * working directory and user. A failed step is an error that names
+     * the step, its exit code and its last output; earlier layers stay
+     * cached.
+     */
+    func build(options: BuildOptions) async throws  -> BuildResult
+
+    /**
+     * [`Spaces::build`], reporting each step and the lines it prints to
+     * `listener` as they happen.
+     */
+    func buildWithProgress(options: BuildOptions, listener: BuildListener) async throws  -> BuildResult
+
+    /**
+     * The builds on this machine, oldest first, with their tags.
+     */
+    func builds() async throws  -> [BuildInfo]
+
+    /**
+     * Deletes a build: its tags and the layer checkpoints no other build
+     * uses. `build` is a tag, a recipe key (or its first 12 characters) or
+     * a checkpoint. Returns the checkpoints deleted. Spaces already made
+     * from it keep running.
+     */
+    func deleteBuild(build: String) async throws  -> [String]
 
 }
 /**
@@ -10130,6 +11548,26 @@ open class Spaces: SpacesProtocol, @unchecked Sendable {
 
 
     /**
+     * What Cua did in your clouds, newest last (default the newest 50).
+     */
+open func cloudAudit(limit: UInt32? = nil)async throws  -> [CloudAuditEntry]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_cloud_audit(
+                    self.uniffiCloneHandle(),
+                    FfiConverterOptionUInt32.lower(limit)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeCloudAuditEntry.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
      * Connects a cloud account (after the checks `cloud_test` runs). With
      * `make_default`, Spaces are created there when no location is given.
      * `ttl_hours` (default 8, 0: never) deletes each Space there after
@@ -10153,15 +11591,17 @@ open func cloudConnect(target: CloudTarget, makeDefault: Bool, ttlHours: UInt32?
 }
 
     /**
-     * Forgets a connected cloud (nothing in it is deleted).
+     * Forgets a connected cloud. Refused (listing them) while Cua
+     * resources still run there; with `delete_resources`, deletes everything Cua
+     * created there first and disconnects once the cloud confirms.
      */
-open func cloudDisconnect(provider: String)async throws  -> CloudDisconnected  {
+open func cloudDisconnect(provider: String, deleteResources: Bool = false)async throws  -> CloudDisconnected  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_cua_sdk_fn_method_spaces_cloud_disconnect(
                     self.uniffiCloneHandle(),
-                    FfiConverterString.lower(provider)
+                    FfiConverterString.lower(provider),FfiConverterBool.lower(deleteResources)
                 )
             },
             pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
@@ -10233,6 +11673,195 @@ open func cloudTest(target: CloudTarget)async throws  -> CloudTestReport  {
             completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
             freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeCloudTestReport_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Adds `count` hosts of `instance_type` in a linked cloud by hand
+     * (the scaler never removes them); each ends at its TTL.
+     */
+open func cloudAddHost(provider: String, instanceType: String, region: String?, count: UInt32?, ttlHours: UInt32?)async throws  -> [ElasticHost]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_cloud_add_host(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(provider),FfiConverterString.lower(instanceType),FfiConverterOptionString.lower(region),FfiConverterOptionUInt32.lower(count),FfiConverterOptionUInt32.lower(ttlHours)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeElasticHost.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * The elastic pool's budget and autoscale switch, after setting the
+     * fields `update` gives.
+     */
+open func cloudBudget(update: ElasticBudgetUpdate)async throws  -> ElasticBudget  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_cloud_budget(
+                    self.uniffiCloneHandle(),
+                    FfiConverterTypeElasticBudgetUpdate_lower(update)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeElasticBudget_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * The hosts the elastic pool added in your clouds, with their cost.
+     */
+open func cloudHosts()async throws  -> [ElasticHost]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_cloud_hosts(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeElasticHost.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * What the elastic pool would do for some Spaces: where each goes
+     * (your devices first, then hosts with room, then new cloud machines
+     * at the least cost) and what that costs. With `apply`, it adds the
+     * machines (create the Spaces with `on` `auto`).
+     */
+open func cloudPlan(request: ElasticPlanRequest)async throws  -> ElasticPlan  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_cloud_plan(
+                    self.uniffiCloneHandle(),
+                    FfiConverterTypeElasticPlanRequest_lower(request)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeElasticPlan_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * One scale-in pass now: idle hosts go at the end of their paid time,
+     * the least-used one is cordoned when the others have room.
+     */
+open func cloudReconcile()async throws  -> [ElasticDecision]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_cloud_reconcile(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeElasticDecision.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Removes hosts this home added to the pool.
+     */
+open func cloudRemoveHost(names: [String])async throws  -> ElasticRemoved  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_cloud_remove_host(
+                    self.uniffiCloneHandle(),
+                    FfiConverterSequenceString.lower(names)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeElasticRemoved_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Keeps Spaces of `image` ready where the elastic pool puts them (the
+     * same solve as `on` `auto`, under the budget and pins), so the next
+     * creates of that shape start in a fraction of a second. Refused, and
+     * nothing bought, when the budget or pins cannot fit it.
+     */
+open func prewarm(image: String, options: PrewarmOptions)async throws  -> Prewarm  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_prewarm(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(image),FfiConverterTypePrewarmOptions_lower(options)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypePrewarm_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * The prewarms, with how many each keeps ready now.
+     */
+open func prewarms()async throws  -> [Prewarm]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_prewarms(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypePrewarm.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Ends prewarm `id` (its ready Spaces go). `false`: no such prewarm.
+     */
+open func removePrewarm(id: String)async throws  -> Bool  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_remove_prewarm(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(id)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_i8,
+            completeFunc: ffi_cua_sdk_rust_future_complete_i8,
+            freeFunc: ffi_cua_sdk_rust_future_free_i8,
+            liftFunc: FfiConverterBool.lift,
             errorHandler: FfiConverterTypeCuaError_lift
         )
 }
@@ -10720,6 +12349,29 @@ open func create(options: SpaceCreateOptions)async throws  -> SpaceCreateResult 
 }
 
     /**
+     * Creates the empty named volume `name` (1 to 63 of `a-z`, `0-9`, `.`,
+     * `_`, `-`). Fails when it exists. Mount it with
+     * [`SpaceCreateOptions::volumes`]; read and write its files with
+     * [`Spaces::volume_ls`] and friends under `volumes/<name>/`.
+     */
+open func createVolume(name: String)async throws  -> NamedVolume  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_create_volume(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(name)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeNamedVolume_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
      * [`Spaces::create`], reporting what it does to `listener` (pulling
      * the image, booting, waiting for cua-spacesd, connecting) until the
      * Space is ready. Always waits (`options.wait` is ignored). Through a
@@ -10759,6 +12411,54 @@ open func delete(space: String)async throws  -> String  {
             completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
             freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
             liftFunc: FfiConverterString.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Deletes the named volume `name` and its files (their history stays
+     * in the Cua Volume). Refused while Spaces mount it unless `force`.
+     * Returns how many files went.
+     */
+open func deleteVolume(name: String, force: Bool = false)async throws  -> UInt64  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_delete_volume(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(name),FfiConverterBool.lower(force)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_u64,
+            completeFunc: ffi_cua_sdk_rust_future_complete_u64,
+            freeFunc: ffi_cua_sdk_rust_future_free_u64,
+            liftFunc: FfiConverterUInt64.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Starts Space `name` from `source` (a Space id such as
+     * `local:<name>`, a sandbox name, a checkpoint name, or the tag of a
+     * build ([`Spaces::build`]) or its checkpoint; a sandbox wins) and returns it
+     * connected.
+     * A running source is forked with its memory; a QEMU checkpoint's
+     * forks share its RAM copy-on-write. A fork of a build has the build's
+     * environment, working directory and user. Local sandboxes only.
+     */
+open func fork(source: String, name: String)async throws  -> Space  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_fork(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(source),FfiConverterString.lower(name)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_u64,
+            completeFunc: ffi_cua_sdk_rust_future_complete_u64,
+            freeFunc: ffi_cua_sdk_rust_future_free_u64,
+            liftFunc: FfiConverterTypeSpace_lift,
             errorHandler: FfiConverterTypeCuaError_lift
         )
 }
@@ -10825,6 +12525,31 @@ open func list()async throws  -> [SpaceInfo]  {
             completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
             freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
             liftFunc: FfiConverterSequenceTypeSpaceInfo.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * The Spaces known now: this machine's at once, and the account's other
+     * computers as far as they answered within a moment ([`SpaceList`]
+     * says how far the read got). A slow or unreachable relay never holds
+     * up or fails this machine's own Spaces, so an app shows them right
+     * away and reads again while the list is incomplete. [`Spaces::list`]
+     * waits for every computer instead.
+     */
+open func listKnown()async throws  -> SpaceList  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_list_known(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeSpaceList_lift,
             errorHandler: FfiConverterTypeCuaError_lift
         )
 }
@@ -10941,6 +12666,30 @@ open func remove(space: String)async throws   {
 }
 
     /**
+     * Gives a local VM Space another shape: `cpus` vCPUs, `memory_mb` MiB
+     * of memory, a disk grown to `disk_gb` GiB (each `None` keeps it). It
+     * shuts down and boots again from its own disk (a stopped one boots),
+     * so its files stay and its memory and processes do not. Returns once
+     * it is ready again.
+     */
+open func resize(space: String, cpus: UInt32?, memoryMb: UInt64?, diskGb: UInt32?)async throws  -> SpaceResizeReport  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_resize(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(space),FfiConverterOptionUInt32.lower(cpus),FfiConverterOptionUInt64.lower(memoryMb),FfiConverterOptionUInt32.lower(diskGb)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeSpaceResizeReport_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
      * Resolves an id, legacy id, URL or display name.
      */
 open func resolve(space: String)async throws  -> SpaceInfo  {
@@ -10981,6 +12730,53 @@ open func resources(visible: Bool)async throws  -> ResourcesSnapshot  {
             completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
             freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeResourcesSnapshot_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Replaces a Space's egress policy; an empty one removes it (see
+     * [`EgressPolicy`]). Its host enforces it at once. A bad entry is
+     * `InvalidArgument`, a Space that cannot take one `Unsupported`.
+     */
+open func setEgress(space: String, policy: EgressPolicy)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_set_egress(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(space),FfiConverterTypeEgressPolicy_lower(policy)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_void,
+            completeFunc: ffi_cua_sdk_rust_future_complete_void,
+            freeFunc: ffi_cua_sdk_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Gives a Space a lifetime of `seconds` from now, replacing any earlier
+     * one: when it passes, the cua daemon deletes the Space (`on_expire`
+     * `"delete"`, the default) or turns it off (`"suspend"`), whether or
+     * not this process is still running. Works for a Space on this machine
+     * or one of your machines. Returns when it ends (Unix seconds).
+     * Embedded: recorded; the cua daemon on this machine enforces it.
+     */
+open func setLifetime(space: String, seconds: UInt64, onExpire: String?)async throws  -> Int64  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_set_lifetime(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(space),FfiConverterUInt64.lower(seconds),FfiConverterOptionString.lower(onExpire)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_i64,
+            completeFunc: ffi_cua_sdk_rust_future_complete_i64,
+            freeFunc: ffi_cua_sdk_rust_future_free_i64,
+            liftFunc: FfiConverterInt64.lift,
             errorHandler: FfiConverterTypeCuaError_lift
         )
 }
@@ -11029,16 +12825,40 @@ open func start(space: String)async throws  -> SpacePowerReport  {
 
     /**
      * Turns a Space off the way its provider can (`SpaceInfo.power`):
-     * suspends it, keeping its memory (a local container or QEMU VM), or
-     * stops it, keeping its disk (a local Lume VM; a Space one of your
-     * machines provides, which that machine stops). A cloud Space, a Space
-     * added by address and your own computers cannot be turned off.
+     * stops it, keeping its disk and freeing its memory (a local VM; a
+     * Space one of your machines provides, which that machine stops), or
+     * suspends it, keeping its memory (a local container that cannot
+     * stop). [`Spaces::suspend`] suspends a local container or QEMU VM on
+     * purpose. A Space added by address and your own computers cannot be
+     * turned off.
      */
 open func stop(space: String)async throws  -> SpacePowerReport  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_cua_sdk_fn_method_spaces_stop(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(space)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeSpacePowerReport_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Suspends a local Space (a container or a QEMU VM), keeping its
+     * memory: it resumes where it was, and its memory stays in use until
+     * then. [`Spaces::stop`] stops it instead and frees its memory.
+     */
+open func suspend(space: String)async throws  -> SpacePowerReport  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_suspend(
                     self.uniffiCloneHandle(),
                     FfiConverterString.lower(space)
                 )
@@ -11557,6 +13377,44 @@ open func volumeWrite(path: String, content: Data, ifEtag: String?, createOnly: 
 }
 
     /**
+     * The named volumes of Cua Volume, by name, with the Spaces that mount
+     * each. Needs Cua Spaces (the Cua Volume).
+     */
+open func volumes()async throws  -> [NamedVolume]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_volumes(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeNamedVolume.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Tells `listener` when the Space list changed: once at the start, then
+     * on every change. This computer's Spaces within a second; your other
+     * computers on the mesh within about a second of connecting or going
+     * away; the others within 10 seconds. Reopens by itself if the daemon
+     * restarts (and then calls `listener` again). Stop it with
+     * [`SpacesListWatch::stop`].
+     */
+open func watchList(listener: SpacesListListener) -> SpacesListWatch  {
+    return try!  FfiConverterTypeSpacesListWatch_lift(try! rustCall() {
+    uniffi_cua_sdk_fn_method_spaces_watch_list(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeSpacesListListener_lower(listener),$0
+    )
+})
+}
+
+    /**
      * The same numbers as events for `listener`: a snapshot first, then an
      * update with only the entries that changed by more than 1 point or
      * 256 MB, and `LowDisk` whenever the warning level changes. Reopens by
@@ -11571,6 +13429,99 @@ open func watchResources(visible: Bool, listener: ResourcesListener) -> Resource
         FfiConverterTypeResourcesListener_lower(listener),$0
     )
 })
+}
+
+    /**
+     * Builds an image from a Dockerfile or steps in a Space, as pinned
+     * layer checkpoints on this machine. Layers already built are reused (a
+     * rebuild of the same recipe is a cache hit that runs nothing; a
+     * changed step rebuilds from it on), and identical builds in flight
+     * share one run. The result's `checkpoint` is a fork source:
+     * `Spaces.fork(result.tag or result.checkpoint, name)` starts a Space
+     * from it in well under a second, with the image's environment,
+     * working directory and user. A failed step is an error that names
+     * the step, its exit code and its last output; earlier layers stay
+     * cached.
+     */
+open func build(options: BuildOptions)async throws  -> BuildResult  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_build(
+                    self.uniffiCloneHandle(),
+                    FfiConverterTypeBuildOptions_lower(options)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeBuildResult_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * [`Spaces::build`], reporting each step and the lines it prints to
+     * `listener` as they happen.
+     */
+open func buildWithProgress(options: BuildOptions, listener: BuildListener)async throws  -> BuildResult  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_build_with_progress(
+                    self.uniffiCloneHandle(),
+                    FfiConverterTypeBuildOptions_lower(options),FfiConverterTypeBuildListener_lower(listener)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeBuildResult_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * The builds on this machine, oldest first, with their tags.
+     */
+open func builds()async throws  -> [BuildInfo]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_builds(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeBuildInfo.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Deletes a build: its tags and the layer checkpoints no other build
+     * uses. `build` is a tag, a recipe key (or its first 12 characters) or
+     * a checkpoint. Returns the checkpoints deleted. Spaces already made
+     * from it keep running.
+     */
+open func deleteBuild(build: String)async throws  -> [String]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_delete_build(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(build)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceString.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
 }
 
 
@@ -11624,6 +13575,335 @@ public func FfiConverterTypeSpaces_lower(_ value: Spaces) -> UInt64 {
 
 
 /**
+ * Hears that the Space list changed ([`Spaces::watch_list`]). Called on an
+ * SDK worker thread; return quickly (read the list on your own queue).
+ */
+public protocol SpacesListListener: AnyObject, Sendable {
+
+    /**
+     * The list changed (and once at the start): read it again.
+     * `generation` only increases while one daemon runs.
+     */
+    func onChanged(generation: UInt64)
+
+}
+/**
+ * Hears that the Space list changed ([`Spaces::watch_list`]). Called on an
+ * SDK worker thread; return quickly (read the list on your own queue).
+ */
+open class SpacesListListenerImpl: SpacesListListener, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_cua_sdk_fn_clone_spaceslistlistener(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_cua_sdk_fn_free_spaceslistlistener(handle, $0) }
+    }
+
+
+
+
+    /**
+     * The list changed (and once at the start): read it again.
+     * `generation` only increases while one daemon runs.
+     */
+open func onChanged(generation: UInt64)  {try! rustCall() {
+    uniffi_cua_sdk_fn_method_spaceslistlistener_on_changed(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(generation),$0
+    )
+}
+}
+
+
+
+}
+
+
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+fileprivate struct UniffiCallbackInterfaceSpacesListListener {
+
+    // Create the VTable using a series of closures.
+    // Swift automatically converts these into C callback functions.
+    //
+    // This creates 1-element array, since this seems to be the only way to construct a const
+    // pointer that we can pass to the Rust code.
+    static let vtable: [UniffiVTableCallbackInterfaceSpacesListListener] = [UniffiVTableCallbackInterfaceSpacesListListener(
+        uniffiFree: { (uniffiHandle: UInt64) -> () in
+            do {
+                try FfiConverterTypeSpacesListListener.handleMap.remove(handle: uniffiHandle)
+            } catch {
+                print("Uniffi callback interface SpacesListListener: handle missing in uniffiFree")
+            }
+        },
+        uniffiClone: { (uniffiHandle: UInt64) -> UInt64 in
+            do {
+                return try FfiConverterTypeSpacesListListener.handleMap.clone(handle: uniffiHandle)
+            } catch {
+                fatalError("Uniffi callback interface SpacesListListener: handle missing in uniffiClone")
+            }
+        },
+        onChanged: { (
+            uniffiHandle: UInt64,
+            generation: UInt64,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterTypeSpacesListListener.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.onChanged(
+                     generation: try FfiConverterUInt64.lift(generation)
+                )
+            }
+
+
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        }
+    )]
+}
+
+private func uniffiCallbackInitSpacesListListener() {
+    uniffi_cua_sdk_fn_init_callback_vtable_spaceslistlistener(UniffiCallbackInterfaceSpacesListListener.vtable)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSpacesListListener: FfiConverter {
+    fileprivate static let handleMap = UniffiHandleMap<SpacesListListener>()
+
+    typealias FfiType = UInt64
+    typealias SwiftType = SpacesListListener
+
+    public static func lift(_ handle: UInt64) throws -> SpacesListListener {
+        if ((handle & 1) == 0) {
+            // Rust-generated handle, construct a new class that uses the handle to implement the
+            // interface
+            return SpacesListListenerImpl(unsafeFromHandle: handle)
+        } else {
+            // Swift-generated handle, get the object from the handle map
+            return try handleMap.remove(handle: handle)
+        }
+    }
+
+    public static func lower(_ value: SpacesListListener) -> UInt64 {
+         if let rustImpl = value as? SpacesListListenerImpl {
+             // Rust-implemented object.  Clone the handle and return it
+            return rustImpl.uniffiCloneHandle()
+         } else {
+            // Swift object, generate a new vtable handle and return that.
+            return handleMap.insert(obj: value)
+         }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SpacesListListener {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: SpacesListListener, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpacesListListener_lift(_ handle: UInt64) throws -> SpacesListListener {
+    return try FfiConverterTypeSpacesListListener.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpacesListListener_lower(_ value: SpacesListListener) -> UInt64 {
+    return FfiConverterTypeSpacesListListener.lower(value)
+}
+
+
+
+
+
+
+/**
+ * A running [`Spaces::watch_list`]. Dropping it also stops it.
+ */
+public protocol SpacesListWatchProtocol: AnyObject, Sendable {
+
+    /**
+     * Ends the watch. No call is made after this returns.
+     */
+    func stop()
+
+}
+/**
+ * A running [`Spaces::watch_list`]. Dropping it also stops it.
+ */
+open class SpacesListWatch: SpacesListWatchProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_cua_sdk_fn_clone_spaceslistwatch(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_cua_sdk_fn_free_spaceslistwatch(handle, $0) }
+    }
+
+
+
+
+    /**
+     * Ends the watch. No call is made after this returns.
+     */
+open func stop()  {try! rustCall() {
+    uniffi_cua_sdk_fn_method_spaceslistwatch_stop(
+            self.uniffiCloneHandle(),$0
+    )
+}
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSpacesListWatch: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = SpacesListWatch
+
+    public static func lift(_ handle: UInt64) throws -> SpacesListWatch {
+        return SpacesListWatch(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: SpacesListWatch) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SpacesListWatch {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: SpacesListWatch, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpacesListWatch_lift(_ handle: UInt64) throws -> SpacesListWatch {
+    return try FfiConverterTypeSpacesListWatch.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpacesListWatch_lower(_ value: SpacesListWatch) -> UInt64 {
+    return FfiConverterTypeSpacesListWatch.lower(value)
+}
+
+
+
+
+
+
+/**
  * Client for one cua-spacesd.
  */
 public protocol SpacesdClientProtocol: AnyObject, Sendable {
@@ -11644,15 +13924,25 @@ public protocol SpacesdClientProtocol: AnyObject, Sendable {
      * (`/cua.env.v1.WindowsService/ListWindows`) or `Service/Method`.
      * Covers windows, accessibility, driver tools, teleport, tunnels and
      * every other RPC without a typed method.
+     *
+     * `user` makes a file request (`FilesystemService` `Stat`, `ListDir`,
+     * `MakeDir`, `Move`, `Remove`, `CreateWatcher`, `CreateSignedUrl`,
+     * `BeginUpload`) act as that guest user: it sets the request's
+     * `run_as` (in `header` for `BeginUpload`) and checks that the guest
+     * agent supports acting as another user. Any other method refuses it,
+     * and so does a request that already names a different `run_as`.
      */
-    func callJson(method: String, requestJson: String) async throws  -> String
+    func callJson(method: String, requestJson: String, user: String?) async throws  -> String
 
     /**
      * Calls a server-streaming `cua.env.v1` RPC and collects at most
      * `max_messages` responses (or until the stream ends or `timeout_ms`
      * elapses).
+     *
+     * `user` acts as that guest user for `WatchDir` and `ReadFile`, as for
+     * `call_json`.
      */
-    func callJsonStream(method: String, requestJson: String, maxMessages: UInt32, timeoutMs: UInt32) async throws  -> [String]
+    func callJsonStream(method: String, requestJson: String, maxMessages: UInt32, timeoutMs: UInt32, user: String?) async throws  -> [String]
 
     /**
      * `GetCapabilities` (cached).
@@ -11689,14 +13979,15 @@ public protocol SpacesdClientProtocol: AnyObject, Sendable {
     func doubleClick(x: Double, y: Double) async throws
 
     /**
-     * Downloads `path` into memory.
+     * Downloads `path` into memory. `user` reads as that guest user (see
+     * `UploadOptions.user`).
      */
-    func download(path: String) async throws  -> Data
+    func download(path: String, user: String?) async throws  -> Data
 
     /**
-     * Downloads `path` to a local file.
+     * Downloads `path` to a local file. `user` reads as that guest user.
      */
-    func downloadFile(path: String, localPath: String) async throws  -> TransferResult
+    func downloadFile(path: String, localPath: String, user: String?) async throws  -> TransferResult
 
     /**
      * Drags with the left button.
@@ -11707,6 +13998,15 @@ public protocol SpacesdClientProtocol: AnyObject, Sendable {
      * Endpoint URL.
      */
     func endpoint()  -> String
+
+    /**
+     * Forwards a TCP port on this machine to guest `port` through
+     * cua-spacesd's tunnel: works for any Space this client reaches (on
+     * this machine, one of your machines or the cloud). `bind` is the
+     * local address to listen on (default `127.0.0.1:0`, a free loopback
+     * port; `0.0.0.0:0` serves the LAN).
+     */
+    func forwardTcp(port: UInt16, bind: String?) async throws  -> SpacesdForward
 
     /**
      * Clipboard text.
@@ -11747,9 +14047,9 @@ public protocol SpacesdClientProtocol: AnyObject, Sendable {
     func keyboardJson(requestJson: String) async throws  -> String
 
     /**
-     * `ListDir` (depth 1 = direct children).
+     * `ListDir` (depth 1 = direct children), as `user`.
      */
-    func listDir(path: String, depth: UInt32) async throws  -> [FileEntry]
+    func listDir(path: String, depth: UInt32, user: String?, xattrNamespace: String?) async throws  -> [FileEntry]
 
     /**
      * Guest processes as proto3 JSON (`[ProcessInfo]`).
@@ -11757,14 +14057,32 @@ public protocol SpacesdClientProtocol: AnyObject, Sendable {
     func listProcesses(includeExited: Bool) async throws  -> String
 
     /**
-     * `MakeDir` (with parents).
+     * `MakeDir` (with parents), as `user`: the new directories are owned
+     * by that user.
      */
-    func makeDir(path: String) async throws  -> FileEntry
+    func makeDir(path: String, user: String?) async throws  -> FileEntry
+
+    /**
+     * `Move`: renames `source` to `destination`, as `user`. `overwrite`
+     * replaces an existing destination (otherwise it fails with
+     * `AlreadyExists`); `create_parents` makes the destination's missing
+     * parent directories (owned by `user`).
+     */
+    func movePath(source: String, destination: String, overwrite: Bool, createParents: Bool, user: String?) async throws  -> FileEntry
 
     /**
      * Moves the pointer.
      */
     func moveTo(x: Double, y: Double) async throws
+
+    /**
+     * Streams `path` in chunks: one read that resumes where a dropped
+     * stream stopped and checks each segment's SHA-256, delivered through
+     * a small buffer (memory stays bounded whatever the file size). Read it
+     * with [`SpacesdDownload::next_chunk`]; dropping it, or `cancel`, stops
+     * the transfer.
+     */
+    func openDownload(path: String, chunkSize: UInt32?, user: String?) async throws  -> SpacesdDownload
 
     /**
      * Opens a media session and starts delivering encoded video frames and
@@ -11792,14 +14110,26 @@ public protocol SpacesdClientProtocol: AnyObject, Sendable {
     func press(key: String) async throws
 
     /**
-     * `Remove`.
+     * `Remove`, as `user`.
      */
-    func remove(path: String, recursive: Bool) async throws
+    func remove(path: String, recursive: Bool, user: String?) async throws
 
     /**
      * Right click.
      */
     func rightClick(x: Double, y: Double) async throws
+
+    /**
+     * Which way calls go now, in one line: `local <host:port>` (a Space on
+     * this machine), `direct <address>`, `relay <relay URL>` (the relay's
+     * HTTPS path), `mesh direct <ip:port> rtt <ms> ms` (end to end over the
+     * mesh, straight to the machine: a LAN neighbour), `mesh relayed` or
+     * `cloud`. A Space one of your own machines provides prefers the
+     * direct path and falls back to the relay by itself (`CUA_MESH=off`
+     * turns that off). A client made otherwise reports where its spacesd
+     * runs (`local`, `cloud`, `direct`) and the endpoint it dials.
+     */
+    func route() async throws  -> String
 
     /**
      * Runs a command to completion.
@@ -11832,9 +14162,12 @@ public protocol SpacesdClientProtocol: AnyObject, Sendable {
     func spawn(command: SpacesdCommand) async throws  -> SpacesdProcess
 
     /**
-     * `Stat`.
+     * `Stat`. `user` acts as that guest user (see `UploadOptions.user`);
+     * `xattr_namespace` picks the extended-attribute prefix reported in
+     * `FileEntry.metadata` (default `user.cua.meta.`). `no_follow` reports
+     * a symbolic link itself rather than its target.
      */
-    func stat(path: String) async throws  -> FileEntry
+    func stat(path: String, user: String?, xattrNamespace: String?, noFollow: Bool) async throws  -> FileEntry
 
     /**
      * `grpc` or `grpc-web`.
@@ -11959,14 +14292,21 @@ open func attach(pid: UInt32?, tag: String?, replay: ReplayMode)async throws  ->
      * (`/cua.env.v1.WindowsService/ListWindows`) or `Service/Method`.
      * Covers windows, accessibility, driver tools, teleport, tunnels and
      * every other RPC without a typed method.
+     *
+     * `user` makes a file request (`FilesystemService` `Stat`, `ListDir`,
+     * `MakeDir`, `Move`, `Remove`, `CreateWatcher`, `CreateSignedUrl`,
+     * `BeginUpload`) act as that guest user: it sets the request's
+     * `run_as` (in `header` for `BeginUpload`) and checks that the guest
+     * agent supports acting as another user. Any other method refuses it,
+     * and so does a request that already names a different `run_as`.
      */
-open func callJson(method: String, requestJson: String)async throws  -> String  {
+open func callJson(method: String, requestJson: String, user: String? = nil)async throws  -> String  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_cua_sdk_fn_method_spacesdclient_call_json(
                     self.uniffiCloneHandle(),
-                    FfiConverterString.lower(method),FfiConverterString.lower(requestJson)
+                    FfiConverterString.lower(method),FfiConverterString.lower(requestJson),FfiConverterOptionString.lower(user)
                 )
             },
             pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
@@ -11981,14 +14321,17 @@ open func callJson(method: String, requestJson: String)async throws  -> String  
      * Calls a server-streaming `cua.env.v1` RPC and collects at most
      * `max_messages` responses (or until the stream ends or `timeout_ms`
      * elapses).
+     *
+     * `user` acts as that guest user for `WatchDir` and `ReadFile`, as for
+     * `call_json`.
      */
-open func callJsonStream(method: String, requestJson: String, maxMessages: UInt32, timeoutMs: UInt32)async throws  -> [String]  {
+open func callJsonStream(method: String, requestJson: String, maxMessages: UInt32, timeoutMs: UInt32, user: String? = nil)async throws  -> [String]  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_cua_sdk_fn_method_spacesdclient_call_json_stream(
                     self.uniffiCloneHandle(),
-                    FfiConverterString.lower(method),FfiConverterString.lower(requestJson),FfiConverterUInt32.lower(maxMessages),FfiConverterUInt32.lower(timeoutMs)
+                    FfiConverterString.lower(method),FfiConverterString.lower(requestJson),FfiConverterUInt32.lower(maxMessages),FfiConverterUInt32.lower(timeoutMs),FfiConverterOptionString.lower(user)
                 )
             },
             pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
@@ -12124,15 +14467,16 @@ open func doubleClick(x: Double, y: Double)async throws   {
 }
 
     /**
-     * Downloads `path` into memory.
+     * Downloads `path` into memory. `user` reads as that guest user (see
+     * `UploadOptions.user`).
      */
-open func download(path: String)async throws  -> Data  {
+open func download(path: String, user: String? = nil)async throws  -> Data  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_cua_sdk_fn_method_spacesdclient_download(
                     self.uniffiCloneHandle(),
-                    FfiConverterString.lower(path)
+                    FfiConverterString.lower(path),FfiConverterOptionString.lower(user)
                 )
             },
             pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
@@ -12144,15 +14488,15 @@ open func download(path: String)async throws  -> Data  {
 }
 
     /**
-     * Downloads `path` to a local file.
+     * Downloads `path` to a local file. `user` reads as that guest user.
      */
-open func downloadFile(path: String, localPath: String)async throws  -> TransferResult  {
+open func downloadFile(path: String, localPath: String, user: String? = nil)async throws  -> TransferResult  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_cua_sdk_fn_method_spacesdclient_download_file(
                     self.uniffiCloneHandle(),
-                    FfiConverterString.lower(path),FfiConverterString.lower(localPath)
+                    FfiConverterString.lower(path),FfiConverterString.lower(localPath),FfiConverterOptionString.lower(user)
                 )
             },
             pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
@@ -12192,6 +14536,30 @@ open func endpoint() -> String  {
             self.uniffiCloneHandle(),$0
     )
 })
+}
+
+    /**
+     * Forwards a TCP port on this machine to guest `port` through
+     * cua-spacesd's tunnel: works for any Space this client reaches (on
+     * this machine, one of your machines or the cloud). `bind` is the
+     * local address to listen on (default `127.0.0.1:0`, a free loopback
+     * port; `0.0.0.0:0` serves the LAN).
+     */
+open func forwardTcp(port: UInt16, bind: String?)async throws  -> SpacesdForward  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spacesdclient_forward_tcp(
+                    self.uniffiCloneHandle(),
+                    FfiConverterUInt16.lower(port),FfiConverterOptionString.lower(bind)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_u64,
+            completeFunc: ffi_cua_sdk_rust_future_complete_u64,
+            freeFunc: ffi_cua_sdk_rust_future_free_u64,
+            liftFunc: FfiConverterTypeSpacesdForward_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
 }
 
     /**
@@ -12329,15 +14697,15 @@ open func keyboardJson(requestJson: String)async throws  -> String  {
 }
 
     /**
-     * `ListDir` (depth 1 = direct children).
+     * `ListDir` (depth 1 = direct children), as `user`.
      */
-open func listDir(path: String, depth: UInt32)async throws  -> [FileEntry]  {
+open func listDir(path: String, depth: UInt32, user: String? = nil, xattrNamespace: String? = nil)async throws  -> [FileEntry]  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_cua_sdk_fn_method_spacesdclient_list_dir(
                     self.uniffiCloneHandle(),
-                    FfiConverterString.lower(path),FfiConverterUInt32.lower(depth)
+                    FfiConverterString.lower(path),FfiConverterUInt32.lower(depth),FfiConverterOptionString.lower(user),FfiConverterOptionString.lower(xattrNamespace)
                 )
             },
             pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
@@ -12369,15 +14737,39 @@ open func listProcesses(includeExited: Bool)async throws  -> String  {
 }
 
     /**
-     * `MakeDir` (with parents).
+     * `MakeDir` (with parents), as `user`: the new directories are owned
+     * by that user.
      */
-open func makeDir(path: String)async throws  -> FileEntry  {
+open func makeDir(path: String, user: String? = nil)async throws  -> FileEntry  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_cua_sdk_fn_method_spacesdclient_make_dir(
                     self.uniffiCloneHandle(),
-                    FfiConverterString.lower(path)
+                    FfiConverterString.lower(path),FfiConverterOptionString.lower(user)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeFileEntry_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * `Move`: renames `source` to `destination`, as `user`. `overwrite`
+     * replaces an existing destination (otherwise it fails with
+     * `AlreadyExists`); `create_parents` makes the destination's missing
+     * parent directories (owned by `user`).
+     */
+open func movePath(source: String, destination: String, overwrite: Bool = false, createParents: Bool = false, user: String? = nil)async throws  -> FileEntry  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spacesdclient_move_path(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(source),FfiConverterString.lower(destination),FfiConverterBool.lower(overwrite),FfiConverterBool.lower(createParents),FfiConverterOptionString.lower(user)
                 )
             },
             pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
@@ -12404,6 +14796,30 @@ open func moveTo(x: Double, y: Double)async throws   {
             completeFunc: ffi_cua_sdk_rust_future_complete_void,
             freeFunc: ffi_cua_sdk_rust_future_free_void,
             liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Streams `path` in chunks: one read that resumes where a dropped
+     * stream stopped and checks each segment's SHA-256, delivered through
+     * a small buffer (memory stays bounded whatever the file size). Read it
+     * with [`SpacesdDownload::next_chunk`]; dropping it, or `cancel`, stops
+     * the transfer.
+     */
+open func openDownload(path: String, chunkSize: UInt32? = nil, user: String? = nil)async throws  -> SpacesdDownload  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spacesdclient_open_download(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(path),FfiConverterOptionUInt32.lower(chunkSize),FfiConverterOptionString.lower(user)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_u64,
+            completeFunc: ffi_cua_sdk_rust_future_complete_u64,
+            freeFunc: ffi_cua_sdk_rust_future_free_u64,
+            liftFunc: FfiConverterTypeSpacesdDownload_lift,
             errorHandler: FfiConverterTypeCuaError_lift
         )
 }
@@ -12494,15 +14910,15 @@ open func press(key: String)async throws   {
 }
 
     /**
-     * `Remove`.
+     * `Remove`, as `user`.
      */
-open func remove(path: String, recursive: Bool)async throws   {
+open func remove(path: String, recursive: Bool, user: String? = nil)async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_cua_sdk_fn_method_spacesdclient_remove(
                     self.uniffiCloneHandle(),
-                    FfiConverterString.lower(path),FfiConverterBool.lower(recursive)
+                    FfiConverterString.lower(path),FfiConverterBool.lower(recursive),FfiConverterOptionString.lower(user)
                 )
             },
             pollFunc: ffi_cua_sdk_rust_future_poll_void,
@@ -12529,6 +14945,33 @@ open func rightClick(x: Double, y: Double)async throws   {
             completeFunc: ffi_cua_sdk_rust_future_complete_void,
             freeFunc: ffi_cua_sdk_rust_future_free_void,
             liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Which way calls go now, in one line: `local <host:port>` (a Space on
+     * this machine), `direct <address>`, `relay <relay URL>` (the relay's
+     * HTTPS path), `mesh direct <ip:port> rtt <ms> ms` (end to end over the
+     * mesh, straight to the machine: a LAN neighbour), `mesh relayed` or
+     * `cloud`. A Space one of your own machines provides prefers the
+     * direct path and falls back to the relay by itself (`CUA_MESH=off`
+     * turns that off). A client made otherwise reports where its spacesd
+     * runs (`local`, `cloud`, `direct`) and the endpoint it dials.
+     */
+open func route()async throws  -> String  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spacesdclient_route(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterString.lift,
             errorHandler: FfiConverterTypeCuaError_lift
         )
 }
@@ -12654,15 +15097,18 @@ open func spawn(command: SpacesdCommand)async throws  -> SpacesdProcess  {
 }
 
     /**
-     * `Stat`.
+     * `Stat`. `user` acts as that guest user (see `UploadOptions.user`);
+     * `xattr_namespace` picks the extended-attribute prefix reported in
+     * `FileEntry.metadata` (default `user.cua.meta.`). `no_follow` reports
+     * a symbolic link itself rather than its target.
      */
-open func stat(path: String)async throws  -> FileEntry  {
+open func stat(path: String, user: String? = nil, xattrNamespace: String? = nil, noFollow: Bool = false)async throws  -> FileEntry  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_cua_sdk_fn_method_spacesdclient_stat(
                     self.uniffiCloneHandle(),
-                    FfiConverterString.lower(path)
+                    FfiConverterString.lower(path),FfiConverterOptionString.lower(user),FfiConverterOptionString.lower(xattrNamespace),FfiConverterBool.lower(noFollow)
                 )
             },
             pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
@@ -12795,6 +15241,333 @@ public func FfiConverterTypeSpacesdClient_lower(_ value: SpacesdClient) -> UInt6
 
 
 /**
+ * A download in progress ([`SpacesdClient::open_download`]).
+ */
+public protocol SpacesdDownloadProtocol: AnyObject, Sendable {
+
+    /**
+     * Stops the transfer.
+     */
+    func cancel()
+
+    /**
+     * The next chunk, or `None` once the whole file arrived.
+     */
+    func nextChunk() async throws  -> Data?
+
+}
+/**
+ * A download in progress ([`SpacesdClient::open_download`]).
+ */
+open class SpacesdDownload: SpacesdDownloadProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_cua_sdk_fn_clone_spacesddownload(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_cua_sdk_fn_free_spacesddownload(handle, $0) }
+    }
+
+
+
+
+    /**
+     * Stops the transfer.
+     */
+open func cancel()  {try! rustCall() {
+    uniffi_cua_sdk_fn_method_spacesddownload_cancel(
+            self.uniffiCloneHandle(),$0
+    )
+}
+}
+
+    /**
+     * The next chunk, or `None` once the whole file arrived.
+     */
+open func nextChunk()async throws  -> Data?  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spacesddownload_next_chunk(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterOptionData.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSpacesdDownload: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = SpacesdDownload
+
+    public static func lift(_ handle: UInt64) throws -> SpacesdDownload {
+        return SpacesdDownload(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: SpacesdDownload) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SpacesdDownload {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: SpacesdDownload, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpacesdDownload_lift(_ handle: UInt64) throws -> SpacesdDownload {
+    return try FfiConverterTypeSpacesdDownload.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpacesdDownload_lower(_ value: SpacesdDownload) -> UInt64 {
+    return FfiConverterTypeSpacesdDownload.lower(value)
+}
+
+
+
+
+
+
+/**
+ * A loopback (or `bind`) TCP port that reaches a guest port through
+ * cua-spacesd's tunnel ([`SpacesdClient::forward_tcp`]). Stopped by `stop`
+ * or when dropped.
+ */
+public protocol SpacesdForwardProtocol: AnyObject, Sendable {
+
+    /**
+     * Guest port.
+     */
+    func guestPort()  -> UInt16
+
+    /**
+     * `host:port` accepting connections.
+     */
+    func localAddr()  -> String
+
+    /**
+     * Stops listening and revokes the driver-side forward (also done when
+     * it is dropped).
+     */
+    func stop() async throws
+
+}
+/**
+ * A loopback (or `bind`) TCP port that reaches a guest port through
+ * cua-spacesd's tunnel ([`SpacesdClient::forward_tcp`]). Stopped by `stop`
+ * or when dropped.
+ */
+open class SpacesdForward: SpacesdForwardProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_cua_sdk_fn_clone_spacesdforward(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_cua_sdk_fn_free_spacesdforward(handle, $0) }
+    }
+
+
+
+
+    /**
+     * Guest port.
+     */
+open func guestPort() -> UInt16  {
+    return try!  FfiConverterUInt16.lift(try! rustCall() {
+    uniffi_cua_sdk_fn_method_spacesdforward_guest_port(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+    /**
+     * `host:port` accepting connections.
+     */
+open func localAddr() -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_cua_sdk_fn_method_spacesdforward_local_addr(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+    /**
+     * Stops listening and revokes the driver-side forward (also done when
+     * it is dropped).
+     */
+open func stop()async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spacesdforward_stop(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_void,
+            completeFunc: ffi_cua_sdk_rust_future_complete_void,
+            freeFunc: ffi_cua_sdk_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSpacesdForward: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = SpacesdForward
+
+    public static func lift(_ handle: UInt64) throws -> SpacesdForward {
+        return SpacesdForward(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: SpacesdForward) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SpacesdForward {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: SpacesdForward, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpacesdForward_lift(_ handle: UInt64) throws -> SpacesdForward {
+    return try FfiConverterTypeSpacesdForward.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpacesdForward_lower(_ value: SpacesdForward) -> UInt64 {
+    return FfiConverterTypeSpacesdForward.lower(value)
+}
+
+
+
+
+
+
+/**
  * A guest process, from `spawn` or `attach`.
  */
 public protocol SpacesdProcessProtocol: AnyObject, Sendable {
@@ -12805,12 +15578,14 @@ public protocol SpacesdProcessProtocol: AnyObject, Sendable {
     func closeStdin() async throws
 
     /**
-     * Stops receiving output without affecting the process.
+     * Stops receiving output without affecting the process. A pending
+     * `next_event` returns `None` at once.
      */
     func detach() async
 
     /**
-     * SIGKILL.
+     * SIGKILL to the process and its process group (what it started),
+     * including a command run as another user through `sudo`.
      */
     func kill() async throws
 
@@ -12936,7 +15711,8 @@ open func closeStdin()async throws   {
 }
 
     /**
-     * Stops receiving output without affecting the process.
+     * Stops receiving output without affecting the process. A pending
+     * `next_event` returns `None` at once.
      */
 open func detach()async   {
     return
@@ -12957,7 +15733,8 @@ open func detach()async   {
 }
 
     /**
-     * SIGKILL.
+     * SIGKILL to the process and its process group (what it started),
+     * including a command run as another user through `sudo`.
      */
 open func kill()async throws   {
     return
@@ -15570,6 +18347,517 @@ public func FfiConverterTypeAuthStatus_lower(_ value: AuthStatus) -> RustBuffer 
 
 
 /**
+ * The fork [`BakeOptions::verify_fork`] made and checked.
+ */
+public struct BakeForkCheck: Equatable, Hashable {
+    /**
+     * The fork's name (deleted after the check).
+     */
+    public var fork: String
+    /**
+     * Seconds from the fork request until it was ready.
+     */
+    public var forkS: Double
+    /**
+     * Seconds the stack check and health commands took in the fork.
+     */
+    public var checkS: Double
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The fork's name (deleted after the check).
+         */fork: String,
+        /**
+         * Seconds from the fork request until it was ready.
+         */forkS: Double,
+        /**
+         * Seconds the stack check and health commands took in the fork.
+         */checkS: Double) {
+        self.fork = fork
+        self.forkS = forkS
+        self.checkS = checkS
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension BakeForkCheck: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeBakeForkCheck: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> BakeForkCheck {
+        return
+            try BakeForkCheck(
+                fork: FfiConverterString.read(from: &buf),
+                forkS: FfiConverterDouble.read(from: &buf),
+                checkS: FfiConverterDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: BakeForkCheck, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.fork, into: &buf)
+        FfiConverterDouble.write(value.forkS, into: &buf)
+        FfiConverterDouble.write(value.checkS, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBakeForkCheck_lift(_ buf: RustBuffer) throws -> BakeForkCheck {
+    return try FfiConverterTypeBakeForkCheck.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBakeForkCheck_lower(_ value: BakeForkCheck) -> RustBuffer {
+    return FfiConverterTypeBakeForkCheck.lower(value)
+}
+
+
+/**
+ * Options for [`Sandboxes::bake`].
+ */
+public struct BakeOptions: Equatable, Hashable {
+    /**
+     * The Docker Compose project directory on this machine (holds
+     * compose.yaml or docker-compose.yml, and whatever it builds or
+     * mounts).
+     */
+    public var projectDir: String
+    /**
+     * The checkpoint to save (`Sandboxes.fork(checkpoint, name)` starts
+     * from it).
+     */
+    public var checkpoint: String
+    /**
+     * The image: a reference or a local disk path. `None`: the docker tier
+     * (`Image.linux(tier="docker")`, a Linux image with Docker).
+     */
+    public var image: String?
+    /**
+     * The bake Space's name. `None`: `bake-<checkpoint>`.
+     */
+    public var name: String?
+    /**
+     * vCPUs of the bake Space (forks get the same).
+     */
+    public var cpus: UInt32?
+    /**
+     * Memory of the bake Space in MiB (forks get the same).
+     */
+    public var memoryMb: UInt64?
+    /**
+     * Compose files, relative to the project. Empty: compose's own lookup.
+     */
+    public var composeFiles: [String]
+    /**
+     * The compose project name. `None`: the directory name.
+     */
+    public var projectName: String?
+    /**
+     * Where the project lands in the guest. `None`:
+     * `/opt/cua-bake/<project>`.
+     */
+    public var dest: String?
+    /**
+     * `docker save` tarballs on this machine to `docker load` before
+     * `compose up`, for images the guest cannot pull.
+     */
+    public var imageTarballs: [String]
+    /**
+     * Guest shell commands, run as root in the project directory, that
+     * must exit 0 before the checkpoint (each retried until
+     * `health_timeout_s`). `compose up --wait` already waits for the
+     * services' healthchecks.
+     */
+    public var health: [String]
+    /**
+     * Budget for `compose up --wait` and each health command, seconds.
+     */
+    public var healthTimeoutS: UInt32
+    /**
+     * Guest shell commands, run as root in the project directory once the
+     * stack is healthy and before the checkpoint: state forks should start
+     * with.
+     */
+    public var run: [String]
+    /**
+     * Fork the checkpoint once, check the stack is live in the fork, then
+     * delete the fork.
+     */
+    public var verifyFork: Bool
+    /**
+     * Keep the bake Space after the checkpoint (default: delete it).
+     */
+    public var keep: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The Docker Compose project directory on this machine (holds
+         * compose.yaml or docker-compose.yml, and whatever it builds or
+         * mounts).
+         */projectDir: String,
+        /**
+         * The checkpoint to save (`Sandboxes.fork(checkpoint, name)` starts
+         * from it).
+         */checkpoint: String,
+        /**
+         * The image: a reference or a local disk path. `None`: the docker tier
+         * (`Image.linux(tier="docker")`, a Linux image with Docker).
+         */image: String? = nil,
+        /**
+         * The bake Space's name. `None`: `bake-<checkpoint>`.
+         */name: String? = nil,
+        /**
+         * vCPUs of the bake Space (forks get the same).
+         */cpus: UInt32? = nil,
+        /**
+         * Memory of the bake Space in MiB (forks get the same).
+         */memoryMb: UInt64? = nil,
+        /**
+         * Compose files, relative to the project. Empty: compose's own lookup.
+         */composeFiles: [String] = [],
+        /**
+         * The compose project name. `None`: the directory name.
+         */projectName: String? = nil,
+        /**
+         * Where the project lands in the guest. `None`:
+         * `/opt/cua-bake/<project>`.
+         */dest: String? = nil,
+        /**
+         * `docker save` tarballs on this machine to `docker load` before
+         * `compose up`, for images the guest cannot pull.
+         */imageTarballs: [String] = [],
+        /**
+         * Guest shell commands, run as root in the project directory, that
+         * must exit 0 before the checkpoint (each retried until
+         * `health_timeout_s`). `compose up --wait` already waits for the
+         * services' healthchecks.
+         */health: [String] = [],
+        /**
+         * Budget for `compose up --wait` and each health command, seconds.
+         */healthTimeoutS: UInt32 = UInt32(600),
+        /**
+         * Guest shell commands, run as root in the project directory once the
+         * stack is healthy and before the checkpoint: state forks should start
+         * with.
+         */run: [String] = [],
+        /**
+         * Fork the checkpoint once, check the stack is live in the fork, then
+         * delete the fork.
+         */verifyFork: Bool = false,
+        /**
+         * Keep the bake Space after the checkpoint (default: delete it).
+         */keep: Bool = false) {
+        self.projectDir = projectDir
+        self.checkpoint = checkpoint
+        self.image = image
+        self.name = name
+        self.cpus = cpus
+        self.memoryMb = memoryMb
+        self.composeFiles = composeFiles
+        self.projectName = projectName
+        self.dest = dest
+        self.imageTarballs = imageTarballs
+        self.health = health
+        self.healthTimeoutS = healthTimeoutS
+        self.run = run
+        self.verifyFork = verifyFork
+        self.keep = keep
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension BakeOptions: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeBakeOptions: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> BakeOptions {
+        return
+            try BakeOptions(
+                projectDir: FfiConverterString.read(from: &buf),
+                checkpoint: FfiConverterString.read(from: &buf),
+                image: FfiConverterOptionString.read(from: &buf),
+                name: FfiConverterOptionString.read(from: &buf),
+                cpus: FfiConverterOptionUInt32.read(from: &buf),
+                memoryMb: FfiConverterOptionUInt64.read(from: &buf),
+                composeFiles: FfiConverterSequenceString.read(from: &buf),
+                projectName: FfiConverterOptionString.read(from: &buf),
+                dest: FfiConverterOptionString.read(from: &buf),
+                imageTarballs: FfiConverterSequenceString.read(from: &buf),
+                health: FfiConverterSequenceString.read(from: &buf),
+                healthTimeoutS: FfiConverterUInt32.read(from: &buf),
+                run: FfiConverterSequenceString.read(from: &buf),
+                verifyFork: FfiConverterBool.read(from: &buf),
+                keep: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: BakeOptions, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.projectDir, into: &buf)
+        FfiConverterString.write(value.checkpoint, into: &buf)
+        FfiConverterOptionString.write(value.image, into: &buf)
+        FfiConverterOptionString.write(value.name, into: &buf)
+        FfiConverterOptionUInt32.write(value.cpus, into: &buf)
+        FfiConverterOptionUInt64.write(value.memoryMb, into: &buf)
+        FfiConverterSequenceString.write(value.composeFiles, into: &buf)
+        FfiConverterOptionString.write(value.projectName, into: &buf)
+        FfiConverterOptionString.write(value.dest, into: &buf)
+        FfiConverterSequenceString.write(value.imageTarballs, into: &buf)
+        FfiConverterSequenceString.write(value.health, into: &buf)
+        FfiConverterUInt32.write(value.healthTimeoutS, into: &buf)
+        FfiConverterSequenceString.write(value.run, into: &buf)
+        FfiConverterBool.write(value.verifyFork, into: &buf)
+        FfiConverterBool.write(value.keep, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBakeOptions_lift(_ buf: RustBuffer) throws -> BakeOptions {
+    return try FfiConverterTypeBakeOptions.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBakeOptions_lower(_ value: BakeOptions) -> RustBuffer {
+    return FfiConverterTypeBakeOptions.lower(value)
+}
+
+
+/**
+ * What [`Sandboxes::bake`] did and how long each step took (seconds).
+ */
+public struct BakeSummary: Equatable, Hashable {
+    /**
+     * The checkpoint saved.
+     */
+    public var checkpoint: String
+    /**
+     * The engine holding it (`qemu`, ...).
+     */
+    public var runtime: String
+    /**
+     * The bake Space (deleted unless `keep`).
+     */
+    public var space: String
+    /**
+     * The image it ran.
+     */
+    public var image: String
+    /**
+     * The compose project name.
+     */
+    public var project: String
+    /**
+     * The project directory in the guest.
+     */
+    public var dest: String
+    /**
+     * When dockerd became ready, seconds after the guest kernel booted.
+     */
+    public var dockerdReadyS: Double?
+    /**
+     * Creating the Space until its cua-spacesd answered.
+     */
+    public var createS: Double
+    /**
+     * The packed project's size.
+     */
+    public var uploadBytes: UInt64
+    /**
+     * Uploading the project and loading the tarballs.
+     */
+    public var uploadS: Double
+    /**
+     * `docker compose up --wait`.
+     */
+    public var composeUpS: Double
+    /**
+     * The stack check and health commands.
+     */
+    public var healthS: Double
+    /**
+     * The checkpoint.
+     */
+    public var checkpointS: Double
+    /**
+     * The whole bake.
+     */
+    public var totalS: Double
+    /**
+     * One line per container: name, state or health, restarts.
+     */
+    public var containers: [String]
+    /**
+     * The fork check, with `verify_fork`.
+     */
+    public var verifyFork: BakeForkCheck?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The checkpoint saved.
+         */checkpoint: String,
+        /**
+         * The engine holding it (`qemu`, ...).
+         */runtime: String,
+        /**
+         * The bake Space (deleted unless `keep`).
+         */space: String,
+        /**
+         * The image it ran.
+         */image: String,
+        /**
+         * The compose project name.
+         */project: String,
+        /**
+         * The project directory in the guest.
+         */dest: String,
+        /**
+         * When dockerd became ready, seconds after the guest kernel booted.
+         */dockerdReadyS: Double?,
+        /**
+         * Creating the Space until its cua-spacesd answered.
+         */createS: Double,
+        /**
+         * The packed project's size.
+         */uploadBytes: UInt64,
+        /**
+         * Uploading the project and loading the tarballs.
+         */uploadS: Double,
+        /**
+         * `docker compose up --wait`.
+         */composeUpS: Double,
+        /**
+         * The stack check and health commands.
+         */healthS: Double,
+        /**
+         * The checkpoint.
+         */checkpointS: Double,
+        /**
+         * The whole bake.
+         */totalS: Double,
+        /**
+         * One line per container: name, state or health, restarts.
+         */containers: [String],
+        /**
+         * The fork check, with `verify_fork`.
+         */verifyFork: BakeForkCheck?) {
+        self.checkpoint = checkpoint
+        self.runtime = runtime
+        self.space = space
+        self.image = image
+        self.project = project
+        self.dest = dest
+        self.dockerdReadyS = dockerdReadyS
+        self.createS = createS
+        self.uploadBytes = uploadBytes
+        self.uploadS = uploadS
+        self.composeUpS = composeUpS
+        self.healthS = healthS
+        self.checkpointS = checkpointS
+        self.totalS = totalS
+        self.containers = containers
+        self.verifyFork = verifyFork
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension BakeSummary: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeBakeSummary: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> BakeSummary {
+        return
+            try BakeSummary(
+                checkpoint: FfiConverterString.read(from: &buf),
+                runtime: FfiConverterString.read(from: &buf),
+                space: FfiConverterString.read(from: &buf),
+                image: FfiConverterString.read(from: &buf),
+                project: FfiConverterString.read(from: &buf),
+                dest: FfiConverterString.read(from: &buf),
+                dockerdReadyS: FfiConverterOptionDouble.read(from: &buf),
+                createS: FfiConverterDouble.read(from: &buf),
+                uploadBytes: FfiConverterUInt64.read(from: &buf),
+                uploadS: FfiConverterDouble.read(from: &buf),
+                composeUpS: FfiConverterDouble.read(from: &buf),
+                healthS: FfiConverterDouble.read(from: &buf),
+                checkpointS: FfiConverterDouble.read(from: &buf),
+                totalS: FfiConverterDouble.read(from: &buf),
+                containers: FfiConverterSequenceString.read(from: &buf),
+                verifyFork: FfiConverterOptionTypeBakeForkCheck.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: BakeSummary, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.checkpoint, into: &buf)
+        FfiConverterString.write(value.runtime, into: &buf)
+        FfiConverterString.write(value.space, into: &buf)
+        FfiConverterString.write(value.image, into: &buf)
+        FfiConverterString.write(value.project, into: &buf)
+        FfiConverterString.write(value.dest, into: &buf)
+        FfiConverterOptionDouble.write(value.dockerdReadyS, into: &buf)
+        FfiConverterDouble.write(value.createS, into: &buf)
+        FfiConverterUInt64.write(value.uploadBytes, into: &buf)
+        FfiConverterDouble.write(value.uploadS, into: &buf)
+        FfiConverterDouble.write(value.composeUpS, into: &buf)
+        FfiConverterDouble.write(value.healthS, into: &buf)
+        FfiConverterDouble.write(value.checkpointS, into: &buf)
+        FfiConverterDouble.write(value.totalS, into: &buf)
+        FfiConverterSequenceString.write(value.containers, into: &buf)
+        FfiConverterOptionTypeBakeForkCheck.write(value.verifyFork, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBakeSummary_lift(_ buf: RustBuffer) throws -> BakeSummary {
+    return try FfiConverterTypeBakeSummary.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBakeSummary_lower(_ value: BakeSummary) -> RustBuffer {
+    return FfiConverterTypeBakeSummary.lower(value)
+}
+
+
+/**
  * A local file copied into a built image.
  */
 public struct BuildFile: Equatable, Hashable {
@@ -15635,6 +18923,838 @@ public func FfiConverterTypeBuildFile_lift(_ buf: RustBuffer) throws -> BuildFil
 #endif
 public func FfiConverterTypeBuildFile_lower(_ value: BuildFile) -> RustBuffer {
     return FfiConverterTypeBuildFile.lower(value)
+}
+
+
+/**
+ * What an image configures for commands run in it.
+ */
+public struct BuildImageConfig: Equatable, Hashable {
+    /**
+     * The `FROM` reference.
+     */
+    public var base: String
+    /**
+     * Environment from `ENV` steps.
+     */
+    public var env: [String: String]
+    /**
+     * Working directory, when a step set one.
+     */
+    public var workdir: String?
+    /**
+     * User, when a step set one.
+     */
+    public var user: String?
+    /**
+     * The user cua-spacesd runs as in the image.
+     */
+    public var driverUser: String
+    /**
+     * Default command.
+     */
+    public var cmd: [String]?
+    /**
+     * Entrypoint.
+     */
+    public var entrypoint: [String]?
+    /**
+     * The shell `Run` used.
+     */
+    public var shell: [String]?
+    /**
+     * Exposed ports.
+     */
+    public var exposed: [String]
+    /**
+     * Labels.
+     */
+    public var labels: [String: String]
+    /**
+     * Volumes.
+     */
+    public var volumes: [String]
+    /**
+     * Stop signal.
+     */
+    public var stopSignal: String?
+    /**
+     * Health check, as written.
+     */
+    public var healthcheck: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The `FROM` reference.
+         */base: String,
+        /**
+         * Environment from `ENV` steps.
+         */env: [String: String],
+        /**
+         * Working directory, when a step set one.
+         */workdir: String?,
+        /**
+         * User, when a step set one.
+         */user: String?,
+        /**
+         * The user cua-spacesd runs as in the image.
+         */driverUser: String,
+        /**
+         * Default command.
+         */cmd: [String]?,
+        /**
+         * Entrypoint.
+         */entrypoint: [String]?,
+        /**
+         * The shell `Run` used.
+         */shell: [String]?,
+        /**
+         * Exposed ports.
+         */exposed: [String],
+        /**
+         * Labels.
+         */labels: [String: String],
+        /**
+         * Volumes.
+         */volumes: [String],
+        /**
+         * Stop signal.
+         */stopSignal: String?,
+        /**
+         * Health check, as written.
+         */healthcheck: String?) {
+        self.base = base
+        self.env = env
+        self.workdir = workdir
+        self.user = user
+        self.driverUser = driverUser
+        self.cmd = cmd
+        self.entrypoint = entrypoint
+        self.shell = shell
+        self.exposed = exposed
+        self.labels = labels
+        self.volumes = volumes
+        self.stopSignal = stopSignal
+        self.healthcheck = healthcheck
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension BuildImageConfig: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeBuildImageConfig: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> BuildImageConfig {
+        return
+            try BuildImageConfig(
+                base: FfiConverterString.read(from: &buf),
+                env: FfiConverterDictionaryStringString.read(from: &buf),
+                workdir: FfiConverterOptionString.read(from: &buf),
+                user: FfiConverterOptionString.read(from: &buf),
+                driverUser: FfiConverterString.read(from: &buf),
+                cmd: FfiConverterOptionSequenceString.read(from: &buf),
+                entrypoint: FfiConverterOptionSequenceString.read(from: &buf),
+                shell: FfiConverterOptionSequenceString.read(from: &buf),
+                exposed: FfiConverterSequenceString.read(from: &buf),
+                labels: FfiConverterDictionaryStringString.read(from: &buf),
+                volumes: FfiConverterSequenceString.read(from: &buf),
+                stopSignal: FfiConverterOptionString.read(from: &buf),
+                healthcheck: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: BuildImageConfig, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.base, into: &buf)
+        FfiConverterDictionaryStringString.write(value.env, into: &buf)
+        FfiConverterOptionString.write(value.workdir, into: &buf)
+        FfiConverterOptionString.write(value.user, into: &buf)
+        FfiConverterString.write(value.driverUser, into: &buf)
+        FfiConverterOptionSequenceString.write(value.cmd, into: &buf)
+        FfiConverterOptionSequenceString.write(value.entrypoint, into: &buf)
+        FfiConverterOptionSequenceString.write(value.shell, into: &buf)
+        FfiConverterSequenceString.write(value.exposed, into: &buf)
+        FfiConverterDictionaryStringString.write(value.labels, into: &buf)
+        FfiConverterSequenceString.write(value.volumes, into: &buf)
+        FfiConverterOptionString.write(value.stopSignal, into: &buf)
+        FfiConverterOptionString.write(value.healthcheck, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBuildImageConfig_lift(_ buf: RustBuffer) throws -> BuildImageConfig {
+    return try FfiConverterTypeBuildImageConfig.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBuildImageConfig_lower(_ value: BuildImageConfig) -> RustBuffer {
+    return FfiConverterTypeBuildImageConfig.lower(value)
+}
+
+
+/**
+ * A build on this machine ([`Spaces::builds`]).
+ */
+public struct BuildInfo: Equatable, Hashable {
+    /**
+     * The final layer's checkpoint.
+     */
+    public var checkpoint: String
+    /**
+     * The recipe's cache key.
+     */
+    public var key: String
+    /**
+     * Tags naming it.
+     */
+    public var tags: [String]
+    /**
+     * The `FROM` reference.
+     */
+    public var base: String
+    /**
+     * Layers it is made of (checkpoints), base first.
+     */
+    public var layers: [String]
+    /**
+     * RFC 3339 build time.
+     */
+    public var createdAt: String
+    /**
+     * Image configuration.
+     */
+    public var config: BuildImageConfig
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The final layer's checkpoint.
+         */checkpoint: String,
+        /**
+         * The recipe's cache key.
+         */key: String,
+        /**
+         * Tags naming it.
+         */tags: [String],
+        /**
+         * The `FROM` reference.
+         */base: String,
+        /**
+         * Layers it is made of (checkpoints), base first.
+         */layers: [String],
+        /**
+         * RFC 3339 build time.
+         */createdAt: String,
+        /**
+         * Image configuration.
+         */config: BuildImageConfig) {
+        self.checkpoint = checkpoint
+        self.key = key
+        self.tags = tags
+        self.base = base
+        self.layers = layers
+        self.createdAt = createdAt
+        self.config = config
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension BuildInfo: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeBuildInfo: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> BuildInfo {
+        return
+            try BuildInfo(
+                checkpoint: FfiConverterString.read(from: &buf),
+                key: FfiConverterString.read(from: &buf),
+                tags: FfiConverterSequenceString.read(from: &buf),
+                base: FfiConverterString.read(from: &buf),
+                layers: FfiConverterSequenceString.read(from: &buf),
+                createdAt: FfiConverterString.read(from: &buf),
+                config: FfiConverterTypeBuildImageConfig.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: BuildInfo, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.checkpoint, into: &buf)
+        FfiConverterString.write(value.key, into: &buf)
+        FfiConverterSequenceString.write(value.tags, into: &buf)
+        FfiConverterString.write(value.base, into: &buf)
+        FfiConverterSequenceString.write(value.layers, into: &buf)
+        FfiConverterString.write(value.createdAt, into: &buf)
+        FfiConverterTypeBuildImageConfig.write(value.config, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBuildInfo_lift(_ buf: RustBuffer) throws -> BuildInfo {
+    return try FfiConverterTypeBuildInfo.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBuildInfo_lower(_ value: BuildInfo) -> RustBuffer {
+    return FfiConverterTypeBuildInfo.lower(value)
+}
+
+
+/**
+ * Options for [`Spaces::build`] and [`super::SpaceCreateOptions::build`].
+ * Give the recipe as a `dockerfile` (text) or a `base` image; `steps` are
+ * applied after it.
+ */
+public struct BuildOptions: Equatable, Hashable {
+    /**
+     * Dockerfile text. One stage; the instructions `cua build` documents
+     * (multi-stage, heredocs, BuildKit flags and `ONBUILD` are refused,
+     * naming the line).
+     */
+    public var dockerfile: String?
+    /**
+     * The build context: the directory `COPY` sources are relative to
+     * (`.dockerignore` applies). Default: none, and a `COPY` fails.
+     */
+    public var contextDir: String?
+    /**
+     * A base image, for a build made of `steps` alone: a Cua image,
+     * `ubuntu:<version>`, `debian:<version>` or `python:<version>`.
+     */
+    public var base: String?
+    /**
+     * Steps, after the Dockerfile's.
+     */
+    public var steps: [BuildStep]
+    /**
+     * Build arguments (`ARG` values).
+     */
+    public var buildArgs: [String: String]
+    /**
+     * An alias for the result: `Spaces.fork`, `build:<tag>` images and
+     * `Spaces.create(build=...)` find the build by it.
+     */
+    public var tag: String?
+    /**
+     * `vm` (default), `container` or `microvm`.
+     */
+    public var kind: String?
+    /**
+     * Where: `local` (default). A build's checkpoints stay on the machine
+     * that took them.
+     */
+    public var on: String?
+    /**
+     * vCPUs of the build's machine, and so of Spaces made from it
+     * (default 2).
+     */
+    public var cpus: UInt32?
+    /**
+     * Memory in MiB (default 4096).
+     */
+    public var memoryMb: UInt64?
+    /**
+     * No desktop: only cua-spacesd runs (default true).
+     */
+    public var headless: Bool?
+    /**
+     * Build every layer again instead of using cached ones.
+     */
+    public var noCache: Bool
+    /**
+     * Budget for each step in milliseconds (default one hour).
+     */
+    public var stepTimeoutMs: UInt64?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Dockerfile text. One stage; the instructions `cua build` documents
+         * (multi-stage, heredocs, BuildKit flags and `ONBUILD` are refused,
+         * naming the line).
+         */dockerfile: String? = nil,
+        /**
+         * The build context: the directory `COPY` sources are relative to
+         * (`.dockerignore` applies). Default: none, and a `COPY` fails.
+         */contextDir: String? = nil,
+        /**
+         * A base image, for a build made of `steps` alone: a Cua image,
+         * `ubuntu:<version>`, `debian:<version>` or `python:<version>`.
+         */base: String? = nil,
+        /**
+         * Steps, after the Dockerfile's.
+         */steps: [BuildStep] = [],
+        /**
+         * Build arguments (`ARG` values).
+         */buildArgs: [String: String] = [:],
+        /**
+         * An alias for the result: `Spaces.fork`, `build:<tag>` images and
+         * `Spaces.create(build=...)` find the build by it.
+         */tag: String? = nil,
+        /**
+         * `vm` (default), `container` or `microvm`.
+         */kind: String? = nil,
+        /**
+         * Where: `local` (default). A build's checkpoints stay on the machine
+         * that took them.
+         */on: String? = nil,
+        /**
+         * vCPUs of the build's machine, and so of Spaces made from it
+         * (default 2).
+         */cpus: UInt32? = nil,
+        /**
+         * Memory in MiB (default 4096).
+         */memoryMb: UInt64? = nil,
+        /**
+         * No desktop: only cua-spacesd runs (default true).
+         */headless: Bool? = nil,
+        /**
+         * Build every layer again instead of using cached ones.
+         */noCache: Bool = false,
+        /**
+         * Budget for each step in milliseconds (default one hour).
+         */stepTimeoutMs: UInt64? = nil) {
+        self.dockerfile = dockerfile
+        self.contextDir = contextDir
+        self.base = base
+        self.steps = steps
+        self.buildArgs = buildArgs
+        self.tag = tag
+        self.kind = kind
+        self.on = on
+        self.cpus = cpus
+        self.memoryMb = memoryMb
+        self.headless = headless
+        self.noCache = noCache
+        self.stepTimeoutMs = stepTimeoutMs
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension BuildOptions: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeBuildOptions: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> BuildOptions {
+        return
+            try BuildOptions(
+                dockerfile: FfiConverterOptionString.read(from: &buf),
+                contextDir: FfiConverterOptionString.read(from: &buf),
+                base: FfiConverterOptionString.read(from: &buf),
+                steps: FfiConverterSequenceTypeBuildStep.read(from: &buf),
+                buildArgs: FfiConverterDictionaryStringString.read(from: &buf),
+                tag: FfiConverterOptionString.read(from: &buf),
+                kind: FfiConverterOptionString.read(from: &buf),
+                on: FfiConverterOptionString.read(from: &buf),
+                cpus: FfiConverterOptionUInt32.read(from: &buf),
+                memoryMb: FfiConverterOptionUInt64.read(from: &buf),
+                headless: FfiConverterOptionBool.read(from: &buf),
+                noCache: FfiConverterBool.read(from: &buf),
+                stepTimeoutMs: FfiConverterOptionUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: BuildOptions, into buf: inout [UInt8]) {
+        FfiConverterOptionString.write(value.dockerfile, into: &buf)
+        FfiConverterOptionString.write(value.contextDir, into: &buf)
+        FfiConverterOptionString.write(value.base, into: &buf)
+        FfiConverterSequenceTypeBuildStep.write(value.steps, into: &buf)
+        FfiConverterDictionaryStringString.write(value.buildArgs, into: &buf)
+        FfiConverterOptionString.write(value.tag, into: &buf)
+        FfiConverterOptionString.write(value.kind, into: &buf)
+        FfiConverterOptionString.write(value.on, into: &buf)
+        FfiConverterOptionUInt32.write(value.cpus, into: &buf)
+        FfiConverterOptionUInt64.write(value.memoryMb, into: &buf)
+        FfiConverterOptionBool.write(value.headless, into: &buf)
+        FfiConverterBool.write(value.noCache, into: &buf)
+        FfiConverterOptionUInt64.write(value.stepTimeoutMs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBuildOptions_lift(_ buf: RustBuffer) throws -> BuildOptions {
+    return try FfiConverterTypeBuildOptions.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBuildOptions_lower(_ value: BuildOptions) -> RustBuffer {
+    return FfiConverterTypeBuildOptions.lower(value)
+}
+
+
+/**
+ * What a build is doing ([`Spaces::build_with_progress`]).
+ */
+public struct BuildProgress: Equatable, Hashable {
+    /**
+     * `note`, `step`, `output`, `step_done` or `finished`.
+     */
+    public var event: String
+    /**
+     * The step (0: the base image).
+     */
+    public var index: UInt32
+    /**
+     * Steps after the base.
+     */
+    public var total: UInt32
+    /**
+     * The step as a line, a note, or an output line.
+     */
+    public var text: String
+    /**
+     * `step`: served from a cached layer. `finished`: nothing ran.
+     */
+    public var cached: Bool
+    /**
+     * `step_done` and `finished`: seconds taken.
+     */
+    public var seconds: Double
+    /**
+     * `step_done`: the layer's checkpoint.
+     */
+    public var checkpoint: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `note`, `step`, `output`, `step_done` or `finished`.
+         */event: String,
+        /**
+         * The step (0: the base image).
+         */index: UInt32,
+        /**
+         * Steps after the base.
+         */total: UInt32,
+        /**
+         * The step as a line, a note, or an output line.
+         */text: String,
+        /**
+         * `step`: served from a cached layer. `finished`: nothing ran.
+         */cached: Bool,
+        /**
+         * `step_done` and `finished`: seconds taken.
+         */seconds: Double,
+        /**
+         * `step_done`: the layer's checkpoint.
+         */checkpoint: String) {
+        self.event = event
+        self.index = index
+        self.total = total
+        self.text = text
+        self.cached = cached
+        self.seconds = seconds
+        self.checkpoint = checkpoint
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension BuildProgress: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeBuildProgress: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> BuildProgress {
+        return
+            try BuildProgress(
+                event: FfiConverterString.read(from: &buf),
+                index: FfiConverterUInt32.read(from: &buf),
+                total: FfiConverterUInt32.read(from: &buf),
+                text: FfiConverterString.read(from: &buf),
+                cached: FfiConverterBool.read(from: &buf),
+                seconds: FfiConverterDouble.read(from: &buf),
+                checkpoint: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: BuildProgress, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.event, into: &buf)
+        FfiConverterUInt32.write(value.index, into: &buf)
+        FfiConverterUInt32.write(value.total, into: &buf)
+        FfiConverterString.write(value.text, into: &buf)
+        FfiConverterBool.write(value.cached, into: &buf)
+        FfiConverterDouble.write(value.seconds, into: &buf)
+        FfiConverterString.write(value.checkpoint, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBuildProgress_lift(_ buf: RustBuffer) throws -> BuildProgress {
+    return try FfiConverterTypeBuildProgress.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBuildProgress_lower(_ value: BuildProgress) -> RustBuffer {
+    return FfiConverterTypeBuildProgress.lower(value)
+}
+
+
+/**
+ * The result of [`Spaces::build`].
+ */
+public struct BuildResult: Equatable, Hashable {
+    /**
+     * The final layer's checkpoint: `Spaces.fork` and `cua sb fork` start
+     * Spaces from it.
+     */
+    public var checkpoint: String
+    /**
+     * The tag, when one was asked for.
+     */
+    public var tag: String?
+    /**
+     * The recipe's cache key.
+     */
+    public var key: String
+    /**
+     * Every layer was cached: nothing ran.
+     */
+    public var cached: Bool
+    /**
+     * One per step, base first.
+     */
+    public var steps: [BuildStepResult]
+    /**
+     * What commands run in the image get.
+     */
+    public var config: BuildImageConfig
+    /**
+     * Seconds the build took.
+     */
+    public var seconds: Double
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The final layer's checkpoint: `Spaces.fork` and `cua sb fork` start
+         * Spaces from it.
+         */checkpoint: String,
+        /**
+         * The tag, when one was asked for.
+         */tag: String?,
+        /**
+         * The recipe's cache key.
+         */key: String,
+        /**
+         * Every layer was cached: nothing ran.
+         */cached: Bool,
+        /**
+         * One per step, base first.
+         */steps: [BuildStepResult],
+        /**
+         * What commands run in the image get.
+         */config: BuildImageConfig,
+        /**
+         * Seconds the build took.
+         */seconds: Double) {
+        self.checkpoint = checkpoint
+        self.tag = tag
+        self.key = key
+        self.cached = cached
+        self.steps = steps
+        self.config = config
+        self.seconds = seconds
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension BuildResult: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeBuildResult: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> BuildResult {
+        return
+            try BuildResult(
+                checkpoint: FfiConverterString.read(from: &buf),
+                tag: FfiConverterOptionString.read(from: &buf),
+                key: FfiConverterString.read(from: &buf),
+                cached: FfiConverterBool.read(from: &buf),
+                steps: FfiConverterSequenceTypeBuildStepResult.read(from: &buf),
+                config: FfiConverterTypeBuildImageConfig.read(from: &buf),
+                seconds: FfiConverterDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: BuildResult, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.checkpoint, into: &buf)
+        FfiConverterOptionString.write(value.tag, into: &buf)
+        FfiConverterString.write(value.key, into: &buf)
+        FfiConverterBool.write(value.cached, into: &buf)
+        FfiConverterSequenceTypeBuildStepResult.write(value.steps, into: &buf)
+        FfiConverterTypeBuildImageConfig.write(value.config, into: &buf)
+        FfiConverterDouble.write(value.seconds, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBuildResult_lift(_ buf: RustBuffer) throws -> BuildResult {
+    return try FfiConverterTypeBuildResult.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBuildResult_lower(_ value: BuildResult) -> RustBuffer {
+    return FfiConverterTypeBuildResult.lower(value)
+}
+
+
+/**
+ * One step of a finished build.
+ */
+public struct BuildStepResult: Equatable, Hashable {
+    /**
+     * The step (0: the base image).
+     */
+    public var index: UInt32
+    /**
+     * The step as a line (`RUN make`).
+     */
+    public var text: String
+    /**
+     * Served from a cached layer: nothing ran.
+     */
+    public var cached: Bool
+    /**
+     * Seconds it took (0 when cached).
+     */
+    public var seconds: Double
+    /**
+     * The layer's checkpoint, for a step that makes one.
+     */
+    public var checkpoint: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The step (0: the base image).
+         */index: UInt32,
+        /**
+         * The step as a line (`RUN make`).
+         */text: String,
+        /**
+         * Served from a cached layer: nothing ran.
+         */cached: Bool,
+        /**
+         * Seconds it took (0 when cached).
+         */seconds: Double,
+        /**
+         * The layer's checkpoint, for a step that makes one.
+         */checkpoint: String?) {
+        self.index = index
+        self.text = text
+        self.cached = cached
+        self.seconds = seconds
+        self.checkpoint = checkpoint
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension BuildStepResult: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeBuildStepResult: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> BuildStepResult {
+        return
+            try BuildStepResult(
+                index: FfiConverterUInt32.read(from: &buf),
+                text: FfiConverterString.read(from: &buf),
+                cached: FfiConverterBool.read(from: &buf),
+                seconds: FfiConverterDouble.read(from: &buf),
+                checkpoint: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: BuildStepResult, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.index, into: &buf)
+        FfiConverterString.write(value.text, into: &buf)
+        FfiConverterBool.write(value.cached, into: &buf)
+        FfiConverterDouble.write(value.seconds, into: &buf)
+        FfiConverterOptionString.write(value.checkpoint, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBuildStepResult_lift(_ buf: RustBuffer) throws -> BuildStepResult {
+    return try FfiConverterTypeBuildStepResult.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBuildStepResult_lower(_ value: BuildStepResult) -> RustBuffer {
+    return FfiConverterTypeBuildStepResult.lower(value)
 }
 
 
@@ -15724,6 +19844,292 @@ public func FfiConverterTypeBundledSkill_lift(_ buf: RustBuffer) throws -> Bundl
 #endif
 public func FfiConverterTypeBundledSkill_lower(_ value: BundledSkill) -> RustBuffer {
     return FfiConverterTypeBundledSkill.lower(value)
+}
+
+
+/**
+ * A named checkpoint of a sandbox, and the machine that holds it.
+ */
+public struct CheckpointSummary: Equatable, Hashable {
+    /**
+     * The checkpoint's name.
+     */
+    public var name: String
+    /**
+     * The sandbox it was taken from.
+     */
+    public var source: String
+    /**
+     * The engine that holds it (`firecracker`, `gvisor`, `qemu`, ...).
+     */
+    public var runtimeType: String
+    /**
+     * RFC 3339 creation time.
+     */
+    public var createdAt: String
+    /**
+     * The source's image.
+     */
+    public var image: String
+    /**
+     * Pinned: a fork source to keep (`delete_checkpoint` refuses it and
+     * `prune_checkpoints` leaves it until it is unpinned).
+     */
+    public var pinned: Bool
+    /**
+     * Its forks map its RAM copy-on-write and share the pages they do not
+     * write (a QEMU memory checkpoint).
+     */
+    public var sharedMemory: Bool
+    /**
+     * Taken to fork a running sandbox many times ([`Sandboxes::fork_many`]
+     * of a sandbox): deleted with the last of its forks.
+     */
+    public var releaseWithForks: Bool
+    /**
+     * How many of its forks still exist (for `release_with_forks`).
+     */
+    public var forks: UInt32
+    /**
+     * Where it is: empty for this machine, else the name of the machine of
+     * yours that holds it (a checkpoint of a Space that machine provides).
+     * Its forks start there (`Spaces.create` with image
+     * `checkpoint:<name>`, or `fork_many`), or on another machine after a
+     * verified copy.
+     */
+    public var host: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The checkpoint's name.
+         */name: String,
+        /**
+         * The sandbox it was taken from.
+         */source: String,
+        /**
+         * The engine that holds it (`firecracker`, `gvisor`, `qemu`, ...).
+         */runtimeType: String,
+        /**
+         * RFC 3339 creation time.
+         */createdAt: String,
+        /**
+         * The source's image.
+         */image: String,
+        /**
+         * Pinned: a fork source to keep (`delete_checkpoint` refuses it and
+         * `prune_checkpoints` leaves it until it is unpinned).
+         */pinned: Bool,
+        /**
+         * Its forks map its RAM copy-on-write and share the pages they do not
+         * write (a QEMU memory checkpoint).
+         */sharedMemory: Bool,
+        /**
+         * Taken to fork a running sandbox many times ([`Sandboxes::fork_many`]
+         * of a sandbox): deleted with the last of its forks.
+         */releaseWithForks: Bool,
+        /**
+         * How many of its forks still exist (for `release_with_forks`).
+         */forks: UInt32,
+        /**
+         * Where it is: empty for this machine, else the name of the machine of
+         * yours that holds it (a checkpoint of a Space that machine provides).
+         * Its forks start there (`Spaces.create` with image
+         * `checkpoint:<name>`, or `fork_many`), or on another machine after a
+         * verified copy.
+         */host: String) {
+        self.name = name
+        self.source = source
+        self.runtimeType = runtimeType
+        self.createdAt = createdAt
+        self.image = image
+        self.pinned = pinned
+        self.sharedMemory = sharedMemory
+        self.releaseWithForks = releaseWithForks
+        self.forks = forks
+        self.host = host
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension CheckpointSummary: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCheckpointSummary: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CheckpointSummary {
+        return
+            try CheckpointSummary(
+                name: FfiConverterString.read(from: &buf),
+                source: FfiConverterString.read(from: &buf),
+                runtimeType: FfiConverterString.read(from: &buf),
+                createdAt: FfiConverterString.read(from: &buf),
+                image: FfiConverterString.read(from: &buf),
+                pinned: FfiConverterBool.read(from: &buf),
+                sharedMemory: FfiConverterBool.read(from: &buf),
+                releaseWithForks: FfiConverterBool.read(from: &buf),
+                forks: FfiConverterUInt32.read(from: &buf),
+                host: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: CheckpointSummary, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.source, into: &buf)
+        FfiConverterString.write(value.runtimeType, into: &buf)
+        FfiConverterString.write(value.createdAt, into: &buf)
+        FfiConverterString.write(value.image, into: &buf)
+        FfiConverterBool.write(value.pinned, into: &buf)
+        FfiConverterBool.write(value.sharedMemory, into: &buf)
+        FfiConverterBool.write(value.releaseWithForks, into: &buf)
+        FfiConverterUInt32.write(value.forks, into: &buf)
+        FfiConverterString.write(value.host, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCheckpointSummary_lift(_ buf: RustBuffer) throws -> CheckpointSummary {
+    return try FfiConverterTypeCheckpointSummary.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCheckpointSummary_lower(_ value: CheckpointSummary) -> RustBuffer {
+    return FfiConverterTypeCheckpointSummary.lower(value)
+}
+
+
+/**
+ * One line of the cloud audit log (`cloud_audit`). Never a secret.
+ */
+public struct CloudAuditEntry: Equatable, Hashable {
+    /**
+     * When (RFC 3339, UTC).
+     */
+    public var ts: String
+    /**
+     * `connect`, `disconnect`, `resource_recorded`, `resource_created`,
+     * `resource_confirmed` or `resource_deleted`.
+     */
+    public var action: String
+    public var provider: String
+    /**
+     * The resource type; empty for `connect` and `disconnect`.
+     */
+    public var kind: String
+    public var id: String
+    /**
+     * The Space it belongs to.
+     */
+    public var space: String
+    /**
+     * `user`, `sweep`, `auto-sweep`, `disconnect` or `rollback`.
+     */
+    public var actor: String
+    /**
+     * `ok`, `failed` or `refused`.
+     */
+    public var outcome: String
+    public var detail: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * When (RFC 3339, UTC).
+         */ts: String,
+        /**
+         * `connect`, `disconnect`, `resource_recorded`, `resource_created`,
+         * `resource_confirmed` or `resource_deleted`.
+         */action: String, provider: String,
+        /**
+         * The resource type; empty for `connect` and `disconnect`.
+         */kind: String, id: String,
+        /**
+         * The Space it belongs to.
+         */space: String,
+        /**
+         * `user`, `sweep`, `auto-sweep`, `disconnect` or `rollback`.
+         */actor: String,
+        /**
+         * `ok`, `failed` or `refused`.
+         */outcome: String, detail: String) {
+        self.ts = ts
+        self.action = action
+        self.provider = provider
+        self.kind = kind
+        self.id = id
+        self.space = space
+        self.actor = actor
+        self.outcome = outcome
+        self.detail = detail
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension CloudAuditEntry: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCloudAuditEntry: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CloudAuditEntry {
+        return
+            try CloudAuditEntry(
+                ts: FfiConverterString.read(from: &buf),
+                action: FfiConverterString.read(from: &buf),
+                provider: FfiConverterString.read(from: &buf),
+                kind: FfiConverterString.read(from: &buf),
+                id: FfiConverterString.read(from: &buf),
+                space: FfiConverterString.read(from: &buf),
+                actor: FfiConverterString.read(from: &buf),
+                outcome: FfiConverterString.read(from: &buf),
+                detail: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: CloudAuditEntry, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.ts, into: &buf)
+        FfiConverterString.write(value.action, into: &buf)
+        FfiConverterString.write(value.provider, into: &buf)
+        FfiConverterString.write(value.kind, into: &buf)
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.space, into: &buf)
+        FfiConverterString.write(value.actor, into: &buf)
+        FfiConverterString.write(value.outcome, into: &buf)
+        FfiConverterString.write(value.detail, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCloudAuditEntry_lift(_ buf: RustBuffer) throws -> CloudAuditEntry {
+    return try FfiConverterTypeCloudAuditEntry.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCloudAuditEntry_lower(_ value: CloudAuditEntry) -> RustBuffer {
+    return FfiConverterTypeCloudAuditEntry.lower(value)
 }
 
 
@@ -15919,16 +20325,24 @@ public struct CloudDisconnected: Equatable, Hashable {
      * Resources Cua still records there.
      */
     public var left: [CloudResource]
+    /**
+     * With `delete`: what was deleted from the account first.
+     */
+    public var deleted: [CloudResource]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
     public init(provider: String, disconnected: Bool,
         /**
          * Resources Cua still records there.
-         */left: [CloudResource]) {
+         */left: [CloudResource],
+        /**
+         * With `delete`: what was deleted from the account first.
+         */deleted: [CloudResource]) {
         self.provider = provider
         self.disconnected = disconnected
         self.left = left
+        self.deleted = deleted
     }
 
 
@@ -15949,7 +20363,8 @@ public struct FfiConverterTypeCloudDisconnected: FfiConverterRustBuffer {
             try CloudDisconnected(
                 provider: FfiConverterString.read(from: &buf),
                 disconnected: FfiConverterBool.read(from: &buf),
-                left: FfiConverterSequenceTypeCloudResource.read(from: &buf)
+                left: FfiConverterSequenceTypeCloudResource.read(from: &buf),
+                deleted: FfiConverterSequenceTypeCloudResource.read(from: &buf)
         )
     }
 
@@ -15957,6 +20372,7 @@ public struct FfiConverterTypeCloudDisconnected: FfiConverterRustBuffer {
         FfiConverterString.write(value.provider, into: &buf)
         FfiConverterBool.write(value.disconnected, into: &buf)
         FfiConverterSequenceTypeCloudResource.write(value.left, into: &buf)
+        FfiConverterSequenceTypeCloudResource.write(value.deleted, into: &buf)
     }
 }
 
@@ -16084,11 +20500,11 @@ public func FfiConverterTypeCloudKind_lower(_ value: CloudKind) -> RustBuffer {
  */
 public struct CloudProvider: Equatable, Hashable {
     /**
-     * `aws`, `gcp`, `modal`.
+     * `aws`, `gcp`, `hetzner`, `modal`.
      */
     public var name: String
     /**
-     * `AWS`, `Google Cloud`, `Modal`.
+     * `AWS`, `Google Cloud`, `Hetzner Cloud`, `Modal`.
      */
     public var title: String
     /**
@@ -16124,10 +20540,10 @@ public struct CloudProvider: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * `aws`, `gcp`, `modal`.
+         * `aws`, `gcp`, `hetzner`, `modal`.
          */name: String,
         /**
-         * `AWS`, `Google Cloud`, `Modal`.
+         * `AWS`, `Google Cloud`, `Hetzner Cloud`, `Modal`.
          */title: String,
         /**
          * `vm` or `sandbox`.
@@ -16551,12 +20967,13 @@ public func FfiConverterTypeCloudSweepReport_lower(_ value: CloudSweepReport) ->
 
 
 /**
- * Where in a cloud account Spaces go. Credentials are never here: each
- * cloud uses its own CLI sign-in.
+ * Where in a cloud account Spaces go. AWS, Google Cloud and Modal use
+ * their own CLI sign-in; Hetzner takes its API token in `token` (or
+ * `HCLOUD_TOKEN`).
  */
 public struct CloudTarget: Equatable, Hashable {
     /**
-     * `aws`, `gcp` or `modal`.
+     * `aws`, `gcp`, `hetzner` or `modal`.
      */
     public var provider: String
     /**
@@ -16564,7 +20981,7 @@ public struct CloudTarget: Equatable, Hashable {
      */
     public var profile: String?
     /**
-     * AWS or GCP region.
+     * AWS or GCP region, or Hetzner location (`fsn1`).
      */
     public var region: String?
     /**
@@ -16579,18 +20996,24 @@ public struct CloudTarget: Equatable, Hashable {
      * Modal environment.
      */
     public var environment: String?
+    /**
+     * Hetzner: the project's Read & Write API token. Secret: used for the
+     * checks, saved in the Cua credential store when they pass, never
+     * printed.
+     */
+    public var token: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
     public init(
         /**
-         * `aws`, `gcp` or `modal`.
+         * `aws`, `gcp`, `hetzner` or `modal`.
          */provider: String,
         /**
          * AWS or Modal profile.
          */profile: String? = nil,
         /**
-         * AWS or GCP region.
+         * AWS or GCP region, or Hetzner location (`fsn1`).
          */region: String? = nil,
         /**
          * GCP zone.
@@ -16600,13 +21023,19 @@ public struct CloudTarget: Equatable, Hashable {
          */project: String? = nil,
         /**
          * Modal environment.
-         */environment: String? = nil) {
+         */environment: String? = nil,
+        /**
+         * Hetzner: the project's Read & Write API token. Secret: used for the
+         * checks, saved in the Cua credential store when they pass, never
+         * printed.
+         */token: String? = nil) {
         self.provider = provider
         self.profile = profile
         self.region = region
         self.zone = zone
         self.project = project
         self.environment = environment
+        self.token = token
     }
 
 
@@ -16630,7 +21059,8 @@ public struct FfiConverterTypeCloudTarget: FfiConverterRustBuffer {
                 region: FfiConverterOptionString.read(from: &buf),
                 zone: FfiConverterOptionString.read(from: &buf),
                 project: FfiConverterOptionString.read(from: &buf),
-                environment: FfiConverterOptionString.read(from: &buf)
+                environment: FfiConverterOptionString.read(from: &buf),
+                token: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -16641,6 +21071,7 @@ public struct FfiConverterTypeCloudTarget: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.zone, into: &buf)
         FfiConverterOptionString.write(value.project, into: &buf)
         FfiConverterOptionString.write(value.environment, into: &buf)
+        FfiConverterOptionString.write(value.token, into: &buf)
     }
 }
 
@@ -20040,6 +24471,1173 @@ public func FfiConverterTypeDriveView_lower(_ value: DriveView) -> RustBuffer {
 
 
 /**
+ * Which destinations a Space may open connections to. Everything is
+ * allowed unless a rule says otherwise: every `deny` entry blocks that
+ * destination, every `allow` entry is an exception that wins over `deny`
+ * (`deny: ["all"]` with `allow: ["1.1.1.1"]` leaves only 1.1.1.1
+ * reachable), and an `allow` list with no `deny` blocks nothing. Entries
+ * are IPv4/IPv6 addresses or CIDRs (`all` is `0.0.0.0/0` and `::/0`);
+ * a hostname is refused (rules are by IP/CIDR). DNS works only while the
+ * resolver the guest uses is not blocked (or is allowed): there is no
+ * special case. Loopback, replies to connections made to the guest and
+ * IPv6 neighbor discovery are never filtered.
+ *
+ * The host the Space runs on enforces it, outside the guest, from the
+ * guest's first instruction ([`SpaceInfo::egress_enforced`]): containers
+ * (runc and gVisor) on the container engine's host, Firecracker and QEMU
+ * VMs on Linux in a network namespace around the VM. Nothing in the
+ * guest, root included, can change it. macOS VMs, Apple Containerization,
+ * QEMU on macOS or Windows, Cua Cloud and your own cloud accounts refuse
+ * a policy (`Unsupported`, saying why).
+ */
+public struct EgressPolicy: Equatable, Hashable {
+    /**
+     * Destinations that stay reachable where `deny` blocks them.
+     */
+    public var allow: [String]
+    /**
+     * Destinations that are blocked.
+     */
+    public var deny: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Destinations that stay reachable where `deny` blocks them.
+         */allow: [String] = [],
+        /**
+         * Destinations that are blocked.
+         */deny: [String] = []) {
+        self.allow = allow
+        self.deny = deny
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension EgressPolicy: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeEgressPolicy: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> EgressPolicy {
+        return
+            try EgressPolicy(
+                allow: FfiConverterSequenceString.read(from: &buf),
+                deny: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: EgressPolicy, into buf: inout [UInt8]) {
+        FfiConverterSequenceString.write(value.allow, into: &buf)
+        FfiConverterSequenceString.write(value.deny, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeEgressPolicy_lift(_ buf: RustBuffer) throws -> EgressPolicy {
+    return try FfiConverterTypeEgressPolicy.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeEgressPolicy_lower(_ value: EgressPolicy) -> RustBuffer {
+    return FfiConverterTypeEgressPolicy.lower(value)
+}
+
+
+/**
+ * Some Spaces of one group on one machine.
+ */
+public struct ElasticAssignment: Equatable, Hashable {
+    /**
+     * The group (`request-0`).
+     */
+    public var group: String
+    /**
+     * A machine in the pool by name, or empty when it is a new one.
+     */
+    public var host: String
+    /**
+     * The index into `new_hosts` (when `host` is empty).
+     */
+    public var newIndex: UInt32?
+    /**
+     * How many Spaces.
+     */
+    public var count: UInt32
+    /**
+     * The checkpoint is copied there first.
+     */
+    public var sync: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The group (`request-0`).
+         */group: String,
+        /**
+         * A machine in the pool by name, or empty when it is a new one.
+         */host: String,
+        /**
+         * The index into `new_hosts` (when `host` is empty).
+         */newIndex: UInt32?,
+        /**
+         * How many Spaces.
+         */count: UInt32,
+        /**
+         * The checkpoint is copied there first.
+         */sync: Bool) {
+        self.group = group
+        self.host = host
+        self.newIndex = newIndex
+        self.count = count
+        self.sync = sync
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ElasticAssignment: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeElasticAssignment: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ElasticAssignment {
+        return
+            try ElasticAssignment(
+                group: FfiConverterString.read(from: &buf),
+                host: FfiConverterString.read(from: &buf),
+                newIndex: FfiConverterOptionUInt32.read(from: &buf),
+                count: FfiConverterUInt32.read(from: &buf),
+                sync: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ElasticAssignment, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.group, into: &buf)
+        FfiConverterString.write(value.host, into: &buf)
+        FfiConverterOptionUInt32.write(value.newIndex, into: &buf)
+        FfiConverterUInt32.write(value.count, into: &buf)
+        FfiConverterBool.write(value.sync, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeElasticAssignment_lift(_ buf: RustBuffer) throws -> ElasticAssignment {
+    return try FfiConverterTypeElasticAssignment.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeElasticAssignment_lower(_ value: ElasticAssignment) -> RustBuffer {
+    return FfiConverterTypeElasticAssignment.lower(value)
+}
+
+
+/**
+ * The budget, and what the clouds cost now.
+ */
+public struct ElasticBudget: Equatable, Hashable {
+    public var autoscale: Bool
+    public var maxUsdPerHour: Double
+    public var monthlyUsd: Double
+    public var maxNewHosts: UInt32
+    public var warm: Bool
+    public var allowMetal: Bool
+    /**
+     * USD spent on elastic hosts this month.
+     */
+    public var monthUsd: Double
+    /**
+     * USD per hour of the hosts running now.
+     */
+    public var runningUsdPerHour: Double
+    /**
+     * Hosts running.
+     */
+    public var hosts: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(autoscale: Bool, maxUsdPerHour: Double, monthlyUsd: Double, maxNewHosts: UInt32, warm: Bool, allowMetal: Bool,
+        /**
+         * USD spent on elastic hosts this month.
+         */monthUsd: Double,
+        /**
+         * USD per hour of the hosts running now.
+         */runningUsdPerHour: Double,
+        /**
+         * Hosts running.
+         */hosts: UInt32) {
+        self.autoscale = autoscale
+        self.maxUsdPerHour = maxUsdPerHour
+        self.monthlyUsd = monthlyUsd
+        self.maxNewHosts = maxNewHosts
+        self.warm = warm
+        self.allowMetal = allowMetal
+        self.monthUsd = monthUsd
+        self.runningUsdPerHour = runningUsdPerHour
+        self.hosts = hosts
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ElasticBudget: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeElasticBudget: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ElasticBudget {
+        return
+            try ElasticBudget(
+                autoscale: FfiConverterBool.read(from: &buf),
+                maxUsdPerHour: FfiConverterDouble.read(from: &buf),
+                monthlyUsd: FfiConverterDouble.read(from: &buf),
+                maxNewHosts: FfiConverterUInt32.read(from: &buf),
+                warm: FfiConverterBool.read(from: &buf),
+                allowMetal: FfiConverterBool.read(from: &buf),
+                monthUsd: FfiConverterDouble.read(from: &buf),
+                runningUsdPerHour: FfiConverterDouble.read(from: &buf),
+                hosts: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ElasticBudget, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.autoscale, into: &buf)
+        FfiConverterDouble.write(value.maxUsdPerHour, into: &buf)
+        FfiConverterDouble.write(value.monthlyUsd, into: &buf)
+        FfiConverterUInt32.write(value.maxNewHosts, into: &buf)
+        FfiConverterBool.write(value.warm, into: &buf)
+        FfiConverterBool.write(value.allowMetal, into: &buf)
+        FfiConverterDouble.write(value.monthUsd, into: &buf)
+        FfiConverterDouble.write(value.runningUsdPerHour, into: &buf)
+        FfiConverterUInt32.write(value.hosts, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeElasticBudget_lift(_ buf: RustBuffer) throws -> ElasticBudget {
+    return try FfiConverterTypeElasticBudget.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeElasticBudget_lower(_ value: ElasticBudget) -> RustBuffer {
+    return FfiConverterTypeElasticBudget.lower(value)
+}
+
+
+/**
+ * The elastic pool's caps and switches (`cloud_budget`): set those given.
+ */
+public struct ElasticBudgetUpdate: Equatable, Hashable {
+    public var maxUsdPerHour: Double?
+    public var monthlyUsd: Double?
+    public var autoscale: Bool?
+    public var maxNewHosts: UInt32?
+    public var warm: Bool?
+    public var allowMetal: Bool?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(maxUsdPerHour: Double? = nil, monthlyUsd: Double? = nil, autoscale: Bool? = nil, maxNewHosts: UInt32? = nil, warm: Bool? = nil, allowMetal: Bool? = nil) {
+        self.maxUsdPerHour = maxUsdPerHour
+        self.monthlyUsd = monthlyUsd
+        self.autoscale = autoscale
+        self.maxNewHosts = maxNewHosts
+        self.warm = warm
+        self.allowMetal = allowMetal
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ElasticBudgetUpdate: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeElasticBudgetUpdate: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ElasticBudgetUpdate {
+        return
+            try ElasticBudgetUpdate(
+                maxUsdPerHour: FfiConverterOptionDouble.read(from: &buf),
+                monthlyUsd: FfiConverterOptionDouble.read(from: &buf),
+                autoscale: FfiConverterOptionBool.read(from: &buf),
+                maxNewHosts: FfiConverterOptionUInt32.read(from: &buf),
+                warm: FfiConverterOptionBool.read(from: &buf),
+                allowMetal: FfiConverterOptionBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ElasticBudgetUpdate, into buf: inout [UInt8]) {
+        FfiConverterOptionDouble.write(value.maxUsdPerHour, into: &buf)
+        FfiConverterOptionDouble.write(value.monthlyUsd, into: &buf)
+        FfiConverterOptionBool.write(value.autoscale, into: &buf)
+        FfiConverterOptionUInt32.write(value.maxNewHosts, into: &buf)
+        FfiConverterOptionBool.write(value.warm, into: &buf)
+        FfiConverterOptionBool.write(value.allowMetal, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeElasticBudgetUpdate_lift(_ buf: RustBuffer) throws -> ElasticBudgetUpdate {
+    return try FfiConverterTypeElasticBudgetUpdate.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeElasticBudgetUpdate_lower(_ value: ElasticBudgetUpdate) -> RustBuffer {
+    return FfiConverterTypeElasticBudgetUpdate.lower(value)
+}
+
+
+/**
+ * One scale-in decision.
+ */
+public struct ElasticDecision: Equatable, Hashable {
+    public var host: String
+    /**
+     * `keep`, `cordon` or `remove`.
+     */
+    public var action: String
+    public var reason: String
+    /**
+     * `keep`: unix seconds it is looked at again.
+     */
+    public var until: UInt64
+    /**
+     * `remove`: USD saved against keeping it a billing step longer.
+     */
+    public var savesUsd: Double
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(host: String,
+        /**
+         * `keep`, `cordon` or `remove`.
+         */action: String, reason: String,
+        /**
+         * `keep`: unix seconds it is looked at again.
+         */until: UInt64,
+        /**
+         * `remove`: USD saved against keeping it a billing step longer.
+         */savesUsd: Double) {
+        self.host = host
+        self.action = action
+        self.reason = reason
+        self.until = until
+        self.savesUsd = savesUsd
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ElasticDecision: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeElasticDecision: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ElasticDecision {
+        return
+            try ElasticDecision(
+                host: FfiConverterString.read(from: &buf),
+                action: FfiConverterString.read(from: &buf),
+                reason: FfiConverterString.read(from: &buf),
+                until: FfiConverterUInt64.read(from: &buf),
+                savesUsd: FfiConverterDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ElasticDecision, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.host, into: &buf)
+        FfiConverterString.write(value.action, into: &buf)
+        FfiConverterString.write(value.reason, into: &buf)
+        FfiConverterUInt64.write(value.until, into: &buf)
+        FfiConverterDouble.write(value.savesUsd, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeElasticDecision_lift(_ buf: RustBuffer) throws -> ElasticDecision {
+    return try FfiConverterTypeElasticDecision.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeElasticDecision_lower(_ value: ElasticDecision) -> RustBuffer {
+    return FfiConverterTypeElasticDecision.lower(value)
+}
+
+
+/**
+ * A host the elastic pool added in one of your clouds.
+ */
+public struct ElasticHost: Equatable, Hashable {
+    /**
+     * Its pool name (`hetzner-1`).
+     */
+    public var name: String
+    public var provider: String
+    public var typeName: String
+    public var region: String
+    /**
+     * The cloud's id.
+     */
+    public var id: String
+    /**
+     * Its relay machine once joined.
+     */
+    public var machine: String
+    /**
+     * `creating`, `booting`, `joined`, `cordoned`, `offline`, `gone`.
+     */
+    public var state: String
+    /**
+     * Unix seconds.
+     */
+    public var started: UInt64
+    /**
+     * Unix seconds it ends on its own.
+     */
+    public var expires: UInt64
+    public var usdPerHour: Double
+    public var billingStepSecs: UInt64
+    public var billingMinSecs: UInt64
+    /**
+     * Added by hand: never removed by the scaler.
+     */
+    public var pinned: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Its pool name (`hetzner-1`).
+         */name: String, provider: String, typeName: String, region: String,
+        /**
+         * The cloud's id.
+         */id: String,
+        /**
+         * Its relay machine once joined.
+         */machine: String,
+        /**
+         * `creating`, `booting`, `joined`, `cordoned`, `offline`, `gone`.
+         */state: String,
+        /**
+         * Unix seconds.
+         */started: UInt64,
+        /**
+         * Unix seconds it ends on its own.
+         */expires: UInt64, usdPerHour: Double, billingStepSecs: UInt64, billingMinSecs: UInt64,
+        /**
+         * Added by hand: never removed by the scaler.
+         */pinned: Bool) {
+        self.name = name
+        self.provider = provider
+        self.typeName = typeName
+        self.region = region
+        self.id = id
+        self.machine = machine
+        self.state = state
+        self.started = started
+        self.expires = expires
+        self.usdPerHour = usdPerHour
+        self.billingStepSecs = billingStepSecs
+        self.billingMinSecs = billingMinSecs
+        self.pinned = pinned
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ElasticHost: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeElasticHost: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ElasticHost {
+        return
+            try ElasticHost(
+                name: FfiConverterString.read(from: &buf),
+                provider: FfiConverterString.read(from: &buf),
+                typeName: FfiConverterString.read(from: &buf),
+                region: FfiConverterString.read(from: &buf),
+                id: FfiConverterString.read(from: &buf),
+                machine: FfiConverterString.read(from: &buf),
+                state: FfiConverterString.read(from: &buf),
+                started: FfiConverterUInt64.read(from: &buf),
+                expires: FfiConverterUInt64.read(from: &buf),
+                usdPerHour: FfiConverterDouble.read(from: &buf),
+                billingStepSecs: FfiConverterUInt64.read(from: &buf),
+                billingMinSecs: FfiConverterUInt64.read(from: &buf),
+                pinned: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ElasticHost, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.provider, into: &buf)
+        FfiConverterString.write(value.typeName, into: &buf)
+        FfiConverterString.write(value.region, into: &buf)
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.machine, into: &buf)
+        FfiConverterString.write(value.state, into: &buf)
+        FfiConverterUInt64.write(value.started, into: &buf)
+        FfiConverterUInt64.write(value.expires, into: &buf)
+        FfiConverterDouble.write(value.usdPerHour, into: &buf)
+        FfiConverterUInt64.write(value.billingStepSecs, into: &buf)
+        FfiConverterUInt64.write(value.billingMinSecs, into: &buf)
+        FfiConverterBool.write(value.pinned, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeElasticHost_lift(_ buf: RustBuffer) throws -> ElasticHost {
+    return try FfiConverterTypeElasticHost.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeElasticHost_lower(_ value: ElasticHost) -> RustBuffer {
+    return FfiConverterTypeElasticHost.lower(value)
+}
+
+
+/**
+ * A machine the plan adds.
+ */
+public struct ElasticNewHost: Equatable, Hashable {
+    public var provider: String
+    public var typeName: String
+    public var region: String
+    public var usdPerHour: Double
+    public var bootSecs: UInt32
+    /**
+     * Seconds billed for the work it gets.
+     */
+    public var billedSecs: UInt64
+    /**
+     * A Spaces supplier's Space (Modal), not a host.
+     */
+    public var oneSpace: Bool
+    /**
+     * Estimated round trip from the requester, ms (0: unknown).
+     */
+    public var rttMs: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(provider: String, typeName: String, region: String, usdPerHour: Double, bootSecs: UInt32,
+        /**
+         * Seconds billed for the work it gets.
+         */billedSecs: UInt64,
+        /**
+         * A Spaces supplier's Space (Modal), not a host.
+         */oneSpace: Bool,
+        /**
+         * Estimated round trip from the requester, ms (0: unknown).
+         */rttMs: UInt32) {
+        self.provider = provider
+        self.typeName = typeName
+        self.region = region
+        self.usdPerHour = usdPerHour
+        self.bootSecs = bootSecs
+        self.billedSecs = billedSecs
+        self.oneSpace = oneSpace
+        self.rttMs = rttMs
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ElasticNewHost: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeElasticNewHost: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ElasticNewHost {
+        return
+            try ElasticNewHost(
+                provider: FfiConverterString.read(from: &buf),
+                typeName: FfiConverterString.read(from: &buf),
+                region: FfiConverterString.read(from: &buf),
+                usdPerHour: FfiConverterDouble.read(from: &buf),
+                bootSecs: FfiConverterUInt32.read(from: &buf),
+                billedSecs: FfiConverterUInt64.read(from: &buf),
+                oneSpace: FfiConverterBool.read(from: &buf),
+                rttMs: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ElasticNewHost, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.provider, into: &buf)
+        FfiConverterString.write(value.typeName, into: &buf)
+        FfiConverterString.write(value.region, into: &buf)
+        FfiConverterDouble.write(value.usdPerHour, into: &buf)
+        FfiConverterUInt32.write(value.bootSecs, into: &buf)
+        FfiConverterUInt64.write(value.billedSecs, into: &buf)
+        FfiConverterBool.write(value.oneSpace, into: &buf)
+        FfiConverterUInt32.write(value.rttMs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeElasticNewHost_lift(_ buf: RustBuffer) throws -> ElasticNewHost {
+    return try FfiConverterTypeElasticNewHost.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeElasticNewHost_lower(_ value: ElasticNewHost) -> RustBuffer {
+    return FfiConverterTypeElasticNewHost.lower(value)
+}
+
+
+/**
+ * The elastic pool's decision (`cloud_plan`).
+ */
+public struct ElasticPlan: Equatable, Hashable {
+    public var assignments: [ElasticAssignment]
+    public var newHosts: [ElasticNewHost]
+    public var unplaced: [ElasticUnplaced]
+    /**
+     * USD per hour the new machines add.
+     */
+    public var addedUsdPerHour: Double
+    /**
+     * USD the new machines cost for the work, billed.
+     */
+    public var projectedUsd: Double
+    /**
+     * A lower bound for any plan of the same work.
+     */
+    public var lowerBoundUsd: Double
+    /**
+     * `exact`, `exact-incumbent` or `greedy`.
+     */
+    public var solver: String
+    /**
+     * Seconds until the last Space can start.
+     */
+    public var readyInSecs: UInt32
+    /**
+     * One line per decision.
+     */
+    public var explain: [String]
+    /**
+     * The hosts added (with `apply`).
+     */
+    public var added: [ElasticHost]
+    /**
+     * The whole answer as JSON (the demand it detected, the pool it saw):
+     * what an agent inspects or edits.
+     */
+    public var json: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(assignments: [ElasticAssignment], newHosts: [ElasticNewHost], unplaced: [ElasticUnplaced],
+        /**
+         * USD per hour the new machines add.
+         */addedUsdPerHour: Double,
+        /**
+         * USD the new machines cost for the work, billed.
+         */projectedUsd: Double,
+        /**
+         * A lower bound for any plan of the same work.
+         */lowerBoundUsd: Double,
+        /**
+         * `exact`, `exact-incumbent` or `greedy`.
+         */solver: String,
+        /**
+         * Seconds until the last Space can start.
+         */readyInSecs: UInt32,
+        /**
+         * One line per decision.
+         */explain: [String],
+        /**
+         * The hosts added (with `apply`).
+         */added: [ElasticHost],
+        /**
+         * The whole answer as JSON (the demand it detected, the pool it saw):
+         * what an agent inspects or edits.
+         */json: String) {
+        self.assignments = assignments
+        self.newHosts = newHosts
+        self.unplaced = unplaced
+        self.addedUsdPerHour = addedUsdPerHour
+        self.projectedUsd = projectedUsd
+        self.lowerBoundUsd = lowerBoundUsd
+        self.solver = solver
+        self.readyInSecs = readyInSecs
+        self.explain = explain
+        self.added = added
+        self.json = json
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ElasticPlan: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeElasticPlan: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ElasticPlan {
+        return
+            try ElasticPlan(
+                assignments: FfiConverterSequenceTypeElasticAssignment.read(from: &buf),
+                newHosts: FfiConverterSequenceTypeElasticNewHost.read(from: &buf),
+                unplaced: FfiConverterSequenceTypeElasticUnplaced.read(from: &buf),
+                addedUsdPerHour: FfiConverterDouble.read(from: &buf),
+                projectedUsd: FfiConverterDouble.read(from: &buf),
+                lowerBoundUsd: FfiConverterDouble.read(from: &buf),
+                solver: FfiConverterString.read(from: &buf),
+                readyInSecs: FfiConverterUInt32.read(from: &buf),
+                explain: FfiConverterSequenceString.read(from: &buf),
+                added: FfiConverterSequenceTypeElasticHost.read(from: &buf),
+                json: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ElasticPlan, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeElasticAssignment.write(value.assignments, into: &buf)
+        FfiConverterSequenceTypeElasticNewHost.write(value.newHosts, into: &buf)
+        FfiConverterSequenceTypeElasticUnplaced.write(value.unplaced, into: &buf)
+        FfiConverterDouble.write(value.addedUsdPerHour, into: &buf)
+        FfiConverterDouble.write(value.projectedUsd, into: &buf)
+        FfiConverterDouble.write(value.lowerBoundUsd, into: &buf)
+        FfiConverterString.write(value.solver, into: &buf)
+        FfiConverterUInt32.write(value.readyInSecs, into: &buf)
+        FfiConverterSequenceString.write(value.explain, into: &buf)
+        FfiConverterSequenceTypeElasticHost.write(value.added, into: &buf)
+        FfiConverterString.write(value.json, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeElasticPlan_lift(_ buf: RustBuffer) throws -> ElasticPlan {
+    return try FfiConverterTypeElasticPlan.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeElasticPlan_lower(_ value: ElasticPlan) -> RustBuffer {
+    return FfiConverterTypeElasticPlan.lower(value)
+}
+
+
+/**
+ * What to plan for (`cloud_plan`). Pins are constraints of the same
+ * solve: leave them unset to let the pool decide.
+ */
+public struct ElasticPlanRequest: Equatable, Hashable {
+    /**
+     * How many Spaces (default 1).
+     */
+    public var count: UInt32?
+    /**
+     * Image (default linux).
+     */
+    public var image: String?
+    /**
+     * `container`, `vm` or `microvm` (default: from the image).
+     */
+    public var kind: String?
+    /**
+     * vCPUs each (default: learned from earlier Spaces of the image).
+     */
+    public var cpus: UInt32?
+    /**
+     * MiB each.
+     */
+    public var memoryMb: UInt64?
+    /**
+     * Keep them on one machine (forks of one checkpoint).
+     */
+    public var together: Bool?
+    /**
+     * `interactive`, `batch`, `compat` or `persistent_agent`.
+     */
+    public var caller: String?
+    /**
+     * Expected lifetime, seconds.
+     */
+    public var durationSecs: UInt64?
+    /**
+     * Only this cloud.
+     */
+    public var provider: String?
+    /**
+     * Only this region.
+     */
+    public var region: String?
+    /**
+     * Only this machine type.
+     */
+    public var instanceType: String?
+    /**
+     * Exactly this many new machines.
+     */
+    public var hosts: UInt32?
+    /**
+     * Add no machines.
+     */
+    public var noScale: Bool?
+    /**
+     * Only your own devices.
+     */
+    public var devicesOnly: Bool?
+    /**
+     * A $/hour cap for this plan.
+     */
+    public var maxUsdPerHour: Double?
+    /**
+     * Add the machines the plan needs.
+     */
+    public var apply: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * How many Spaces (default 1).
+         */count: UInt32? = nil,
+        /**
+         * Image (default linux).
+         */image: String? = nil,
+        /**
+         * `container`, `vm` or `microvm` (default: from the image).
+         */kind: String? = nil,
+        /**
+         * vCPUs each (default: learned from earlier Spaces of the image).
+         */cpus: UInt32? = nil,
+        /**
+         * MiB each.
+         */memoryMb: UInt64? = nil,
+        /**
+         * Keep them on one machine (forks of one checkpoint).
+         */together: Bool? = nil,
+        /**
+         * `interactive`, `batch`, `compat` or `persistent_agent`.
+         */caller: String? = nil,
+        /**
+         * Expected lifetime, seconds.
+         */durationSecs: UInt64? = nil,
+        /**
+         * Only this cloud.
+         */provider: String? = nil,
+        /**
+         * Only this region.
+         */region: String? = nil,
+        /**
+         * Only this machine type.
+         */instanceType: String? = nil,
+        /**
+         * Exactly this many new machines.
+         */hosts: UInt32? = nil,
+        /**
+         * Add no machines.
+         */noScale: Bool? = nil,
+        /**
+         * Only your own devices.
+         */devicesOnly: Bool? = nil,
+        /**
+         * A $/hour cap for this plan.
+         */maxUsdPerHour: Double? = nil,
+        /**
+         * Add the machines the plan needs.
+         */apply: Bool = false) {
+        self.count = count
+        self.image = image
+        self.kind = kind
+        self.cpus = cpus
+        self.memoryMb = memoryMb
+        self.together = together
+        self.caller = caller
+        self.durationSecs = durationSecs
+        self.provider = provider
+        self.region = region
+        self.instanceType = instanceType
+        self.hosts = hosts
+        self.noScale = noScale
+        self.devicesOnly = devicesOnly
+        self.maxUsdPerHour = maxUsdPerHour
+        self.apply = apply
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ElasticPlanRequest: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeElasticPlanRequest: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ElasticPlanRequest {
+        return
+            try ElasticPlanRequest(
+                count: FfiConverterOptionUInt32.read(from: &buf),
+                image: FfiConverterOptionString.read(from: &buf),
+                kind: FfiConverterOptionString.read(from: &buf),
+                cpus: FfiConverterOptionUInt32.read(from: &buf),
+                memoryMb: FfiConverterOptionUInt64.read(from: &buf),
+                together: FfiConverterOptionBool.read(from: &buf),
+                caller: FfiConverterOptionString.read(from: &buf),
+                durationSecs: FfiConverterOptionUInt64.read(from: &buf),
+                provider: FfiConverterOptionString.read(from: &buf),
+                region: FfiConverterOptionString.read(from: &buf),
+                instanceType: FfiConverterOptionString.read(from: &buf),
+                hosts: FfiConverterOptionUInt32.read(from: &buf),
+                noScale: FfiConverterOptionBool.read(from: &buf),
+                devicesOnly: FfiConverterOptionBool.read(from: &buf),
+                maxUsdPerHour: FfiConverterOptionDouble.read(from: &buf),
+                apply: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ElasticPlanRequest, into buf: inout [UInt8]) {
+        FfiConverterOptionUInt32.write(value.count, into: &buf)
+        FfiConverterOptionString.write(value.image, into: &buf)
+        FfiConverterOptionString.write(value.kind, into: &buf)
+        FfiConverterOptionUInt32.write(value.cpus, into: &buf)
+        FfiConverterOptionUInt64.write(value.memoryMb, into: &buf)
+        FfiConverterOptionBool.write(value.together, into: &buf)
+        FfiConverterOptionString.write(value.caller, into: &buf)
+        FfiConverterOptionUInt64.write(value.durationSecs, into: &buf)
+        FfiConverterOptionString.write(value.provider, into: &buf)
+        FfiConverterOptionString.write(value.region, into: &buf)
+        FfiConverterOptionString.write(value.instanceType, into: &buf)
+        FfiConverterOptionUInt32.write(value.hosts, into: &buf)
+        FfiConverterOptionBool.write(value.noScale, into: &buf)
+        FfiConverterOptionBool.write(value.devicesOnly, into: &buf)
+        FfiConverterOptionDouble.write(value.maxUsdPerHour, into: &buf)
+        FfiConverterBool.write(value.apply, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeElasticPlanRequest_lift(_ buf: RustBuffer) throws -> ElasticPlanRequest {
+    return try FfiConverterTypeElasticPlanRequest.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeElasticPlanRequest_lower(_ value: ElasticPlanRequest) -> RustBuffer {
+    return FfiConverterTypeElasticPlanRequest.lower(value)
+}
+
+
+/**
+ * What `cloud_remove_host` did.
+ */
+public struct ElasticRemoved: Equatable, Hashable {
+    public var removed: [String]
+    /**
+     * `name: error` per host not removed.
+     */
+    public var failed: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(removed: [String],
+        /**
+         * `name: error` per host not removed.
+         */failed: [String]) {
+        self.removed = removed
+        self.failed = failed
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ElasticRemoved: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeElasticRemoved: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ElasticRemoved {
+        return
+            try ElasticRemoved(
+                removed: FfiConverterSequenceString.read(from: &buf),
+                failed: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ElasticRemoved, into buf: inout [UInt8]) {
+        FfiConverterSequenceString.write(value.removed, into: &buf)
+        FfiConverterSequenceString.write(value.failed, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeElasticRemoved_lift(_ buf: RustBuffer) throws -> ElasticRemoved {
+    return try FfiConverterTypeElasticRemoved.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeElasticRemoved_lower(_ value: ElasticRemoved) -> RustBuffer {
+    return FfiConverterTypeElasticRemoved.lower(value)
+}
+
+
+/**
+ * Spaces with no place, and why.
+ */
+public struct ElasticUnplaced: Equatable, Hashable {
+    public var group: String
+    public var count: UInt32
+    public var reason: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(group: String, count: UInt32, reason: String) {
+        self.group = group
+        self.count = count
+        self.reason = reason
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ElasticUnplaced: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeElasticUnplaced: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ElasticUnplaced {
+        return
+            try ElasticUnplaced(
+                group: FfiConverterString.read(from: &buf),
+                count: FfiConverterUInt32.read(from: &buf),
+                reason: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ElasticUnplaced, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.group, into: &buf)
+        FfiConverterUInt32.write(value.count, into: &buf)
+        FfiConverterString.write(value.reason, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeElasticUnplaced_lift(_ buf: RustBuffer) throws -> ElasticUnplaced {
+    return try FfiConverterTypeElasticUnplaced.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeElasticUnplaced_lower(_ value: ElasticUnplaced) -> RustBuffer {
+    return FfiConverterTypeElasticUnplaced.lower(value)
+}
+
+
+/**
  * How a process ended.
  */
 public struct ExitInfo: Equatable, Hashable {
@@ -20051,6 +25649,17 @@ public struct ExitInfo: Equatable, Hashable {
      * Terminating signal (`kill`, `term`, ...).
      */
     public var signal: String?
+    /**
+     * Raw number of the terminating signal on the guest's OS, set for every
+     * signal death, also for those `signal` has no name for (SIGSEGV,
+     * SIGABRT, SIGPIPE, ...).
+     */
+    public var signalNumber: Int32?
+    /**
+     * Conventional name of the terminating signal without `SIG`, in upper
+     * case ("SEGV", "ABRT"); independent of the guest's OS.
+     */
+    public var signalName: String?
     /**
      * Stopped by its timeout.
      */
@@ -20074,6 +25683,15 @@ public struct ExitInfo: Equatable, Hashable {
          * Terminating signal (`kill`, `term`, ...).
          */signal: String?,
         /**
+         * Raw number of the terminating signal on the guest's OS, set for every
+         * signal death, also for those `signal` has no name for (SIGSEGV,
+         * SIGABRT, SIGPIPE, ...).
+         */signalNumber: Int32? = nil,
+        /**
+         * Conventional name of the terminating signal without `SIG`, in upper
+         * case ("SEGV", "ABRT"); independent of the guest's OS.
+         */signalName: String? = nil,
+        /**
          * Stopped by its timeout.
          */timedOut: Bool,
         /**
@@ -20084,6 +25702,8 @@ public struct ExitInfo: Equatable, Hashable {
          */success: Bool) {
         self.code = code
         self.signal = signal
+        self.signalNumber = signalNumber
+        self.signalName = signalName
         self.timedOut = timedOut
         self.error = error
         self.success = success
@@ -20107,6 +25727,8 @@ public struct FfiConverterTypeExitInfo: FfiConverterRustBuffer {
             try ExitInfo(
                 code: FfiConverterOptionInt32.read(from: &buf),
                 signal: FfiConverterOptionString.read(from: &buf),
+                signalNumber: FfiConverterOptionInt32.read(from: &buf),
+                signalName: FfiConverterOptionString.read(from: &buf),
                 timedOut: FfiConverterBool.read(from: &buf),
                 error: FfiConverterOptionString.read(from: &buf),
                 success: FfiConverterBool.read(from: &buf)
@@ -20116,6 +25738,8 @@ public struct FfiConverterTypeExitInfo: FfiConverterRustBuffer {
     public static func write(_ value: ExitInfo, into buf: inout [UInt8]) {
         FfiConverterOptionInt32.write(value.code, into: &buf)
         FfiConverterOptionString.write(value.signal, into: &buf)
+        FfiConverterOptionInt32.write(value.signalNumber, into: &buf)
+        FfiConverterOptionString.write(value.signalName, into: &buf)
         FfiConverterBool.write(value.timedOut, into: &buf)
         FfiConverterOptionString.write(value.error, into: &buf)
         FfiConverterBool.write(value.success, into: &buf)
@@ -20170,6 +25794,21 @@ public struct FileEntry: Equatable, Hashable {
      * Symlink target.
      */
     public var symlinkTarget: String?
+    /**
+     * Owning user name (a numeric id when the guest has no such user);
+     * `None` where the guest has no owners (Windows).
+     */
+    public var owner: String?
+    /**
+     * Owning group name; `None` where the guest has none (Windows).
+     */
+    public var group: String?
+    /**
+     * Extended attributes under the call's `xattr_namespace` (default
+     * `user.cua.meta.`), without the prefix. Empty when there are none or
+     * the guest file system has no extended attributes.
+     */
+    public var metadata: [String: String]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -20194,7 +25833,19 @@ public struct FileEntry: Equatable, Hashable {
          */modifiedMs: Int64?,
         /**
          * Symlink target.
-         */symlinkTarget: String?) {
+         */symlinkTarget: String?,
+        /**
+         * Owning user name (a numeric id when the guest has no such user);
+         * `None` where the guest has no owners (Windows).
+         */owner: String?,
+        /**
+         * Owning group name; `None` where the guest has none (Windows).
+         */group: String?,
+        /**
+         * Extended attributes under the call's `xattr_namespace` (default
+         * `user.cua.meta.`), without the prefix. Empty when there are none or
+         * the guest file system has no extended attributes.
+         */metadata: [String: String]) {
         self.name = name
         self.path = path
         self.kind = kind
@@ -20202,6 +25853,9 @@ public struct FileEntry: Equatable, Hashable {
         self.mode = mode
         self.modifiedMs = modifiedMs
         self.symlinkTarget = symlinkTarget
+        self.owner = owner
+        self.group = group
+        self.metadata = metadata
     }
 
 
@@ -20226,7 +25880,10 @@ public struct FfiConverterTypeFileEntry: FfiConverterRustBuffer {
                 size: FfiConverterUInt64.read(from: &buf),
                 mode: FfiConverterUInt32.read(from: &buf),
                 modifiedMs: FfiConverterOptionInt64.read(from: &buf),
-                symlinkTarget: FfiConverterOptionString.read(from: &buf)
+                symlinkTarget: FfiConverterOptionString.read(from: &buf),
+                owner: FfiConverterOptionString.read(from: &buf),
+                group: FfiConverterOptionString.read(from: &buf),
+                metadata: FfiConverterDictionaryStringString.read(from: &buf)
         )
     }
 
@@ -20238,6 +25895,9 @@ public struct FfiConverterTypeFileEntry: FfiConverterRustBuffer {
         FfiConverterUInt32.write(value.mode, into: &buf)
         FfiConverterOptionInt64.write(value.modifiedMs, into: &buf)
         FfiConverterOptionString.write(value.symlinkTarget, into: &buf)
+        FfiConverterOptionString.write(value.owner, into: &buf)
+        FfiConverterOptionString.write(value.group, into: &buf)
+        FfiConverterDictionaryStringString.write(value.metadata, into: &buf)
     }
 }
 
@@ -20254,6 +25914,692 @@ public func FfiConverterTypeFileEntry_lift(_ buf: RustBuffer) throws -> FileEntr
 #endif
 public func FfiConverterTypeFileEntry_lower(_ value: FileEntry) -> RustBuffer {
     return FfiConverterTypeFileEntry.lower(value)
+}
+
+
+/**
+ * One fork of a batch. Ready, or failed with why.
+ */
+public struct ForkBatchItem: Equatable, Hashable {
+    /**
+     * Its index in the batch.
+     */
+    public var index: UInt32
+    /**
+     * Its group.
+     */
+    public var group: UInt32
+    /**
+     * Its checkpoint.
+     */
+    public var source: String
+    /**
+     * Its name.
+     */
+    public var name: String
+    /**
+     * The machine it runs on (`local` for this one).
+     */
+    public var host: String
+    /**
+     * The Space to connect to (`local:<name>`, `direct:<addr>`,
+     * `relay:<machine>`); empty when it failed.
+     */
+    public var space: String
+    /**
+     * Why it failed; empty when it is ready.
+     */
+    public var error: String
+    /**
+     * `host_failed`, `no_capacity`, `sync_failed`, `fork_failed` or
+     * `no_host` with `error`.
+     */
+    public var errorCode: String
+    /**
+     * Which placement it came from (1: the first).
+     */
+    public var attempt: UInt32
+    /**
+     * Milliseconds from the start of the batch until it was ready.
+     */
+    public var elapsedMs: UInt64
+    /**
+     * Milliseconds its own fork took.
+     */
+    public var forkMs: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Its index in the batch.
+         */index: UInt32,
+        /**
+         * Its group.
+         */group: UInt32,
+        /**
+         * Its checkpoint.
+         */source: String,
+        /**
+         * Its name.
+         */name: String,
+        /**
+         * The machine it runs on (`local` for this one).
+         */host: String,
+        /**
+         * The Space to connect to (`local:<name>`, `direct:<addr>`,
+         * `relay:<machine>`); empty when it failed.
+         */space: String,
+        /**
+         * Why it failed; empty when it is ready.
+         */error: String,
+        /**
+         * `host_failed`, `no_capacity`, `sync_failed`, `fork_failed` or
+         * `no_host` with `error`.
+         */errorCode: String,
+        /**
+         * Which placement it came from (1: the first).
+         */attempt: UInt32,
+        /**
+         * Milliseconds from the start of the batch until it was ready.
+         */elapsedMs: UInt64,
+        /**
+         * Milliseconds its own fork took.
+         */forkMs: UInt64) {
+        self.index = index
+        self.group = group
+        self.source = source
+        self.name = name
+        self.host = host
+        self.space = space
+        self.error = error
+        self.errorCode = errorCode
+        self.attempt = attempt
+        self.elapsedMs = elapsedMs
+        self.forkMs = forkMs
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ForkBatchItem: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeForkBatchItem: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ForkBatchItem {
+        return
+            try ForkBatchItem(
+                index: FfiConverterUInt32.read(from: &buf),
+                group: FfiConverterUInt32.read(from: &buf),
+                source: FfiConverterString.read(from: &buf),
+                name: FfiConverterString.read(from: &buf),
+                host: FfiConverterString.read(from: &buf),
+                space: FfiConverterString.read(from: &buf),
+                error: FfiConverterString.read(from: &buf),
+                errorCode: FfiConverterString.read(from: &buf),
+                attempt: FfiConverterUInt32.read(from: &buf),
+                elapsedMs: FfiConverterUInt64.read(from: &buf),
+                forkMs: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ForkBatchItem, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.index, into: &buf)
+        FfiConverterUInt32.write(value.group, into: &buf)
+        FfiConverterString.write(value.source, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.host, into: &buf)
+        FfiConverterString.write(value.space, into: &buf)
+        FfiConverterString.write(value.error, into: &buf)
+        FfiConverterString.write(value.errorCode, into: &buf)
+        FfiConverterUInt32.write(value.attempt, into: &buf)
+        FfiConverterUInt64.write(value.elapsedMs, into: &buf)
+        FfiConverterUInt64.write(value.forkMs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeForkBatchItem_lift(_ buf: RustBuffer) throws -> ForkBatchItem {
+    return try FfiConverterTypeForkBatchItem.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeForkBatchItem_lower(_ value: ForkBatchItem) -> RustBuffer {
+    return FfiConverterTypeForkBatchItem.lower(value)
+}
+
+
+/**
+ * A group's placement. Where its forks went.
+ */
+public struct ForkBatchPlacement: Equatable, Hashable {
+    /**
+     * The group.
+     */
+    public var group: UInt32
+    /**
+     * Its checkpoint.
+     */
+    public var source: String
+    /**
+     * The machine.
+     */
+    public var host: String
+    /**
+     * How many of its forks go there.
+     */
+    public var count: UInt32
+    /**
+     * 1 for the first placement, higher when placed again.
+     */
+    public var attempt: UInt32
+    /**
+     * The checkpoint is copied there first.
+     */
+    public var needsSync: Bool
+    /**
+     * Why there.
+     */
+    public var reason: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The group.
+         */group: UInt32,
+        /**
+         * Its checkpoint.
+         */source: String,
+        /**
+         * The machine.
+         */host: String,
+        /**
+         * How many of its forks go there.
+         */count: UInt32,
+        /**
+         * 1 for the first placement, higher when placed again.
+         */attempt: UInt32,
+        /**
+         * The checkpoint is copied there first.
+         */needsSync: Bool,
+        /**
+         * Why there.
+         */reason: String) {
+        self.group = group
+        self.source = source
+        self.host = host
+        self.count = count
+        self.attempt = attempt
+        self.needsSync = needsSync
+        self.reason = reason
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ForkBatchPlacement: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeForkBatchPlacement: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ForkBatchPlacement {
+        return
+            try ForkBatchPlacement(
+                group: FfiConverterUInt32.read(from: &buf),
+                source: FfiConverterString.read(from: &buf),
+                host: FfiConverterString.read(from: &buf),
+                count: FfiConverterUInt32.read(from: &buf),
+                attempt: FfiConverterUInt32.read(from: &buf),
+                needsSync: FfiConverterBool.read(from: &buf),
+                reason: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ForkBatchPlacement, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.group, into: &buf)
+        FfiConverterString.write(value.source, into: &buf)
+        FfiConverterString.write(value.host, into: &buf)
+        FfiConverterUInt32.write(value.count, into: &buf)
+        FfiConverterUInt32.write(value.attempt, into: &buf)
+        FfiConverterBool.write(value.needsSync, into: &buf)
+        FfiConverterString.write(value.reason, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeForkBatchPlacement_lift(_ buf: RustBuffer) throws -> ForkBatchPlacement {
+    return try FfiConverterTypeForkBatchPlacement.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeForkBatchPlacement_lower(_ value: ForkBatchPlacement) -> RustBuffer {
+    return FfiConverterTypeForkBatchPlacement.lower(value)
+}
+
+
+/**
+ * A finished batch. Every fork and the summary ([`ForkBatch::collect`]).
+ */
+public struct ForkBatchResult: Equatable, Hashable {
+    /**
+     * The forks, by index.
+     */
+    public var items: [ForkBatchItem]
+    /**
+     * The summary.
+     */
+    public var summary: ForkBatchSummary
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The forks, by index.
+         */items: [ForkBatchItem],
+        /**
+         * The summary.
+         */summary: ForkBatchSummary) {
+        self.items = items
+        self.summary = summary
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ForkBatchResult: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeForkBatchResult: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ForkBatchResult {
+        return
+            try ForkBatchResult(
+                items: FfiConverterSequenceTypeForkBatchItem.read(from: &buf),
+                summary: FfiConverterTypeForkBatchSummary.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ForkBatchResult, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeForkBatchItem.write(value.items, into: &buf)
+        FfiConverterTypeForkBatchSummary.write(value.summary, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeForkBatchResult_lift(_ buf: RustBuffer) throws -> ForkBatchResult {
+    return try FfiConverterTypeForkBatchResult.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeForkBatchResult_lower(_ value: ForkBatchResult) -> RustBuffer {
+    return FfiConverterTypeForkBatchResult.lower(value)
+}
+
+
+/**
+ * A batch's summary.
+ */
+public struct ForkBatchSummary: Equatable, Hashable {
+    /**
+     * Forks that are ready.
+     */
+    public var ok: UInt32
+    /**
+     * Forks that failed.
+     */
+    public var failed: UInt32
+    /**
+     * Milliseconds the batch took.
+     */
+    public var elapsedMs: UInt64
+    /**
+     * Ready forks per machine.
+     */
+    public var perHost: [String: UInt32]
+    /**
+     * Most forks starting at once per machine.
+     */
+    public var peakParallel: [String: UInt32]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Forks that are ready.
+         */ok: UInt32,
+        /**
+         * Forks that failed.
+         */failed: UInt32,
+        /**
+         * Milliseconds the batch took.
+         */elapsedMs: UInt64,
+        /**
+         * Ready forks per machine.
+         */perHost: [String: UInt32],
+        /**
+         * Most forks starting at once per machine.
+         */peakParallel: [String: UInt32]) {
+        self.ok = ok
+        self.failed = failed
+        self.elapsedMs = elapsedMs
+        self.perHost = perHost
+        self.peakParallel = peakParallel
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ForkBatchSummary: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeForkBatchSummary: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ForkBatchSummary {
+        return
+            try ForkBatchSummary(
+                ok: FfiConverterUInt32.read(from: &buf),
+                failed: FfiConverterUInt32.read(from: &buf),
+                elapsedMs: FfiConverterUInt64.read(from: &buf),
+                perHost: FfiConverterDictionaryStringUInt32.read(from: &buf),
+                peakParallel: FfiConverterDictionaryStringUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ForkBatchSummary, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.ok, into: &buf)
+        FfiConverterUInt32.write(value.failed, into: &buf)
+        FfiConverterUInt64.write(value.elapsedMs, into: &buf)
+        FfiConverterDictionaryStringUInt32.write(value.perHost, into: &buf)
+        FfiConverterDictionaryStringUInt32.write(value.peakParallel, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeForkBatchSummary_lift(_ buf: RustBuffer) throws -> ForkBatchSummary {
+    return try FfiConverterTypeForkBatchSummary.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeForkBatchSummary_lower(_ value: ForkBatchSummary) -> RustBuffer {
+    return FfiConverterTypeForkBatchSummary.lower(value)
+}
+
+
+/**
+ * A group of forks. The forks of one checkpoint that go to one machine
+ * together ([`Sandboxes::fork_groups`]).
+ */
+public struct ForkGroup: Equatable, Hashable {
+    /**
+     * The checkpoint, or a local sandbox (see [`Sandboxes::fork_many`]).
+     */
+    public var source: String
+    /**
+     * How many forks.
+     */
+    public var count: UInt32
+    /**
+     * Names are `<prefix>-<n>` (empty: the batch's).
+     */
+    public var namePrefix: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The checkpoint, or a local sandbox (see [`Sandboxes::fork_many`]).
+         */source: String,
+        /**
+         * How many forks.
+         */count: UInt32,
+        /**
+         * Names are `<prefix>-<n>` (empty: the batch's).
+         */namePrefix: String = "") {
+        self.source = source
+        self.count = count
+        self.namePrefix = namePrefix
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ForkGroup: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeForkGroup: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ForkGroup {
+        return
+            try ForkGroup(
+                source: FfiConverterString.read(from: &buf),
+                count: FfiConverterUInt32.read(from: &buf),
+                namePrefix: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ForkGroup, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.source, into: &buf)
+        FfiConverterUInt32.write(value.count, into: &buf)
+        FfiConverterString.write(value.namePrefix, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeForkGroup_lift(_ buf: RustBuffer) throws -> ForkGroup {
+    return try FfiConverterTypeForkGroup.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeForkGroup_lower(_ value: ForkGroup) -> RustBuffer {
+    return FfiConverterTypeForkGroup.lower(value)
+}
+
+
+/**
+ * Batched fork options. For [`Sandboxes::fork_many`] and
+ * [`Sandboxes::fork_groups`].
+ */
+public struct ForkManyOptions: Equatable, Hashable {
+    /**
+     * Where: `local` (this machine, the default), `auto` (your machines
+     * that provide Spaces, this one included, least loaded first) or
+     * `host:<machine>`.
+     */
+    public var on: String?
+    /**
+     * Forks per group for [`Sandboxes::fork_many`] (0: all in one group).
+     * A group's forks go to one machine, so they share the checkpoint's
+     * memory there.
+     */
+    public var groupSize: UInt32
+    /**
+     * Forks started at once on one machine (0: 4).
+     */
+    public var maxParallelPerHost: UInt32
+    /**
+     * Names are `<prefix>-<n>` (empty: `<checkpoint>-<random>`).
+     */
+    public var namePrefix: String
+    /**
+     * vCPUs each fork is counted as when placing (0: 1, as forks of one
+     * world are mostly idle).
+     */
+    public var cpus: UInt32
+    /**
+     * Memory (MiB) each fork is counted as when placing (0: the
+     * checkpoint's).
+     */
+    public var memoryMb: UInt64
+    /**
+     * Times forks of a machine that failed (or was full) are placed again
+     * on another (0: once).
+     */
+    public var retries: UInt32
+    /**
+     * Never place failed forks again: report them.
+     */
+    public var noRetry: Bool
+    /**
+     * Where machines fetch a checkpoint they lack when the one that holds
+     * it cannot be reached.
+     */
+    public var fallback: SnapshotFallbackOptions?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Where: `local` (this machine, the default), `auto` (your machines
+         * that provide Spaces, this one included, least loaded first) or
+         * `host:<machine>`.
+         */on: String? = nil,
+        /**
+         * Forks per group for [`Sandboxes::fork_many`] (0: all in one group).
+         * A group's forks go to one machine, so they share the checkpoint's
+         * memory there.
+         */groupSize: UInt32 = UInt32(0),
+        /**
+         * Forks started at once on one machine (0: 4).
+         */maxParallelPerHost: UInt32 = UInt32(0),
+        /**
+         * Names are `<prefix>-<n>` (empty: `<checkpoint>-<random>`).
+         */namePrefix: String = "",
+        /**
+         * vCPUs each fork is counted as when placing (0: 1, as forks of one
+         * world are mostly idle).
+         */cpus: UInt32 = UInt32(0),
+        /**
+         * Memory (MiB) each fork is counted as when placing (0: the
+         * checkpoint's).
+         */memoryMb: UInt64 = UInt64(0),
+        /**
+         * Times forks of a machine that failed (or was full) are placed again
+         * on another (0: once).
+         */retries: UInt32 = UInt32(0),
+        /**
+         * Never place failed forks again: report them.
+         */noRetry: Bool = false,
+        /**
+         * Where machines fetch a checkpoint they lack when the one that holds
+         * it cannot be reached.
+         */fallback: SnapshotFallbackOptions? = nil) {
+        self.on = on
+        self.groupSize = groupSize
+        self.maxParallelPerHost = maxParallelPerHost
+        self.namePrefix = namePrefix
+        self.cpus = cpus
+        self.memoryMb = memoryMb
+        self.retries = retries
+        self.noRetry = noRetry
+        self.fallback = fallback
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ForkManyOptions: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeForkManyOptions: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ForkManyOptions {
+        return
+            try ForkManyOptions(
+                on: FfiConverterOptionString.read(from: &buf),
+                groupSize: FfiConverterUInt32.read(from: &buf),
+                maxParallelPerHost: FfiConverterUInt32.read(from: &buf),
+                namePrefix: FfiConverterString.read(from: &buf),
+                cpus: FfiConverterUInt32.read(from: &buf),
+                memoryMb: FfiConverterUInt64.read(from: &buf),
+                retries: FfiConverterUInt32.read(from: &buf),
+                noRetry: FfiConverterBool.read(from: &buf),
+                fallback: FfiConverterOptionTypeSnapshotFallbackOptions.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ForkManyOptions, into buf: inout [UInt8]) {
+        FfiConverterOptionString.write(value.on, into: &buf)
+        FfiConverterUInt32.write(value.groupSize, into: &buf)
+        FfiConverterUInt32.write(value.maxParallelPerHost, into: &buf)
+        FfiConverterString.write(value.namePrefix, into: &buf)
+        FfiConverterUInt32.write(value.cpus, into: &buf)
+        FfiConverterUInt64.write(value.memoryMb, into: &buf)
+        FfiConverterUInt32.write(value.retries, into: &buf)
+        FfiConverterBool.write(value.noRetry, into: &buf)
+        FfiConverterOptionTypeSnapshotFallbackOptions.write(value.fallback, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeForkManyOptions_lift(_ buf: RustBuffer) throws -> ForkManyOptions {
+    return try FfiConverterTypeForkManyOptions.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeForkManyOptions_lower(_ value: ForkManyOptions) -> RustBuffer {
+    return FfiConverterTypeForkManyOptions.lower(value)
 }
 
 
@@ -23084,6 +29430,75 @@ public func FfiConverterTypeMediaStats_lower(_ value: MediaStats) -> RustBuffer 
 
 
 /**
+ * A named volume of Cua Volume ([`Spaces::volumes`]).
+ */
+public struct NamedVolume: Equatable, Hashable {
+    /**
+     * The name.
+     */
+    public var name: String
+    /**
+     * Ids of the Spaces that mount it.
+     */
+    public var mountedIn: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The name.
+         */name: String,
+        /**
+         * Ids of the Spaces that mount it.
+         */mountedIn: [String]) {
+        self.name = name
+        self.mountedIn = mountedIn
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension NamedVolume: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNamedVolume: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NamedVolume {
+        return
+            try NamedVolume(
+                name: FfiConverterString.read(from: &buf),
+                mountedIn: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NamedVolume, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterSequenceString.write(value.mountedIn, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNamedVolume_lift(_ buf: RustBuffer) throws -> NamedVolume {
+    return try FfiConverterTypeNamedVolume.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNamedVolume_lower(_ value: NamedVolume) -> RustBuffer {
+    return FfiConverterTypeNamedVolume.lower(value)
+}
+
+
+/**
  * One entry of the notifications feed.
  */
 public struct NotificationInfo: Equatable, Hashable {
@@ -23821,6 +30236,219 @@ public func FfiConverterTypePoint_lift(_ buf: RustBuffer) throws -> Point {
 #endif
 public func FfiConverterTypePoint_lower(_ value: Point) -> RustBuffer {
     return FfiConverterTypePoint.lower(value)
+}
+
+
+/**
+ * What a pool's sandboxes are and how many it keeps ready
+ * ([`Sandboxes::create_pool`]). The shape fields mean what they mean in
+ * [`SandboxCreateOptions`].
+ */
+public struct PoolCreateOptions: Equatable, Hashable {
+    /**
+     * Pool name (lower-case letters, digits and `-`). `None`: a new name.
+     * The name of an existing pool updates it.
+     */
+    public var name: String?
+    /**
+     * Where its sandboxes run: `local` (the default; the only location
+     * with pools today).
+     */
+    public var on: String?
+    /**
+     * What kind of machine: `auto`, `container`, `vm` or `microvm`.
+     */
+    public var kind: String?
+    /**
+     * Which engine: `auto` or one the location offers for the kind.
+     */
+    public var runtime: String?
+    /**
+     * Guest OS (`linux`, `macos`, `windows`).
+     */
+    public var os: String?
+    /**
+     * vCPUs of each sandbox.
+     */
+    public var cpus: UInt32?
+    /**
+     * Memory of each sandbox (MiB).
+     */
+    public var memoryMb: UInt64?
+    /**
+     * Guest environment.
+     */
+    public var env: [String: String]
+    /**
+     * Extra guest ports to publish.
+     */
+    public var ports: [UInt16]
+    /**
+     * Named services (name → guest port).
+     */
+    public var services: [String: UInt16]
+    /**
+     * The sandboxes' command (argv), replacing the image's entrypoint (as
+     * [`SandboxCreateOptions::command`]).
+     */
+    public var command: [String]?
+    /**
+     * Sandboxes without a desktop (as [`SandboxCreateOptions::headless`]).
+     */
+    public var headless: Bool
+    /**
+     * Sandboxes kept ready at all times (refilled right after each create
+     * from the pool).
+     */
+    public var min: UInt32
+    /**
+     * The most kept ready, not counting those created from the pool
+     * (default: `min`).
+     */
+    public var max: UInt32?
+    /**
+     * After this long without a create from the pool it keeps none ready,
+     * until the next create (default: never).
+     */
+    public var idleMs: UInt64?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Pool name (lower-case letters, digits and `-`). `None`: a new name.
+         * The name of an existing pool updates it.
+         */name: String? = nil,
+        /**
+         * Where its sandboxes run: `local` (the default; the only location
+         * with pools today).
+         */on: String? = nil,
+        /**
+         * What kind of machine: `auto`, `container`, `vm` or `microvm`.
+         */kind: String? = nil,
+        /**
+         * Which engine: `auto` or one the location offers for the kind.
+         */runtime: String? = nil,
+        /**
+         * Guest OS (`linux`, `macos`, `windows`).
+         */os: String? = nil,
+        /**
+         * vCPUs of each sandbox.
+         */cpus: UInt32? = nil,
+        /**
+         * Memory of each sandbox (MiB).
+         */memoryMb: UInt64? = nil,
+        /**
+         * Guest environment.
+         */env: [String: String] = [:],
+        /**
+         * Extra guest ports to publish.
+         */ports: [UInt16] = [],
+        /**
+         * Named services (name → guest port).
+         */services: [String: UInt16] = [:],
+        /**
+         * The sandboxes' command (argv), replacing the image's entrypoint (as
+         * [`SandboxCreateOptions::command`]).
+         */command: [String]? = nil,
+        /**
+         * Sandboxes without a desktop (as [`SandboxCreateOptions::headless`]).
+         */headless: Bool = false,
+        /**
+         * Sandboxes kept ready at all times (refilled right after each create
+         * from the pool).
+         */min: UInt32 = UInt32(1),
+        /**
+         * The most kept ready, not counting those created from the pool
+         * (default: `min`).
+         */max: UInt32? = nil,
+        /**
+         * After this long without a create from the pool it keeps none ready,
+         * until the next create (default: never).
+         */idleMs: UInt64? = nil) {
+        self.name = name
+        self.on = on
+        self.kind = kind
+        self.runtime = runtime
+        self.os = os
+        self.cpus = cpus
+        self.memoryMb = memoryMb
+        self.env = env
+        self.ports = ports
+        self.services = services
+        self.command = command
+        self.headless = headless
+        self.min = min
+        self.max = max
+        self.idleMs = idleMs
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension PoolCreateOptions: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePoolCreateOptions: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PoolCreateOptions {
+        return
+            try PoolCreateOptions(
+                name: FfiConverterOptionString.read(from: &buf),
+                on: FfiConverterOptionString.read(from: &buf),
+                kind: FfiConverterOptionString.read(from: &buf),
+                runtime: FfiConverterOptionString.read(from: &buf),
+                os: FfiConverterOptionString.read(from: &buf),
+                cpus: FfiConverterOptionUInt32.read(from: &buf),
+                memoryMb: FfiConverterOptionUInt64.read(from: &buf),
+                env: FfiConverterDictionaryStringString.read(from: &buf),
+                ports: FfiConverterSequenceUInt16.read(from: &buf),
+                services: FfiConverterDictionaryStringUInt16.read(from: &buf),
+                command: FfiConverterOptionSequenceString.read(from: &buf),
+                headless: FfiConverterBool.read(from: &buf),
+                min: FfiConverterUInt32.read(from: &buf),
+                max: FfiConverterOptionUInt32.read(from: &buf),
+                idleMs: FfiConverterOptionUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PoolCreateOptions, into buf: inout [UInt8]) {
+        FfiConverterOptionString.write(value.name, into: &buf)
+        FfiConverterOptionString.write(value.on, into: &buf)
+        FfiConverterOptionString.write(value.kind, into: &buf)
+        FfiConverterOptionString.write(value.runtime, into: &buf)
+        FfiConverterOptionString.write(value.os, into: &buf)
+        FfiConverterOptionUInt32.write(value.cpus, into: &buf)
+        FfiConverterOptionUInt64.write(value.memoryMb, into: &buf)
+        FfiConverterDictionaryStringString.write(value.env, into: &buf)
+        FfiConverterSequenceUInt16.write(value.ports, into: &buf)
+        FfiConverterDictionaryStringUInt16.write(value.services, into: &buf)
+        FfiConverterOptionSequenceString.write(value.command, into: &buf)
+        FfiConverterBool.write(value.headless, into: &buf)
+        FfiConverterUInt32.write(value.min, into: &buf)
+        FfiConverterOptionUInt32.write(value.max, into: &buf)
+        FfiConverterOptionUInt64.write(value.idleMs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePoolCreateOptions_lift(_ buf: RustBuffer) throws -> PoolCreateOptions {
+    return try FfiConverterTypePoolCreateOptions.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePoolCreateOptions_lower(_ value: PoolCreateOptions) -> RustBuffer {
+    return FfiConverterTypePoolCreateOptions.lower(value)
 }
 
 
@@ -24606,6 +31234,320 @@ public func FfiConverterTypePresencePoint_lift(_ buf: RustBuffer) throws -> Pres
 #endif
 public func FfiConverterTypePresencePoint_lower(_ value: PresencePoint) -> RustBuffer {
     return FfiConverterTypePresencePoint.lower(value)
+}
+
+
+/**
+ * Spaces of one shape the elastic pool keeps ready: the next creates of
+ * that shape claim them in a fraction of a second.
+ */
+public struct Prewarm: Equatable, Hashable {
+    /**
+     * `pw-xxxxxx`.
+     */
+    public var id: String
+    public var image: String
+    public var kind: String
+    public var cpus: UInt32
+    public var memoryMb: UInt64
+    /**
+     * Asked.
+     */
+    public var count: UInt32
+    /**
+     * Ready now.
+     */
+    public var ready: UInt32
+    public var placements: [PrewarmPlacement]
+    /**
+     * Unix seconds.
+     */
+    public var expiresAt: UInt64
+    /**
+     * Hosts added for it.
+     */
+    public var newHosts: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `pw-xxxxxx`.
+         */id: String, image: String, kind: String, cpus: UInt32, memoryMb: UInt64,
+        /**
+         * Asked.
+         */count: UInt32,
+        /**
+         * Ready now.
+         */ready: UInt32, placements: [PrewarmPlacement],
+        /**
+         * Unix seconds.
+         */expiresAt: UInt64,
+        /**
+         * Hosts added for it.
+         */newHosts: [String]) {
+        self.id = id
+        self.image = image
+        self.kind = kind
+        self.cpus = cpus
+        self.memoryMb = memoryMb
+        self.count = count
+        self.ready = ready
+        self.placements = placements
+        self.expiresAt = expiresAt
+        self.newHosts = newHosts
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension Prewarm: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePrewarm: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Prewarm {
+        return
+            try Prewarm(
+                id: FfiConverterString.read(from: &buf),
+                image: FfiConverterString.read(from: &buf),
+                kind: FfiConverterString.read(from: &buf),
+                cpus: FfiConverterUInt32.read(from: &buf),
+                memoryMb: FfiConverterUInt64.read(from: &buf),
+                count: FfiConverterUInt32.read(from: &buf),
+                ready: FfiConverterUInt32.read(from: &buf),
+                placements: FfiConverterSequenceTypePrewarmPlacement.read(from: &buf),
+                expiresAt: FfiConverterUInt64.read(from: &buf),
+                newHosts: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: Prewarm, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.image, into: &buf)
+        FfiConverterString.write(value.kind, into: &buf)
+        FfiConverterUInt32.write(value.cpus, into: &buf)
+        FfiConverterUInt64.write(value.memoryMb, into: &buf)
+        FfiConverterUInt32.write(value.count, into: &buf)
+        FfiConverterUInt32.write(value.ready, into: &buf)
+        FfiConverterSequenceTypePrewarmPlacement.write(value.placements, into: &buf)
+        FfiConverterUInt64.write(value.expiresAt, into: &buf)
+        FfiConverterSequenceString.write(value.newHosts, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePrewarm_lift(_ buf: RustBuffer) throws -> Prewarm {
+    return try FfiConverterTypePrewarm.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePrewarm_lower(_ value: Prewarm) -> RustBuffer {
+    return FfiConverterTypePrewarm.lower(value)
+}
+
+
+/**
+ * What to keep ready (`Spaces::prewarm`).
+ */
+public struct PrewarmOptions: Equatable, Hashable {
+    /**
+     * How many, 1 to 256 (default 1).
+     */
+    public var count: UInt32?
+    /**
+     * `auto` (default), `local`, a linked cloud or `host:<machine>`.
+     */
+    public var on: String?
+    /**
+     * `container`, `vm` or `microvm` (default: the image's).
+     */
+    public var kind: String?
+    public var cpus: UInt32?
+    public var memoryMb: UInt64?
+    /**
+     * Seconds to keep them (default 3600).
+     */
+    public var ttlSecs: UInt64?
+    /**
+     * Only this cloud machine type.
+     */
+    public var instanceType: String?
+    /**
+     * Only this cloud region.
+     */
+    public var region: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * How many, 1 to 256 (default 1).
+         */count: UInt32? = nil,
+        /**
+         * `auto` (default), `local`, a linked cloud or `host:<machine>`.
+         */on: String? = nil,
+        /**
+         * `container`, `vm` or `microvm` (default: the image's).
+         */kind: String? = nil, cpus: UInt32? = nil, memoryMb: UInt64? = nil,
+        /**
+         * Seconds to keep them (default 3600).
+         */ttlSecs: UInt64? = nil,
+        /**
+         * Only this cloud machine type.
+         */instanceType: String? = nil,
+        /**
+         * Only this cloud region.
+         */region: String? = nil) {
+        self.count = count
+        self.on = on
+        self.kind = kind
+        self.cpus = cpus
+        self.memoryMb = memoryMb
+        self.ttlSecs = ttlSecs
+        self.instanceType = instanceType
+        self.region = region
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension PrewarmOptions: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePrewarmOptions: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PrewarmOptions {
+        return
+            try PrewarmOptions(
+                count: FfiConverterOptionUInt32.read(from: &buf),
+                on: FfiConverterOptionString.read(from: &buf),
+                kind: FfiConverterOptionString.read(from: &buf),
+                cpus: FfiConverterOptionUInt32.read(from: &buf),
+                memoryMb: FfiConverterOptionUInt64.read(from: &buf),
+                ttlSecs: FfiConverterOptionUInt64.read(from: &buf),
+                instanceType: FfiConverterOptionString.read(from: &buf),
+                region: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PrewarmOptions, into buf: inout [UInt8]) {
+        FfiConverterOptionUInt32.write(value.count, into: &buf)
+        FfiConverterOptionString.write(value.on, into: &buf)
+        FfiConverterOptionString.write(value.kind, into: &buf)
+        FfiConverterOptionUInt32.write(value.cpus, into: &buf)
+        FfiConverterOptionUInt64.write(value.memoryMb, into: &buf)
+        FfiConverterOptionUInt64.write(value.ttlSecs, into: &buf)
+        FfiConverterOptionString.write(value.instanceType, into: &buf)
+        FfiConverterOptionString.write(value.region, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePrewarmOptions_lift(_ buf: RustBuffer) throws -> PrewarmOptions {
+    return try FfiConverterTypePrewarmOptions.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePrewarmOptions_lower(_ value: PrewarmOptions) -> RustBuffer {
+    return FfiConverterTypePrewarmOptions.lower(value)
+}
+
+
+/**
+ * Where a prewarm keeps Spaces ready.
+ */
+public struct PrewarmPlacement: Equatable, Hashable {
+    /**
+     * The machine's name.
+     */
+    public var host: String
+    /**
+     * `local` or its relay machine id.
+     */
+    public var machine: String
+    public var count: UInt32
+    public var ready: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The machine's name.
+         */host: String,
+        /**
+         * `local` or its relay machine id.
+         */machine: String, count: UInt32, ready: UInt32) {
+        self.host = host
+        self.machine = machine
+        self.count = count
+        self.ready = ready
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension PrewarmPlacement: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePrewarmPlacement: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PrewarmPlacement {
+        return
+            try PrewarmPlacement(
+                host: FfiConverterString.read(from: &buf),
+                machine: FfiConverterString.read(from: &buf),
+                count: FfiConverterUInt32.read(from: &buf),
+                ready: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PrewarmPlacement, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.host, into: &buf)
+        FfiConverterString.write(value.machine, into: &buf)
+        FfiConverterUInt32.write(value.count, into: &buf)
+        FfiConverterUInt32.write(value.ready, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePrewarmPlacement_lift(_ buf: RustBuffer) throws -> PrewarmPlacement {
+    return try FfiConverterTypePrewarmPlacement.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePrewarmPlacement_lower(_ value: PrewarmPlacement) -> RustBuffer {
+    return FfiConverterTypePrewarmPlacement.lower(value)
 }
 
 
@@ -26195,6 +33137,13 @@ public struct SandboxCreateOptions: Equatable, Hashable {
      */
     public var token: String?
     /**
+     * Create from this pool: locally, a pool made with
+     * [`Sandboxes::create_pool`] (the sandbox gets the pool's image and
+     * shape and takes one of its ready sandboxes in about 0.1 s; `image`
+     * may be left empty).
+     */
+    public var pool: String?
+    /**
      * Guest OS (`linux`, `macos`, `windows`).
      */
     public var os: String?
@@ -26227,6 +33176,12 @@ public struct SandboxCreateOptions: Equatable, Hashable {
      * are not secrets).
      */
     public var env: [String: String]
+    /**
+     * Lifetime backstop in seconds: the platform deletes the sandbox this
+     * long after it stops being kept alive (a provider sandbox such as
+     * `on = "e2b"`: its lifetime). `None`: the platform's default.
+     */
+    public var ttlSeconds: UInt32?
     /**
      * The sandbox's command (argv), replacing the image's entrypoint.
      * Same meaning local (container ENTRYPOINT, or run by cloud-init in a
@@ -26276,6 +33231,35 @@ public struct SandboxCreateOptions: Equatable, Hashable {
      * (the default): no GPU.
      */
     public var gpu: String?
+    /**
+     * A Space without a desktop: only cua-spacesd runs (exec, files,
+     * processes, MCP), with no display, window manager or audio. For shell
+     * and RL workloads it starts several times faster and fits many more
+     * per machine. Images without cua-spacesd are unaffected; a `command`
+     * of your own is kept.
+     */
+    public var headless: Bool
+    /**
+     * Whether an image without cua-spacesd gets a static one injected, so
+     * any OCI image is a full Space (local containers and microVMs: exec,
+     * files, ports). `None` (the default): yes. `Some(false)` runs the
+     * image as it is.
+     */
+    public var spacesd: Bool?
+    /**
+     * A size profile: defaults for what is left unset. `"rollout"`: 1
+     * vCPU, 1024 MiB and `headless` (a local VM gets no display hardware,
+     * so many more fit on one machine), for RL rollouts and agent episodes
+     * that mostly wait. `None` or `"default"`: 2 vCPUs, 4096 MiB.
+     */
+    public var profile: String?
+    /**
+     * A fork source (a "bake" sandbox): a local QEMU VM's guest RAM is a
+     * shared file, so its checkpoints take milliseconds and forks of them
+     * share its pages ([`Sandboxes::checkpoint`], [`Sandboxes::fork`]).
+     * Other kinds ignore it. `None` (the default): not one.
+     */
+    public var forkable: Bool?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -26312,6 +33296,12 @@ public struct SandboxCreateOptions: Equatable, Hashable {
          * spacesd token.
          */token: String? = nil,
         /**
+         * Create from this pool: locally, a pool made with
+         * [`Sandboxes::create_pool`] (the sandbox gets the pool's image and
+         * shape and takes one of its ready sandboxes in about 0.1 s; `image`
+         * may be left empty).
+         */pool: String? = nil,
+        /**
          * Guest OS (`linux`, `macos`, `windows`).
          */os: String? = nil,
         /**
@@ -26336,6 +33326,11 @@ public struct SandboxCreateOptions: Equatable, Hashable {
          * Guest environment (local: container environment or cloud-init; values
          * are not secrets).
          */env: [String: String] = [:],
+        /**
+         * Lifetime backstop in seconds: the platform deletes the sandbox this
+         * long after it stops being kept alive (a provider sandbox such as
+         * `on = "e2b"`: its lifetime). `None`: the platform's default.
+         */ttlSeconds: UInt32? = nil,
         /**
          * The sandbox's command (argv), replacing the image's entrypoint.
          * Same meaning local (container ENTRYPOINT, or run by cloud-init in a
@@ -26376,13 +33371,39 @@ public struct SandboxCreateOptions: Equatable, Hashable {
          * `virgl` (QEMU on Linux), `nvidia` (a runc container on Linux), a
          * contrib provider's GPU type; `auto` picks the runtime's own. `None`
          * (the default): no GPU.
-         */gpu: String? = nil) {
+         */gpu: String? = nil,
+        /**
+         * A Space without a desktop: only cua-spacesd runs (exec, files,
+         * processes, MCP), with no display, window manager or audio. For shell
+         * and RL workloads it starts several times faster and fits many more
+         * per machine. Images without cua-spacesd are unaffected; a `command`
+         * of your own is kept.
+         */headless: Bool = false,
+        /**
+         * Whether an image without cua-spacesd gets a static one injected, so
+         * any OCI image is a full Space (local containers and microVMs: exec,
+         * files, ports). `None` (the default): yes. `Some(false)` runs the
+         * image as it is.
+         */spacesd: Bool? = nil,
+        /**
+         * A size profile: defaults for what is left unset. `"rollout"`: 1
+         * vCPU, 1024 MiB and `headless` (a local VM gets no display hardware,
+         * so many more fit on one machine), for RL rollouts and agent episodes
+         * that mostly wait. `None` or `"default"`: 2 vCPUs, 4096 MiB.
+         */profile: String? = nil,
+        /**
+         * A fork source (a "bake" sandbox): a local QEMU VM's guest RAM is a
+         * shared file, so its checkpoints take milliseconds and forks of them
+         * share its pages ([`Sandboxes::checkpoint`], [`Sandboxes::fork`]).
+         * Other kinds ignore it. `None` (the default): not one.
+         */forkable: Bool? = nil) {
         self.on = on
         self.kind = kind
         self.runtime = runtime
         self.image = image
         self.name = name
         self.token = token
+        self.pool = pool
         self.os = os
         self.cpus = cpus
         self.memoryMb = memoryMb
@@ -26391,6 +33412,7 @@ public struct SandboxCreateOptions: Equatable, Hashable {
         self.waitFor = waitFor
         self.readyTimeoutMs = readyTimeoutMs
         self.env = env
+        self.ttlSeconds = ttlSeconds
         self.command = command
         self.sidecars = sidecars
         self.registrySecret = registrySecret
@@ -26399,6 +33421,10 @@ public struct SandboxCreateOptions: Equatable, Hashable {
         self.overlays = overlays
         self.keepOnFailure = keepOnFailure
         self.gpu = gpu
+        self.headless = headless
+        self.spacesd = spacesd
+        self.profile = profile
+        self.forkable = forkable
     }
 
 
@@ -26423,6 +33449,7 @@ public struct FfiConverterTypeSandboxCreateOptions: FfiConverterRustBuffer {
                 image: FfiConverterString.read(from: &buf),
                 name: FfiConverterOptionString.read(from: &buf),
                 token: FfiConverterOptionString.read(from: &buf),
+                pool: FfiConverterOptionString.read(from: &buf),
                 os: FfiConverterOptionString.read(from: &buf),
                 cpus: FfiConverterOptionUInt32.read(from: &buf),
                 memoryMb: FfiConverterOptionUInt64.read(from: &buf),
@@ -26431,6 +33458,7 @@ public struct FfiConverterTypeSandboxCreateOptions: FfiConverterRustBuffer {
                 waitFor: FfiConverterSequenceTypeReadinessProbe.read(from: &buf),
                 readyTimeoutMs: FfiConverterOptionUInt32.read(from: &buf),
                 env: FfiConverterDictionaryStringString.read(from: &buf),
+                ttlSeconds: FfiConverterOptionUInt32.read(from: &buf),
                 command: FfiConverterOptionSequenceString.read(from: &buf),
                 sidecars: FfiConverterSequenceTypeContainer.read(from: &buf),
                 registrySecret: FfiConverterOptionTypeRegistrySecret.read(from: &buf),
@@ -26438,7 +33466,11 @@ public struct FfiConverterTypeSandboxCreateOptions: FfiConverterRustBuffer {
                 network: FfiConverterOptionString.read(from: &buf),
                 overlays: FfiConverterSequenceTypeOverlay.read(from: &buf),
                 keepOnFailure: FfiConverterBool.read(from: &buf),
-                gpu: FfiConverterOptionString.read(from: &buf)
+                gpu: FfiConverterOptionString.read(from: &buf),
+                headless: FfiConverterBool.read(from: &buf),
+                spacesd: FfiConverterOptionBool.read(from: &buf),
+                profile: FfiConverterOptionString.read(from: &buf),
+                forkable: FfiConverterOptionBool.read(from: &buf)
         )
     }
 
@@ -26449,6 +33481,7 @@ public struct FfiConverterTypeSandboxCreateOptions: FfiConverterRustBuffer {
         FfiConverterString.write(value.image, into: &buf)
         FfiConverterOptionString.write(value.name, into: &buf)
         FfiConverterOptionString.write(value.token, into: &buf)
+        FfiConverterOptionString.write(value.pool, into: &buf)
         FfiConverterOptionString.write(value.os, into: &buf)
         FfiConverterOptionUInt32.write(value.cpus, into: &buf)
         FfiConverterOptionUInt64.write(value.memoryMb, into: &buf)
@@ -26457,6 +33490,7 @@ public struct FfiConverterTypeSandboxCreateOptions: FfiConverterRustBuffer {
         FfiConverterSequenceTypeReadinessProbe.write(value.waitFor, into: &buf)
         FfiConverterOptionUInt32.write(value.readyTimeoutMs, into: &buf)
         FfiConverterDictionaryStringString.write(value.env, into: &buf)
+        FfiConverterOptionUInt32.write(value.ttlSeconds, into: &buf)
         FfiConverterOptionSequenceString.write(value.command, into: &buf)
         FfiConverterSequenceTypeContainer.write(value.sidecars, into: &buf)
         FfiConverterOptionTypeRegistrySecret.write(value.registrySecret, into: &buf)
@@ -26465,6 +33499,10 @@ public struct FfiConverterTypeSandboxCreateOptions: FfiConverterRustBuffer {
         FfiConverterSequenceTypeOverlay.write(value.overlays, into: &buf)
         FfiConverterBool.write(value.keepOnFailure, into: &buf)
         FfiConverterOptionString.write(value.gpu, into: &buf)
+        FfiConverterBool.write(value.headless, into: &buf)
+        FfiConverterOptionBool.write(value.spacesd, into: &buf)
+        FfiConverterOptionString.write(value.profile, into: &buf)
+        FfiConverterOptionBool.write(value.forkable, into: &buf)
     }
 }
 
@@ -26787,6 +33825,161 @@ public func FfiConverterTypeSandboxListing_lift(_ buf: RustBuffer) throws -> San
 #endif
 public func FfiConverterTypeSandboxListing_lower(_ value: SandboxListing) -> RustBuffer {
     return FfiConverterTypeSandboxListing.lower(value)
+}
+
+
+/**
+ * A pool ([`Sandboxes::create_pool`]).
+ */
+public struct SandboxPool: Equatable, Hashable {
+    /**
+     * Name.
+     */
+    public var name: String
+    /**
+     * Image as given.
+     */
+    public var image: String
+    /**
+     * Where its sandboxes run (`local`).
+     */
+    public var location: String
+    /**
+     * Kind and runtime as given (empty: auto).
+     */
+    public var kind: String
+    public var runtime: String
+    /**
+     * Each sandbox's CPUs and memory (MiB).
+     */
+    public var cpus: UInt32
+    public var memoryMb: UInt64
+    /**
+     * Sandboxes kept ready at all times, and at most.
+     */
+    public var min: UInt32
+    public var max: UInt32
+    /**
+     * After this long without a create it keeps none ready (`None`: never).
+     */
+    public var idleMs: UInt64?
+    /**
+     * Ready now, and starting.
+     */
+    public var ready: UInt32
+    public var starting: UInt32
+    /**
+     * Why it holds what it holds, or why it cannot.
+     */
+    public var status: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Name.
+         */name: String,
+        /**
+         * Image as given.
+         */image: String,
+        /**
+         * Where its sandboxes run (`local`).
+         */location: String,
+        /**
+         * Kind and runtime as given (empty: auto).
+         */kind: String, runtime: String,
+        /**
+         * Each sandbox's CPUs and memory (MiB).
+         */cpus: UInt32, memoryMb: UInt64,
+        /**
+         * Sandboxes kept ready at all times, and at most.
+         */min: UInt32, max: UInt32,
+        /**
+         * After this long without a create it keeps none ready (`None`: never).
+         */idleMs: UInt64?,
+        /**
+         * Ready now, and starting.
+         */ready: UInt32, starting: UInt32,
+        /**
+         * Why it holds what it holds, or why it cannot.
+         */status: String) {
+        self.name = name
+        self.image = image
+        self.location = location
+        self.kind = kind
+        self.runtime = runtime
+        self.cpus = cpus
+        self.memoryMb = memoryMb
+        self.min = min
+        self.max = max
+        self.idleMs = idleMs
+        self.ready = ready
+        self.starting = starting
+        self.status = status
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension SandboxPool: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSandboxPool: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SandboxPool {
+        return
+            try SandboxPool(
+                name: FfiConverterString.read(from: &buf),
+                image: FfiConverterString.read(from: &buf),
+                location: FfiConverterString.read(from: &buf),
+                kind: FfiConverterString.read(from: &buf),
+                runtime: FfiConverterString.read(from: &buf),
+                cpus: FfiConverterUInt32.read(from: &buf),
+                memoryMb: FfiConverterUInt64.read(from: &buf),
+                min: FfiConverterUInt32.read(from: &buf),
+                max: FfiConverterUInt32.read(from: &buf),
+                idleMs: FfiConverterOptionUInt64.read(from: &buf),
+                ready: FfiConverterUInt32.read(from: &buf),
+                starting: FfiConverterUInt32.read(from: &buf),
+                status: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SandboxPool, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.image, into: &buf)
+        FfiConverterString.write(value.location, into: &buf)
+        FfiConverterString.write(value.kind, into: &buf)
+        FfiConverterString.write(value.runtime, into: &buf)
+        FfiConverterUInt32.write(value.cpus, into: &buf)
+        FfiConverterUInt64.write(value.memoryMb, into: &buf)
+        FfiConverterUInt32.write(value.min, into: &buf)
+        FfiConverterUInt32.write(value.max, into: &buf)
+        FfiConverterOptionUInt64.write(value.idleMs, into: &buf)
+        FfiConverterUInt32.write(value.ready, into: &buf)
+        FfiConverterUInt32.write(value.starting, into: &buf)
+        FfiConverterString.write(value.status, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSandboxPool_lift(_ buf: RustBuffer) throws -> SandboxPool {
+    return try FfiConverterTypeSandboxPool.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSandboxPool_lower(_ value: SandboxPool) -> RustBuffer {
+    return FfiConverterTypeSandboxPool.lower(value)
 }
 
 
@@ -27228,6 +34421,246 @@ public func FfiConverterTypeSetupStep_lower(_ value: SetupStep) -> RustBuffer {
 
 
 /**
+ * One share.
+ */
+public struct Share: Equatable, Hashable {
+    /**
+     * Handle for `Shares.stop` (`share-...`).
+     */
+    public var id: String
+    /**
+     * The link.
+     */
+    public var url: String
+    /**
+     * Name for lists.
+     */
+    public var name: String?
+    /**
+     * Who may open it.
+     */
+    public var access: ShareAccess
+    /**
+     * `port`, `space_port`, `file` or `dir`.
+     */
+    public var kind: String
+    /**
+     * What it serves (`port 3000`, `space:dev:3000`, a path).
+     */
+    public var target: String
+    /**
+     * The account that made it.
+     */
+    public var owner: String
+    /**
+     * When it was made (unix seconds).
+     */
+    public var createdAtUnix: Int64?
+    /**
+     * When it ends (unix seconds); none: until stopped.
+     */
+    public var expiresAtUnix: Int64?
+    /**
+     * Limits of this link worth showing next to it (for example that
+     * browsers cannot open it yet).
+     */
+    public var notices: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Handle for `Shares.stop` (`share-...`).
+         */id: String,
+        /**
+         * The link.
+         */url: String,
+        /**
+         * Name for lists.
+         */name: String?,
+        /**
+         * Who may open it.
+         */access: ShareAccess,
+        /**
+         * `port`, `space_port`, `file` or `dir`.
+         */kind: String,
+        /**
+         * What it serves (`port 3000`, `space:dev:3000`, a path).
+         */target: String,
+        /**
+         * The account that made it.
+         */owner: String,
+        /**
+         * When it was made (unix seconds).
+         */createdAtUnix: Int64?,
+        /**
+         * When it ends (unix seconds); none: until stopped.
+         */expiresAtUnix: Int64?,
+        /**
+         * Limits of this link worth showing next to it (for example that
+         * browsers cannot open it yet).
+         */notices: [String]) {
+        self.id = id
+        self.url = url
+        self.name = name
+        self.access = access
+        self.kind = kind
+        self.target = target
+        self.owner = owner
+        self.createdAtUnix = createdAtUnix
+        self.expiresAtUnix = expiresAtUnix
+        self.notices = notices
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension Share: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeShare: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Share {
+        return
+            try Share(
+                id: FfiConverterString.read(from: &buf),
+                url: FfiConverterString.read(from: &buf),
+                name: FfiConverterOptionString.read(from: &buf),
+                access: FfiConverterTypeShareAccess.read(from: &buf),
+                kind: FfiConverterString.read(from: &buf),
+                target: FfiConverterString.read(from: &buf),
+                owner: FfiConverterString.read(from: &buf),
+                createdAtUnix: FfiConverterOptionInt64.read(from: &buf),
+                expiresAtUnix: FfiConverterOptionInt64.read(from: &buf),
+                notices: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: Share, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.url, into: &buf)
+        FfiConverterOptionString.write(value.name, into: &buf)
+        FfiConverterTypeShareAccess.write(value.access, into: &buf)
+        FfiConverterString.write(value.kind, into: &buf)
+        FfiConverterString.write(value.target, into: &buf)
+        FfiConverterString.write(value.owner, into: &buf)
+        FfiConverterOptionInt64.write(value.createdAtUnix, into: &buf)
+        FfiConverterOptionInt64.write(value.expiresAtUnix, into: &buf)
+        FfiConverterSequenceString.write(value.notices, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeShare_lift(_ buf: RustBuffer) throws -> Share {
+    return try FfiConverterTypeShare.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeShare_lower(_ value: Share) -> RustBuffer {
+    return FfiConverterTypeShare.lower(value)
+}
+
+
+/**
+ * What opening a link once returned.
+ */
+public struct ShareCheck: Equatable, Hashable {
+    /**
+     * 2xx.
+     */
+    public var ok: Bool
+    /**
+     * HTTP status (0: the link could not be opened).
+     */
+    public var status: UInt32
+    /**
+     * `link` (the real link, through the relay, as the owner) or `local`.
+     */
+    public var via: String
+    /**
+     * A short human line.
+     */
+    public var detail: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * 2xx.
+         */ok: Bool,
+        /**
+         * HTTP status (0: the link could not be opened).
+         */status: UInt32,
+        /**
+         * `link` (the real link, through the relay, as the owner) or `local`.
+         */via: String,
+        /**
+         * A short human line.
+         */detail: String) {
+        self.ok = ok
+        self.status = status
+        self.via = via
+        self.detail = detail
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ShareCheck: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeShareCheck: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ShareCheck {
+        return
+            try ShareCheck(
+                ok: FfiConverterBool.read(from: &buf),
+                status: FfiConverterUInt32.read(from: &buf),
+                via: FfiConverterString.read(from: &buf),
+                detail: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ShareCheck, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.ok, into: &buf)
+        FfiConverterUInt32.write(value.status, into: &buf)
+        FfiConverterString.write(value.via, into: &buf)
+        FfiConverterString.write(value.detail, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeShareCheck_lift(_ buf: RustBuffer) throws -> ShareCheck {
+    return try FfiConverterTypeShareCheck.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeShareCheck_lower(_ value: ShareCheck) -> RustBuffer {
+    return FfiConverterTypeShareCheck.lower(value)
+}
+
+
+/**
  * Options for [`Space::request_site_login`].
  */
 public struct SiteLoginOptions: Equatable, Hashable {
@@ -27494,6 +34927,240 @@ public func FfiConverterTypeSiteLoginReport_lift(_ buf: RustBuffer) throws -> Si
 #endif
 public func FfiConverterTypeSiteLoginReport_lower(_ value: SiteLoginReport) -> RustBuffer {
     return FfiConverterTypeSiteLoginReport.lower(value)
+}
+
+
+/**
+ * A fallback copy of checkpoints. Your machines fetch a checkpoint there
+ * when the machine that holds it cannot be reached
+ * ([`Sandboxes::publish_checkpoint`] puts it there). Set `s3_bucket` (S3,
+ * with each machine's AWS credentials) or `dir` (a folder every machine
+ * mounts, such as your Cua Volume).
+ */
+public struct SnapshotFallbackOptions: Equatable, Hashable {
+    /**
+     * S3 bucket.
+     */
+    public var s3Bucket: String
+    /**
+     * Key prefix in the bucket (`cua-snapshots/`).
+     */
+    public var s3Prefix: String
+    /**
+     * Region (empty: each machine's AWS default).
+     */
+    public var s3Region: String
+    /**
+     * An S3-compatible endpoint (empty: AWS).
+     */
+    public var s3Endpoint: String
+    /**
+     * A folder every machine mounts (`~` is each machine's home), for
+     * example `~/Cua Volume/snapshots`.
+     */
+    public var dir: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * S3 bucket.
+         */s3Bucket: String = "",
+        /**
+         * Key prefix in the bucket (`cua-snapshots/`).
+         */s3Prefix: String = "",
+        /**
+         * Region (empty: each machine's AWS default).
+         */s3Region: String = "",
+        /**
+         * An S3-compatible endpoint (empty: AWS).
+         */s3Endpoint: String = "",
+        /**
+         * A folder every machine mounts (`~` is each machine's home), for
+         * example `~/Cua Volume/snapshots`.
+         */dir: String = "") {
+        self.s3Bucket = s3Bucket
+        self.s3Prefix = s3Prefix
+        self.s3Region = s3Region
+        self.s3Endpoint = s3Endpoint
+        self.dir = dir
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension SnapshotFallbackOptions: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSnapshotFallbackOptions: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SnapshotFallbackOptions {
+        return
+            try SnapshotFallbackOptions(
+                s3Bucket: FfiConverterString.read(from: &buf),
+                s3Prefix: FfiConverterString.read(from: &buf),
+                s3Region: FfiConverterString.read(from: &buf),
+                s3Endpoint: FfiConverterString.read(from: &buf),
+                dir: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SnapshotFallbackOptions, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.s3Bucket, into: &buf)
+        FfiConverterString.write(value.s3Prefix, into: &buf)
+        FfiConverterString.write(value.s3Region, into: &buf)
+        FfiConverterString.write(value.s3Endpoint, into: &buf)
+        FfiConverterString.write(value.dir, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSnapshotFallbackOptions_lift(_ buf: RustBuffer) throws -> SnapshotFallbackOptions {
+    return try FfiConverterTypeSnapshotFallbackOptions.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSnapshotFallbackOptions_lower(_ value: SnapshotFallbackOptions) -> RustBuffer {
+    return FfiConverterTypeSnapshotFallbackOptions.lower(value)
+}
+
+
+/**
+ * A checkpoint copy's progress. Copying it to a machine that lacked it.
+ */
+public struct SnapshotSyncProgress: Equatable, Hashable {
+    /**
+     * The checkpoint.
+     */
+    public var name: String
+    /**
+     * Its digest.
+     */
+    public var digest: String
+    /**
+     * Where the bytes come from now (a machine, `s3`, `volume`).
+     */
+    public var from: String
+    /**
+     * Bytes copied.
+     */
+    public var bytesDone: UInt64
+    /**
+     * Bytes to copy in all.
+     */
+    public var bytesTotal: UInt64
+    /**
+     * Bytes the machine had already.
+     */
+    public var bytesReused: UInt64
+    /**
+     * Finished.
+     */
+    public var done: Bool
+    /**
+     * Every file matched its SHA-256.
+     */
+    public var verified: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The checkpoint.
+         */name: String,
+        /**
+         * Its digest.
+         */digest: String,
+        /**
+         * Where the bytes come from now (a machine, `s3`, `volume`).
+         */from: String,
+        /**
+         * Bytes copied.
+         */bytesDone: UInt64,
+        /**
+         * Bytes to copy in all.
+         */bytesTotal: UInt64,
+        /**
+         * Bytes the machine had already.
+         */bytesReused: UInt64,
+        /**
+         * Finished.
+         */done: Bool,
+        /**
+         * Every file matched its SHA-256.
+         */verified: Bool) {
+        self.name = name
+        self.digest = digest
+        self.from = from
+        self.bytesDone = bytesDone
+        self.bytesTotal = bytesTotal
+        self.bytesReused = bytesReused
+        self.done = done
+        self.verified = verified
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension SnapshotSyncProgress: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSnapshotSyncProgress: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SnapshotSyncProgress {
+        return
+            try SnapshotSyncProgress(
+                name: FfiConverterString.read(from: &buf),
+                digest: FfiConverterString.read(from: &buf),
+                from: FfiConverterString.read(from: &buf),
+                bytesDone: FfiConverterUInt64.read(from: &buf),
+                bytesTotal: FfiConverterUInt64.read(from: &buf),
+                bytesReused: FfiConverterUInt64.read(from: &buf),
+                done: FfiConverterBool.read(from: &buf),
+                verified: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SnapshotSyncProgress, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.digest, into: &buf)
+        FfiConverterString.write(value.from, into: &buf)
+        FfiConverterUInt64.write(value.bytesDone, into: &buf)
+        FfiConverterUInt64.write(value.bytesTotal, into: &buf)
+        FfiConverterUInt64.write(value.bytesReused, into: &buf)
+        FfiConverterBool.write(value.done, into: &buf)
+        FfiConverterBool.write(value.verified, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSnapshotSyncProgress_lift(_ buf: RustBuffer) throws -> SnapshotSyncProgress {
+    return try FfiConverterTypeSnapshotSyncProgress.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSnapshotSyncProgress_lower(_ value: SnapshotSyncProgress) -> RustBuffer {
+    return FfiConverterTypeSnapshotSyncProgress.lower(value)
 }
 
 
@@ -27981,13 +35648,18 @@ public func FfiConverterTypeSpaceCancelOutcome_lower(_ value: SpaceCancelOutcome
  */
 public struct SpaceCreateOptions: Equatable, Hashable {
     /**
-     * Image (default: the canonical Linux image).
+     * Image (default: the canonical Linux image). `checkpoint:<name>`
+     * starts a fork of that checkpoint, on whichever of your machines
+     * holds it ([`CheckpointSummary::host`]): its disk, memory and
+     * processes, so no command, environment, services, GPU or disk size.
      */
     public var image: String?
     /**
      * Where: `local` (free), a connected cloud account (`aws`, `gcp`,
      * `modal`) or `host:<name>`. `None`: the user default (`default.on`,
-     * `CUA_DEFAULT_ON`, else `local`).
+     * `CUA_DEFAULT_ON`, else `local`); for a `checkpoint:` image, where the
+     * checkpoint is. A checkpoint also starts on `host:<machine>` or
+     * `auto`, copied there first when that machine lacks it.
      */
     public var on: String?
     /**
@@ -28044,7 +35716,9 @@ public struct SpaceCreateOptions: Equatable, Hashable {
     public var services: [String: UInt16]
     /**
      * Whether the image runs cua-spacesd (default: yes for the canonical
-     * images, no for any other image).
+     * images; any other image gets a static one injected on a local
+     * container or microVM, so it is a full Space; `false` runs the image
+     * as it is).
      */
     public var spacesd: Bool?
     /**
@@ -28060,17 +35734,97 @@ public struct SpaceCreateOptions: Equatable, Hashable {
      * [`Spaces::cancel_create`] before the Space's id is known.
      */
     public var createId: String?
+    /**
+     * Keep the Space on your machines (`on` "auto"): when its machine goes
+     * away it is created again on another one, with the same name (its
+     * disk starts fresh). Needs the cua daemon of Cua Spaces and an
+     * account with machines that provide Spaces.
+     */
+    public var durable: Bool
+    /**
+     * A size profile: defaults for what is left unset. `"rollout"`: 1
+     * vCPU, 1024 MiB and `headless` (a local VM gets no display hardware,
+     * so many more fit on one machine), for RL rollouts and agent episodes
+     * that mostly wait. `None` or `"default"`: 2 vCPUs, 4096 MiB.
+     */
+    public var profile: String?
+    /**
+     * A Space without a desktop: only cua-spacesd runs (exec, files,
+     * processes, MCP), with no display, window manager or audio. For shell
+     * and RL workloads it starts several times faster and fits many more
+     * per machine. `None`: what `profile` says (a desktop by default).
+     */
+    public var headless: Bool?
+    /**
+     * A fork source (a "bake" Space): a local QEMU VM's guest RAM is a
+     * shared file, so its checkpoints ([`Space::checkpoint`]) take
+     * milliseconds and forks of them ([`Space::fork`], [`Spaces::fork`])
+     * share its pages. Other kinds ignore it. `None` (the default): not
+     * one.
+     */
+    public var forkable: Bool?
+    /**
+     * Build an image first (cached when unchanged), then fork the result.
+     * `image` must be unset.
+     */
+    public var build: BuildOptions?
+    /**
+     * Named volumes of Cua Volume to mount in the Space
+     * ([`Spaces::create_volume`]): each appears at its `path`, read-write
+     * or read-only; the Space sees no other volume. Needs the Cua Volume
+     * (Cua Spaces) and a guest that can mount it; the create fails
+     * otherwise, naming what is missing. A fork mounts the same volumes.
+     */
+    public var volumes: [VolumeMount]
+    /**
+     * Guest network: `default` (unset) gives outbound network; `none`
+     * gives none (QEMU VMs, here or on one of your machines; published
+     * ports and cua-spacesd still reach the guest). Not with `durable` or
+     * `reuse`. A daemon or machine whose cua is too old to enforce `none`
+     * is refused (`CapabilityMissing`) and the Space it made is deleted.
+     */
+    public var network: String?
+    /**
+     * Labels kept with the Space and returned in `SpaceInfo.labels`: at
+     * most 64; keys and values are not empty (UTF-8); keys up to 63 bytes,
+     * values up to 256. Not with `durable` or `reuse`. The device that
+     * creates the Space keeps them (also for `host:` and `auto`).
+     */
+    public var labels: [String: String]
+    /**
+     * Egress policy (see [`EgressPolicy`]), enforced by the host the Space
+     * runs on from the guest's first instruction. A kind or location with
+     * no host-side point refuses it (`Unsupported`) before anything is
+     * created. Not with `durable`, `reuse` or `wait = false`; a daemon too old
+     * to enforce it makes the create fail.
+     */
+    public var egress: EgressPolicy?
+    /**
+     * With `on` a linked cloud (`aws`, `hetzner`, ...): the machine type
+     * its host must be (`c7g.xlarge`, `cax41`), a pin of the elastic
+     * pool's solve. `None`: the pool picks the cheapest that fits.
+     */
+    public var instanceType: String?
+    /**
+     * With `on` a linked cloud: the region its host must be in.
+     */
+    public var region: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
     public init(
         /**
-         * Image (default: the canonical Linux image).
+         * Image (default: the canonical Linux image). `checkpoint:<name>`
+         * starts a fork of that checkpoint, on whichever of your machines
+         * holds it ([`CheckpointSummary::host`]): its disk, memory and
+         * processes, so no command, environment, services, GPU or disk size.
          */image: String? = nil,
         /**
          * Where: `local` (free), a connected cloud account (`aws`, `gcp`,
          * `modal`) or `host:<name>`. `None`: the user default (`default.on`,
-         * `CUA_DEFAULT_ON`, else `local`).
+         * `CUA_DEFAULT_ON`, else `local`); for a `checkpoint:` image, where the
+         * checkpoint is. A checkpoint also starts on `host:<machine>` or
+         * `auto`, copied there first when that machine lacks it.
          */on: String? = nil,
         /**
          * `auto` (default), `container` or `vm`.
@@ -28114,7 +35868,9 @@ public struct SpaceCreateOptions: Equatable, Hashable {
          */services: [String: UInt16] = [:],
         /**
          * Whether the image runs cua-spacesd (default: yes for the canonical
-         * images, no for any other image).
+         * images; any other image gets a static one injected on a local
+         * container or microVM, so it is a full Space; `false` runs the image
+         * as it is).
          */spacesd: Bool? = nil,
         /**
          * A GPU option of the runtime the Space runs on
@@ -28126,7 +35882,71 @@ public struct SpaceCreateOptions: Equatable, Hashable {
         /**
          * Your own key for this create (an app's pending row), for
          * [`Spaces::cancel_create`] before the Space's id is known.
-         */createId: String? = nil) {
+         */createId: String? = nil,
+        /**
+         * Keep the Space on your machines (`on` "auto"): when its machine goes
+         * away it is created again on another one, with the same name (its
+         * disk starts fresh). Needs the cua daemon of Cua Spaces and an
+         * account with machines that provide Spaces.
+         */durable: Bool = false,
+        /**
+         * A size profile: defaults for what is left unset. `"rollout"`: 1
+         * vCPU, 1024 MiB and `headless` (a local VM gets no display hardware,
+         * so many more fit on one machine), for RL rollouts and agent episodes
+         * that mostly wait. `None` or `"default"`: 2 vCPUs, 4096 MiB.
+         */profile: String? = nil,
+        /**
+         * A Space without a desktop: only cua-spacesd runs (exec, files,
+         * processes, MCP), with no display, window manager or audio. For shell
+         * and RL workloads it starts several times faster and fits many more
+         * per machine. `None`: what `profile` says (a desktop by default).
+         */headless: Bool? = nil,
+        /**
+         * A fork source (a "bake" Space): a local QEMU VM's guest RAM is a
+         * shared file, so its checkpoints ([`Space::checkpoint`]) take
+         * milliseconds and forks of them ([`Space::fork`], [`Spaces::fork`])
+         * share its pages. Other kinds ignore it. `None` (the default): not
+         * one.
+         */forkable: Bool? = nil,
+        /**
+         * Build an image first (cached when unchanged), then fork the result.
+         * `image` must be unset.
+         */build: BuildOptions? = nil,
+        /**
+         * Named volumes of Cua Volume to mount in the Space
+         * ([`Spaces::create_volume`]): each appears at its `path`, read-write
+         * or read-only; the Space sees no other volume. Needs the Cua Volume
+         * (Cua Spaces) and a guest that can mount it; the create fails
+         * otherwise, naming what is missing. A fork mounts the same volumes.
+         */volumes: [VolumeMount] = [],
+        /**
+         * Guest network: `default` (unset) gives outbound network; `none`
+         * gives none (QEMU VMs, here or on one of your machines; published
+         * ports and cua-spacesd still reach the guest). Not with `durable` or
+         * `reuse`. A daemon or machine whose cua is too old to enforce `none`
+         * is refused (`CapabilityMissing`) and the Space it made is deleted.
+         */network: String? = nil,
+        /**
+         * Labels kept with the Space and returned in `SpaceInfo.labels`: at
+         * most 64; keys and values are not empty (UTF-8); keys up to 63 bytes,
+         * values up to 256. Not with `durable` or `reuse`. The device that
+         * creates the Space keeps them (also for `host:` and `auto`).
+         */labels: [String: String] = [:],
+        /**
+         * Egress policy (see [`EgressPolicy`]), enforced by the host the Space
+         * runs on from the guest's first instruction. A kind or location with
+         * no host-side point refuses it (`Unsupported`) before anything is
+         * created. Not with `durable`, `reuse` or `wait = false`; a daemon too old
+         * to enforce it makes the create fail.
+         */egress: EgressPolicy? = nil,
+        /**
+         * With `on` a linked cloud (`aws`, `hetzner`, ...): the machine type
+         * its host must be (`c7g.xlarge`, `cax41`), a pin of the elastic
+         * pool's solve. `None`: the pool picks the cheapest that fits.
+         */instanceType: String? = nil,
+        /**
+         * With `on` a linked cloud: the region its host must be in.
+         */region: String? = nil) {
         self.image = image
         self.on = on
         self.kind = kind
@@ -28144,6 +35964,17 @@ public struct SpaceCreateOptions: Equatable, Hashable {
         self.spacesd = spacesd
         self.gpu = gpu
         self.createId = createId
+        self.durable = durable
+        self.profile = profile
+        self.headless = headless
+        self.forkable = forkable
+        self.build = build
+        self.volumes = volumes
+        self.network = network
+        self.labels = labels
+        self.egress = egress
+        self.instanceType = instanceType
+        self.region = region
     }
 
 
@@ -28178,7 +36009,18 @@ public struct FfiConverterTypeSpaceCreateOptions: FfiConverterRustBuffer {
                 services: FfiConverterDictionaryStringUInt16.read(from: &buf),
                 spacesd: FfiConverterOptionBool.read(from: &buf),
                 gpu: FfiConverterOptionString.read(from: &buf),
-                createId: FfiConverterOptionString.read(from: &buf)
+                createId: FfiConverterOptionString.read(from: &buf),
+                durable: FfiConverterBool.read(from: &buf),
+                profile: FfiConverterOptionString.read(from: &buf),
+                headless: FfiConverterOptionBool.read(from: &buf),
+                forkable: FfiConverterOptionBool.read(from: &buf),
+                build: FfiConverterOptionTypeBuildOptions.read(from: &buf),
+                volumes: FfiConverterSequenceTypeVolumeMount.read(from: &buf),
+                network: FfiConverterOptionString.read(from: &buf),
+                labels: FfiConverterDictionaryStringString.read(from: &buf),
+                egress: FfiConverterOptionTypeEgressPolicy.read(from: &buf),
+                instanceType: FfiConverterOptionString.read(from: &buf),
+                region: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -28200,6 +36042,17 @@ public struct FfiConverterTypeSpaceCreateOptions: FfiConverterRustBuffer {
         FfiConverterOptionBool.write(value.spacesd, into: &buf)
         FfiConverterOptionString.write(value.gpu, into: &buf)
         FfiConverterOptionString.write(value.createId, into: &buf)
+        FfiConverterBool.write(value.durable, into: &buf)
+        FfiConverterOptionString.write(value.profile, into: &buf)
+        FfiConverterOptionBool.write(value.headless, into: &buf)
+        FfiConverterOptionBool.write(value.forkable, into: &buf)
+        FfiConverterOptionTypeBuildOptions.write(value.build, into: &buf)
+        FfiConverterSequenceTypeVolumeMount.write(value.volumes, into: &buf)
+        FfiConverterOptionString.write(value.network, into: &buf)
+        FfiConverterDictionaryStringString.write(value.labels, into: &buf)
+        FfiConverterOptionTypeEgressPolicy.write(value.egress, into: &buf)
+        FfiConverterOptionString.write(value.instanceType, into: &buf)
+        FfiConverterOptionString.write(value.region, into: &buf)
     }
 }
 
@@ -28754,7 +36607,7 @@ public struct SpaceInfo: Equatable, Hashable {
      */
     public var powerState: String
     /**
-     * A Space in your own cloud: the provider (`aws`, `gcp`, `modal`);
+     * A Space in your own cloud: the provider (`aws`, `gcp`, `hetzner`, `modal`);
      * empty otherwise.
      */
     public var cloud: String
@@ -28770,11 +36623,48 @@ public struct SpaceInfo: Equatable, Hashable {
      */
     public var cloudDelete: String
     /**
+     * A durable Space (`SpaceCreateOptions.durable`): its name. It is
+     * created again on another of your machines when its machine goes
+     * away, and keeps this name. Empty for other Spaces.
+     */
+    public var durable: String
+    /**
      * Why a local Space stopped without being asked to, in plain words
      * ("out of memory", "killed", "exited with code 1"); empty otherwise,
      * and once it is started again.
      */
     public var stopReason: String
+    /**
+     * Labels set at create (`SpaceCreateOptions.labels`).
+     */
+    public var labels: [String: String]
+    /**
+     * When the Space ends (Unix seconds), as set by
+     * [`Spaces::set_lifetime`]; 0 when it has none.
+     */
+    public var expiresAtUnix: Int64
+    /**
+     * What happens then: `delete` or `suspend`; empty without a lifetime.
+     */
+    public var onExpire: String
+    /**
+     * When the Space was created (Unix seconds; the time it was added, for
+     * a Space added by address); 0 when unknown.
+     */
+    public var createdAtUnix: Int64
+    /**
+     * The egress policy last set on the Space; empty when it has none.
+     */
+    public var egress: EgressPolicy
+    /**
+     * Where `egress` is enforced; `None` without one.
+     */
+    public var egressEnforced: EgressEnforcement?
+    /**
+     * Named volumes mounted in the Space (see
+     * [`SpaceCreateOptions::volumes`]).
+     */
+    public var volumes: [VolumeMount]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -28848,7 +36738,7 @@ public struct SpaceInfo: Equatable, Hashable {
          * runs).
          */powerState: String,
         /**
-         * A Space in your own cloud: the provider (`aws`, `gcp`, `modal`);
+         * A Space in your own cloud: the provider (`aws`, `gcp`, `hetzner`, `modal`);
          * empty otherwise.
          */cloud: String,
         /**
@@ -28861,10 +36751,39 @@ public struct SpaceInfo: Equatable, Hashable {
          * Empty for other Spaces.
          */cloudDelete: String,
         /**
+         * A durable Space (`SpaceCreateOptions.durable`): its name. It is
+         * created again on another of your machines when its machine goes
+         * away, and keeps this name. Empty for other Spaces.
+         */durable: String = "",
+        /**
          * Why a local Space stopped without being asked to, in plain words
          * ("out of memory", "killed", "exited with code 1"); empty otherwise,
          * and once it is started again.
-         */stopReason: String = "") {
+         */stopReason: String = "",
+        /**
+         * Labels set at create (`SpaceCreateOptions.labels`).
+         */labels: [String: String],
+        /**
+         * When the Space ends (Unix seconds), as set by
+         * [`Spaces::set_lifetime`]; 0 when it has none.
+         */expiresAtUnix: Int64,
+        /**
+         * What happens then: `delete` or `suspend`; empty without a lifetime.
+         */onExpire: String,
+        /**
+         * When the Space was created (Unix seconds; the time it was added, for
+         * a Space added by address); 0 when unknown.
+         */createdAtUnix: Int64,
+        /**
+         * The egress policy last set on the Space; empty when it has none.
+         */egress: EgressPolicy,
+        /**
+         * Where `egress` is enforced; `None` without one.
+         */egressEnforced: EgressEnforcement?,
+        /**
+         * Named volumes mounted in the Space (see
+         * [`SpaceCreateOptions::volumes`]).
+         */volumes: [VolumeMount]) {
         self.id = id
         self.name = name
         self.provider = provider
@@ -28886,7 +36805,15 @@ public struct SpaceInfo: Equatable, Hashable {
         self.cloud = cloud
         self.cloudPlace = cloudPlace
         self.cloudDelete = cloudDelete
+        self.durable = durable
         self.stopReason = stopReason
+        self.labels = labels
+        self.expiresAtUnix = expiresAtUnix
+        self.onExpire = onExpire
+        self.createdAtUnix = createdAtUnix
+        self.egress = egress
+        self.egressEnforced = egressEnforced
+        self.volumes = volumes
     }
 
 
@@ -28926,7 +36853,15 @@ public struct FfiConverterTypeSpaceInfo: FfiConverterRustBuffer {
                 cloud: FfiConverterString.read(from: &buf),
                 cloudPlace: FfiConverterString.read(from: &buf),
                 cloudDelete: FfiConverterString.read(from: &buf),
-                stopReason: FfiConverterString.read(from: &buf)
+                durable: FfiConverterString.read(from: &buf),
+                stopReason: FfiConverterString.read(from: &buf),
+                labels: FfiConverterDictionaryStringString.read(from: &buf),
+                expiresAtUnix: FfiConverterInt64.read(from: &buf),
+                onExpire: FfiConverterString.read(from: &buf),
+                createdAtUnix: FfiConverterInt64.read(from: &buf),
+                egress: FfiConverterTypeEgressPolicy.read(from: &buf),
+                egressEnforced: FfiConverterOptionTypeEgressEnforcement.read(from: &buf),
+                volumes: FfiConverterSequenceTypeVolumeMount.read(from: &buf)
         )
     }
 
@@ -28952,7 +36887,15 @@ public struct FfiConverterTypeSpaceInfo: FfiConverterRustBuffer {
         FfiConverterString.write(value.cloud, into: &buf)
         FfiConverterString.write(value.cloudPlace, into: &buf)
         FfiConverterString.write(value.cloudDelete, into: &buf)
+        FfiConverterString.write(value.durable, into: &buf)
         FfiConverterString.write(value.stopReason, into: &buf)
+        FfiConverterDictionaryStringString.write(value.labels, into: &buf)
+        FfiConverterInt64.write(value.expiresAtUnix, into: &buf)
+        FfiConverterString.write(value.onExpire, into: &buf)
+        FfiConverterInt64.write(value.createdAtUnix, into: &buf)
+        FfiConverterTypeEgressPolicy.write(value.egress, into: &buf)
+        FfiConverterOptionTypeEgressEnforcement.write(value.egressEnforced, into: &buf)
+        FfiConverterSequenceTypeVolumeMount.write(value.volumes, into: &buf)
     }
 }
 
@@ -28973,6 +36916,113 @@ public func FfiConverterTypeSpaceInfo_lower(_ value: SpaceInfo) -> RustBuffer {
 
 
 /**
+ * The Spaces known now ([`Spaces::list_known`]) and how far the read got.
+ */
+public struct SpaceList: Equatable, Hashable {
+    /**
+     * This machine's Spaces, and the account's other computers' as far as
+     * they answered (the last known ones meanwhile).
+     */
+    public var spaces: [SpaceInfo]
+    /**
+     * Some of the account's computers have not answered yet: the list may
+     * grow, and an empty one is not "no Spaces". Always false from a
+     * daemon that predates it (it answers once every computer did).
+     */
+    public var incomplete: Bool
+    /**
+     * How many computers are still being reached (0 when unknown).
+     */
+    public var reaching: UInt32
+    /**
+     * The other computers' rows are the last known ones, not yet
+     * confirmed by the relay.
+     */
+    public var stale: Bool
+    /**
+     * Why the account's computers could not be read, when they could not.
+     */
+    public var notice: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * This machine's Spaces, and the account's other computers' as far as
+         * they answered (the last known ones meanwhile).
+         */spaces: [SpaceInfo],
+        /**
+         * Some of the account's computers have not answered yet: the list may
+         * grow, and an empty one is not "no Spaces". Always false from a
+         * daemon that predates it (it answers once every computer did).
+         */incomplete: Bool,
+        /**
+         * How many computers are still being reached (0 when unknown).
+         */reaching: UInt32,
+        /**
+         * The other computers' rows are the last known ones, not yet
+         * confirmed by the relay.
+         */stale: Bool,
+        /**
+         * Why the account's computers could not be read, when they could not.
+         */notice: String) {
+        self.spaces = spaces
+        self.incomplete = incomplete
+        self.reaching = reaching
+        self.stale = stale
+        self.notice = notice
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension SpaceList: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSpaceList: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SpaceList {
+        return
+            try SpaceList(
+                spaces: FfiConverterSequenceTypeSpaceInfo.read(from: &buf),
+                incomplete: FfiConverterBool.read(from: &buf),
+                reaching: FfiConverterUInt32.read(from: &buf),
+                stale: FfiConverterBool.read(from: &buf),
+                notice: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SpaceList, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeSpaceInfo.write(value.spaces, into: &buf)
+        FfiConverterBool.write(value.incomplete, into: &buf)
+        FfiConverterUInt32.write(value.reaching, into: &buf)
+        FfiConverterBool.write(value.stale, into: &buf)
+        FfiConverterString.write(value.notice, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpaceList_lift(_ buf: RustBuffer) throws -> SpaceList {
+    return try FfiConverterTypeSpaceList.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpaceList_lower(_ value: SpaceList) -> RustBuffer {
+    return FfiConverterTypeSpaceList.lower(value)
+}
+
+
+/**
  * What [`Spaces::stop`] or [`Spaces::start`] did.
  */
 public struct SpacePowerReport: Equatable, Hashable {
@@ -28985,8 +37035,8 @@ public struct SpacePowerReport: Equatable, Hashable {
      */
     public var state: String
     /**
-     * How it turns off: `suspend` (its memory is kept) or `stop` (its
-     * disk is kept).
+     * How it was turned off: `suspend` (its memory is kept, and still in
+     * use) or `stop` (its disk is kept; its memory is freed).
      */
     public var power: String
     /**
@@ -29004,8 +37054,8 @@ public struct SpacePowerReport: Equatable, Hashable {
          * `running`, `suspended` or `stopped`: the state it is in now.
          */state: String,
         /**
-         * How it turns off: `suspend` (its memory is kept) or `stop` (its
-         * disk is kept).
+         * How it was turned off: `suspend` (its memory is kept, and still in
+         * use) or `stop` (its disk is kept; its memory is freed).
          */power: String,
         /**
          * What happened, for people.
@@ -29159,6 +37209,105 @@ public func FfiConverterTypeSpaceRelayRegistration_lift(_ buf: RustBuffer) throw
 #endif
 public func FfiConverterTypeSpaceRelayRegistration_lower(_ value: SpaceRelayRegistration) -> RustBuffer {
     return FfiConverterTypeSpaceRelayRegistration.lower(value)
+}
+
+
+/**
+ * What [`Spaces::resize`] did: the shape the Space has now.
+ */
+public struct SpaceResizeReport: Equatable, Hashable {
+    /**
+     * The Space.
+     */
+    public var space: String
+    /**
+     * vCPUs (when changed).
+     */
+    public var cpus: UInt32?
+    /**
+     * Memory in MiB (when changed).
+     */
+    public var memoryMb: UInt64?
+    /**
+     * Disk in GiB (when grown).
+     */
+    public var diskGb: UInt32?
+    /**
+     * What happened, for people.
+     */
+    public var message: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The Space.
+         */space: String,
+        /**
+         * vCPUs (when changed).
+         */cpus: UInt32?,
+        /**
+         * Memory in MiB (when changed).
+         */memoryMb: UInt64?,
+        /**
+         * Disk in GiB (when grown).
+         */diskGb: UInt32?,
+        /**
+         * What happened, for people.
+         */message: String) {
+        self.space = space
+        self.cpus = cpus
+        self.memoryMb = memoryMb
+        self.diskGb = diskGb
+        self.message = message
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension SpaceResizeReport: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSpaceResizeReport: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SpaceResizeReport {
+        return
+            try SpaceResizeReport(
+                space: FfiConverterString.read(from: &buf),
+                cpus: FfiConverterOptionUInt32.read(from: &buf),
+                memoryMb: FfiConverterOptionUInt64.read(from: &buf),
+                diskGb: FfiConverterOptionUInt32.read(from: &buf),
+                message: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SpaceResizeReport, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.space, into: &buf)
+        FfiConverterOptionUInt32.write(value.cpus, into: &buf)
+        FfiConverterOptionUInt64.write(value.memoryMb, into: &buf)
+        FfiConverterOptionUInt32.write(value.diskGb, into: &buf)
+        FfiConverterString.write(value.message, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpaceResizeReport_lift(_ buf: RustBuffer) throws -> SpaceResizeReport {
+    return try FfiConverterTypeSpaceResizeReport.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpaceResizeReport_lower(_ value: SpaceResizeReport) -> RustBuffer {
+    return FfiConverterTypeSpaceResizeReport.lower(value)
 }
 
 
@@ -30631,6 +38780,84 @@ public func FfiConverterTypeSpaceTransferReport_lower(_ value: SpaceTransferRepo
 
 
 /**
+ * What carries a connected Space's calls ([`Space::transport`]), for a
+ * badge: whether the relay can read them.
+ */
+public struct SpaceTransport: Equatable, Hashable {
+    /**
+     * `local`, `direct`, `mesh` (end to end), `relay_https` (the relay's
+     * HTTPS path: the relay can read the session in transit), `cloud`, or
+     * empty when the Space runs no cua-spacesd.
+     */
+    public var transport: String
+    /**
+     * Why it took the relay's HTTPS path although the mesh was wanted;
+     * empty on the mesh and when the HTTPS path was chosen
+     * (`CUA_MESH=off`), and from an older daemon.
+     */
+    public var fallbackReason: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `local`, `direct`, `mesh` (end to end), `relay_https` (the relay's
+         * HTTPS path: the relay can read the session in transit), `cloud`, or
+         * empty when the Space runs no cua-spacesd.
+         */transport: String,
+        /**
+         * Why it took the relay's HTTPS path although the mesh was wanted;
+         * empty on the mesh and when the HTTPS path was chosen
+         * (`CUA_MESH=off`), and from an older daemon.
+         */fallbackReason: String) {
+        self.transport = transport
+        self.fallbackReason = fallbackReason
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension SpaceTransport: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSpaceTransport: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SpaceTransport {
+        return
+            try SpaceTransport(
+                transport: FfiConverterString.read(from: &buf),
+                fallbackReason: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SpaceTransport, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.transport, into: &buf)
+        FfiConverterString.write(value.fallbackReason, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpaceTransport_lift(_ buf: RustBuffer) throws -> SpaceTransport {
+    return try FfiConverterTypeSpaceTransport.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpaceTransport_lower(_ value: SpaceTransport) -> RustBuffer {
+    return FfiConverterTypeSpaceTransport.lower(value)
+}
+
+
+/**
  * Processor, memory and storage use ([`Space::usage`]). A size is the
  * guest's own limit only when its `*_limited` flag says so (a VM's memory
  * or disk, a container's cgroup memory limit).
@@ -31038,6 +39265,10 @@ public struct SpacesHost: Equatable, Hashable {
      * Its limits, when it answered.
      */
     public var limits: [SpacesHostLimit]
+    /**
+     * How busy it is, when it answered and reports it.
+     */
+    public var load: SpacesHostLoad?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -31060,13 +39291,17 @@ public struct SpacesHost: Equatable, Hashable {
          */os: String,
         /**
          * Its limits, when it answered.
-         */limits: [SpacesHostLimit]) {
+         */limits: [SpacesHostLimit],
+        /**
+         * How busy it is, when it answered and reports it.
+         */load: SpacesHostLoad?) {
         self.id = id
         self.name = name
         self.via = via
         self.online = online
         self.os = os
         self.limits = limits
+        self.load = load
     }
 
 
@@ -31090,7 +39325,8 @@ public struct FfiConverterTypeSpacesHost: FfiConverterRustBuffer {
                 via: FfiConverterString.read(from: &buf),
                 online: FfiConverterBool.read(from: &buf),
                 os: FfiConverterString.read(from: &buf),
-                limits: FfiConverterSequenceTypeSpacesHostLimit.read(from: &buf)
+                limits: FfiConverterSequenceTypeSpacesHostLimit.read(from: &buf),
+                load: FfiConverterOptionTypeSpacesHostLoad.read(from: &buf)
         )
     }
 
@@ -31101,6 +39337,7 @@ public struct FfiConverterTypeSpacesHost: FfiConverterRustBuffer {
         FfiConverterBool.write(value.online, into: &buf)
         FfiConverterString.write(value.os, into: &buf)
         FfiConverterSequenceTypeSpacesHostLimit.write(value.limits, into: &buf)
+        FfiConverterOptionTypeSpacesHostLoad.write(value.load, into: &buf)
     }
 }
 
@@ -31206,6 +39443,115 @@ public func FfiConverterTypeSpacesHostLimit_lift(_ buf: RustBuffer) throws -> Sp
 #endif
 public func FfiConverterTypeSpacesHostLimit_lower(_ value: SpacesHostLimit) -> RustBuffer {
     return FfiConverterTypeSpacesHostLimit.lower(value)
+}
+
+
+/**
+ * How busy one of your machines is (its job runner's view).
+ */
+public struct SpacesHostLoad: Equatable, Hashable {
+    /**
+     * CPU it offers, in thousandths.
+     */
+    public var millicpusTotal: UInt32
+    /**
+     * Of that, free.
+     */
+    public var millicpusFree: UInt32
+    /**
+     * Memory it offers (MiB).
+     */
+    public var memoryTotalMb: UInt64
+    /**
+     * Of that, free.
+     */
+    public var memoryFreeMb: UInt64
+    /**
+     * Spaces running there.
+     */
+    public var spaces: UInt32
+    /**
+     * Why it takes nothing now (empty: it does).
+     */
+    public var problem: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * CPU it offers, in thousandths.
+         */millicpusTotal: UInt32,
+        /**
+         * Of that, free.
+         */millicpusFree: UInt32,
+        /**
+         * Memory it offers (MiB).
+         */memoryTotalMb: UInt64,
+        /**
+         * Of that, free.
+         */memoryFreeMb: UInt64,
+        /**
+         * Spaces running there.
+         */spaces: UInt32,
+        /**
+         * Why it takes nothing now (empty: it does).
+         */problem: String) {
+        self.millicpusTotal = millicpusTotal
+        self.millicpusFree = millicpusFree
+        self.memoryTotalMb = memoryTotalMb
+        self.memoryFreeMb = memoryFreeMb
+        self.spaces = spaces
+        self.problem = problem
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension SpacesHostLoad: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSpacesHostLoad: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SpacesHostLoad {
+        return
+            try SpacesHostLoad(
+                millicpusTotal: FfiConverterUInt32.read(from: &buf),
+                millicpusFree: FfiConverterUInt32.read(from: &buf),
+                memoryTotalMb: FfiConverterUInt64.read(from: &buf),
+                memoryFreeMb: FfiConverterUInt64.read(from: &buf),
+                spaces: FfiConverterUInt32.read(from: &buf),
+                problem: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SpacesHostLoad, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.millicpusTotal, into: &buf)
+        FfiConverterUInt32.write(value.millicpusFree, into: &buf)
+        FfiConverterUInt64.write(value.memoryTotalMb, into: &buf)
+        FfiConverterUInt64.write(value.memoryFreeMb, into: &buf)
+        FfiConverterUInt32.write(value.spaces, into: &buf)
+        FfiConverterString.write(value.problem, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpacesHostLoad_lift(_ buf: RustBuffer) throws -> SpacesHostLoad {
+    return try FfiConverterTypeSpacesHostLoad.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpacesHostLoad_lower(_ value: SpacesHostLoad) -> RustBuffer {
+    return FfiConverterTypeSpacesHostLoad.lower(value)
 }
 
 
@@ -31480,6 +39826,27 @@ public struct SpacesdCommand: Equatable, Hashable {
      */
     public var pty: PtySize?
     /**
+     * Idempotency key: a later start with the same key reattaches to the
+     * running process or replays its recorded outcome instead of running
+     * the command again (the guest's exec ledger; see `GetExecRecord`).
+     */
+    public var requestId: String?
+    /**
+     * Fencing epoch: a start with an epoch lower than the Space's current
+     * one is refused; a higher one advances it. `None` is unfenced.
+     */
+    public var epoch: UInt64?
+    /**
+     * Size of the guest's output scrollback ring for this process, in
+     * bytes. The ring never blocks the process: a reader that falls more
+     * than this far behind loses the evicted bytes (visible as an offset
+     * gap). `None` uses the server default (8 MiB); the server clamps
+     * larger requests to its maximum (512 MiB) rather than failing. The
+     * ring is allocated up to this size as output arrives, so the cost is
+     * bounded by the output actually produced.
+     */
+    public var scrollbackBytes: UInt64?
+    /**
      * Kill the process (`term`, then `kill`) when this client's connection
      * to cua-spacesd ends before the process does, including when the
      * client process dies. Off by default: processes are detached and can be
@@ -31518,6 +39885,24 @@ public struct SpacesdCommand: Equatable, Hashable {
          * Run in a PTY of this size.
          */pty: PtySize? = nil,
         /**
+         * Idempotency key: a later start with the same key reattaches to the
+         * running process or replays its recorded outcome instead of running
+         * the command again (the guest's exec ledger; see `GetExecRecord`).
+         */requestId: String? = nil,
+        /**
+         * Fencing epoch: a start with an epoch lower than the Space's current
+         * one is refused; a higher one advances it. `None` is unfenced.
+         */epoch: UInt64? = nil,
+        /**
+         * Size of the guest's output scrollback ring for this process, in
+         * bytes. The ring never blocks the process: a reader that falls more
+         * than this far behind loses the evicted bytes (visible as an offset
+         * gap). `None` uses the server default (8 MiB); the server clamps
+         * larger requests to its maximum (512 MiB) rather than failing. The
+         * ring is allocated up to this size as output arrives, so the cost is
+         * bounded by the output actually produced.
+         */scrollbackBytes: UInt64? = nil,
+        /**
          * Kill the process (`term`, then `kill`) when this client's connection
          * to cua-spacesd ends before the process does, including when the
          * client process dies. Off by default: processes are detached and can be
@@ -31532,6 +39917,9 @@ public struct SpacesdCommand: Equatable, Hashable {
         self.tag = tag
         self.stdin = stdin
         self.pty = pty
+        self.requestId = requestId
+        self.epoch = epoch
+        self.scrollbackBytes = scrollbackBytes
         self.killOnDisconnect = killOnDisconnect
     }
 
@@ -31560,6 +39948,9 @@ public struct FfiConverterTypeSpacesdCommand: FfiConverterRustBuffer {
                 tag: FfiConverterOptionString.read(from: &buf),
                 stdin: FfiConverterBool.read(from: &buf),
                 pty: FfiConverterOptionTypePtySize.read(from: &buf),
+                requestId: FfiConverterOptionString.read(from: &buf),
+                epoch: FfiConverterOptionUInt64.read(from: &buf),
+                scrollbackBytes: FfiConverterOptionUInt64.read(from: &buf),
                 killOnDisconnect: FfiConverterBool.read(from: &buf)
         )
     }
@@ -31574,6 +39965,9 @@ public struct FfiConverterTypeSpacesdCommand: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.tag, into: &buf)
         FfiConverterBool.write(value.stdin, into: &buf)
         FfiConverterOptionTypePtySize.write(value.pty, into: &buf)
+        FfiConverterOptionString.write(value.requestId, into: &buf)
+        FfiConverterOptionUInt64.write(value.epoch, into: &buf)
+        FfiConverterOptionUInt64.write(value.scrollbackBytes, into: &buf)
         FfiConverterBool.write(value.killOnDisconnect, into: &buf)
     }
 }
@@ -32929,6 +41323,25 @@ public struct UploadOptions: Equatable, Hashable {
      * Create missing parent directories.
      */
     public var createParents: Bool
+    /**
+     * Guest user to write as: the file (and parents it creates) is owned
+     * by that user and the user's permissions apply. Needs a guest agent
+     * that runs as root or has passwordless `sudo` (the Linux images do);
+     * otherwise the call fails with a permission error that says why.
+     */
+    public var user: String?
+    /**
+     * Extended attributes to store with the file, published atomically
+     * with its content. At most 32 keys; a key is 1-128 bytes of
+     * `A-Za-z0-9._:/@+-`, a value at most 1024 bytes, 3072 bytes in all.
+     */
+    public var metadata: [String: String]?
+    /**
+     * Extended-attribute key prefix for `metadata` (and for the metadata
+     * reported back): must start with `user.` and end with `.`. Default
+     * `user.cua.meta.`.
+     */
+    public var xattrNamespace: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -32944,11 +41357,30 @@ public struct UploadOptions: Equatable, Hashable {
          */permissions: UInt32 = UInt32(0),
         /**
          * Create missing parent directories.
-         */createParents: Bool = true) {
+         */createParents: Bool = true,
+        /**
+         * Guest user to write as: the file (and parents it creates) is owned
+         * by that user and the user's permissions apply. Needs a guest agent
+         * that runs as root or has passwordless `sudo` (the Linux images do);
+         * otherwise the call fails with a permission error that says why.
+         */user: String? = nil,
+        /**
+         * Extended attributes to store with the file, published atomically
+         * with its content. At most 32 keys; a key is 1-128 bytes of
+         * `A-Za-z0-9._:/@+-`, a value at most 1024 bytes, 3072 bytes in all.
+         */metadata: [String: String]? = nil,
+        /**
+         * Extended-attribute key prefix for `metadata` (and for the metadata
+         * reported back): must start with `user.` and end with `.`. Default
+         * `user.cua.meta.`.
+         */xattrNamespace: String? = nil) {
         self.createNew = createNew
         self.append = append
         self.permissions = permissions
         self.createParents = createParents
+        self.user = user
+        self.metadata = metadata
+        self.xattrNamespace = xattrNamespace
     }
 
 
@@ -32970,7 +41402,10 @@ public struct FfiConverterTypeUploadOptions: FfiConverterRustBuffer {
                 createNew: FfiConverterBool.read(from: &buf),
                 append: FfiConverterBool.read(from: &buf),
                 permissions: FfiConverterUInt32.read(from: &buf),
-                createParents: FfiConverterBool.read(from: &buf)
+                createParents: FfiConverterBool.read(from: &buf),
+                user: FfiConverterOptionString.read(from: &buf),
+                metadata: FfiConverterOptionDictionaryStringString.read(from: &buf),
+                xattrNamespace: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -32979,6 +41414,9 @@ public struct FfiConverterTypeUploadOptions: FfiConverterRustBuffer {
         FfiConverterBool.write(value.append, into: &buf)
         FfiConverterUInt32.write(value.permissions, into: &buf)
         FfiConverterBool.write(value.createParents, into: &buf)
+        FfiConverterOptionString.write(value.user, into: &buf)
+        FfiConverterOptionDictionaryStringString.write(value.metadata, into: &buf)
+        FfiConverterOptionString.write(value.xattrNamespace, into: &buf)
     }
 }
 
@@ -33320,6 +41758,103 @@ public func FfiConverterTypeViewerOptions_lower(_ value: ViewerOptions) -> RustB
     return FfiConverterTypeViewerOptions.lower(value)
 }
 
+
+/**
+ * A named volume of Cua Volume mounted in a Space: the folder
+ * `volumes/<name>/` (or `subpath` inside it) appears at `path`.
+ *
+ * Linux Spaces of every kind (containers, microVMs, VMs) bind-mount it;
+ * a macOS Space gets a symbolic link to the folder (its writes are
+ * refused when `read_only`, by the volume's access rules, though the link
+ * itself is not read-only). The Space sees only the volumes it mounted.
+ */
+public struct VolumeMount: Equatable, Hashable {
+    /**
+     * The volume's name ([`Spaces::create_volume`]): 1 to 63 of `a-z`,
+     * `0-9`, `.`, `_`, `-`.
+     */
+    public var name: String
+    /**
+     * Where it appears in the Space (absolute, for example `/mnt/shared`).
+     */
+    public var path: String
+    /**
+     * Mounted read-only: writes fail.
+     */
+    public var readOnly: Bool
+    /**
+     * A folder inside the volume to mount instead of all of it (relative).
+     */
+    public var subpath: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The volume's name ([`Spaces::create_volume`]): 1 to 63 of `a-z`,
+         * `0-9`, `.`, `_`, `-`.
+         */name: String,
+        /**
+         * Where it appears in the Space (absolute, for example `/mnt/shared`).
+         */path: String,
+        /**
+         * Mounted read-only: writes fail.
+         */readOnly: Bool = false,
+        /**
+         * A folder inside the volume to mount instead of all of it (relative).
+         */subpath: String = "") {
+        self.name = name
+        self.path = path
+        self.readOnly = readOnly
+        self.subpath = subpath
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension VolumeMount: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeVolumeMount: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VolumeMount {
+        return
+            try VolumeMount(
+                name: FfiConverterString.read(from: &buf),
+                path: FfiConverterString.read(from: &buf),
+                readOnly: FfiConverterBool.read(from: &buf),
+                subpath: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: VolumeMount, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.path, into: &buf)
+        FfiConverterBool.write(value.readOnly, into: &buf)
+        FfiConverterString.write(value.subpath, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVolumeMount_lift(_ buf: RustBuffer) throws -> VolumeMount {
+    return try FfiConverterTypeVolumeMount.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVolumeMount_lower(_ value: VolumeMount) -> RustBuffer {
+    return FfiConverterTypeVolumeMount.lower(value)
+}
+
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 /**
@@ -33509,6 +42044,305 @@ public func FfiConverterTypeAgentSetupTarget_lift(_ buf: RustBuffer) throws -> A
 #endif
 public func FfiConverterTypeAgentSetupTarget_lower(_ value: AgentSetupTarget) -> RustBuffer {
     return FfiConverterTypeAgentSetupTarget.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * One build step. Values are literal: a Dockerfile's `$VAR`s are expanded
+ * by [`BuildOptions::dockerfile`]'s parser, not here. `Run` and `Copy`
+ * steps run as the `User`, in the `Workdir` and with the `Env` set before
+ * them.
+ */
+
+public enum BuildStep: Equatable, Hashable {
+
+    /**
+     * A shell command line (`/bin/sh -c`, or the last `Shell`).
+     */
+    case run(
+        /**
+         * The command line.
+         */command: String
+    )
+    /**
+     * A command and arguments, run without a shell.
+     */
+    case runExec(
+        /**
+         * Program and arguments.
+         */argv: [String]
+    )
+    /**
+     * Files of the build context copied in (`COPY`; `unpack`: `ADD`).
+     */
+    case copy(
+        /**
+         * Paths (globs allowed) relative to the context directory.
+         */sources: [String],
+        /**
+         * Destination in the image; relative to the current `Workdir`.
+         */dest: String,
+        /**
+         * `user[:group]` that owns what lands (default root).
+         */owner: String?,
+        /**
+         * A `chmod` mode applied to what lands (default: the source's).
+         */mode: String?,
+        /**
+         * A local tar archive is unpacked into `dest`.
+         */unpack: Bool
+    )
+    /**
+     * Environment for later steps and for commands run in the image.
+     */
+    case env(
+        /**
+         * Variables.
+         */vars: [String: String]
+    )
+    /**
+     * The working directory (created when missing).
+     */
+    case workdir(
+        /**
+         * Directory, relative to the current one.
+         */path: String
+    )
+    /**
+     * The user later steps and the image's commands run as.
+     */
+    case user(
+        /**
+         * Name or id, optionally `:group`.
+         */user: String
+    )
+    /**
+     * Ports the image listens on.
+     */
+    case expose(
+        /**
+         * Ports (`80`, `443/tcp`).
+         */ports: [String]
+    )
+    /**
+     * The image's default command.
+     */
+    case cmd(
+        /**
+         * Program and arguments.
+         */argv: [String]
+    )
+    /**
+     * The image's entrypoint.
+     */
+    case entrypoint(
+        /**
+         * Program and arguments.
+         */argv: [String]
+    )
+    /**
+     * The shell `Run` uses.
+     */
+    case shell(
+        /**
+         * Program and flags (`["/bin/bash", "-c"]`).
+         */argv: [String]
+    )
+    /**
+     * Image labels.
+     */
+    case label(
+        /**
+         * Labels.
+         */labels: [String: String]
+    )
+    /**
+     * Volume mount points.
+     */
+    case volume(
+        /**
+         * Paths.
+         */paths: [String]
+    )
+    /**
+     * The stop signal.
+     */
+    case stopSignal(
+        /**
+         * Name or number.
+         */signal: String
+    )
+    /**
+     * The health check, as written.
+     */
+    case healthcheck(
+        /**
+         * The `HEALTHCHECK` arguments.
+         */text: String
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension BuildStep: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeBuildStep: FfiConverterRustBuffer {
+    typealias SwiftType = BuildStep
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> BuildStep {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .run(command: try FfiConverterString.read(from: &buf)
+        )
+
+        case 2: return .runExec(argv: try FfiConverterSequenceString.read(from: &buf)
+        )
+
+        case 3: return .copy(sources: try FfiConverterSequenceString.read(from: &buf), dest: try FfiConverterString.read(from: &buf), owner: try FfiConverterOptionString.read(from: &buf), mode: try FfiConverterOptionString.read(from: &buf), unpack: try FfiConverterBool.read(from: &buf)
+        )
+
+        case 4: return .env(vars: try FfiConverterDictionaryStringString.read(from: &buf)
+        )
+
+        case 5: return .workdir(path: try FfiConverterString.read(from: &buf)
+        )
+
+        case 6: return .user(user: try FfiConverterString.read(from: &buf)
+        )
+
+        case 7: return .expose(ports: try FfiConverterSequenceString.read(from: &buf)
+        )
+
+        case 8: return .cmd(argv: try FfiConverterSequenceString.read(from: &buf)
+        )
+
+        case 9: return .entrypoint(argv: try FfiConverterSequenceString.read(from: &buf)
+        )
+
+        case 10: return .shell(argv: try FfiConverterSequenceString.read(from: &buf)
+        )
+
+        case 11: return .label(labels: try FfiConverterDictionaryStringString.read(from: &buf)
+        )
+
+        case 12: return .volume(paths: try FfiConverterSequenceString.read(from: &buf)
+        )
+
+        case 13: return .stopSignal(signal: try FfiConverterString.read(from: &buf)
+        )
+
+        case 14: return .healthcheck(text: try FfiConverterString.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: BuildStep, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case let .run(command):
+            writeInt(&buf, Int32(1))
+            FfiConverterString.write(command, into: &buf)
+
+
+        case let .runExec(argv):
+            writeInt(&buf, Int32(2))
+            FfiConverterSequenceString.write(argv, into: &buf)
+
+
+        case let .copy(sources,dest,owner,mode,unpack):
+            writeInt(&buf, Int32(3))
+            FfiConverterSequenceString.write(sources, into: &buf)
+            FfiConverterString.write(dest, into: &buf)
+            FfiConverterOptionString.write(owner, into: &buf)
+            FfiConverterOptionString.write(mode, into: &buf)
+            FfiConverterBool.write(unpack, into: &buf)
+
+
+        case let .env(vars):
+            writeInt(&buf, Int32(4))
+            FfiConverterDictionaryStringString.write(vars, into: &buf)
+
+
+        case let .workdir(path):
+            writeInt(&buf, Int32(5))
+            FfiConverterString.write(path, into: &buf)
+
+
+        case let .user(user):
+            writeInt(&buf, Int32(6))
+            FfiConverterString.write(user, into: &buf)
+
+
+        case let .expose(ports):
+            writeInt(&buf, Int32(7))
+            FfiConverterSequenceString.write(ports, into: &buf)
+
+
+        case let .cmd(argv):
+            writeInt(&buf, Int32(8))
+            FfiConverterSequenceString.write(argv, into: &buf)
+
+
+        case let .entrypoint(argv):
+            writeInt(&buf, Int32(9))
+            FfiConverterSequenceString.write(argv, into: &buf)
+
+
+        case let .shell(argv):
+            writeInt(&buf, Int32(10))
+            FfiConverterSequenceString.write(argv, into: &buf)
+
+
+        case let .label(labels):
+            writeInt(&buf, Int32(11))
+            FfiConverterDictionaryStringString.write(labels, into: &buf)
+
+
+        case let .volume(paths):
+            writeInt(&buf, Int32(12))
+            FfiConverterSequenceString.write(paths, into: &buf)
+
+
+        case let .stopSignal(signal):
+            writeInt(&buf, Int32(13))
+            FfiConverterString.write(signal, into: &buf)
+
+
+        case let .healthcheck(text):
+            writeInt(&buf, Int32(14))
+            FfiConverterString.write(text, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBuildStep_lift(_ buf: RustBuffer) throws -> BuildStep {
+    return try FfiConverterTypeBuildStep.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBuildStep_lower(_ value: BuildStep) -> RustBuffer {
+    return FfiConverterTypeBuildStep.lower(value)
 }
 
 
@@ -33719,7 +42553,7 @@ public enum CuaError: Swift.Error, Equatable, Hashable, Foundation.LocalizedErro
     case Cancelled(message: String)
 
     /**
-     * Your own cloud account (AWS, Google Cloud, Modal) refused or failed
+     * Your own cloud account (AWS, Google Cloud, Hetzner, Modal) refused or failed
      * a call Cua made for a Space there: a missing permission, a quota, a
      * region without the machine type. The message names the cloud's own
      * error.
@@ -33729,6 +42563,18 @@ public enum CuaError: Swift.Error, Equatable, Hashable, Foundation.LocalizedErro
      * region or project.
      */
     case Cloud(message: String)
+
+    /**
+     * The machine has no room for another Space now: its VMs are at their
+     * memory limit (shared snapshot memory counted once) or CPU limit, or
+     * the machine itself is low on memory. Nothing was started. The
+     * message says which limit, by how much, and what to do.
+     *
+     * Fix: Delete a Space, create it smaller (`cpus`, `memory_mb`), create
+     * it on another machine (`on="auto"`), or raise the limit on this one
+     * (`CUA_VM_MAX_RSS_FRACTION`, `CUA_VM_VCPU_OVERCOMMIT`).
+     */
+    case HostCapacity(message: String)
 
 
 
@@ -33855,6 +42701,10 @@ public struct FfiConverterTypeCuaError: FfiConverterRustBuffer {
             message: try FfiConverterString.read(from: &buf)
         )
 
+        case 25: return .HostCapacity(
+            message: try FfiConverterString.read(from: &buf)
+        )
+
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -33914,6 +42764,8 @@ public struct FfiConverterTypeCuaError: FfiConverterRustBuffer {
             writeInt(&buf, Int32(23))
         case .Cloud(_ /* message is ignored*/):
             writeInt(&buf, Int32(24))
+        case .HostCapacity(_ /* message is ignored*/):
+            writeInt(&buf, Int32(25))
 
 
         }
@@ -34095,6 +42947,181 @@ public func FfiConverterTypeDiskLevel_lift(_ buf: RustBuffer) throws -> DiskLeve
 #endif
 public func FfiConverterTypeDiskLevel_lower(_ value: DiskLevel) -> RustBuffer {
     return FfiConverterTypeDiskLevel.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * Where a Space's egress policy is enforced ([`SpaceInfo::egress_enforced`]).
+ */
+
+public enum EgressEnforcement: Equatable, Hashable {
+
+    /**
+     * By the host the Space runs on, outside the guest: nothing in the
+     * guest, root included, can change it.
+     */
+    case host
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension EgressEnforcement: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeEgressEnforcement: FfiConverterRustBuffer {
+    typealias SwiftType = EgressEnforcement
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> EgressEnforcement {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .host
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: EgressEnforcement, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .host:
+            writeInt(&buf, Int32(1))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeEgressEnforcement_lift(_ buf: RustBuffer) throws -> EgressEnforcement {
+    return try FfiConverterTypeEgressEnforcement.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeEgressEnforcement_lower(_ value: EgressEnforcement) -> RustBuffer {
+    return FfiConverterTypeEgressEnforcement.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * A batch event.
+ */
+
+public enum ForkBatchEvent: Equatable, Hashable {
+
+    /**
+     * A group was placed.
+     */
+    case placement(placement: ForkBatchPlacement
+    )
+    /**
+     * A checkpoint is being copied to a machine.
+     */
+    case sync(progress: SnapshotSyncProgress
+    )
+    /**
+     * A fork is ready, or failed.
+     */
+    case item(item: ForkBatchItem
+    )
+    /**
+     * The batch is over (the last event).
+     */
+    case done(summary: ForkBatchSummary
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ForkBatchEvent: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeForkBatchEvent: FfiConverterRustBuffer {
+    typealias SwiftType = ForkBatchEvent
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ForkBatchEvent {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .placement(placement: try FfiConverterTypeForkBatchPlacement.read(from: &buf)
+        )
+
+        case 2: return .sync(progress: try FfiConverterTypeSnapshotSyncProgress.read(from: &buf)
+        )
+
+        case 3: return .item(item: try FfiConverterTypeForkBatchItem.read(from: &buf)
+        )
+
+        case 4: return .done(summary: try FfiConverterTypeForkBatchSummary.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ForkBatchEvent, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case let .placement(placement):
+            writeInt(&buf, Int32(1))
+            FfiConverterTypeForkBatchPlacement.write(placement, into: &buf)
+
+
+        case let .sync(progress):
+            writeInt(&buf, Int32(2))
+            FfiConverterTypeSnapshotSyncProgress.write(progress, into: &buf)
+
+
+        case let .item(item):
+            writeInt(&buf, Int32(3))
+            FfiConverterTypeForkBatchItem.write(item, into: &buf)
+
+
+        case let .done(summary):
+            writeInt(&buf, Int32(4))
+            FfiConverterTypeForkBatchSummary.write(summary, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeForkBatchEvent_lift(_ buf: RustBuffer) throws -> ForkBatchEvent {
+    return try FfiConverterTypeForkBatchEvent.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeForkBatchEvent_lower(_ value: ForkBatchEvent) -> RustBuffer {
+    return FfiConverterTypeForkBatchEvent.lower(value)
 }
 
 
@@ -35134,6 +44161,92 @@ public func FfiConverterTypeSandboxStatus_lower(_ value: SandboxStatus) -> RustB
 }
 
 
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * Who may open a share.
+ */
+
+public enum ShareAccess: Equatable, Hashable {
+
+    /**
+     * Only the owner's cua.ai account, on any of the owner's devices.
+     */
+    case `private`
+    /**
+     * Members of the owner's team.
+     */
+    case team
+    /**
+     * Anyone with the link, until it expires or is stopped.
+     */
+    case `public`
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ShareAccess: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeShareAccess: FfiConverterRustBuffer {
+    typealias SwiftType = ShareAccess
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ShareAccess {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .`private`
+
+        case 2: return .team
+
+        case 3: return .`public`
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ShareAccess, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .`private`:
+            writeInt(&buf, Int32(1))
+
+
+        case .team:
+            writeInt(&buf, Int32(2))
+
+
+        case .`public`:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeShareAccess_lift(_ buf: RustBuffer) throws -> ShareAccess {
+    return try FfiConverterTypeShareAccess.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeShareAccess_lower(_ value: ShareAccess) -> RustBuffer {
+    return FfiConverterTypeShareAccess.lower(value)
+}
+
+
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
@@ -35449,6 +44562,54 @@ fileprivate struct FfiConverterOptionTypeAuthIdentity: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeBakeForkCheck: FfiConverterRustBuffer {
+    typealias SwiftType = BakeForkCheck?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeBakeForkCheck.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeBakeForkCheck.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeBuildOptions: FfiConverterRustBuffer {
+    typealias SwiftType = BuildOptions?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeBuildOptions.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeBuildOptions.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeComputerResources: FfiConverterRustBuffer {
     typealias SwiftType = ComputerResources?
 
@@ -35593,6 +44754,30 @@ fileprivate struct FfiConverterOptionTypeDriveView: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeEgressPolicy: FfiConverterRustBuffer {
+    typealias SwiftType = EgressPolicy?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeEgressPolicy.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeEgressPolicy.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeExitInfo: FfiConverterRustBuffer {
     typealias SwiftType = ExitInfo?
 
@@ -35609,6 +44794,30 @@ fileprivate struct FfiConverterOptionTypeExitInfo: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeExitInfo.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeForkManyOptions: FfiConverterRustBuffer {
+    typealias SwiftType = ForkManyOptions?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeForkManyOptions.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeForkManyOptions.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -35929,6 +45138,30 @@ fileprivate struct FfiConverterOptionTypeSiteLoginOptions: FfiConverterRustBuffe
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeSnapshotFallbackOptions: FfiConverterRustBuffer {
+    typealias SwiftType = SnapshotFallbackOptions?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeSnapshotFallbackOptions.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeSnapshotFallbackOptions.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeSpaceAgentOptions: FfiConverterRustBuffer {
     typealias SwiftType = SpaceAgentOptions?
 
@@ -35993,6 +45226,30 @@ fileprivate struct FfiConverterOptionTypeSpaceInfo: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeSpaceInfo.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeSpacesHostLoad: FfiConverterRustBuffer {
+    typealias SwiftType = SpacesHostLoad?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeSpacesHostLoad.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeSpacesHostLoad.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -36097,6 +45354,54 @@ fileprivate struct FfiConverterOptionTypeViewerOptions: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeEgressEnforcement: FfiConverterRustBuffer {
+    typealias SwiftType = EgressEnforcement?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeEgressEnforcement.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeEgressEnforcement.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeForkBatchEvent: FfiConverterRustBuffer {
+    typealias SwiftType = ForkBatchEvent?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeForkBatchEvent.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeForkBatchEvent.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeImageFormat: FfiConverterRustBuffer {
     typealias SwiftType = ImageFormat?
 
@@ -36137,6 +45442,30 @@ fileprivate struct FfiConverterOptionTypeRegistrySecret: FfiConverterRustBuffer 
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeRegistrySecret.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeShareAccess: FfiConverterRustBuffer {
+    typealias SwiftType = ShareAccess?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeShareAccess.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeShareAccess.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -36209,6 +45538,30 @@ fileprivate struct FfiConverterOptionSequenceTypeHttpHeader: FfiConverterRustBuf
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterSequenceTypeHttpHeader.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionDictionaryStringString: FfiConverterRustBuffer {
+    typealias SwiftType = [String: String]?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterDictionaryStringString.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterDictionaryStringString.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -36542,6 +45895,56 @@ fileprivate struct FfiConverterSequenceTypeBuildFile: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeBuildInfo: FfiConverterRustBuffer {
+    typealias SwiftType = [BuildInfo]
+
+    public static func write(_ value: [BuildInfo], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeBuildInfo.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [BuildInfo] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [BuildInfo]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeBuildInfo.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeBuildStepResult: FfiConverterRustBuffer {
+    typealias SwiftType = [BuildStepResult]
+
+    public static func write(_ value: [BuildStepResult], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeBuildStepResult.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [BuildStepResult] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [BuildStepResult]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeBuildStepResult.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeBundledSkill: FfiConverterRustBuffer {
     typealias SwiftType = [BundledSkill]
 
@@ -36559,6 +45962,56 @@ fileprivate struct FfiConverterSequenceTypeBundledSkill: FfiConverterRustBuffer 
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeBundledSkill.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeCheckpointSummary: FfiConverterRustBuffer {
+    typealias SwiftType = [CheckpointSummary]
+
+    public static func write(_ value: [CheckpointSummary], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeCheckpointSummary.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [CheckpointSummary] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [CheckpointSummary]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeCheckpointSummary.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeCloudAuditEntry: FfiConverterRustBuffer {
+    typealias SwiftType = [CloudAuditEntry]
+
+    public static func write(_ value: [CloudAuditEntry], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeCloudAuditEntry.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [CloudAuditEntry] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [CloudAuditEntry]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeCloudAuditEntry.read(from: &buf))
         }
         return seq
     }
@@ -37067,6 +46520,131 @@ fileprivate struct FfiConverterSequenceTypeDriveVersion: FfiConverterRustBuffer 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeElasticAssignment: FfiConverterRustBuffer {
+    typealias SwiftType = [ElasticAssignment]
+
+    public static func write(_ value: [ElasticAssignment], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeElasticAssignment.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ElasticAssignment] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ElasticAssignment]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeElasticAssignment.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeElasticDecision: FfiConverterRustBuffer {
+    typealias SwiftType = [ElasticDecision]
+
+    public static func write(_ value: [ElasticDecision], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeElasticDecision.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ElasticDecision] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ElasticDecision]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeElasticDecision.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeElasticHost: FfiConverterRustBuffer {
+    typealias SwiftType = [ElasticHost]
+
+    public static func write(_ value: [ElasticHost], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeElasticHost.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ElasticHost] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ElasticHost]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeElasticHost.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeElasticNewHost: FfiConverterRustBuffer {
+    typealias SwiftType = [ElasticNewHost]
+
+    public static func write(_ value: [ElasticNewHost], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeElasticNewHost.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ElasticNewHost] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ElasticNewHost]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeElasticNewHost.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeElasticUnplaced: FfiConverterRustBuffer {
+    typealias SwiftType = [ElasticUnplaced]
+
+    public static func write(_ value: [ElasticUnplaced], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeElasticUnplaced.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ElasticUnplaced] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ElasticUnplaced]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeElasticUnplaced.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeFileEntry: FfiConverterRustBuffer {
     typealias SwiftType = [FileEntry]
 
@@ -37084,6 +46662,56 @@ fileprivate struct FfiConverterSequenceTypeFileEntry: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeFileEntry.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeForkBatchItem: FfiConverterRustBuffer {
+    typealias SwiftType = [ForkBatchItem]
+
+    public static func write(_ value: [ForkBatchItem], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeForkBatchItem.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ForkBatchItem] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ForkBatchItem]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeForkBatchItem.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeForkGroup: FfiConverterRustBuffer {
+    typealias SwiftType = [ForkGroup]
+
+    public static func write(_ value: [ForkGroup], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeForkGroup.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ForkGroup] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ForkGroup]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeForkGroup.read(from: &buf))
         }
         return seq
     }
@@ -37317,6 +46945,31 @@ fileprivate struct FfiConverterSequenceTypeMachineHealthCheck: FfiConverterRustB
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeNamedVolume: FfiConverterRustBuffer {
+    typealias SwiftType = [NamedVolume]
+
+    public static func write(_ value: [NamedVolume], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeNamedVolume.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [NamedVolume] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [NamedVolume]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeNamedVolume.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeNotificationInfo: FfiConverterRustBuffer {
     typealias SwiftType = [NotificationInfo]
 
@@ -37484,6 +47137,56 @@ fileprivate struct FfiConverterSequenceTypePresenceMember: FfiConverterRustBuffe
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypePresenceMember.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypePrewarm: FfiConverterRustBuffer {
+    typealias SwiftType = [Prewarm]
+
+    public static func write(_ value: [Prewarm], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypePrewarm.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [Prewarm] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [Prewarm]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypePrewarm.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypePrewarmPlacement: FfiConverterRustBuffer {
+    typealias SwiftType = [PrewarmPlacement]
+
+    public static func write(_ value: [PrewarmPlacement], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypePrewarmPlacement.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [PrewarmPlacement] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [PrewarmPlacement]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypePrewarmPlacement.read(from: &buf))
         }
         return seq
     }
@@ -37692,6 +47395,31 @@ fileprivate struct FfiConverterSequenceTypeSandboxInfo: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeSandboxPool: FfiConverterRustBuffer {
+    typealias SwiftType = [SandboxPool]
+
+    public static func write(_ value: [SandboxPool], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeSandboxPool.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [SandboxPool] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [SandboxPool]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeSandboxPool.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeSetupStep: FfiConverterRustBuffer {
     typealias SwiftType = [SetupStep]
 
@@ -37709,6 +47437,31 @@ fileprivate struct FfiConverterSequenceTypeSetupStep: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeSetupStep.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeShare: FfiConverterRustBuffer {
+    typealias SwiftType = [Share]
+
+    public static func write(_ value: [Share], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeShare.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [Share] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [Share]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeShare.read(from: &buf))
         }
         return seq
     }
@@ -38092,6 +47845,56 @@ fileprivate struct FfiConverterSequenceTypeTeleportItem: FfiConverterRustBuffer 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeVolumeMount: FfiConverterRustBuffer {
+    typealias SwiftType = [VolumeMount]
+
+    public static func write(_ value: [VolumeMount], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeVolumeMount.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [VolumeMount] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [VolumeMount]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeVolumeMount.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeBuildStep: FfiConverterRustBuffer {
+    typealias SwiftType = [BuildStep]
+
+    public static func write(_ value: [BuildStep], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeBuildStep.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [BuildStep] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [BuildStep]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeBuildStep.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeImageLayer: FfiConverterRustBuffer {
     typealias SwiftType = [ImageLayer]
 
@@ -38159,6 +47962,32 @@ fileprivate struct FfiConverterDictionaryStringUInt16: FfiConverterRustBuffer {
         for _ in 0..<len {
             let key = try FfiConverterString.read(from: &buf)
             let value = try FfiConverterUInt16.read(from: &buf)
+            dict[key] = value
+        }
+        return dict
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterDictionaryStringUInt32: FfiConverterRustBuffer {
+    public static func write(_ value: [String: UInt32], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for (key, value) in value {
+            FfiConverterString.write(key, into: &buf)
+            FfiConverterUInt32.write(value, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [String: UInt32] {
+        let len: Int32 = try readInt(&buf)
+        var dict = [String: UInt32]()
+        dict.reserveCapacity(Int(len))
+        for _ in 0..<len {
+            let key = try FfiConverterString.read(from: &buf)
+            let value = try FfiConverterUInt32.read(from: &buf)
             dict[key] = value
         }
         return dict
@@ -38412,13 +48241,14 @@ public func canonicalImage(os: String, version: String?)throws  -> String  {
 /**
  * The canonical image for `os`, `version` and `tier`: `slim` (the minimum
  * that passes `cua-spacesd doctor --strict`; CI and benchmarks use it),
- * `full` or `None` (the default, with dev tooling) or, on macOS, `xcode`
- * / `xcode-<X.Y>` (full plus one pinned Xcode). The tag is
+ * `full` or `None` (the default, with dev tooling), on macOS `xcode`
+ * / `xcode-<X.Y>` (full plus one pinned Xcode) or, on Linux, `docker`
+ * (slim plus the Docker engine, a VM: `-docker-disk`). The tag is
  * `<os-version>[-<tier>]` (`ghcr.io/trycua/linux:24.04-slim`); the
  * resolver finds its `-disk` sibling. `CUA_IMAGE_<OS>` overrides only the
  * default full image. Raises `ImageNotPublished` for a tier CI has not
- * published yet, `InvalidArgument` for an unknown tier or `xcode`
- * outside macOS.
+ * published yet, `InvalidArgument` for an unknown tier, `xcode` outside
+ * macOS or `docker` outside Linux.
  */
 public func canonicalImageTier(os: String, version: String?, tier: String?)throws  -> String  {
     return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeCuaError_lift) {
@@ -38586,7 +48416,7 @@ public func qualifySandboxRef(name: String, local: Bool? = nil)throws  -> String
 /**
  * Every location word `on=` accepts, in display order: `local`, `cloud`,
  * then the contrib providers (`e2b`, `daytona`, `modal`, ...) and your own
- * clouds (`aws`, `gcp`). A word is listed whether or not this build
+ * clouds (`aws`, `gcp`, `hetzner`). A word is listed whether or not this build
  * includes that provider (see [`contrib_providers_built`]).
  */
 public func sandboxLocations() -> [String]  {
@@ -38940,7 +48770,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_func_canonical_image() != 8955) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_func_canonical_image_tier() != 17006) {
+    if (uniffi_cua_sdk_checksum_func_canonical_image_tier() != 39799) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_func_image_alias() != 25551) {
@@ -38976,7 +48806,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_func_qualify_sandbox_ref() != 59566) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_func_sandbox_locations() != 10614) {
+    if (uniffi_cua_sdk_checksum_func_sandbox_locations() != 28653) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_func_presence_color() != 238) {
@@ -39060,7 +48890,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_func_telemetry_use_app_notice() != 17365) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_agentsetup_configure_mcp() != 62628) {
+    if (uniffi_cua_sdk_checksum_method_agentsetup_configure_mcp() != 53713) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_agentsetup_detect() != 59369) {
@@ -39217,6 +49047,21 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_cua_spacesd() != 62689) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_cua_check_share() != 37820) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_cua_share() != 50100) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_cua_shares() != 39646) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_cua_stop_all_shares() != 36274) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_cua_stop_share() != 18637) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_devices_approve() != 49147) {
@@ -39387,6 +49232,12 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_mediasession_stats() != 8671) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_sdk_checksum_method_forkbatch_collect() != 56883) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_forkbatch_next() != 11244) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_sdk_checksum_method_guestdisplay_open_command() != 4758) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -39418,6 +49269,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_sandbox_delete() != 17492) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_sandbox_expires_at_unix() != 46305) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_sandbox_forward() != 19019) {
@@ -39474,6 +49328,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_sandbox_refresh() != 45835) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_sdk_checksum_method_sandbox_resize() != 25505) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_sdk_checksum_method_sandbox_restart() != 22482) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -39495,6 +49352,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_sandbox_services() != 16018) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_sdk_checksum_method_sandbox_set_lifetime() != 36699) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_sdk_checksum_method_sandbox_spacesd() != 50770) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -39507,7 +49367,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_sandbox_wait_ready() != 17033) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_sdk_checksum_method_sandboxes_bake() != 14802) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_sdk_checksum_method_sandboxes_cancel_create() != 52079) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_sandboxes_checkpoint() != 17587) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_sandboxes_checkpoints() != 2515) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_sandboxes_connect() != 12250) {
@@ -39519,10 +49388,31 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_sandboxes_create() != 52749) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_sdk_checksum_method_sandboxes_create_pool() != 53813) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_sdk_checksum_method_sandboxes_delete() != 43939) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_sdk_checksum_method_sandboxes_delete_checkpoint() != 15663) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_sandboxes_delete_pool() != 8011) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_sandboxes_fork() != 13186) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_sandboxes_fork_groups() != 29823) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_sandboxes_fork_many() != 46478) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_sdk_checksum_method_sandboxes_get() != 32181) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_sandboxes_get_pool() != 37892) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_sandboxes_list() != 11890) {
@@ -39531,7 +49421,19 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_sandboxes_list_all() != 9098) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_sdk_checksum_method_sandboxes_list_pools() != 31630) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_sdk_checksum_method_sandboxes_list_with_warnings() != 59684) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_sandboxes_pin_checkpoint() != 37956) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_sandboxes_prune_checkpoints() != 11362) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_sandboxes_publish_checkpoint() != 4912) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_service_endpoint() != 13535) {
@@ -39627,6 +49529,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_space_capabilities_json() != 39079) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_sdk_checksum_method_space_checkpoint() != 439) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_sdk_checksum_method_space_close_stream() != 64912) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -39634,6 +49539,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_space_download() != 24915) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_space_fork() != 28892) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_space_forward() != 47943) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_space_home() != 24422) {
@@ -39658,6 +49569,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_space_request_site_login() != 2223) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_space_route() != 9790) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_space_screenshot() != 41142) {
@@ -39700,6 +49614,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_space_thumbnail() != 10979) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_space_transport() != 727) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_space_unshare() != 58172) {
@@ -39768,10 +49685,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_spacestreamsession_stats() != 40219) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_sdk_checksum_method_spaces_cloud_audit() != 55399) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_sdk_checksum_method_spaces_cloud_connect() != 30460) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_spaces_cloud_disconnect() != 33934) {
+    if (uniffi_cua_sdk_checksum_method_spaces_cloud_disconnect() != 35548) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spaces_cloud_status() != 61347) {
@@ -39781,6 +49701,33 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spaces_cloud_test() != 25322) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spaces_cloud_add_host() != 59195) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spaces_cloud_budget() != 63247) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spaces_cloud_hosts() != 18416) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spaces_cloud_plan() != 45997) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spaces_cloud_reconcile() != 7744) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spaces_cloud_remove_host() != 49136) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spaces_prewarm() != 20692) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spaces_prewarms() != 24110) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spaces_remove_prewarm() != 56425) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spaces_agent_pause() != 55408) {
@@ -39852,10 +49799,19 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_spaces_create() != 2097) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_sdk_checksum_method_spaces_create_volume() != 29649) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_sdk_checksum_method_spaces_create_with_progress() != 28676) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spaces_delete() != 39986) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spaces_delete_volume() != 11412) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spaces_fork() != 18152) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spaces_gpu_support() != 3623) {
@@ -39865,6 +49821,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spaces_list() != 27182) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spaces_list_known() != 21083) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spaces_list_tools_json() != 19259) {
@@ -39882,10 +49841,19 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_spaces_remove() != 23086) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_sdk_checksum_method_spaces_resize() != 2886) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_sdk_checksum_method_spaces_resolve() != 9986) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spaces_resources() != 12146) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spaces_set_egress() != 12366) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spaces_set_lifetime() != 62609) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spaces_space() != 26355) {
@@ -39894,7 +49862,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_spaces_start() != 32898) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_spaces_stop() != 64586) {
+    if (uniffi_cua_sdk_checksum_method_spaces_stop() != 59057) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spaces_suspend() != 23817) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spaces_volume_approve() != 8640) {
@@ -39972,10 +49943,37 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_spaces_volume_write() != 64388) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_sdk_checksum_method_spaces_volumes() != 15143) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spaces_watch_list() != 1499) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_sdk_checksum_method_spaces_watch_resources() != 49660) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_sdk_checksum_method_spaces_build() != 49398) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spaces_build_with_progress() != 7812) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spaces_builds() != 43761) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spaces_delete_build() != 6500) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spaceslistlistener_on_changed() != 40063) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spaceslistwatch_stop() != 38223) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_sdk_checksum_method_teleportapprover_approve() != 36264) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_buildlistener_on_progress() != 22922) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spacesdclient_agents() != 39176) {
@@ -39984,10 +49982,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_spacesdclient_attach() != 5563) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_spacesdclient_call_json() != 51262) {
+    if (uniffi_cua_sdk_checksum_method_spacesdclient_call_json() != 8886) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_spacesdclient_call_json_stream() != 42228) {
+    if (uniffi_cua_sdk_checksum_method_spacesdclient_call_json_stream() != 14801) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spacesdclient_capabilities() != 31337) {
@@ -40008,16 +50006,19 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_spacesdclient_double_click() != 10956) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_spacesdclient_download() != 6368) {
+    if (uniffi_cua_sdk_checksum_method_spacesdclient_download() != 8616) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_spacesdclient_download_file() != 26945) {
+    if (uniffi_cua_sdk_checksum_method_spacesdclient_download_file() != 30168) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spacesdclient_drag() != 32232) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spacesdclient_endpoint() != 30765) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spacesdclient_forward_tcp() != 38811) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spacesdclient_get_clipboard() != 51062) {
@@ -40041,16 +50042,22 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_spacesdclient_keyboard_json() != 49929) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_spacesdclient_list_dir() != 6490) {
+    if (uniffi_cua_sdk_checksum_method_spacesdclient_list_dir() != 31233) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spacesdclient_list_processes() != 29240) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_spacesdclient_make_dir() != 1754) {
+    if (uniffi_cua_sdk_checksum_method_spacesdclient_make_dir() != 46317) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spacesdclient_move_path() != 23309) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spacesdclient_move_to() != 46959) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spacesdclient_open_download() != 27334) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spacesdclient_open_media() != 3814) {
@@ -40065,10 +50072,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_spacesdclient_press() != 5935) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_spacesdclient_remove() != 9963) {
+    if (uniffi_cua_sdk_checksum_method_spacesdclient_remove() != 41411) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spacesdclient_right_click() != 48234) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spacesdclient_route() != 29042) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spacesdclient_run() != 45378) {
@@ -40089,7 +50099,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_spacesdclient_spawn() != 22009) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_spacesdclient_stat() != 29126) {
+    if (uniffi_cua_sdk_checksum_method_spacesdclient_stat() != 57159) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spacesdclient_transport() != 45732) {
@@ -40104,13 +50114,28 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_spacesdclient_upload_file() != 4146) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_sdk_checksum_method_spacesddownload_cancel() != 63175) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spacesddownload_next_chunk() != 20848) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spacesdforward_guest_port() != 59767) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spacesdforward_local_addr() != 54475) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spacesdforward_stop() != 59627) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_sdk_checksum_method_spacesdprocess_close_stdin() != 12460) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_spacesdprocess_detach() != 21835) {
+    if (uniffi_cua_sdk_checksum_method_spacesdprocess_detach() != 64798) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_spacesdprocess_kill() != 63092) {
+    if (uniffi_cua_sdk_checksum_method_spacesdprocess_kill() != 65087) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spacesdprocess_next_event() != 12843) {
@@ -40160,9 +50185,11 @@ private let initializationResult: InitializationResult = {
     }
 
     uniffiCallbackInitAudioSink()
+    uniffiCallbackInitBuildListener()
     uniffiCallbackInitFrameSink()
     uniffiCallbackInitResourcesListener()
     uniffiCallbackInitSpaceCreateListener()
+    uniffiCallbackInitSpacesListListener()
     uniffiCallbackInitTeleportApprover()
     return InitializationResult.ok
 }()

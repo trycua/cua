@@ -47,7 +47,6 @@ struct SpaceReadyNote: Equatable {
 @MainActor
 final class SpaceReadyNotifier {
     static let shared = SpaceReadyNotifier()
-    private var authorized: Bool?
 
     func post(_ note: SpaceReadyNote) {
         guard DeviceNotifier.available else { return }
@@ -65,10 +64,7 @@ final class SpaceReadyNotifier {
         }
         let request = UNNotificationRequest(identifier: note.identifier, content: content, trigger: nil)
         Task {
-            if authorized == nil {
-                authorized = (try? await center.requestAuthorization(options: [.alert, .sound])) ?? false
-            }
-            guard authorized == true else { return }
+            guard await PermissionRequester.notificationsAuthorized(center) else { return }
             try? await center.add(request)
         }
     }

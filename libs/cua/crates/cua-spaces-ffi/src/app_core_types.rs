@@ -73,8 +73,6 @@ pub enum AppThumbnailScene {
 pub type AppSpaceProvider = core::model::SpaceProvider;
 #[uniffi::remote(Enum)]
 pub enum AppSpaceProvider {
-    /// Cua Cloud.
-    Cloud,
     /// This Mac.
     Local,
     /// A machine added by address.
@@ -109,9 +107,6 @@ pub struct AppSpaceProgress {
     pub label: String,
     /// Why the create failed.
     pub error: Option<String>,
-    /// It failed because the account is out of Cua Cloud credit: the
-    /// website billing page "Add credit" opens.
-    pub credit_url: Option<String>,
     /// While it downloads: "4.2 of 22.1 GB · 85 MB/s · about 4 min"
     /// ([`crate::spaces::creating::transfer_text`]).
     pub transfer: Option<String>,
@@ -119,6 +114,40 @@ pub struct AppSpaceProgress {
     pub cancellable: bool,
     /// Cancel was pressed and the create is being cleaned up.
     pub cancelling: bool,
+    /// The app is running the create a second time by itself, after a
+    /// failure that usually passes (the label says "Retrying…" while it
+    /// prepares).
+    pub retrying: bool,
+    /// It failed the same way twice in a row (same cause, same machine,
+    /// same image): the fix to show instead of a plain Try again.
+    pub fix: Option<AppCreateFix>,
+}
+
+/// What a fix button does.
+pub type AppCreateFixAction = core::model::CreateFixAction;
+#[uniffi::remote(Enum)]
+pub enum AppCreateFixAction {
+    /// Copies `value` (a Terminal command) to the clipboard.
+    CopyCommand,
+    /// Opens `value` (a help page) in the browser.
+    OpenUrl,
+    /// Opens the failed create's details (the diagnostic report to review).
+    Details,
+}
+
+/// The fix for a create that keeps failing the same way: one plain
+/// sentence and one button.
+pub type AppCreateFix = core::model::CreateFix;
+#[uniffi::remote(Record)]
+pub struct AppCreateFix {
+    /// What is wrong and what to do, in plain words.
+    pub text: String,
+    /// The button's words.
+    pub label: String,
+    /// What the button does.
+    pub action: AppCreateFixAction,
+    /// The command to copy or the page to open.
+    pub value: Option<String>,
 }
 
 /// How a Space turns off: the SDK's `power` words.
@@ -171,8 +200,6 @@ pub struct AppSpace {
     pub started_at: Option<i64>,
     /// Placeholder scene.
     pub scene: AppThumbnailScene,
-    /// Group (cloud namespace or location word).
-    pub fleet_id: Option<String>,
     /// Fixture machine size.
     pub size: Option<String>,
     /// Fixture region.
@@ -280,12 +307,9 @@ pub struct AppSpaceRow {
 pub type AppLocation = core::model::Location;
 #[uniffi::remote(Enum)]
 pub enum AppLocation {
-    /// Cua Cloud (the SDK's `on="cloud"`). The apps do not offer it for new
-    /// Spaces ([`CLOUD_SPACES_OFFERED`]); existing cloud Spaces still list.
-    Cloud,
     /// This Mac.
     Local,
-    /// The user's own cloud account (AWS, Google Cloud, Modal), connected
+    /// The user's own cloud account (AWS, Google Cloud, Hetzner, Modal), connected
     /// with `cua cloud connect`: the SDK's `on` is the provider's word
     /// (`aws`), which the wizard carries beside it.
     Yours,
@@ -293,6 +317,11 @@ pub enum AppLocation {
     /// one added by its Tailscale or LAN address): the SDK's `on` is
     /// `host:<machine>`, which the wizard carries beside it.
     Host,
+    /// The least-loaded of the user's machines that can take it: this Mac
+    /// or one of their machines that provides Spaces (the SDK's
+    /// `on="auto"`). Offered only while the user has such a machine, and
+    /// never a default.
+    Auto,
 }
 
 /// Container or virtual machine.
@@ -306,6 +335,9 @@ pub enum AppSpaceKind {
 }
 
 /// The engine that runs a Space.
+///
+/// JSON is the SDK's plain `runtime` word: the built-in engines' words, or
+/// the name of an external runtime provider ([`Runtime::Other`]).
 pub type AppRuntime = core::model::Runtime;
 #[uniffi::remote(Enum)]
 pub enum AppRuntime {
@@ -319,8 +351,9 @@ pub enum AppRuntime {
     Qemu,
     /// Lume.
     Lume,
-    /// KubeVirt.
-    Kubevirt,
+    /// An external runtime provider installed on this machine, by its name
+    /// (the `<name>` of its `cua-runtime-<name>` executable).
+    Other(String),
 }
 
 /// The three ambient status dots.
@@ -335,6 +368,35 @@ pub struct AppAmbientDots {
     pub suspended: bool,
     /// Any agent actively working.
     pub agent_active: bool,
+}
+
+/// How far the Space list read got (the SDK's `Spaces.list_known`), and
+/// how many Spaces it listed.
+pub type AppListViewInput = core::spaces::ListViewInput;
+#[uniffi::remote(Record)]
+pub struct AppListViewInput {
+    /// The list was read at least once: before that nothing is known, not
+    /// even this machine's Spaces.
+    pub loaded: bool,
+    /// Some of the account's computers have not answered yet.
+    pub incomplete: bool,
+    /// How many computers are still being reached (0 when unknown).
+    pub reaching: u32,
+    /// Spaces listed now.
+    pub count: u32,
+}
+
+/// What the Spaces page shows besides the Spaces themselves.
+pub type AppListView = core::spaces::ListView;
+#[uniffi::remote(Record)]
+pub struct AppListView {
+    /// "Create your first Space": only when the list is complete and has no
+    /// Space. A list still loading, or with computers still answering, is
+    /// not empty yet (an app update restarting the daemon must not show it).
+    pub empty: bool,
+    /// One quiet line where the Spaces go while the list is not complete
+    /// ("Reaching 6 computers…"), below what is known so far.
+    pub reaching_line: Option<String>,
 }
 
 /// What a notice is about.
@@ -449,8 +511,6 @@ pub struct AppPendingCreate {
     pub permille: u32,
     /// Why it failed.
     pub error: Option<String>,
-    /// It failed for want of Cua Cloud credit: the billing page.
-    pub credit_url: Option<String>,
     /// The registered Space's id once it finished; the row goes when the
     /// registry lists it.
     pub space_id: Option<String>,
@@ -485,6 +545,19 @@ pub struct AppPendingCreate {
     pub host: Option<String>,
     /// That machine's name, for the row and for a failure that names it.
     pub host_name: Option<String>,
+    /// How many times the app ran this create again by itself: 0, or 1
+    /// after a failure that usually passes ([`fail_decision`]).
+    pub attempt: u32,
+    /// The create failed and the app runs it again now: the shell starts
+    /// the same create (same arguments, same pending id) once more. Cleared
+    /// by the new attempt's first progress or its end.
+    pub retry_pending: bool,
+    /// The finer cause (`error_subclass` word) of the failure the app
+    /// retried, for the create's final usage event.
+    pub retried_subclass: Option<String>,
+    /// It failed the same way as the last create of this image here: the
+    /// fix to show instead of a plain Try again ([`fix_for`]).
+    pub fix: Option<AppCreateFix>,
 }
 
 /// One delete in flight (or done, until the registry drops the Space).
@@ -518,6 +591,21 @@ pub struct AppPendingPower {
     pub error: Option<String>,
 }
 
+/// Creates of one image on one machine that failed for the same cause in a
+/// row.
+pub type AppFailureStreak = core::spaces::creating::FailureStreak;
+#[uniffi::remote(Record)]
+pub struct AppFailureStreak {
+    /// The cause word (`insufficient_disk`, `runtime_not_running`, ...).
+    pub kind: String,
+    /// Where: `local`, `cloud`, or `relay:<machine>`.
+    pub place: String,
+    /// The image asked for (empty for the default).
+    pub image: String,
+    /// Failures in a row.
+    pub count: u32,
+}
+
 /// Every pending create and delete, and every power action.
 pub type AppCreatesState = core::spaces::creating::CreatesState;
 #[uniffi::remote(Record)]
@@ -528,6 +616,10 @@ pub struct AppCreatesState {
     pub deleting: Vec<AppPendingDelete>,
     /// Spaces being turned off or on (or whose last try failed).
     pub powering: Vec<AppPendingPower>,
+    /// The same failure in a row, per cause, machine and image (kept when
+    /// the failed row is dismissed; a success there clears it). No error
+    /// text, only the cause word.
+    pub streaks: Vec<AppFailureStreak>,
 }
 
 /// `spaces::creating::CreateAction`.
@@ -619,6 +711,8 @@ pub enum AppCreateAction {
         error: String,
         /// The error enum's case name, when the shell has one.
         error_variant: String,
+        /// Epoch ms (an automatic retry starts its clock here).
+        now: Option<i64>,
     },
     /// Remove a failed row.
     Dismiss {
@@ -730,7 +824,7 @@ pub struct AppSidebarRow {
 pub type AppSidebarSection = core::spaces::sidebar::SidebarSection;
 #[uniffi::remote(Record)]
 pub struct AppSidebarSection {
-    /// "Cua Cloud", "This Mac", "Connected", "My computers"
+    /// "This Mac", "Connected", "My computers"
     /// (`spaces.sidebar.section.*`).
     pub title: AppMsg,
     /// Rows.
@@ -968,9 +1062,6 @@ pub struct AppSpaceDetail {
     pub confirm: AppDeleteConfirm,
     /// The sections under the facts, in order (Stream, Agents, Teleport).
     pub sections: Vec<String>,
-    /// A cloud Space refused for want of credit: one line and "Add
-    /// credit" (the website billing page).
-    pub credit_notice: Option<AppCreditNotice>,
     /// Why turning it off or on failed, shown inline under the preview.
     pub power_error: Option<String>,
     /// Signed in, but this device is not enrolled: a machine reached
@@ -1245,7 +1336,7 @@ pub enum AppWindowMode {
     /// has room to hang below the notch. Same top-centre placement as `Ambient`.
     AmbientTeleport,
     Switcher,
-    CreateFleet,
+    CreateSpace,
 }
 
 /// `notch::geometry::LogicalRect`.
@@ -1898,7 +1989,7 @@ pub struct AppNotchView {
     pub prompt: Option<String>,
     /// Accessibility label of the panel.
     pub label: String,
-    /// "N Spaces": the tab's spoken label (remote Spaces only).
+    /// "N Spaces": the tab's spoken label (Spaces on or starting only).
     pub count_label: String,
     /// The tab's two rows: the count over the word.
     pub tab: AppNotchTab,
@@ -1911,7 +2002,8 @@ pub struct AppNotchView {
     pub activity: Option<AppNotchActivity>,
     /// The notch is hidden (menu bar only): draw nothing.
     pub hidden: bool,
-    /// The tab shows (closed, no drag in flight; a drag tucks it away).
+    /// The tab shows (closed, no drag in flight, at least one Space on or
+    /// starting; a drag tucks it away, and with none the notch is bare).
     pub show_tab: bool,
     /// The pointer rests on the closed notch while the dwell runs: the
     /// shells grow it by [`NotchMotion::hover_scale`].
@@ -2968,6 +3060,9 @@ pub struct AppReviewView {
 }
 
 /// The image list's local engine.
+///
+/// JSON is a plain word: `container`, `qemu`, `lume`, or the name of an
+/// external runtime provider ([`LocalEngine::External`]).
 pub type AppLocalEngine = core::wizard::LocalEngine;
 #[uniffi::remote(Enum)]
 pub enum AppLocalEngine {
@@ -2977,16 +3072,48 @@ pub enum AppLocalEngine {
     Qemu,
     /// A Lume VM.
     Lume,
+    /// An external runtime provider installed on this Mac, by its name
+    /// ([`ExternalRuntimeInfo::name`]).
+    External(String),
 }
 
-/// The image list's cloud engine.
-pub type AppCloudEngine = core::wizard::CloudEngine;
-#[uniffi::remote(Enum)]
-pub enum AppCloudEngine {
-    /// gVisor containers.
-    Gvisor,
-    /// KubeVirt VMs.
-    Kubevirt,
+/// An image an external runtime provider offers.
+pub type AppExternalImage = core::wizard::ExternalImage;
+#[uniffi::remote(Record)]
+pub struct AppExternalImage {
+    /// The reference to create a Space from.
+    pub reference: String,
+    /// A short title.
+    pub title: String,
+    /// The provider's default image.
+    pub default: bool,
+}
+
+/// An external runtime provider installed on this Mac, as `cua runtime
+/// doctor` reports it ([`external_runtimes_from_doctor`]). Registered with
+/// [`set_external_runtimes`], its images join the New Space catalog in a
+/// group of their own and run only on this Mac.
+pub type AppExternalRuntime = core::wizard::ExternalRuntimeInfo;
+#[uniffi::remote(Record)]
+pub struct AppExternalRuntime {
+    /// Its name: the runtime word a create passes (`acme`).
+    pub name: String,
+    /// The name it gives itself ("macOS VMs"), else its name.
+    pub label: String,
+    /// One line about it, when it gave one.
+    pub description: Option<String>,
+    /// What its Spaces present as (a micro VM is a virtual machine).
+    pub kind: AppSpaceKind,
+    /// The guest operating systems it runs (`macos`, `linux`, `windows`).
+    pub os: Vec<String>,
+    /// The guest architectures it runs (`arm64`, `amd64`).
+    pub arch: Vec<String>,
+    /// It can create Spaces now.
+    pub ready: bool,
+    /// Its doctor's one line.
+    pub detail: String,
+    /// The images it offers.
+    pub images: Vec<AppExternalImage>,
 }
 
 /// The catalog's image tier (canonical images only).
@@ -2999,6 +3126,8 @@ pub enum AppImageTier {
     Full,
     /// macOS: full plus one pinned Xcode.
     Xcode,
+    /// Linux: slim plus the Docker engine, a VM with dockerd up at boot.
+    Docker,
 }
 
 /// The guest distribution a catalog image names: its id picks the OS icon
@@ -3060,8 +3189,6 @@ pub struct AppSandboxImage {
     pub spacesd: bool,
     /// Local engine.
     pub local: Option<AppLocalEngine>,
-    /// Cloud engine.
-    pub cloud: Option<AppCloudEngine>,
     /// `slim`, `full` or `xcode` (canonical images only).
     pub tier: Option<AppImageTier>,
     /// Offered in pickers.
@@ -3128,16 +3255,6 @@ pub struct AppLocalStorage {
     pub linux_runtime_download_bytes: u64,
 }
 
-/// Cua Cloud rates for this account.
-pub type AppCloudPricing = core::wizard::CloudPricing;
-#[uniffi::remote(Record)]
-pub struct AppCloudPricing {
-    /// USD per reserved vCPU per hour.
-    pub vcpu_hour_usd: f64,
-    /// USD per reserved GB (GiB) of memory per hour.
-    pub memory_gib_hour_usd: f64,
-}
-
 /// What one connected cloud can run for an image family, and at what cost
 /// (a `cloud_status` provider's `kinds` row).
 pub type AppCloudOffer = core::wizard::CloudOffer;
@@ -3162,7 +3279,7 @@ pub struct AppCloudOffer {
 pub type AppConnectedCloud = core::wizard::ConnectedCloud;
 #[uniffi::remote(Record)]
 pub struct AppConnectedCloud {
-    /// The SDK's `on` word: `aws`, `gcp`, `modal`.
+    /// The SDK's `on` word: `aws`, `gcp`, `hetzner`, `modal`.
     pub name: String,
     /// `AWS`, `Google Cloud`, `Modal`.
     pub title: String,
@@ -3194,6 +3311,24 @@ pub struct AppHostLimit {
     pub reason: String,
 }
 
+/// How busy one of your machines is (its job runner's view).
+pub type AppHostLoad = core::wizard::HostLoad;
+#[uniffi::remote(Record)]
+pub struct AppHostLoad {
+    /// CPU it offers, in thousandths.
+    pub millicpus_total: u32,
+    /// Of that, free.
+    pub millicpus_free: u32,
+    /// Memory it offers (MiB).
+    pub memory_total_mb: u64,
+    /// Of that, free.
+    pub memory_free_mb: u64,
+    /// Spaces running there.
+    pub spaces: u32,
+    /// Why it takes nothing now (empty: it does).
+    pub problem: String,
+}
+
 /// One of the user's machines that provides Spaces (the SDK's
 /// `Spaces.hosts()`): a relay host, or one added by its Tailscale or LAN
 /// address. New Space can create on it (`on="host:<id>"`).
@@ -3215,6 +3350,8 @@ pub struct AppSpaceHost {
     /// Its limits, when it answered; a [`HOST_SHARING_STOPPED`] entry when
     /// it is online and refused because its owner stopped sharing it.
     pub limits: Vec<AppHostLimit>,
+    /// How busy it is, when it answered and reports it.
+    pub load: Option<AppHostLoad>,
 }
 
 /// A setting that makes This Mac able to run the Space: shown when the
@@ -3236,14 +3373,14 @@ pub struct AppRuntimeSwitch {
 pub type AppPlacementOption = core::wizard::PlacementOption;
 #[uniffi::remote(Record)]
 pub struct AppPlacementOption {
-    /// What choosing it sets as the create's `on`: `local`, `cloud`,
-    /// `host:<machine>`, or a connected cloud's word (`aws`).
+    /// What choosing it sets as the create's `on`: `auto`, `local`,
+    /// `cloud`, `host:<machine>`, or a connected cloud's word (`aws`).
     pub id: String,
     /// The menu's text: "This Mac", "Mac mini", "Mac mini (offline)",
     /// "Mac mini (not sharing)", "AWS · us-west-2".
     pub label: String,
-    /// Its group, in menu order (a separator between groups): `this-mac`,
-    /// `hosts`, `clouds`.
+    /// Its group, in menu order (a separator between groups): `auto`,
+    /// `this-mac`, `hosts`, `clouds`.
     pub group: String,
     /// Chosen.
     pub selected: bool,
@@ -3279,8 +3416,6 @@ pub type AppWizardEnv = core::wizard::WizardEnv;
 pub struct AppWizardEnv {
     /// Where "Run on" starts (Settings, `cua config set default.on`).
     pub default_location: AppLocation,
-    /// Signed in (or client credentials).
-    pub cloud_available: bool,
     /// A local container backend or Lume exists.
     pub local_available: bool,
     /// Why local is unavailable.
@@ -3304,8 +3439,6 @@ pub struct AppWizardEnv {
     /// Free space and pulled images here (the SDK's `Local.storage()`),
     /// when known.
     pub storage: Option<AppLocalStorage>,
-    /// This account's Cua Cloud rates, when known (no estimate without).
-    pub cloud_pricing: Option<AppCloudPricing>,
     /// The user's connected clouds (`cloud_status`), for "Your cloud"
     /// (offered only while its experiment is on: [`offered_clouds`]).
     pub clouds: Vec<AppConnectedCloud>,
@@ -3634,9 +3767,9 @@ pub struct AppCreatePlan {
     pub runtime: AppRuntime,
     /// Name, when given.
     pub name: Option<String>,
-    /// vCPUs (local and Cua Cloud).
+    /// vCPUs (local and remote).
     pub cpus: Option<u32>,
-    /// Memory MB (local and Cua Cloud).
+    /// Memory MB (local and remote).
     pub memory_mb: Option<u32>,
     /// Local VMs only: grow the disk to this many GB (larger than the
     /// image's).
@@ -3656,8 +3789,8 @@ pub type AppCreateSpaceArgs = core::wizard::CreateSpaceArgs;
 pub struct AppCreateSpaceArgs {
     /// Image ref.
     pub image: String,
-    /// The SDK's `on`: `local`, `cloud`, `host:<machine>`, or a connected
-    /// cloud's word (`aws`, `gcp`, `modal`).
+    /// The SDK's `on`: `local`, `cloud`, `auto`, `host:<machine>`, or a
+    /// connected cloud's word (`aws`, `gcp`, `hetzner`, `modal`).
     pub on: String,
     /// `container` / `vm`.
     pub kind: AppSpaceKind,
@@ -5228,51 +5361,6 @@ pub enum KvOutcome {
     },
 }
 
-/// The saved card (never its number).
-pub type AppBillingCard = core::billing::BillingCard;
-#[uniffi::remote(Record)]
-pub struct AppBillingCard {
-    /// `visa`, `mastercard`, ...
-    pub brand: String,
-    /// Last four digits.
-    pub last4: String,
-}
-
-/// The account's Cua Cloud credit.
-pub type AppBillingCredit = core::billing::BillingCredit;
-#[uniffi::remote(Record)]
-pub struct AppBillingCredit {
-    /// What is left, US cents.
-    pub balance_usd_cents: i64,
-}
-
-/// The account's billing, as the apps read it.
-pub type AppBillingStatus = core::billing::BillingStatus;
-#[uniffi::remote(Record)]
-pub struct AppBillingStatus {
-    /// Billing is on for this account (off: Settings shows no Billing row).
-    pub billing_enabled: bool,
-    /// The saved default card.
-    pub card: Option<AppBillingCard>,
-    /// The account's credit, when it has any.
-    pub credit: Option<AppBillingCredit>,
-    /// The website billing page (credit, cards, plans).
-    pub billing_url: Option<String>,
-}
-
-/// A cloud Space refused for want of credit: the line, the button, and the
-/// website billing page it opens.
-pub type AppCreditNotice = core::billing::CreditNotice;
-#[uniffi::remote(Record)]
-pub struct AppCreditNotice {
-    /// [`OUT_OF_CREDIT`].
-    pub text: String,
-    /// [`ADD_CREDIT`].
-    pub button: String,
-    /// The website billing page.
-    pub url: String,
-}
-
 /// `volume_mount_status`.
 pub type AppDriveMountInput = core::drive_settings::DriveMountInput;
 #[uniffi::remote(Record)]
@@ -6322,6 +6410,8 @@ pub enum AppAboutLinkId {
     Privacy,
     /// The terms of service.
     Terms,
+    /// The public status page.
+    Status,
     /// A new issue.
     Issue,
 }
@@ -6374,7 +6464,7 @@ pub struct AppAboutView {
     pub title: String,
     /// "Version 0.2.0 (0.2.0.123)".
     pub version_line: String,
-    /// Acknowledgements, Privacy Policy, Terms of Service, Report an Issue.
+    /// Acknowledgements, Privacy Policy, Terms of Service, System Status, Report an Issue.
     pub links: Vec<AppAboutLink>,
     /// "© 2026 Cua AI, Inc. All rights reserved."
     pub copyright: String,
@@ -6588,6 +6678,62 @@ pub struct AppLoginItemPlan {
     pub record: Option<bool>,
 }
 
+/// What the shell's platform check found from the app's own process.
+pub type AppLocalNetworkAccess = core::local_network::LocalNetworkAccess;
+#[uniffi::remote(Enum)]
+pub enum AppLocalNetworkAccess {
+    /// A connect to the local network went out.
+    Allowed,
+    /// macOS blocked it (not allowed yet, or turned off).
+    Blocked,
+    /// No local network to try, or no clear answer.
+    Unknown,
+    /// Not probed: the app has not explained yet, and a connect while access
+    /// is undecided makes macOS ask before the explanation.
+    NotChecked,
+}
+
+/// What the shell found.
+pub type AppLocalNetworkInput = core::local_network::LocalNetworkInput;
+#[uniffi::remote(Record)]
+pub struct AppLocalNetworkInput {
+    /// The app's own connect.
+    pub access: AppLocalNetworkAccess,
+    /// The app already explained and made macOS ask (saved by the shell).
+    pub asked: bool,
+    /// `netstat -rn -f inet`, or empty when it could not be read.
+    pub routes: String,
+}
+
+/// What to do.
+pub type AppLocalNetworkStepKind = core::local_network::LocalNetworkStepKind;
+#[uniffi::remote(Enum)]
+pub enum AppLocalNetworkStepKind {
+    Proceed,
+    Explain,
+    Fail,
+}
+
+/// The step, in the words to show.
+pub type AppLocalNetworkStep = core::local_network::LocalNetworkStep;
+#[uniffi::remote(Record)]
+pub struct AppLocalNetworkStep {
+    pub kind: AppLocalNetworkStepKind,
+    /// The dialog's title (none for Proceed).
+    pub title: String,
+    /// The dialog's text; for Fail also the create's error.
+    pub message: String,
+    /// The main button: Continue, Open Settings or OK.
+    pub primary: String,
+    /// The other button: Cancel or OK; empty when there is one button.
+    pub secondary: String,
+    /// What the main button opens (Fail for missing access).
+    pub settings_url: Option<String>,
+    /// For Fail: the create's error variant (`local_network_denied`,
+    /// `local_network_vpn`; telemetry's `error_subclass`).
+    pub error_variant: String,
+}
+
 /// The switches, as stored (`"experiments": {"cuaVolume": true}`).
 pub type AppExperiments = core::experiments::Experiments;
 #[uniffi::remote(Record)]
@@ -6599,8 +6745,8 @@ pub struct AppExperiments {
     /// Sharing a Space with other accounts. On unless turned off: a missing
     /// key reads as on (the plans on cua.ai/pricing list sharing).
     pub sharing: bool,
-    /// The New UI (the shared web UI) is the main window: the user's choice
-    /// or, without one, [`new_ui_default`] ([`crate::settings::resolve_new_ui`]).
+    /// The shared web UI is the main window. Always on in the macOS shell
+    /// ([`crate::settings::resolve_new_ui`]); kept for older files and builds.
     pub web_ui: bool,
 }
 
@@ -6624,7 +6770,9 @@ pub struct AppSettings {
     pub menu_bar: bool,
     /// Switcher theme.
     pub theme: AppSwitcherTheme,
-    /// Where New Space starts.
+    /// Where New Space starts. A word this build does not know (the
+    /// retired `cloud`) reads as this Mac, so an old file keeps its other
+    /// settings.
     pub default_location: AppLocation,
     /// Hide the notch over full-screen apps.
     pub hide_in_full_screen: bool,
@@ -6640,15 +6788,14 @@ pub struct AppSettings {
     /// Settings); `None`: never chosen ([`crate::login_item::launch_plan`]).
     pub launch_at_login: Option<bool>,
     /// Settings, Experiments: every switch off unless turned on
-    /// ([`crate::experiments`]). Its `webUi` is the New UI as this launch
-    /// shows it ([`resolve_new_ui`]); the file keeps only [`Self::new_ui`]'s
+    /// ([`crate::experiments`]). Its `webUi` is always on in the macOS
+    /// shell ([`resolve_new_ui`]); the file keeps only [`Self::new_ui`]'s
     /// "on" there, the value older builds read.
     pub experiments: AppExperiments,
-    /// The New UI as the user chose it (Settings, Experiments, "Use classic
-    /// UI"); `None`: never chosen, so
-    /// [`crate::experiments::new_ui_default`] decides. An older build's
-    /// saved `webUi: true` reads as `Some(true)`; its `false` was only the
-    /// saved default, so it reads as never chosen ([`load`]).
+    /// The New UI as an older build's "Use classic UI" saved it. Read and
+    /// kept for those builds, never acted on: the web UI is the only UI
+    /// ([`resolve_new_ui`]). An older build's saved `webUi: true` reads as
+    /// `Some(true)`; its `false` was only the saved default ([`load`]).
     pub new_ui: Option<bool>,
     /// Keyvault copies (import ids) the user dismissed from the notch: it no
     /// longer shows them, nothing is revoked or wiped
@@ -6734,7 +6881,7 @@ pub type AppSettingsInput = core::settings::SettingsInput;
 pub struct AppSettingsInput {
     /// The signed-in account.
     pub identity: Option<String>,
-    /// Cua Cloud through client credentials (an API key): its client id.
+    /// The Cua account through client credentials (an API key): its client id.
     pub api_key_client: Option<String>,
     /// The sign-in in progress.
     pub sign_in: AppSignInPhase,
@@ -6743,10 +6890,6 @@ pub struct AppSettingsInput {
     /// The Spaces tab is hidden from the notch (the menu bar item is the
     /// entry point).
     pub menu_bar: bool,
-    /// Where New Space starts.
-    pub default_location: AppLocation,
-    /// The environment sets the default location: which variable.
-    pub location_locked_by: Option<String>,
     /// The telemetry switch (none until read).
     pub telemetry: Option<AppTelemetryInput>,
     /// Coding agents (none while detecting).
@@ -6759,8 +6902,6 @@ pub struct AppSettingsInput {
     /// app's URL. None: the Teams section shows the production account
     /// app's links only.
     pub teams: Option<AppTeamsInput>,
-    /// The account's Cua Cloud billing, once read (signed in).
-    pub billing: Option<AppBillingStatus>,
     /// Launch at login, once the system was asked (none: no rows).
     pub login_item: Option<AppLoginItemInput>,
     /// Settings, Experiments (what the page mentions follows them).
@@ -6786,6 +6927,9 @@ pub struct AppSettingsInput {
     /// Which engine local Linux Spaces run on (`runtime.linux`: `auto`,
     /// `builtin`, `system`); none: no Linux row.
     pub linux_source: Option<String>,
+    /// Overflow into your clouds when this machine is full
+    /// (`placement.overflow`); none: no row.
+    pub overflow: Option<bool>,
 }
 
 /// How a Settings row draws.
@@ -6925,7 +7069,7 @@ pub type AppSignInFooterInput = core::sign_in::SignInFooterInput;
 pub struct AppSignInFooterInput {
     /// The signed-in account.
     pub identity: Option<String>,
-    /// Cua Cloud works through client credentials (an API key).
+    /// The Cua account works through client credentials (an API key).
     pub cloud_configured: bool,
     /// Signing in is possible here.
     pub can_sign_in: bool,
@@ -6982,7 +7126,7 @@ pub type AppChromeInput = core::window::ChromeInput;
 pub struct AppChromeInput {
     /// The signed-in account.
     pub identity: Option<String>,
-    /// Cua Cloud works (signed in, or client credentials).
+    /// The Cua account works (signed in, or client credentials).
     pub cloud_configured: bool,
     /// Signing in is possible here (the native shell).
     pub can_sign_in: bool,
@@ -7660,7 +7804,8 @@ pub struct AppCliInstallPlan {
     pub installed_version: Option<String>,
     /// `cua --version` of the bundled CLI.
     pub bundled_version: Option<String>,
-    /// Another `cua` found earlier on PATH (it would shadow `target`).
+    /// Another CLI of the same name found earlier on PATH (it would shadow
+    /// `target`).
     pub shadowed_by: Option<String>,
     /// `bin_dir` is already on PATH.
     pub on_path: bool,
@@ -7668,9 +7813,10 @@ pub struct AppCliInstallPlan {
     pub path_profile: Option<String>,
     /// The line that would be added to `path_profile`.
     pub path_line: Option<String>,
-    /// A working `cua` CLI already on this machine: `target`, else the
-    /// first in the usual install folders or on PATH (a Finder-launched
+    /// A working CLI of this channel already on this machine: `target`, else
+    /// the first in the usual install folders or on PATH (a Finder-launched
     /// app's PATH lacks `~/.local/bin`, so the folders are searched too).
+    /// Local looks for `cua-local` only: a Stable `cua` is not its CLI.
     pub found: Option<String>,
 }
 
@@ -8322,9 +8468,9 @@ pub struct AppApproveSheetView {
 pub type AppCloudProviderInput = core::cloud_connect::CloudProviderInput;
 #[uniffi::remote(Record)]
 pub struct AppCloudProviderInput {
-    /// `aws`, `gcp`, `modal`.
+    /// `aws`, `gcp`, `hetzner`, `modal`.
     pub name: String,
-    /// `AWS`, `Google Cloud`, `Modal`.
+    /// `AWS`, `Google Cloud`, `Hetzner`, `Modal`.
     pub title: String,
     /// Connected already.
     pub connected: bool,
@@ -8407,6 +8553,9 @@ pub struct AppCloudConnectState {
     pub profile: String,
     /// Also make it the default location.
     pub make_default: bool,
+    /// The shell's token field (Hetzner) is not empty. Only this flag
+    /// lives here; the token itself stays in the shell's secure field.
+    pub token_entered: bool,
     /// Where it is.
     pub phase: AppCloudConnectPhase,
 }
@@ -8417,7 +8566,7 @@ pub type AppCloudConnectAction = core::cloud_connect::CloudConnectAction;
 pub enum AppCloudConnectAction {
     /// A provider row.
     Select {
-        /// `aws`, `gcp`, `modal`.
+        /// `aws`, `gcp`, `hetzner`, `modal`.
         name: String,
     },
     /// The region, project or environment field.
@@ -8434,6 +8583,12 @@ pub enum AppCloudConnectAction {
     SetMakeDefault {
         /// On.
         on: bool,
+    },
+    /// The token field changed between empty and not empty (the text
+    /// itself is never sent here).
+    SetTokenEntered {
+        /// Not empty.
+        entered: bool,
     },
     /// Test pressed (the shell runs the view's request).
     Test,
@@ -8465,7 +8620,7 @@ pub enum AppCloudConnectAction {
 pub type AppCloudTargetArgs = core::cloud_connect::CloudTargetArgs;
 #[uniffi::remote(Record)]
 pub struct AppCloudTargetArgs {
-    /// `aws`, `gcp`, `modal`.
+    /// `aws`, `gcp`, `hetzner`, `modal`.
     pub provider: String,
     /// AWS or Modal profile.
     pub profile: Option<String>,
@@ -8475,6 +8630,9 @@ pub struct AppCloudTargetArgs {
     pub project: Option<String>,
     /// Modal environment.
     pub environment: Option<String>,
+    /// Hetzner: the shell attaches the API token it holds as the call's
+    /// secret `token`. The token itself is never in this value.
+    pub uses_token: bool,
 }
 
 /// The call the shell runs now.
@@ -8548,6 +8706,9 @@ pub struct AppCloudConnectView {
     pub field: Option<AppCloudField>,
     /// The profile field (AWS, Modal).
     pub profile_field: Option<AppCloudField>,
+    /// The API token field (Hetzner only): a masked field whose value the
+    /// shell keeps (`value` is always empty here).
+    pub token_field: Option<AppCloudField>,
     /// The checks the last test ran.
     pub checks: Vec<AppCloudCheckRow>,
     /// One line under the checks ("Ready. Nothing was created.").
@@ -9360,11 +9521,15 @@ pub enum AppTelemetrySignal {
     /// A first-run page was shown or left (`cua_onboarding_page`).
     OnboardingPage {
         /// `welcome`, `signin`, `agents`, `presentation`, `volume`,
-        /// `this_machine` or `done`.
+        /// `this_machine` or `done`; or, with a `step_*` action, one of
+        /// `schema::FIRST_RUN_STEPS` (`connect_agent`, `terminal`, ...).
         page: String,
-        /// `shown`, `completed`, `skipped` or `back`.
+        /// `shown`, `completed`, `skipped` or `back`; or `step_viewed`,
+        /// `step_completed`, `step_failed` or `step_skipped`, which send
+        /// `cua_onboarding_step_*` and `cua_onboarding_skipped`.
         action: String,
-        /// The page's answer as a fixed word, or `none`.
+        /// The page's answer as a fixed word, or `none`; for
+        /// `step_failed`, the reason (`timeout`, `install_failed`, ...).
         choice: String,
     },
     /// The New Space panel (`cua_space_wizard`).
@@ -9393,6 +9558,11 @@ pub enum AppTelemetrySignal {
         gpu: bool,
         /// The error enum's case name, when the shell sent one.
         error_variant: String,
+        /// 1 when the app ran the create a second time by itself, else 0.
+        retry_attempt: u32,
+        /// The finer cause (`error_subclass`): the failure's, or on a
+        /// retried create that worked, the failure it recovered from.
+        error_subclass: String,
     },
     /// A Space create started (`cua_space_create_started`).
     SpaceCreateStarted {
@@ -9913,6 +10083,10 @@ pub struct AppChecklistState {
     pub dismissed: bool,
     /// It was on screen once (`checklist_shown` was recorded).
     pub shown: bool,
+    /// Steps skipped ("Skip"), each once, in checklist order: they count as
+    /// done for the progress and for `complete`, and a skipped step done
+    /// later shows as done.
+    pub skipped: Vec<AppChecklistStep>,
 }
 
 /// `checklist::ChecklistAction`.
@@ -9926,7 +10100,12 @@ pub enum AppChecklistAction {
     },
     /// The checklist is on screen.
     Shown,
-    /// Closed with ×.
+    /// "Skip" on a step: not for this person; it counts as done.
+    Skip {
+        /// The step.
+        step: AppChecklistStep,
+    },
+    /// Closed with × ("Hide", or "Done" once complete).
     Dismiss,
     /// Getting Started (the palette, the Help menu): open it again.
     Reopen,
@@ -9987,6 +10166,8 @@ pub struct AppChecklistRow {
     pub action: String,
     /// Done (ticked, struck through).
     pub done: bool,
+    /// Skipped (struck through, not ticked); never with `done`.
+    pub skipped: bool,
 }
 
 /// The checklist as drawn.
@@ -10005,6 +10186,10 @@ pub struct AppChecklistView {
     pub progress: String,
     /// The close button's accessibility label.
     pub close_label: String,
+    /// "Skip", on each step not done or skipped.
+    pub skip_label: String,
+    /// "Hide", or "Done" once complete: closes the checklist.
+    pub hide_label: String,
     /// The steps in order.
     pub rows: Vec<AppChecklistRow>,
 }

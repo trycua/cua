@@ -100,12 +100,24 @@ impl std::fmt::Display for Principal {
     }
 }
 
+/// A folder a Space mounted: a named volume (`volumes/<name>/`, or a
+/// folder inside it), at the given mode, in addition to the defaults.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MountAccess {
+    /// A folder key ending in `/`.
+    pub prefix: String,
+    pub mode: Mode,
+}
+
 /// A session: a principal, and the Space it acts in (if any).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Context {
     pub principal: Principal,
     /// The Space id of the session (`local:work`).
     pub space: Option<String>,
+    /// What the Space mounted besides its own folder. Never widens the
+    /// user, and never outlives the Space's record.
+    pub mounts: Vec<MountAccess>,
 }
 
 impl Context {
@@ -113,6 +125,7 @@ impl Context {
         Context {
             principal: Principal::User,
             space: None,
+            mounts: vec![],
         }
     }
 
@@ -120,6 +133,7 @@ impl Context {
         Context {
             principal: Principal::Agent(name.into()),
             space: space.map(str::to_string),
+            mounts: vec![],
         }
     }
 
@@ -127,7 +141,17 @@ impl Context {
         Context {
             principal: Principal::Space(id.into()),
             space: Some(id.into()),
+            mounts: vec![],
         }
+    }
+
+    /// This session with the folders its Space mounted. Applies to a Space
+    /// or an agent acting in one; the user already has everything.
+    pub fn with_mounts(mut self, mounts: Vec<MountAccess>) -> Context {
+        if self.principal != Principal::User && self.space.is_some() {
+            self.mounts = mounts;
+        }
+        self
     }
 
     fn space_folder(&self) -> Option<String> {
@@ -149,8 +173,19 @@ pub fn default_mode(ctx: &Context, key: &str) -> Option<Mode> {
         Area::Space(s) => {
             (ctx.space_folder().as_deref() == Some(s.as_str())).then_some(Mode::ReadWrite)
         }
-        Area::Root | Area::Other => None,
+        Area::Root => None,
+        Area::Other => mounted_mode(ctx, key),
     }
+}
+
+/// The access the Space's mounts give on `key` (the best of those that
+/// cover it).
+fn mounted_mode(ctx: &Context, key: &str) -> Option<Mode> {
+    ctx.mounts
+        .iter()
+        .filter(|m| key.starts_with(&m.prefix) || format!("{key}/") == m.prefix)
+        .map(|m| m.mode)
+        .max()
 }
 
 /// A widening of the defaults.
@@ -223,6 +258,7 @@ pub fn can_traverse(ctx: &Context, prefix: &str, grants: &[Grant], now_ms: u64) 
     if ctx.principal != Principal::User {
         reachable.push(path::PUBLIC.into());
     }
+    reachable.extend(ctx.mounts.iter().map(|m| m.prefix.clone()));
     for g in grants {
         if g.is_live(now_ms)
             && Principal::parse(&g.principal).is_ok_and(|p| p.id() == ctx.principal.id())

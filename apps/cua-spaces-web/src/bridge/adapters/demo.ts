@@ -43,14 +43,16 @@ import { demoKeyvaultSetupHandlers, demoKeyvaultSetupState, demoNoVaultOverview,
 import { unsupportedStreamOps } from "../ops/stream";
 import { unsupportedPresenceOps } from "../ops/presence";
 import { unsupportedRuntimeFixOps } from "../ops/runtime-fix";
+import type { CliInstallPlan } from "../contracts/first-run";
 import { unsupportedChecklistOps } from "../ops/checklist";
 import { demoTeleportHandlers } from "./demo/teleport";
 import { createDemoSettings } from "./demo/settings";
-import { demoAgentSetup, demoPersistentAgents, demoRunRecords, runAt, writtenEvents, type DemoRunRecord } from "./demo-agents";
+import { demoAgentSetup, demoPersistentAgents, demoReply, demoRunRecords, demoStartedRun, runAt, writtenEvents, type DemoRunRecord } from "./demo-agents";
 import { demoVolumeHandlers, demoVolumeState, type DemoVolumeState } from "./demo/volume";
 import { demoHostSetupHandlers, demoHostSetupState, type DemoHostSetupState } from "./demo/host-setup";
 import { demoSpaceDetailHandlers, demoSpaceDetailState, type DemoSpaceDetailState } from "./demo/space-detail";
 import { demoTelemetryHandlers, demoTelemetryState, type DemoTelemetryState } from "./demo/telemetry";
+import { demoLinksHandlers, demoLinksState, type DemoLinksState } from "./demo/links";
 import { demoResourcesHandlers, demoResourcesState, type DemoResourcesState } from "./demo/resources";
 import { demoRelayUsageHandlers, demoRelayUsageNamed, demoRelayUsageState, type DemoRelayUsageState } from "./demo/relay-usage";
 import { demoStartupHandlers, demoStartupState, type DemoStartupState } from "./demo/startup";
@@ -70,6 +72,10 @@ export interface DemoOptions {
   noVault?: boolean;
   /** Start with no Spaces (the first-Space empty state). */
   noSpaces?: boolean;
+  /** An account in no team (`?demo=no-team`): Share explains that sharing is for teams. */
+  noTeam?: boolean;
+  /** A team with no free computers (`?demo=team-full`): adding a machine to it is refused, as the control plane does at one computer per seat. Simulated: the demo has no control plane. */
+  teamFull?: boolean;
   /** Start at the macOS Keychain prompt (the startup screen). */
   keychain?: boolean;
   /** Answer New Space's options as the SwiftUI host does (`demo/new-space.ts`). */
@@ -79,24 +85,44 @@ export interface DemoOptions {
   /** The relay allowance: `idle` (free, no live session, so prompts can show),
    * `warn` (80% of the hours), `limit` (used up), `pro` or `teams`. */
   usage?: "idle" | "warn" | "limit" | "pro" | "teams";
+  /** Which agents are on this computer (`?demo=agents-none`, `?demo=agents-codex`); all of them by default. `unset`: all found, none set up for Cua yet, without the first-run onboarding. */
+  agents?: "none" | "codex" | "unset";
+  /** Coding agents whose config file Cua can't write (setup fails with a permission error), by id. */
+  agentsReadOnly?: string[];
   /** This Mac's free disk: `low` (`?demo=low-disk`) or `full` (`?demo=disk-full`). */
   disk?: "low" | "full";
   /** The machine the demo runs on: a Mac on Apple silicon unless set (the
    * Electron shell passes its own system and architecture). */
   platform?: DemoPlatform;
-  /** Where the updater is at start (`?demo=update-ready`, `?demo=update-downloading`). */
+  /** Where the updater is at start (`?demo=update-ready`, `?demo=update-downloading`, `?demo=update-error`). */
   update?: Partial<UpdateState>;
   /** A This Mac prompt to show (`?demo=nudge-second-agent`, `?demo=nudge-risky`). */
   nudge?: "second-agent" | "risky";
+  /** Creates fail as a real host's do: `runtime-once` (the first create's
+   * built-in Linux runtime does not start; later attempts work,
+   * `?demo=create-fail-runtime`) or `disk` (every create is short of disk
+   * space, `?demo=create-fail-disk`). */
+  failCreates?: "runtime-once" | "disk";
+  /** The CLI the demo host reports: the released app's `cua` on PATH unless
+   * set; `local` is a Local build's (`?demo=cli-local`), `missing` one
+   * not installed (`?demo=cli-missing`). */
+  cli?: "local" | "missing";
 }
+
+/** The SDK's words for the failures `failCreates` plays. */
+export const DEMO_CREATE_FAILURES = {
+  runtime: "local runtime: the built-in Linux runtime did not start: exiting, status 1",
+  disk: "not enough disk space to pull ghcr.io/trycua/macos:26: it needs about 30.0 GB and cua keeps 5.0 GB free, but only 12.4 GB is available on /Users/me/.lume (run `cua cache prune` to free space, or lower CUA_DISK_MIN_FREE)",
+} as const;
 
 const DEMO_NOTES = "https://github.com/trycua/cua/releases/tag/cua-spaces-v0.9.3";
 
-/** `?demo=fresh` (signed out, first run), `?demo=slow` (slow answers), `?demo=locked` (Keyvault locked), `?demo=novault` (no Keyvault yet),
+/** `?demo=fresh` (signed out, first run), `?demo=no-team`, `?demo=team-full`, `?demo=slow` (slow answers), `?demo=locked` (Keyvault locked), `?demo=novault` (no Keyvault yet),
  * `?demo=empty` (no Spaces yet), `?demo=keychain` (the startup screen),
  * `?demo=mac-host` (New Space options and the Keyvault's Settings rows in the
  * SwiftUI host's shape), `?demo=unenrolled` (this device not enrolled),
- * `?demo=update-ready` (an update is downloaded), `?demo=update-downloading`,
+ * `?demo=agents-readonly` (Cua can't write Hermes's config),
+ * `?demo=update-ready` (an update is downloaded), `?demo=update-downloading`, `?demo=update-error`,
  * and `?demo=low-disk` / `?demo=disk-full` (This Mac almost out of space). */
 export function demoOptionsFromSearch(search: string): DemoOptions {
   const flags = new Set((new URLSearchParams(search).get("demo") ?? "").split(",").filter(Boolean));
@@ -108,17 +134,26 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     keyvaultLocked: flags.has("locked"),
     noVault: flags.has("novault"),
     noSpaces: flags.has("empty"),
+    noTeam: flags.has("no-team"),
+    teamFull: flags.has("team-full"),
     keychain: flags.has("keychain"),
     macHost: flags.has("mac-host"),
     unenrolled: flags.has("unenrolled"),
     usage: (["idle", "warn", "limit", "pro", "teams"] as const).find((u) => flags.has(`usage-${u}`)),
+    agents: (["none", "codex"] as const).find((a) => flags.has(`agents-${a}`)),
+    // `?demo=agents-readonly`: Hermes's config file can't be written, so setting it up fails.
+    ...(flags.has("agents-readonly") ? { agentsReadOnly: ["hermes"] } : {}),
     nudge: (["second-agent", "risky"] as const).find((n) => flags.has(`nudge-${n}`)),
     disk: flags.has("disk-full") ? "full" : flags.has("low-disk") ? "low" : undefined,
+    cli: flags.has("cli-local") ? "local" : flags.has("cli-missing") ? "missing" : undefined,
+    failCreates: flags.has("create-fail-runtime") ? "runtime-once" : flags.has("create-fail-disk") ? "disk" : undefined,
     ...(flags.has("update-ready")
       ? { update: { status: "downloaded" as const, version: "0.9.3", percent: 100, notesUrl: DEMO_NOTES } }
       : flags.has("update-downloading")
         ? { update: { status: "downloading" as const, version: "0.9.3", percent: 42, notesUrl: DEMO_NOTES } }
-        : {}),
+        : flags.has("update-error")
+          ? { update: { status: "error" as const, message: "The network connection was lost." } }
+          : {}),
   };
 }
 
@@ -165,7 +200,8 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     agents: demoPersistentAgents(now()),
     // A named allowance is for showing the prompts, which wait for no agent run.
     runs: options.usage ? [] : demoRunRecords(now()),
-    agentSetup: demoAgentSetup(),
+    readOnlyAgents: options.agentsReadOnly ?? [],
+    agentSetup: demoAgentSetup(options.onboarded === false || options.agents === "unset", options.agents === "none" ? [] : options.agents === "codex" ? ["codex"] : null),
     platform: options.platform ?? MAC_DEMO_PLATFORM,
     paired: [],
     renamed: {},
@@ -174,6 +210,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     volume: demoVolumeState(now(), options.onboarded !== false, options.platform),
     ...demoTelemetryState(),
     ...demoRelayUsageState(),
+    links: demoLinksState(),
     ...demoResourcesState(options.disk ?? "healthy"),
     ...(options.usage ? { relayUsage: demoRelayUsageNamed(options.usage) } : {}),
     ...demoSpaceDetailState(),
@@ -220,6 +257,24 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
   const replaceRow = (id: string, patch: Partial<SpaceRow>) => {
     state.rows = state.rows.map((r) => (r.id === id ? { ...r, ...patch } : r));
   };
+  // The bundled CLI (`?demo=cli-missing`: a disk-image install, none on PATH yet).
+  const cliName = options.cli === "local" ? "cua-local" : "cua";
+  let cliInstalled = options.cli !== "missing";
+  const cliPlan = (): CliInstallPlan => {
+    const target = `/Users/me/.local/bin/${cliName}`;
+    return {
+      source: `/Applications/Cua Spaces.app/Contents/MacOS/cua`,
+      target,
+      binDir: "/Users/me/.local/bin",
+      method: "symlink",
+      installed: cliInstalled,
+      upToDate: cliInstalled,
+      onPath: cliInstalled,
+      pathProfile: cliInstalled ? null : "/Users/me/.zshrc",
+      pathLine: cliInstalled ? null : 'export PATH="/Users/me/.local/bin:$PATH"',
+      found: cliInstalled ? target : null,
+    };
+  };
   const settingsSnapshot = (): SettingsSnapshot => ({
     values: { ...state.settings },
     defaultLocation: { value: state.settings.defaultLocation, source: "config", path: "~/.cua/config.toml" },
@@ -227,6 +282,8 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     ...(state.hostSettings ? { hostSettings: { ...state.hostSettings } } : {}),
     // The macOS hosts register ⌘⇧Space; the Windows and Linux shells have none.
     globalShortcut: state.platform.os === "macos" ? { label: state.settings.hotkey, registered: true } : null,
+    // What a host's CLI install plan names (`CuaChannel::cli_name`): Local's is `cua-local`.
+    cli: { name: cliName, installed: cliInstalled },
   });
   const overview = () => {
     if (!state.keyvaultSetUp) return demoNoVaultOverview(now());
@@ -240,13 +297,10 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     return withDemoCopies(o, state, now());
   };
   const session = (): SessionSnapshot => ({
-    fleet: {
+    account: {
       configured: Boolean(state.identity),
       authMode: state.identity ? "user" : "none",
-      baseUrl: "https://api.cua.ai",
-      tokenUrl: "https://auth.cua.ai/oauth/token",
       identity: state.identity,
-      namespaces: state.identity ? ["ada"] : [],
     },
     onboarding: { ...state.onboarding },
     daemon: { connected: true, version: "0.6.0", socketPath: "~/.cua/daemon.sock" },
@@ -262,6 +316,8 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
   };
 
   const ctx = { state, now, wait, emit, findRow, stepMs: step };
+  // Creates asked for so far (`failCreates: "runtime-once"` fails the first).
+  let createAttempts = 0;
   const handlers: { [K in OpName]: Handler<K> } = {
     "spaces.list": () => state.rows.map((r) => ({ ...r })),
 
@@ -276,6 +332,16 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       const job = { cancelled: false };
       state.creates.set(pendingId, job);
       try {
+        // A failure the options ask for, after the create starts preparing.
+        const failure =
+          options.failCreates === "disk" ? DEMO_CREATE_FAILURES.disk : options.failCreates === "runtime-once" && createAttempts++ === 0 ? DEMO_CREATE_FAILURES.runtime : null;
+        if (failure) {
+          for (const fraction of [0, 0.3]) {
+            emit({ type: "spaces.createProgress", progress: { pendingId, phase: "preparing", fraction, detail: "preparing", space: id } });
+            await wait(step / 2);
+          }
+          throw new HostError(failure, "runtime");
+        }
         for (const phase of CREATE_PHASES) {
           for (const fraction of [0, 0.5]) {
             if (job.cancelled) throw new HostError("cancelled: the create was stopped and what it made was removed", "cancelled");
@@ -491,6 +557,24 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
         caught_up: page.length === after.length,
       };
     },
+    "agents.start": async ({ spaceId, agent, prompt, repo }) => {
+      const row = findRow(spaceId);
+      if (row.powerState !== "running" || !row.reachable) throw new HostError(`${row.name} is not running`, "space_off");
+      await wait(step);
+      const runId = `run-${Math.random().toString(16).slice(2, 8)}`;
+      state.runs.push(demoStartedRun(spaceId, runId, agent, prompt, now(), repo));
+      emit({ type: "agents.changed" });
+      return { run_id: runId, agent, space: spaceId };
+    },
+    "agents.message": async ({ spaceId, runId, text }) => {
+      const rec = state.runs.find((r) => r.space === spaceId && r.run.runId === runId);
+      if (!rec) throw new HostError(`no run ${runId} in ${spaceId}`, "not_found");
+      const busy = runAt(rec, now()).status === "running";
+      demoReply(rec, text, now());
+      emit({ type: "agents.changed" });
+      const run = runAt(rec, now());
+      return { delivered: true, run_id: runId, status: run.status, phase: run.phase, reason: busy ? "queued after the current turn" : "" };
+    },
     "agents.pause": async ({ name }) => {
       const agent = findAgent(name);
       await wait(step);
@@ -533,7 +617,11 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       await wait(step);
       const wanted = (r: AgentSetupRow) => r.installed && (agents === null || agents.includes(r.agent));
       state.agentSetup = state.agentSetup.map((r) =>
-        wanted(r) ? { ...r, configured: true, skillsInstalled: r.skillsTotal, detail: "Skills and MCP server set up" } : r,
+        wanted(r)
+          ? state.readOnlyAgents.includes(r.agent)
+            ? { ...r, configured: false, skillsInstalled: 0, detail: "Permission denied (os error 13)" }
+            : { ...r, configured: true, skillsInstalled: r.skillsTotal, detail: "Skills and MCP server set up" }
+          : r,
       );
       // The demo plays the agent's first request a little later: a line in this computer's access log.
       const used = state.agentSetup.find(wanted);
@@ -547,13 +635,15 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     },
     ...newSpaceDemoHandlers({ state, wait, emit, step, now }),
     ...demoTeleportHandlers({ wait, emit, now, stepMs: step }),
-    ...demoShareHandlers({ wait, stepMs: step }),
+    ...demoShareHandlers({ wait, stepMs: step, teamFull: options.teamFull }),
     ...demoAgentDetailHandlers({ wait, stepMs: step, now }),
     ...demoAgentKeysHandlers({ wait, stepMs: step, now }),
     ...demoVolumeHandlers({ state: state.volume, now, wait, step, emit, platform: state.platform }),
     ...createDemoSettings({ now, wait, emit, stepMs: step, platform: state.platform, unenrolled: options.unenrolled, update: options.update, experiments: state.volume.experiments, signedIn: () => Boolean(state.identity), settings: () => state.settings, setSettings: (p) => ((state.settings = { ...state.settings, ...p }), emit({ type: "settings.changed" })), addMachine: (m) => ((state.paired = [...state.paired, m]), emit({ type: "machines.changed" })) }),
     ...demoTelemetryHandlers(ctx),
+    ...(options.noTeam ? { "teams.list": () => ({ teams: [], currentTeamId: null }) } : {}),
     ...demoRelayUsageHandlers(ctx),
+    ...demoLinksHandlers(ctx),
     "nudges.pending": () => risky.filter((r) => r.expiresMs > now()).map((r) => ({ ...r })),
     "nudges.answer": ({ id }) => {
       risky = risky.filter((r) => r.id !== id);
@@ -569,6 +659,12 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     ...unsupportedChecklistOps("demo"),
     ...unsupportedPresenceOps("demo"),
     ...unsupportedRuntimeFixOps("demo"),
+    "cli.plan": () => cliPlan(),
+    "cli.install": async () => {
+      await wait(step);
+      cliInstalled = true;
+      return cliPlan();
+    },
   };
 
   return {
@@ -589,7 +685,11 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
   };
 }
 
-export interface DemoState extends DemoTelemetryState, DemoRelayUsageState, DemoResourcesState, DemoSpaceDetailState, DemoHostSetupState, DemoStartupState, DemoNewSpaceState, DemoKeyvaultSetupState, DemoKeyvaultManageState {
+interface DemoLinksStateField {
+  links: DemoLinksState;
+}
+
+export interface DemoState extends DemoLinksStateField, DemoTelemetryState, DemoRelayUsageState, DemoResourcesState, DemoSpaceDetailState, DemoHostSetupState, DemoStartupState, DemoNewSpaceState, DemoKeyvaultSetupState, DemoKeyvaultManageState {
   rows: SpaceRow[];
   items: KvItem[];
   keyvaultLocked: boolean;
@@ -603,6 +703,7 @@ export interface DemoState extends DemoTelemetryState, DemoRelayUsageState, Demo
   agents: PersistentAgent[];
   runs: DemoRunRecord[];
   agentSetup: AgentSetupRow[];
+  readOnlyAgents: string[];
   volume: DemoVolumeState;
   platform: DemoPlatform;
   /** Machines added with a pairing code ("Add a machine"). */

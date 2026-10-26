@@ -137,6 +137,25 @@ pub struct ProvidedSpace {
     /// for a Space on the relay (`relay_machine` is then set).
     #[serde(default, skip_serializing_if = "is_zero")]
     pub direct_port: u16,
+    /// vCPUs the Space was admitted with (0: not recorded, counted as the
+    /// default Space).
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub cpus: u32,
+    /// Memory (MiB) the Space was admitted with (0: not recorded).
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub memory_mb: u64,
+    /// Reached through this host's own channel (its forward listens on
+    /// loopback), not on the host's direct address.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub routed: bool,
+}
+
+fn is_zero_u32(n: &u32) -> bool {
+    *n == 0
+}
+
+fn is_zero_u64(n: &u64) -> bool {
+    *n == 0
 }
 
 fn is_zero(n: &u16) -> bool {
@@ -219,6 +238,22 @@ pub fn save_provided(host_dir: &Path, all: &[ProvidedSpace]) -> Result<()> {
     let text =
         serde_json::to_string_pretty(all).map_err(|e| Error::Internal(e.to_string()))? + "\n";
     crate::host::write_secret(&provided_path(host_dir), &text)
+}
+
+/// Reads, changes with `f` and saves the provided Spaces as one step:
+/// creates and deletes running at once (a batch of forks a host makes for
+/// another machine) never lose each other's records. Serialized in this
+/// process, which is the only writer (the host's daemon).
+pub fn update_provided<R>(
+    host_dir: &Path,
+    f: impl FnOnce(&mut Vec<ProvidedSpace>) -> R,
+) -> Result<R> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut all = load_provided(host_dir)?;
+    let r = f(&mut all);
+    save_provided(host_dir, &all)?;
+    Ok(r)
 }
 
 // ------------------------------------------------------------------ audit
@@ -504,6 +539,32 @@ pub fn describe_choices(machines: &[Machine]) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    /// Records added from many threads at once are all kept.
+    #[test]
+    fn concurrent_updates_keep_every_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path().to_path_buf();
+        let threads: Vec<_> = (0..16)
+            .map(|i| {
+                let d = d.clone();
+                std::thread::spawn(move || {
+                    update_provided(&d, |all| {
+                        all.push(ProvidedSpace {
+                            local_space: format!("local:s{i}"),
+                            ..Default::default()
+                        })
+                    })
+                    .unwrap()
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().unwrap();
+        }
+        assert_eq!(load_provided(&d).unwrap().len(), 16);
+    }
+
     use super::*;
 
     fn m(id: &str, name: &str) -> Machine {

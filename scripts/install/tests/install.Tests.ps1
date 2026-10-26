@@ -64,6 +64,21 @@ Describe 'functions' {
         { Assert-DownloadUrl 'file:///tmp/a.zip' 'file:///tmp/r.json' } | Should -Not -Throw
     }
 
+    It 'orders cua versions as semver, a dev build older than its release' {
+        Test-CuaVersionNewer '0.7.99' '0.7.0' | Should -BeTrue
+        Test-CuaVersionNewer '0.10.0' '0.9.9' | Should -BeTrue
+        Test-CuaVersionNewer '0.7.0' '0.7.0' | Should -BeFalse
+        Test-CuaVersionNewer '0.6.0' '0.7.0' | Should -BeFalse
+        Test-CuaVersionNewer '0.7.0' '0.7.0-rc.1' | Should -BeTrue
+        Test-CuaVersionNewer '0.7.0-rc.1' '0.7.0' | Should -BeFalse
+        Test-CuaVersionNewer '0.7.0-rc.10' '0.7.0-rc.9' | Should -BeTrue
+        Test-CuaVersionNewer '0.7.0-dev' '0.7.0' | Should -BeFalse
+        Test-CuaVersionNewer '0.7.0' '0.7.0-dev' | Should -BeTrue
+        Test-CuaVersionNewer '0.8.0-dev' '0.7.0' | Should -BeTrue
+        Test-CuaVersionNewer '0.0.0' '0.6.0' | Should -BeFalse
+        Test-CuaVersionNewer 'junk' '0.7.0' | Should -BeFalse
+    }
+
     It 'maps architectures' {
         Get-CuaPlatform -Arch 'AMD64' | Should -Be 'windows-x64'
         Get-CuaPlatform -Arch 'ARM64' | Should -Be 'windows-arm64'
@@ -350,6 +365,47 @@ Describe 'install.ps1' {
     It '-RequireSignature fails without a verifiable signature' {
         { Invoke-Installer @{ CliOnly = $true; Yes = $true; RequireSignature = $true; Prefix = (Join-Path $env:CUA_TEST_ROOT 'p4') } } |
             Should -Throw '*no verifiable signature*'
+    }
+
+    # UL2: a newer cua already installed is never replaced. A POSIX shell
+    # script stands in for cua.exe, so these run where `& file.exe` can exec one.
+    Context 'never downgrades the installed cua' -Skip:($IsWindows) {
+        BeforeAll {
+            function script:New-FakeCua([string]$Prefix, [string]$Ver) {
+                $bin = Join-Path $Prefix 'bin'
+                New-Item -ItemType Directory -Force -Path $bin | Out-Null
+                $exe = Join-Path $bin 'cua.exe'
+                Set-Content -LiteralPath $exe -Value "#!/bin/sh`necho 'cua $Ver'" -NoNewline
+                chmod +x $exe
+                return $exe
+            }
+        }
+        It 'keeps a newer installed cua' {
+            $p = Join-Path $env:CUA_TEST_ROOT 'nd1'; $exe = New-FakeCua $p '9.9.9'
+            $out = Invoke-Installer @{ CliOnly = $true; Yes = $true; NoOnboarding = $true; NoModifyPath = $true; Prefix = $p }
+            $out | Should -Match 'kept .*cua 9.9.9 is newer than the release.s 1.2.3'
+            (Get-Content -LiteralPath $exe -Raw) | Should -Match '9.9.9'
+        }
+        It 'upgrades an older installed cua' {
+            $p = Join-Path $env:CUA_TEST_ROOT 'nd2'; $exe = New-FakeCua $p '0.1.0'
+            Invoke-Installer @{ CliOnly = $true; Yes = $true; NoOnboarding = $true; NoModifyPath = $true; Prefix = $p } | Out-Null
+            (Get-Content -LiteralPath $exe -Raw) | Should -Match 'fake cua'
+        }
+        It 'installs when none is there' {
+            $p = Join-Path $env:CUA_TEST_ROOT 'nd3'
+            Invoke-Installer @{ CliOnly = $true; Yes = $true; NoOnboarding = $true; NoModifyPath = $true; Prefix = $p } | Out-Null
+            Join-Path $p 'bin/cua.exe' | Should -Exist
+        }
+        It 'treats a dev build installed as older, and a release as newer than a dev build' {
+            $p = Join-Path $env:CUA_TEST_ROOT 'nd4'; $exe = New-FakeCua $p '1.2.3-dev'
+            Invoke-Installer @{ CliOnly = $true; Yes = $true; NoOnboarding = $true; NoModifyPath = $true; Prefix = $p } | Out-Null
+            (Get-Content -LiteralPath $exe -Raw) | Should -Match 'fake cua'
+        }
+        It '-Version rolls back a newer cua on purpose' {
+            $p = Join-Path $env:CUA_TEST_ROOT 'nd5'; $exe = New-FakeCua $p '9.9.9'
+            Invoke-Installer @{ CliOnly = $true; Yes = $true; NoOnboarding = $true; NoModifyPath = $true; Prefix = $p; Version = '1.2.3' } | Out-Null
+            (Get-Content -LiteralPath $exe -Raw) | Should -Match 'fake cua'
+        }
     }
 
     It 'reads the versioned manifest for -Version' {

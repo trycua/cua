@@ -38,7 +38,7 @@ describe("host labels", () => {
     expect(creatingLine(line, "linux")).toBe("This computer \u00b7 Downloading image\u2026");
     expect(creatingLine(line, "win32")).toBe("This PC \u00b7 Downloading image\u2026");
     // Elsewhere, or a failure in the core's own words: as it is.
-    expect(creatingLine("Cua Cloud \u00b7 Starting\u2026", "linux")).toBe("Cua Cloud \u00b7 Starting\u2026");
+    expect(creatingLine("Studio \u00b7 Starting\u2026", "linux")).toBe("Studio \u00b7 Starting\u2026");
     expect(creatingLine("This Mac can't reach its new VM", "linux")).toBe("This Mac can't reach its new VM");
   });
 

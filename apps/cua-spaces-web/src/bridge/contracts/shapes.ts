@@ -28,18 +28,18 @@ import type {
   CancelOutcome,
   DaemonStatus,
   DefaultLocation,
-  FleetStatus,
+  AccountStatus,
   HostStatus,
   MachineRow,
   OnboardingState,
   SignInStart,
   SpacePowerReport,
   TelemetryView,
+  CrashReportingConfig,
 } from "./host";
 import type { KeyvaultOverview, KvGrant } from "./keyvault";
 import type {
   CloudCheckWire,
-  CloudPricing,
   CloudProviderWire,
   CloudTestWire,
   ConnectedCloud,
@@ -54,7 +54,7 @@ import type {
 import type { NotificationInput } from "./notifications";
 import type { AboutInput, DriveCheckInput, DriveStorageInput, LoginItemReport, StorageInput, UpdateState } from "./settings";
 import type { ShareEntry, ShareRemoval } from "./share";
-import type { SpaceProgress, SpaceRow } from "./spaces";
+import type { CreateFix, SpaceProgress, SpaceRow } from "./spaces";
 import type { CatalogEntry, ConsentItem, KvDomainCount, KvInventory, OpenWindow, PlanStep, RemoteWindow, RunReport, TeleportPlan } from "./teleport";
 import type { AgentSetupOutcome, DriveGrantInput, DriveMountInput, DriveRequestInput, Experiments, VolumeOverview } from "./volume";
 import type { AgentKeysReport } from "../ops/agent-keys";
@@ -64,10 +64,12 @@ import type { RelayUsage } from "../ops/relay-usage";
 import type { RiskyRequest } from "../ops/nudges";
 import type { ComputerResources, DiskOnHost, DiskWarning, GuestUsage, ResourcesSnapshot, SpaceResources } from "../ops/resources";
 import type { HostChecklistState } from "../ops/checklist";
+import type { ShareLink } from "../ops/links";
+import type { CliInstallPlan } from "./first-run";
 import type { PresenceCursorWire, PresenceJoinInfo, PresenceParticipantWire } from "../ops/presence";
 import type { StartupState } from "../ops/startup";
 import type { StreamTicket } from "../ops/stream";
-import type { GlobalShortcut, HostSettings, HostSignIn, HostSignInFailure, OpName, SessionSnapshot, SettingsSnapshot, SettingsValues } from "../protocol";
+import type { CliInfo, GlobalShortcut, HostSettings, HostSignIn, HostSignInFailure, OpName, SessionSnapshot, SettingsSnapshot, SettingsValues } from "../protocol";
 import type { WebkitMethod, WkHostState, WkMachines, WkOnboarding, WkSession, WkSettings, WkSettingsRow, WkSpace, WkSpaces } from "../webkit-protocol";
 import { Defs, any, bool, dict, list, nul, nullable, num, obj, object, oneOf, opt, optNull, str, union, type Schema } from "./schema";
 
@@ -78,6 +80,25 @@ const limits = list(object({ resource: str, used: num, limit: num, reason: str }
 const os = oneOf("macos", "windows", "linux", "unknown");
 
 /* ---- Spaces and machines --------------------------------------------------- */
+
+const CliInstallPlanShape = ref(
+  "CliInstallPlan",
+  obj<CliInstallPlan>()({
+    source: optNull(str),
+    target: str,
+    binDir: str,
+    method: optNull(oneOf("symlink", "copy")),
+    installed: bool,
+    upToDate: bool,
+    installedVersion: optNull(str),
+    bundledVersion: optNull(str),
+    shadowedBy: optNull(str),
+    onPath: bool,
+    pathProfile: optNull(str),
+    pathLine: optNull(str),
+    found: optNull(str),
+  }),
+);
 
 const DiskWarningShape = ref("DiskWarning", obj<DiskWarning>()({ level: oneOf("ok", "low", "critical"), free: num, total: num, threshold: num }));
 
@@ -107,9 +128,24 @@ const ComputerResourcesShape = ref(
   }),
 );
 
+const CreateFixShape = ref(
+  "CreateFix",
+  obj<CreateFix>()({ text: str, label: str, action: oneOf("copy-command", "open-url", "details"), value: opt(str) }),
+);
+
 const SpaceProgressShape = ref(
   "SpaceProgress",
-  obj<SpaceProgress>()({ phase: str, permille: num, label: str, error: opt(str), transfer: opt(str), cancellable: opt(bool), cancelling: opt(bool) }),
+  obj<SpaceProgress>()({
+    phase: str,
+    permille: num,
+    label: str,
+    error: opt(str),
+    transfer: opt(str),
+    cancellable: opt(bool),
+    cancelling: opt(bool),
+    retrying: opt(bool),
+    fix: opt(CreateFixShape),
+  }),
 );
 
 const SpaceRowShape = ref(
@@ -118,7 +154,7 @@ const SpaceRowShape = ref(
     id: str,
     hostProgress: opt(SpaceProgressShape),
     name: str,
-    provider: oneOf("cloud", "local", "direct", "relay"),
+    provider: oneOf("local", "direct", "relay"),
     spacesdVersion: str,
     features: strings,
     addedAt: opt(str),
@@ -171,6 +207,7 @@ const HostStatusShape = ref(
     ownerEmail: optNull(str),
     account: optNull(object({ id: optNull(str), email: optNull(str), display: optNull(str) })),
     progress: optNull(str),
+    appName: optNull(str),
   }),
 );
 
@@ -215,15 +252,11 @@ const MachineRowShape = ref(
 const SessionShape = ref(
   "SessionSnapshot",
   obj<SessionSnapshot>()({
-    fleet: obj<FleetStatus>()({
+    account: obj<AccountStatus>()({
       configured: bool,
       authMode: oneOf("user", "client-credentials", "static-token", "none"),
-      baseUrl: str,
-      tokenUrl: str,
       clientId: opt(str),
       identity: opt(str),
-      namespaces: opt(strings),
-      probeError: opt(str),
     }),
     onboarding: obj<OnboardingState>()({
       completed: bool,
@@ -268,6 +301,7 @@ const SettingsShape = ref(
     ),
     globalShortcut: optNull(obj<GlobalShortcut>()({ label: str, registered: bool })),
     accountUrl: optNull(str),
+    cli: optNull(obj<CliInfo>()({ name: str, installed: bool })),
   }),
 );
 
@@ -449,6 +483,18 @@ const LinkNoticeShape = ref(
   }),
 );
 
+const CrashReportingConfigShape = ref(
+  "CrashReportingConfig",
+  obj<CrashReportingConfig>()({
+    allowed: bool,
+    dsn: str,
+    release: str,
+    environment: str,
+    shell: str,
+    crashTest: opt(oneOf("ui")),
+  }),
+);
+
 /* ---- New Space ------------------------------------------------------------- */
 
 const StorageVolumeShape = obj<StorageVolume>()({ availableBytes: num, totalBytes: num, name: str });
@@ -467,7 +513,6 @@ const GpuShape = ref(
   "GpuChoice",
   obj<GpuChoice>()({ runtime: str, id: str, label: str, experimental: bool, supported: bool, reason: optNull(str), learnMore: optNull(str) }),
 );
-const PricingShape = ref("CloudPricing", obj<CloudPricing>()({ vcpuHourUsd: num, memoryGibHourUsd: num }));
 const LocalStatusShape = ref(
   "LocalStatus",
   obj<LocalStatus>()({
@@ -489,15 +534,13 @@ const LocalStatusShape = ref(
 const WizardEnvShape = ref(
   "WizardEnv",
   obj<WizardEnv>()({
-    defaultLocation: oneOf("cloud", "local", "yours", "host"),
-    cloudAvailable: bool,
+    defaultLocation: oneOf("local", "yours", "host"),
     localAvailable: bool,
     localReason: optNull(str),
     localBackends: optNull(strings),
     maxCpus: num,
     hostArch: optNull(str),
     storage: optNull(LocalStorageShape),
-    cloudPricing: optNull(PricingShape),
     clouds: opt(
       list(
         obj<ConnectedCloud>()({
@@ -520,7 +563,6 @@ const createOptions = (strict: boolean) =>
   obj<NewSpaceOptions>()({
     local: strict ? LocalStatusShape : nullable(LocalStatusShape),
     gpus: nullable(list(GpuShape)),
-    cloudPricing: nullable(PricingShape),
     experiments: ExperimentsShape,
     maxCpus: nullable(num),
     // The SwiftUI host's wizard runs on its env: there it is required.
@@ -697,7 +739,20 @@ const PresenceCursorShape = ref(
 
 /** The host's copy of the checklist (`ops/checklist.ts`). */
 const ChecklistAnswerShape = object({
-  state: obj<HostChecklistState>()({ done: strings, dismissed: bool, shown: bool }),
+  state: obj<HostChecklistState>()({ done: strings, dismissed: bool, shown: bool, skipped: strings }),
+});
+
+/** A link to something you run (`ops/links.ts`). */
+const ShareLinkShape = obj<ShareLink>()({
+  id: str,
+  url: str,
+  name: nullable(str),
+  access: oneOf("private", "team", "public"),
+  kind: str,
+  target: str,
+  owner: str,
+  createdAtUnix: nullable(num),
+  expiresAtUnix: nullable(num),
 });
 
 /** One Machines row as the core lists it (`machines::MachinePageRow`). */
@@ -858,6 +913,7 @@ export const OP_SHAPES: Record<OpName, Schema> = {
       createdAt: nullable(num),
       phase: str,
       turn: num,
+      needsYou: optNull(obj<{ title: string; detail: string }>()({ title: str, detail: str })),
     }),
   ),
   "agents.events": obj<AgentEventsPage>()({
@@ -868,6 +924,8 @@ export const OP_SHAPES: Record<OpName, Schema> = {
     cursor: num,
     caught_up: bool,
   }),
+  "agents.start": object({ run_id: str, agent: str }),
+  "agents.message": object({ delivered: bool, run_id: str, status: oneOf("running", "idle", "failed", "crashed", "unknown"), phase: str }),
   "agents.pause": nul,
   "agents.resume": nul,
   "agents.setup": agentSetupRows,
@@ -1019,6 +1077,11 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   ),
   "checklist.get": ChecklistAnswerShape,
   "checklist.send": ChecklistAnswerShape,
+  "links.list": object({ links: list(ShareLinkShape) }),
+  "links.create": ShareLinkShape,
+  "links.stop": object({ stopped: strings }),
+  "cli.plan": nullable(CliInstallPlanShape),
+  "cli.install": CliInstallPlanShape,
   "presence.join": obj<PresenceJoinInfo>()({
     handle: str,
     me: PresenceParticipantShape,
@@ -1060,6 +1123,7 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "telemetry.track": nul,
   "telemetry.linkNotice": nullable(LinkNoticeShape),
   "telemetry.acknowledgeLinkNotice": nul,
+  "crashReporting.config": CrashReportingConfigShape,
   "spaces.usage": nullable(
     obj<SpaceUsage>()({ memoryUsed: num, memoryTotal: num, memoryLimited: bool, diskUsed: num, diskTotal: num, diskLimited: bool }),
   ),
@@ -1110,6 +1174,7 @@ const WkHostShape = ref(
     ownerEmail: optNull(str),
     account: optNull(object({ id: optNull(str), email: optNull(str), display: optNull(str) })),
     progress: optNull(str),
+    appName: optNull(str),
   }),
 );
 
@@ -1123,7 +1188,7 @@ const WkSpaceShape = ref(
     detail: str,
     lastUsedAt: num,
     startedAt: optNull(num),
-    provider: optNull(oneOf("cloud", "local", "direct", "relay")),
+    provider: optNull(oneOf("local", "direct", "relay")),
     sdk: optNull(object({ features: strings, spacesdVersion: str, reachable: bool, error: optNull(str) })),
     osName: optNull(str),
     osPrettyName: optNull(str),
@@ -1143,7 +1208,7 @@ const WkSpaceShape = ref(
 
 const WkSpacesShape = ref(
   "WkSpaces",
-  obj<WkSpaces>()({ loaded: bool, selectedId: nullable(str), spaces: list(object({ space: WkSpaceShape, deleting: bool })), rosterError: optNull(str), daemonNotice: optNull(str) }),
+  obj<WkSpaces>()({ loaded: bool, selectedId: nullable(str), spaces: list(object({ space: WkSpaceShape, deleting: bool })), rosterError: optNull(str), daemonNotice: optNull(str), incomplete: opt(bool), reaching: opt(num), stale: opt(bool) }),
 );
 
 const WkSessionShape = ref(
@@ -1185,6 +1250,7 @@ const WkSettingsShape = ref(
     updateChannel: optNull(oneOf("stable", "beta")),
     globalShortcut: optNull(object({ label: str, registered: bool })),
     accountUrl: optNull(str),
+    cli: optNull(object({ name: str, installed: bool })),
   }),
 );
 
@@ -1311,6 +1377,8 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "agents.list": OP_SHAPES["agents.list"],
   "agents.runs": OP_SHAPES["agents.runs"],
   "agents.events": OP_SHAPES["agents.events"],
+  "agents.start": OP_SHAPES["agents.start"],
+  "agents.message": OP_SHAPES["agents.message"],
   "agents.pause": any,
   "agents.resume": any,
   "agents.setup": agentSetupRows,
@@ -1384,6 +1452,7 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "telemetry.track": nul,
   "telemetry.linkNotice": nullable(LinkNoticeShape),
   "telemetry.acknowledgeLinkNotice": nul,
+  "crashReporting.config": CrashReportingConfigShape,
   "spaces.usage": OP_SHAPES["spaces.usage"],
   "spaces.windows": OP_SHAPES["spaces.windows"],
   "stream.pip": strings,
@@ -1421,6 +1490,11 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "machines.checkHealth": nul,
   "checklist.get": OP_SHAPES["checklist.get"],
   "checklist.send": OP_SHAPES["checklist.send"],
+  "links.list": OP_SHAPES["links.list"],
+  "links.create": OP_SHAPES["links.create"],
+  "links.stop": OP_SHAPES["links.stop"],
+  "cli.plan": OP_SHAPES["cli.plan"],
+  "cli.install": OP_SHAPES["cli.install"],
 };
 
 /** Methods whose answer has no shape here, and why (none today: keep the

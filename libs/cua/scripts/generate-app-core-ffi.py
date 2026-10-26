@@ -20,10 +20,10 @@ OUT = ROOT / "crates/cua-spaces-ffi/src/app_core_types.rs"
 # (source file, module path, [types]) in FFI order.
 TYPES = [
     ("message.rs", "message", ["Msg"]),
-    ("model.rs", "model", ["SpaceOs", "SpaceStatus", "ThumbnailScene", "SpaceProvider", "SpaceSdkRef", "SpaceProgress", "PowerControl", "SpacePower", "Space", "SpaceRow", "Location", "SpaceKind", "Runtime"]),
-    ("spaces/mod.rs", "spaces", ["AmbientDots"]),
+    ("model.rs", "model", ["SpaceOs", "SpaceStatus", "ThumbnailScene", "SpaceProvider", "SpaceSdkRef", "SpaceProgress", "CreateFixAction", "CreateFix", "PowerControl", "SpacePower", "Space", "SpaceRow", "Location", "SpaceKind", "Runtime"]),
+    ("spaces/mod.rs", "spaces", ["AmbientDots", "ListViewInput", "ListView"]),
     ("spaces/roster.rs", "spaces::roster", ["NoticeKind", "Notice", "RosterState", "RosterAction"]),
-    ("spaces/creating.rs", "spaces::creating", ["PendingCreate", "PendingDelete", "PendingPower", "CreatesState", "CreateAction"]),
+    ("spaces/creating.rs", "spaces::creating", ["PendingCreate", "PendingDelete", "PendingPower", "FailureStreak", "CreatesState", "CreateAction"]),
     ("spaces/sidebar.rs", "spaces::sidebar", ["PowerButton", "SidebarRow", "SidebarSection", "SidebarView", "FactCopy", "FactWarning", "Fact", "DetailActionId", "DetailAction", "DeleteConfirm", "DetailCopy", "SpaceUsage", "NewSpaceOn", "SpaceDetail"]),
     ("spaces/cover.rs", "spaces::cover", ["StreamPhase", "DesktopCoverInput", "DesktopCoverKind", "DesktopCover", "ThumbnailPolicy"]),
     ("spaces/stream.rs", "spaces::stream", ["StreamDisplay", "StreamSectionInput", "StreamRowKind", "StreamRowIcon", "StreamRowActionId", "StreamRowAction", "StreamRow", "StreamSection", "PipEvent", "PipCommand"]),
@@ -36,7 +36,7 @@ TYPES = [
     ("teleport/grid.rs", "teleport::grid", ["PickerTileIcon", "PickerTileThumbnail", "PickerTile", "PickerTileSection", "PickerGrid", "PickerGridTab", "PickerGridTabItem", "PickerGridPrimary"]),
     ("teleport/review.rs", "teleport::review", ["SendSource", "RememberedChoice", "ReviewDomain", "ReviewToggle", "VaultPassword", "ReviewPassword", "VaultSource", "ReviewChoice"]),
     ("teleport/flow.rs", "teleport::flow", ["Capability", "Move", "SensitiveGroup", "SensitiveOption", "CatalogEntry", "ConsentKind", "ConsentItem", "PlanStepView", "Plan", "RunPhase", "RunEvent", "RunReport", "Consent", "InstallCuaPrompt", "Step", "PickerState", "PickerEvent", "EntrySection", "ReviewView"]),
-    ("wizard.rs", "wizard", ["LocalEngine", "CloudEngine", "ImageTier", "ImageDistro", "PlatformSize", "ImageSizes", "SandboxImage", "ImageGroup", "KindOption", "StorageVolume", "LocalStorage", "CloudPricing", "CloudOffer", "ConnectedCloud", "HostLimit", "SpaceHost", "RuntimeSwitch", "PlacementOption", "GpuChoice", "WizardEnv", "WizardMode", "AddressForm", "ResourceField", "ResourceEdit", "WizardState", "WizardAction", "StepState", "StepView", "Tile", "MenuOption", "CreatePlan", "CreateSpaceArgs", "AddressView", "AddressSubmit", "ImageSuggestion", "SuggestionGroup", "ImageFieldView", "WizardField", "WizardLabels", "WizardFact", "GpuRow", "ResourceEditView", "WizardView"]),
+    ("wizard.rs", "wizard", ["LocalEngine", "ExternalImage", "ExternalRuntimeInfo", "ImageTier", "ImageDistro", "PlatformSize", "ImageSizes", "SandboxImage", "ImageGroup", "KindOption", "StorageVolume", "LocalStorage", "CloudOffer", "ConnectedCloud", "HostLimit", "HostLoad", "SpaceHost", "RuntimeSwitch", "PlacementOption", "GpuChoice", "WizardEnv", "WizardMode", "AddressForm", "ResourceField", "ResourceEdit", "WizardState", "WizardAction", "StepState", "StepView", "Tile", "MenuOption", "CreatePlan", "CreateSpaceArgs", "AddressView", "AddressSubmit", "ImageSuggestion", "SuggestionGroup", "ImageFieldView", "WizardField", "WizardLabels", "WizardFact", "GpuRow", "ResourceEditView", "WizardView"]),
     ("keyvault/wire.rs", "keyvault::wire", ["KvItemPolicy", "KvItem", "KvFavicon", "KvDomainCount", "KvInventory", "KvSigning", "KvCaller", "KvSelector", "KvAccessRequest", "KvPending", "KvGrant", "KvRuleCaller", "KvRule", "KvDelivery", "KvAuditEntry", "KvStatus", "KvVerification", "KeyvaultOverview", "KvCommand"]),
     ("keyvault/view.rs", "keyvault::view", ["Tone", "SigningBadge", "Tri", "DecisionTone", "Decision", "PendingRow", "AccessKind", "AccessRow", "KvLabels", "KeyvaultPage"]),
     ("keyvault/vault.rs", "keyvault::vault", ["KvKind", "KvLock", "VaultState", "VaultAction", "VaultRow", "VaultSite", "VaultFiles", "VaultApp", "VaultSelection", "VaultView", "UnlockPrompt", "KvDeleteConfirm", "KvVaultSource"]),
@@ -44,7 +44,6 @@ TYPES = [
     ("keyvault/approval.rs", "keyvault::approval", ["ApprovalState", "ApprovalAction", "ApprovalRow", "ApprovalView"]),
     ("keyvault/credential.rs", "keyvault::credential", ["KvFormMode", "KvMethod", "KvCredentialForm", "KvStrength", "KvPassphraseCheck"]),
     ("keyvault/client.rs", "keyvault::client", ["KvOutcome"]),
-    ("billing.rs", "billing", ["BillingCard", "BillingCredit", "BillingStatus", "CreditNotice"]),
     ("drive_settings.rs", "drive_settings", ["DriveMountInput", "DriveS3Input", "DriveStorageInput", "DriveCheckInput", "DriveCacheInput", "StorageInput", "DriveStorageUpdate", "StorageForm", "StorageField", "StorageRequest", "StorageState", "StorageAction"]),
     ("onboarding.rs", "onboarding", ["OnboardingStep", "DriveStepRequest", "StorageChoice", "OnboardingMode", "OnboardingState", "OnboardingAction", "OnboardingTodoId", "OnboardingTodo", "StepDot", "UsageToggle", "ModeChoice", "OnboardingView", "DriveCard", "PresentationCard", "OnboardingCopy", "OnboardingCheckbox"]),
     ("onboarding_preview.rs", "onboarding_preview", ["PreviewPoint", "NotchPreview", "MenuPreviewRow", "MenuPreview", "PresentationPreview", "PreviewFrame"]),
@@ -53,6 +52,7 @@ TYPES = [
     ("about.rs", "about", ["UpdateChannel", "AboutInput", "AboutLinkId", "AboutLink", "AboutUpdates", "AboutView", "LaunchInput", "LaunchPlan", "DaemonCheck", "RefreshReport"]),
     ("agent_keys.rs", "agent_keys", ["AgentKeyInput", "AgentKeysInput", "AgentKeyRow", "AgentKeysView", "AgentKeyFormInput", "AgentKeyFormView", "AgentKeyConfirm"]),
     ("login_item.rs", "login_item", ["LoginItemStatus", "LoginItemInput", "LoginItemPlan"]),
+    ("local_network.rs", "local_network", ["LocalNetworkAccess", "LocalNetworkInput", "LocalNetworkStepKind", "LocalNetworkStep"]),
     ("experiments.rs", "experiments", ["Experiments"]),
     ("settings.rs", "settings", ["SwitcherTheme", "AppSettings", "KeyCombo", "SignInPhase", "TelemetryInput", "SettingsInput", "SettingsRowKind", "SettingsOption", "SettingsRow", "SettingsSection", "SettingsPage"]),
     ("sign_in.rs", "sign_in", ["SignInFailure", "SignInFooterState", "SignInFooterInput", "SignInToast", "SignInFooter"]),
@@ -114,6 +114,7 @@ RENAME = {
     "ApprovalRow": "KvApprovalRow",
     "ApprovalView": "KvApprovalView",
     "AppSettings": "AppSettings",
+    "ExternalRuntimeInfo": "AppExternalRuntime",
 }
 
 

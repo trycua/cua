@@ -94,7 +94,6 @@ fn word(s: &str) -> &str {
         "windows" => "Windows",
         "macos" => "macOS",
         "local" => "this computer",
-        "cloud" => "Cua Cloud",
         "relay" => "another of my computers",
         "container" => "container",
         "vm" => "VM",
@@ -129,7 +128,7 @@ pub fn create_report(input: &CreateReportInput) -> CreateReport {
         &crate::errors::plain_error(&input.error),
         &input.phase,
         "",
-        input.provider != "cloud",
+        true,
     );
     let error_kind = if kind.is_empty() { "other" } else { kind }.to_string();
     let r = |s: &str| redact_with(s, &input.names);

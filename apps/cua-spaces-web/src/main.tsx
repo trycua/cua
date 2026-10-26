@@ -6,6 +6,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
 import { BridgeProvider } from "@/bridge";
+import { startCrashReporting } from "@/crash-reporting";
 import { ToastProvider } from "@/components/ui/toast";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { routeTree } from "./routeTree.gen";
@@ -25,6 +26,9 @@ declare module "@tanstack/react-router" {
     router: typeof router;
   }
 }
+
+// Errors from the page, when the host allows reports (src/crash-reporting).
+void startCrashReporting();
 
 const root = createRoot(document.getElementById("root")!);
 if (pip) {

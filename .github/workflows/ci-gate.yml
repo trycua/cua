@@ -16,33 +16,83 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
+      # Which workflows this gate may ignore, from the paths the PR changes (area map:
+      # .github/ci-areas.json, docs/contributing/CI.md). The merge queue entry resolves the
+      # same pull request and reads the same file list, so both events compute one set.
+      # Any failure here fails the gate: nothing is skipped on error.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            .github/ci-areas.json
+            .github/scripts/ci_gate_scope.py
+          sparse-checkout-cone-mode: false
+      - name: Scope the gate to the changed areas
+        id: scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          QUEUE_REF: ${{ github.event.merge_group.head_ref }}
+        run: |
+          set -euo pipefail
+          api() { local out; for _ in 1 2 3 4 5 6; do out=$(gh api "$@") && { printf '%s\n' "$out"; return; }; sleep 20; done; return 1; }
+          pr=$PR_NUMBER
+          if [[ -n "$QUEUE_REF" ]]; then
+            [[ "$QUEUE_REF" =~ /pr-([0-9]+) ]] || { echo "::error::cannot read the pull request from $QUEUE_REF"; exit 1; }
+            pr=${BASH_REMATCH[1]}
+          fi
+          api "repos/$GITHUB_REPOSITORY/pulls/$pr" --jq '.body // ""' > "$RUNNER_TEMP/pr-body.txt"
+          labels=$(api "repos/$GITHUB_REPOSITORY/issues/$pr/labels" --jq '[.[].name] | join(",")')
+          api --paginate "repos/$GITHUB_REPOSITORY/pulls/$pr/files?per_page=100" \
+            --jq '.[] | .filename, (.previous_filename // empty)' > "$RUNNER_TEMP/files.txt"
+          # The files API stops at 3000 entries; a PR that large waits on everything.
+          if (( $(wc -l < "$RUNNER_TEMP/files.txt") >= 3000 )); then echo ".github/too-many-files" > "$RUNNER_TEMP/files.txt"; fi
+          python3 .github/scripts/ci_gate_scope.py --labels "$labels" --body-file "$RUNNER_TEMP/pr-body.txt" < "$RUNNER_TEMP/files.txt"
       - name: Wait for every other workflow on the pull request head
         env:
           GH_TOKEN: ${{ github.token }}
           PR_SHA: ${{ github.event.pull_request.head.sha }}
           QUEUE_REF: ${{ github.event.merge_group.head_ref }}
+          IGNORE_RE: ${{ steps.scope.outputs.ignore_re }}
         run: |
           set -uo pipefail
           api() { local out; for _ in 1 2 3 4 5 6; do out=$(gh api "$@") && { printf '%s\n' "$out"; return; }; sleep 120; done; return 1; }
           sha=$PR_SHA
           if [[ -n "$QUEUE_REF" ]]; then
-            pr=$(grep -oP '/pr-\K[0-9]+' <<<"$QUEUE_REF") || exit 1
+            [[ "$QUEUE_REF" =~ /pr-([0-9]+) ]] || exit 1
+            pr=${BASH_REMATCH[1]}
             sha=$(api "repos/$GITHUB_REPOSITORY/pulls/$pr" --jq .head.sha) || exit 1
           fi
+          # IGNORE_RE (from the scope step) names workflow files that belong only to areas this PR
+          # did not touch. Empty means wait for every run.
+          scope_jq='(env.IGNORE_RE // "") == "" or ((.path | sub("@.*"; "") | split("/") | last) | test(env.IGNORE_RE) | not)'
           runs() {
             api --paginate "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$sha&per_page=100" \
-              --jq ".workflow_runs[] | select(.workflow_id != $GITHUB_WORKFLOW_ID and (.event == \"pull_request\" or .event == \"pull_request_target\") and (.path | test(\"claude-auto-fix|ci-release-reminder|review-cua-perception-candidates\") | not)) | [.workflow_id, .id, .name, .conclusion // \"\", .status] | @tsv"
+              --jq ".workflow_runs[] | select(.workflow_id != $GITHUB_WORKFLOW_ID and (.event == \"pull_request\" or .event == \"pull_request_target\") and (.path | test(\"claude-auto-fix|ci-release-reminder|review-cua-perception-candidates\") | not) and ($scope_jq)) | [.workflow_id, .id, .name, .conclusion // \"\", .status] | @tsv"
           }
           GITHUB_WORKFLOW_ID=$(api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .workflow_id) || exit 1
-          sleep 90
+          # Two identical listings cannot prove every run has appeared, so no verdict is allowed
+          # before a fixed 120 s window. Runs for one event are created within 4 s of it (30 recent
+          # PRs); the window leaves 30x margin for slow fan-out. After it, a poll counts only when
+          # the run set equals the previous poll's and every run is completed. Poll fast while quick
+          # PRs finish, then back off: a long suite costs about 85 run listings an hour.
+          poll_interval() {
+            local elapsed=$((SECONDS - started))
+            if (( elapsed < 300 )); then echo 10
+            elif (( elapsed < 900 )); then echo 30
+            else echo 60
+            fi
+          }
+          started=$SECONDS
+          sleep 120
           previous=
           while :; do
             current=$(runs) || exit 1
-            if [[ -n "$current" && "$current" == "$previous" ]] && ! grep -qvP '\tcompleted$' <<<"$current"; then
+            if [[ -n "$current" && "$current" == "$previous" ]] && awk -F'\t' '$NF != "completed" { exit 1 }' <<<"$current"; then
               break
             fi
             previous=$current
-            sleep 120
+            sleep "$(poll_interval)"
           done
           failed=0
           for workflow in $(cut -f1 <<<"$current" | sort -u); do

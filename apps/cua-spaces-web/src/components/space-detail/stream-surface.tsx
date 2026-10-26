@@ -57,6 +57,8 @@ export interface StreamSurfaceProps {
   /** Shown instead of the stream (progress, stopped). */
   children?: ReactNode;
   className?: string;
+  /** Pointer and keys go to the Space (default). False only shows it (Watch). */
+  interactive?: boolean;
 }
 
 /** How long the desktop may take to send its first picture. After that the
@@ -82,7 +84,7 @@ function useTimedOut(waiting: boolean, ms: number, key: string): boolean {
 const SURFACE_RADIUS = 12;
 const SURFACE_BORDER = 1;
 
-export function StreamSurface({ spaceId, os, aspectRatio = 16 / 10, canStream, previewText, access, onAccessAction, children, className }: StreamSurfaceProps) {
+export function StreamSurface({ spaceId, os, aspectRatio = 16 / 10, canStream, previewText, access, onAccessAction, children, className, interactive = true }: StreamSurfaceProps) {
   const ref = useRef<HTMLDivElement | null>(null);
   const settings = useSettings();
   const autoConnect = settings.data?.values.autoConnect ?? true;
@@ -103,7 +105,7 @@ export function StreamSurface({ spaceId, os, aspectRatio = 16 / 10, canStream, p
     attempt,
     spaceId,
     tier: "full",
-    interactive: true,
+    interactive,
     radius: SURFACE_RADIUS,
     inset: SURFACE_BORDER,
     os,

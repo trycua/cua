@@ -149,8 +149,6 @@ pub enum ThumbnailScene {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SpaceProvider {
-    /// Cua Cloud.
-    Cloud,
     /// This Mac.
     Local,
     /// A machine added by address.
@@ -163,7 +161,6 @@ impl SpaceProvider {
     /// The JSON word.
     pub fn as_str(self) -> &'static str {
         match self {
-            SpaceProvider::Cloud => "cloud",
             SpaceProvider::Local => "local",
             SpaceProvider::Direct => "direct",
             SpaceProvider::Relay => "relay",
@@ -173,7 +170,6 @@ impl SpaceProvider {
     /// A known location word.
     pub fn parse(word: &str) -> Option<Self> {
         match word {
-            "cloud" => Some(SpaceProvider::Cloud),
             "local" => Some(SpaceProvider::Local),
             "direct" => Some(SpaceProvider::Direct),
             "relay" => Some(SpaceProvider::Relay),
@@ -218,9 +214,6 @@ pub struct Space {
     pub started_at: Option<i64>,
     /// Placeholder scene.
     pub scene: ThumbnailScene,
-    /// Group (cloud namespace or location word).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fleet_id: Option<String>,
     /// Fixture machine size.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size: Option<String>,
@@ -339,10 +332,6 @@ pub struct SpaceProgress {
     /// Why the create failed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
-    /// It failed because the account is out of Cua Cloud credit: the
-    /// website billing page "Add credit" opens.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub credit_url: Option<String>,
     /// While it downloads: "4.2 of 22.1 GB · 85 MB/s · about 4 min"
     /// ([`crate::spaces::creating::transfer_text`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -353,6 +342,43 @@ pub struct SpaceProgress {
     /// Cancel was pressed and the create is being cleaned up.
     #[serde(default)]
     pub cancelling: bool,
+    /// The app is running the create a second time by itself, after a
+    /// failure that usually passes (the label says "Retrying…" while it
+    /// prepares).
+    #[serde(default)]
+    pub retrying: bool,
+    /// It failed the same way twice in a row (same cause, same machine,
+    /// same image): the fix to show instead of a plain Try again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fix: Option<CreateFix>,
+}
+
+/// What a fix button does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CreateFixAction {
+    /// Copies `value` (a Terminal command) to the clipboard.
+    CopyCommand,
+    /// Opens `value` (a help page) in the browser.
+    OpenUrl,
+    /// Opens the failed create's details (the diagnostic report to review).
+    Details,
+}
+
+/// The fix for a create that keeps failing the same way: one plain
+/// sentence and one button.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateFix {
+    /// What is wrong and what to do, in plain words.
+    pub text: String,
+    /// The button's words.
+    pub label: String,
+    /// What the button does.
+    pub action: CreateFixAction,
+    /// The command to copy or the page to open.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
 }
 
 /// One row of the SDK's `list_spaces`.
@@ -520,22 +546,13 @@ pub fn emulation_warning_on(
     })
 }
 
-/// The apps offer Cua Cloud for new Spaces. Off: the apps create Spaces on
-/// this Mac and on machines added by address, and the New Space wizard
-/// shows "Your cloud" as coming soon. The cua SDK and CLI still create
-/// cloud sandboxes, and cloud Spaces that already exist still list.
-pub const CLOUD_SPACES_OFFERED: bool = false;
-
 /// Where new Spaces can be created.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Location {
-    /// Cua Cloud (the SDK's `on="cloud"`). The apps do not offer it for new
-    /// Spaces ([`CLOUD_SPACES_OFFERED`]); existing cloud Spaces still list.
-    Cloud,
     /// This Mac.
     Local,
-    /// The user's own cloud account (AWS, Google Cloud, Modal), connected
+    /// The user's own cloud account (AWS, Google Cloud, Hetzner, Modal), connected
     /// with `cua cloud connect`: the SDK's `on` is the provider's word
     /// (`aws`), which the wizard carries beside it.
     Yours,
@@ -543,10 +560,15 @@ pub enum Location {
     /// one added by its Tailscale or LAN address): the SDK's `on` is
     /// `host:<machine>`, which the wizard carries beside it.
     Host,
+    /// The least-loaded of the user's machines that can take it: this Mac
+    /// or one of their machines that provides Spaces (the SDK's
+    /// `on="auto"`). Offered only while the user has such a machine, and
+    /// never a default.
+    Auto,
 }
 
 impl Location {
-    /// "Cua Cloud" / "This Mac" / "Your cloud" / "Your machine".
+    /// "This Mac" / "Your cloud" / "Your computer" / "Auto".
     pub fn label(self) -> &'static str {
         self.label_on(SpaceOs::Macos)
     }
@@ -555,19 +577,10 @@ impl Location {
     /// "This computer" on Linux.
     pub fn label_on(self, os: SpaceOs) -> &'static str {
         match self {
-            Location::Cloud => "Cua Cloud",
             Location::Local => os.this_machine(),
             Location::Yours => "Your cloud",
             Location::Host => "Your computer",
-        }
-    }
-
-    /// Where an image goes when it cannot run here: this Mac, else Cua
-    /// Cloud.
-    pub fn other(self) -> Self {
-        match self {
-            Location::Cloud | Location::Yours | Location::Host => Location::Local,
-            Location::Local => Location::Cloud,
+            Location::Auto => "Auto",
         }
     }
 
@@ -575,10 +588,10 @@ impl Location {
     /// provider's word and `host:<machine>` are).
     pub fn as_str(self) -> &'static str {
         match self {
-            Location::Cloud => "cloud",
             Location::Local => "local",
             Location::Yours => "yours",
             Location::Host => "host",
+            Location::Auto => "auto",
         }
     }
 }
@@ -612,8 +625,10 @@ impl SpaceKind {
 }
 
 /// The engine that runs a Space.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+///
+/// JSON is the SDK's plain `runtime` word: the built-in engines' words, or
+/// the name of an external runtime provider ([`Runtime::Other`]).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Runtime {
     /// Let the SDK pick.
     Auto,
@@ -625,32 +640,113 @@ pub enum Runtime {
     Qemu,
     /// Lume.
     Lume,
-    /// KubeVirt.
-    Kubevirt,
+    /// An external runtime provider installed on this machine, by its name
+    /// (the `<name>` of its `cua-runtime-<name>` executable).
+    Other(String),
+}
+
+/// Whether `word` has the shape of an external runtime provider's name:
+/// `[a-z0-9][a-z0-9-]{0,31}`.
+pub fn valid_runtime_word(word: &str) -> bool {
+    let b = word.as_bytes();
+    (1..=32).contains(&b.len())
+        && (b[0].is_ascii_lowercase() || b[0].is_ascii_digit())
+        && b.iter()
+            .all(|&c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
 }
 
 impl Runtime {
-    /// "Automatic", "gVisor", ...
-    pub fn label(self) -> &'static str {
+    /// "Automatic", "gVisor", ...; for an external runtime provider, the
+    /// name it gives itself while registered
+    /// ([`crate::wizard::set_external_runtimes`]), else its runtime word.
+    pub fn label(&self) -> String {
         match self {
-            Runtime::Auto => "Automatic",
-            Runtime::Gvisor => "gVisor",
-            Runtime::Runc => "runc",
-            Runtime::Qemu => "QEMU",
-            Runtime::Lume => "Lume",
-            Runtime::Kubevirt => "KubeVirt",
+            Runtime::Auto => "Automatic".into(),
+            Runtime::Gvisor => "gVisor".into(),
+            Runtime::Runc => "runc".into(),
+            Runtime::Qemu => "QEMU".into(),
+            Runtime::Lume => "Lume".into(),
+            Runtime::Other(n) => crate::wizard::external_runtime_label(n),
         }
     }
 
     /// The SDK's `runtime` word.
-    pub fn as_str(self) -> &'static str {
+    pub fn as_str(&self) -> &str {
         match self {
             Runtime::Auto => "auto",
             Runtime::Gvisor => "gvisor",
             Runtime::Runc => "runc",
             Runtime::Qemu => "qemu",
             Runtime::Lume => "lume",
-            Runtime::Kubevirt => "kubevirt",
+            Runtime::Other(n) => n,
         }
+    }
+
+    /// Parses the SDK's `runtime` word: a built-in engine's, else an
+    /// external runtime provider's name. `None` for a word that is neither.
+    pub fn parse(word: &str) -> Option<Self> {
+        Some(match word {
+            "auto" => Runtime::Auto,
+            "gvisor" => Runtime::Gvisor,
+            "runc" => Runtime::Runc,
+            "qemu" => Runtime::Qemu,
+            "lume" => Runtime::Lume,
+            w if valid_runtime_word(w) => Runtime::Other(w.to_string()),
+            _ => return None,
+        })
+    }
+}
+
+impl Serialize for Runtime {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for Runtime {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let word = String::deserialize(deserializer)?;
+        Runtime::parse(&word)
+            .ok_or_else(|| serde::de::Error::custom(format!("unknown runtime `{word}`")))
+    }
+}
+
+#[cfg(test)]
+mod runtime_tests {
+    use super::*;
+
+    #[test]
+    fn runtime_words_round_trip() {
+        for (word, rt) in [
+            ("auto", Runtime::Auto),
+            ("gvisor", Runtime::Gvisor),
+            ("runc", Runtime::Runc),
+            ("qemu", Runtime::Qemu),
+            ("lume", Runtime::Lume),
+            ("acme", Runtime::Other("acme".into())),
+            ("acme-2", Runtime::Other("acme-2".into())),
+        ] {
+            let json = format!("\"{word}\"");
+            assert_eq!(serde_json::from_str::<Runtime>(&json).unwrap(), rt);
+            assert_eq!(serde_json::to_string(&rt).unwrap(), json);
+            assert_eq!(rt.as_str(), word);
+        }
+    }
+
+    #[test]
+    fn runtime_rejects_words_no_provider_can_have() {
+        for word in ["", "Acme", "-acme", "acme_vm", "a b", &"a".repeat(33)] {
+            assert!(
+                serde_json::from_str::<Runtime>(&format!("\"{word}\"")).is_err(),
+                "{word}"
+            );
+        }
+        assert!(valid_runtime_word(&"a".repeat(32)));
+    }
+
+    #[test]
+    fn an_unregistered_provider_is_labelled_by_its_word() {
+        assert_eq!(Runtime::Gvisor.label(), "gVisor");
+        assert_eq!(Runtime::Other("zeta".into()).label(), "zeta");
     }
 }

@@ -60,24 +60,41 @@
 pub mod app_icon;
 /// A hash-chained audit log (the share audit).
 pub mod audit;
+pub mod build;
 #[cfg(feature = "mcp-client")]
 pub mod client;
 /// Spaces in your own cloud account: a cloud sandbox (`cua_sandbox_core::byoc`)
 /// shown as its relay machine.
 pub mod cloud;
 pub mod creating;
+pub mod dial_backoff;
+pub mod durable;
+pub mod egress;
+/// The elastic pool: placement and scaling over your devices and clouds.
+pub mod elastic;
 pub mod error;
 pub mod exec;
+pub mod fork_batch;
 pub mod groups;
+pub mod host_jobs;
 pub mod host_spaces;
 pub mod id;
+pub mod lifetimes;
+pub mod list_watch;
+pub mod listing;
+mod local_load;
 pub mod mesh;
+pub mod named_volumes;
 pub mod operator;
+pub mod pool_checkpoints;
+pub mod prewarm;
 pub mod registry;
 pub mod relay;
 pub mod resources;
+pub mod route;
 pub mod routines;
 pub mod services;
+pub mod snapshots;
 mod space;
 mod spaces;
 pub mod thumbnails;
@@ -94,6 +111,9 @@ pub mod files;
 pub mod hotspot;
 #[cfg(feature = "spaces-agents")]
 pub mod install_cache;
+/// Host services job members reach on their loopback (`JobSpec::services`).
+#[cfg(feature = "spaces-hotspot")]
+pub mod job_services;
 #[cfg(feature = "mcp")]
 pub mod mcp;
 #[cfg(feature = "spaces-presence")]
@@ -120,8 +140,12 @@ pub use app_icon::{AppIcon, IconRequest};
 pub use creating::{CancelOutcome, CancelState};
 pub use error::{Error, Result};
 pub use id::{Provider, SpaceId};
+pub use listing::{LIST_WAIT, ListProgress, SpaceListing};
 pub use relay::{RelayAccount, RelayMachine};
-pub use space::{SPACESD_FEATURE, ServiceSource, Space, SpaceInfo, SpacePower, SpaceService};
+pub use route::{ChannelRoute, Transport};
+pub use space::{
+    SPACESD_FEATURE, ServiceSource, Space, SpaceInfo, SpacePower, SpaceResize, SpaceService,
+};
 pub use spaces::{
     CreatePhase, CreateProgress, DEFAULT_PROBE_TIMEOUT, PendingSpace, ProgressSink,
     RecoveredCreate, RecoveryOutcome, SpaceCreate, SpaceCreated, Spaces, SpacesBuilder,

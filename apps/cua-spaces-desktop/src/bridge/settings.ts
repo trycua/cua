@@ -14,10 +14,12 @@ import type { AppModel } from "../model/app-model";
 import { words } from "../model/errors";
 import { bounded } from "../model/time";
 import { string } from "./args";
+import { consentMayHaveChanged } from "../crash-reporting";
 import type { BridgeContext } from "./context";
 import { Failure, type Handlers } from "./host";
 import { hostParts, type HostParts } from "./host-parts";
 import { encode } from "./value";
+import { cliSetting } from "./cli";
 
 function telemetryInput(model: AppModel): AppTelemetryInput | undefined {
   try {
@@ -38,16 +40,12 @@ export function settingsPage(model: AppModel, parts: HostParts) {
     signIn: model.signIn,
     canSignOut: model.account !== null && model.identity !== null,
     menuBar: model.settings.menuBar,
-    defaultLocation: model.settings.defaultLocation,
-    locationLockedBy: undefined,
     telemetry: telemetryInput(model),
     agents: coding.rows ?? undefined,
     agentsBusy: coding.busy,
     agentsPending: coding.pending,
     // Teams from the Spaces API (read by `settings.get`).
     teams: model.teams.input(),
-    // No Cua Cloud billing in the apps (the row stays hidden).
-    billing: undefined,
     loginItem:
       login.status === null
         ? undefined
@@ -91,6 +89,8 @@ export function settingsState(model: AppModel, parts: HostParts) {
     // The account app (CUA_ENV, CUA_ACCOUNT_APP_URL): the page's core has no
     // environment, so Upgrade's billing fallback names this one.
     accountUrl: model.native.appAccountAppUrl(),
+    // The CLI this app installs and whether it is here (`cli.ts`).
+    cli: cliSetting(model),
   };
 }
 
@@ -146,12 +146,21 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
         model.linuxSource = (await model.backend.linuxSource()) ?? option;
         model.changed("settings");
         return;
-      case "default-location":
-        save({ defaultLocation: model.native.AppLocation.Local }); // Cua Cloud has ended
-        return;
       case "auto-connect":
         save({ autoConnect: option === "on" });
         return;
+      case "global-shortcut": {
+        // The keys that bring the app forward from any app (Mac). The option is the accelerator.
+        const system = parts().system;
+        if (!system?.setGlobalShortcut) throw Failure.failed("This computer has no shortcut to change.");
+        try {
+          system.setGlobalShortcut(option);
+        } catch (e) {
+          throw Failure.failed(e instanceof Error ? e.message : String(e));
+        }
+        model.changed("settings");
+        return;
+      }
       case "launch-at-login": {
         const login = parts().loginItem;
         login.set(option === "on");
@@ -174,6 +183,8 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
         return;
       case "telemetry":
         model.telemetry?.setEnabled(option === "on");
+        // Off also stops crash reports (crash-reporting.ts).
+        consentMayHaveChanged();
         // The switch sits beside the usage note (Welcome, Settings): the
         // notice was seen.
         model.telemetry?.acknowledgeNotice();

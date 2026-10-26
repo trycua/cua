@@ -3,8 +3,8 @@
 
 /**
  * The demo host's New Space and "Connect a cloud" answers: this Mac with
- * Docker and Lume, the GPU option Lume offers, Cua Cloud rates, the Your
- * cloud experiment on, and an account where AWS and Google Cloud have a
+ * Docker and Lume, the GPU option Lume offers, the Your cloud
+ * experiment on, and an account where AWS and Google Cloud have a
  * sign-in on this machine and nothing is connected yet. Test passes;
  * Connect connects. All synthetic.
  */
@@ -47,7 +47,6 @@ export const DEMO_NEW_SPACE_OPTIONS: NewSpaceOptions = {
       learnMore: "https://cua.ai/docs/lume/guides/gpu-passthrough",
     },
   ],
-  cloudPricing: { vcpuHourUsd: 0.044625, memoryGibHourUsd: 0.0223125 },
   experiments: { ...NO_EXPERIMENTS, yourCloud: true },
   maxCpus: 10,
 };
@@ -69,7 +68,6 @@ export function demoMacHostOptions(_defaultLocation: string, vmsRunning: number,
   const hd = { availableBytes: 212 * GB, totalBytes: 494 * GB, name: "Macintosh HD" };
   const env: WizardEnv & { localDetails: Record<string, string> | null; lumeSource: string | null; linuxSource: string | null } = {
     defaultLocation: "local",
-    cloudAvailable: !pending,
     localAvailable: true,
     localReason: null,
     localBackends: pending ? null : ["lume", "qemu", "container"],
@@ -79,7 +77,6 @@ export function demoMacHostOptions(_defaultLocation: string, vmsRunning: number,
     lumeSource: pending ? null : "auto",
     linuxSource: pending ? null : "auto",
     storage: pending ? null : { reserveBytes: 5 * GB, lume: hd, qemu: hd, container: hd, pulled: ["ghcr.io/trycua/linux:24.04"] },
-    cloudPricing: pending ? null : d.cloudPricing,
     clouds: [],
     hosts: [],
     experiments: d.experiments,
@@ -88,7 +85,6 @@ export function demoMacHostOptions(_defaultLocation: string, vmsRunning: number,
   return {
     local: { available: env.localAvailable, backends: env.localBackends ?? [], error: null, hostArch: "arm64", storage: env.storage },
     gpus: env.gpus ?? null,
-    cloudPricing: env.cloudPricing ?? null,
     experiments: d.experiments,
     maxCpus: 10,
     env,
@@ -129,6 +125,19 @@ function demoProviders(): CloudProviderWire[] {
       ],
     },
     {
+      name: "hetzner",
+      title: "Hetzner",
+      tier: "vm",
+      connected: false,
+      credentials: { found: false },
+      region: "fsn1",
+      ttl_hours: 8,
+      kinds: [
+        { image: "linux", kind: "container", supported: true, machine_type: "cx23", usd_per_hour: 0.0114 },
+        { image: "windows", kind: "vm", supported: false, reason: "Hetzner Cloud has no nested virtualization; only containers run." },
+      ],
+    },
+    {
       name: "modal",
       title: "Modal",
       tier: "sandbox",
@@ -141,7 +150,7 @@ function demoProviders(): CloudProviderWire[] {
   ];
 }
 
-const REGION_NAME: Record<string, string> = { aws: "region", gcp: "project", modal: "environment" };
+const REGION_NAME: Record<string, string> = { aws: "region", gcp: "project", hetzner: "location", modal: "environment" };
 
 type Handlers = { [K in keyof NewSpaceOperations]: (args: NewSpaceOperations[K]["args"]) => Promise<NewSpaceOperations[K]["result"]> | NewSpaceOperations[K]["result"] };
 
@@ -215,8 +224,8 @@ export function newSpaceDemoHandlers({ state, wait, emit, step, now }: NewSpaceD
     "clouds.test": async ({ target }) => {
       const p = find(target);
       await wait(step * 2);
-      if (!p.credentials?.found) {
-        return { provider: p.name, ok: false, checks: [{ name: "credentials", ok: false, detail: `no ${p.title} sign-in on this computer` }] };
+      if (!p.credentials?.found && !target.token) {
+        return { provider: p.name, ok: false, checks: [{ name: "credentials", ok: false, detail: p.name === "hetzner" ? "paste a Hetzner project API token" : `no ${p.title} sign-in on this computer` }] };
       }
       const where = placeOf(p, target);
       return {
@@ -233,9 +242,11 @@ export function newSpaceDemoHandlers({ state, wait, emit, step, now }: NewSpaceD
     "clouds.connect": async ({ target, makeDefault }) => {
       const p = find(target);
       await wait(step * 2);
-      if (!p.credentials?.found) throw new HostError(`no ${p.title} sign-in on this computer`, "failed");
+      if (!p.credentials?.found && !target.token) throw new HostError(`no ${p.title} sign-in on this computer`, "failed");
       const where = placeOf(p, target);
       p.connected = true;
+      // The token is used for the checks only; the demo keeps nothing of it.
+      if (target.token) p.credentials = { found: true, source: "saved token" };
       if (target.region) p.region = target.region;
       if (target.project) p.project = target.project;
       if (target.environment) p.environment = target.environment;

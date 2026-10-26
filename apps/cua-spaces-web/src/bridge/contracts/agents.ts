@@ -49,6 +49,8 @@ export interface SpaceAgentRun {
   /** Finer phase (`thinking`, `tool`, `waiting`, ...). */
   phase: string;
   turn: number;
+  /** The run is blocked until the person acts (a sign-in, an approval). A host that cannot tell leaves it out. */
+  needsYou?: { title: string; detail: string } | null;
 }
 
 /** How a conversation view shows an event (`cua_agents::events::CATEGORIES`). */
@@ -87,6 +89,39 @@ export interface AgentEventsPage {
   cursor: number;
   /** Nothing more is written yet. */
   caught_up: boolean;
+}
+
+/** `agents.start`: a coding agent's run in a Space (`agent_start`). */
+export interface AgentStartRequest {
+  spaceId: string;
+  /** Harness id (`claude-code`, `openai-codex`, ...). */
+  agent: string;
+  /** The task. */
+  prompt: string;
+  /** A Git URL cloned into the run's folder first, and its branch or tag. */
+  repo?: string;
+  branch?: string;
+  model?: string;
+  /** Provider key names to forward (values never cross the bridge). Saved keys the harness reads go without being named. */
+  envFromHost?: string[];
+}
+
+/** `agent_start`'s answer (snake_case, as the tool answers). */
+export interface AgentStarted {
+  run_id: string;
+  agent: string;
+  space?: string;
+  cwd?: string;
+  hint?: string;
+}
+
+/** `agent_message`'s answer: queued while a turn runs, or a new turn. */
+export interface AgentMessageSent {
+  delivered: boolean;
+  run_id: string;
+  status: AgentRunStatus;
+  phase: string;
+  reason?: string;
 }
 
 /** A coding agent on this machine, as the SDK's agent setup sees it. */

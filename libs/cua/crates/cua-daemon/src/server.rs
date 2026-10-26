@@ -3,13 +3,14 @@
 //! (bearer token). Both listeners serve native gRPC (h2c) and gRPC-Web.
 
 use crate::{
-    CreateRequest, Discovery, Error, Result, Runtime, VERSION,
+    Discovery, Error, Result, Runtime, VERSION,
     convert::{self, from_dur, info_to_pb, probe_from_pb, provider_from_pb},
     passthrough,
 };
 use axum::body::Body as AxumBody;
 use cua_proto::daemon::v1::{
-    self as pb, daemon_service_server::*, runtime_service_server::*, sandbox_service_server::*,
+    self as pb, daemon_service_server::*, fork_batch_service_server::*, pool_service_server::*,
+    runtime_service_server::*, sandbox_service_server::*, share_service_server::*,
     space_service_server::*,
 };
 use cua_proto::env::v1 as envpb;
@@ -102,6 +103,16 @@ impl Drop for Busy {
     }
 }
 
+/// How often the daemon ends expired local sandboxes
+/// (`CUA_SANDBOX_REAP_INTERVAL_MS`, default 2 s).
+fn reap_interval() -> Duration {
+    std::env::var("CUA_SANDBOX_REAP_INTERVAL_MS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|ms| *ms > 0)
+        .map_or(Duration::from_secs(2), Duration::from_millis)
+}
+
 fn unix_now() -> u64 {
     SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
@@ -109,8 +120,90 @@ fn unix_now() -> u64 {
         .unwrap_or(0)
 }
 
+/// How often the daemon checks whether the built-in Linux runtime VM runs
+/// with no Linux Space in it.
+const IDLE_RUNTIME_CHECK: Duration = Duration::from_secs(300);
 /// First maintenance pass after start.
 const MAINTENANCE_FIRST: Duration = Duration::from_secs(60);
+/// How often the daemon checks that its home is still there.
+const HOME_CHECK: Duration = Duration::from_secs(5);
+
+/// Stops the daemon when its home directory is removed from under it (a
+/// torn-down environment, a deleted test home). Its sockets, discovery file
+/// and state are gone with it, nothing can reach it, and every periodic
+/// writer it runs (the Cua Volume's device heartbeat, the lifetimes
+/// reaper, the pool) would otherwise bring the directories back one file at
+/// a time. Two misses in a row, so a rename in progress is not mistaken for
+/// a removal. Checked only when the home existed at start.
+pub async fn home_watchdog(
+    home: std::path::PathBuf,
+    every: Duration,
+    shared_shutdown: watch::Sender<bool>,
+    mut shutdown: watch::Receiver<bool>,
+) {
+    if !home.is_dir() {
+        return;
+    }
+    let mut misses = 0;
+    loop {
+        tokio::select! {
+            _ = shutdown.changed() => return,
+            _ = tokio::time::sleep(every) => {}
+        }
+        if home.is_dir() {
+            misses = 0;
+            continue;
+        }
+        misses += 1;
+        if misses >= 2 {
+            tracing::warn!(home = %home.display(), "the daemon's home was removed; stopping");
+            let _ = shared_shutdown.send(true);
+            return;
+        }
+    }
+}
+
+/// First look for VMs nobody uses after the daemon starts.
+pub const GUARD_FIRST: Duration = Duration::from_secs(2);
+/// Spacing of looks for VMs nobody uses: a scan of the process table and a
+/// few small files, so an orphan lives about this long plus
+/// [`crate::guard::Policy::starter_gone`].
+pub const GUARD_EVERY: Duration = Duration::from_secs(20);
+
+/// Ends the VMs nobody uses ([`crate::guard`]): `first` after start (the VMs
+/// a crashed daemon, an expired lifetime or a deleted home left), then every
+/// `every`. It sweeps `home` (which this daemon serves) and, with
+/// `host_wide`, any home on the machine that has no daemon or no home at
+/// all. `CUA_VM_GUARD=0` turns the daemon's own guard off.
+pub async fn guard_loop(
+    home: std::path::PathBuf,
+    host_wide: bool,
+    policy: crate::guard::Policy,
+    first: Duration,
+    every: Duration,
+    mut shutdown: watch::Receiver<bool>,
+) {
+    let mut wait = first;
+    loop {
+        tokio::select! {
+            _ = shutdown.changed() => return,
+            _ = tokio::time::sleep(wait) => {}
+        }
+        let ended = if host_wide {
+            crate::guard::sweep(&home, true, &policy, false).await
+        } else {
+            crate::guard::sweep_own(&home, true, &policy, false).await
+        };
+        if !ended.is_empty() {
+            tracing::info!(
+                ended = ended.iter().filter(|e| e.error.is_none()).count(),
+                "ended VMs nobody uses"
+            );
+        }
+        wait = every;
+    }
+}
+
 /// Idle time before a maintenance pass may run.
 const MAINTENANCE_IDLE: Duration = Duration::from_secs(300);
 /// Spacing of maintenance passes.
@@ -207,22 +300,109 @@ impl DaemonHandle {
             )
             .await;
         }
+        // The warm pool's members are this daemon's: a stopped daemon takes
+        // them with it (they would otherwise run, holding memory, until
+        // some later daemon adopts or reaps them). Bounded; whatever is
+        // still starting is left to the lease reaper.
+        if let Ok(vmm) = self.shared.runtime.vmm()
+            && let Some(pool) = vmm.pool()
+        {
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(90), pool.drain()).await;
+        }
         for t in self.tasks.drain(..) {
             t.abort();
             let _ = t.await;
         }
+        // The built-in Linux runtime VM must not outlive the daemon that
+        // started it (nothing else would stop it): stop it unless Linux
+        // Spaces still run in it, and leave the answer for `cua daemon stop`.
+        if let Ok(vmm) = self.shared.runtime.vmm().cloned() {
+            let stop = tokio::time::timeout(
+                std::time::Duration::from_secs(200),
+                vmm.stop_linux_runtime_now(),
+            )
+            .await
+            .unwrap_or_else(|_| {
+                cua_vmm::managed::RuntimeStop::Failed("stopping took too long".into())
+            });
+            tracing::info!(?stop, "the Linux runtime at daemon shutdown");
+            cua_vmm::managed::record_shutdown(&stop);
+        }
         self.cleanup();
     }
 
+    /// [`wait`](Self::wait), with the shutdown bounded: once shutdown is
+    /// requested, the daemon's own wind-down (extensions, the warm pool, the
+    /// built-in Linux runtime) gets `grace`; past it the socket and discovery
+    /// file go and this returns `false`, so a stop signal always ends the
+    /// process (a supervisor that sees the daemon gone never waits on one
+    /// still winding down for minutes).
+    pub async fn wait_bounded(self, grace: Duration) -> bool {
+        let mut rx = self.shared.shutdown.subscribe();
+        while !*rx.borrow() {
+            if rx.changed().await.is_err() {
+                break;
+            }
+        }
+        let socket = self.socket_path.clone();
+        let discovery = self.discovery_path.clone();
+        if tokio::time::timeout(grace, self.wait()).await.is_ok() {
+            return true;
+        }
+        tracing::warn!(
+            ?grace,
+            "the daemon's shutdown took too long; exiting without it"
+        );
+        cleanup_paths(socket.as_deref(), discovery.as_deref());
+        false
+    }
+
     fn cleanup(&self) {
-        if let Some(p) = &self.socket_path {
-            let _ = std::fs::remove_file(p);
+        cleanup_paths(self.socket_path.as_deref(), self.discovery_path.as_deref());
+    }
+}
+
+/// Removes the daemon's socket, and its discovery file while it names this
+/// process.
+fn cleanup_paths(socket: Option<&std::path::Path>, discovery: Option<&std::path::Path>) {
+    if let Some(p) = socket {
+        let _ = std::fs::remove_file(p);
+    }
+    if let Some(p) = discovery
+        && Discovery::read(p).is_some_and(|d| d.pid == std::process::id())
+    {
+        let _ = std::fs::remove_file(p);
+    }
+}
+
+/// How long a stopped daemon may take to wind down before it exits anyway
+/// ([`DaemonHandle::wait_bounded`]).
+pub const SHUTDOWN_GRACE: Duration = Duration::from_secs(30);
+
+/// Resolves on the first stop signal: SIGTERM (`kill`, launchd, systemd, an
+/// app quitting) or SIGINT (Ctrl-C) on Unix, Ctrl-C elsewhere.
+pub async fn stop_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        match (
+            signal(SignalKind::terminate()),
+            signal(SignalKind::interrupt()),
+        ) {
+            (Ok(mut term), Ok(mut int)) => {
+                tokio::select! {
+                    _ = term.recv() => tracing::info!("SIGTERM: stopping the daemon"),
+                    _ = int.recv() => tracing::info!("SIGINT: stopping the daemon"),
+                }
+            }
+            _ => {
+                let _ = tokio::signal::ctrl_c().await;
+            }
         }
-        if let Some(p) = &self.discovery_path
-            && Discovery::read(p).is_some_and(|d| d.pid == std::process::id())
-        {
-            let _ = std::fs::remove_file(p);
-        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
     }
 }
 
@@ -278,6 +458,72 @@ pub async fn start(runtime: Runtime, config: ServerConfig) -> Result<DaemonHandl
     };
     #[cfg(feature = "spaces")]
     let host_spaces = cua_spaces::host_spaces::HostSpacesServer::new(runtime.spaces().clone());
+    #[cfg(feature = "spaces")]
+    runtime.set_host_spaces(host_spaces.clone());
+    // Prewarms keep this machine's warm pools (`SetHostWarm`, and this
+    // machine's own prewarms).
+    #[cfg(feature = "spaces")]
+    runtime
+        .spaces()
+        .set_local_pools(Some(Arc::new(crate::prewarm_pools::DaemonPools(
+            runtime.clone(),
+        ))));
+    // Cluster jobs a crash interrupted end now (their Spaces go).
+    #[cfg(feature = "spaces")]
+    {
+        let h = host_spaces.clone();
+        tokio::spawn(async move { h.resume_jobs().await });
+    }
+    // Local sandbox lifetimes (`KeepAlive` on a local sandbox) end here,
+    // whether or not the client that set them is still around.
+    {
+        let rt = runtime.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(reap_interval());
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                tick.tick().await;
+                rt.reap_expired().await;
+                #[cfg(feature = "spaces")]
+                rt.spaces().reap_expired().await;
+            }
+        });
+    }
+    // The elastic pool's scale-in: idle cloud hosts this home added go at
+    // their billing boundary, the least-used one is cordoned when the
+    // others have room (`CUA_ELASTIC_RECONCILE_SECS`, default 30; 0: off).
+    #[cfg(feature = "spaces")]
+    {
+        let every = std::env::var("CUA_ELASTIC_RECONCILE_SECS")
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .unwrap_or(30);
+        if every > 0 {
+            let rt = runtime.clone();
+            tokio::spawn(async move {
+                let mut tick = tokio::time::interval(Duration::from_secs(every));
+                tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                loop {
+                    tick.tick().await;
+                    match rt.spaces().elastic_provision_pending().await {
+                        Ok(h) if !h.is_empty() => tracing::info!(
+                            hosts = h.len(),
+                            "elastic pool added hosts for waiting jobs"
+                        ),
+                        Ok(_) => {}
+                        Err(e) => tracing::warn!("elastic pool (waiting jobs): {e}"),
+                    }
+                    match rt.spaces().elastic_reconcile().await {
+                        Ok(d) if !d.is_empty() => {
+                            tracing::debug!(decisions = d.len(), "elastic pool reconciled")
+                        }
+                        Ok(_) => {}
+                        Err(e) => tracing::warn!("elastic pool reconcile: {e}"),
+                    }
+                }
+            });
+        }
+    }
     // Running Spaces' thumbnails stay fresh while a client asks for them
     // (the Spaces apps' notch and previews, SDK scripts); idle otherwise.
     #[cfg(feature = "spaces")]
@@ -313,6 +559,10 @@ pub async fn start(runtime: Runtime, config: ServerConfig) -> Result<DaemonHandl
                 .map(|i| i.executable.clone())
                 .unwrap_or_default(),
             build_id: own.map(|i| i.build_id).unwrap_or_default(),
+            // Filled in per request (the pool changes).
+            warm_spaces: 0,
+            warm_memory_bytes: 0,
+            warm_reason: String::new(),
         }),
         bridges: Mutex::new(HashMap::new()),
         bridge_ttl: config.bridge_ticket_ttl,
@@ -368,11 +618,69 @@ pub async fn start(runtime: Runtime, config: ServerConfig) -> Result<DaemonHandl
             "Unix sockets are not available on this platform; use loopback".into(),
         ));
     }
+    // What this machine's VMs use and may still use, for placement.
+    #[cfg(feature = "spaces")]
+    if let Ok(vmm) = shared.runtime.vmm() {
+        vmm.report_vm_capacity();
+    }
+    // Local warm pools: the daemon keeps Spaces of the shapes this host
+    // creates ready ahead of time (`pool.*` settings).
+    if let Ok(vmm) = shared.runtime.vmm()
+        && let Some(t) = vmm.enable_pool(
+            shared.runtime.sandboxes().state().clone(),
+            shared.shutdown.subscribe(),
+        )
+    {
+        tasks.push(t);
+    }
+    tasks.push(tokio::spawn(home_watchdog(
+        crate::cua_home(),
+        HOME_CHECK,
+        shared.shutdown.clone(),
+        shared.shutdown.subscribe(),
+    )));
+    if std::env::var("CUA_VM_GUARD").as_deref() != Ok("0") {
+        tasks.push(tokio::spawn(guard_loop(
+            crate::cua_home(),
+            true,
+            crate::guard::Policy::default(),
+            GUARD_FIRST,
+            GUARD_EVERY,
+            shared.shutdown.subscribe(),
+        )));
+    }
+    // The built-in Linux runtime VM holds the memory its Spaces used until
+    // it stops: stop it once idle, also when this daemon started after the
+    // last Space was gone.
+    if let Ok(vmm) = shared.runtime.vmm().cloned() {
+        let mut rx = shared.shutdown.subscribe();
+        tasks.push(tokio::spawn(async move {
+            loop {
+                vmm.stop_idle_linux_runtime().await;
+                tokio::select! {
+                    _ = rx.changed() => return,
+                    _ = tokio::time::sleep(IDLE_RUNTIME_CHECK) => {}
+                }
+            }
+        }));
+    }
     if std::env::var(crate::maintenance::ENV_DAEMON_MAINTENANCE).as_deref() != Ok("0") {
         tasks.push(tokio::spawn(maintenance_loop(
             shared.clone(),
             shared.shutdown.subscribe(),
         )));
+    }
+    // The automatic cloud sweep (`CUA_CLOUD_SWEEP_SECS`, 0: off).
+    #[cfg(feature = "byoc")]
+    tasks.extend(crate::cloud_sweep::spawn(
+        &shared.runtime,
+        shared.shutdown.subscribe(),
+    ));
+    // `cua share`: the records and the gateway the host's cua-spacesd
+    // forwards /share/... to.
+    #[cfg(feature = "spaces")]
+    if let Err(e) = shared.runtime.start_shares(&crate::cua_home()).await {
+        tracing::warn!(error = %e, "cua share is unavailable in this daemon");
     }
     // A host in direct mode forwards a port to each Space it provides:
     // open them again (nothing for any other machine).
@@ -462,7 +770,19 @@ async fn accept_loop<L: Accept>(listener: L, app: BoxedApp, mut shutdown: watch:
                 let Ok(stream) = accepted else { continue };
                 let svc = TowerToHyperService::new(app.clone());
                 conns.spawn(async move {
-                    let _ = Builder::new(TokioExecutor::new())
+                    let mut builder = Builder::new(TokioExecutor::new());
+                    // The env passthrough carries file transfers and
+                    // streamed output at memory speed: the same windows and
+                    // frames as cua-spacesd's own listener, not hyper's
+                    // 64 KiB / 16 KiB defaults.
+                    builder
+                        .http2()
+                        .initial_stream_window_size(cua_spacesd_client::transport::STREAM_WINDOW)
+                        .initial_connection_window_size(
+                            cua_spacesd_client::transport::CONNECTION_WINDOW,
+                        )
+                        .max_frame_size(cua_spacesd_client::transport::MAX_FRAME);
+                    let _ = builder
                         .serve_connection_with_upgrades(TokioIo::new(stream), svc)
                         .await;
                 });
@@ -473,12 +793,28 @@ async fn accept_loop<L: Accept>(listener: L, app: BoxedApp, mut shutdown: watch:
     conns.abort_all();
 }
 
+/// Headers that name a caller other than this machine's user.
+pub const FORWARDED_CALLER_HEADERS: &[&str] = &["x-cua-host-caller", "x-cua-share-caller"];
+
+/// Removes [`FORWARDED_CALLER_HEADERS`] from a request that did not come
+/// through the daemon socket.
+pub fn strip_forwarded_caller(headers: &mut http::HeaderMap) {
+    for h in FORWARDED_CALLER_HEADERS {
+        headers.remove(*h);
+    }
+}
+
 fn app(shared: Arc<Shared>, require_token: bool) -> BoxedApp {
     let svc = Svc(shared.clone());
     // The clients' limit, not gRPC's 4 MiB default: a tool call can carry
     // a full-size screenshot or file either way.
     let limit = cua_spacesd_client::MAX_MESSAGE_BYTES;
     let grpc = tonic::service::Routes::new(
+        ForkBatchServiceServer::new(svc.clone())
+            .max_decoding_message_size(limit)
+            .max_encoding_message_size(limit),
+    )
+    .add_service(
         SandboxServiceServer::new(svc.clone())
             .max_decoding_message_size(limit)
             .max_encoding_message_size(limit),
@@ -494,16 +830,37 @@ fn app(shared: Arc<Shared>, require_token: bool) -> BoxedApp {
             .max_encoding_message_size(limit),
     )
     .add_service(
+        PoolServiceServer::new(svc.clone())
+            .max_decoding_message_size(limit)
+            .max_encoding_message_size(limit),
+    )
+    .add_service(
         DaemonServiceServer::new(svc.clone())
             .max_decoding_message_size(limit)
             .max_encoding_message_size(limit),
-    );
+    )
+    .add_service(ShareServiceServer::new(svc.clone()));
     #[cfg(feature = "spaces")]
-    let grpc = grpc.add_service(
-        cua_proto::env::v1::host_spaces_service_server::HostSpacesServiceServer::new(
-            crate::host_svc::HostSvc(svc.0.clone()),
-        ),
-    );
+    let grpc = grpc
+        .add_service(
+            cua_proto::env::v1::host_spaces_service_server::HostSpacesServiceServer::new(
+                crate::host_svc::HostSvc(svc.0.clone()),
+            ),
+        )
+        .add_service(
+            cua_proto::env::v1::host_jobs_service_server::HostJobsServiceServer::new(
+                crate::host_svc::HostJobsSvc(svc.0.clone()),
+            )
+            .max_decoding_message_size(64 * 1024 * 1024)
+            .max_encoding_message_size(64 * 1024 * 1024),
+        )
+        .add_service(
+            cua_proto::env::v1::host_snapshots_service_server::HostSnapshotsServiceServer::new(
+                crate::host_svc::HostSnapshotsSvc(svc.0.clone()),
+            )
+            .max_decoding_message_size(64 * 1024 * 1024)
+            .max_encoding_message_size(64 * 1024 * 1024),
+        );
     let grpc = grpc.into_axum_router();
     let router = axum::Router::new()
         .route(
@@ -552,9 +909,14 @@ fn app(shared: Arc<Shared>, require_token: bool) -> BoxedApp {
         let busy = Busy::new(shared.clone());
         async move {
             let _busy = busy;
-            let req = req.map(AxumBody::new);
+            let mut req = req.map(AxumBody::new);
             if require_token && !authorized(&req, &token) {
                 return Ok::<_, std::convert::Infallible>(unauthorized(&req));
+            }
+            if require_token {
+                // A call on the loopback listener is this machine's user:
+                // only the socket's peer forwards another caller.
+                strip_forwarded_caller(req.headers_mut());
             }
             let grpc_web = req
                 .headers()
@@ -674,61 +1036,19 @@ impl Svc {
 /// fields still count when `location` / `runtime` are empty (older
 /// clients).
 #[allow(deprecated)]
-fn create_request(r: pb::CreateSandboxRequest) -> std::result::Result<CreateRequest, Status> {
-    let non_empty = |s: String| (!s.is_empty()).then_some(s);
-    let wait_for = r
-        .wait_for
-        .iter()
-        .map(probe_from_pb)
-        .collect::<Result<Vec<_>>>()
-        .map_err(st)?;
-    let ports = r
-        .ports
-        .iter()
-        .map(|p| u16::try_from(*p).map_err(|_| st(Error::InvalidArgument("port".into()))))
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-    let create = CreateRequest {
-        location: non_empty(r.location),
-        kind: non_empty(r.kind),
-        runtime: non_empty(r.runtime),
-        provider: provider_from_pb(r.provider),
-        name: non_empty(r.name),
-        image: r.image,
-        url: non_empty(r.url),
-        token: non_empty(r.token),
-        os: non_empty(r.os),
-        cpus: Some(r.cpus),
-        memory_mb: Some(r.memory_mb),
-        ports,
-        services: r.services.into_iter().map(|(k, v)| (k, v as u16)).collect(),
-        wait_for,
-        ready_timeout: r.ready_timeout.as_ref().map(from_dur),
-        env: r.env.into_iter().collect(),
-        command: (!r.command.is_empty()).then_some(r.command),
-        labels: r.labels.into_iter().collect(),
-        sidecars: r
-            .sidecars
-            .into_iter()
-            .map(crate::convert::sidecar_from_pb)
-            .collect::<Result<Vec<_>>>()
-            .map_err(st)?,
-        registry_credentials: r
-            .registry_secret
-            .map(crate::convert::registry_secret_from_pb)
-            .transpose()
-            .map_err(st)?,
-        build: r
-            .build
-            .map(crate::convert::build_from_pb)
-            .transpose()
-            .map_err(st)?,
-        container_runtime: non_empty(r.container_runtime),
-        network: non_empty(r.network),
-        owner_pid: (r.owner_pid > 0).then_some(r.owner_pid),
-        keep_on_failure: r.keep_on_failure,
-        gpu: non_empty(r.gpu),
-    };
-    Ok(create)
+/// The guest network a create applies once it succeeds, as its response
+/// says it (`CreateSandboxResponse.network`): a client checks it, since a
+/// daemon that predates `network` never reads it.
+fn applied_network(create: &crate::CreateRequest) -> String {
+    let mode = cua_sandbox_core::NetworkMode::parse(create.network.as_deref().unwrap_or_default())
+        .unwrap_or_default();
+    crate::spaces_svc::network_word(mode).to_string()
+}
+
+fn create_request(
+    r: pb::CreateSandboxRequest,
+) -> std::result::Result<crate::CreateRequest, Status> {
+    crate::convert::create_request_from_pb(r).map_err(st)
 }
 
 pub(crate) fn st(e: Error) -> Status {
@@ -739,6 +1059,38 @@ pub(crate) type R<T> = std::result::Result<tonic::Response<T>, Status>;
 
 pub(crate) fn ok<T>(t: T) -> R<T> {
     Ok(tonic::Response::new(t))
+}
+
+#[tonic::async_trait]
+impl ForkBatchService for Svc {
+    type ForkSandboxBatchStream = std::pin::Pin<
+        Box<
+            dyn tokio_stream::Stream<
+                    Item = std::result::Result<pb::ForkSandboxBatchResponse, Status>,
+                > + Send,
+        >,
+    >;
+
+    async fn fork_sandbox_batch(
+        &self,
+        req: tonic::Request<pb::ForkSandboxBatchRequest>,
+    ) -> R<Self::ForkSandboxBatchStream> {
+        #[cfg(feature = "spaces")]
+        {
+            use tokio_stream::StreamExt as _;
+            let rx = self.rt().fork_batch(req.into_inner()).await.map_err(st)?;
+            ok(Box::pin(
+                tokio_stream::wrappers::ReceiverStream::new(rx).map(|r| r.map_err(st)),
+            ))
+        }
+        #[cfg(not(feature = "spaces"))]
+        {
+            let _ = req;
+            Err(Status::unimplemented(
+                "batched forks need the cua daemon of Cua Spaces",
+            ))
+        }
+    }
 }
 
 #[tonic::async_trait]
@@ -781,9 +1133,11 @@ impl SandboxService for Svc {
         req: tonic::Request<pb::CreateSandboxRequest>,
     ) -> R<pb::CreateSandboxResponse> {
         let create = create_request(req.into_inner())?;
+        let network = applied_network(&create);
         let rec = self.rt().create(create).await.map_err(st)?;
         ok(pb::CreateSandboxResponse {
             sandbox: Some(info_to_pb(&rec)),
+            network,
         })
     }
 
@@ -801,6 +1155,7 @@ impl SandboxService for Svc {
     ) -> R<Self::CreateSandboxStreamStream> {
         use pb::create_sandbox_stream_response::Event;
         let create = create_request(req.into_inner().create.unwrap_or_default())?;
+        let network = applied_network(&create);
         // Bounded: a slow reader drops progress, never the result (which
         // goes out on the same channel after every report).
         let (tx, rx) = tokio::sync::mpsc::channel(64);
@@ -825,6 +1180,7 @@ impl SandboxService for Svc {
                         .map(|rec| pb::CreateSandboxStreamResponse {
                             event: Some(Event::Result(pb::CreateSandboxResponse {
                                 sandbox: Some(info_to_pb(&rec)),
+                                network,
                             })),
                         })
                         .map_err(st),
@@ -911,6 +1267,21 @@ impl SandboxService for Svc {
         ok(pb::RestartSandboxResponse {})
     }
 
+    async fn resize_sandbox(
+        &self,
+        req: tonic::Request<pb::ResizeSandboxRequest>,
+    ) -> R<pb::ResizeSandboxResponse> {
+        let r = req.into_inner();
+        let shape = cua_vmm::Resize {
+            cpus: r.cpus,
+            memory_mb: r.memory_mb,
+            disk_gb: r.disk_gb,
+            probes: Vec::new(),
+        };
+        self.rt().resize(&r.name, &shape).await.map_err(st)?;
+        ok(pb::ResizeSandboxResponse {})
+    }
+
     async fn keep_alive(
         &self,
         req: tonic::Request<pb::KeepAliveRequest>,
@@ -921,7 +1292,20 @@ impl SandboxService for Svc {
             .as_ref()
             .map(from_dur)
             .unwrap_or(Duration::from_secs(600));
-        self.rt().keep_alive(&r.name, d).await.map_err(st)?;
+        if r.on_expire.is_empty() {
+            self.rt().keep_alive(&r.name, d).await.map_err(st)?;
+        } else {
+            let action = cua_sandbox_core::LocalExpiry::parse(&r.on_expire).ok_or_else(|| {
+                tonic::Status::invalid_argument(format!(
+                    "on_expire {:?}: expected \"delete\" or \"suspend\"",
+                    r.on_expire
+                ))
+            })?;
+            self.rt()
+                .set_lifetime(&r.name, d, action)
+                .await
+                .map_err(st)?;
+        }
         ok(pb::KeepAliveResponse {})
     }
 
@@ -1046,6 +1430,97 @@ impl SandboxService for Svc {
         ok(pb::RevokePublicUrlResponse {})
     }
 
+    async fn checkpoint_sandbox(
+        &self,
+        req: tonic::Request<pb::CheckpointSandboxRequest>,
+    ) -> R<pb::CheckpointSandboxResponse> {
+        let r = req.into_inner();
+        // A client that disconnects or dies mid-checkpoint must not cancel
+        // it: a microVM is paused while its memory is saved, and work dropped
+        // there would leave it paused. The checkpoint runs to completion in
+        // its own task whatever happens to this call.
+        let rt = self.rt().clone();
+        let checkpoint =
+            tokio::spawn(
+                async move { rt.checkpoint_anywhere(&r.name, &r.checkpoint, r.pin).await },
+            )
+            .await
+            .map_err(|e| tonic::Status::internal(format!("checkpoint task: {e}")))?
+            .map_err(st)?;
+        ok(pb::CheckpointSandboxResponse {
+            checkpoint: Some(checkpoint),
+        })
+    }
+
+    async fn fork_sandbox(
+        &self,
+        req: tonic::Request<pb::ForkSandboxRequest>,
+    ) -> R<pb::ForkSandboxResponse> {
+        let r = req.into_inner();
+        // Like a checkpoint, a fork runs to completion even if its caller
+        // goes away, so it never leaves a half-started sandbox behind.
+        let rt = self.rt().clone();
+        let rec = tokio::spawn(async move {
+            rt.fork(&r.source, &r.name, r.labels.into_iter().collect())
+                .await
+        })
+        .await
+        .map_err(|e| tonic::Status::internal(format!("fork task: {e}")))?
+        .map_err(st)?;
+        ok(pb::ForkSandboxResponse {
+            sandbox: Some(info_to_pb(&rec)),
+        })
+    }
+
+    async fn list_checkpoints(
+        &self,
+        _req: tonic::Request<pb::ListCheckpointsRequest>,
+    ) -> R<pb::ListCheckpointsResponse> {
+        ok(pb::ListCheckpointsResponse {
+            checkpoints: self.rt().checkpoints_everywhere().await,
+        })
+    }
+
+    async fn delete_checkpoint(
+        &self,
+        req: tonic::Request<pb::DeleteCheckpointRequest>,
+    ) -> R<pb::DeleteCheckpointResponse> {
+        self.rt()
+            .delete_checkpoint_everywhere(&req.into_inner().name)
+            .await
+            .map_err(st)?;
+        ok(pb::DeleteCheckpointResponse {})
+    }
+
+    async fn pin_checkpoint(
+        &self,
+        req: tonic::Request<pb::PinCheckpointRequest>,
+    ) -> R<pb::PinCheckpointResponse> {
+        let r = req.into_inner();
+        let rec = self
+            .rt()
+            .pin_checkpoint(&r.name, r.pinned)
+            .await
+            .map_err(st)?;
+        ok(pb::PinCheckpointResponse {
+            checkpoint: Some(convert::checkpoint_to_pb(&rec)),
+        })
+    }
+
+    async fn prune_checkpoints(
+        &self,
+        _req: tonic::Request<pb::PruneCheckpointsRequest>,
+    ) -> R<pb::PruneCheckpointsResponse> {
+        // Like a checkpoint, a prune runs to completion even if its caller
+        // goes away, so no checkpoint is left half deleted.
+        let rt = self.rt().clone();
+        let deleted = tokio::spawn(async move { rt.prune_checkpoints().await })
+            .await
+            .map_err(|e| tonic::Status::internal(format!("prune task: {e}")))?
+            .map_err(st)?;
+        ok(pb::PruneCheckpointsResponse { deleted })
+    }
+
     async fn close_forward(
         &self,
         req: tonic::Request<pb::CloseForwardRequest>,
@@ -1120,6 +1595,57 @@ impl SandboxService for Svc {
 }
 
 #[tonic::async_trait]
+impl PoolService for Svc {
+    async fn create_pool(
+        &self,
+        req: tonic::Request<pb::CreatePoolRequest>,
+    ) -> R<pb::CreatePoolResponse> {
+        let r = req.into_inner();
+        let spec =
+            crate::convert::create_request_from_pb(r.spec.unwrap_or_default()).map_err(st)?;
+        let p = self
+            .rt()
+            .create_pool(
+                Some(r.name.as_str()),
+                spec,
+                r.min,
+                r.max,
+                r.idle.as_ref().map(from_dur),
+            )
+            .await
+            .map_err(st)?;
+        ok(pb::CreatePoolResponse {
+            pool: Some(crate::convert::pool_to_pb(&p)),
+        })
+    }
+
+    async fn get_pool(&self, req: tonic::Request<pb::GetPoolRequest>) -> R<pb::GetPoolResponse> {
+        let p = self.rt().get_pool(&req.into_inner().name).map_err(st)?;
+        ok(pb::GetPoolResponse {
+            pool: Some(crate::convert::pool_to_pb(&p)),
+        })
+    }
+
+    async fn list_pools(
+        &self,
+        _: tonic::Request<pb::ListPoolsRequest>,
+    ) -> R<pb::ListPoolsResponse> {
+        let pools = self.rt().list_pools().map_err(st)?;
+        ok(pb::ListPoolsResponse {
+            pools: pools.iter().map(crate::convert::pool_to_pb).collect(),
+        })
+    }
+
+    async fn delete_pool(
+        &self,
+        req: tonic::Request<pb::DeletePoolRequest>,
+    ) -> R<pb::DeletePoolResponse> {
+        let deleted = self.rt().delete_pool(&req.into_inner().name).map_err(st)?;
+        ok(pb::DeletePoolResponse { deleted })
+    }
+}
+
+#[tonic::async_trait]
 impl RuntimeService for Svc {
     async fn doctor(&self, _: tonic::Request<pb::DoctorRequest>) -> R<pb::DoctorResponse> {
         ok(crate::local::doctor_response().await)
@@ -1184,7 +1710,14 @@ impl RuntimeService for Svc {
 #[tonic::async_trait]
 impl DaemonService for Svc {
     async fn get_info(&self, _: tonic::Request<pb::GetInfoRequest>) -> R<pb::GetInfoResponse> {
-        ok(self.0.info.lock().unwrap().clone())
+        let mut info = self.0.info.lock().unwrap().clone();
+        if let Some(pool) = self.0.runtime.vmm().ok().and_then(|v| v.pool()) {
+            let st = pool.status();
+            info.warm_spaces = st.members;
+            info.warm_memory_bytes = st.memory_mb * 1024 * 1024;
+            info.warm_reason = st.reason;
+        }
+        ok(info)
     }
 
     async fn open_media_bridge(

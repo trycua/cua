@@ -217,6 +217,11 @@ pub const FLOWS: &[(&str, &str, &str)] = &[
         include_str!("../parity/first-run.json"),
         include_str!("../parity/golden/first-run.json"),
     ),
+    (
+        "create-retry",
+        include_str!("../parity/create-retry.json"),
+        include_str!("../parity/golden/create-retry.json"),
+    ),
 ];
 
 /// The core calls a flow makes, over JSON. A host implements it with its
@@ -1827,6 +1832,7 @@ pub mod frame {
                 if r["selected"] == true { " | selected" } else { "" }))).collect::<Vec<_>>(),
             "field": field(&v["field"]),
             "profile": field(&v["profileField"]),
+            "token": field(&v["tokenField"]),
             "checks": v["checks"].as_array().into_iter().flatten().map(|c| Value::String(format!(
                 "{} {}", if c["ok"] == true { "ok" } else { "failed" }, str_of(&c["text"])))).collect::<Vec<_>>(),
             "result": v["result"],
@@ -1926,7 +1932,7 @@ pub fn run(name: &str, flow_json: &str, h: &dyn Host) -> Result<Value, String> {
         "main-window" => run_main_window(&flow, h),
         "notch" => run_notch(&flow, h),
         "notch-drag-trigger" => run_notch_drag_trigger(&flow, h),
-        "provisioning" | "create-progress" | "create-cancel" | "create-stages" => {
+        "provisioning" | "create-progress" | "create-cancel" | "create-stages" | "create-retry" => {
             run_provisioning(&flow, h)
         }
         "stream-section" => run_stream_section(&flow, h),
@@ -2265,15 +2271,21 @@ fn provisioning_frame(
             "progressText": d["progressText"],
             "canStream": d["canStream"],
             "actions": actions,
-            // `text [button -> url]`, when a cloud create ran out of credit.
-            "creditNotice": if d["creditNotice"].is_null() { Value::Null } else {
-                Value::String(format!("{} [{} -> {}]", d["creditNotice"]["text"].as_str().unwrap_or(""),
-                    d["creditNotice"]["button"].as_str().unwrap_or(""), d["creditNotice"]["url"].as_str().unwrap_or("")))
-            },
         });
         // Why turning it off or on failed, when it did.
         if let Some(e) = d["powerError"].as_str() {
             detail["powerError"] = Value::String(e.into());
+        }
+        // A create that failed the same way twice: its fix, as
+        // `text [label: action value]`.
+        let fix = &space["progress"]["fix"];
+        if let Some(text) = fix["text"].as_str() {
+            detail["fix"] = Value::String(format!(
+                "{text} [{}: {} {}]",
+                fix["label"].as_str().unwrap_or(""),
+                fix["action"].as_str().unwrap_or(""),
+                fix["value"].as_str().unwrap_or("-"),
+            ));
         }
         details.push(detail);
     }
@@ -3306,9 +3318,9 @@ fn patched(base: &Value, patch: &Value) -> Value {
 }
 
 /// Each case's first-run screen (`firstRun.view`) as small frames: the
-/// headline, the rows, the first request, the extra Space card, the plan
-/// card, the main button and the art; with Home's to-do list
-/// (`firstRun.todos`) where the case asks.
+/// screen's headline and lines (the agents, what signing in connects, the
+/// first request and its status, the first Space card), its buttons and the
+/// art; with Home's to-do list (`firstRun.todos`) where the case asks.
 fn run_first_run(f: &Value, h: &dyn Host) -> Result<Value, String> {
     let mut frames = Vec::new();
     for case in f["cases"].as_array().into_iter().flatten() {
@@ -3327,31 +3339,73 @@ fn run_first_run(f: &Value, h: &dyn Host) -> Result<Value, String> {
             "step": v["step"],
             "art": format!("{} {} {}", s(&v["art"]["agent"]), s(&v["art"]["computer"]), s(&v["art"]["extra"])),
         });
+        let row = |r: &Value| {
+            format!(
+                "[{}] {} — {}{}",
+                s(&r["state"]),
+                s(&r["title"]),
+                s(&r["note"]),
+                if r["action"].is_object() {
+                    format!(" ({})", btn(&r["action"]))
+                } else {
+                    String::new()
+                }
+            )
+        };
+        if v["welcome"].is_object() {
+            let k = &v["welcome"];
+            frame["welcome"] =
+                json!({ "title": k["title"], "lede": k["lede"], "primary": btn(&k["primary"]) });
+        }
         if v["connect"].is_object() {
             let k = &v["connect"];
-            // "[x] Claude Code", "[ ] Cursor (Not found on this Mac)", "[=] ..." locked.
-            let picks = |key: &str| -> Vec<String> {
-                k[key]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .map(|p| {
-                        let mark = if p["locked"].as_bool() == Some(true) {
-                            "="
-                        } else if p["checked"].as_bool() == Some(true) {
-                            "x"
-                        } else {
-                            " "
-                        };
-                        let note = if p["note"].is_string() {
-                            format!(" ({})", s(&p["note"]))
+            // "Hermes (~/.hermes/config.yaml) connect:Connect", "Codex (…) [Connected]".
+            let agents: Vec<String> = k["agents"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|p| {
+                    format!(
+                        "{}{}{}{}",
+                        s(&p["name"]),
+                        if p["file"].is_string() {
+                            format!(" ({})", s(&p["file"]))
                         } else {
                             String::new()
-                        };
-                        format!("[{mark}] {}{note}", s(&p["name"]))
-                    })
-                    .collect()
-            };
+                        },
+                        if p["note"].is_string() {
+                            format!(" [{}]", s(&p["note"]))
+                        } else {
+                            String::new()
+                        },
+                        if p["action"].is_object() {
+                            format!(" {}", btn(&p["action"]))
+                        } else {
+                            String::new()
+                        },
+                    )
+                })
+                .collect();
+            let alternatives: Vec<String> = k["alternatives"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|a| {
+                    format!(
+                        "{}: {} — {}{}",
+                        s(&a["id"]),
+                        s(&a["title"]),
+                        s(&a["note"]),
+                        if a["command"].is_string() {
+                            format!(" `{}`", s(&a["command"]))
+                        } else if a["url"].is_string() {
+                            format!(" <{}>", s(&a["url"]))
+                        } else {
+                            String::new()
+                        }
+                    )
+                })
+                .collect();
             let creds: Vec<String> = k["credentials"]
                 .as_array()
                 .into_iter()
@@ -3379,86 +3433,129 @@ fn run_first_run(f: &Value, h: &dyn Host) -> Result<Value, String> {
                     )
                 })
                 .collect();
-            let connects: Vec<String> = k["connects"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .map(&s)
-                .collect();
             frame["connect"] = json!({
                 "title": k["title"],
                 "lede": k["lede"],
-                "intro": k["intro"],
-                "agents": format!("{}: {}", s(&k["agentsLabel"]), picks("agents").join(", ")),
-                "more": format!("{}: {}", s(&k["moreLabel"]), picks("more").join(", ")),
-                "agentsNote": k["agentsNote"],
+                "agents": agents,
+                "alternatives": alternatives,
                 "credentials": if creds.is_empty() { Value::Null } else {
-                    json!(format!("{} ({}): {}", s(&k["credentialsLabel"]), s(&k["credentialsNote"]), creds.join(" / ")))
+                    json!(format!("{}: {}", s(&k["credentialsNote"]), creds.join(" / ")))
                 },
                 "primary": btn(&k["primary"]),
-                "connects": connects.join(", "),
-                "busy": k["busy"],
+                "secondary": btn(&k["secondary"]),
+                "error": k["error"],
             });
         }
-        if v["setup"].is_object() {
-            let k = &v["setup"];
+        if v["devices"].is_object() {
+            let k = &v["devices"];
+            let rows: Vec<String> = k["rows"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|r| format!("{} — {}", s(&r["title"]), s(&r["note"])))
+                .collect();
+            frame["devices"] = json!({
+                "title": k["title"],
+                "lede": k["lede"],
+                "rows": rows,
+                "status": if k["status"].is_object() { json!(row(&k["status"])) } else { Value::Null },
+                "primary": btn(&k["primary"]),
+                "secondary": btn(&k["secondary"]),
+                "note": k["note"],
+            });
+        }
+        if v["permissions"].is_object() {
+            let k = &v["permissions"];
             let rows: Vec<String> = k["rows"]
                 .as_array()
                 .into_iter()
                 .flatten()
                 .map(|r| {
                     format!(
-                        "[{}] {} — {}{}",
-                        s(&r["state"]),
-                        s(&r["title"]),
-                        s(&r["note"]),
-                        if r["action"].is_object() {
-                            format!(" ({})", btn(&r["action"]))
+                        "{}{}",
+                        row(r),
+                        if r["settingsUrl"].is_string() {
+                            format!(" <{}>", s(&r["settingsUrl"]))
                         } else {
                             String::new()
                         }
                     )
                 })
                 .collect();
-            let x = &k["extra"];
-            let choices: Vec<String> = x["choices"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .map(|o| {
-                    format!(
-                        "{}: {}{}",
-                        s(&o["label"]),
-                        s(&o["detail"]),
-                        if o["blocked"].is_string() {
-                            format!(" (blocked: {})", s(&o["blocked"]))
-                        } else {
-                            String::new()
-                        }
-                    )
-                })
-                .collect();
-            frame["setup"] = json!({
+            frame["permissions"] = json!({
                 "title": k["title"],
+                "lede": k["lede"],
                 "rows": rows,
-                "prompt": if k["prompt"].is_object() {
-                    json!(format!("{}: {} / {}", s(&k["prompt"]["heading"]), s(&k["prompt"]["text"]), s(&k["prompt"]["note"])))
-                } else { Value::Null },
-                "extra": {
+                "note": k["note"],
+                "primary": btn(&k["primary"]),
+                "secondary": btn(&k["secondary"]),
+            });
+        }
+        if v["setup"].is_object() {
+            let k = &v["setup"];
+            let extra = if k["extra"].is_object() {
+                let x = &k["extra"];
+                let choices: Vec<String> = x["choices"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|o| {
+                        format!(
+                            "{} {}: {}{}",
+                            s(&o["id"]),
+                            s(&o["label"]),
+                            s(&o["detail"]),
+                            if o["blocked"].is_string() {
+                                format!(" (blocked: {})", s(&o["blocked"]))
+                            } else {
+                                String::new()
+                            }
+                        )
+                    })
+                    .collect();
+                json!({
                     "phase": x["phase"],
                     "title": x["title"],
                     "note": x["note"],
                     "choices": choices,
                     "action": btn(&x["action"]),
                     "footnote": x["footnote"],
-                },
-                "upsell": if k["upsell"].is_object() {
-                    let u = &k["upsell"];
-                    let lines: Vec<String> = u["lines"].as_array().into_iter().flatten().map(&s).collect();
-                    json!(format!("{} | {} | {} | {} | {}", s(&u["plan"]), s(&u["title"]), lines.join(" / "), s(&u["price"]), btn(&u["cta"])))
+                })
+            } else {
+                Value::Null
+            };
+            frame["setup"] = json!({
+                "title": k["title"],
+                "lede": k["lede"],
+                "prompt": if k["prompt"].is_object() {
+                    json!(format!("{}: {} / {}", s(&k["prompt"]["heading"]), s(&k["prompt"]["text"]), s(&k["prompt"]["note"])))
                 } else { Value::Null },
+                "status": if k["status"].is_object() { json!(row(&k["status"])) } else { Value::Null },
+                "extra": extra,
                 "primary": format!("{}{}", btn(&k["primary"]), if k["primary"]["enabled"].as_bool() == Some(true) { "" } else { " (off)" }),
             });
+        }
+        if v["cli"].is_object() {
+            let k = &v["cli"];
+            let facts: Vec<String> = k["facts"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|f| format!("{}: {}", s(&f["label"]), s(&f["value"])))
+                .collect();
+            frame["cli"] = json!({
+                "title": k["title"],
+                "lede": k["lede"],
+                "facts": facts,
+                "status": k["status"],
+                "try": k["tryCommand"],
+                "error": k["error"],
+                "primary": btn(&k["primary"]),
+                "secondary": btn(&k["secondary"]),
+            });
+        }
+        if case["steps"].as_bool() == Some(true) {
+            frame["steps"] = v["steps"].clone();
         }
         if case["todos"].as_bool() == Some(true) {
             let t = c(h, "firstRun.todos", json!({ "input": input }))?;
@@ -3984,7 +4081,8 @@ fn run_drive_storage(f: &Value, h: &dyn Host) -> Result<Value, String> {
     Ok(json!({ "flow": "drive-storage", "frames": frames }))
 }
 
-/// The menu bar item and the notch count the same Spaces: for each case
+/// The menu bar item and the notch count the same Spaces, the ones on or
+/// starting: for each case
 /// (this machine not hosting, hosting, a provider's Spaces, remote Spaces,
 /// then Cua Volume's sync states), the notch tab's count, the menu's lines
 /// and whether the two agree.
@@ -4014,7 +4112,7 @@ fn run_menu_count(f: &Value, h: &dyn Host) -> Result<Value, String> {
             "notch.view",
             json!({ "state": notch_state, "spaces": roster }),
         )?;
-        let count = c(h, "spaces.openableCount", json!({ "spaces": roster }))?;
+        let count = c(h, "spaces.onCount", json!({ "spaces": roster }))?;
         let menu = c(
             h,
             "window.menu",
@@ -4193,7 +4291,7 @@ fn run_launch_at_login(f: &Value, h: &dyn Host) -> Result<Value, String> {
             h,
             "settings.page",
             json!({ "input": { "signIn": { "kind": "idle" }, "canSignOut": false, "menuBar": false,
-                "defaultLocation": "local", "agentsBusy": false, "agentsPending": [],
+                "agentsBusy": false, "agentsPending": [],
                 "loginItem": step["loginItem"] } }),
         )?;
         let general: Vec<Value> = v["sections"]

@@ -57,7 +57,6 @@
 pub mod about;
 pub mod agent_keys;
 pub mod agents;
-pub mod billing;
 pub mod checklist;
 pub mod cloud_connect;
 pub mod devices;
@@ -73,6 +72,7 @@ pub mod first_run;
 pub mod host;
 pub mod installer;
 pub mod keyvault;
+pub mod local_network;
 pub mod login_item;
 pub mod machines;
 pub mod machines_health;

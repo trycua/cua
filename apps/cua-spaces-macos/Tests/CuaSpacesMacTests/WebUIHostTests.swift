@@ -33,6 +33,19 @@ struct WebUIHostTests {
         #expect(WebUISchemeHandler.mime("wasm") == "application/wasm")
     }
 
+    /// About's Acknowledgements reads the app's bundled notices at
+    /// `/__app/THIRD_PARTY_NOTICES.md`; no other app file is reachable.
+    @Test func theSchemeHandlerServesTheBundledNoticesAndNothingElseOfTheApp() {
+        let notices = URL(fileURLWithPath: "/tmp/THIRD_PARTY_NOTICES.md")
+        let h = WebUISchemeHandler(root: nil, appFiles: ["THIRD_PARTY_NOTICES.md": notices])
+        #expect(h.appFile("/__app/THIRD_PARTY_NOTICES.md") == notices)
+        #expect(h.appFile("/__app/../Info.plist") == nil)
+        #expect(h.appFile("/__app/Info.plist") == nil)
+        #expect(h.appFile("/THIRD_PARTY_NOTICES.md") == nil)
+        // A debug build finds the checkout's copy.
+        #expect(WebUISchemeHandler.bundledAppFiles()["THIRD_PARTY_NOTICES.md"] != nil)
+    }
+
     @Test func coreRecordsEncodeAsPlainValues() {
         let x = AppExperiments(cuaVolume: true, yourCloud: false, sharing: false, webUi: true)
         let v = BridgeValue.encode(x) as? [String: Any]
@@ -176,7 +189,7 @@ struct WebUIHostTests {
     @Test func theContractsOperationsAreRouted() {
         for m in ["spaces.cancelCreate", "host.status", "keyvault.approve", "keyvault.deny", "keyvault.revokeGrant",
                   "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
-                  "agents.setup", "agents.configure", "agents.signIn"] {
+                  "agents.setup", "agents.configure", "agents.signIn", "agents.start", "agents.message"] {
             #expect(WebUIBridge.methods.contains(m), "\(m)")
         }
     }
@@ -294,6 +307,10 @@ struct WebUIHostTests {
         #expect(await failure(bridge, "agents.setup", [:]) == "unsupported")
         #expect(await failure(bridge, "agents.runs", [:]) == "bad_args")
         #expect(await failure(bridge, "agents.pause", [:]) == "bad_args")
+        #expect(await failure(bridge, "agents.start", ["spaceId": "s", "agent": "claude-code", "prompt": "hi"]) == "unsupported")
+        #expect(await failure(bridge, "agents.start", ["spaceId": "s"]) == "bad_args")
+        #expect(await failure(bridge, "agents.message", ["spaceId": "s", "runId": "r", "text": "hi"]) == "unsupported")
+        #expect(await failure(bridge, "agents.message", ["spaceId": "s", "runId": "r"]) == "bad_args")
     }
 
     @Test func agentRunsAndSetupRowsAreTheCoresRecords() async throws {
@@ -417,7 +434,7 @@ struct WebUIHostTests {
     @Test func createOptionsAreTheNativeSheetsEnv() async throws {
         let backend = FixtureSpacesBackend()
         backend.fixtureHosts = [AppSpaceHost(id: "96fedb7e", name: "gamma-4 Mac Studio", via: "relay", online: true,
-                                             os: "macos", limits: [])]
+                                             os: "macos", limits: [], load: nil)]
         let (bridge, model) = bridge(backend: backend)
         let options = try #require(try await bridge.handle("spaces.createOptions", [:]) as? [String: Any])
         let env = try #require(options["env"] as? [String: Any])
@@ -455,16 +472,13 @@ struct WebUIHostTests {
         #expect(await failure(bridge, "spaces.create", ["config": config, "pendingId": "pending:web-2"]) == "cancelled")
     }
 
-    /// While New UI is on, New Space opens its wizard; the native sheet is
-    /// the fallback.
-    @Test func newSpaceOpensTheWebWizardWhileNewUIIsOn() async {
+    /// New Space opens the web wizard, whatever an older build saved for
+    /// the New UI.
+    @Test func newSpaceOpensTheWebWizard() async {
         let (_, model) = bridge()
         var asked: [String?] = []
         model.openWebNewSpace = { on in asked.append(on); return true }
-        await model.openNewSpace()
-        #expect(asked.isEmpty && model.showingNewSpace)
-        model.cancelNewSpace()
-        model.settings.experiments.webUi = true
+        model.settings.experiments.webUi = false
         await model.openNewSpace()
         await model.openNewSpace(on: "host:m1")
         #expect(asked == [nil, "host:m1"])
@@ -658,16 +672,6 @@ struct WebUIHostTests {
         _ = try await bridge.handle("settings.choose", ["row": "welcome", "option": "show"])
         #expect(!model.onboarding.completed)
         #expect(opened == 1, "its window opens, even with only Settings up")
-    }
-
-    @Test func turningNewUIOffClosesItsWindow() {
-        let (_, model) = bridge()
-        var closed = 0
-        model.closeWebUI = { closed += 1 }
-        model.chooseExperiment(row: "experiment:web_ui", option: "on")
-        #expect(closed == 0)
-        model.chooseExperiment(row: "experiment:web_ui", option: "off")
-        #expect(closed == 1)
     }
 
     @Test func theNewUIWindowComesBackWhereItWas() {

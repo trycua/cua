@@ -472,19 +472,80 @@
         "json"
       ]
     },
-    "CloudPricing": {
+    "CliInstallPlan": {
       "type": "object",
       "properties": {
-        "vcpuHourUsd": {
-          "type": "number"
+        "source": {
+          "type": [
+            "string",
+            "null"
+          ]
         },
-        "memoryGibHourUsd": {
-          "type": "number"
+        "target": {
+          "type": "string"
+        },
+        "binDir": {
+          "type": "string"
+        },
+        "method": {
+          "enum": [
+            "symlink",
+            "copy",
+            null
+          ]
+        },
+        "installed": {
+          "type": "boolean"
+        },
+        "upToDate": {
+          "type": "boolean"
+        },
+        "installedVersion": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "bundledVersion": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "shadowedBy": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "onPath": {
+          "type": "boolean"
+        },
+        "pathProfile": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pathLine": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "found": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
-        "vcpuHourUsd",
-        "memoryGibHourUsd"
+        "target",
+        "binDir",
+        "installed",
+        "upToDate",
+        "onPath"
       ]
     },
     "CloudProviderWire": {
@@ -654,6 +715,64 @@
         "spacesDiskBytes",
         "spacesDiskExact",
         "warning"
+      ]
+    },
+    "CrashReportingConfig": {
+      "type": "object",
+      "properties": {
+        "allowed": {
+          "type": "boolean"
+        },
+        "dsn": {
+          "type": "string"
+        },
+        "release": {
+          "type": "string"
+        },
+        "environment": {
+          "type": "string"
+        },
+        "shell": {
+          "type": "string"
+        },
+        "crashTest": {
+          "enum": [
+            "ui"
+          ]
+        }
+      },
+      "required": [
+        "allowed",
+        "dsn",
+        "release",
+        "environment",
+        "shell"
+      ]
+    },
+    "CreateFix": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "action": {
+          "enum": [
+            "copy-command",
+            "open-url",
+            "details"
+          ]
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text",
+        "label",
+        "action"
       ]
     },
     "DevicesInput": {
@@ -1203,6 +1322,12 @@
           }
         },
         "progress": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "appName": {
           "type": [
             "string",
             "null"
@@ -2318,16 +2443,6 @@
             "$ref": "#/$defs/GpuChoice"
           }
         },
-        "cloudPricing": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/CloudPricing"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
         "experiments": {
           "$ref": "#/$defs/Experiments"
         },
@@ -2360,7 +2475,6 @@
       "required": [
         "local",
         "gpus",
-        "cloudPricing",
         "experiments",
         "maxCpus"
       ]
@@ -2646,7 +2760,7 @@
     "SessionSnapshot": {
       "type": "object",
       "properties": {
-        "fleet": {
+        "account": {
           "type": "object",
           "properties": {
             "configured": {
@@ -2660,33 +2774,16 @@
                 "none"
               ]
             },
-            "baseUrl": {
-              "type": "string"
-            },
-            "tokenUrl": {
-              "type": "string"
-            },
             "clientId": {
               "type": "string"
             },
             "identity": {
               "type": "string"
-            },
-            "namespaces": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            },
-            "probeError": {
-              "type": "string"
             }
           },
           "required": [
             "configured",
-            "authMode",
-            "baseUrl",
-            "tokenUrl"
+            "authMode"
           ]
         },
         "onboarding": {
@@ -2794,7 +2891,7 @@
         }
       },
       "required": [
-        "fleet",
+        "account",
         "onboarding",
         "daemon"
       ]
@@ -2999,6 +3096,24 @@
             "string",
             "null"
           ]
+        },
+        "cli": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "installed": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "name",
+            "installed"
+          ]
         }
       },
       "required": [
@@ -3063,6 +3178,12 @@
         },
         "cancelling": {
           "type": "boolean"
+        },
+        "retrying": {
+          "type": "boolean"
+        },
+        "fix": {
+          "$ref": "#/$defs/CreateFix"
         }
       },
       "required": [
@@ -3190,7 +3311,6 @@
         },
         "provider": {
           "enum": [
-            "cloud",
             "local",
             "direct",
             "relay"
@@ -3635,14 +3755,10 @@
       "properties": {
         "defaultLocation": {
           "enum": [
-            "cloud",
             "local",
             "yours",
             "host"
           ]
-        },
-        "cloudAvailable": {
-          "type": "boolean"
         },
         "localAvailable": {
           "type": "boolean"
@@ -3675,16 +3791,6 @@
           "anyOf": [
             {
               "$ref": "#/$defs/LocalStorage"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "cloudPricing": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/CloudPricing"
             },
             {
               "type": "null"
@@ -3822,7 +3928,6 @@
       },
       "required": [
         "defaultLocation",
-        "cloudAvailable",
         "localAvailable",
         "maxCpus"
       ]
@@ -3961,16 +4066,6 @@
             "$ref": "#/$defs/GpuChoice"
           }
         },
-        "cloudPricing": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/CloudPricing"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
         "experiments": {
           "$ref": "#/$defs/Experiments"
         },
@@ -3996,7 +4091,6 @@
       "required": [
         "local",
         "gpus",
-        "cloudPricing",
         "experiments",
         "maxCpus",
         "env"
@@ -4243,6 +4337,12 @@
           }
         },
         "progress": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "appName": {
           "type": [
             "string",
             "null"
@@ -4678,6 +4778,24 @@
             "string",
             "null"
           ]
+        },
+        "cli": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "installed": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "name",
+            "installed"
+          ]
         }
       },
       "required": [
@@ -4725,7 +4843,6 @@
         },
         "provider": {
           "enum": [
-            "cloud",
             "local",
             "direct",
             "relay",
@@ -4927,6 +5044,15 @@
             "string",
             "null"
           ]
+        },
+        "incomplete": {
+          "type": "boolean"
+        },
+        "reaching": {
+          "type": "number"
+        },
+        "stale": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -5085,6 +5211,35 @@
         ]
       }
     },
+    "agents.message": {
+      "type": "object",
+      "properties": {
+        "delivered": {
+          "type": "boolean"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "running",
+            "idle",
+            "failed",
+            "crashed",
+            "unknown"
+          ]
+        },
+        "phase": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "delivered",
+        "run_id",
+        "status",
+        "phase"
+      ]
+    },
     "agents.pause": {
       "type": "null"
     },
@@ -5140,6 +5295,24 @@
           },
           "turn": {
             "type": "number"
+          },
+          "needsYou": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "title": {
+                "type": "string"
+              },
+              "detail": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "title",
+              "detail"
+            ]
           }
         },
         "required": [
@@ -5202,6 +5375,21 @@
         "$ref": "#/$defs/AgentSetupRow"
       }
     },
+    "agents.start": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "type": "string"
+        },
+        "agent": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "agent"
+      ]
+    },
     "checklist.get": {
       "type": "object",
       "properties": {
@@ -5219,12 +5407,19 @@
             },
             "shown": {
               "type": "boolean"
+            },
+            "skipped": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           "required": [
             "done",
             "dismissed",
-            "shown"
+            "shown",
+            "skipped"
           ]
         }
       },
@@ -5249,17 +5444,37 @@
             },
             "shown": {
               "type": "boolean"
+            },
+            "skipped": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           "required": [
             "done",
             "dismissed",
-            "shown"
+            "shown",
+            "skipped"
           ]
         }
       },
       "required": [
         "state"
+      ]
+    },
+    "cli.install": {
+      "$ref": "#/$defs/CliInstallPlan"
+    },
+    "cli.plan": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CliInstallPlan"
+        },
+        {
+          "type": "null"
+        }
       ]
     },
     "clouds.connect": {
@@ -5321,6 +5536,9 @@
         "ok",
         "checks"
       ]
+    },
+    "crashReporting.config": {
+      "$ref": "#/$defs/CrashReportingConfig"
     },
     "devices.approve": {
       "type": "null"
@@ -5445,6 +5663,143 @@
     },
     "keyvault.unlock": {
       "type": "null"
+    },
+    "links.create": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "access": {
+          "enum": [
+            "private",
+            "team",
+            "public"
+          ]
+        },
+        "kind": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "createdAtUnix": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "expiresAtUnix": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "url",
+        "name",
+        "access",
+        "kind",
+        "target",
+        "owner",
+        "createdAtUnix",
+        "expiresAtUnix"
+      ]
+    },
+    "links.list": {
+      "type": "object",
+      "properties": {
+        "links": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "access": {
+                "enum": [
+                  "private",
+                  "team",
+                  "public"
+                ]
+              },
+              "kind": {
+                "type": "string"
+              },
+              "target": {
+                "type": "string"
+              },
+              "owner": {
+                "type": "string"
+              },
+              "createdAtUnix": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "expiresAtUnix": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "url",
+              "name",
+              "access",
+              "kind",
+              "target",
+              "owner",
+              "createdAtUnix",
+              "expiresAtUnix"
+            ]
+          }
+        }
+      },
+      "required": [
+        "links"
+      ]
+    },
+    "links.stop": {
+      "type": "object",
+      "properties": {
+        "stopped": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "stopped"
+      ]
     },
     "loginItem.get": {
       "$ref": "#/$defs/LoginItemReport"
@@ -6677,6 +7032,35 @@
         ]
       }
     },
+    "agents.message": {
+      "type": "object",
+      "properties": {
+        "delivered": {
+          "type": "boolean"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "running",
+            "idle",
+            "failed",
+            "crashed",
+            "unknown"
+          ]
+        },
+        "phase": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "delivered",
+        "run_id",
+        "status",
+        "phase"
+      ]
+    },
     "agents.pause": {},
     "agents.readFile": {
       "$ref": "#/$defs/AgentOpenFile"
@@ -6728,6 +7112,24 @@
           },
           "turn": {
             "type": "number"
+          },
+          "needsYou": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "title": {
+                "type": "string"
+              },
+              "detail": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "title",
+              "detail"
+            ]
           }
         },
         "required": [
@@ -6790,6 +7192,21 @@
         "$ref": "#/$defs/AgentSetupRow"
       }
     },
+    "agents.start": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "type": "string"
+        },
+        "agent": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "agent"
+      ]
+    },
     "app.info": {
       "type": "object",
       "properties": {
@@ -6837,12 +7254,19 @@
             },
             "shown": {
               "type": "boolean"
+            },
+            "skipped": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           "required": [
             "done",
             "dismissed",
-            "shown"
+            "shown",
+            "skipped"
           ]
         }
       },
@@ -6867,17 +7291,37 @@
             },
             "shown": {
               "type": "boolean"
+            },
+            "skipped": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           "required": [
             "done",
             "dismissed",
-            "shown"
+            "shown",
+            "skipped"
           ]
         }
       },
       "required": [
         "state"
+      ]
+    },
+    "cli.install": {
+      "$ref": "#/$defs/CliInstallPlan"
+    },
+    "cli.plan": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CliInstallPlan"
+        },
+        {
+          "type": "null"
+        }
       ]
     },
     "clouds.connect": {
@@ -6942,6 +7386,9 @@
         "ok",
         "checks"
       ]
+    },
+    "crashReporting.config": {
+      "$ref": "#/$defs/CrashReportingConfig"
     },
     "devices.approve": {
       "type": "null"
@@ -7094,6 +7541,143 @@
       "$ref": "#/$defs/WkKeyvault"
     },
     "keyvault.unlockVault": {},
+    "links.create": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "access": {
+          "enum": [
+            "private",
+            "team",
+            "public"
+          ]
+        },
+        "kind": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "createdAtUnix": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "expiresAtUnix": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "url",
+        "name",
+        "access",
+        "kind",
+        "target",
+        "owner",
+        "createdAtUnix",
+        "expiresAtUnix"
+      ]
+    },
+    "links.list": {
+      "type": "object",
+      "properties": {
+        "links": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "access": {
+                "enum": [
+                  "private",
+                  "team",
+                  "public"
+                ]
+              },
+              "kind": {
+                "type": "string"
+              },
+              "target": {
+                "type": "string"
+              },
+              "owner": {
+                "type": "string"
+              },
+              "createdAtUnix": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "expiresAtUnix": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "url",
+              "name",
+              "access",
+              "kind",
+              "target",
+              "owner",
+              "createdAtUnix",
+              "expiresAtUnix"
+            ]
+          }
+        }
+      },
+      "required": [
+        "links"
+      ]
+    },
+    "links.stop": {
+      "type": "object",
+      "properties": {
+        "stopped": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "stopped"
+      ]
+    },
     "loginItem.get": {
       "$ref": "#/$defs/LoginItemReport"
     },

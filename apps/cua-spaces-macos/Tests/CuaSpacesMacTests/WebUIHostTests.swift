@@ -401,6 +401,29 @@ struct WebUIHostTests {
         #expect(s?["accountUrl"] as? String == appAccountAppUrl())
     }
 
+    /// Settings, Advanced's runtime choices come with the page's first
+    /// `settings.get`, before New Space ever probed (they were missing: only
+    /// New Space's probe read `runtime.lume` and `runtime.linux`).
+    @Test func settingsCarryTheRuntimeChoicesOnTheFirstRead() async throws {
+        let backend = FixtureSpacesBackend()
+        backend.fixtureLumeSource = "system"
+        backend.fixtureLinuxSource = "builtin"
+        let (bridge, model) = bridge(backend: backend)
+        #expect(model.lumeSource == nil)
+        let s = try #require(try await bridge.handle("settings.get", [:]) as? [String: Any])
+        let page = try #require(s["page"] as? [String: Any])
+        let sections = try #require(page["sections"] as? [[String: Any]])
+        let rows = sections.flatMap { $0["rows"] as? [[String: Any]] ?? [] }
+        func active(_ id: String) -> String? {
+            let row = rows.first { $0["id"] as? String == id }
+            let options = row?["options"] as? [[String: Any]] ?? []
+            return options.first { $0["active"] as? Bool == true }?["id"] as? String
+        }
+        #expect(active("macos-runtime") == "system")
+        #expect(active("linux-runtime") == "builtin")
+        #expect(rows.contains { $0["id"] as? String == "placement-overflow" })
+    }
+
     @Test func theGlobalShortcutSaysWhetherTheSystemGaveIt() async throws {
         let (bridge, _) = bridge()
         defer { GlobalShortcut.installed = nil }

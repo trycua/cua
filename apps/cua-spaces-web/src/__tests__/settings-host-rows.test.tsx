@@ -26,7 +26,7 @@ async function mountSettings(own: HostSettings | null) {
   const demo = createDemoAdapter({ latencyMs: 1, stepMs: 4 });
   const chosen: [string, string][] = [];
   const settings = { ...own };
-  const ROW: Record<string, keyof HostSettings> = { "macos-runtime": "lumeSource", "linux-runtime": "linuxSource", "auto-connect": "autoConnect", "keyvault-auto-wipe": "keyvaultAutoWipe" };
+  const ROW: Record<string, keyof HostSettings> = { "macos-runtime": "lumeSource", "linux-runtime": "linuxSource", "auto-connect": "autoConnect", "placement-overflow": "overflow", "keyvault-auto-wipe": "keyvaultAutoWipe" };
   const adapter: DataAdapter = {
     mode: demo.mode,
     subscribe: (l) => demo.subscribe(l),
@@ -34,7 +34,7 @@ async function mountSettings(own: HostSettings | null) {
       if (op === "settings.choose") {
         chosen.push([args.row, args.option]);
         const key = ROW[args.row]!;
-        (settings as Record<string, unknown>)[key] = key === "autoConnect" || key === "keyvaultAutoWipe" ? args.option === "on" : args.option;
+        (settings as Record<string, unknown>)[key] = key === "autoConnect" || key === "overflow" || key === "keyvaultAutoWipe" ? args.option === "on" : args.option;
         op = "settings.get";
       }
       const out = await demo.call(op as never, args as never);
@@ -58,7 +58,7 @@ const row = (id: string) => document.querySelector<HTMLElement>(`[data-setting-r
 
 describe.skipIf(!wasmBuilt)("the host's own settings (real routes, wasm core)", () => {
   it("lays out which software runs Spaces and auto-connect in Advanced, in plain words, and picks their options", async () => {
-    const { chosen } = await mountSettings({ lumeSource: "system", linuxSource: "auto", autoConnect: true, keyvaultAutoWipe: false });
+    const { chosen } = await mountSettings({ lumeSource: "system", linuxSource: "auto", autoConnect: true, overflow: true, keyvaultAutoWipe: false });
     const macos = await waitFor(() => {
       const r = row("macos-runtime");
       if (!r) throw new Error("no runtime row");
@@ -70,6 +70,8 @@ describe.skipIf(!wasmBuilt)("the host's own settings (real routes, wasm core)", 
     expect(document.body.textContent).not.toMatch(/Lume|gVisor|Runtimes/);
     expect(within(row("linux-runtime")!).getByText("Linux computers")).toBeTruthy();
     expect(within(row("auto-connect")!).getByText("Open a Space\u2019s screen right away")).toBeTruthy();
+    // Overflow into your cloud, which the SwiftUI host reads too.
+    expect(within(row("placement-overflow")!).getByText("Use my own cloud when this Mac is busy")).toBeTruthy();
     // The Keyvault's switches live on the Keyvault page now.
     expect(row("keyvault-auto-wipe")).toBeNull();
 
@@ -91,6 +93,7 @@ describe.skipIf(!wasmBuilt)("the host's own settings (real routes, wasm core)", 
     await waitFor(() => expect(document.querySelector("[data-setting-row]")).toBeTruthy());
     expect(row("macos-runtime")).toBeNull();
     expect(row("auto-connect")).toBeNull();
+    expect(row("placement-overflow")).toBeNull();
     expect(row("keyvault-auto-wipe")).toBeNull();
   });
 });

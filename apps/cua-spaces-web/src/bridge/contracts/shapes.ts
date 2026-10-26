@@ -341,6 +341,7 @@ const SettingsShape = ref(
         lumeSource: optNull(str),
         linuxSource: optNull(str),
         autoConnect: optNull(bool),
+        overflow: optNull(bool),
         keyvaultAutoWipe: optNull(bool),
         keyvaultUnlockPrompt: optNull(bool),
         keyvaultSiteIcons: optNull(bool),

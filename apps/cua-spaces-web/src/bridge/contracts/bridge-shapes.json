@@ -4204,6 +4204,12 @@
                 "null"
               ]
             },
+            "overflow": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
             "keyvaultAutoWipe": {
               "type": [
                 "boolean",

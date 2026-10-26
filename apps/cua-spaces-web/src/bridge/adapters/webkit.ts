@@ -335,6 +335,7 @@ export function toSettingsSnapshot(s: WkSettings, page: Pick<SettingsValues, "th
       lumeSource: source("macos-runtime"),
       linuxSource: source("linux-runtime"),
       autoConnect: on("auto-connect"),
+      overflow: on("placement-overflow"),
       keyvaultAutoWipe: on("keyvault-auto-wipe"),
       keyvaultUnlockPrompt: on("keyvault-unlock-prompt"),
       keyvaultSiteIcons: on("keyvault-site-icons"),

@@ -740,6 +740,8 @@ export interface SettingsInput {
   keyvaultProtection?: { label: string; value: string }[];
   /** "Connect to the desktop automatically" (none: no row). */
   autoConnect?: boolean | null;
+  /** Overflow into your clouds when this machine is full (`placement.overflow`; none: no row). */
+  overflow?: boolean | null;
   /** Which Lume macOS Spaces run on (none: no Runtimes section). */
   lumeSource?: string | null;
   /** Which engine local Linux Spaces run on (none: no Linux row). */

@@ -354,6 +354,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
 
         case "settings.get":
             model.refreshTelemetry()
+            // Settings, Advanced's runtime choices and overflow come from the
+            // config file; read them here (nothing else does before New Space).
+            if model.servicesIn { await model.loadRuntimeSettings() }
             return settings()
         case "settings.choose":
             let row = try string(args, "row"), option = try string(args, "option")
@@ -1169,7 +1172,11 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         follow("session.changed") { [model] in
             _ = (model.identity, model.signIn, model.cloudConfigured, model.onboarding.completed)
         }
-        follow("settings.changed") { [model] in _ = model.settings }
+        // The runtime choices too: New Space's probe and its "Use built-in"
+        // switch read and change them.
+        follow("settings.changed") { [model] in
+            _ = (model.settings, model.lumeSource, model.linuxSource, model.placementOverflow)
+        }
         // These views are rewritten on every read, so the event goes out
         // only when what the page shows differs.
         followChanges("machines.changed") { [weak self] in

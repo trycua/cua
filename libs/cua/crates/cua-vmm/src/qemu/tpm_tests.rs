@@ -277,3 +277,54 @@ async fn abandoned_launch_stops_swtpm() {
     assert!(fake.wait().is_ok());
     assert!(!tmp.path().join("swtpm.pid").exists());
 }
+
+#[tokio::test]
+async fn late_cleanup_leaves_the_replacement_swtpm() {
+    let tmp = tempfile::tempdir().unwrap();
+    let link = fake_swtpm_link(tmp.path());
+    let tpm = tmp.path().join("tpm");
+    std::fs::create_dir_all(&tpm).unwrap();
+    let mut old = spawn_fake(&link, &tpm);
+    let mut guard = LaunchGuard::new(tmp.path().join("qemu.pid"));
+    guard.tpm_dir = Some(tmp.path().to_path_buf());
+    std::fs::write(tmp.path().join("swtpm.pid"), old.id().to_string()).unwrap();
+    drop(guard);
+    // A replacement takes over the directory and the pidfile before the
+    // deferred cleanup runs.
+    std::fs::remove_file(tpm.join("swtpm.sock")).unwrap();
+    let mut new = std::process::Command::new(&link)
+        .args(["--exact", "qemu::tpm_tests::fake_swtpm", "--nocapture"])
+        .arg(format!("dir={}", tpm.display()))
+        .env("CUA_TPM_DIR", &tpm)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    while !tpm.join("swtpm.sock").exists() {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    std::fs::write(tmp.path().join("swtpm.pid"), new.id().to_string()).unwrap();
+    assert!(crate::cleanup::settle(Duration::from_secs(10)).await);
+    old.wait().unwrap();
+    assert!(new.try_wait().unwrap().is_none(), "replacement survives");
+    assert_eq!(swtpm_pid(tmp.path()), Some(new.id()));
+    new.kill().unwrap();
+    new.wait().unwrap();
+}
+
+#[test]
+fn text_fallback_requires_the_exact_last_directory() {
+    let n = "dir=/vm/tpm";
+    assert!(names_dir_text(
+        "/bin/swtpm socket --tpm2 --tpmstate dir=/vm/tpm",
+        n
+    ));
+    assert!(!names_dir_text(
+        "/bin/swtpm socket --tpmstate dir=/vm/tpm -backup",
+        n
+    ));
+    assert!(!names_dir_text(
+        "/bin/swtpm socket --tpmstate dir=/vm/tpm backup",
+        n
+    ));
+}

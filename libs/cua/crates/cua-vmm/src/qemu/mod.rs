@@ -3125,7 +3125,7 @@ impl Runtime for QemuRuntime {
 const QEMU_LAUNCH: &str = "\"$0\" \"$@\" </dev/null >>\"$CUA_QEMU_LOG\" 2>&1 & echo $!";
 
 #[cfg(unix)]
-const TPM_LAUNCH: &str = r#""$CUA_SWTPM" socket --daemon --tpm2 --terminate --tpmstate "dir=$CUA_TPM_DIR" --ctrl "type=unixio,path=$CUA_TPM_DIR/swtpm.sock" --pid "file=$CUA_TPM_DIR/../swtpm.pid" </dev/null >>"$CUA_TPM_DIR/../swtpm.log" 2>&1 || exit 1
+const TPM_LAUNCH: &str = r#""$CUA_SWTPM" socket --daemon --tpm2 --terminate --ctrl "type=unixio,path=$CUA_TPM_DIR/swtpm.sock" --pid "file=$CUA_TPM_DIR/../swtpm.pid" --tpmstate "dir=$CUA_TPM_DIR" </dev/null >>"$CUA_TPM_DIR/../swtpm.log" 2>&1 || exit 1
 "$0" "$@" </dev/null >>"$CUA_QEMU_LOG" 2>&1 & echo $!"#;
 
 #[cfg(all(test, unix))]
@@ -4517,26 +4517,35 @@ fn swtpm_owns(pid: u32, tpm_dir: &Path) -> bool {
     if let Ok(raw) = std::fs::read(format!("/proc/{pid}/cmdline")) {
         return is_swtpm && raw.split(|b| *b == 0).any(|a| a == needle.as_bytes());
     }
-    // Elsewhere only flattened text is available: the directory must end the
-    // text or be followed by the next option, so `tpm backup` never matches.
-    let names_dir = cmd.match_indices(&needle).any(|(i, _)| {
-        let rest = &cmd[i + needle.len()..];
-        rest.is_empty() || rest.starts_with(" -")
-    });
-    is_swtpm && names_dir
+    is_swtpm && names_dir_text(&cmd, &needle)
+}
+
+/// Without argument boundaries the directory must be the last option, so no
+/// longer path (`tpm -backup`, `tpm backup`) can pass for it. The launch
+/// script passes `--tpmstate` last for this check.
+fn names_dir_text(cmd: &str, needle: &str) -> bool {
+    cmd.ends_with(&format!("--tpmstate {needle}"))
+}
+
+/// The pid in the pidfile of the VM running in `dir`.
+fn swtpm_pid(dir: &Path) -> Option<u32> {
+    std::fs::read_to_string(dir.join("swtpm.pid"))
+        .ok()
+        .and_then(|t| t.trim().parse::<u32>().ok())
 }
 
 /// End the swtpm of the VM running in `dir`, if the pidfile still names it,
 /// and remove the pidfile. Returns whether that swtpm is still alive.
 fn stop_swtpm(dir: &Path) -> bool {
-    let pidfile = dir.join("swtpm.pid");
+    stop_swtpm_pid(dir, swtpm_pid(dir))
+}
+
+/// End the swtpm `pid` (when it serves this VM's TPM directory). The pidfile
+/// goes only if it still names `pid`: a replacement's file stays.
+fn stop_swtpm_pid(dir: &Path, pid: Option<u32>) -> bool {
     let tpm_dir = dir.join("tpm");
     let mut alive = false;
-    if let Some(pid) = std::fs::read_to_string(&pidfile)
-        .ok()
-        .and_then(|t| t.trim().parse::<u32>().ok())
-        .filter(|p| *p >= 2 && swtpm_owns(*p, &tpm_dir))
-    {
+    if let Some(pid) = pid.filter(|p| *p >= 2 && swtpm_owns(*p, &tpm_dir)) {
         host::signal(pid, "TERM");
         for _ in 0..40 {
             if !host::pid_alive(pid) {
@@ -4549,7 +4558,9 @@ fn stop_swtpm(dir: &Path) -> bool {
         }
         alive = host::pid_alive(pid);
     }
-    let _ = std::fs::remove_file(pidfile);
+    if pid.is_none() || swtpm_pid(dir) == pid {
+        let _ = std::fs::remove_file(dir.join("swtpm.pid"));
+    }
     alive
 }
 
@@ -4613,9 +4624,12 @@ impl Drop for LaunchGuard {
                 },
             );
         let tpm_dir = self.tpm_dir.clone();
+        // The swtpm of this launch, named now: a replacement launch reuses
+        // the pidfile, and this cleanup must not end its swtpm.
+        let tpm_pid = tpm_dir.as_deref().and_then(swtpm_pid);
         let stop_tpm = move || {
             if let Some(dir) = tpm_dir {
-                let _ = stop_swtpm(&dir);
+                let _ = stop_swtpm_pid(&dir, tpm_pid.or_else(|| swtpm_pid(&dir)));
             }
         };
         if let Some(pid) = known {

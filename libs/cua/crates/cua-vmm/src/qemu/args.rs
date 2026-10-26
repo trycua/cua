@@ -334,6 +334,22 @@ pub fn build(cfg: &LaunchConfig) -> Vec<String> {
         display(&mut a, cfg);
     }
 
+    // The TPM is independent of the display: a headless restart keeps it.
+    if let Some(socket) = &cfg.tpm_socket {
+        a.extend([
+            "-chardev".to_string(),
+            format!("socket,id=chrtpm,path={}", socket.display()),
+            "-tpmdev".into(),
+            "emulator,id=tpm0,chardev=chrtpm".into(),
+            "-device".into(),
+            match cfg.arch {
+                Arch::Aarch64 => "tpm-tis-device,tpmdev=tpm0",
+                Arch::X86_64 => "tpm-tis,tpmdev=tpm0",
+            }
+            .into(),
+        ]);
+    }
+
     // Management.
     let mut push = |xs: &[&str]| a.extend(xs.iter().map(|s| s.to_string()));
     push(&[
@@ -377,19 +393,6 @@ fn display(a: &mut Vec<String>, cfg: &LaunchConfig) {
         push(&["-device", "qemu-xhci,id=xhci"]);
     }
     push(&["-device", "usb-kbd", "-device", "usb-tablet"]);
-    if let Some(socket) = &cfg.tpm_socket {
-        push(&[
-            "-chardev",
-            &format!("socket,id=chrtpm,path={}", socket.display()),
-            "-tpmdev",
-            "emulator,id=tpm0,chardev=chrtpm",
-            "-device",
-            match cfg.arch {
-                Arch::Aarch64 => "tpm-tis-device,tpmdev=tpm0",
-                Arch::X86_64 => "tpm-tis,tpmdev=tpm0",
-            },
-        ]);
-    }
     match &cfg.virgl_render_node {
         Some(node) => push(&[
             "-display",
@@ -614,6 +617,12 @@ mod tests {
                 ["-chardev", "socket,id=chrtpm,path=/vm/tpm/swtpm.sock"]
             ));
             assert!(has(&a, ["-tpmdev", "emulator,id=tpm0,chardev=chrtpm"]));
+            let mut h = c.clone();
+            h.headless = true;
+            assert!(has(
+                &build(&h),
+                ["-tpmdev", "emulator,id=tpm0,chardev=chrtpm"]
+            ));
             assert!(has(
                 &a,
                 [

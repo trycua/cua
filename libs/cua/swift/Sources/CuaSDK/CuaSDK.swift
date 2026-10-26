@@ -1008,11 +1008,31 @@ public protocol AgentSetupProtocol: AnyObject, Sendable {
     func detect()  -> [AgentInfo]
 
     /**
+     * Starts `agent`'s device-code sign-in made for Cua (Codex: `codex login
+     * --device-auth` in a folder Cua owns). JSON `{id, url, code}`: show the
+     * link and the code, then wait with [`Self::device_sign_in_wait_json`].
+     */
+    func deviceSignInStartJson(agent: String) async throws  -> String
+
+    /**
+     * Waits for a device sign-in to be approved and saves it into Keyvault on
+     * This Mac. JSON: `{imported, refused, line}` (as Connect's `sign_in`).
+     */
+    func deviceSignInWaitJson(id: String) async throws  -> String
+
+    /**
      * Disconnect: what Connect did, undone (the previous config entry back
      * from Cua's record, the skills, and with `sign_in` the copy in
      * Keyvault). JSON `{outcomes, removed_sign_ins}`.
      */
     func disconnectJson(agents: [String], signIn: Bool) async throws  -> String
+
+    /**
+     * Disconnect of some parts only (an app's page's switches): Cua's skills
+     * and/or its MCP entry, and with `sign_in` the copy in Keyvault. JSON
+     * `{outcomes, removed_sign_ins}`.
+     */
+    func disconnectPartsJson(agents: [String], skills: Bool, mcp: Bool, signIn: Bool) async throws  -> String
 
     /**
      * Installs `skills` (empty: all bundled) for `agents`. Folders cua did
@@ -1201,6 +1221,49 @@ open func detect() -> [AgentInfo]  {
 }
 
     /**
+     * Starts `agent`'s device-code sign-in made for Cua (Codex: `codex login
+     * --device-auth` in a folder Cua owns). JSON `{id, url, code}`: show the
+     * link and the code, then wait with [`Self::device_sign_in_wait_json`].
+     */
+open func deviceSignInStartJson(agent: String)async throws  -> String  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_agentsetup_device_sign_in_start_json(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(agent)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterString.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Waits for a device sign-in to be approved and saves it into Keyvault on
+     * This Mac. JSON: `{imported, refused, line}` (as Connect's `sign_in`).
+     */
+open func deviceSignInWaitJson(id: String)async throws  -> String  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_agentsetup_device_sign_in_wait_json(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(id)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterString.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
      * Disconnect: what Connect did, undone (the previous config entry back
      * from Cua's record, the skills, and with `sign_in` the copy in
      * Keyvault). JSON `{outcomes, removed_sign_ins}`.
@@ -1212,6 +1275,28 @@ open func disconnectJson(agents: [String], signIn: Bool)async throws  -> String 
                 uniffi_cua_sdk_fn_method_agentsetup_disconnect_json(
                     self.uniffiCloneHandle(),
                     FfiConverterSequenceString.lower(agents),FfiConverterBool.lower(signIn)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterString.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Disconnect of some parts only (an app's page's switches): Cua's skills
+     * and/or its MCP entry, and with `sign_in` the copy in Keyvault. JSON
+     * `{outcomes, removed_sign_ins}`.
+     */
+open func disconnectPartsJson(agents: [String], skills: Bool, mcp: Bool, signIn: Bool)async throws  -> String  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_agentsetup_disconnect_parts_json(
+                    self.uniffiCloneHandle(),
+                    FfiConverterSequenceString.lower(agents),FfiConverterBool.lower(skills),FfiConverterBool.lower(mcp),FfiConverterBool.lower(signIn)
                 )
             },
             pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
@@ -50711,7 +50796,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_agentsetup_detect() != 59369) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_sdk_checksum_method_agentsetup_device_sign_in_start_json() != 18365) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_agentsetup_device_sign_in_wait_json() != 39143) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_sdk_checksum_method_agentsetup_disconnect_json() != 14363) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_agentsetup_disconnect_parts_json() != 37278) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_agentsetup_install_skills() != 40049) {

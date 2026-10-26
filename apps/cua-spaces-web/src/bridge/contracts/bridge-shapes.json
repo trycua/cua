@@ -6874,6 +6874,9 @@
     "about.set": {
       "$ref": "#/$defs/AboutInput"
     },
+    "agentKeys.fromShell": {
+      "$ref": "#/$defs/AgentKeysReport"
+    },
     "agentKeys.list": {
       "$ref": "#/$defs/AgentKeysReport"
     },
@@ -6882,6 +6885,20 @@
     },
     "agentKeys.set": {
       "$ref": "#/$defs/AgentKeysReport"
+    },
+    "agentKeys.shell": {
+      "type": "object",
+      "properties": {
+        "names": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "names"
+      ]
     },
     "agents.addRoutine": {
       "type": "null"
@@ -7196,6 +7213,38 @@
       "items": {
         "$ref": "#/$defs/AgentSetupRow"
       }
+    },
+    "agents.signInStart": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "url",
+        "code"
+      ]
+    },
+    "agents.signInWait": {
+      "type": "object",
+      "properties": {
+        "imported": {},
+        "refused": {},
+        "line": {}
+      },
+      "required": [
+        "imported",
+        "refused",
+        "line"
+      ]
     },
     "agents.start": {
       "type": "object",
@@ -8814,6 +8863,72 @@
     "about.set": {
       "$ref": "#/$defs/AboutInput"
     },
+    "agentKeys.fromShell": {
+      "type": "object",
+      "properties": {
+        "keys": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "last4": {
+                "type": "string"
+              },
+              "added_ms": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "provider",
+              "env",
+              "last4",
+              "added_ms"
+            ]
+          }
+        },
+        "providers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "env"
+            ]
+          }
+        },
+        "available": {
+          "type": "boolean"
+        },
+        "unavailable": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "keys",
+        "providers",
+        "available"
+      ]
+    },
     "agentKeys.list": {
       "type": "object",
       "properties": {
@@ -9010,6 +9125,20 @@
         "keys",
         "providers",
         "available"
+      ]
+    },
+    "agentKeys.shell": {
+      "type": "object",
+      "properties": {
+        "names": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "names"
       ]
     },
     "agents.addRoutine": {
@@ -9321,6 +9450,38 @@
       "items": {
         "$ref": "#/$defs/AgentSetupRow"
       }
+    },
+    "agents.signInStart": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "url",
+        "code"
+      ]
+    },
+    "agents.signInWait": {
+      "type": "object",
+      "properties": {
+        "imported": {},
+        "refused": {},
+        "line": {}
+      },
+      "required": [
+        "imported",
+        "refused",
+        "line"
+      ]
     },
     "agents.start": {
       "type": "object",

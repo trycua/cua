@@ -149,9 +149,11 @@ export function Composer({
               onMouseEnter={() => setPicked(i)}
               className={cn("flex h-9 cursor-default items-center gap-2.5 rounded-lg px-2 text-[13px]", i === index && "bg-accent")}
             >
-              <MemberAvatar kind={c.kind} name={c.label} harness={c.kind === "agent" ? agentHarness(c.handle) : ""} size={24} />
+              <MemberAvatar kind={c.kind} name={c.label} harness={c.kind === "agent" ? (c.harness ?? agentHarness(c.handle)) : ""} size={24} />
               <span className="min-w-0 flex-1 truncate">{c.label}</span>
-              <span className="text-xs text-muted-foreground">@{c.handle}</span>
+              <span className="text-xs text-muted-foreground" data-mention-detail={c.detail ? "" : undefined}>
+                {c.detail ?? `@${c.handle}`}
+              </span>
             </div>
           ))}
         </div>

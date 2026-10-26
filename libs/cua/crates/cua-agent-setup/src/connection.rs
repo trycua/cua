@@ -285,7 +285,7 @@ pub fn parse_version(out: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-fn base_command(env: &HostEnv, program: &Path) -> Command {
+pub(crate) fn base_command(env: &HostEnv, program: &Path) -> Command {
     let mut cmd = Command::new(program);
     #[cfg(windows)]
     {
@@ -838,11 +838,21 @@ impl AgentSetup {
         let a = registry::find(agent)
             .ok_or_else(|| signin::CopyRefusal::Failed(signin::unknown(agent).to_string()))?;
         let copy = signin::read_copy(&self.env, a.id, wait)?;
-        let saved = vault.save(&copy).map_err(|e| {
+        self.save_sign_in(a.id, &copy, vault)
+    }
+
+    /// Saves a sign-in made for `agent` into `vault` and notes it.
+    fn save_sign_in(
+        &self,
+        agent: &str,
+        copy: &SignInCopy,
+        vault: &dyn SignInVault,
+    ) -> std::result::Result<ImportedSignIn, signin::CopyRefusal> {
+        let saved = vault.save(copy).map_err(|e| {
             signin::CopyRefusal::Failed(format!("Connected. Sign-in not copied: {e}"))
         })?;
         if let Ok(mut state) = State::load(&self.state_path) {
-            let r = state.connections.entry(a.id.to_string()).or_default();
+            let r = state.connections.entry(agent.to_string()).or_default();
             r.sign_in = Some(crate::state::SignInRecord {
                 env: saved.env.clone(),
                 label: saved.label.clone(),
@@ -852,6 +862,34 @@ impl AgentSetup {
         }
         invalidate();
         Ok(saved)
+    }
+
+    /// Starts `agent`'s device-code sign-in (Codex: `codex login
+    /// --device-auth`) in a folder Cua owns, next to its state; the link and
+    /// code to show. Your own sign-in is never read or changed.
+    pub fn start_device_sign_in(
+        &self,
+        agent: &str,
+    ) -> std::result::Result<signin::DeviceSignIn, signin::CopyRefusal> {
+        let dir = self
+            .state_path
+            .parent()
+            .unwrap_or(Path::new("."))
+            .join("agent-sign-ins")
+            .join(agent);
+        signin::start_device_sign_in(&self.env, &dir, agent)
+    }
+
+    /// Waits for a device sign-in to be approved and saves it into `vault`.
+    pub fn finish_device_sign_in(
+        &self,
+        login: signin::DeviceSignIn,
+        vault: &dyn SignInVault,
+        wait: Duration,
+    ) -> std::result::Result<ImportedSignIn, signin::CopyRefusal> {
+        let copy = login.wait(wait)?;
+        let agent = copy.source.clone();
+        self.save_sign_in(&agent, &copy, vault)
     }
 
     /// Deletes the copies of `agent`'s sign-in from `vault`; the variables

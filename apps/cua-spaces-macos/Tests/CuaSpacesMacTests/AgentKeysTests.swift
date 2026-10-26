@@ -27,6 +27,13 @@ final class FakeAgentKeysTools: AgentsToolRunning, @unchecked Sendable {
             keys.append(["provider": provider, "env": env, "last4": String(value.suffix(4)), "added_ms": 1_790_000_100_000])
         case "agent_keys.remove":
             keys.removeAll { $0["env"] as? String == args["env"] as? String }
+        // Your login shell has an Anthropic key: names only, and a copy saved on request.
+        case "agent_keys.shell": return ["names": ["ANTHROPIC_API_KEY"]]
+        case "agent_keys.from_shell":
+            let env = args["env"] as? String ?? ""
+            guard env == "ANTHROPIC_API_KEY" else { throw AgentsToolError(message: "\(env) isn't set in your shell") }
+            keys.removeAll { $0["env"] as? String == env }
+            keys.append(["provider": "anthropic", "env": env, "last4": "a91c", "added_ms": 1_790_000_200_000])
         default: throw AgentsToolError(message: "unknown tool \(tool)")
         }
         var report: [String: Any] = ["keys": keys, "providers": [], "available": available]
@@ -82,8 +89,20 @@ struct AgentKeysTests {
         #expect(none.view.notice?.contains("need the cua daemon") == true)
     }
 
+    @Test func aKeyFromYourShellIsSavedAndTheNamesNeverReplaceTheList() async throws {
+        let tools = FakeAgentKeysTools()
+        let m = AgentKeysModel(tools: tools)
+        await m.load()
+        let names = try await m.call("agent_keys.shell") as? [String: Any]
+        #expect(names?["names"] as? [String] == ["ANTHROPIC_API_KEY"])
+        // The names answer is not the key list: the rows stay as they were.
+        #expect(m.view.rows.map(\.status) == ["Not set", "\u{2022}\u{2022}\u{2022}\u{2022} 3f9a"])
+        try await m.call("agent_keys.from_shell", ["env": "ANTHROPIC_API_KEY"])
+        #expect(m.view.rows.first?.status == "\u{2022}\u{2022}\u{2022}\u{2022} a91c")
+    }
+
     @Test func theWebBridgeRoutesAgentKeysToTheDaemon() {
-        for m in ["agentKeys.list", "agentKeys.set", "agentKeys.remove"] {
+        for m in ["agentKeys.list", "agentKeys.set", "agentKeys.remove", "agentKeys.shell", "agentKeys.fromShell"] {
             #expect(WebUIBridge.methods.contains(m))
         }
     }

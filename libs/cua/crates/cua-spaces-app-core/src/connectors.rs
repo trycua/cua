@@ -1,0 +1,1240 @@
+// SPDX-License-Identifier: FSL-1.1-MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
+//! Settings, Connectors: the coding apps Cua works with and the providers
+//! they sign in to, with one Connect for each.
+//!
+//! - **Coding apps.** One row per app on this computer, with Connect (or
+//!   Connected) and a chevron to the app's own page. Connect does
+//!   everything once: Cua's skills and MCP server in the app, then the
+//!   app's model sign-in, so the matching provider is connected too
+//!   ([`connect_plan`]).
+//! - **An app's page** ([`app_detail`]): the separate switches (skills, MCP,
+//!   setting the app up again automatically), which provider it signs in
+//!   with and how, Sign in and Sign out, and taking Cua out of the app.
+//! - **Providers.** Anthropic, OpenAI and GitHub, each with Connect: the
+//!   provider's own sign-in where one exists for this use, else a key
+//!   ([`provider_sheet`]). Other keys follow by variable name.
+//! - **The setup card** ([`setup_card`]): what a task that couldn't start
+//!   because its app isn't connected says, with "Connect <app>".
+//!
+//! Only official sign-in paths are offered: an app's own token command
+//! (`claude setup-token`, which prints a token meant for this use), a key
+//! the person pastes, or a key already exported in their shell. Cua never
+//! reads another app's private sign-in store for these.
+//!
+//! Every credential lives where the agent keys do (`agent_keys`: the
+//! daemon's Keychain-backed store); this module only decides the words.
+
+use serde::{Deserialize, Serialize};
+
+use crate::agent_keys::{AgentKeyInput, AgentKeyRow, AgentKeysInput};
+use crate::model::SpaceOs;
+
+/// How a provider can be connected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Way {
+    /// An app's own token command, run on This Mac with one browser
+    /// approval; the token is saved under `env` and only that app uses it.
+    AppToken {
+        app: &'static str,
+        env: &'static str,
+        label: &'static str,
+        help: &'static str,
+    },
+    /// An app's own device-code sign-in, run on This Mac in a folder Cua
+    /// owns (Codex: `codex login --device-auth`); the person enters a code
+    /// on the provider's page. Saved under `env`; only that app uses it.
+    AppDevice {
+        app: &'static str,
+        env: &'static str,
+        label: &'static str,
+        help: &'static str,
+    },
+    /// A key the person pastes.
+    Key,
+    /// The key already exported in the person's shell, saved once.
+    Shell,
+}
+
+/// A provider row.
+struct Provider {
+    id: &'static str,
+    label: &'static str,
+    /// The variable a pasted key is saved as.
+    env: &'static str,
+    /// Other variables that also mean this provider is connected (a
+    /// sign-in token, a key saved under another name).
+    also: &'static [&'static str],
+    used_by: &'static str,
+    key_help: &'static str,
+    placeholder: &'static str,
+    ways: &'static [Way],
+}
+
+const CLAUDE_TOKEN: Way = Way::AppToken {
+    app: "claude-code",
+    env: "CLAUDE_CODE_OAUTH_TOKEN",
+    label: "Sign in with Claude",
+    help: "Opens your browser to approve. Uses your Claude plan. Only Claude Code uses this sign-in.",
+};
+
+const CODEX_DEVICE: Way = Way::AppDevice {
+    app: "codex",
+    env: "CODEX_AUTH_JSON",
+    label: "Sign in with ChatGPT",
+    help: "Shows a code to enter on openai.com. Uses your ChatGPT plan. Only Codex uses this sign-in.",
+};
+
+const PROVIDERS: &[Provider] = &[
+    Provider {
+        id: "anthropic",
+        label: "Anthropic",
+        env: "ANTHROPIC_API_KEY",
+        also: &["CLAUDE_CODE_OAUTH_TOKEN"],
+        used_by: "Claude Code, Hermes and other apps that use Claude.",
+        key_help: "Create a key at console.anthropic.com. Every app that uses Claude can use it.",
+        placeholder: "sk-ant-…",
+        ways: &[CLAUDE_TOKEN, Way::Key, Way::Shell],
+    },
+    Provider {
+        id: "openai",
+        label: "OpenAI",
+        env: "OPENAI_API_KEY",
+        also: &["CODEX_AUTH_JSON"],
+        used_by: "Codex, Hermes and other apps that use OpenAI models.",
+        key_help: "Create a key at platform.openai.com. Every app that uses OpenAI can use it.",
+        placeholder: "sk-…",
+        ways: &[CODEX_DEVICE, Way::Key, Way::Shell],
+    },
+    Provider {
+        id: "github",
+        label: "GitHub",
+        env: "COPILOT_GITHUB_TOKEN",
+        also: &[],
+        used_by: "GitHub Copilot CLI.",
+        key_help: "Create a fine-grained token with the Copilot Requests permission at github.com/settings/tokens.",
+        placeholder: "github_pat_…",
+        ways: &[Way::Key, Way::Shell],
+    },
+];
+
+/// Which providers an app signs in to, and the way its Connect uses.
+struct AppSignIn {
+    app: &'static str,
+    /// Any one of these connected is enough.
+    providers: &'static [&'static str],
+    /// The way Connect starts when none is connected (`None`: it asks with
+    /// the provider's sheet).
+    way: Option<Way>,
+}
+
+const APPS: &[AppSignIn] = &[
+    AppSignIn {
+        app: "claude-code",
+        providers: &["anthropic"],
+        way: Some(CLAUDE_TOKEN),
+    },
+    AppSignIn {
+        app: "codex",
+        providers: &["openai"],
+        way: Some(CODEX_DEVICE),
+    },
+    AppSignIn {
+        app: "copilot-cli",
+        providers: &["github"],
+        way: None,
+    },
+    AppSignIn {
+        app: "hermes",
+        providers: &["anthropic", "openai"],
+        way: None,
+    },
+    AppSignIn {
+        app: "t3code",
+        providers: &["anthropic", "openai"],
+        way: None,
+    },
+];
+
+fn provider(id: &str) -> Option<&'static Provider> {
+    PROVIDERS.iter().find(|p| p.id == id)
+}
+
+fn app_sign_in(app: &str) -> Option<&'static AppSignIn> {
+    APPS.iter().find(|a| a.app == app)
+}
+
+/// Every variable the providers own (they are not listed under Other keys).
+fn provider_env(env: &str) -> bool {
+    PROVIDERS
+        .iter()
+        .any(|p| p.env == env || p.also.contains(&env))
+}
+
+/// One coding app on this computer (`agents.setup`, plus what the page knows).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ConnectorAppInput {
+    /// Setup id (`claude-code`, `codex`, ...).
+    pub agent: String,
+    pub name: String,
+    pub installed: bool,
+    /// Cua's skills and MCP server are both in place.
+    pub configured: bool,
+    /// Cua's skills are in the app.
+    pub skills: bool,
+    /// Cua's MCP server is in the app's settings (`None`: the app has no MCP settings Cua writes).
+    pub mcp: Option<bool>,
+    /// The app's settings file, for its page.
+    pub mcp_config: Option<String>,
+}
+
+/// Something running for a row: `app:<id>` or `provider:<id>`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ConnectorBusy {
+    pub id: String,
+    /// `connecting` (tools), `signing-in` (a browser approval), `signing-out`.
+    pub step: String,
+}
+
+/// Why the last change to a row failed.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ConnectorFailure {
+    pub id: String,
+    pub line: String,
+}
+
+/// What the Connectors page reads.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ConnectorsInput {
+    pub apps: Vec<ConnectorAppInput>,
+    /// The saved keys and sign-ins (`agentKeys.list`).
+    pub keys: AgentKeysInput,
+    /// Provider variables exported in the person's shell (names only).
+    pub shell_keys: Vec<String>,
+    /// "Set up new apps automatically".
+    pub auto: bool,
+    /// Apps the person turned off: never set up again on their own.
+    pub off: Vec<String>,
+    pub busy: Vec<ConnectorBusy>,
+    pub failures: Vec<ConnectorFailure>,
+}
+
+impl ConnectorsInput {
+    fn key(&self, env: &str) -> Option<&AgentKeyInput> {
+        self.keys.keys.iter().find(|k| k.env == env)
+    }
+    fn busy(&self, id: &str) -> Option<&str> {
+        self.busy
+            .iter()
+            .find(|b| b.id == id)
+            .map(|b| b.step.as_str())
+    }
+    fn failure(&self, id: &str) -> Option<&str> {
+        self.failures
+            .iter()
+            .find(|f| f.id == id)
+            .map(|f| f.line.as_str())
+    }
+    fn app(&self, id: &str) -> Option<&ConnectorAppInput> {
+        self.apps.iter().find(|a| a.agent == id)
+    }
+}
+
+/// The saved credential that connects a provider, first match wins: the
+/// pasted key, then a sign-in token.
+fn provider_credential<'a>(input: &'a ConnectorsInput, p: &Provider) -> Option<&'a AgentKeyInput> {
+    input
+        .key(p.env)
+        .or_else(|| p.also.iter().find_map(|e| input.key(e)))
+}
+
+fn provider_connected(input: &ConnectorsInput, id: &str) -> bool {
+    provider(id).is_some_and(|p| provider_credential(input, p).is_some())
+}
+
+/// The app's sign-in is in place: one of its providers is connected, or it
+/// signs in on its own.
+fn app_signed_in(input: &ConnectorsInput, app: &str) -> bool {
+    match app_sign_in(app) {
+        Some(a) => a.providers.iter().any(|p| provider_connected(input, p)),
+        None => true,
+    }
+}
+
+fn dots(k: &AgentKeyInput) -> String {
+    if k.last4.is_empty() {
+        "Saved".into()
+    } else {
+        format!("\u{2022}\u{2022}\u{2022}\u{2022} {}", k.last4)
+    }
+}
+
+/// How a saved credential reads on its provider's row.
+fn credential_text(p: &Provider, k: &AgentKeyInput) -> String {
+    match k.env.as_str() {
+        "CLAUDE_CODE_OAUTH_TOKEN" => "Claude sign-in, for Claude Code".into(),
+        "CODEX_AUTH_JSON" => "ChatGPT sign-in, for Codex".into(),
+        e if e == p.env => format!("API key {}", dots(k)),
+        e => format!("{e} {}", dots(k)),
+    }
+}
+
+/// A button on a row.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectorButton {
+    /// `connect`, `sign-out`, `try-again`.
+    pub id: String,
+    pub label: String,
+    pub enabled: bool,
+}
+
+fn button(id: &str, label: impl Into<String>, enabled: bool) -> ConnectorButton {
+    ConnectorButton {
+        id: id.into(),
+        label: label.into(),
+        enabled,
+    }
+}
+
+/// One coding app's row.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectorAppRow {
+    pub agent: String,
+    pub name: String,
+    /// `connected`, `not-connected`, `connecting`, `failed`.
+    pub state: String,
+    /// The row's second line: what is missing, what is happening, or why it failed.
+    pub line: Option<String>,
+    /// Connect, or Try again (absent when connected: the row says so instead).
+    pub button: Option<ConnectorButton>,
+    /// "Connected", beside the chevron once done.
+    pub connected_label: Option<String>,
+    /// The page the row opens ("Claude Code settings", for the chevron's label).
+    pub open_label: String,
+}
+
+/// A provider's row.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectorProviderRow {
+    pub id: String,
+    pub label: String,
+    /// `connected`, `not-connected`, `connecting`, `failed`.
+    pub state: String,
+    /// "Not connected", "API key •••• 3f9a", "Claude sign-in, for Claude Code",
+    /// "Approve in your browser…".
+    pub status: String,
+    /// Who uses it.
+    pub detail: String,
+    /// Connect, or Sign out.
+    pub button: ConnectorButton,
+    /// When it was connected (the page writes "Added <date>").
+    pub added_ms: Option<u64>,
+    /// The saved variables Sign out removes.
+    pub sign_out_envs: Vec<String>,
+}
+
+/// The page.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectorsView {
+    pub apps_title: String,
+    pub apps: Vec<ConnectorAppRow>,
+    /// "We didn't find a coding app yet…", when there is none.
+    pub apps_empty: Option<String>,
+    pub auto_label: String,
+    pub auto_help: String,
+    pub auto: bool,
+    pub providers_title: String,
+    /// Under Providers: where credentials stay.
+    pub providers_footer: String,
+    pub providers: Vec<ConnectorProviderRow>,
+    /// Keys under any other variable (`agent_keys`' rows).
+    pub others: Vec<AgentKeyRow>,
+    pub add_other_label: String,
+    pub other_help: String,
+    /// Why credentials can't be read or saved here.
+    pub notice: Option<String>,
+    pub can_edit: bool,
+    pub added_label: String,
+}
+
+/// Where credentials stay, in the words of the system the app runs on.
+fn vault(os: SpaceOs) -> Option<&'static str> {
+    match os {
+        SpaceOs::Macos => Some("the Keychain"),
+        SpaceOs::Windows => Some("Windows Credential Manager"),
+        SpaceOs::Linux | SpaceOs::Unknown => None,
+    }
+}
+
+fn notice(input: &ConnectorsInput) -> Option<String> {
+    input
+        .keys
+        .error
+        .as_ref()
+        .map(|e| format!("Couldn't read your sign-ins: {e}"))
+        .or_else(|| {
+            input
+                .keys
+                .unavailable
+                .as_ref()
+                .map(|why| format!("Sign-ins can't be saved here: {why}."))
+        })
+}
+
+fn app_row(input: &ConnectorsInput, a: &ConnectorAppInput) -> ConnectorAppRow {
+    let id = format!("app:{}", a.agent);
+    let busy = input.busy(&id);
+    let failure = input.failure(&id);
+    let signed_in = app_signed_in(input, &a.agent);
+    let done = a.configured && signed_in;
+    let needs = app_sign_in(&a.agent).filter(|_| !signed_in).map(|s| {
+        s.providers
+            .iter()
+            .filter_map(|p| provider(p))
+            .map(|p| p.label)
+            .collect::<Vec<_>>()
+            .join(" or ")
+    });
+    let (state, line, btn) = if let Some(step) = busy {
+        let line = match step {
+            "signing-in"
+                if app_sign_in(&a.agent)
+                    .is_some_and(|s| matches!(s.way, Some(Way::AppDevice { .. }))) =>
+            {
+                "Enter the code in your browser…".to_string()
+            }
+            "signing-in" => "Approve in your browser…".to_string(),
+            "signing-out" => "Signing out…".to_string(),
+            _ => format!("Adding Cua to {}…", a.name),
+        };
+        (
+            "connecting",
+            Some(line),
+            Some(button("connect", "Connect", false)),
+        )
+    } else if let Some(why) = failure {
+        (
+            "failed",
+            Some(why.to_string()),
+            Some(button("try-again", "Try again", true)),
+        )
+    } else if done {
+        ("connected", None, None)
+    } else if a.configured {
+        (
+            "not-connected",
+            needs.map(|n| format!("Needs a sign-in to {n}.")),
+            Some(button("connect", "Connect", true)),
+        )
+    } else {
+        (
+            "not-connected",
+            None,
+            Some(button("connect", "Connect", true)),
+        )
+    };
+    ConnectorAppRow {
+        agent: a.agent.clone(),
+        name: a.name.clone(),
+        state: state.into(),
+        line,
+        button: btn,
+        connected_label: done.then(|| "Connected".into()).filter(|_| busy.is_none()),
+        open_label: format!("{} settings", a.name),
+    }
+}
+
+fn provider_row(input: &ConnectorsInput, p: &Provider, can_edit: bool) -> ConnectorProviderRow {
+    let id = format!("provider:{}", p.id);
+    let busy = input.busy(&id);
+    let cred = provider_credential(input, p);
+    let (state, status, btn) = if let Some(step) = busy {
+        let status = match step {
+            "signing-out" => "Signing out…",
+            "signing-in" if p.ways.iter().any(|w| matches!(w, Way::AppDevice { .. })) => {
+                "Enter the code in your browser…"
+            }
+            "signing-in" => "Approve in your browser…",
+            _ => "Connecting…",
+        };
+        (
+            "connecting",
+            status.to_string(),
+            button("connect", "Connect", false),
+        )
+    } else if let Some(why) = input.failure(&id) {
+        (
+            "failed",
+            why.to_string(),
+            button("connect", "Try again", can_edit),
+        )
+    } else if let Some(k) = cred {
+        (
+            "connected",
+            credential_text(p, k),
+            button("sign-out", "Sign out", can_edit),
+        )
+    } else {
+        (
+            "not-connected",
+            "Not connected".into(),
+            button("connect", "Connect", can_edit),
+        )
+    };
+    ConnectorProviderRow {
+        id: p.id.into(),
+        label: p.label.into(),
+        state: state.into(),
+        status,
+        detail: format!("For {}", p.used_by),
+        button: btn,
+        added_ms: cred.filter(|_| busy.is_none()).map(|k| k.added_ms),
+        sign_out_envs: std::iter::once(p.env)
+            .chain(p.also.iter().copied())
+            .filter(|e| input.key(e).is_some())
+            .map(Into::into)
+            .collect(),
+    }
+}
+
+/// The page on a Mac.
+pub fn view(input: &ConnectorsInput) -> ConnectorsView {
+    view_on(input, SpaceOs::Macos)
+}
+
+/// [`view`] in a shell on `os`.
+pub fn view_on(input: &ConnectorsInput, os: SpaceOs) -> ConnectorsView {
+    let notice = notice(input);
+    let can_edit = notice.is_none();
+    let apps: Vec<ConnectorAppRow> = input
+        .apps
+        .iter()
+        .filter(|a| a.installed)
+        .map(|a| app_row(input, a))
+        .collect();
+    let mut others: Vec<&AgentKeyInput> = input
+        .keys
+        .keys
+        .iter()
+        .filter(|k| !provider_env(&k.env))
+        .collect();
+    others.sort_by(|a, b| a.env.cmp(&b.env));
+    let this = os.this_machine_lower();
+    let place = vault(os).map(|v| format!(" in {v}")).unwrap_or_default();
+    ConnectorsView {
+        apps_title: "Coding apps".into(),
+        apps_empty: apps
+            .is_empty()
+            .then(|| "We didn't find a coding app yet. Install one and Cua will notice.".into()),
+        apps,
+        auto_label: "Set up new apps automatically".into(),
+        auto_help: "When you install another coding app, Cua adds itself and tells you.".into(),
+        auto: input.auto,
+        providers_title: "Providers".into(),
+        providers_footer: format!(
+            "Sign-ins and keys stay on {this}{place}. Each one is only given to the apps that use it."
+        ),
+        providers: PROVIDERS
+            .iter()
+            .map(|p| provider_row(input, p, can_edit))
+            .collect(),
+        others: others
+            .into_iter()
+            .map(|k| AgentKeyRow {
+                env: k.env.clone(),
+                provider: "other".into(),
+                title: k.env.clone(),
+                detail: format!("For apps that read {}.", k.env),
+                set: true,
+                status: dots(k),
+                added_ms: Some(k.added_ms),
+                action_label: "Replace".into(),
+                remove_label: Some("Remove".into()),
+            })
+            .collect(),
+        add_other_label: "Add another key".into(),
+        other_help: "For another provider, save its key under the variable its app reads, like \
+                     GEMINI_API_KEY."
+            .into(),
+        can_edit,
+        notice,
+        added_label: "Added".into(),
+    }
+}
+
+/// What one Connect on an app does, in order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectPlan {
+    /// Add Cua's skills and MCP server (`agents.connect`).
+    pub tools: bool,
+    /// Run the app's own token command (`agents.connect` with `signIn`): one
+    /// browser approval.
+    pub app_token: bool,
+    /// Run the app's own device-code sign-in (`agents.signInStart`, then
+    /// `agents.signInWait`): a code to show, entered on the provider's page.
+    pub device: bool,
+    /// Then open this provider's Connect sheet (the app has no token
+    /// command of its own).
+    pub provider: Option<String>,
+    /// The provider the token command signs in to (its row shows the approval too).
+    pub token_provider: Option<String>,
+}
+
+/// What Connect on `agent` does now.
+pub fn connect_plan(input: &ConnectorsInput, agent: &str) -> ConnectPlan {
+    let app = input.app(agent).filter(|a| a.installed);
+    let configured = app.is_some_and(|a| a.configured);
+    let signed_in = app_signed_in(input, agent);
+    let s = app_sign_in(agent);
+    // The app's own token command runs on This Mac: only where the app is.
+    let app_token = !signed_in
+        && app.is_some()
+        && s.is_some_and(|s| matches!(s.way, Some(Way::AppToken { .. })));
+    let device = !signed_in
+        && app.is_some()
+        && s.is_some_and(|s| matches!(s.way, Some(Way::AppDevice { .. })));
+    let provider = if signed_in || app_token || device {
+        None
+    } else {
+        s.and_then(|s| s.providers.first())
+            .map(|p| (*p).to_string())
+    };
+    ConnectPlan {
+        // Cua's tools go into the app where it is on this computer.
+        tools: app.is_some() && !configured,
+        app_token,
+        device,
+        provider,
+        token_provider: if app_token || device {
+            s.and_then(|s| s.providers.first())
+                .map(|p| (*p).to_string())
+        } else {
+            None
+        },
+    }
+}
+
+/// The provider ids `agent` signs in to (any one is enough; empty: it signs in on its own).
+pub fn app_providers(agent: &str) -> Vec<String> {
+    app_sign_in(agent)
+        .map(|s| s.providers.iter().map(|p| (*p).to_string()).collect())
+        .unwrap_or_default()
+}
+
+/// Whether `agent` has a sign-in it can use in a Space now.
+pub fn signed_in(input: &ConnectorsInput, agent: &str) -> bool {
+    app_signed_in(input, agent)
+}
+
+/// A provider's name ("Anthropic").
+pub fn provider_label(id: &str) -> Option<&'static str> {
+    provider(id).map(|p| p.label)
+}
+
+/// One way to connect a provider, as its sheet shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderWay {
+    /// `app-token`, `key`, `shell`.
+    pub id: String,
+    pub label: String,
+    pub help: String,
+    pub button: String,
+    /// For `app-token`: the app whose command runs (`agents.connect` with `signIn`).
+    pub app: Option<String>,
+    /// For `shell`: the variable read from the shell.
+    pub env: Option<String>,
+}
+
+/// A provider's Connect sheet.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderSheetView {
+    pub provider: String,
+    pub title: String,
+    pub lede: String,
+    pub ways: Vec<ProviderWay>,
+    pub cancel_label: String,
+    /// The key field, when the person picks Paste a key.
+    pub key_label: String,
+    pub key_placeholder: String,
+    pub key_help: String,
+    pub save_label: String,
+    /// What `agentKeys.set` gets with a pasted key: `anthropic`, `openai`, or `other` with `key_env`.
+    pub key_provider: String,
+    pub key_env: Option<String>,
+}
+
+/// The sheet for `provider` (None: an unknown provider).
+pub fn provider_sheet(input: &ConnectorsInput, provider_id: &str) -> Option<ProviderSheetView> {
+    provider_sheet_on(input, provider_id, SpaceOs::Macos)
+}
+
+/// [`provider_sheet`] in a shell on `os`.
+pub fn provider_sheet_on(
+    input: &ConnectorsInput,
+    provider_id: &str,
+    os: SpaceOs,
+) -> Option<ProviderSheetView> {
+    let p = provider(provider_id)?;
+    let installed = |app: &str| input.app(app).is_some_and(|a| a.installed);
+    let ways = p
+        .ways
+        .iter()
+        .filter_map(|w| match *w {
+            Way::AppToken {
+                app, label, help, ..
+            } => installed(app).then(|| ProviderWay {
+                id: "app-token".into(),
+                label: label.into(),
+                help: help.into(),
+                button: "Sign in".into(),
+                app: Some(app.into()),
+                env: None,
+            }),
+            Way::AppDevice {
+                app, label, help, ..
+            } => installed(app).then(|| ProviderWay {
+                id: "app-device".into(),
+                label: label.into(),
+                help: help.into(),
+                button: "Sign in".into(),
+                app: Some(app.into()),
+                env: None,
+            }),
+            Way::Key => Some(ProviderWay {
+                id: "key".into(),
+                label: "Paste an API key".into(),
+                help: p.key_help.into(),
+                button: "Paste key".into(),
+                app: None,
+                env: None,
+            }),
+            Way::Shell => input
+                .shell_keys
+                .iter()
+                .any(|k| k == p.env)
+                .then(|| ProviderWay {
+                    id: "shell".into(),
+                    label: format!("Use {} from your shell", p.env),
+                    help: "Cua saves a copy now. It doesn't follow later changes in your shell."
+                        .into(),
+                    button: "Use it".into(),
+                    app: None,
+                    env: Some(p.env.into()),
+                }),
+        })
+        .collect();
+    let this = os.this_machine_lower();
+    let place = vault(os).map(|v| format!("in {v} ")).unwrap_or_default();
+    Some(ProviderSheetView {
+        provider: p.id.into(),
+        title: format!("Connect {}", p.label),
+        lede: format!("For {}", p.used_by),
+        ways,
+        cancel_label: "Cancel".into(),
+        key_label: "API key".into(),
+        key_placeholder: p.placeholder.into(),
+        key_help: format!("It's saved {place}on {this} and won't be shown again."),
+        save_label: "Save".into(),
+        key_provider: if matches!(p.id, "anthropic" | "openai") {
+            p.id
+        } else {
+            "other"
+        }
+        .into(),
+        key_env: (!matches!(p.id, "anthropic" | "openai")).then(|| p.env.into()),
+    })
+}
+
+/// A switch on an app's page.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectorToggle {
+    /// `skills`, `mcp`, `auto`.
+    pub id: String,
+    pub label: String,
+    pub help: String,
+    pub on: bool,
+    pub enabled: bool,
+}
+
+/// The sign-in part of an app's page.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectorSignIn {
+    /// "Signs in with Anthropic".
+    pub title: String,
+    /// The provider row's status for it ("Claude sign-in, for Claude Code", "Not connected").
+    pub status: String,
+    pub connected: bool,
+    /// How Connect signs it in ("Claude sign-in, through claude setup-token").
+    pub way: String,
+    /// The provider it uses (for Sign in and Sign out).
+    pub provider: String,
+    pub button: ConnectorButton,
+}
+
+/// One app's page.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppDetailView {
+    pub agent: String,
+    pub name: String,
+    pub back_label: String,
+    /// Under the title: "Connected", "Not connected", or what is missing.
+    pub status: String,
+    pub connected: bool,
+    /// Connect, while not connected.
+    pub connect: Option<ConnectorButton>,
+    pub tools_title: String,
+    pub toggles: Vec<ConnectorToggle>,
+    pub sign_in_title: String,
+    /// Absent for an app that signs in on its own.
+    pub sign_in: Option<ConnectorSignIn>,
+    /// Instead of `sign_in`: the app signs in on its own.
+    pub sign_in_note: Option<String>,
+    pub settings_file_label: String,
+    pub settings_file: Option<String>,
+    /// "Remove Cua from Claude Code", while Cua is in it.
+    pub remove_label: Option<String>,
+}
+
+fn way_text(app: &str) -> &'static str {
+    match app {
+        "claude-code" => {
+            "Connect runs claude setup-token: one browser approval, using your Claude plan. Or connect Anthropic with an API key."
+        }
+        "codex" => {
+            "Connect signs Codex in with ChatGPT: a code to enter on openai.com, using your ChatGPT plan. Or connect OpenAI with an API key."
+        }
+        "copilot-cli" => "Connect asks for a GitHub token with the Copilot Requests permission.",
+        _ => "It uses whichever of these providers you connect.",
+    }
+}
+
+/// `agent`'s page (None: not on this computer).
+pub fn app_detail(input: &ConnectorsInput, agent: &str) -> Option<AppDetailView> {
+    let a = input.app(agent)?;
+    let row = app_row(input, a);
+    let can_edit = notice(input).is_none();
+    let busy = input.busy(&format!("app:{agent}")).is_some();
+    let mut toggles = vec![ConnectorToggle {
+        id: "skills".into(),
+        label: "Cua skills".into(),
+        help: format!("Teaches {} how to use your Spaces.", a.name),
+        on: a.skills,
+        enabled: !busy,
+    }];
+    if let Some(on) = a.mcp {
+        toggles.push(ConnectorToggle {
+            id: "mcp".into(),
+            label: "Cua tools (MCP)".into(),
+            help: format!("Lets {} open, use and share your Spaces.", a.name),
+            on,
+            enabled: !busy,
+        });
+    }
+    toggles.push(ConnectorToggle {
+        id: "auto".into(),
+        label: "Keep it set up".into(),
+        help: format!("If {} changes its settings, Cua adds itself again.", a.name),
+        on: !input.off.contains(&a.agent),
+        enabled: !busy,
+    });
+    let sign_in = app_sign_in(agent).map(|s| {
+        // The provider it uses: the first connected one, else the first.
+        let pid = s
+            .providers
+            .iter()
+            .find(|p| provider_connected(input, p))
+            .or(s.providers.first())
+            .copied()
+            .unwrap_or_default();
+        let p = provider(pid);
+        let prow = p.map(|p| provider_row(input, p, can_edit));
+        let connected = prow.as_ref().is_some_and(|r| r.state == "connected");
+        let names: Vec<&str> = s
+            .providers
+            .iter()
+            .filter_map(|p| provider(p))
+            .map(|p| p.label)
+            .collect();
+        ConnectorSignIn {
+            title: format!("Signs in with {}", names.join(" or ")),
+            status: prow.as_ref().map(|r| r.status.clone()).unwrap_or_default(),
+            connected,
+            way: way_text(agent).into(),
+            provider: pid.into(),
+            button: if connected {
+                button("sign-out", "Sign out", can_edit && !busy)
+            } else {
+                button("sign-in", "Sign in", can_edit && !busy)
+            },
+        }
+    });
+    let sign_in_note = sign_in.is_none().then(|| {
+        format!(
+            "{} signs in on its own. Cua doesn't need a sign-in for it.",
+            a.name
+        )
+    });
+    Some(AppDetailView {
+        agent: a.agent.clone(),
+        name: a.name.clone(),
+        back_label: "Connectors".into(),
+        status: match row.state.as_str() {
+            "connected" => "Connected".into(),
+            _ => row.line.clone().unwrap_or_else(|| "Not connected".into()),
+        },
+        connected: row.state == "connected",
+        connect: row.button.filter(|_| row.state != "connected"),
+        tools_title: format!("Cua in {}", a.name),
+        toggles,
+        sign_in_title: "Sign-in".into(),
+        sign_in,
+        sign_in_note,
+        settings_file_label: "Settings file".into(),
+        settings_file: a.mcp_config.clone(),
+        remove_label: (a.skills || a.mcp == Some(true))
+            .then(|| format!("Remove Cua from {}", a.name)),
+    })
+}
+
+/// The card a task shows when its app isn't connected yet.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetupCardView {
+    pub title: String,
+    pub body: String,
+    /// "Connect Claude Code".
+    pub connect_label: String,
+    /// While Connect runs.
+    pub connecting_label: String,
+    /// Once connected (the task starts again on its own).
+    pub connected_label: String,
+    pub retry_label: String,
+    pub change_label: String,
+    pub details_label: String,
+}
+
+/// The card for a task whose app `agent` (called `name`) can't sign in.
+pub fn setup_card(input: &ConnectorsInput, agent: &str, name: &str) -> SetupCardView {
+    let plan = connect_plan(input, agent);
+    let provider = app_sign_in(agent)
+        .and_then(|s| s.providers.first())
+        .and_then(|p| provider(p))
+        .map(|p| p.label);
+    let body = match provider {
+        Some(p) if plan.app_token => format!(
+            "{name} needs a sign-in to {p} to work here. Connect it once: approve in your browser, and every Space can use it."
+        ),
+        Some(p) => format!(
+            "{name} needs a sign-in to {p} to work here. Connect it once and every Space can use it."
+        ),
+        None => format!("Connect {name} once and every Space can use it."),
+    };
+    SetupCardView {
+        title: format!("Connect {name} to start"),
+        body,
+        connect_label: format!("Connect {name}"),
+        connecting_label: if plan.app_token {
+            "Approve in your browser…".into()
+        } else if plan.device {
+            "Enter the code in your browser…".into()
+        } else {
+            "Connecting…".into()
+        },
+        connected_label: format!("{name} is connected. Starting again…"),
+        retry_label: "Try again".into(),
+        change_label: "Change computer".into(),
+        details_label: "Details".into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn app(agent: &str, name: &str, configured: bool) -> ConnectorAppInput {
+        ConnectorAppInput {
+            agent: agent.into(),
+            name: name.into(),
+            installed: true,
+            configured,
+            skills: configured,
+            mcp: Some(configured),
+            mcp_config: Some(format!("~/.{agent}/settings.json")),
+        }
+    }
+
+    fn key(env: &str, last4: &str) -> AgentKeyInput {
+        AgentKeyInput {
+            provider: if env == "ANTHROPIC_API_KEY" {
+                "anthropic".into()
+            } else if env == "OPENAI_API_KEY" {
+                "openai".into()
+            } else {
+                "other".into()
+            },
+            env: env.into(),
+            last4: last4.into(),
+            added_ms: 1_000,
+        }
+    }
+
+    fn input() -> ConnectorsInput {
+        ConnectorsInput {
+            apps: vec![
+                app("claude-code", "Claude Code", false),
+                app("codex", "OpenAI Codex", true),
+                app("vscode", "VS Code (Copilot agent mode)", false),
+            ],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn apps_start_with_connect_and_providers_not_connected() {
+        let v = view(&input());
+        assert_eq!(v.apps_title, "Coding apps");
+        assert_eq!(v.providers_title, "Providers");
+        let claude = &v.apps[0];
+        assert_eq!(claude.state, "not-connected");
+        assert_eq!(claude.button.as_ref().unwrap().label, "Connect");
+        assert_eq!(claude.connected_label, None);
+        assert_eq!(claude.open_label, "Claude Code settings");
+        // Codex has Cua but no OpenAI sign-in: still Connect, with what's missing.
+        let codex = &v.apps[1];
+        assert_eq!(codex.state, "not-connected");
+        assert_eq!(codex.line.as_deref(), Some("Needs a sign-in to OpenAI."));
+        let ids: Vec<_> = v.providers.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, ["anthropic", "openai", "github"]);
+        assert!(
+            v.providers
+                .iter()
+                .all(|p| p.status == "Not connected" && p.button.label == "Connect")
+        );
+    }
+
+    #[test]
+    fn an_app_that_signs_in_on_its_own_is_connected_with_cua_in_it() {
+        let mut i = input();
+        i.apps[2].configured = true;
+        let v = view(&i);
+        assert_eq!(v.apps[2].state, "connected");
+        assert_eq!(v.apps[2].connected_label.as_deref(), Some("Connected"));
+        assert!(v.apps[2].button.is_none());
+    }
+
+    #[test]
+    fn connecting_claude_code_connects_anthropic_too() {
+        let mut i = input();
+        i.apps[0].configured = true;
+        i.keys.keys.push(key("CLAUDE_CODE_OAUTH_TOKEN", "AAAA"));
+        let v = view(&i);
+        assert_eq!(v.apps[0].state, "connected");
+        let a = &v.providers[0];
+        assert_eq!(a.state, "connected");
+        assert_eq!(a.status, "Claude sign-in, for Claude Code");
+        assert_eq!(a.button.label, "Sign out");
+        assert_eq!(a.sign_out_envs, ["CLAUDE_CODE_OAUTH_TOKEN"]);
+        // The sign-in token is the provider's, not an Other key.
+        assert!(v.others.is_empty());
+    }
+
+    #[test]
+    fn a_pasted_key_reads_with_its_last_four_and_others_follow() {
+        let mut i = input();
+        i.keys.keys.push(key("OPENAI_API_KEY", "3f9a"));
+        i.keys.keys.push(key("MISTRAL_API_KEY", "9999"));
+        let v = view(&i);
+        assert_eq!(
+            v.providers[1].status,
+            "API key \u{2022}\u{2022}\u{2022}\u{2022} 3f9a"
+        );
+        assert_eq!(v.apps[1].state, "connected");
+        assert_eq!(v.others.len(), 1);
+        assert_eq!(v.others[0].env, "MISTRAL_API_KEY");
+    }
+
+    #[test]
+    fn busy_and_failed_rows_say_so() {
+        let mut i = input();
+        i.busy.push(ConnectorBusy {
+            id: "app:claude-code".into(),
+            step: "signing-in".into(),
+        });
+        i.busy.push(ConnectorBusy {
+            id: "provider:anthropic".into(),
+            step: "signing-in".into(),
+        });
+        i.failures.push(ConnectorFailure {
+            id: "app:codex".into(),
+            line: "Couldn't add Cua to ~/.codex/config.toml.".into(),
+        });
+        let v = view(&i);
+        assert_eq!(v.apps[0].state, "connecting");
+        assert_eq!(v.apps[0].line.as_deref(), Some("Approve in your browser…"));
+        assert!(!v.apps[0].button.as_ref().unwrap().enabled);
+        assert_eq!(v.providers[0].state, "connecting");
+        assert_eq!(v.providers[0].status, "Approve in your browser…");
+        assert_eq!(v.apps[1].state, "failed");
+        assert_eq!(v.apps[1].button.as_ref().unwrap().label, "Try again");
+    }
+
+    #[test]
+    fn connect_uses_only_official_sign_ins() {
+        let i = input();
+        // Claude Code: its own token command, once.
+        assert_eq!(
+            connect_plan(&i, "claude-code"),
+            ConnectPlan {
+                tools: true,
+                app_token: true,
+                device: false,
+                provider: None,
+                token_provider: Some("anthropic".into())
+            }
+        );
+        // Codex: its own device-code sign-in, in a folder Cua owns.
+        assert_eq!(
+            connect_plan(&i, "codex"),
+            ConnectPlan {
+                tools: false,
+                app_token: false,
+                device: true,
+                provider: None,
+                token_provider: Some("openai".into())
+            }
+        );
+        // Not on This Mac: the OpenAI sheet asks for a key.
+        let mut no_codex = i.clone();
+        no_codex.apps.retain(|a| a.agent != "codex");
+        assert_eq!(
+            connect_plan(&no_codex, "codex").provider.as_deref(),
+            Some("openai")
+        );
+        // Not on This Mac: no token command to run here; the provider's sheet asks.
+        let mut away = i.clone();
+        away.apps.retain(|a| a.agent != "claude-code");
+        assert_eq!(
+            connect_plan(&away, "claude-code"),
+            ConnectPlan {
+                tools: false,
+                app_token: false,
+                device: false,
+                provider: Some("anthropic".into()),
+                token_provider: None
+            }
+        );
+        // An app that signs in on its own: only Cua's tools.
+        assert_eq!(
+            connect_plan(&i, "vscode"),
+            ConnectPlan {
+                tools: true,
+                app_token: false,
+                device: false,
+                provider: None,
+                token_provider: None
+            }
+        );
+    }
+
+    #[test]
+    fn provider_sheet_offers_sign_in_key_and_shell() {
+        let mut i = input();
+        i.shell_keys.push("ANTHROPIC_API_KEY".into());
+        let s = provider_sheet(&i, "anthropic").unwrap();
+        assert_eq!(s.title, "Connect Anthropic");
+        let ids: Vec<_> = s.ways.iter().map(|w| w.id.as_str()).collect();
+        assert_eq!(ids, ["app-token", "key", "shell"]);
+        assert_eq!(s.ways[0].app.as_deref(), Some("claude-code"));
+        assert_eq!(s.ways[2].label, "Use ANTHROPIC_API_KEY from your shell");
+        // Without Claude Code there is no Claude sign-in to offer; without the
+        // variable, no shell row.
+        i.apps.retain(|a| a.agent != "claude-code");
+        i.shell_keys.clear();
+        let s = provider_sheet(&i, "anthropic").unwrap();
+        let ids: Vec<_> = s.ways.iter().map(|w| w.id.as_str()).collect();
+        assert_eq!(ids, ["key"]);
+        assert_eq!((s.key_provider.as_str(), s.key_env), ("anthropic", None));
+        let g = provider_sheet(&i, "github").unwrap();
+        assert_eq!(
+            (g.key_provider.as_str(), g.key_env.as_deref()),
+            ("other", Some("COPILOT_GITHUB_TOKEN"))
+        );
+        assert!(provider_sheet(&i, "nope").is_none());
+    }
+
+    #[test]
+    fn app_detail_has_switches_and_its_sign_in() {
+        let mut i = input();
+        i.apps[0].configured = true;
+        i.apps[0].skills = true;
+        i.apps[0].mcp = Some(true);
+        let d = app_detail(&i, "claude-code").unwrap();
+        assert_eq!(d.tools_title, "Cua in Claude Code");
+        let ids: Vec<_> = d.toggles.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, ["skills", "mcp", "auto"]);
+        assert!(d.toggles.iter().all(|t| t.on));
+        let s = d.sign_in.as_ref().unwrap();
+        assert_eq!(s.title, "Signs in with Anthropic");
+        assert_eq!(s.button.label, "Sign in");
+        assert!(!d.connected);
+        assert_eq!(d.status, "Needs a sign-in to Anthropic.");
+        assert_eq!(
+            d.remove_label.as_deref(),
+            Some("Remove Cua from Claude Code")
+        );
+        // Signed in: Sign out, and Connected.
+        i.keys.keys.push(key("CLAUDE_CODE_OAUTH_TOKEN", "AAAA"));
+        let d = app_detail(&i, "claude-code").unwrap();
+        assert!(d.connected);
+        assert_eq!(d.sign_in.unwrap().button.label, "Sign out");
+        // Turned off: Keep it set up is off.
+        i.off.push("claude-code".into());
+        let d = app_detail(&i, "claude-code").unwrap();
+        assert!(!d.toggles.iter().find(|t| t.id == "auto").unwrap().on);
+        // An app that signs in on its own says so.
+        let d = app_detail(&i, "vscode").unwrap();
+        assert!(d.sign_in.is_none());
+        assert!(d.sign_in_note.unwrap().contains("signs in on its own"));
+    }
+
+    #[test]
+    fn setup_card_names_the_app() {
+        let i = input();
+        let c = setup_card(&i, "claude-code", "Claude Code");
+        assert_eq!(c.title, "Connect Claude Code to start");
+        assert_eq!(c.connect_label, "Connect Claude Code");
+        assert_eq!(c.connecting_label, "Approve in your browser…");
+        assert!(c.body.contains("sign-in to Anthropic"));
+        let c = setup_card(&i, "codex", "OpenAI Codex");
+        assert_eq!(c.connect_label, "Connect OpenAI Codex");
+        assert_eq!(c.connecting_label, "Enter the code in your browser…");
+    }
+
+    #[test]
+    fn notice_turns_buttons_off() {
+        let mut i = input();
+        i.keys.error = Some("the daemon isn't running".into());
+        let v = view(&i);
+        assert!(!v.can_edit);
+        assert_eq!(
+            v.notice.as_deref(),
+            Some("Couldn't read your sign-ins: the daemon isn't running")
+        );
+        assert!(v.providers.iter().all(|p| !p.button.enabled));
+    }
+}

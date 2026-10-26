@@ -124,7 +124,23 @@ export function agentsMethods({ model }: BridgeContext): Handlers {
     },
     "agents.disconnect": async (args) => {
       needSetup();
-      const out = await model.agents.coding.setup!.disconnectJson(strings(args, "agents"), args.signIn === true);
+      const setup = model.agents.coding.setup!;
+      // Some parts only (an app's page's switches), when the page says which.
+      const out =
+        typeof args.skills === "boolean" || typeof args.mcp === "boolean"
+          ? await setup.disconnectPartsJson(strings(args, "agents"), args.skills === true, args.mcp === true, args.signIn === true)
+          : await setup.disconnectJson(strings(args, "agents"), args.signIn === true);
+      await model.agents.coding.reload();
+      return JSON.parse(out);
+    },
+    // An agent's device-code sign-in made for Cua (Codex), started and waited in two calls.
+    "agents.signInStart": async (args) => {
+      needSetup();
+      return JSON.parse(await model.agents.coding.setup!.deviceSignInStartJson(string(args, "agent")));
+    },
+    "agents.signInWait": async (args) => {
+      needSetup();
+      const out = await model.agents.coding.setup!.deviceSignInWaitJson(string(args, "id"));
       await model.agents.coding.reload();
       return JSON.parse(out);
     },

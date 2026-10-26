@@ -97,11 +97,11 @@ pub struct SetupCmdArgs {
     /// names the cua-driver binary.
     #[arg(long)]
     pub cua_driver: bool,
-    /// Also copy each agent's sign-in to Keyvault on This Mac, so its runs
-    /// in your Spaces use it: Codex's ChatGPT sign-in (`~/.codex/auth.json`),
-    /// Claude Code's `claude setup-token` (one browser approval), Hermes'
-    /// provider key (`~/.hermes/.env`). The agent's own sign-in is never
-    /// changed.
+    /// Also make a sign-in for each agent's runs in your Spaces and keep it
+    /// in Keyvault on This Mac: Claude Code's `claude setup-token` (one
+    /// browser approval). Codex signs in with a code from the Cua Spaces app
+    /// (Settings, Connectors); Hermes uses the providers connected there.
+    /// The agent's own sign-in files are never read or changed.
     #[arg(long, conflicts_with = "cua_driver")]
     pub sign_in: bool,
 }

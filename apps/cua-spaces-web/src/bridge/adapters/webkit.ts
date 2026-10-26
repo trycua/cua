@@ -710,7 +710,10 @@ export function createWebkitAdapter(
     "agents.connect": async ({ agents, signIn, skills, mcp }) =>
       // No timeout: Claude Code's sign-in waits for its one browser approval.
       list(await request("agents.connect", { agents, signIn, skills: skills ?? true, mcp: mcp ?? true }, null)) as ConnectResult[],
-    "agents.disconnect": ({ agents, signIn }) => request<{ removed_sign_ins: string[] }>("agents.disconnect", { agents, signIn }),
+    "agents.disconnect": ({ agents, signIn, skills, mcp }) =>
+      request<{ removed_sign_ins: string[] }>("agents.disconnect", { agents, signIn, ...(skills === undefined ? {} : { skills }), ...(mcp === undefined ? {} : { mcp }) }),
+    "agents.signInStart": ({ agent }) => request<OpResult<"agents.signInStart">>("agents.signInStart", { agent }),
+    "agents.signInWait": ({ id }) => request<OpResult<"agents.signInWait">>("agents.signInWait", { id }),
     "session.openExternal": async ({ url }) => {
       win.open?.(url, "_blank", "noopener");
       return null;

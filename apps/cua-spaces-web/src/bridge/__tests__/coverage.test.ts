@@ -71,6 +71,8 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "agents.status": { refresh: true },
   "agents.connect": { agents: ["codex"], signIn: true },
   "agents.disconnect": { agents: ["codex"], signIn: true },
+  "agents.signInStart": { agent: "codex" },
+  "agents.signInWait": { id: "codex-1" },
   ...AGENT_DETAIL_ARGS,
   ...NEW_SPACE_ARGS,
   ...AGENT_KEYS_ARGS,

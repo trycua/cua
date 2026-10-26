@@ -3175,6 +3175,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "cua-agent-setup",
+ "cua-agents",
  "cua-auth",
  "cua-create-failure",
  "cua-home",

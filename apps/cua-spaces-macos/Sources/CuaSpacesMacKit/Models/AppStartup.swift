@@ -742,6 +742,15 @@ public final class PendingAgentSetup: AgentSetupRunning, @unchecked Sendable {
     public func disconnectJson(agents: [String], signIn: Bool) async throws -> String {
         try await s().disconnectJson(agents: agents, signIn: signIn)
     }
+    public func disconnectPartsJson(agents: [String], skills: Bool, mcp: Bool, signIn: Bool) async throws -> String {
+        try await s().disconnectPartsJson(agents: agents, skills: skills, mcp: mcp, signIn: signIn)
+    }
+    public func deviceSignInStartJson(agent: String) async throws -> String {
+        try await s().deviceSignInStartJson(agent: agent)
+    }
+    public func deviceSignInWaitJson(id: String) async throws -> String {
+        try await s().deviceSignInWaitJson(id: id)
+    }
 }
 
 /// This Mac's relay devices until the SDK is in.

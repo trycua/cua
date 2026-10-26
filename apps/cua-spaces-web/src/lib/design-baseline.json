@@ -133,7 +133,7 @@
     "outlined-box": 1
   },
   "components/space-thread/identity.tsx": {
-    "radius": 2
+    "radius": 1
   },
   "components/space-thread/members-panel.tsx": {
     "radius": 1,

@@ -25504,11 +25504,28 @@ export interface AgentSetupLike {
  */
     detect(): Array<AgentInfo>;
 /**
+ * Starts `agent`'s device-code sign-in made for Cua (Codex: `codex login
+ * --device-auth` in a folder Cua owns). JSON `{id, url, code}`: show the
+ * link and the code, then wait with [`Self::device_sign_in_wait_json`].
+ */
+    deviceSignInStartJson(agent: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<string>;
+/**
+ * Waits for a device sign-in to be approved and saves it into Keyvault on
+ * This Mac. JSON: `{imported, refused, line}` (as Connect's `sign_in`).
+ */
+    deviceSignInWaitJson(id: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<string>;
+/**
  * Disconnect: what Connect did, undone (the previous config entry back
  * from Cua's record, the skills, and with `sign_in` the copy in
  * Keyvault). JSON `{outcomes, removed_sign_ins}`.
  */
     disconnectJson(agents: Array<string>, signIn: boolean, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<string>;
+/**
+ * Disconnect of some parts only (an app's page's switches): Cua's skills
+ * and/or its MCP entry, and with `sign_in` the copy in Keyvault. JSON
+ * `{outcomes, removed_sign_ins}`.
+ */
+    disconnectPartsJson(agents: Array<string>, skills: boolean, mcp: boolean, signIn: boolean, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<string>;
 /**
  * Installs `skills` (empty: all bundled) for `agents`. Folders cua did
  * not write are skipped unless `force`.
@@ -25702,6 +25719,79 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
+ * Starts `agent`'s device-code sign-in made for Cua (Codex: `codex login
+ * --device-auth` in a folder Cua owns). JSON `{id, url, code}`: show the
+ * link and the code, then wait with [`Self::device_sign_in_wait_json`].
+ */
+    async deviceSignInStartJson(agent: string, asyncOpts_?: { signal: AbortSignal }): Promise<string> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_agentsetup_device_sign_in_start_json(
+                    uniffiTypeAgentSetupObjectFactory.clonePointer(this),FfiConverterString.lower(agent, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
+ * Waits for a device sign-in to be approved and saves it into Keyvault on
+ * This Mac. JSON: `{imported, refused, line}` (as Connect's `sign_in`).
+ */
+    async deviceSignInWaitJson(id: string, asyncOpts_?: { signal: AbortSignal }): Promise<string> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_agentsetup_device_sign_in_wait_json(
+                    uniffiTypeAgentSetupObjectFactory.clonePointer(this),FfiConverterString.lower(id, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
  * Disconnect: what Connect did, undone (the previous config entry back
  * from Cua's record, the skills, and with `sign_in` the copy in
  * Keyvault). JSON `{outcomes, removed_sign_ins}`.
@@ -25714,6 +25804,43 @@ private constructor(pointer: UniffiHandle) {
             /*rustFutureFunc:*/ () => {
                 return nativeModule().uniffi_cua_sdk_fn_method_agentsetup_disconnect_json(
                     uniffiTypeAgentSetupObjectFactory.clonePointer(this),FfiConverterSequenceString.lower(agents, nativeModule().rustbuffer_alloc),FfiConverterBool.lower(signIn, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
+ * Disconnect of some parts only (an app's page's switches): Cua's skills
+ * and/or its MCP entry, and with `sign_in` the copy in Keyvault. JSON
+ * `{outcomes, removed_sign_ins}`.
+ */
+    async disconnectPartsJson(agents: Array<string>, skills: boolean, mcp: boolean, signIn: boolean, asyncOpts_?: { signal: AbortSignal }): Promise<string> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_agentsetup_disconnect_parts_json(
+                    uniffiTypeAgentSetupObjectFactory.clonePointer(this),FfiConverterSequenceString.lower(agents, nativeModule().rustbuffer_alloc),FfiConverterBool.lower(skills, nativeModule().rustbuffer_alloc),FfiConverterBool.lower(mcp, nativeModule().rustbuffer_alloc),FfiConverterBool.lower(signIn, nativeModule().rustbuffer_alloc)
                 );
             },
             /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
@@ -46158,8 +46285,17 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_agentsetup_detect() !== 59369) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_agentsetup_detect");
     }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_agentsetup_device_sign_in_start_json() !== 18365) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_agentsetup_device_sign_in_start_json");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_agentsetup_device_sign_in_wait_json() !== 39143) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_agentsetup_device_sign_in_wait_json");
+    }
     if (nativeModule().uniffi_cua_sdk_checksum_method_agentsetup_disconnect_json() !== 14363) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_agentsetup_disconnect_json");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_agentsetup_disconnect_parts_json() !== 37278) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_agentsetup_disconnect_parts_json");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_agentsetup_install_skills() !== 40049) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_agentsetup_install_skills");

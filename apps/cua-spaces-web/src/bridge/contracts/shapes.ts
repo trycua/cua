@@ -805,6 +805,8 @@ const ConnectResultsShape = list(
   ),
 );
 const DisconnectShape = object({ removed_sign_ins: list(str) });
+const SignInStartShape = object({ id: str, url: str, code: str });
+const SignInWaitShape = object({ imported: any, refused: any, line: any });
 const AgentDetailShape = ref(
   "AgentDetailInput",
   obj<AgentDetailInput>()({
@@ -1187,6 +1189,8 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "agents.status": ConnectionReportShape,
   "agents.connect": ConnectResultsShape,
   "agents.disconnect": DisconnectShape,
+  "agents.signInStart": SignInStartShape,
+  "agents.signInWait": SignInWaitShape,
   "agents.detail": AgentDetailShape,
   "agents.readFile": AgentOpenFileShape,
   "agents.restoreFile": nul,
@@ -1268,6 +1272,8 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "agentKeys.list": AgentKeysShape,
   "agentKeys.set": AgentKeysShape,
   "agentKeys.remove": AgentKeysShape,
+  "agentKeys.shell": object({ names: list(str) }),
+  "agentKeys.fromShell": AgentKeysShape,
 
   "volume.overview": VolumeShape,
   "volume.storage": nullable(DriveStorageShape),
@@ -1673,6 +1679,8 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "agents.status": ConnectionReportShape,
   "agents.connect": ConnectResultsShape,
   "agents.disconnect": DisconnectShape,
+  "agents.signInStart": SignInStartShape,
+  "agents.signInWait": SignInWaitShape,
   "agents.setupDriver": OP_SHAPES["agents.setupDriver"],
   "agents.detail": AgentDetailShape,
   "agents.readFile": AgentOpenFileShape,
@@ -1685,6 +1693,8 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "agentKeys.list": AgentKeysWire,
   "agentKeys.set": AgentKeysWire,
   "agentKeys.remove": AgentKeysWire,
+  "agentKeys.shell": object({ names: list(str) }),
+  "agentKeys.fromShell": AgentKeysWire,
   "clouds.status": nullable(OP_SHAPES["clouds.status"]),
   "clouds.test": OP_SHAPES["clouds.test"],
   "clouds.connect": OP_SHAPES["clouds.connect"],

@@ -20,6 +20,8 @@ import { SpaceHeader } from "@/components/space-detail/space-header";
 import { SpaceCall } from "@/components/space-thread/space-call";
 import { StateLabel } from "@/components/state-dot";
 import { PageTip } from "@/components/tips";
+import { creatingThread } from "@/components/space-thread/queued";
+import { useAskTasks } from "@/lib/ask-first";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
@@ -104,6 +106,9 @@ function SpaceDetailPage() {
   // The Space's thread (CUA-2155). A daemon without it answers unsupported,
   // and the page keeps its classic layout; a create still in progress has none yet.
   const thread = useSpaceThread(space && !space.id.startsWith("pending:") ? space.id : null);
+  const askFirstOn = useFlag("spaces_ask_first_home");
+  // Ask first's tasks: a Space being made for one draws as the Space page in its creating state.
+  const tasks = useAskTasks();
   // Open on a creating row: once the create finished and the registry lists
   // the Space, its row (and this id) goes; follow it to the Space's own id.
   // Only a page that showed the row follows: the address of a row that is
@@ -399,15 +404,22 @@ function SpaceDetailPage() {
   const desktopPip = desktopRow?.actions.find((a) => a.id === "pip");
   const powerError = detail.powerError ? <p className="mb-4 text-[13px] text-destructive">{detail.powerError}</p> : null;
   // One tip at a time (the core's `tips.view`, place `space`).
-  const tip = <PageTip place="space" space={space} onShare={shareAction?.enabled ? share : undefined} />;
+  // A Space made for an Ask-first job is busy with its agent: no tip (it would also appear once ready and move the page).
+  const askSpace = askFirstOn && tasks.some((t) => t.pendingId === space.id || (t.inSpace && t.spaceId === space.id));
+  const tip = askSpace ? null : <PageTip place="space" space={space} onShare={shareAction?.enabled ? share : undefined} />;
   // In the call layout the tip sits directly on the stage and the rail: no gap under it, so the rail meets it flush.
-  const callTip = <PageTip place="space" space={space} onShare={shareAction?.enabled ? share : undefined} className="mb-0" />;
+  const callTip = askSpace ? null : <PageTip place="space" space={space} onShare={shareAction?.enabled ? share : undefined} className="mb-0" />;
 
   // The call layout: the desktop on top, the thread below, the people on the
   // right. A machine's own page (no desktop to call into) and a daemon
   // without the thread keep the classic page.
   // A create still in progress has no thread yet: its progress shows on the classic page.
-  if (!detail.desktopNote && thread.status !== "unsupported" && !space.id.startsWith("pending:")) {
+  // A Space being made for an Ask-first job: the same page in its creating state (progress on
+  // the stage, the job queued in the thread); a failed create keeps the classic page's fixes.
+  const creating = space.id.startsWith("pending:") && askFirstOn && state !== "failed" && tasks.some((t) => t.pendingId === space.id);
+  const callThread = creating ? creatingThread(space.id) : thread;
+  const later = "Available once the Space is ready";
+  if (!detail.desktopNote && callThread.status !== "unsupported" && (creating || !space.id.startsWith("pending:"))) {
     return (
       <>
         <SpaceCall
@@ -421,7 +433,9 @@ function SpaceDetailPage() {
               title={detail.title}
               place={place}
               power={
-                canPower(space)
+                creating
+                  ? { state: "pending", label: "Being made", onClick: () => {} }
+                  : canPower(space)
                   ? pending
                     ? { state: "pending", label: pending, onClick: () => {} }
                     : state === "stopped"
@@ -430,13 +444,13 @@ function SpaceDetailPage() {
                   : undefined
               }
               pip={
-                desktopPip
+                !creating && desktopPip
                   ? { id: desktopRow!.id, label: desktopPip.help ?? "Pop out", help: desktopPip.help ?? undefined, enabled: true, active: desktopPip.active, onClick: () => void onPip(desktopRow!) }
                   : undefined
               }
-              teleport={teleportAction ? { label: teleportAction.label, help: teleportAction.help ?? undefined, enabled: teleportAction.enabled, onClick: teleportApp } : undefined}
-              share={shareAction ? { label: shareAction.label, help: shareAction.help ?? undefined, enabled: shareAction.enabled, onClick: share } : undefined}
-              remove={canDelete(space) ? { label: detail.deleteLabel, enabled: true, onClick: () => setConfirm("delete") } : undefined}
+              teleport={creating ? { label: "Teleport an app", help: later, enabled: false, onClick: () => {} } : teleportAction ? { label: teleportAction.label, help: teleportAction.help ?? undefined, enabled: teleportAction.enabled, onClick: teleportApp } : undefined}
+              share={creating ? { label: "Share", help: later, enabled: false, onClick: () => {} } : shareAction ? { label: shareAction.label, help: shareAction.help ?? undefined, enabled: shareAction.enabled, onClick: share } : undefined}
+              remove={!creating && canDelete(space) ? { label: detail.deleteLabel, enabled: true, onClick: () => setConfirm("delete") } : undefined}
               dismiss={state === "failed" ? { label: "Remove", enabled: true, onClick: dismiss } : undefined}
             />
           }
@@ -452,11 +466,12 @@ function SpaceDetailPage() {
           smallStage={surface("h-full", shownRow?.id ?? null, shownView?.app ?? null, false)}
           aspect={aspect}
           stageLabel={shownRow?.label ?? "Desktop"}
-          thread={thread}
+          thread={callThread}
+          creating={creating}
           facts={detail.facts}
           more={sections}
-          windows={stream?.rows.filter((r) => r.kind === "window") ?? []}
-          desktop={desktopRow ?? null}
+          windows={creating ? [] : (stream?.rows.filter((r) => r.kind === "window") ?? [])}
+          desktop={creating ? null : (desktopRow ?? null)}
           selected={shownRow?.id ?? null}
           onSelect={(row) => setShown(row.kind === "window" ? { spaceId: space.id, row: row.id } : null)}
           view={shownView}

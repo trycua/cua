@@ -17,11 +17,28 @@ const PROVIDERS = [
 
 const providerOf = (env: string): AgentKeyProvider => PROVIDERS.find((p) => p.env === env)?.id ?? "other";
 
-export function demoAgentKeysHandlers({ wait, stepMs, now }: { wait(ms: number): Promise<void>; stepMs: number; now: () => number }): DemoHandlers<
-  "agentKeys.list" | "agentKeys.set" | "agentKeys.remove"
-> {
-  let keys: AgentKeyInfo[] = [{ provider: "openai", env: "OPENAI_API_KEY", last4: "3f9a", addedMs: now() - 6 * 24 * 3600_000 }];
-  const report = (): AgentKeysReport => ({ keys: keys.map((k) => ({ ...k })), providers: PROVIDERS, available: true, unavailable: null });
+/** The demo's saved keys, shared with Connect (a sign-in Connect copies lands here, as in the daemon's store). */
+export interface DemoKeyStore {
+  keys: AgentKeyInfo[];
+}
+
+export const demoKeyStore = (now: () => number): DemoKeyStore => ({
+  keys: [{ provider: "openai", env: "OPENAI_API_KEY", last4: "3f9a", addedMs: now() - 6 * 24 * 3600_000 }],
+});
+
+export function demoAgentKeysHandlers({
+  wait,
+  stepMs,
+  now,
+  store = demoKeyStore(now),
+}: {
+  wait(ms: number): Promise<void>;
+  stepMs: number;
+  now: () => number;
+  store?: DemoKeyStore;
+}): DemoHandlers<"agentKeys.list" | "agentKeys.set" | "agentKeys.remove" | "agentKeys.shell" | "agentKeys.fromShell"> {
+  const keys = () => store.keys;
+  const report = (): AgentKeysReport => ({ keys: keys().map((k) => ({ ...k })), providers: PROVIDERS, available: true, unavailable: null });
   return {
     "agentKeys.list": () => report(),
     "agentKeys.set": async ({ provider, env, value }) => {
@@ -33,14 +50,25 @@ export function demoAgentKeysHandlers({ wait, stepMs, now }: { wait(ms: number):
       if (!v) throw new HostError("the key is empty");
       // The Keychain write.
       await wait(stepMs / 2);
-      keys = [...keys.filter((k) => k.env !== name), { provider: providerOf(name), env: name, last4: v.length >= 12 ? v.slice(-4) : "", addedMs: now() }].sort(
+      store.keys = [...keys().filter((k) => k.env !== name), { provider: providerOf(name), env: name, last4: v.length >= 12 ? v.slice(-4) : "", addedMs: now() }].sort(
         (a, b) => a.env.localeCompare(b.env),
       );
       return report();
     },
+    // The demo's shell exports an Anthropic key (`?demo=…` none needed): Use it saves a copy.
+    "agentKeys.shell": async () => {
+      await wait(stepMs);
+      return { names: ["ANTHROPIC_API_KEY"] };
+    },
+    "agentKeys.fromShell": async ({ env }) => {
+      if (env !== "ANTHROPIC_API_KEY") throw new HostError(`${env} isn't set in your shell`);
+      await wait(stepMs / 2);
+      store.keys = [...keys().filter((k) => k.env !== env), { provider: "anthropic", env, last4: "a91c", addedMs: now() }];
+      return report();
+    },
     "agentKeys.remove": async ({ env }) => {
       await wait(stepMs / 2);
-      keys = keys.filter((k) => k.env !== env);
+      store.keys = keys().filter((k) => k.env !== env);
       return report();
     },
   };

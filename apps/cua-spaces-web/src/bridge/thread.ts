@@ -180,7 +180,7 @@ export interface SpaceThread {
   /** Reads the page before the oldest entry shown. */
   loadEarlier(): Promise<void>;
   /** Posts `text`; `view` says what the person is looking at in the Space (the main view's window). */
-  post(text: string, view?: ThreadView | null): Promise<void>;
+  post(text: string, view?: ThreadView | null): Promise<ThreadEntry | null>;
   answer(approval: number, approve: boolean): Promise<void>;
   /** Changes who can task, control and approve an agent (owners and admins). */
   setRights(name: string, rights: Partial<AgentRights>): Promise<void>;
@@ -334,11 +334,12 @@ export function useSpaceThread(spaceId: string | null): SpaceThread {
 
   const post = useCallback(
     async (text: string, view?: ThreadView | null) => {
-      if (!spaceId || !data || !text.trim()) return;
+      if (!spaceId || !data || !text.trim()) return null;
       const entry = await data.call("thread.post", { spaceId, text: text.trim(), ...(view ? { view } : {}) });
       if (entry) merge([entry]);
       // Your own message: everything above it is read; the divider goes.
       setReadSeq(null);
+      return entry ?? null;
     },
     [data, spaceId, merge],
   );

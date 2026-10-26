@@ -25,13 +25,8 @@
         "version": "0.33.4-2"
       },
       "omarchy_plugin": {
-        "broken_pins": {
-          "hyprutils": {
-            "channel": "0.14.3-1",
-            "pinned": "0.14.2-1"
-          }
-        },
-        "installable": false,
+        "broken_pins": {},
+        "installable": true,
         "pins": {
           "aquamarine": "0.15.1-1",
           "glibc": "2.44+r50+g1848099f063e-1",
@@ -39,13 +34,13 @@
           "hyprgraphics": "0.5.1-4",
           "hyprland": "0.56.2-4",
           "hyprlang": "0.6.8-5",
-          "hyprutils": "0.14.2-1",
+          "hyprutils": "0.14.3-1",
           "libgcc": "16.2.1+r23+gd564253eb6c8-1",
           "libstdc++": "16.2.1+r23+gd564253eb6c8-1",
           "libxkbcommon": "1.13.2-1",
           "wayland": "1.26.0-1"
         },
-        "version": "0.33.2-3"
+        "version": "0.33.2-4"
       },
       "packages": {
         "aquamarine": "0.15.1-1",
@@ -1695,9 +1690,9 @@
       }
     }
   ],
-  "generated_at": "2026-10-23T07:03:41Z",
+  "generated_at": "2026-10-26T07:13:39Z",
   "note": "CI requalification of the Cua Hyprland plugin per Hyprland build. Not native certification and not a package: the reviewed kit/profile process stays the release gate.",
-  "run_url": "https://github.com/trycua/cua/actions/runs/39914982423",
+  "run_url": "https://github.com/trycua/cua/actions/runs/40284411436",
   "schema": 1,
   "tracked_packages": [
     "hyprland",

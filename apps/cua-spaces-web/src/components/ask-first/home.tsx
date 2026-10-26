@@ -3,19 +3,20 @@
 
 import { Link } from "@tanstack/react-router";
 import { ChevronRightIcon } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
-import { useAgents, useFirstSpaceOffers, useSpaces, useSpaceThumbnail, type AgentRunSummary, type Space, type SpaceOs } from "@/bridge";
+import { useAgents, useSpaces, useSpaceThumbnail, type AgentRunSummary, type Space } from "@/bridge";
 import { CuaKey } from "@/components/cua-key";
 import { OsIcon } from "@/components/os-icon";
 import { SpaceCanvas } from "@/components/space-canvas";
 import { Button } from "@/components/ui/button";
-import { mostUsedAgent, orderTasks, SUGGESTIONS, taskState, TASK_STATE_TEXT, taskTitle, useAskTasks, type AskTask, type TaskState } from "@/lib/ask-first";
-import { spaceState } from "@/lib/spaces";
+import { currentWhere, mostUsedAgent, orderTasks, startErrorView, SUGGESTIONS, taskState, TASK_STATE_TEXT, taskTitle, useAskTasks, type AskTask, type TaskState } from "@/lib/ask-first";
+import { realSpaces, spaceState } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
 
-import { AppMark, AskBox, TASK_AGENTS, type TaskWhere } from "./ask-box";
+import { agentName, AppMark, AskBox, TASK_AGENTS, type TaskWhere } from "./ask-box";
 import { useStartTask } from "./use-start-task";
+import { useWhereOptions } from "./where-options";
 
 /** The run a task follows, from the runs in your running Spaces. */
 export function taskRun(runs: readonly AgentRunSummary[] | undefined, task: AskTask): AgentRunSummary | undefined {
@@ -24,7 +25,7 @@ export function taskRun(runs: readonly AgentRunSummary[] | undefined, task: AskT
 
 export function StateDot({ state }: { state: TaskState }) {
   const tone =
-    state === "working" ? "bg-success" : state === "needs-you" || state === "stuck" ? "bg-warning" : state === "failed" ? "bg-destructive" : state === "done" ? "bg-success" : "bg-muted-foreground/40";
+    state === "working" ? "bg-success" : state === "needs-you" || state === "stuck" ? "bg-warning" : state === "failed" || state === "didnt-start" ? "bg-destructive" : state === "done" ? "bg-success" : "bg-muted-foreground/40";
   return (
     <span className={cn("relative inline-flex size-2 shrink-0 rounded-full", tone)}>
       {state === "working" ? <span className="absolute inset-0 animate-ping rounded-full bg-success/60" /> : null}
@@ -41,8 +42,8 @@ export function AskFirstHome() {
   const tasks = useAskTasks();
   const { data: spaces } = useSpaces();
   const { data: agents, agentSetup } = useAgents();
-  const { offers } = useFirstSpaceOffers();
-  const start = useStartTask();
+  const { kinds, spaces: pickable } = useWhereOptions();
+  const { start } = useStartTask();
   const [installed, setInstalled] = useState<ReadonlySet<string>>(new Set());
   useEffect(() => {
     let live = true;
@@ -62,16 +63,9 @@ export function AskFirstHome() {
   const [text, setText] = useState("");
   const [agent, setAgent] = useState<string | null>(null);
   const chosenAgent = agent ?? mostUsed ?? TASK_AGENTS.find((a) => installed.has(a.id))?.id ?? "claude-code";
-  const [where, setWhere] = useState<TaskWhere>({ kind: "new", os: "linux" });
-  const kinds = useMemo(() => {
-    const k: { os: SpaceOs; note: string; blocked: string | null }[] = offers.map((o) => ({
-      os: o.os,
-      note: `Free. Ready in ${o.time}${o.size ? ` (${o.size})` : ""}.`,
-      blocked: o.blocked,
-    }));
-    return k.length ? k : [{ os: "linux" as const, note: "Free. Ready in a few minutes.", blocked: null }];
-  }, [offers]);
-  const running = (spaces ?? []).filter((s) => spaceState(s) === "running");
+  // A new Linux computer unless you pick; a pick that's no longer offered falls back to it.
+  const [picked, setWhere] = useState<TaskWhere | null>(null);
+  const where = currentWhere(picked, kinds, pickable);
   const submit = (prompt = text, w = where) => {
     if (!prompt.trim()) return;
     start({ prompt, agent: chosenAgent, where: w });
@@ -100,7 +94,7 @@ export function AskFirstHome() {
           where={where}
           onWhere={setWhere}
           kinds={kinds}
-          spaces={running}
+          spaces={pickable}
           busy={false}
           onSubmit={() => submit()}
           compact={!first}
@@ -132,7 +126,7 @@ export function AskFirstHome() {
         ) : (
           <TaskList rows={rows} spaces={spaces ?? []} />
         )}
-        {!first && (spaces?.length ?? 0) > 0 ? <YourSpaces spaces={spaces ?? []} /> : null}
+        {!first && realSpaces(spaces ?? []).length > 0 ? <YourSpaces spaces={realSpaces(spaces ?? [])} /> : null}
       </div>
     </div>
   );
@@ -165,7 +159,12 @@ function ago(ms: number, now = Date.now()): string {
 
 function TaskRow({ task, run, state, space }: { task: AskTask; run: AgentRunSummary | undefined; state: TaskState; space: Space | undefined }) {
   const thumb = useSpaceThumbnail(task.spaceId ?? "", Boolean(space) && task.ending !== "thrown");
-  const line = state === "needs-you" && run?.needsYou ? run.needsYou.title : state === "failed" && task.error ? `Stopped: ${task.error}` : TASK_STATE_TEXT[state];
+  const line =
+    state === "needs-you" && run?.needsYou
+      ? run.needsYou.title
+      : state === "didnt-start" && task.error
+        ? `Didn't start: ${startErrorView(task.error, agentName(task.agent)).title}`
+        : TASK_STATE_TEXT[state];
   const where = task.ending === "thrown" ? "Thrown away" : (space?.name ?? "");
   return (
     <Link

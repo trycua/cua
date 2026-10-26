@@ -14,7 +14,9 @@
 
 import { useSyncExternalStore } from "react";
 
-import type { AgentRunStatus, SpaceOs, TranscriptItem } from "@/bridge";
+import type { AgentRunStatus, Space, SpaceOs, TranscriptItem } from "@/bridge";
+
+import { isMachineDesktop, spaceState } from "./spaces";
 
 export type TaskEnding = "kept" | "thrown";
 
@@ -148,8 +150,111 @@ export function taskTitle(prompt: string, max = 80): string {
   return [...line].length <= max ? line : `${[...line].slice(0, max - 1).join("").trimEnd()}…`;
 }
 
+/** Where the job runs, as picked: a new computer of a kind on this Mac, or a Space you already have. */
+export type TaskWhere = { kind: "new"; os: SpaceOs } | { kind: "space"; space: Space };
+
+/**
+ * What `agents.start` is pointed at. The core's `agent_start` only runs in a
+ * Space (a `local:`, `cloud:`, `direct:` or `relay:` id), auto-approved
+ * because "the Space is the sandbox". A machine's own desktop (this Mac's
+ * `this-mac` row, or another of your machines sharing its screen) is not a
+ * Space: the core can't resolve it, and running an auto-approved agent on
+ * a real computer would break the promise that yours stays untouched. So
+ * that target is refused here, before anything is called.
+ */
+export type TaskTarget = { kind: "create"; os: SpaceOs } | { kind: "space"; spaceId: string } | { kind: "host" };
+
+/** The id of this Mac's own row in the Spaces list. */
+export const THIS_MAC_ID = "this-mac";
+
+/** The raw error kept on a task that was pointed at a machine's own desktop. */
+export const HOST_TARGET_ERROR = `${THIS_MAC_ID}: agents run in a Space, not on a computer's own desktop`;
+
+export function taskTarget(where: TaskWhere): TaskTarget {
+  if (where.kind === "new") return { kind: "create", os: where.os };
+  return isMachineDesktop(where.space) ? { kind: "host" } : { kind: "space", spaceId: where.space.id };
+}
+
+/** A kept task's target, for Try again: its computer if it has one (the row, when listed, decides), else a new one. */
+export function retryTarget(task: Pick<AskTask, "spaceId" | "os">, spaces: readonly Space[] | undefined): TaskTarget {
+  if (!task.spaceId) return { kind: "create", os: task.os };
+  const row = spaces?.find((s) => s.id === task.spaceId);
+  if (task.spaceId === THIS_MAC_ID || (row && isMachineDesktop(row))) return { kind: "host" };
+  return { kind: "space", spaceId: task.spaceId };
+}
+
+/** A kind of new computer this Mac can make, with its line ("Free. Ready in about 2 min."). */
+export interface NewKind {
+  os: SpaceOs;
+  note: string;
+  blocked: string | null;
+}
+
+/** The computers you already have that a job can use: running Spaces, never a machine's own desktop. */
+export function pickableSpaces(spaces: readonly Space[] | undefined): Space[] {
+  return (spaces ?? []).filter((s) => !isMachineDesktop(s) && spaceState(s) === "running");
+}
+
+/** Where a job runs unless you pick: a new Linux computer on this Mac (or the first kind this Mac can make). */
+export function defaultWhere(kinds: readonly NewKind[]): TaskWhere {
+  const ok = kinds.filter((k) => !k.blocked);
+  const os = ok.find((k) => k.os === "linux")?.os ?? ok[0]?.os ?? "linux";
+  return { kind: "new", os };
+}
+
+/** The pick if it's still offered, else the default (a picked Space that went away, or this Mac's own desktop, falls back). */
+export function currentWhere(picked: TaskWhere | null, kinds: readonly NewKind[], spaces: readonly Space[]): TaskWhere {
+  if (picked?.kind === "new" && kinds.some((k) => k.os === picked.os && !k.blocked)) return picked;
+  if (picked?.kind === "space") {
+    const row = spaces.find((s) => s.id === picked.space.id);
+    if (row) return { kind: "space", space: row };
+  }
+  return defaultWhere(kinds);
+}
+
+/** What a failed start offers in its card. */
+export type StartErrorAction = "change-computer" | "add-key" | "retry";
+
+export interface StartErrorView {
+  title: string;
+  body: string;
+  /** The one action that helps most. */
+  action: StartErrorAction;
+  /** Whether Try again can help (not for a target that can't work). */
+  retry: boolean;
+}
+
+/**
+ * A core error from making the computer or starting the agent, in plain
+ * words with the one thing to do next. The raw text stays on the task and
+ * shows under Details.
+ */
+export function startErrorView(raw: string, agent: string): StartErrorView {
+  const e = raw.toLowerCase();
+  if (e.includes(THIS_MAC_ID))
+    return {
+      title: "Agents can't work on this Mac itself",
+      body: `${agent} gets its own computer, so yours stays untouched. Pick a new computer or one you already have.`,
+      action: "change-computer",
+      retry: false,
+    };
+  if (/cloud has ended/.test(e))
+    return { title: "That computer is no longer available", body: "Cua Cloud has ended. Pick a computer on this Mac instead.", action: "change-computer", retry: false };
+  if (/more than one|ambiguous/.test(e))
+    return { title: "More than one computer has that name", body: "Pick the one you mean.", action: "change-computer", retry: false };
+  if (/not found|no such|unknown space|add_space/.test(e))
+    return { title: "Couldn't find that computer", body: "It may have been deleted or renamed. Pick another one.", action: "change-computer", retry: false };
+  if (/api key|key|sign in|signed in|auth|login|credential|unauthori[sz]ed|401/.test(e))
+    return { title: `${agent} needs your key`, body: `Add it in Settings → Connected apps, then try again.`, action: "add-key", retry: true };
+  if (/not running|space_off|stopped|suspended|offline|unreachable|timed out|timeout|connection|refused/.test(e))
+    return { title: "Couldn't reach that computer", body: "Check it's on, then try again. Or pick another one.", action: "retry", retry: true };
+  if (/disk|space left|no room|memory|quota|limit/.test(e))
+    return { title: "This Mac doesn't have room for a new computer", body: "Free some disk space or turn off a computer you're not using, then try again.", action: "retry", retry: true };
+  return { title: `${agent} couldn't start`, body: "Something went wrong. Try again, or pick another computer.", action: "retry", retry: true };
+}
+
 /** Where a task stands, in the words Home and the thread use. */
-export type TaskState = "starting" | "working" | "needs-you" | "stuck" | "done" | "failed" | "kept" | "thrown";
+export type TaskState = "starting" | "working" | "needs-you" | "stuck" | "done" | "didnt-start" | "failed" | "kept" | "thrown";
 
 /** No new event for this long while a turn runs reads as stuck. */
 export const STUCK_MS = 10 * 60_000;
@@ -160,7 +265,7 @@ export function taskState(
   now = Date.now(),
 ): TaskState {
   if (task.ending === "thrown") return "thrown";
-  if (task.error) return "failed";
+  if (task.error) return task.runId ? "failed" : "didnt-start";
   if (!task.runId || !run || run.status === null) return task.ending === "kept" ? "kept" : "starting";
   if (run.needsYou) return "needs-you";
   if (run.status === "running") return run.lastEventMs !== null && now - run.lastEventMs > STUCK_MS ? "stuck" : "working";
@@ -174,6 +279,7 @@ export const TASK_STATE_TEXT: Record<TaskState, string> = {
   "needs-you": "Needs you",
   stuck: "No progress for 10 minutes",
   done: "Done",
+  "didnt-start": "Didn't start",
   failed: "Stopped",
   kept: "Done. Computer kept",
   thrown: "Done. Computer thrown away",

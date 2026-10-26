@@ -2,6 +2,9 @@ use async_trait::async_trait;
 use core_foundation::base::{CFRelease, CFTypeRef};
 use cua_driver_contract::{ScrollBy, ScrollDirection, ScrollInput};
 use cua_driver_core::{
+    action_record::{
+        ActionEffect, ActionExecutionRecord, ActionTransport, ActualDelivery, RequestedDelivery,
+    },
     protocol::ToolResult,
     tool::{Tool, ToolDef},
     tool_args::parse_typed_projection,
@@ -56,6 +59,34 @@ const AMOUNT_MAX: u64 = 50;
 
 fn clamp_amount(requested: u64) -> usize {
     requested.clamp(AMOUNT_MIN, AMOUNT_MAX) as usize
+}
+
+/// The wheel actuator posts to a pid even when foreground assistance is used.
+/// Do not infer global HID transport or actual activation from the request.
+fn wheel_action_record(
+    requested: super::DeliveryMode,
+    actual: ActualDelivery,
+) -> ActionExecutionRecord {
+    let mut record = ActionExecutionRecord::new(
+        ActionEffect::Unverifiable,
+        ActionTransport::MacosCgEventPid,
+        if requested.is_foreground() {
+            RequestedDelivery::Foreground
+        } else {
+            RequestedDelivery::Background
+        },
+    );
+    record.actual_delivery = Some(actual);
+    record
+}
+
+fn wheel_delivery_label(actual: ActualDelivery) -> &'static str {
+    match actual {
+        ActualDelivery::Foreground => " (target foreground observed before dispatch)",
+        ActualDelivery::Unknown => " (foreground assist requested; target foreground not confirmed)",
+        ActualDelivery::Background => " (background delivery)",
+        ActualDelivery::NotApplicable => "",
+    }
 }
 
 const ELECTRON_BACKGROUND_SCROLL_UNAVAILABLE: &str = "Background scroll is unavailable for \
@@ -544,7 +575,7 @@ impl Tool for ScrollTool {
                 prior_front,
                 "scroll.CGScrollWheel",
                 || async move {
-                    tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+                    tokio::task::spawn_blocking(move || -> anyhow::Result<ActualDelivery> {
                         let do_it = move || -> anyhow::Result<()> {
                             crate::input::mouse::scroll_wheel_at_xy(
                                 pid,
@@ -560,14 +591,19 @@ impl Tool for ScrollTool {
                         // Foreground rung: brief front → wheel → restore prior frontmost.
                         match (fg, wid) {
                             (true, Some(w)) => {
-                                crate::input::skylight::with_foreground_assist(
-                                    pid as libc::pid_t,
-                                    w,
-                                    do_it,
-                                )?;
-                                Ok(())
+                                let outcome =
+                                    crate::input::skylight::with_observed_foreground_assist(
+                                        pid as libc::pid_t,
+                                        w,
+                                        do_it,
+                                    );
+                                outcome.action_result?;
+                                Ok(outcome.observation.actual_delivery())
                             }
-                            _ => do_it(),
+                            _ => {
+                                do_it()?;
+                                Ok(ActualDelivery::Background)
+                            }
                         }
                     })
                     .await
@@ -576,21 +612,18 @@ impl Tool for ScrollTool {
             .await;
 
             let changes = super::finish_window_observation(snapshot).await;
-            let mode_label = if fg {
-                " (delivery_mode:foreground)"
-            } else {
-                ""
-            };
             return match result {
-                Ok(Ok(())) => ToolResult::text(format!(
+                Ok(Ok(actual)) => ToolResult::text(format!(
                     "✅ Sent {direction} scroll by {by} × {amount} via pixel wheel at \
-                     ({screen_x:.0}, {screen_y:.0}){mode_label} (background CGEvent; not \
+                     ({screen_x:.0}, {screen_y:.0}){} (pid-routed CGEvent; not \
                      driver-verified — confirm via screenshot).{}",
+                    wheel_delivery_label(actual),
                     changes.result_suffix()
                 ))
                 .with_structured(serde_json::json!({
-                    "path": if fg { "cgevent_fg" } else { "cgevent" }, "verified": false, "effect": "unverifiable"
-                })),
+                    "path": "cgevent", "verified": false, "effect": "unverifiable"
+                }))
+                .with_action_record(wheel_action_record(delivery_mode, actual)),
                 Ok(Err(e)) => ToolResult::error(format!("Wheel scroll failed: {e}")),
                 Err(e)     => ToolResult::error(format!("Task error: {e}")),
             };
@@ -833,6 +866,31 @@ unsafe fn collect_ax_buttons(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wheel_record_keeps_pid_transport_and_observed_delivery_separate() {
+        for actual in [
+            ActualDelivery::Unknown,
+            ActualDelivery::Foreground,
+            ActualDelivery::Background,
+        ] {
+            let record = wheel_action_record(super::super::DeliveryMode::Foreground, actual);
+            assert_eq!(record.transport, ActionTransport::MacosCgEventPid);
+            assert_eq!(record.requested_delivery, RequestedDelivery::Foreground);
+            assert_eq!(record.actual_delivery, Some(actual));
+            assert_eq!(record.effect, ActionEffect::Unverifiable);
+            assert!(record.evidence.is_empty());
+            assert!(record.fallbacks.is_empty());
+            record.validate().unwrap();
+        }
+        let background = wheel_action_record(
+            super::super::DeliveryMode::Background,
+            ActualDelivery::Background,
+        );
+        assert_eq!(background.requested_delivery, RequestedDelivery::Background);
+        assert!(wheel_delivery_label(ActualDelivery::Unknown).contains("not confirmed"));
+        assert!(!wheel_delivery_label(ActualDelivery::Unknown).contains("background"));
+    }
 
     #[test]
     fn amount_is_clamped_to_the_advertised_range() {

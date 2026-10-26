@@ -395,6 +395,8 @@ function SpaceDetailPage() {
   const powerError = detail.powerError ? <p className="mb-4 text-[13px] text-destructive">{detail.powerError}</p> : null;
   // One tip at a time (the core's `tips.view`, place `space`).
   const tip = <PageTip place="space" space={space} onShare={shareAction?.enabled ? share : undefined} />;
+  // In the call layout the tip sits directly on the stage and the rail: no gap under it, so the rail meets it flush.
+  const callTip = <PageTip place="space" space={space} onShare={shareAction?.enabled ? share : undefined} className="mb-0" />;
 
   // The call layout: the desktop on top, the thread below, the people on the
   // right. A machine's own page (no desktop to call into) and a daemon
@@ -435,7 +437,7 @@ function SpaceDetailPage() {
           }
           notice={
             <>
-              {tip}
+              {callTip}
               {detail.powerError ? <p className="px-5 pb-2 text-[13px] text-destructive">{detail.powerError}</p> : null}
             </>
           }

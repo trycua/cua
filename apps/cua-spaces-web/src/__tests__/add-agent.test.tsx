@@ -62,8 +62,8 @@ describe("Add an agent", () => {
     await app({ joinRedeemMs: null });
     await openSheet();
     expect(q("[data-add-agent='pick']")?.textContent).toContain("Add an agent to ubuntu-build");
-    // Share with a person leads back to Share, where the page can share.
-    expect(qa("[data-add-row]").map((r) => r.dataset.addRow)).toEqual(["start", "connect", "share"]);
+    // Share with a person leads back to Share, where the page can share (once the Space's Share is read).
+    await waitFor(() => expect(qa("[data-add-row]").map((r) => r.dataset.addRow)).toEqual(["start", "connect", "share"]));
     expect(q("[data-add-row='share']")?.textContent).toContain("Share with a person");
     expect(qa("[data-add-agent-marks] [data-harness-mark]").map((m) => m.dataset.harnessMark)).toEqual(["hermes", "claude-code", "codex", "cursor", "openclaw", "t3code"]);
   });

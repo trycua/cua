@@ -231,7 +231,8 @@ pub fn user_data(b: &HostBoot<'_>) -> String {
              cat > /usr/local/bin/cua-idle-poweroff <<'IDLE'\n\
              #!/bin/bash\n\
              # Spaces are containers (Docker, runc or gVisor) or VMs (QEMU).\n\
-             busy() {{ [ \"$(docker ps -q 2>/dev/null | wc -l)\" -gt 0 ] || pgrep -x qemu-system-x86_64 >/dev/null || pgrep -x qemu-system-aarch64 >/dev/null; }}\n\
+             # Linux truncates long /proc comm names, so match QEMU command lines.\n\
+             busy() {{ [ \"$(docker ps -q 2>/dev/null | wc -l)\" -gt 0 ] || pgrep -f '[q]emu-system-(x86_64|aarch64)([[:space:]]|$)' >/dev/null; }}\n\
              idle=0\n\
              while sleep 60; do\n\
                if busy; then idle=0; else idle=$((idle+60)); fi\n\
@@ -1209,6 +1210,10 @@ mod tests {
         assert!(ud.contains("shutdown -h now 'cua: this host reached its TTL'"));
         assert!(ud.contains("echo 1800000000 > /etc/cua/expires"));
         assert!(ud.contains("cua-idle-poweroff"), "idle backstop");
+        assert!(
+            ud.contains("pgrep -f '[q]emu-system-(x86_64|aarch64)"),
+            "idle guard must match QEMU command lines"
+        );
         assert!(ud.contains("[ \"$idle\" -ge 1200 ]"));
         assert!(ud.contains("export CUA_ENV=staging"));
         // The mesh is on before setup, so the service keeps it; a person's

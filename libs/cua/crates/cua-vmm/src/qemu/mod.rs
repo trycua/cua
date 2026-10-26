@@ -861,7 +861,7 @@ impl QemuRuntime {
         let res = self.launch_admitted(st, spec, boot, persist).await;
         if res.is_err() {
             self.release(&st.name);
-            self.stop_tpm(st);
+            let _ = self.stop_tpm(st).await;
         }
         res
     }
@@ -1084,7 +1084,7 @@ impl QemuRuntime {
                         "install it (macOS: brew install swtpm; Debian/Ubuntu: sudo apt-get install swtpm) and add it to PATH",
                     )
                 })?;
-                self.stop_tpm(st);
+                self.stop_tpm(st).await?;
                 std::fs::create_dir_all(&tpm_dir)?;
                 std::fs::set_permissions(&tpm_dir, std::fs::Permissions::from_mode(0o700))?;
                 Some((bin, tpm_dir.clone()))
@@ -1245,8 +1245,12 @@ impl QemuRuntime {
         // A create cancelled between the launch and the moment its pid is
         // recorded would leave a running QEMU nothing knows about: the
         // guard ends whatever its pid file names unless the start finished.
-        let mut launch_guard = LaunchGuard::new(dir.join("qemu.pid"));
-        launch_guard.tpm_dir = tpm_env.as_ref().map(|_| dir.clone());
+        let mut launch_guard = LaunchGuard::new();
+        // Each launch has its own swtpm record, so cleanup can never reach
+        // another launch's TPM through a shared pidfile.
+        let record = tpm_env
+            .as_ref()
+            .map(|_| dir.join(format!("swtpm.{}.pid", unique_suffix())));
 
         // Launch detached: on Unix a throwaway `sh` backgrounds QEMU and exits,
         // so QEMU is re-parented to init (no zombie in long-lived callers) and
@@ -1283,20 +1287,22 @@ impl QemuRuntime {
                 }
                 None => (bin.clone(), argv.clone()),
             };
-            // The launch runs in its own task: a cancel that drops this
-            // future after the shell started QEMU but before we have its
-            // pid must still end that QEMU (the task checks the flag).
-            let abandoned = launch_guard.abandoned.clone();
-            let pid_cell = launch_guard.pid_cell.clone();
+            // The shell runs to completion even when this future is dropped;
+            // then the undo ends exactly this launch's QEMU and TPM record.
             let tpm_log = tpm_env.as_ref().map_or(String::new(), |_| {
                 format!("; see {}", dir.join("swtpm.log").display())
             });
             let (program2, args2, log2, dir2) =
                 (program.clone(), args.clone(), log_path.clone(), dir.clone());
-            let pid = tokio::spawn(async move {
+            let (record2, tpm_dir2) = (record.clone(), tpm_dir.clone());
+            let (record3, tpm_dir3) = (record.clone(), tpm_dir.clone());
+            let create = async move {
                 let mut command = tokio::process::Command::new("/bin/sh");
-                if let Some((swtpm, tpm_dir)) = &tpm_env {
-                    command.env("CUA_SWTPM", swtpm).env("CUA_TPM_DIR", tpm_dir);
+                if let (Some((swtpm, tpm_dir)), Some(record)) = (&tpm_env, &record2) {
+                    command
+                        .env("CUA_SWTPM", swtpm)
+                        .env("CUA_TPM_DIR", tpm_dir)
+                        .env("CUA_TPM_RECORD", record);
                 }
                 let out = command
                     .arg("-c")
@@ -1310,34 +1316,31 @@ impl QemuRuntime {
                     .env("CUA_QEMU_LOG", &log2)
                     .current_dir(&dir2)
                     .output()
-                    .await?;
-                let pid = match String::from_utf8_lossy(&out.stdout).trim().parse::<u32>() {
-                    Ok(pid) => pid,
-                    Err(e) => {
-                        if tpm_env.is_some() {
-                            let _ = stop_swtpm(&dir2);
-                        }
-                        return Err(VmmError::other(format!(
+                    .await;
+                let failed = match out {
+                    Ok(out) => match String::from_utf8_lossy(&out.stdout).trim().parse::<u32>() {
+                        Ok(pid) => return Ok::<u32, VmmError>(pid),
+                        Err(e) => VmmError::other(format!(
                             "could not launch {}: {e}{tpm_log}",
                             program2.display()
-                        )));
-                    }
+                        )),
+                    },
+                    Err(e) => e.into(),
                 };
-                // Publish the pid, then look at the flag: the guard sets the
-                // flag, then looks at the pid; one of the two sees the other.
-                pid_cell.store(pid, std::sync::atomic::Ordering::SeqCst);
-                if abandoned.load(std::sync::atomic::Ordering::SeqCst) {
-                    end_launched(pid).await;
-                    // The guard's own wait for the TPM may have ended already.
-                    if tpm_env.is_some() {
-                        let _ = stop_swtpm(&dir2);
-                    }
+                if let Some(record) = &record2 {
+                    let _ = end_record(record, &tpm_dir2).await;
                 }
-                Ok::<u32, VmmError>(pid)
-            })
-            .await
-            .map_err(|e| VmmError::other(format!("launching qemu: {e}")))??;
+                Err(failed)
+            };
+            let undo = move |pid: u32| async move {
+                end_launched(pid).await;
+                if let Some(record) = &record3 {
+                    let _ = end_record(record, &tpm_dir3).await;
+                }
+            };
+            let pid = crate::cleanup::complete_or_undo(create, undo).await?;
             launch_guard.pid = Some(pid);
+            launch_guard.tpm = record.map(|r| (r, tpm_dir.clone()));
             st.pid = Some(pid);
             if netns_rules.is_some() {
                 st.pasta_pid = Some(pid);
@@ -1354,6 +1357,7 @@ impl QemuRuntime {
                 .stdout(log.try_clone()?)
                 .stderr(log)
                 .spawn()?;
+            launch_guard.pid = Some(child.id());
             st.pid = Some(child.id());
         }
         if persist {
@@ -1521,13 +1525,7 @@ impl QemuRuntime {
         }
         // The disk of a checkpoint lives in the layer store: use the entry.
         let src = self.dir(&from.name).join("tpm");
-        let launch = self.run_dir(from);
-        if stop_swtpm(&launch) {
-            return Err(VmmError::other(format!(
-                "the TPM of '{}' is still running; stop the VM first",
-                from.name
-            )));
-        }
+        self.tpm_stopped(from)?;
         let dst = to_dir.join("tpm");
         std::fs::create_dir_all(&dst)?;
         #[cfg(unix)]
@@ -1650,8 +1648,38 @@ impl QemuRuntime {
             .unwrap_or_else(|| self.dir(&st.name))
     }
 
-    fn stop_tpm(&self, st: &QemuState) {
-        let _ = stop_swtpm(&self.run_dir(st));
+    /// End every swtpm this VM launched; a record goes only once its swtpm
+    /// has exited. The first failure is returned after trying them all.
+    async fn stop_tpm(&self, st: &QemuState) -> Result<()> {
+        let tpm_dir = self.run_dir(st).join("tpm");
+        let mut first = None;
+        for record in tpm_records(&self.run_dir(st)) {
+            if let Err(e) = end_record(&record, &tpm_dir).await {
+                first.get_or_insert(e);
+            }
+        }
+        first.map_or(Ok(()), Err)
+    }
+
+    /// Refuse while any swtpm of this VM is alive (or cannot be told apart
+    /// from one). Signals and removes nothing.
+    fn tpm_stopped(&self, st: &QemuState) -> Result<()> {
+        if !st.tpm {
+            return Ok(());
+        }
+        let run = self.run_dir(st);
+        let tpm_dir = run.join("tpm");
+        for record in tpm_records(&run) {
+            if let Some(pid) = record_pid(&record)
+                && swtpm_state(pid, &record, &tpm_dir) != Tpm::Gone
+            {
+                return Err(VmmError::invalid(format!(
+                    "the TPM of '{}' is still running (swtpm {pid}); stop the VM first",
+                    st.name
+                )));
+            }
+        }
+        Ok(())
     }
 
     async fn force_stop(&self, st: &mut QemuState, graceful: Duration) -> Result<()> {
@@ -1662,8 +1690,7 @@ impl QemuRuntime {
             st.pid = None;
             self.drop_aliases(Some(&self.dir(&st.name)));
             Self::end_netns(st);
-            self.stop_tpm(st);
-            return Ok(());
+            return self.stop_tpm(st).await;
         };
         if !graceful.is_zero() {
             let wait = if let Ok(mut q) = self.qmp(&st.name).await {
@@ -1679,8 +1706,7 @@ impl QemuRuntime {
                 st.pid = None;
                 self.drop_aliases(Some(&self.dir(&st.name)));
                 Self::end_netns(st);
-                self.stop_tpm(st);
-                return Ok(());
+                return self.stop_tpm(st).await;
             }
         }
         let quit = match self.qmp(&st.name).await {
@@ -1699,8 +1725,7 @@ impl QemuRuntime {
         st.pid = None;
         self.drop_aliases(Some(&self.dir(&st.name)));
         Self::end_netns(st);
-        self.stop_tpm(st);
-        Ok(())
+        self.stop_tpm(st).await
     }
 
     /// pasta exits with QEMU; one left behind (a VM killed with it) goes.
@@ -2720,6 +2745,7 @@ impl Runtime for QemuRuntime {
                 "'{src_name}' is running; stop it (or checkpoint it) before forking"
             )));
         }
+        self.tpm_stopped(&src)?;
         let backing = match (snapshot, src.kind) {
             (Some(snap), _) => {
                 // A full copy of the disk at that snapshot.
@@ -2899,6 +2925,7 @@ impl Runtime for QemuRuntime {
         if self.state_path(checkpoint).exists() {
             return Err(VmmError::AlreadyExists(checkpoint.to_string()));
         }
+        self.tpm_stopped(&st)?;
         let layer = self.freeze(&mut st).await?;
         self.save(&st)?;
         let dir = self.dir(checkpoint);
@@ -3125,7 +3152,7 @@ impl Runtime for QemuRuntime {
 const QEMU_LAUNCH: &str = "\"$0\" \"$@\" </dev/null >>\"$CUA_QEMU_LOG\" 2>&1 & echo $!";
 
 #[cfg(unix)]
-const TPM_LAUNCH: &str = r#""$CUA_SWTPM" socket --daemon --tpm2 --terminate --ctrl "type=unixio,path=$CUA_TPM_DIR/swtpm.sock" --pid "file=$CUA_TPM_DIR/../swtpm.pid" --tpmstate "dir=$CUA_TPM_DIR" </dev/null >>"$CUA_TPM_DIR/../swtpm.log" 2>&1 || exit 1
+const TPM_LAUNCH: &str = r#""$CUA_SWTPM" socket --daemon --tpm2 --terminate --ctrl "type=unixio,path=$CUA_TPM_DIR/swtpm.sock" --pid "file=$CUA_TPM_RECORD" --tpmstate "dir=$CUA_TPM_DIR" </dev/null >>"$CUA_TPM_DIR/../swtpm.log" 2>&1 || exit 1
 "$0" "$@" </dev/null >>"$CUA_QEMU_LOG" 2>&1 & echo $!"#;
 
 #[cfg(all(test, unix))]
@@ -3526,6 +3553,34 @@ mod tests {
         assert!(!root.join("ck2").exists());
         assert!(r.load("ck1").is_err() && r.load("ck2").is_err());
         assert!(r.load("vm1").is_ok());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn fork_and_checkpoint_refuse_a_live_tpm_before_freezing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let Some(r) = tpm_runtime(tmp.path()).await else {
+            return;
+        };
+        let root = tmp.path().join("qemu");
+        let link = super::tpm_tests::fake_swtpm_link(tmp.path());
+        let mut fake = super::tpm_tests::spawn_fake(
+            &link,
+            &root.join("vm1/swtpm.a.pid"),
+            &root.join("vm1/tpm"),
+        );
+        let disk = r.load("vm1").unwrap().disk;
+        let count = |r: &QemuRuntime| std::fs::read_dir(r.layers_dir()).map_or(0, |d| d.count());
+        let layers = count(&r);
+        let e = r.checkpoint("vm1", "ck1").await.unwrap_err().to_string();
+        assert!(e.contains("still running"), "{e}");
+        let e = r.fork("vm1", "vm2").await.unwrap_err().to_string();
+        assert!(e.contains("still running"), "{e}");
+        assert_eq!(r.load("vm1").unwrap().disk, disk);
+        assert_eq!(count(&r), layers);
+        assert!(r.load("ck1").is_err() && r.load("vm2").is_err());
+        fake.kill().unwrap();
+        fake.wait().unwrap();
     }
 
     #[cfg(unix)]
@@ -4502,82 +4557,123 @@ mod tests {
     }
 }
 
-/// Whether `pid` is the swtpm serving `tpm_dir` (a reused pid is not).
-fn swtpm_owns(pid: u32, tpm_dir: &Path) -> bool {
+/// What a recorded pid is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Tpm {
+    /// The swtpm of that record.
+    Ours,
+    /// Not alive, or something else now (a reused pid, a zombie).
+    Gone,
+    /// Alive, but `ps` cannot say what it is: never signalled.
+    Unknown,
+}
+
+/// Whether `pid` is the swtpm launched with `record` for `tpm_dir`.
+fn swtpm_state(pid: u32, record: &Path, tpm_dir: &Path) -> Tpm {
+    if pid < 2 {
+        return Tpm::Gone;
+    }
     let Some(cmd) = host::pid_command(pid) else {
-        return false;
+        return if host::pid_alive(pid) {
+            Tpm::Unknown
+        } else {
+            Tpm::Gone
+        };
     };
     let is_swtpm = cmd
         .split_whitespace()
         .next()
         .and_then(|w| Path::new(w).file_name())
         .is_some_and(|n| n == "swtpm");
-    let needle = format!("dir={}", tpm_dir.display());
-    // Linux keeps argument boundaries: the argument must be exactly ours.
-    if let Ok(raw) = std::fs::read(format!("/proc/{pid}/cmdline")) {
-        return is_swtpm && raw.split(|b| *b == 0).any(|a| a == needle.as_bytes());
+    let file = format!("file={}", record.display());
+    let dir = format!("dir={}", tpm_dir.display());
+    // Linux keeps argument boundaries: the arguments must be exactly ours.
+    let ours = if let Ok(raw) = std::fs::read(format!("/proc/{pid}/cmdline")) {
+        let args: Vec<&[u8]> = raw.split(|b| *b == 0).collect();
+        args.contains(&file.as_bytes()) && args.contains(&dir.as_bytes())
+    } else {
+        names_dir_text(&cmd, &file, &dir)
+    };
+    if is_swtpm && ours {
+        Tpm::Ours
+    } else {
+        Tpm::Gone
     }
-    is_swtpm && names_dir_text(&cmd, &needle)
 }
 
-/// Without argument boundaries the directory must be the last option, so no
-/// longer path (`tpm -backup`, `tpm backup`) can pass for it. The launch
-/// script passes `--tpmstate` last for this check.
-fn names_dir_text(cmd: &str, needle: &str) -> bool {
-    cmd.ends_with(&format!("--tpmstate {needle}"))
+/// Without argument boundaries the record and directory must be the last
+/// options, in the launch script's order, so no longer path (`tpm -backup`,
+/// `tpm backup`) can pass for it.
+fn names_dir_text(cmd: &str, file: &str, dir: &str) -> bool {
+    cmd.ends_with(&format!("--pid {file} --tpmstate {dir}"))
 }
 
-/// The pid in the pidfile of the VM running in `dir`.
-fn swtpm_pid(dir: &Path) -> Option<u32> {
-    std::fs::read_to_string(dir.join("swtpm.pid"))
+/// The pid a swtpm record holds.
+fn record_pid(record: &Path) -> Option<u32> {
+    std::fs::read_to_string(record)
         .ok()
         .and_then(|t| t.trim().parse::<u32>().ok())
 }
 
-/// End the swtpm of the VM running in `dir`, if the pidfile still names it,
-/// and remove the pidfile. Returns whether that swtpm is still alive.
-fn stop_swtpm(dir: &Path) -> bool {
-    stop_swtpm_pid(dir, swtpm_pid(dir))
+/// The swtpm records (`swtpm.<id>.pid`) in a VM's run directory.
+fn tpm_records(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let n = e.file_name();
+            let n = n.to_string_lossy();
+            n.starts_with("swtpm.") && n.ends_with(".pid")
+        })
+        .map(|e| e.path())
+        .collect()
 }
 
-/// End the swtpm `pid` (when it serves this VM's TPM directory). The pidfile
-/// goes only if it still names `pid`: a replacement's file stays.
-fn stop_swtpm_pid(dir: &Path, pid: Option<u32>) -> bool {
-    let tpm_dir = dir.join("tpm");
-    let mut alive = false;
-    if let Some(pid) = pid.filter(|p| *p >= 2 && swtpm_owns(*p, &tpm_dir)) {
-        host::signal(pid, "TERM");
-        for _ in 0..40 {
-            if !host::pid_alive(pid) {
+/// End the swtpm a record names: TERM, then KILL. The record is removed only
+/// once that swtpm is gone; otherwise it stays and this is an error.
+async fn end_record(record: &Path, tpm_dir: &Path) -> Result<()> {
+    let Some(pid) = record_pid(record) else {
+        return Ok(());
+    };
+    for (sig, polls) in [("TERM", 20), ("KILL", 10)] {
+        if swtpm_state(pid, record, tpm_dir) != Tpm::Ours {
+            break;
+        }
+        host::signal(pid, sig);
+        for _ in 0..polls {
+            if swtpm_state(pid, record, tpm_dir) != Tpm::Ours {
                 break;
             }
-            std::thread::sleep(Duration::from_millis(50));
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        if host::pid_alive(pid) && swtpm_owns(pid, &tpm_dir) {
-            host::signal(pid, "KILL");
-        }
-        alive = host::pid_alive(pid);
     }
-    if pid.is_none() || swtpm_pid(dir) == pid {
-        let _ = std::fs::remove_file(dir.join("swtpm.pid"));
+    if swtpm_state(pid, record, tpm_dir) == Tpm::Gone {
+        let _ = std::fs::remove_file(record);
+        return Ok(());
     }
-    alive
+    Err(VmmError::other(format!(
+        "the TPM of '{}' (swtpm {pid}) did not exit",
+        tpm_dir
+            .parent()
+            .and_then(Path::file_name)
+            .unwrap_or_default()
+            .to_string_lossy()
+    )))
 }
 
-/// Ends the QEMU a start launched when the start does not finish (its
-/// future dropped by a cancel, or an early error): the pid file QEMU writes
-/// names it even before the caller recorded the pid.
+/// Ends the QEMU (and the TPM record) a start launched when the start does
+/// not finish (its future dropped by a cancel, or an early error). The
+/// launch shell itself is covered by `complete_or_undo`; this covers the
+/// time from the reported pid until the start succeeds. It ends only the
+/// pid and record it was handed.
 struct LaunchGuard {
-    pidfile: PathBuf,
     armed: bool,
-    /// Set when dropped armed, for a launch task still in flight.
-    abandoned: Arc<std::sync::atomic::AtomicBool>,
     /// The launched process, once known.
     pid: Option<u32>,
-    /// The pid as the launch task learned it (0: not yet).
-    pid_cell: Arc<std::sync::atomic::AtomicU32>,
-    /// The launch directory of a VM with a TPM: its swtpm ends with QEMU.
-    tpm_dir: Option<PathBuf>,
+    /// The swtpm record and TPM directory of this launch.
+    tpm: Option<(PathBuf, PathBuf)>,
 }
 
 /// TERM, then KILL, a QEMU nobody will use.
@@ -4593,14 +4689,11 @@ async fn end_launched(pid: u32) {
 }
 
 impl LaunchGuard {
-    fn new(pidfile: PathBuf) -> Self {
+    fn new() -> Self {
         Self {
-            pidfile,
             armed: true,
-            abandoned: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             pid: None,
-            pid_cell: Arc::new(std::sync::atomic::AtomicU32::new(0)),
-            tpm_dir: None,
+            tpm: None,
         }
     }
 
@@ -4611,49 +4704,17 @@ impl LaunchGuard {
 
 impl Drop for LaunchGuard {
     fn drop(&mut self) {
-        if !self.armed {
+        if !self.armed || (self.pid.is_none() && self.tpm.is_none()) {
             return;
         }
-        self.abandoned
-            .store(true, std::sync::atomic::Ordering::SeqCst);
-        let known =
-            self.pid.or_else(
-                || match self.pid_cell.load(std::sync::atomic::Ordering::SeqCst) {
-                    0 => None,
-                    p => Some(p),
-                },
-            );
-        let tpm_dir = self.tpm_dir.clone();
-        // The swtpm of this launch, named now: a replacement launch reuses
-        // the pidfile, and this cleanup must not end its swtpm.
-        let tpm_pid = tpm_dir.as_deref().and_then(swtpm_pid);
-        let stop_tpm = move || {
-            if let Some(dir) = tpm_dir {
-                let _ = stop_swtpm_pid(&dir, tpm_pid.or_else(|| swtpm_pid(&dir)));
-            }
-        };
-        if let Some(pid) = known {
-            crate::cleanup::spawn(async move {
-                end_launched(pid).await;
-                stop_tpm();
-            });
-            return;
-        }
-        let pidfile = self.pidfile.clone();
+        let (pid, tpm) = (self.pid, self.tpm.take());
         crate::cleanup::spawn(async move {
-            // QEMU writes the file a moment after it starts.
-            for _ in 0..40 {
-                if let Some(pid) = std::fs::read_to_string(&pidfile)
-                    .ok()
-                    .and_then(|t| t.trim().parse::<u32>().ok())
-                {
-                    end_launched(pid).await;
-                    stop_tpm();
-                    return;
-                }
-                tokio::time::sleep(Duration::from_millis(100)).await;
+            if let Some(p) = pid {
+                end_launched(p).await;
             }
-            stop_tpm();
+            if let Some((r, d)) = tpm {
+                let _ = end_record(&r, &d).await;
+            }
         });
     }
 }
@@ -4669,7 +4730,7 @@ mod launch_guard_tests {
             .spawn()
             .unwrap();
         let pid = child.id();
-        let mut g = LaunchGuard::new(PathBuf::from("/nonexistent/qemu.pid"));
+        let mut g = LaunchGuard::new();
         g.pid = Some(pid);
         drop(g);
         assert!(crate::cleanup::settle(Duration::from_secs(10)).await);
@@ -4684,7 +4745,7 @@ mod launch_guard_tests {
             .arg("30")
             .spawn()
             .unwrap();
-        let mut g = LaunchGuard::new(PathBuf::from("/nonexistent/qemu.pid"));
+        let mut g = LaunchGuard::new();
         g.pid = Some(child.id());
         g.disarm();
         drop(g);

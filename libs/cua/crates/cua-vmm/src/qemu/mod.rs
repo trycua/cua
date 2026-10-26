@@ -1311,20 +1311,27 @@ impl QemuRuntime {
                     .current_dir(&dir2)
                     .output()
                     .await?;
-                let pid = String::from_utf8_lossy(&out.stdout)
-                    .trim()
-                    .parse::<u32>()
-                    .map_err(|e| {
-                        VmmError::other(format!(
+                let pid = match String::from_utf8_lossy(&out.stdout).trim().parse::<u32>() {
+                    Ok(pid) => pid,
+                    Err(e) => {
+                        if tpm_env.is_some() {
+                            let _ = stop_swtpm(&dir2);
+                        }
+                        return Err(VmmError::other(format!(
                             "could not launch {}: {e}{tpm_log}",
                             program2.display()
-                        ))
-                    })?;
+                        )));
+                    }
+                };
                 // Publish the pid, then look at the flag: the guard sets the
                 // flag, then looks at the pid; one of the two sees the other.
                 pid_cell.store(pid, std::sync::atomic::Ordering::SeqCst);
                 if abandoned.load(std::sync::atomic::Ordering::SeqCst) {
                     end_launched(pid).await;
+                    // The guard's own wait for the TPM may have ended already.
+                    if tpm_env.is_some() {
+                        let _ = stop_swtpm(&dir2);
+                    }
                 }
                 Ok::<u32, VmmError>(pid)
             })
@@ -2945,7 +2952,7 @@ impl Runtime for QemuRuntime {
         if st.kind != EntryKind::Instance {
             return Err(VmmError::invalid(format!("'{name}' is not a VM instance")));
         }
-        if Self::is_running(&st) {
+        if Self::is_running(&st) && !st.netns && rules.blocks_anything() {
             refuse_tpm(&st, "a move into a new network namespace")?;
         }
         let previous = st.egress.replace(policy.clone());
@@ -3566,6 +3573,8 @@ mod tests {
             invalid(r.set_egress("vm1", &block).await),
             refused("a move into a new network namespace")
         );
+        // A policy that blocks nothing needs no namespace, so it is saved.
+        r.set_egress("vm1", &Default::default()).await.unwrap();
         assert_eq!(names(&r), before);
         assert!(!root.join("x").exists());
     }
@@ -4504,11 +4513,15 @@ fn swtpm_owns(pid: u32, tpm_dir: &Path) -> bool {
         .and_then(|w| Path::new(w).file_name())
         .is_some_and(|n| n == "swtpm");
     let needle = format!("dir={}", tpm_dir.display());
+    // Linux keeps argument boundaries: the argument must be exactly ours.
+    if let Ok(raw) = std::fs::read(format!("/proc/{pid}/cmdline")) {
+        return is_swtpm && raw.split(|b| *b == 0).any(|a| a == needle.as_bytes());
+    }
+    // Elsewhere only flattened text is available: the directory must end the
+    // text or be followed by the next option, so `tpm backup` never matches.
     let names_dir = cmd.match_indices(&needle).any(|(i, _)| {
-        cmd[i + needle.len()..]
-            .chars()
-            .next()
-            .is_none_or(char::is_whitespace)
+        let rest = &cmd[i + needle.len()..];
+        rest.is_empty() || rest.starts_with(" -")
     });
     is_swtpm && names_dir
 }

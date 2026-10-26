@@ -239,10 +239,12 @@ async fn stop_tpm_leaves_other_processes() {
         .unwrap();
     let mut elsewhere = spawn_fake(&link, &other);
     let mut prefixed = spawn_fake(&link, &prefix);
+    let mut spaced = spawn_fake(&link, &dir.join("tpm backup"));
     for pid in [
         sleeper.id().to_string(),
         elsewhere.id().to_string(),
         prefixed.id().to_string(),
+        spaced.id().to_string(),
         "not-a-pid".into(),
         "0".into(),
         "1".into(),
@@ -252,7 +254,7 @@ async fn stop_tpm_leaves_other_processes() {
         runtime.force_stop(&mut st, Duration::ZERO).await.unwrap();
         assert!(!dir.join("swtpm.pid").exists(), "{pid}");
     }
-    for child in [&mut sleeper, &mut elsewhere, &mut prefixed] {
+    for child in [&mut sleeper, &mut elsewhere, &mut prefixed, &mut spaced] {
         assert!(child.try_wait().unwrap().is_none(), "survives");
         child.kill().unwrap();
         child.wait().unwrap();

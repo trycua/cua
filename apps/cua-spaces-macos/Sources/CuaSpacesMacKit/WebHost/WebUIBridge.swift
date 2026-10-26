@@ -75,6 +75,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "machines.list", "host.status",
         "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
         "agents.setup", "agents.configure", "agents.signIn",
+        // Start a run in a Space and reply to it (the daemon's agent_start, agent_message).
+        "agents.start", "agents.message",
         // A persistent agent's Memory, Routines and Access (`PersistentModel`).
         "agents.detail", "agents.readFile", "agents.restoreFile", "agents.addRoutine", "agents.setRoutine",
         "agents.removeRoutine", "agents.allowComputer", "agents.revokeComputer",
@@ -310,7 +312,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             return hostStatus()
 
         case "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
-             "agents.setup", "agents.configure", "agents.signIn":
+             "agents.setup", "agents.configure", "agents.signIn", "agents.start", "agents.message":
             return try await agents(method, args)
 
         case "checklist.get": return ["state": model.checklist.stored]
@@ -718,6 +720,18 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             let max = (args["max"] as? NSNumber)?.uint32Value
             return try await persistent.runEvents(space: try string(args, "spaceId"), runId: try string(args, "runId"),
                                                   cursor: cursor, max: max)
+        case "agents.start":
+            let spaceId = try string(args, "spaceId"), agent = try string(args, "agent"), prompt = try string(args, "prompt")
+            guard persistent.canCallTools else { throw Failure.unsupported("Starting a run needs the cua daemon") }
+            let text = { (key: String) in (args[key] as? String).flatMap { $0.isEmpty ? nil : $0 } }
+            return try await persistent.startRun(space: spaceId, agent: agent, prompt: prompt, repo: text("repo"),
+                                                 branch: text("branch"), model: text("model"),
+                                                 envFromHost: (args["envFromHost"] as? [String]) ?? [])
+        case "agents.message":
+            let spaceId = try string(args, "spaceId"), runId = try string(args, "runId"), text = try string(args, "text")
+            guard persistent.canCallTools else { throw Failure.unsupported("Replying to a run needs the cua daemon") }
+            return try await persistent.sendMessage(space: spaceId, runId: runId, text: text,
+                                                    force: (args["force"] as? Bool) ?? false)
         case "agents.pause", "agents.resume":
             let name = try string(args, "name")
             guard !persistent.agentsState.busy else { throw Failure(code: "failed", message: "Another change is still running") }

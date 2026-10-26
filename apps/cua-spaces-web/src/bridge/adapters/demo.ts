@@ -47,7 +47,7 @@ import type { CliInstallPlan } from "../contracts/first-run";
 import { unsupportedChecklistOps } from "../ops/checklist";
 import { demoTeleportHandlers } from "./demo/teleport";
 import { createDemoSettings } from "./demo/settings";
-import { demoAgentSetup, demoPersistentAgents, demoRunRecords, runAt, writtenEvents, type DemoRunRecord } from "./demo-agents";
+import { demoAgentSetup, demoPersistentAgents, demoReply, demoRunRecords, demoStartedRun, runAt, writtenEvents, type DemoRunRecord } from "./demo-agents";
 import { demoVolumeHandlers, demoVolumeState, type DemoVolumeState } from "./demo/volume";
 import { demoHostSetupHandlers, demoHostSetupState, type DemoHostSetupState } from "./demo/host-setup";
 import { demoSpaceDetailHandlers, demoSpaceDetailState, type DemoSpaceDetailState } from "./demo/space-detail";
@@ -554,6 +554,24 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
         cursor: page.length ? page[page.length - 1]!.seq : cursor,
         caught_up: page.length === after.length,
       };
+    },
+    "agents.start": async ({ spaceId, agent, prompt, repo }) => {
+      const row = findRow(spaceId);
+      if (row.powerState !== "running" || !row.reachable) throw new HostError(`${row.name} is not running`, "space_off");
+      await wait(step);
+      const runId = `run-${Math.random().toString(16).slice(2, 8)}`;
+      state.runs.push(demoStartedRun(spaceId, runId, agent, prompt, now(), repo));
+      emit({ type: "agents.changed" });
+      return { run_id: runId, agent, space: spaceId };
+    },
+    "agents.message": async ({ spaceId, runId, text }) => {
+      const rec = state.runs.find((r) => r.space === spaceId && r.run.runId === runId);
+      if (!rec) throw new HostError(`no run ${runId} in ${spaceId}`, "not_found");
+      const busy = runAt(rec, now()).status === "running";
+      demoReply(rec, text, now());
+      emit({ type: "agents.changed" });
+      const run = runAt(rec, now());
+      return { delivered: true, run_id: runId, status: run.status, phase: run.phase, reason: busy ? "queued after the current turn" : "" };
     },
     "agents.pause": async ({ name }) => {
       const agent = findAgent(name);

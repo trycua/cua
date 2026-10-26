@@ -89,6 +89,8 @@ export const TAURI_EVENTS = {
 export const TAURI_UNSUPPORTED: readonly OpName[] = [
   "settings.choose",
   "agents.events",
+  "agents.start",
+  "agents.message",
   "agents.setupDriver",
   "agents.signIn",
   "host.joinWithCode",

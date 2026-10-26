@@ -28,7 +28,7 @@ import type {
   CreateProgress,
   TelemetryView,
 } from "./contracts/host";
-import type { AgentEventsPage, AgentSetupRow, PersistentAgent, SpaceAgentRun } from "./contracts/agents";
+import type { AgentEventsPage, AgentMessageSent, AgentSetupRow, AgentStarted, AgentStartRequest, PersistentAgent, SpaceAgentRun } from "./contracts/agents";
 import type { KeyvaultOverview, KvGrant, KvItem } from "./contracts/keyvault";
 import type { SpaceOs, SpaceRow } from "./contracts/spaces";
 import { NEW_SPACE_OPERATIONS, type NewSpaceOperations } from "./ops/new-space";
@@ -271,6 +271,10 @@ export interface HostOperations
   "agents.runs": { args: { spaceId: string }; result: SpaceAgentRun[] };
   /** A run's events after `cursor` (`agent_events`; at most `max`, default 100). */
   "agents.events": { args: { spaceId: string; runId: string; cursor: number; max?: number }; result: AgentEventsPage };
+  /** Starts a coding agent in a Space (`agent_start`). */
+  "agents.start": { args: AgentStartRequest; result: AgentStarted };
+  /** Sends a reply to a run (`agent_message`; `force` interrupts the turn first). */
+  "agents.message": { args: { spaceId: string; runId: string; text: string; force?: boolean }; result: AgentMessageSent };
   /** Stops the run, saves the home, holds routines, suspends a local Space (`agent_pause`). */
   "agents.pause": { args: { name: string }; result: null };
   "agents.resume": { args: { name: string }; result: null };
@@ -314,6 +318,8 @@ export const OPERATIONS = [
   "agents.list",
   "agents.runs",
   "agents.events",
+  "agents.start",
+  "agents.message",
   "agents.pause",
   "agents.resume",
   "agents.setup",

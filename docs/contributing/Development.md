@@ -200,6 +200,24 @@ It does not publish releases.
 
 ## Generated and Local Files
 
+Generated artifacts (UniFFI bindings for Python, Swift, Kotlin and TypeScript,
+the Swift and Electron bindings of the Spaces app, the Spaces contract manifest
+and fixtures, the app-core FFI mirrors, the cua-driver contract, ABI header and
+bindings, image constants, and the generated reference docs) are committed and
+checked by CI. One command regenerates all of them:
+
+```sh
+scripts/regen-all.sh                  # regenerate everything
+scripts/regen-all.sh --check          # same checks as CI, writes nothing
+scripts/regen-all.sh --only swift,electron
+scripts/regen-all.sh --list           # target names
+```
+
+It builds `cua-spaces-ffi` once and shares it between the Swift and Electron
+bindings. `docs` only regenerates the references your diff touches (set
+`DOCS_ALL=1` for all). Run it before pushing any change to Rust FFI types,
+protos or contracts.
+
 Do not commit build products, staged harness binaries, local VM artifacts,
 credentials, permission databases, or editor-specific state. Promote an
 artifact into source control only when it becomes a stable fixture, sample, or

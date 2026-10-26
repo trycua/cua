@@ -94,7 +94,7 @@ try {
     mkdirSync(dirname(destination), { recursive: true })
     writeFileSync(destination, contents)
   }
-  if (stale.length) throw new Error(`stale Cua Spaces app binding: ${stale.join(", ")}`)
+  if (stale.length) throw new Error(`stale Cua Spaces app binding: ${stale.join(", ")}\nRun scripts/regen-all.sh (it also refreshes the Electron binding)`)
   console.log(check ? "The Cua Spaces app binding is up to date." : "Generated the Cua Spaces app binding.")
 } finally {
   rmSync(temporary, { recursive: true, force: true })

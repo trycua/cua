@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import type { MachinesView } from "./contracts/host";
-import type { ListStatus } from "./contracts/spaces";
+import type { CreatingElsewhere, ListStatus } from "./contracts/spaces";
 import type { HostEvent, OpArgs, OpName, OpResult } from "./protocol";
 
 export type BridgeMode = "tauri" | "electron" | "webkit" | "demo";
@@ -41,6 +41,11 @@ export interface DataAdapter {
    * lists complete lists only.
    */
   listStatus?(): ListStatus;
+  /**
+   * The Spaces your other computers are creating now, read with
+   * `spaces.list` (CUA-2349). Undefined: the host does not read them.
+   */
+  creatingElsewhere?(): CreatingElsewhere[];
   /**
    * The host's standing notice, read with `spaces.list`: null, or a line to
    * show above every page while it lasts (another app keeps its own daemon

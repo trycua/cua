@@ -54,7 +54,7 @@ import type {
 import type { NotificationInput } from "./notifications";
 import type { AboutInput, DriveCheckInput, DriveStorageInput, LoginItemReport, StorageInput, UpdateState } from "./settings";
 import type { ShareEntry, ShareRemoval } from "./share";
-import type { CreateFix, SpaceProgress, SpaceRow } from "./spaces";
+import type { CreateFix, CreatingElsewhere, SpaceProgress, SpaceRow } from "./spaces";
 import type { CatalogEntry, ConsentItem, KvDomainCount, KvInventory, OpenWindow, PlanStep, RemoteWindow, RunReport, TeleportPlan } from "./teleport";
 import type { AgentSetupOutcome, DriveGrantInput, DriveMountInput, DriveRequestInput, Experiments, VolumeOverview } from "./volume";
 import type { AgentKeysReport } from "../ops/agent-keys";
@@ -1178,6 +1178,12 @@ const WkHostShape = ref(
   }),
 );
 
+/** `spaces.list`'s Spaces your other computers are creating (CUA-2349). */
+const CreatingElsewhereShape = ref(
+  "CreatingElsewhere",
+  obj<CreatingElsewhere>()({ machineId: str, machineName: str, name: str, os: str, phase: str, percent: num }),
+);
+
 const WkSpaceShape = ref(
   "WkSpace",
   obj<WkSpace>()({
@@ -1208,7 +1214,7 @@ const WkSpaceShape = ref(
 
 const WkSpacesShape = ref(
   "WkSpaces",
-  obj<WkSpaces>()({ loaded: bool, selectedId: nullable(str), spaces: list(object({ space: WkSpaceShape, deleting: bool })), rosterError: optNull(str), daemonNotice: optNull(str), incomplete: opt(bool), reaching: opt(num), stale: opt(bool) }),
+  obj<WkSpaces>()({ loaded: bool, selectedId: nullable(str), spaces: list(object({ space: WkSpaceShape, deleting: bool })), rosterError: optNull(str), daemonNotice: optNull(str), incomplete: opt(bool), reaching: opt(num), stale: opt(bool), creatingElsewhere: opt(list(CreatingElsewhereShape)) }),
 );
 
 const WkSessionShape = ref(

@@ -18691,6 +18691,93 @@ const FfiConverterTypeSpaceCreateResult = (() => {
 })();
 
 /**
+ * A Space another of your computers is creating ([`SpaceList::creating`]).
+ */
+export type SpaceCreatingElsewhere = {
+    /**
+     * The computer's relay machine id.
+     */
+    machineId: string,
+    /**
+     * The computer's name.
+     */
+    machineName: string,
+    /**
+     * The Space's name.
+     */
+    name: string,
+    /**
+     * `macos`, `linux`, `windows`, or empty when unknown.
+     */
+    os: string,
+    /**
+     * The create's phase (`preparing`, `pulling`, `booting`, ...).
+     */
+    phase: string,
+    /**
+     * How far along the whole create is, 0 to 100.
+     */
+    percent: number,
+    /**
+     * When the computer published it, unix ms.
+     */
+    updatedAtMs: bigint
+}
+
+/**
+ * Generated factory for {@link SpaceCreatingElsewhere} record objects.
+ */
+export const SpaceCreatingElsewhere = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<SpaceCreatingElsewhere, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<SpaceCreatingElsewhere>,
+    });
+})();
+
+const FfiConverterTypeSpaceCreatingElsewhere = (() => {
+    type TypeName = SpaceCreatingElsewhere;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                machineId: FfiConverterString.read(from),
+                machineName: FfiConverterString.read(from),
+                name: FfiConverterString.read(from),
+                os: FfiConverterString.read(from),
+                phase: FfiConverterString.read(from),
+                percent: FfiConverterUInt32.read(from),
+                updatedAtMs: FfiConverterUInt64.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.machineId, into);
+            FfiConverterString.write(value.machineName, into);
+            FfiConverterString.write(value.name, into);
+            FfiConverterString.write(value.os, into);
+            FfiConverterString.write(value.phase, into);
+            FfiConverterUInt32.write(value.percent, into);
+            FfiConverterUInt64.write(value.updatedAtMs, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.machineId) +
+             FfiConverterString.allocationSize(value.machineName) +
+             FfiConverterString.allocationSize(value.name) +
+             FfiConverterString.allocationSize(value.os) +
+             FfiConverterString.allocationSize(value.phase) +
+             FfiConverterUInt32.allocationSize(value.percent) +
+             FfiConverterUInt64.allocationSize(value.updatedAtMs);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
  * One of a Space's displays ([`Space::displays`]).
  */
 export type SpaceDisplay = {
@@ -18891,7 +18978,12 @@ export type SpaceList = {
     /**
      * Why the account's computers could not be read, when they could not.
      */
-    notice: string
+    notice: string,
+    /**
+     * Spaces your other computers are creating now, from what each
+     * published through the relay (empty from a daemon that predates it).
+     */
+    creating: Array<SpaceCreatingElsewhere>
 }
 
 /**
@@ -18919,7 +19011,8 @@ const FfiConverterTypeSpaceList = (() => {
                 incomplete: FfiConverterBool.read(from),
                 reaching: FfiConverterUInt32.read(from),
                 stale: FfiConverterBool.read(from),
-                notice: FfiConverterString.read(from)
+                notice: FfiConverterString.read(from),
+                creating: FfiConverterSequenceTypeSpaceCreatingElsewhere.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -18928,13 +19021,15 @@ const FfiConverterTypeSpaceList = (() => {
             FfiConverterUInt32.write(value.reaching, into);
             FfiConverterBool.write(value.stale, into);
             FfiConverterString.write(value.notice, into);
+            FfiConverterSequenceTypeSpaceCreatingElsewhere.write(value.creating, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterSequenceTypeSpaceInfo.allocationSize(value.spaces) +
              FfiConverterBool.allocationSize(value.incomplete) +
              FfiConverterUInt32.allocationSize(value.reaching) +
              FfiConverterBool.allocationSize(value.stale) +
-             FfiConverterString.allocationSize(value.notice);
+             FfiConverterString.allocationSize(value.notice) +
+             FfiConverterSequenceTypeSpaceCreatingElsewhere.allocationSize(value.creating);
 
         }
     };
@@ -44327,6 +44422,9 @@ const FfiConverterOptionalTypeSpaceInfo = new FfiConverterOptional(FfiConverterT
 // FfiConverter for Array<SpaceInfo>
 const FfiConverterSequenceTypeSpaceInfo = new FfiConverterArray(FfiConverterTypeSpaceInfo);
 
+// FfiConverter for Array<SpaceCreatingElsewhere>
+const FfiConverterSequenceTypeSpaceCreatingElsewhere = new FfiConverterArray(FfiConverterTypeSpaceCreatingElsewhere);
+
 // FfiConverter for Array<SpaceSentFile>
 const FfiConverterSequenceTypeSpaceSentFile = new FfiConverterArray(FfiConverterTypeSpaceSentFile);
 
@@ -46256,6 +46354,7 @@ export default Object.freeze({
     FfiConverterTypeSpaceCreateOptions,
     FfiConverterTypeSpaceCreateProgress,
     FfiConverterTypeSpaceCreateResult,
+    FfiConverterTypeSpaceCreatingElsewhere,
     FfiConverterTypeSpaceDisplay,
     FfiConverterTypeSpaceHotspotStatus,
     FfiConverterTypeSpaceInfo,

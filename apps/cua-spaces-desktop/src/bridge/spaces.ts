@@ -34,6 +34,8 @@ export function spacesState(model: AppModel) {
     reaching: model.listReaching,
     // Your other computers' rows are the last known ones, not yet confirmed.
     stale: model.listStale,
+    // Spaces your other computers are creating now: "Creating macOS on Mac mini… 40%".
+    creatingElsewhere: model.creatingElsewhere,
   };
 }
 

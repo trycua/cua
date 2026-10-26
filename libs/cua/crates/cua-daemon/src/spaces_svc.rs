@@ -350,16 +350,16 @@ mod imp {
             // Plus the signed-in account's relay machines: refreshed, or
             // (`known_now`) as far as they answered, never holding up this
             // machine's own Spaces.
-            let (others, progress) = if known_now {
+            let (others, progress, creating) = if known_now {
                 let l = self
                     .spaces()
                     .list_known(cua_spaces::LIST_WAIT)
                     .await
                     .map_err(|e| st(e.into()))?;
-                (l.spaces, l.progress)
+                (l.spaces, l.progress, l.creating)
             } else {
                 let all = self.spaces().list_all().await.map_err(|e| st(e.into()))?;
-                (all, cua_spaces::ListProgress::default())
+                (all, cua_spaces::ListProgress::default(), Vec::new())
             };
             for info in others {
                 if info.provider == cua_spaces::Provider::Relay
@@ -374,6 +374,18 @@ mod imp {
                 reaching: progress.reaching,
                 stale: progress.stale,
                 notice: progress.notice,
+                creating: creating
+                    .into_iter()
+                    .map(|c| pb::CreatingSpace {
+                        machine_id: c.machine_id,
+                        machine_name: c.machine_name,
+                        name: c.name,
+                        os: c.os,
+                        phase: c.phase,
+                        percent: u32::from(c.percent),
+                        updated_at_ms: c.updated_at_ms,
+                    })
+                    .collect(),
             })
         }
 

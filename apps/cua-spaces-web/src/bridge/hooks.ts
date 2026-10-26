@@ -20,7 +20,7 @@ import type {
 import { NO_EXPERIMENTS, type Experiments } from "./contracts/volume";
 import type { KvGrant, KvListView, KvSelection, VaultAction } from "./contracts/keyvault";
 import type { KvAccessCommand } from "./ops/keyvault-manage";
-import { LIST_COMPLETE, type ListStatus, type Space } from "./contracts/spaces";
+import { LIST_COMPLETE, type CreatingElsewhere, type ListStatus, type Space } from "./contracts/spaces";
 import { hostSetupGuide, type HostSetupGuide, type Machine } from "./derive";
 import {
   firstSpaceImages,
@@ -148,9 +148,13 @@ export interface SpacesHook extends Resource<Space[]> {
   /** How far the list got: while some of the account's computers have not
    * answered (or nothing was read yet) it is not "no Spaces" (`listView`). */
   listStatus: ListStatus;
+  /** Spaces your other computers are creating now ("Creating macOS on Mac mini… 40%"). */
+  creatingElsewhere: CreatingElsewhere[];
   /** The host's standing notice (another app keeps its own daemon). Null when none. */
   hostNotice: string | null;
 }
+
+const NONE_ELSEWHERE: CreatingElsewhere[] = [];
 
 /** Nothing read yet (no store). */
 const NOT_LOADED: ListStatus = { ...LIST_COMPLETE, loaded: false };
@@ -163,6 +167,7 @@ export function useSpaces(): SpacesHook {
   const store = ctx.store;
   const listStatus = useSyncExternalStore(store ? store.subscribe : noopSubscribe, () => store?.listStatus ?? NOT_LOADED, () => NOT_LOADED);
   const listNotice = useSyncExternalStore(store ? store.subscribe : noopSubscribe, () => store?.listNotice ?? null, () => null);
+  const creatingElsewhere = useSyncExternalStore(store ? store.subscribe : noopSubscribe, () => store?.creatingElsewhere ?? NONE_ELSEWHERE, () => NONE_ELSEWHERE);
   const run = useAction();
   return {
     ...r,
@@ -180,6 +185,7 @@ export function useSpaces(): SpacesHook {
     createdId: (id) => ctx.store?.createdId(id),
     listNotice,
     listStatus,
+    creatingElsewhere,
     hostNotice: ctx.store?.hostNotice ?? null,
   };
 }

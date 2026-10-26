@@ -36279,6 +36279,125 @@ public func FfiConverterTypeSpaceCreateResult_lower(_ value: SpaceCreateResult) 
 
 
 /**
+ * A Space another of your computers is creating ([`SpaceList::creating`]).
+ */
+public struct SpaceCreatingElsewhere: Equatable, Hashable {
+    /**
+     * The computer's relay machine id.
+     */
+    public var machineId: String
+    /**
+     * The computer's name.
+     */
+    public var machineName: String
+    /**
+     * The Space's name.
+     */
+    public var name: String
+    /**
+     * `macos`, `linux`, `windows`, or empty when unknown.
+     */
+    public var os: String
+    /**
+     * The create's phase (`preparing`, `pulling`, `booting`, ...).
+     */
+    public var phase: String
+    /**
+     * How far along the whole create is, 0 to 100.
+     */
+    public var percent: UInt32
+    /**
+     * When the computer published it, unix ms.
+     */
+    public var updatedAtMs: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The computer's relay machine id.
+         */machineId: String,
+        /**
+         * The computer's name.
+         */machineName: String,
+        /**
+         * The Space's name.
+         */name: String,
+        /**
+         * `macos`, `linux`, `windows`, or empty when unknown.
+         */os: String,
+        /**
+         * The create's phase (`preparing`, `pulling`, `booting`, ...).
+         */phase: String,
+        /**
+         * How far along the whole create is, 0 to 100.
+         */percent: UInt32,
+        /**
+         * When the computer published it, unix ms.
+         */updatedAtMs: UInt64) {
+        self.machineId = machineId
+        self.machineName = machineName
+        self.name = name
+        self.os = os
+        self.phase = phase
+        self.percent = percent
+        self.updatedAtMs = updatedAtMs
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension SpaceCreatingElsewhere: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSpaceCreatingElsewhere: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SpaceCreatingElsewhere {
+        return
+            try SpaceCreatingElsewhere(
+                machineId: FfiConverterString.read(from: &buf),
+                machineName: FfiConverterString.read(from: &buf),
+                name: FfiConverterString.read(from: &buf),
+                os: FfiConverterString.read(from: &buf),
+                phase: FfiConverterString.read(from: &buf),
+                percent: FfiConverterUInt32.read(from: &buf),
+                updatedAtMs: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SpaceCreatingElsewhere, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.machineId, into: &buf)
+        FfiConverterString.write(value.machineName, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.os, into: &buf)
+        FfiConverterString.write(value.phase, into: &buf)
+        FfiConverterUInt32.write(value.percent, into: &buf)
+        FfiConverterUInt64.write(value.updatedAtMs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpaceCreatingElsewhere_lift(_ buf: RustBuffer) throws -> SpaceCreatingElsewhere {
+    return try FfiConverterTypeSpaceCreatingElsewhere.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpaceCreatingElsewhere_lower(_ value: SpaceCreatingElsewhere) -> RustBuffer {
+    return FfiConverterTypeSpaceCreatingElsewhere.lower(value)
+}
+
+
+/**
  * One of a Space's displays ([`Space::displays`]).
  */
 public struct SpaceDisplay: Equatable, Hashable {
@@ -36943,6 +37062,11 @@ public struct SpaceList: Equatable, Hashable {
      * Why the account's computers could not be read, when they could not.
      */
     public var notice: String
+    /**
+     * Spaces your other computers are creating now, from what each
+     * published through the relay (empty from a daemon that predates it).
+     */
+    public var creating: [SpaceCreatingElsewhere]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -36965,12 +37089,17 @@ public struct SpaceList: Equatable, Hashable {
          */stale: Bool,
         /**
          * Why the account's computers could not be read, when they could not.
-         */notice: String) {
+         */notice: String,
+        /**
+         * Spaces your other computers are creating now, from what each
+         * published through the relay (empty from a daemon that predates it).
+         */creating: [SpaceCreatingElsewhere]) {
         self.spaces = spaces
         self.incomplete = incomplete
         self.reaching = reaching
         self.stale = stale
         self.notice = notice
+        self.creating = creating
     }
 
 
@@ -36993,7 +37122,8 @@ public struct FfiConverterTypeSpaceList: FfiConverterRustBuffer {
                 incomplete: FfiConverterBool.read(from: &buf),
                 reaching: FfiConverterUInt32.read(from: &buf),
                 stale: FfiConverterBool.read(from: &buf),
-                notice: FfiConverterString.read(from: &buf)
+                notice: FfiConverterString.read(from: &buf),
+                creating: FfiConverterSequenceTypeSpaceCreatingElsewhere.read(from: &buf)
         )
     }
 
@@ -37003,6 +37133,7 @@ public struct FfiConverterTypeSpaceList: FfiConverterRustBuffer {
         FfiConverterUInt32.write(value.reaching, into: &buf)
         FfiConverterBool.write(value.stale, into: &buf)
         FfiConverterString.write(value.notice, into: &buf)
+        FfiConverterSequenceTypeSpaceCreatingElsewhere.write(value.creating, into: &buf)
     }
 }
 
@@ -47487,6 +47618,31 @@ fileprivate struct FfiConverterSequenceTypeSpaceAppIconRequest: FfiConverterRust
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeSpaceAppIconRequest.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeSpaceCreatingElsewhere: FfiConverterRustBuffer {
+    typealias SwiftType = [SpaceCreatingElsewhere]
+
+    public static func write(_ value: [SpaceCreatingElsewhere], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeSpaceCreatingElsewhere.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [SpaceCreatingElsewhere] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [SpaceCreatingElsewhere]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeSpaceCreatingElsewhere.read(from: &buf))
         }
         return seq
     }

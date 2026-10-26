@@ -523,7 +523,7 @@ fn default_linux_image() -> String {
 
 /// The guest OS of `image`: the catalog's word, else `windows` for a name
 /// that says so, else `linux`.
-fn guest_os(image: &str) -> String {
+pub(crate) fn guest_os(image: &str) -> String {
     if let Some(os) = cua_image::catalog::catalog_os(image).filter(|o| !o.is_empty()) {
         return os;
     }

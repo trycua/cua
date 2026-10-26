@@ -28,7 +28,7 @@ export const agentName = (id: string) => TASK_AGENTS.find((a) => a.id === id)?.n
 const OS_WORD: Record<SpaceOs, string> = { linux: "Linux", macos: "Mac", windows: "Windows", unknown: "" };
 
 export function whereLabel(where: TaskWhere): string {
-  return where.kind === "new" ? `A new ${OS_WORD[where.os]} computer · this Mac` : where.space.name;
+  return where.kind === "new" ? `A new ${OS_WORD[where.os]} computer · this Mac` : where.kind === "this-mac" ? "This Mac" : where.space.name;
 }
 
 export function AppMark({ agent, size = 32 }: { agent: string; size?: number }) {
@@ -39,12 +39,26 @@ export function AppMark({ agent, size = 32 }: { agent: string; size?: number }) 
   );
 }
 
-/** Why this Mac itself isn't in the list. */
-export const WHERE_FOOTER = "Agents don't work on this Mac itself. Each job gets its own computer, so yours stays untouched.";
+/** The trade-off, under the list. */
+export const WHERE_FOOTER = "A new computer keeps yours untouched. This Mac works on your own files and apps.";
 
-function Picker({ trigger, title, children, footer }: { trigger: ReactElement; title: string; children: ReactNode; footer?: ReactNode }) {
+function Picker({
+  trigger,
+  title,
+  children,
+  footer,
+  open,
+  onOpenChange,
+}: {
+  trigger: ReactElement;
+  title: string;
+  children: ReactNode;
+  footer?: ReactNode;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+}) {
   return (
-    <MenuPrimitive.Root>
+    <MenuPrimitive.Root {...(open === undefined ? {} : { open })} onOpenChange={(o) => onOpenChange?.(o)}>
       <MenuPrimitive.Trigger render={trigger} />
       <MenuPrimitive.Portal>
         <MenuPrimitive.Positioner sideOffset={6} align="start" className="z-50 outline-none">
@@ -90,6 +104,8 @@ export function AskBox({
   mostUsed,
   where,
   onWhere,
+  whereOpen,
+  onWhereOpen,
   kinds,
   spaces,
   busy,
@@ -106,6 +122,9 @@ export function AskBox({
   mostUsed: string | null;
   where: TaskWhere;
   onWhere: (w: TaskWhere) => void;
+  /** The Where picker held open (it reopens when "Use this Mac?" is declined). */
+  whereOpen?: boolean;
+  onWhereOpen?: (open: boolean) => void;
   /** The kinds of new computer this Mac can make, with a line each ("about 2 min"). */
   kinds: NewKind[];
   /** Running Spaces to use instead (never this Mac's own desktop: `pickableSpaces`). */
@@ -158,11 +177,19 @@ export function AskBox({
         <WherePicker
           where={where}
           onWhere={onWhere}
+          open={whereOpen}
+          onOpenChange={onWhereOpen}
           kinds={kinds}
           spaces={spaces}
           trigger={
             <button type="button" className={pickerButton} data-picker="where">
-              {where.kind === "new" ? <OsIcon os={where.os} className="size-4 text-muted-foreground" /> : <MonitorIcon className="size-4 text-muted-foreground" />}
+              {where.kind === "new" ? (
+                <OsIcon os={where.os} className="size-4 text-muted-foreground" />
+              ) : where.kind === "this-mac" ? (
+                <LaptopIcon className="size-4 text-muted-foreground" />
+              ) : (
+                <MonitorIcon className="size-4 text-muted-foreground" />
+              )}
               <span className="max-w-72 truncate">{whereLabel(where)}</span>
               <ChevronDownIcon className="size-4 text-muted-foreground" />
             </button>
@@ -184,9 +211,9 @@ export function AskBox({
 }
 
 /**
- * "Where it runs": the kinds of new computer this Mac can make, then the
- * running Spaces you have. This Mac's own desktop is never offered (the
- * footer says why): `agent_start` runs only in a Space.
+ * "Where it runs": the kinds of new computer this Mac can make, then this
+ * Mac itself and the running Spaces you have. Picking this Mac asks once
+ * (`useWherePick`).
  */
 export function WherePicker({
   where,
@@ -194,15 +221,19 @@ export function WherePicker({
   kinds,
   spaces,
   trigger,
+  open,
+  onOpenChange,
 }: {
   where: TaskWhere | null;
   onWhere: (w: TaskWhere) => void;
   kinds: NewKind[];
   spaces: Space[];
   trigger: ReactElement;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
   return (
-    <Picker title="Where it runs" trigger={trigger} footer={WHERE_FOOTER}>
+    <Picker title="Where it runs" trigger={trigger} footer={WHERE_FOOTER} open={open} onOpenChange={onOpenChange}>
       {kinds.map((k) => (
         <PickerRow
           key={k.os}
@@ -217,7 +248,18 @@ export function WherePicker({
           onSelect={() => onWhere({ kind: "new", os: k.os })}
         />
       ))}
-      {spaces.length ? <p className="px-3 pt-3 pb-1 text-[12px] font-medium text-muted-foreground">Or use a computer you already have</p> : null}
+      <p className="px-3 pt-3 pb-1 text-[12px] font-medium text-muted-foreground">Or use a computer you already have</p>
+      <PickerRow
+        icon={
+          <span className="flex size-7 items-center justify-center rounded-md border text-muted-foreground">
+            <LaptopIcon className="size-4" />
+          </span>
+        }
+        title="This Mac"
+        note="Works on your own files and apps"
+        selected={where?.kind === "this-mac"}
+        onSelect={() => onWhere({ kind: "this-mac" })}
+      />
       {spaces.slice(0, 5).map((s) => (
         <PickerRow
           key={s.id}

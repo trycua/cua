@@ -8,6 +8,7 @@ import { CoreSettingsRow } from "@/components/settings/core-section";
 import { HostSetupForm } from "@/components/this-machine";
 import { Button } from "@/components/ui/button";
 import { toastError } from "@/components/ui/toast";
+import { setThisMacConfirmed, useThisMacConfirmed } from "@/lib/ask-first";
 
 /** The host form's profile for your own connection server or Direct (`host::SELF_HOSTED_PROFILE`). */
 const SELF_HOSTED = "self-hosted";
@@ -121,10 +122,19 @@ function askFirstRow(on: boolean): CoreRow {
   };
 }
 
+/** Whether a task asks before it works on this Mac itself (the answer to "Work on this Mac?" is kept per device). */
+function thisMacAskRow(asks: boolean): CoreRow {
+  return { ...askFirstRow(asks), id: "ask-first:this-mac", label: "Ask before a task uses this Mac", options: [
+    { id: "on", label: "On", active: asks },
+    { id: "off", label: "Off", active: !asks },
+  ] };
+}
+
 /** Cua Volume and the new Home. Off hides; nothing set up is undone. */
 function Labs() {
   const { data, chooseExperiment } = useExperiments();
   const askFirst = useFlag("spaces_ask_first_home");
+  const thisMacOk = useThisMacConfirmed();
   const rows = (data?.page?.sections.flatMap((s) => s.rows) ?? []).filter((r) => LABS.has(r.id));
   const note: Record<string, string> = {
     "experiment:cua_volume": "Memory and files your agents share across every Space.",
@@ -136,6 +146,13 @@ function Labs() {
         description="Home asks what you want done, then does it on a fresh computer you can watch. On this device only."
         onChoose={(_, option) => setFlagOverride("spaces_ask_first_home", option === "on")}
       />
+      {askFirst ? (
+        <CoreSettingsRow
+          row={thisMacAskRow(!thisMacOk)}
+          description="Before a task works directly on this Mac, with your files and apps. Turn it on to be asked again."
+          onChoose={(_, option) => setThisMacConfirmed(option === "off")}
+        />
+      ) : null}
       {rows.map((r) => (
         <CoreSettingsRow
           key={r.id}

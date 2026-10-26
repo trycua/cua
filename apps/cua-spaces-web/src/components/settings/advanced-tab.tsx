@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { setFlagOverride, useAbout, useBridge, useExperiments, useFlag, useMachines, useSession, useSettings, useThisMachine, type SettingsOption, type SettingsRow as CoreRow } from "@/bridge";
-import { aboutView } from "@/bridge/settings-derive";
+import { setFlagOverride, useBridge, useExperiments, useFlag, useMachines, useSession, useSettings, useThisMachine, type SettingsOption, type SettingsRow as CoreRow } from "@/bridge";
 import { SettingsGroup } from "@/components/settings-group";
 import { CoreSettingsRow } from "@/components/settings/core-section";
+import { UpdateChannelGroup } from "@/components/settings/update-channel";
 import { HostSetupForm } from "@/components/this-machine";
 import { Button } from "@/components/ui/button";
 import { toastError } from "@/components/ui/toast";
@@ -12,8 +12,6 @@ import { setThisMacConfirmed, useThisMacConfirmed } from "@/lib/ask-first";
 
 /** The host form's profile for your own connection server or Direct (`host::SELF_HOSTED_PROFILE`). */
 const SELF_HOSTED = "self-hosted";
-
-const BETA_HELP = "New features sooner, with rough edges. Back on Stable, this version stays until a newer stable release.";
 
 /** Experiments that stay as Labs. "Your cloud" and "Sharing" have no switch any more: the plan decides on the server. */
 const LABS = new Set(["experiment:cua_volume"]);
@@ -29,7 +27,7 @@ const runtimeRow = (row: CoreRow): CoreRow => ({
 });
 
 /**
- * Settings, Advanced: early releases, Labs, which software runs Spaces on
+ * Settings, Advanced: where updates come from, Labs, which software runs Spaces on
  * this Mac, and your own connection server. For options most people never
  * touch; each says what it does in a line.
  */
@@ -44,7 +42,7 @@ export function AdvancedTab() {
 
   return (
     <div data-settings-tab="advanced">
-      <EarlyReleases />
+      <UpdateChannelGroup />
       <Labs />
       {runtimes || autoConnect || overflow ? (
         <SettingsGroup title="Which software runs Spaces on this Mac">
@@ -61,44 +59,6 @@ export function AdvancedTab() {
       ) : null}
       <OwnConnection />
     </div>
-  );
-}
-
-/** "Get early releases (Beta)": the update channel, moved here from About. */
-function EarlyReleases() {
-  const { data, setAbout } = useAbout();
-  const { mode, core } = useBridge();
-  const view = data?.view;
-  if (!view || !data) return null;
-  // A build with no update feed (a local build) keeps the row, greyed out.
-  const unavailable = !view.updates && mode === "electron" ? (aboutView(core, { ...data.input, updater: true })?.updates ?? null) : null;
-  const updates = view.updates ?? unavailable;
-  if (!updates) return null;
-  const beta = updates.channels.find((c) => c.id === "beta")?.active ?? false;
-  const row: CoreRow = {
-    id: "update-channel",
-    kind: "toggle",
-    label: "Get early releases (Beta)",
-    value: null,
-    button: null,
-    options: [
-      { id: "on", label: "On", active: beta },
-      { id: "off", label: "Off", active: !beta },
-    ],
-    enabled: data.canChange && !unavailable,
-    help: null,
-    linkLabel: null,
-    linkUrl: null,
-    placeholder: null,
-  };
-  return (
-    <SettingsGroup title="Updates">
-      <CoreSettingsRow
-        row={row}
-        description={BETA_HELP}
-        onChoose={(_, option) => void setAbout({ channel: option === "on" ? "beta" : "stable" }).catch(toastError("Couldn't change the update channel"))}
-      />
-    </SettingsGroup>
   );
 }
 

@@ -72,10 +72,10 @@ describe.skipIf(!wasmBuilt)("Settings tabs (real routes, wasm core)", () => {
     expect(text).not.toMatch(/provider key/i);
   });
 
-  it("moves Early releases here from About, and drops the Sharing and Your cloud switches", async () => {
+  it("has where updates come from here, and drops the Sharing and Your cloud switches", async () => {
     await mountApp("/settings/advanced", host);
     await waitFor(() => expect(tab("advanced")).not.toBeNull());
-    await waitFor(() => expect(tab("advanced")!.textContent).toContain("Get early releases (Beta)"));
+    await waitFor(() => expect(tab("advanced")!.textContent).toContain("Get updates from"));
     const text = tab("advanced")!.textContent!;
     expect(text).toContain("Cua Volume");
     expect(text).not.toMatch(/Your cloud|Sharing|Experiments/);

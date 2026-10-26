@@ -286,7 +286,7 @@ export function toSettingsSnapshot(s: WkSettings, page: Pick<SettingsValues, "th
       defaultLocation: DEFAULT_SETTINGS.defaultLocation,
       // The core lays out `launch-at-login` once the host read the login item.
       launchAtLogin: loginRow && loginRow.enabled ? active(loginRow) === "on" : null,
-      updateChannel: s.updateChannel === "beta" || s.updateChannel === "stable" ? s.updateChannel : null,
+      updateChannel: s.updateChannel === "beta" || s.updateChannel === "stable" || s.updateChannel === "nightly" ? s.updateChannel : null,
       // The core's General row (`settings::auto_connect_row`), when the host lays it out.
       ...(rows.has("auto-connect") ? { autoConnect: active(rows.get("auto-connect")) === "on" } : {}),
     },

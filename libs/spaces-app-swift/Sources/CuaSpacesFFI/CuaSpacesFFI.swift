@@ -2980,6 +2980,11 @@ public struct AppAboutInput: Equatable, Hashable {
      * A check is running.
      */
     public var checking: Bool
+    /**
+     * The updater can follow the nightly appcast; the picker offers
+     * Nightly only then.
+     */
+    public var nightly: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -3014,7 +3019,11 @@ public struct AppAboutInput: Equatable, Hashable {
          */lastCheck: String?,
         /**
          * A check is running.
-         */checking: Bool) {
+         */checking: Bool,
+        /**
+         * The updater can follow the nightly appcast; the picker offers
+         * Nightly only then.
+         */nightly: Bool) {
         self.platform = platform
         self.version = version
         self.build = build
@@ -3025,6 +3034,7 @@ public struct AppAboutInput: Equatable, Hashable {
         self.channel = channel
         self.lastCheck = lastCheck
         self.checking = checking
+        self.nightly = nightly
     }
 
 
@@ -3052,7 +3062,8 @@ public struct FfiConverterTypeAppAboutInput: FfiConverterRustBuffer {
                 autoInstall: FfiConverterBool.read(from: &buf),
                 channel: FfiConverterTypeAppUpdateChannel.read(from: &buf),
                 lastCheck: FfiConverterOptionString.read(from: &buf),
-                checking: FfiConverterBool.read(from: &buf)
+                checking: FfiConverterBool.read(from: &buf),
+                nightly: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -3067,6 +3078,7 @@ public struct FfiConverterTypeAppAboutInput: FfiConverterRustBuffer {
         FfiConverterTypeAppUpdateChannel.write(value.channel, into: &buf)
         FfiConverterOptionString.write(value.lastCheck, into: &buf)
         FfiConverterBool.write(value.checking, into: &buf)
+        FfiConverterBool.write(value.nightly, into: &buf)
     }
 }
 
@@ -3184,17 +3196,29 @@ public struct AppAboutUpdates: Equatable, Hashable {
      */
     public var autoInstallEnabled: Bool
     /**
-     * "Update to:".
+     * "Get updates from".
      */
     public var channelLabel: String
     /**
-     * Stable, Beta.
+     * Stable, Beta and, where offered, Nightly.
      */
     public var channels: [AppSettingsOption]
     /**
-     * The channel picker's tooltip.
+     * What the chosen channel gets, in a line.
      */
     public var channelHelp: String
+    /**
+     * A word about the version running on this channel; `None`: nothing.
+     */
+    public var channelNote: String?
+    /**
+     * "Download Stable": the way back to an older Stable right now.
+     */
+    public var downloadLabel: String?
+    /**
+     * Where `download_label` goes.
+     */
+    public var downloadUrl: String?
     /**
      * "Check Now" (or "Checking…").
      */
@@ -3227,14 +3251,23 @@ public struct AppAboutUpdates: Equatable, Hashable {
          * It can be used (only with automatic checks).
          */autoInstallEnabled: Bool,
         /**
-         * "Update to:".
+         * "Get updates from".
          */channelLabel: String,
         /**
-         * Stable, Beta.
+         * Stable, Beta and, where offered, Nightly.
          */channels: [AppSettingsOption],
         /**
-         * The channel picker's tooltip.
+         * What the chosen channel gets, in a line.
          */channelHelp: String,
+        /**
+         * A word about the version running on this channel; `None`: nothing.
+         */channelNote: String?,
+        /**
+         * "Download Stable": the way back to an older Stable right now.
+         */downloadLabel: String?,
+        /**
+         * Where `download_label` goes.
+         */downloadUrl: String?,
         /**
          * "Check Now" (or "Checking…").
          */checkLabel: String,
@@ -3252,6 +3285,9 @@ public struct AppAboutUpdates: Equatable, Hashable {
         self.channelLabel = channelLabel
         self.channels = channels
         self.channelHelp = channelHelp
+        self.channelNote = channelNote
+        self.downloadLabel = downloadLabel
+        self.downloadUrl = downloadUrl
         self.checkLabel = checkLabel
         self.checkEnabled = checkEnabled
         self.lastCheck = lastCheck
@@ -3281,6 +3317,9 @@ public struct FfiConverterTypeAppAboutUpdates: FfiConverterRustBuffer {
                 channelLabel: FfiConverterString.read(from: &buf),
                 channels: FfiConverterSequenceTypeAppSettingsOption.read(from: &buf),
                 channelHelp: FfiConverterString.read(from: &buf),
+                channelNote: FfiConverterOptionString.read(from: &buf),
+                downloadLabel: FfiConverterOptionString.read(from: &buf),
+                downloadUrl: FfiConverterOptionString.read(from: &buf),
                 checkLabel: FfiConverterString.read(from: &buf),
                 checkEnabled: FfiConverterBool.read(from: &buf),
                 lastCheck: FfiConverterString.read(from: &buf)
@@ -3296,6 +3335,9 @@ public struct FfiConverterTypeAppAboutUpdates: FfiConverterRustBuffer {
         FfiConverterString.write(value.channelLabel, into: &buf)
         FfiConverterSequenceTypeAppSettingsOption.write(value.channels, into: &buf)
         FfiConverterString.write(value.channelHelp, into: &buf)
+        FfiConverterOptionString.write(value.channelNote, into: &buf)
+        FfiConverterOptionString.write(value.downloadLabel, into: &buf)
+        FfiConverterOptionString.write(value.downloadUrl, into: &buf)
         FfiConverterString.write(value.checkLabel, into: &buf)
         FfiConverterBool.write(value.checkEnabled, into: &buf)
         FfiConverterString.write(value.lastCheck, into: &buf)
@@ -60042,6 +60084,10 @@ public enum AppUpdateChannel: Equatable, Hashable {
      * Releases and prereleases (`X.Y.Z-suffix`).
      */
     case beta
+    /**
+     * A build of main most nights, from its own appcast. Untested.
+     */
+    case nightly
 
 
 
@@ -60067,6 +60113,8 @@ public struct FfiConverterTypeAppUpdateChannel: FfiConverterRustBuffer {
 
         case 2: return .beta
 
+        case 3: return .nightly
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -60081,6 +60129,10 @@ public struct FfiConverterTypeAppUpdateChannel: FfiConverterRustBuffer {
 
         case .beta:
             writeInt(&buf, Int32(2))
+
+
+        case .nightly:
+            writeInt(&buf, Int32(3))
 
         }
     }
@@ -70883,6 +70935,19 @@ public func appAboutAllowedChannels(channel: AppUpdateChannel) -> [String]  {
 })
 }
 /**
+ * The appcast a Sparkle updater on `channel` reads, from the app's own
+ * `SUFeedURL` (`stable_feed`): the nightly appcast for Nightly; `None`
+ * keeps `SUFeedURL` (and for Nightly: this feed has no nightly).
+ */
+public func appAboutFeedUrl(channel: AppUpdateChannel, stableFeed: String) -> String?  {
+    return try!  FfiConverterOptionString.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_about_feed_url(
+        FfiConverterTypeAppUpdateChannel_lower(channel),
+        FfiConverterString.lower(stableFeed),$0
+    )
+})
+}
+/**
  * The About input from JSON (parity flows).
  */
 public func appAboutInputFromJson(json: String)throws  -> AppAboutInput  {
@@ -74399,6 +74464,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_about_allowed_channels() != 59781) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_about_feed_url() != 49899) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_about_input_from_json() != 570) {

@@ -1,6 +1,6 @@
 {
   "name": "about",
-  "about": "Settings, About: the name, version, links and copyright; the update controls (automatic checks and installs, Stable or Beta, Check Now, the last check); what a launch after an update refreshes; whose daemon restarts; the one notice when the refresh failed.",
+  "about": "Settings, About: the name, version, links and copyright; the update controls (automatic checks and installs, Stable, Beta or Nightly where the host has the nightly feed, what the chosen channel means and the way back from a nightly build, Check Now, the last check); what a launch after an update refreshes; whose daemon restarts; the one notice when the refresh failed.",
   "input": {
     "platform": "macos",
     "version": "0.2.0",
@@ -11,12 +11,16 @@
     "autoInstall": false,
     "channel": "stable",
     "lastCheck": null,
-    "checking": false
+    "checking": false,
+    "nightly": false
   },
   "panes": [
     { "step": "first open" },
     { "step": "install automatically", "set": { "autoInstall": true } },
     { "step": "beta, checked before", "set": { "channel": "beta", "version": "0.3.0-beta.1", "build": "0.3.0.130", "lastCheck": "9/30/26, 3:04 PM" } },
+    { "step": "nightly offered", "set": { "nightly": true } },
+    { "step": "nightly", "set": { "channel": "nightly", "version": "0.17.0-nightly.20261025+1a2b3c4", "build": "0.16.0.2026102503" } },
+    { "step": "back on stable from a nightly", "set": { "channel": "stable" } },
     { "step": "checking", "set": { "checking": true } },
     { "step": "no automatic checks", "set": { "checking": false, "autoCheck": false } },
     { "step": "no updater", "set": { "updater": false, "build": "" } }

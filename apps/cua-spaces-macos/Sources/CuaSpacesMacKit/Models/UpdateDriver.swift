@@ -35,9 +35,13 @@ public struct UpdateState: Equatable, Sendable {
 
     public static func idle(currentVersion: String) -> UpdateState { UpdateState(currentVersion: currentVersion) }
 
-    /// The release's page: the repository's tag for a Cua Spaces version.
+    /// The release's page: the repository's tag for a Cua Spaces version;
+    /// for a nightly, the rolling nightly release (its notes list the changes).
     public static func notesURL(version: String) -> String {
-        "https://github.com/trycua/cua/releases/tag/cua-spaces-v\(version)"
+        if version.split(separator: "+").first?.contains("-nightly") == true {
+            return "https://github.com/trycua/cua/releases/tag/cua-spaces-nightly"
+        }
+        return "https://github.com/trycua/cua/releases/tag/cua-spaces-v\(version)"
     }
 
     /// The bridge's record; absent values are explicit nulls.

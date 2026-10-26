@@ -6371,6 +6371,8 @@ pub enum AppUpdateChannel {
     Stable,
     /// Releases and prereleases (`X.Y.Z-suffix`).
     Beta,
+    /// A build of main most nights, from its own appcast. Untested.
+    Nightly,
 }
 
 /// What the About pane shows.
@@ -6398,6 +6400,9 @@ pub struct AppAboutInput {
     pub last_check: Option<String>,
     /// A check is running.
     pub checking: bool,
+    /// The updater can follow the nightly appcast; the picker offers
+    /// Nightly only then.
+    pub nightly: bool,
 }
 
 /// Which link.
@@ -6442,12 +6447,18 @@ pub struct AppAboutUpdates {
     pub auto_install: bool,
     /// It can be used (only with automatic checks).
     pub auto_install_enabled: bool,
-    /// "Update to:".
+    /// "Get updates from".
     pub channel_label: String,
-    /// Stable, Beta.
+    /// Stable, Beta and, where offered, Nightly.
     pub channels: Vec<AppSettingsOption>,
-    /// The channel picker's tooltip.
+    /// What the chosen channel gets, in a line.
     pub channel_help: String,
+    /// A word about the version running on this channel; `None`: nothing.
+    pub channel_note: Option<String>,
+    /// "Download Stable": the way back to an older Stable right now.
+    pub download_label: Option<String>,
+    /// Where `download_label` goes.
+    pub download_url: Option<String>,
     /// "Check Now" (or "Checking…").
     pub check_label: String,
     /// Check Now can be used.

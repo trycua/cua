@@ -162,7 +162,8 @@ export function createDemoSettings(ctx: DemoSettingsContext): Handlers {
 
   const about = (): AboutInput => ({
     platform: platform.os,
-    version: "0.6.0",
+    // What runs: 0.6.0, or the update "Restart to update" moved to.
+    version: update.currentVersion,
     build: "0.6.0.142",
     os: machine.osText,
     updater: true,
@@ -171,7 +172,30 @@ export function createDemoSettings(ctx: DemoSettingsContext): Handlers {
     channel: ctx.settings().updateChannel ?? "stable",
     lastCheck: lastCheck === null ? null : timeText(lastCheck),
     checking,
+    // The Mac app follows the nightly feed too.
+    nightly: platform.os === "macos",
   });
+  /** A check of the chosen channel, as the Mac app runs one after a switch: Nightly finds a build and downloads it. */
+  const checkChannel = (channel: AboutInput["channel"]) => {
+    if (update.status === "downloading" || update.status === "downloaded") return;
+    checking = true;
+    emit({ type: "settings.changed" });
+    void (async () => {
+      await wait(stepMs * 2);
+      checking = false;
+      lastCheck = now();
+      emit({ type: "settings.changed" });
+      if (channel !== "nightly") return;
+      const version = "0.17.0-nightly.20261025+d45964f";
+      for (const percent of [0, 35, 70, 100]) {
+        update = { ...update, status: "downloading", version, percent, notesUrl: null, message: null };
+        emit({ type: "update.changed" });
+        await wait(stepMs);
+      }
+      update = { ...update, status: "downloaded", percent: null };
+      emit({ type: "update.changed" });
+    })();
+  };
   const loginItem = (): LoginItemReport => ({
     status: ctx.settings().launchAtLogin ? "enabled" : "notRegistered",
     providesSpaces: false,
@@ -195,7 +219,10 @@ export function createDemoSettings(ctx: DemoSettingsContext): Handlers {
     "about.set": ({ autoCheck: c, autoInstall: i, channel }) => {
       if (c !== undefined) autoCheck = c;
       if (i !== undefined) autoInstall = i;
-      if (channel) ctx.setSettings({ updateChannel: channel });
+      if (channel && channel !== (ctx.settings().updateChannel ?? "stable")) {
+        ctx.setSettings({ updateChannel: channel });
+        checkChannel(channel);
+      }
       return about();
     },
     "about.checkNow": () => {

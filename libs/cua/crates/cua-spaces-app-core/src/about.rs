@@ -4,8 +4,9 @@
 //! Settings, About: the app's name and version, its links (acknowledgements,
 //! privacy policy, terms, system status, an issue report), the copyright line, and, where
 //! the app updates itself (the macOS app, through Sparkle), the update
-//! controls: automatic checks, automatic installs, the channel (Stable or
-//! Beta), Check Now and the last check.
+//! controls: automatic checks, automatic installs, the channel (Stable,
+//! Beta or, where a nightly feed exists, Nightly), Check Now and the last
+//! check.
 //!
 //! Also what the first launch after an update does ([`after_launch`]): it
 //! refreshes what cua installed into the coding agents (`cua agents
@@ -30,6 +31,16 @@ pub const ISSUE_URL: &str = "https://github.com/trycua/cua/issues/new";
 /// The copyright line.
 pub const COPYRIGHT: &str = "\u{a9} 2026 Cua AI, Inc. All rights reserved.";
 
+/// The public download page, for going back to Stable by hand: Sparkle
+/// never installs an older version than the one running.
+pub const DOWNLOAD_URL: &str = "https://spaces.cua.ai/download";
+
+/// The Sparkle appcast of the stable and beta releases, as the release
+/// workflow publishes it (the app's `SUFeedURL`) ...
+const STABLE_FEED_SUFFIX: &str = "/cua-spaces-latest/cua-spaces-appcast.xml";
+/// ... and the nightly appcast next to it (`nightly-cua-spaces.yml`).
+const NIGHTLY_FEED_SUFFIX: &str = "/cua-spaces-nightly/cua-spaces-nightly-appcast.xml";
+
 /// Which releases the updater offers.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -39,6 +50,9 @@ pub enum UpdateChannel {
     Stable,
     /// Releases and prereleases (`X.Y.Z-suffix`).
     Beta,
+    /// A build of main most nights (`X.Y.Z-nightly.YYYYMMDD+sha`), from its
+    /// own appcast ([`nightly_feed_url`]). Untested.
+    Nightly,
 }
 
 impl UpdateChannel {
@@ -47,26 +61,57 @@ impl UpdateChannel {
         match self {
             UpdateChannel::Stable => "stable",
             UpdateChannel::Beta => "beta",
+            UpdateChannel::Nightly => "nightly",
         }
     }
 
     /// The channel for a picker id (anything else is Stable).
     pub fn from_id(id: &str) -> UpdateChannel {
-        if id == "beta" {
-            UpdateChannel::Beta
-        } else {
-            UpdateChannel::Stable
+        match id {
+            "beta" => UpdateChannel::Beta,
+            "nightly" => UpdateChannel::Nightly,
+            _ => UpdateChannel::Stable,
         }
     }
 }
 
 /// The Sparkle channels an updater on `channel` may install from (Stable:
-/// none but the default one).
+/// none but the default one). The nightly appcast tags every item
+/// `nightly`, so an app that is not on Nightly installs none of them even
+/// if it read that feed.
 pub fn allowed_channels(channel: UpdateChannel) -> Vec<String> {
     match channel {
         UpdateChannel::Stable => vec![],
         UpdateChannel::Beta => vec!["beta".into()],
+        UpdateChannel::Nightly => vec!["nightly".into()],
     }
+}
+
+/// The nightly appcast next to `stable_feed` (the app's `SUFeedURL`, the
+/// appcast on the rolling `cua-spaces-latest` release); `None` for any
+/// other feed (a fork's or a local build's), which has no nightly.
+pub fn nightly_feed_url(stable_feed: &str) -> Option<String> {
+    let base = stable_feed.strip_suffix(STABLE_FEED_SUFFIX)?;
+    base.starts_with("https://")
+        .then(|| format!("{base}{NIGHTLY_FEED_SUFFIX}"))
+}
+
+/// The appcast a Sparkle updater on `channel` reads: the nightly one for
+/// Nightly, else `None` (the app's own `SUFeedURL`).
+pub fn feed_url(channel: UpdateChannel, stable_feed: &str) -> Option<String> {
+    match channel {
+        UpdateChannel::Nightly => nightly_feed_url(stable_feed),
+        UpdateChannel::Stable | UpdateChannel::Beta => None,
+    }
+}
+
+/// A nightly build's version (`0.17.0-nightly.20261025+1a2b3c4`).
+pub fn is_nightly_version(version: &str) -> bool {
+    version
+        .split('+')
+        .next()
+        .and_then(|v| v.split_once('-'))
+        .is_some_and(|(_, pre)| pre == "nightly" || pre.starts_with("nightly."))
 }
 
 /// What the About pane shows.
@@ -94,6 +139,9 @@ pub struct AboutInput {
     pub last_check: Option<String>,
     /// A check is running.
     pub checking: bool,
+    /// The updater can follow the nightly appcast (the macOS app with the
+    /// release feed); the picker offers Nightly only then.
+    pub nightly: bool,
 }
 
 /// Which link.
@@ -138,12 +186,21 @@ pub struct AboutUpdates {
     pub auto_install: bool,
     /// It can be used (only with automatic checks).
     pub auto_install_enabled: bool,
-    /// "Update to:".
+    /// "Get updates from".
     pub channel_label: String,
-    /// Stable, Beta.
+    /// Stable, Beta and, where offered, Nightly.
     pub channels: Vec<SettingsOption>,
-    /// The channel picker's tooltip.
+    /// What the chosen channel gets, in a line.
     pub channel_help: String,
+    /// A word about the version running on this channel: Nightly may
+    /// break, or this build is newer than the channel's latest release and
+    /// stays until that channel passes it; `None`: nothing to say.
+    pub channel_note: Option<String>,
+    /// "Download Stable": the way back to an older Stable right now
+    /// ([`DOWNLOAD_URL`]); `None` when no way back is needed.
+    pub download_label: Option<String>,
+    /// Where [`AboutUpdates::download_label`] goes.
+    pub download_url: Option<String>,
     /// "Check Now" (or "Checking…").
     pub check_label: String,
     /// Check Now can be used.
@@ -215,6 +272,49 @@ pub fn issue_url(input: &AboutInput) -> String {
     )
 }
 
+/// What `channel` gets, in plain words.
+fn channel_help(channel: UpdateChannel) -> &'static str {
+    match channel {
+        UpdateChannel::Stable => "Tested releases. Best for most people.",
+        UpdateChannel::Beta => "New features a little sooner, with rough edges.",
+        UpdateChannel::Nightly => {
+            "A new build most nights with the very latest changes. Nightly builds are not \
+             tested, so something may break."
+        }
+    }
+}
+
+/// A nightly build on Stable or Beta: Sparkle only moves forward, so the
+/// way back to an older release right now is a download by hand.
+fn going_back(input: &AboutInput) -> bool {
+    input.channel != UpdateChannel::Nightly && is_nightly_version(&input.version)
+}
+
+/// The note under the picker (see [`AboutUpdates::channel_note`]).
+fn channel_note(input: &AboutInput) -> Option<String> {
+    let name = match input.channel {
+        UpdateChannel::Stable => "Stable",
+        UpdateChannel::Beta => "Beta",
+        UpdateChannel::Nightly => {
+            return Some(
+                "If a nightly build gives you trouble, switch back to Stable. You keep your \
+                 Spaces and settings."
+                    .into(),
+            );
+        }
+    };
+    if going_back(input) {
+        return Some(format!(
+            "This nightly build is newer than the latest {name} release, so it stays until \
+             the next {name} release replaces it. To go back now, download Stable and move it \
+             to Applications."
+        ));
+    }
+    let prerelease = input.version.split('+').next().unwrap_or("").contains('-');
+    (input.channel == UpdateChannel::Stable && prerelease)
+        .then(|| "This beta stays until a newer Stable release replaces it.".into())
+}
+
 /// The About pane for `input`.
 pub fn view(input: &AboutInput) -> AboutView {
     let link = |id, label: &str, url: Option<String>| AboutLink {
@@ -228,22 +328,26 @@ pub fn view(input: &AboutInput) -> AboutView {
         auto_install_label: "Install a downloaded update when Cua Spaces quits".into(),
         auto_install: input.auto_install,
         auto_install_enabled: input.auto_check,
-        channel_label: "Update to:".into(),
+        channel_label: "Get updates from".into(),
         channels: [
             (UpdateChannel::Stable, "Stable"),
             (UpdateChannel::Beta, "Beta"),
+            (UpdateChannel::Nightly, "Nightly"),
         ]
         .into_iter()
+        .filter(|(c, _)| {
+            *c != UpdateChannel::Nightly || input.nightly || input.channel == UpdateChannel::Nightly
+        })
         .map(|(c, label)| SettingsOption {
             id: c.id().into(),
             label: label.into(),
             active: c == input.channel,
         })
         .collect(),
-        channel_help: "Stable gets tested releases. Beta also gets prereleases: new features \
-                       sooner, with rough edges. Back on Stable, this version stays until a \
-                       newer stable release."
-            .into(),
+        channel_help: channel_help(input.channel).into(),
+        channel_note: channel_note(input),
+        download_label: going_back(input).then(|| "Download Stable".into()),
+        download_url: going_back(input).then(|| DOWNLOAD_URL.into()),
         check_label: if input.checking {
             "Checking\u{2026}".into()
         } else {
@@ -422,6 +526,7 @@ mod tests {
             channel: UpdateChannel::Stable,
             last_check: None,
             checking: false,
+            nightly: false,
         }
     }
 
@@ -499,8 +604,95 @@ mod tests {
     fn channels_map_to_sparkle() {
         assert!(allowed_channels(UpdateChannel::Stable).is_empty());
         assert_eq!(allowed_channels(UpdateChannel::Beta), ["beta"]);
+        assert_eq!(allowed_channels(UpdateChannel::Nightly), ["nightly"]);
         assert_eq!(UpdateChannel::from_id("beta"), UpdateChannel::Beta);
-        assert_eq!(UpdateChannel::from_id("nightly"), UpdateChannel::Stable);
+        assert_eq!(UpdateChannel::from_id("nightly"), UpdateChannel::Nightly);
+        assert_eq!(UpdateChannel::from_id("weekly"), UpdateChannel::Stable);
+    }
+
+    #[test]
+    fn nightly_reads_its_own_appcast() {
+        let stable = "https://github.com/trycua/cua/releases/download/cua-spaces-latest/cua-spaces-appcast.xml";
+        let nightly = "https://github.com/trycua/cua/releases/download/cua-spaces-nightly/cua-spaces-nightly-appcast.xml";
+        assert_eq!(nightly_feed_url(stable).as_deref(), Some(nightly));
+        assert_eq!(
+            feed_url(UpdateChannel::Nightly, stable).as_deref(),
+            Some(nightly)
+        );
+        assert_eq!(feed_url(UpdateChannel::Stable, stable), None);
+        assert_eq!(feed_url(UpdateChannel::Beta, stable), None);
+        assert_eq!(nightly_feed_url("https://example.com/appcast.xml"), None);
+        assert_eq!(
+            nightly_feed_url("http://x/cua-spaces-latest/cua-spaces-appcast.xml"),
+            None
+        );
+    }
+
+    #[test]
+    fn nightly_versions_are_recognized() {
+        assert!(is_nightly_version("0.17.0-nightly.20261025+1a2b3c4"));
+        assert!(is_nightly_version("0.17.0-nightly.20261025"));
+        assert!(!is_nightly_version("0.17.0-beta.1"));
+        assert!(!is_nightly_version("0.17.0"));
+        assert!(!is_nightly_version("0.17.0+nightly"));
+    }
+
+    #[test]
+    fn nightly_is_offered_only_where_its_feed_is() {
+        let ids = |i: &AboutInput| -> Vec<String> {
+            view(i)
+                .updates
+                .unwrap()
+                .channels
+                .into_iter()
+                .map(|o| o.id)
+                .collect()
+        };
+        let mut i = input();
+        assert_eq!(ids(&i), ["stable", "beta"]);
+        i.nightly = true;
+        assert_eq!(ids(&i), ["stable", "beta", "nightly"]);
+        // Chosen on a host that cannot follow it any more: still shown, as chosen.
+        i.nightly = false;
+        i.channel = UpdateChannel::Nightly;
+        assert_eq!(ids(&i), ["stable", "beta", "nightly"]);
+    }
+
+    #[test]
+    fn the_note_explains_nightly_and_the_way_back() {
+        let mut i = input();
+        i.nightly = true;
+        let u = view(&i).updates.unwrap();
+        assert_eq!(u.channel_help, "Tested releases. Best for most people.");
+        assert_eq!(u.channel_note, None);
+        assert_eq!(u.download_url, None);
+
+        i.channel = UpdateChannel::Nightly;
+        let u = view(&i).updates.unwrap();
+        assert!(u.channel_help.contains("something may break"));
+        assert!(u.channel_note.unwrap().contains("switch back to Stable"));
+        assert_eq!(u.download_url, None);
+
+        // Back on Stable from a nightly build: it stays, and a download goes back now.
+        i.version = "0.17.0-nightly.20261025+1a2b3c4".into();
+        i.channel = UpdateChannel::Stable;
+        let u = view(&i).updates.unwrap();
+        assert!(
+            u.channel_note
+                .unwrap()
+                .contains("newer than the latest Stable release")
+        );
+        assert_eq!(u.download_label.as_deref(), Some("Download Stable"));
+        assert_eq!(u.download_url.as_deref(), Some(DOWNLOAD_URL));
+
+        // A beta on Stable waits for the next stable release.
+        i.version = "0.17.0-beta.1".into();
+        let u = view(&i).updates.unwrap();
+        assert_eq!(
+            u.channel_note.as_deref(),
+            Some("This beta stays until a newer Stable release replaces it.")
+        );
+        assert_eq!(u.download_url, None);
     }
 
     fn launch(last_seen: Option<&str>, version: &str, build: &str, onboarded: bool) -> LaunchPlan {

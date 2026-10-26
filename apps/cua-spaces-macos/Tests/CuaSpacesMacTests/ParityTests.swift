@@ -2341,6 +2341,8 @@ struct ParityTests {
                     "channel": "\(u.channelLabel) " + u.channels.map { "\($0.label)\($0.active ? "*" : "")" }
                         .joined(separator: " | "),
                     "help": u.channelHelp,
+                    "note": u.channelNote ?? NSNull(),
+                    "download": u.downloadUrl.map { "\(u.downloadLabel ?? "") -> \($0)" } ?? NSNull(),
                     "check": "\(u.checkLabel) \(u.checkEnabled ? "on" : "off")",
                     "lastCheck": u.lastCheck,
                     "sparkleChannels": appAboutAllowedChannels(channel: about.channel),

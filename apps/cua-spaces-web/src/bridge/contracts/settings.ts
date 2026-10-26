@@ -16,7 +16,7 @@ export type { DriveMountInput } from "./volume";
 
 /* ---- About (`about::*`) --------------------------------------------------- */
 
-export type UpdateChannelId = "stable" | "beta";
+export type UpdateChannelId = "stable" | "beta" | "nightly";
 
 /** `about::AboutInput`: what the host reports about the app and its updater. */
 export interface AboutInput {
@@ -35,6 +35,8 @@ export interface AboutInput {
   /** The last check as the host formats a date; null: never. */
   lastCheck: string | null;
   checking: boolean;
+  /** The updater can follow the nightly feed (the Mac app); the picker offers Nightly only then. */
+  nightly?: boolean;
 }
 
 export type AboutLinkId = "acknowledgements" | "privacy" | "terms" | "status" | "issue";
@@ -54,7 +56,13 @@ export interface AboutUpdates {
   autoInstallEnabled: boolean;
   channelLabel: string;
   channels: SettingsOption[];
+  /** What the chosen channel gets, in a line. */
   channelHelp: string;
+  /** A word about this version on this channel (Nightly may break; a nightly build stays until the channel passes it); null: nothing. */
+  channelNote: string | null;
+  /** "Download Stable": the way back from a nightly build right now; null when none is needed. */
+  downloadLabel: string | null;
+  downloadUrl: string | null;
   checkLabel: string;
   checkEnabled: boolean;
   lastCheck: string;

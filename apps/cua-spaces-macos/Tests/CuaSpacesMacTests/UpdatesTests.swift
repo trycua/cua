@@ -26,8 +26,8 @@ struct UpdatesTests {
         model.telemetry = telemetry
         model.checkNow()
         updater.nextResult = "found"
+        // Switching checks the new channel at once.
         model.choose(channel: "beta")
-        model.checkNow()
         // Sparkle installs what it found on its own schedule.
         updater.onUpdateEvent?("installed")
         let got = telemetry.recorded.map { ParityTests.signalFrame($0) }
@@ -96,6 +96,31 @@ struct UpdatesTests {
         model.choose(channel: "stable")
         #expect(updater.channels.isEmpty)
         #expect(saved == [.beta, .stable])
+    }
+
+    @Test func nightlyReadsItsOwnFeedAndIsCheckedAtOnce() {
+        let updater = FixtureUpdater()
+        let model = UpdatesModel(updater: updater, channel: .stable, info: Self.info)
+        #expect(updater.feedURL == nil)
+        #expect(model.view.updates?.channels.map(\.id) == ["stable", "beta", "nightly"])
+        model.choose(channel: "nightly")
+        #expect(updater.channels == ["nightly"])
+        #expect(updater.feedURL == "https://github.com/trycua/cua/releases/download/cua-spaces-nightly/cua-spaces-nightly-appcast.xml")
+        // Switching checks the new channel right away (like T3 Code); choosing it again does not.
+        #expect(updater.checks == 1)
+        model.choose(channel: "nightly")
+        #expect(updater.checks == 1)
+        model.choose(channel: "stable")
+        #expect(updater.feedURL == nil)
+        #expect(updater.checks == 2)
+        // A build whose feed has no nightly next to it offers none.
+        updater.stableFeed = "https://example.com/appcast.xml"
+        #expect(model.view.updates?.channels.map(\.id) == ["stable", "beta"])
+    }
+
+    @Test func aNightlysNotesAreTheNightlyRelease() {
+        #expect(UpdateState.notesURL(version: "0.17.0-nightly.20261025+1a2b3c4") == "https://github.com/trycua/cua/releases/tag/cua-spaces-nightly")
+        #expect(UpdateState.notesURL(version: "0.16.0") == "https://github.com/trycua/cua/releases/tag/cua-spaces-v0.16.0")
     }
 
     // MARK: - The in-app update flow

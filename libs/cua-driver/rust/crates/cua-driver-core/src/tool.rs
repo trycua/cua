@@ -619,6 +619,13 @@ pub(crate) fn advertised_runtime_input_schema(tool_name: &str, schema: &Value) -
             .entry("session")
             .or_insert_with(crate::tool_schema::session_schema);
     }
+    // Dispatch reads `post_action_wait` for every action that waits for the
+    // post-action window-change report (see `crate::post_action_wait`).
+    if crate::post_action_wait::accepts(tool_name) {
+        properties
+            .entry(crate::post_action_wait::POST_ACTION_WAIT_ARG)
+            .or_insert_with(crate::post_action_wait::schema);
+    }
     if !crate::action_target::supports_typed_target(tool_name) {
         return schema;
     }
@@ -1697,10 +1704,22 @@ impl ToolRegistry {
             .and_then(Value::as_str)
             .map(str::to_owned);
         let in_batch = crate::step_pacing::in_batch();
-        let mut result = self
-            .invoke_authorized_unannotated(name, args, context, evidence)
-            .await;
         let tool = renamed_tool(name).unwrap_or(name);
+        let post_action_wait = if crate::post_action_wait::accepts(tool) {
+            match crate::post_action_wait::from_args(tool, &args) {
+                Ok(wait) => wait,
+                Err((message, structured)) => {
+                    return ToolResult::error(message).with_structured(structured);
+                }
+            }
+        } else {
+            crate::post_action_wait::PostActionWait::Default
+        };
+        let mut result = crate::post_action_wait::scope(
+            post_action_wait,
+            self.invoke_authorized_unannotated(name, args, context, evidence),
+        )
+        .await;
         crate::recovery_hint::annotate(tool, &seed, &mut result);
         crate::batch_nudge::annotate(tool, session.as_deref(), in_batch, &mut result);
         result

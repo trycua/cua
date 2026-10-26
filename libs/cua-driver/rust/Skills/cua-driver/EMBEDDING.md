@@ -281,6 +281,32 @@ example to record a demo, sets `CUA_DRIVER_BATCH_PACING=full` in the same
 environment as the variables above. Any other value, or none, applies the
 shortened waits. No tool argument can change it.
 
+### Skipping the report wait per call (macOS)
+
+An agent that reads the window state after every action does not need the
+result to wait for the window watch. Each action that waits for it (`click`,
+`double_click`, `right_click`, `drag`, `scroll`, `type_text`, `press_key`,
+`hotkey` and `set_value`) accepts an optional `post_action_wait` argument:
+
+- `"default"`, or omitting it, keeps the behavior above.
+- `"none"` returns as soon as the input is delivered. The result ends with
+  `Window changes not observed: post_action_wait "none" returned without
+  waiting.` instead of reporting no change. The watch still runs detached for
+  its whole deadline and keeps the focus-steal lease, exactly like the
+  remainder of a quiet watch above, so focus protection is unchanged and a
+  window that opens is reported on the next action's result.
+
+Linux and Windows refuse `"none"` with `unsupported_platform`: the Linux X11
+foreground transaction uses its window watch as delivery evidence, and the
+Windows adapter does not wait for window changes after an action.
+
+Measured on macOS 26 with Calculator in the background (medians of 20 calls
+over three runs), an `element_token` click (AXPress) took 570 to 750 ms with
+the default and 250 to 350 ms with `"none"`. A coordinate click that
+Calculator routes through the pixel path took 870 to 1160 ms and 510 to 690 ms.
+A coordinate click that resolves to an AX press through the hit-test does not
+watch the window list, so the argument does not change it.
+
 ## Pacing synthesized keystrokes (macOS)
 
 The macOS keyboard adapter waits a fixed gap between each key down and up and

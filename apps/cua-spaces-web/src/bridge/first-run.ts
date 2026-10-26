@@ -47,6 +47,7 @@ import type {
   FirstRunOffer,
   FirstRunPermissionsView,
   FirstRunPlan,
+  FirstRunRow,
   FirstRunStep,
   FirstRunTodos,
   FirstRunView,
@@ -239,12 +240,15 @@ function fallbackView(input: FirstRunInput): FirstRunView {
     case "permissions": {
       const host = input.host;
       const known = host?.configured && !input.hostSettingUp ? host : null;
-      const rows = (
-        [
-          ["screen-recording", `See ${place}'s screen`, "So your team and agents can see what's on it.", "Privacy_ScreenCapture"],
-          ["accessibility", "Use the mouse and keyboard", `So they can click and type on ${place}.`, "Privacy_Accessibility"],
-        ] as const
-      ).map(([id, title, note, pane]) => {
+      const localNetwork = Boolean(host?.permissions.some((p) => p.id === "local-network"));
+      const wanted: ReadonlyArray<readonly [FirstRunRow["id"], string, string, string]> = [
+        ["screen-recording", `See ${place}'s screen`, "So your team and agents can see what's on it.", "Privacy_ScreenCapture"],
+        ["accessibility", "Use the mouse and keyboard", `So they can click and type on ${place}.`, "Privacy_Accessibility"],
+        ...(localNetwork
+          ? [["local-network", "Run Spaces on this Mac", "So the macOS Spaces you create here can start and connect.", "Privacy_LocalNetwork"] as const]
+          : []),
+      ];
+      const rows = wanted.map(([id, title, note, pane]) => {
         const missing = known?.permissions.find((p) => p.id === id && !p.granted);
         if (!known) return { id, state: "checking" as const, title, note: `Adding ${place} to your account first…`, action: null, settingsUrl: null };
         if (!missing) return { id, state: "ok" as const, title, note: "Allowed", action: null, settingsUrl: null };
@@ -255,7 +259,9 @@ function fallbackView(input: FirstRunInput): FirstRunView {
         ...base,
         permissions: {
           title: `Share ${place}'s screen.`,
-          lede: `Allow two permissions so your team and agents can see and use ${place}.`,
+          lede: localNetwork
+            ? `Allow three permissions so your team and agents can see and use ${place}, and so macOS Spaces can run on it.`
+            : `Allow two permissions so your team and agents can see and use ${place}.`,
           rows,
           note: `Allow opens System Settings, where you turn on ${host?.appName || "Cua Spaces"}.`,
           primary: all ? { id: "continue", label: "Continue" } : null,
@@ -523,7 +529,7 @@ export function useScreenPermissions(active = true, pollMs = FIRST_RUN_POLL_MS):
     let live = true;
     const read = () =>
       void adapter
-        .call("host.status", {})
+        .call("host.status", { localNetwork: true })
         .then((h) => live && setHost(h))
         .catch(() => {});
     read();
@@ -608,8 +614,9 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
           .catch(() => live && setAgents((a) => a ?? []));
       }
       if (step === "devices" || step === "permissions" || step === "setup" || s.finishedLater) {
+        // On the permissions page the host also checks Local Network access (which makes macOS ask).
         void adapter
-          .call("host.status", {})
+          .call("host.status", step === "permissions" ? { localNetwork: true } : {})
           .then((h) => live && setHost(h))
           .catch(() => {});
       }

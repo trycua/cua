@@ -409,6 +409,28 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     await waitFor(() => expect(heading()).toBe("Share this Mac's screen."));
   });
 
+  it("a Mac that runs macOS Spaces also asks for Local Network on the permissions screen, and checks it there", async () => {
+    const LN = "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork";
+    let granted = false;
+    writeFirstRun({ step: "permissions", picked: ["codex"] });
+    const calls = await mount({
+      signedIn: true,
+      host: (h) => ({ ...h, configured: true, shareDesktop: true, permissions: [{ id: "local-network", label: "Local Network", settingsUrl: LN, granted }] }),
+    });
+    await waitFor(() => expect(heading()).toBe("Share this Mac's screen."));
+    expect(document.body.textContent).toMatch(/Allow three permissions so your team and agents can see and use this Mac, and so macOS Spaces can run on it\./);
+    const rows = () => [...document.querySelectorAll<HTMLElement>("[data-first-run-permissions] [data-first-run-status]")].map((e) => `${e.dataset.firstRunStatus}:${e.dataset.state}`);
+    await waitFor(() => expect(rows()).toEqual(["screen-recording:ok", "accessibility:ok", "local-network:fix"]));
+    // The page asks the host to check it (the daemon's own connect is what makes macOS ask).
+    expect(calls.some((c) => c.op === "host.status" && (c.args as { localNetwork?: boolean } | undefined)?.localNetwork === true)).toBe(true);
+    click('[data-first-run-status="local-network"] [data-first-run-action="allow"]');
+    await waitFor(() => expect(calls.find((c) => c.op === "host.openSettings")?.args).toEqual({ url: LN }));
+    // Allowed on this Mac: a check, live.
+    granted = true;
+    fireEvent.focus(window);
+    await waitFor(() => expect(rows()).toEqual(["screen-recording:ok", "accessibility:ok", "local-network:ok"]));
+  });
+
   it("Not now on the permissions screen goes on; a Mac kept for Spaces only never sees it", async () => {
     writeFirstRun({ step: "permissions", picked: ["codex"] });
     let share = true;

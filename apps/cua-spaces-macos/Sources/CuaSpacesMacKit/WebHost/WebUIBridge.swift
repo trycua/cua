@@ -307,7 +307,14 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             return machines()
         case "host.status":
             if model.host.state == nil, model.servicesIn { await model.host.refresh() }
-            return hostStatus()
+            // The permissions page also asks for Local Network: the daemon
+            // checks it in the background (its connect makes macOS ask), and
+            // the page reads the answer on its next poll.
+            let localNetwork = (args["localNetwork"] as? Bool) == true
+            if localNetwork, model.servicesIn {
+                Task { @MainActor [model] in await model.checkLocalNetworkFromDaemon() }
+            }
+            return hostStatus(localNetwork: localNetwork)
 
         case "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
              "agents.setup", "agents.configure", "agents.signIn":
@@ -842,8 +849,20 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
     /// `HostStatus`, with the signed-in `account` it was checked against),
     /// plus its relay machine id and what a running setup or Sign In waits
     /// for (`progress`); null until it answered.
-    func hostStatus() -> Any {
+    func hostStatus(localNetwork: Bool = false) -> Any {
         guard let state = model.host.state, var out = BridgeValue.encode(state) as? [String: Any] else { return NSNull() }
+        // A Mac that runs macOS Spaces needs Local Network access for the
+        // daemon: listed (granted or not) for the permissions page, which
+        // asks the daemon to check it. Not for Spaces-less Macs or Intel.
+        if localNetwork, state.provideSpaces, AppModel.hostArch == "arm64" {
+            var list = out["permissions"] as? [[String: Any]] ?? []
+            list.append([
+                "id": "local-network", "title": "Local Network",
+                "settingsUrl": "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork",
+                "instructions": NSNull(), "granted": model.daemonLocalNetworkAllowed == true,
+            ])
+            out["permissions"] = list
+        }
         out["machineId"] = model.host.machineId ?? NSNull()
         out["progress"] = model.host.progress ?? NSNull()
         // The name System Settings lists this app under ("Cua Spaces Local"),

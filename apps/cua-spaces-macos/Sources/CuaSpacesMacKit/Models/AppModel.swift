@@ -1230,6 +1230,37 @@ public final class AppModel {
     /// set one).
     public var localNetworkGate: LocalNetworkGate?
 
+    /// What the daemon found when it last tried this Mac's local network:
+    /// true allowed, false blocked, nil not known yet. The daemon is the
+    /// process that reaches the macOS VMs, and macOS decides Local Network
+    /// per process, so the app's own connect (`localNetworkGate`) can pass
+    /// while the daemon is still blocked. The daemon's connect is also what
+    /// makes macOS ask, so this runs where the person expects it: the
+    /// permissions page.
+    public private(set) var daemonLocalNetworkAllowed: Bool?
+    private var daemonLocalNetworkAt = Date.distantPast
+    private var daemonLocalNetworkBusy = false
+
+    /// Asks the daemon (its machine check, `machine.local_network`) and
+    /// remembers the answer; at most once per `minimum` seconds.
+    public func checkLocalNetworkFromDaemon(every minimum: TimeInterval = 4) async {
+        guard !daemonLocalNetworkBusy, Date().timeIntervalSince(daemonLocalNetworkAt) >= minimum else { return }
+        daemonLocalNetworkBusy = true
+        defer {
+            daemonLocalNetworkBusy = false
+            daemonLocalNetworkAt = Date()
+        }
+        let backend = self.backend
+        let answer = await withTimeout(seconds: 20) { try await backend.machineHealth(machine: nil) }
+        guard case .success(let health) = answer,
+              let check = health.checks.first(where: { $0.id == "machine.local_network" }) else { return }
+        switch check.status {
+        case "pass": daemonLocalNetworkAllowed = true
+        case "fail": daemonLocalNetworkAllowed = false
+        default: break
+        }
+    }
+
     /// How long the daemon may take to take a create (its first progress
     /// report, "Preparing", comes as it starts): past it the create fails
     /// at once, with Try again, instead of after the 4 min stall.

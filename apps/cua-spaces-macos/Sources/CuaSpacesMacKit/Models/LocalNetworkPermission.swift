@@ -159,7 +159,12 @@ public struct LiveLocalNetworkProbe: LocalNetworkProbing {
     }
 
     public func access() async -> AppLocalNetworkAccess {
-        guard let host = LiveLocalNetworkPermission.firstSubnetHost() else { return .unknown }
+        // The router (the default gateway) answers a connect, even to refuse
+        // it; the first host of the subnet may be an address nobody has, and
+        // a connect to it stalls and says nothing.
+        let table = await routes()
+        guard let host = LiveLocalNetworkPermission.defaultGateway(inRoutes: table)
+            ?? LiveLocalNetworkPermission.firstSubnetHost() else { return .unknown }
         let queue = DispatchQueue(label: "com.trycua.cua-spaces.local-network.check")
         return await withCheckedContinuation { (done: CheckedContinuation<AppLocalNetworkAccess, Never>) in
             // Port 9 (discard): nothing has to listen; a refusal comes back
@@ -239,6 +244,20 @@ public enum LiveLocalNetworkPermission {
             let ip = addr.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { UInt32(bigEndian: $0.pointee.sin_addr.s_addr) }
             let m = mask.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { UInt32(bigEndian: $0.pointee.sin_addr.s_addr) }
             if let host = subnetHost(ip: ip, mask: m) { return host }
+        }
+        return nil
+    }
+
+    /// The default route's gateway in `netstat -rn -f inet` output, when it
+    /// is an IPv4 address on a real network (not a VPN's tunnel, not a
+    /// `link#` route).
+    static func defaultGateway(inRoutes netstat: String) -> String? {
+        for line in netstat.split(separator: "\n") {
+            let cols = line.split(whereSeparator: { $0 == " " || $0 == "\t" })
+            guard cols.count >= 4, cols[0] == "default",
+                  !isTunnelOrBridge(String(cols[3])) else { continue }
+            let parts = cols[1].split(separator: ".", omittingEmptySubsequences: false)
+            if parts.count == 4, parts.allSatisfy({ UInt8($0) != nil }) { return String(cols[1]) }
         }
         return nil
     }

@@ -287,6 +287,7 @@ pub(crate) fn routes(relay: &Relay) -> Router<Relay> {
         )
         .route("/internal/v1/records/{id}", get(internal_record))
         .route("/internal/v1/shared", get(internal_shared))
+        .route("/internal/v1/devices/{id}", get(internal_device))
         .route(
             "/internal/v1/accounts/{sub}",
             axum::routing::delete(crate::account_erase::erase),
@@ -447,6 +448,67 @@ async fn internal_record(
             .into_response();
     };
     axum::Json(record_facts(&record)).into_response()
+}
+
+/// `GET /internal/v1/devices/{id}`: one client device, read-only, for the
+/// in-cluster services that must know whether a device is enrolled and
+/// not revoked. 200 `{id, account,
+/// public_jwk: {kty: "EC", crv: "P-256", x, y}, state:
+/// pending|enrolled|expired|revoked, enrolled, revoked}`; 404
+/// `device_not_found`. Needs the internal token, like every
+/// `/internal/v1/*` route (and the ingress never routes `/internal/`).
+async fn internal_device(
+    State(relay): State<Relay>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    if let Err(r) = require_internal(&relay, &headers) {
+        return r;
+    }
+    let not_found = || {
+        (
+            StatusCode::NOT_FOUND,
+            axum::Json(serde_json::json!({
+                "error": "device_not_found",
+                "detail": "no such device",
+            })),
+        )
+            .into_response()
+    };
+    if id.len() > 64 || !id.starts_with(crate::devices::DEVICE_ID_PREFIX) {
+        return not_found();
+    }
+    let Some(device) = relay.devices.get(&id) else {
+        return not_found();
+    };
+    axum::Json(device_facts(&device, crate::assertion::now_secs())).into_response()
+}
+
+/// The issuer's view of a device (`/internal/v1/devices/{id}`): its key as a
+/// JWK, so the issuer can match it against a device proof's `jwk` header.
+pub(crate) fn device_facts(device: &crate::devices::DeviceRecord, now: u64) -> serde_json::Value {
+    use crate::devices::DeviceState;
+    let state = device.state(now);
+    let public_jwk = crate::devices::decode_public_key(&device.public_key)
+        .ok()
+        .map(|raw| {
+            use base64::Engine as _;
+            let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+            serde_json::json!({
+                "kty": "EC",
+                "crv": "P-256",
+                "x": b64.encode(&raw[1..33]),
+                "y": b64.encode(&raw[33..65]),
+            })
+        });
+    serde_json::json!({
+        "id": device.id,
+        "account": device.account,
+        "public_jwk": public_jwk,
+        "state": state,
+        "enrolled": state == DeviceState::Enrolled,
+        "revoked": state == DeviceState::Revoked,
+    })
 }
 
 /// `GET /internal/v1/shared?sub=&email=&email_verified=`: what other

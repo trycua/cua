@@ -27812,9 +27812,10 @@ public struct GuestUsage: Equatable, Hashable {
      */
     public var diskUsed: UInt64
     /**
-     * Disk size, bytes.
+     * Disk size, bytes; absent when the guest's file system has no size
+     * of its own (gVisor's root overlay) or did not say. Never a sentinel.
      */
-    public var diskTotal: UInt64
+    public var diskTotal: UInt64?
     /**
      * `disk_total` is the guest's own disk.
      */
@@ -27845,8 +27846,9 @@ public struct GuestUsage: Equatable, Hashable {
          * Disk in use, bytes.
          */diskUsed: UInt64,
         /**
-         * Disk size, bytes.
-         */diskTotal: UInt64,
+         * Disk size, bytes; absent when the guest's file system has no size
+         * of its own (gVisor's root overlay) or did not say. Never a sentinel.
+         */diskTotal: UInt64?,
         /**
          * `disk_total` is the guest's own disk.
          */diskLimited: Bool) {
@@ -27884,7 +27886,7 @@ public struct FfiConverterTypeGuestUsage: FfiConverterRustBuffer {
                 memoryTotal: FfiConverterUInt64.read(from: &buf),
                 memoryLimited: FfiConverterBool.read(from: &buf),
                 diskUsed: FfiConverterUInt64.read(from: &buf),
-                diskTotal: FfiConverterUInt64.read(from: &buf),
+                diskTotal: FfiConverterOptionUInt64.read(from: &buf),
                 diskLimited: FfiConverterBool.read(from: &buf)
         )
     }
@@ -27897,7 +27899,7 @@ public struct FfiConverterTypeGuestUsage: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.memoryTotal, into: &buf)
         FfiConverterBool.write(value.memoryLimited, into: &buf)
         FfiConverterUInt64.write(value.diskUsed, into: &buf)
-        FfiConverterUInt64.write(value.diskTotal, into: &buf)
+        FfiConverterOptionUInt64.write(value.diskTotal, into: &buf)
         FfiConverterBool.write(value.diskLimited, into: &buf)
     }
 }
@@ -35640,6 +35642,98 @@ public func FfiConverterTypeShareCheck_lower(_ value: ShareCheck) -> RustBuffer 
 
 
 /**
+ * A base image several Spaces share copy-on-write (a container image's
+ * layers, the image a VM disk was cloned from).
+ */
+public struct SharedBase: Equatable, Hashable {
+    /**
+     * Which base: Spaces with the same key share the same blocks.
+     */
+    public var key: String
+    /**
+     * The image reference it came from (`ghcr.io/trycua/linux:24.04`).
+     */
+    public var image: String
+    /**
+     * What it takes on this computer, once for all its Spaces; absent when
+     * the runtime cannot tell it apart from the Spaces' own data.
+     */
+    public var bytes: UInt64?
+    /**
+     * Local Spaces that use it, this one included.
+     */
+    public var sharedWith: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Which base: Spaces with the same key share the same blocks.
+         */key: String,
+        /**
+         * The image reference it came from (`ghcr.io/trycua/linux:24.04`).
+         */image: String,
+        /**
+         * What it takes on this computer, once for all its Spaces; absent when
+         * the runtime cannot tell it apart from the Spaces' own data.
+         */bytes: UInt64?,
+        /**
+         * Local Spaces that use it, this one included.
+         */sharedWith: UInt32) {
+        self.key = key
+        self.image = image
+        self.bytes = bytes
+        self.sharedWith = sharedWith
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension SharedBase: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSharedBase: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SharedBase {
+        return
+            try SharedBase(
+                key: FfiConverterString.read(from: &buf),
+                image: FfiConverterString.read(from: &buf),
+                bytes: FfiConverterOptionUInt64.read(from: &buf),
+                sharedWith: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SharedBase, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.key, into: &buf)
+        FfiConverterString.write(value.image, into: &buf)
+        FfiConverterOptionUInt64.write(value.bytes, into: &buf)
+        FfiConverterUInt32.write(value.sharedWith, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSharedBase_lift(_ buf: RustBuffer) throws -> SharedBase {
+    return try FfiConverterTypeSharedBase.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSharedBase_lower(_ value: SharedBase) -> RustBuffer {
+    return FfiConverterTypeSharedBase.lower(value)
+}
+
+
+/**
  * Options for [`Space::request_site_login`].
  */
 public struct SiteLoginOptions: Equatable, Hashable {
@@ -38478,9 +38572,16 @@ public struct SpaceResources: Equatable, Hashable {
      */
     public var usage: GuestUsage?
     /**
-     * What it costs this Mac; absent for a container.
+     * What it costs this Mac: its own data only, never the base it
+     * shares; absent when there is nothing to measure.
      */
     public var diskOnHost: DiskOnHost?
+    /**
+     * The base image it is a copy-on-write copy of, counted once for all
+     * the Spaces that share it; absent when it has none or the runtime
+     * cannot tell it apart.
+     */
+    public var base: SharedBase?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -38504,8 +38605,14 @@ public struct SpaceResources: Equatable, Hashable {
          * The guest's own numbers; absent while it is off or unreachable.
          */usage: GuestUsage?,
         /**
-         * What it costs this Mac; absent for a container.
-         */diskOnHost: DiskOnHost?) {
+         * What it costs this Mac: its own data only, never the base it
+         * shares; absent when there is nothing to measure.
+         */diskOnHost: DiskOnHost?,
+        /**
+         * The base image it is a copy-on-write copy of, counted once for all
+         * the Spaces that share it; absent when it has none or the runtime
+         * cannot tell it apart.
+         */base: SharedBase?) {
         self.id = id
         self.powerState = powerState
         self.cpuAllocated = cpuAllocated
@@ -38513,6 +38620,7 @@ public struct SpaceResources: Equatable, Hashable {
         self.diskAllocated = diskAllocated
         self.usage = usage
         self.diskOnHost = diskOnHost
+        self.base = base
     }
 
 
@@ -38537,7 +38645,8 @@ public struct FfiConverterTypeSpaceResources: FfiConverterRustBuffer {
                 memoryAllocated: FfiConverterUInt64.read(from: &buf),
                 diskAllocated: FfiConverterUInt64.read(from: &buf),
                 usage: FfiConverterOptionTypeGuestUsage.read(from: &buf),
-                diskOnHost: FfiConverterOptionTypeDiskOnHost.read(from: &buf)
+                diskOnHost: FfiConverterOptionTypeDiskOnHost.read(from: &buf),
+                base: FfiConverterOptionTypeSharedBase.read(from: &buf)
         )
     }
 
@@ -38549,6 +38658,7 @@ public struct FfiConverterTypeSpaceResources: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.diskAllocated, into: &buf)
         FfiConverterOptionTypeGuestUsage.write(value.usage, into: &buf)
         FfiConverterOptionTypeDiskOnHost.write(value.diskOnHost, into: &buf)
+        FfiConverterOptionTypeSharedBase.write(value.base, into: &buf)
     }
 }
 
@@ -46618,6 +46728,30 @@ fileprivate struct FfiConverterOptionTypeScreenshotOptions: FfiConverterRustBuff
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeScreenshotOptions.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeSharedBase: FfiConverterRustBuffer {
+    typealias SwiftType = SharedBase?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeSharedBase.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeSharedBase.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }

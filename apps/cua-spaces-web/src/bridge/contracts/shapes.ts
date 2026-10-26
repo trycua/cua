@@ -64,7 +64,7 @@ import type { TelemetryLinkNotice } from "../ops/telemetry";
 import type { SentFileInfo, SpaceThumbnail, SpaceUsage, SpaceWindows } from "../ops/space-detail";
 import type { RelayUsage } from "../ops/relay-usage";
 import type { RiskyRequest } from "../ops/nudges";
-import type { ComputerResources, DiskOnHost, DiskWarning, GuestUsage, ResourcesSnapshot, SpaceResources } from "../ops/resources";
+import type { ComputerResources, DiskOnHost, DiskWarning, GuestUsage, ResourcesSnapshot, SharedBase, SpaceResources } from "../ops/resources";
 import type { HostChecklistState } from "../ops/checklist";
 import type { TipsState } from "./spaces-page";
 import type { ShareLink } from "../ops/links";
@@ -1326,11 +1326,12 @@ export const OP_SHAPES: Record<OpName, Schema> = {
                 memoryTotal: num,
                 memoryLimited: bool,
                 diskUsed: num,
-                diskTotal: num,
+                diskTotal: nullable(num),
                 diskLimited: bool,
               }),
             ),
             diskOnHost: nullable(obj<DiskOnHost>()({ bytes: nullable(num), allocated: num, sharesSpace: bool })),
+            base: opt(nullable(obj<SharedBase>()({ key: str, image: str, bytes: nullable(num), sharedWith: num }))),
           }),
         ),
       ),

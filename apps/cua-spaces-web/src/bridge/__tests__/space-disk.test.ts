@@ -9,7 +9,7 @@ import { spaceDiskBytes, type ResourcesSnapshot } from "@/bridge";
 import { demoResources } from "@/bridge/adapters/demo/resources";
 import { demoSpaceRows } from "@/bridge/adapters/demo-data";
 
-const GB = 1_000_000_000;
+const GB = 1024 ** 3;
 
 describe("spaceDiskBytes", () => {
   const snap = demoResources(demoSpaceRows(0), 0);

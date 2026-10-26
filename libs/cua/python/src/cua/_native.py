@@ -16837,7 +16837,7 @@ class GuestUsage:
     """
     What `SystemService.Metrics` reports from inside a Space.
 """
-    def __init__(self, *, cpu_count:int, cpu_percent:float, load_average_1m:float, memory_used:int, memory_total:int, memory_limited:bool, disk_used:int, disk_total:int, disk_limited:bool):
+    def __init__(self, *, cpu_count:int, cpu_percent:float, load_average_1m:float, memory_used:int, memory_total:int, memory_limited:bool, disk_used:int, disk_total:typing.Optional[int], disk_limited:bool):
         self.cpu_count = cpu_count
         self.cpu_percent = cpu_percent
         self.load_average_1m = load_average_1m
@@ -16885,7 +16885,7 @@ class _UniffiFfiConverterTypeGuestUsage(_UniffiConverterRustBuffer):
             memory_total=_UniffiFfiConverterUInt64.read(buf),
             memory_limited=_UniffiFfiConverterBoolean.read(buf),
             disk_used=_UniffiFfiConverterUInt64.read(buf),
-            disk_total=_UniffiFfiConverterUInt64.read(buf),
+            disk_total=_UniffiFfiConverterOptionalUInt64.read(buf),
             disk_limited=_UniffiFfiConverterBoolean.read(buf),
         )
 
@@ -16898,7 +16898,7 @@ class _UniffiFfiConverterTypeGuestUsage(_UniffiConverterRustBuffer):
         _UniffiFfiConverterUInt64.check_lower(value.memory_total)
         _UniffiFfiConverterBoolean.check_lower(value.memory_limited)
         _UniffiFfiConverterUInt64.check_lower(value.disk_used)
-        _UniffiFfiConverterUInt64.check_lower(value.disk_total)
+        _UniffiFfiConverterOptionalUInt64.check_lower(value.disk_total)
         _UniffiFfiConverterBoolean.check_lower(value.disk_limited)
 
     @staticmethod
@@ -16910,7 +16910,7 @@ class _UniffiFfiConverterTypeGuestUsage(_UniffiConverterRustBuffer):
         _UniffiFfiConverterUInt64.write(value.memory_total, buf)
         _UniffiFfiConverterBoolean.write(value.memory_limited, buf)
         _UniffiFfiConverterUInt64.write(value.disk_used, buf)
-        _UniffiFfiConverterUInt64.write(value.disk_total, buf)
+        _UniffiFfiConverterOptionalUInt64.write(value.disk_total, buf)
         _UniffiFfiConverterBoolean.write(value.disk_limited, buf)
 
 @dataclass
@@ -20928,11 +20928,88 @@ class _UniffiFfiConverterOptionalTypeDiskOnHost(_UniffiConverterRustBuffer):
             raise InternalError("Unexpected flag byte for optional type")
 
 @dataclass
+class SharedBase:
+    """
+    A base image several Spaces share copy-on-write (a container image's
+    layers, the image a VM disk was cloned from).
+"""
+    def __init__(self, *, key:str, image:str, bytes:typing.Optional[int], shared_with:int):
+        self.key = key
+        self.image = image
+        self.bytes = bytes
+        self.shared_with = shared_with
+
+
+
+
+    def __str__(self):
+        return "SharedBase(key={}, image={}, bytes={}, shared_with={})".format(self.key, self.image, self.bytes, self.shared_with)
+    def __eq__(self, other):
+        if self.key != other.key:
+            return False
+        if self.image != other.image:
+            return False
+        if self.bytes != other.bytes:
+            return False
+        if self.shared_with != other.shared_with:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeSharedBase(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return SharedBase(
+            key=_UniffiFfiConverterString.read(buf),
+            image=_UniffiFfiConverterString.read(buf),
+            bytes=_UniffiFfiConverterOptionalUInt64.read(buf),
+            shared_with=_UniffiFfiConverterUInt32.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.key)
+        _UniffiFfiConverterString.check_lower(value.image)
+        _UniffiFfiConverterOptionalUInt64.check_lower(value.bytes)
+        _UniffiFfiConverterUInt32.check_lower(value.shared_with)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.key, buf)
+        _UniffiFfiConverterString.write(value.image, buf)
+        _UniffiFfiConverterOptionalUInt64.write(value.bytes, buf)
+        _UniffiFfiConverterUInt32.write(value.shared_with, buf)
+
+class _UniffiFfiConverterOptionalTypeSharedBase(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterTypeSharedBase.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterTypeSharedBase.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterTypeSharedBase.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
+@dataclass
 class SpaceResources:
     """
     One extra Space on this Mac.
 """
-    def __init__(self, *, id:str, power_state:str, cpu_allocated:int, memory_allocated:int, disk_allocated:int, usage:typing.Optional[GuestUsage], disk_on_host:typing.Optional[DiskOnHost]):
+    def __init__(self, *, id:str, power_state:str, cpu_allocated:int, memory_allocated:int, disk_allocated:int, usage:typing.Optional[GuestUsage], disk_on_host:typing.Optional[DiskOnHost], base:typing.Optional[SharedBase]):
         self.id = id
         self.power_state = power_state
         self.cpu_allocated = cpu_allocated
@@ -20940,12 +21017,13 @@ class SpaceResources:
         self.disk_allocated = disk_allocated
         self.usage = usage
         self.disk_on_host = disk_on_host
+        self.base = base
 
 
 
 
     def __str__(self):
-        return "SpaceResources(id={}, power_state={}, cpu_allocated={}, memory_allocated={}, disk_allocated={}, usage={}, disk_on_host={})".format(self.id, self.power_state, self.cpu_allocated, self.memory_allocated, self.disk_allocated, self.usage, self.disk_on_host)
+        return "SpaceResources(id={}, power_state={}, cpu_allocated={}, memory_allocated={}, disk_allocated={}, usage={}, disk_on_host={}, base={})".format(self.id, self.power_state, self.cpu_allocated, self.memory_allocated, self.disk_allocated, self.usage, self.disk_on_host, self.base)
     def __eq__(self, other):
         if self.id != other.id:
             return False
@@ -20961,6 +21039,8 @@ class SpaceResources:
             return False
         if self.disk_on_host != other.disk_on_host:
             return False
+        if self.base != other.base:
+            return False
         return True
 
 class _UniffiFfiConverterTypeSpaceResources(_UniffiConverterRustBuffer):
@@ -20974,6 +21054,7 @@ class _UniffiFfiConverterTypeSpaceResources(_UniffiConverterRustBuffer):
             disk_allocated=_UniffiFfiConverterUInt64.read(buf),
             usage=_UniffiFfiConverterOptionalTypeGuestUsage.read(buf),
             disk_on_host=_UniffiFfiConverterOptionalTypeDiskOnHost.read(buf),
+            base=_UniffiFfiConverterOptionalTypeSharedBase.read(buf),
         )
 
     @staticmethod
@@ -20985,6 +21066,7 @@ class _UniffiFfiConverterTypeSpaceResources(_UniffiConverterRustBuffer):
         _UniffiFfiConverterUInt64.check_lower(value.disk_allocated)
         _UniffiFfiConverterOptionalTypeGuestUsage.check_lower(value.usage)
         _UniffiFfiConverterOptionalTypeDiskOnHost.check_lower(value.disk_on_host)
+        _UniffiFfiConverterOptionalTypeSharedBase.check_lower(value.base)
 
     @staticmethod
     def write(value, buf):
@@ -20995,6 +21077,7 @@ class _UniffiFfiConverterTypeSpaceResources(_UniffiConverterRustBuffer):
         _UniffiFfiConverterUInt64.write(value.disk_allocated, buf)
         _UniffiFfiConverterOptionalTypeGuestUsage.write(value.usage, buf)
         _UniffiFfiConverterOptionalTypeDiskOnHost.write(value.disk_on_host, buf)
+        _UniffiFfiConverterOptionalTypeSharedBase.write(value.base, buf)
 
 class _UniffiFfiConverterSequenceTypeSpaceResources(_UniffiConverterRustBuffer):
     @classmethod
@@ -46771,6 +46854,7 @@ __all__ = [
     "PublicUrl",
     "ReadinessProbe",
     "ResolvedImage",
+    "SharedBase",
     "SpaceResources",
     "ResourcesSnapshot",
     "ResourcesUpdate",

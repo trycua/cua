@@ -15,7 +15,7 @@ import { computerChoices, gridArea, lastUsedText, namesText, nextSearch, shownSp
 
 afterEach(cleanup);
 
-const GB = 1_000_000_000;
+const GB = 1024 ** 3;
 const NOW = 1_800_000_000_000;
 const MIN = 60_000;
 

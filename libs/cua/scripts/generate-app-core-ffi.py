@@ -80,7 +80,7 @@ TYPES = [
     ("tips.rs", "tips", ["TipsState", "TipPlace", "TipFacts", "TipActionKind", "TipAction", "TipLink", "Tip", "TipsEvent"]),
     ("upsell.rs", "upsell", ["ProBannerInput", "ProBanner"]),
     ("account.rs", "account", ["AccountMenuInput", "AccountMenuItemId", "AccountMenuItem"]),
-    ("resources.rs", "resources", ["DiskLevel", "DiskWarning", "ComputerResources", "GuestUsage", "DiskOnHost", "SpaceResources", "ResourcesSnapshot", "ResourceTone", "ResourceRow", "WarningView", "ThisMacView", "SpaceResourcesView", "ComputerView", "ResourcesView"]),
+    ("resources.rs", "resources", ["DiskLevel", "DiskWarning", "ComputerResources", "GuestUsage", "DiskOnHost", "SharedBase", "SpaceResources", "ResourcesSnapshot", "ResourceTone", "ResourceRow", "WarningView", "ThisMacView", "SpaceResourcesView", "ComputerView", "ResourcesView"]),
 ]
 
 # FFI names that read better than the plain prefix.

@@ -13,6 +13,7 @@ import { AgentsSection } from "@/components/space-detail/agents-section";
 import { DropWell } from "@/components/space-detail/drop-well";
 import { FactList } from "@/components/space-detail/facts";
 import { SpaceResourcesPanel } from "@/components/resources/space-resources-panel";
+import { systemName } from "@/lib/resources";
 import { StreamSection } from "@/components/space-detail/stream-section";
 import { StreamSurface } from "@/components/space-detail/stream-surface";
 import { SpaceHeader } from "@/components/space-detail/space-header";
@@ -653,13 +654,22 @@ function SpaceResources({ space, spaces, snapshot, machines }: { space: Space; s
   const machine = local ? machines.find((m) => m.current) : machines.find((m) => m.id === space.host || m.spaceIds.includes(space.id));
   const host = hostResources(snapshot, machine);
   const computer = local ? thisComputerText() : (machine?.name ?? space.hostName ?? "its computer");
-  // The Spaces on the same computer, with the numbers it sent, for the disk bar.
+  // The Spaces on the same computer, with the numbers it sent, for how it fits.
   const sameComputer = (s: Space) => (local ? s.provider === "local" : s.host === space.host);
-  const siblings = spaces.flatMap((s) => {
-    const bytes = sameComputer(s) ? spaceResources(snapshot, s.id)?.diskOnHost?.bytes : null;
-    return bytes != null ? [{ id: s.id, name: s.name, bytes }] : [];
+  const onComputer = spaces.flatMap((s) => {
+    const r = sameComputer(s) ? spaceResources(snapshot, s.id) : null;
+    return r ? [r] : [];
   });
-  return <SpaceResourcesPanel space={mine} name={space.name} host={host} computer={computer} siblings={siblings} />;
+  return (
+    <SpaceResourcesPanel
+      space={mine}
+      name={space.name}
+      host={host}
+      computer={computer}
+      spaces={onComputer}
+      baseName={systemName(space.osPrettyName)}
+    />
+  );
 }
 
 /** `stream.viewContext`'s answer (camelCase). */

@@ -26035,9 +26035,11 @@ export type AppGuestUsage = {
      */
     diskUsed: bigint,
     /**
-     * Disk size, bytes.
+     * Disk size, bytes; none when the guest's file system has no size of
+     * its own. A sentinel (`i64::MAX`, `u64::MAX`, -1) or 0 reads as none
+     * ([`known_size`]), so no shell ever shows one.
      */
-    diskTotal: bigint,
+    diskTotal?: bigint,
     /**
      * `disk_total` is the guest's own disk.
      */
@@ -26072,7 +26074,7 @@ const FfiConverterTypeAppGuestUsage = (() => {
                 memoryTotal: FfiConverterUInt64.read(from),
                 memoryLimited: FfiConverterBool.read(from),
                 diskUsed: FfiConverterUInt64.read(from),
-                diskTotal: FfiConverterUInt64.read(from),
+                diskTotal: FfiConverterOptionalUInt64.read(from),
                 diskLimited: FfiConverterBool.read(from)
             };
         }
@@ -26084,7 +26086,7 @@ const FfiConverterTypeAppGuestUsage = (() => {
             FfiConverterUInt64.write(value.memoryTotal, into);
             FfiConverterBool.write(value.memoryLimited, into);
             FfiConverterUInt64.write(value.diskUsed, into);
-            FfiConverterUInt64.write(value.diskTotal, into);
+            FfiConverterOptionalUInt64.write(value.diskTotal, into);
             FfiConverterBool.write(value.diskLimited, into);
         }
         allocationSize(value: TypeName): number {
@@ -26095,7 +26097,7 @@ const FfiConverterTypeAppGuestUsage = (() => {
              FfiConverterUInt64.allocationSize(value.memoryTotal) +
              FfiConverterBool.allocationSize(value.memoryLimited) +
              FfiConverterUInt64.allocationSize(value.diskUsed) +
-             FfiConverterUInt64.allocationSize(value.diskTotal) +
+             FfiConverterOptionalUInt64.allocationSize(value.diskTotal) +
              FfiConverterBool.allocationSize(value.diskLimited);
 
         }
@@ -38669,6 +38671,70 @@ const FfiConverterTypeAppResourceEditView = (() => {
     return new FFIConverter();
 })();
 
+export type AppSharedBase = {
+    /**
+     * Spaces with the same key share the same blocks.
+     */
+    key: string,
+    /**
+     * The image reference it came from (`ghcr.io/trycua/linux:24.04`).
+     */
+    image: string,
+    /**
+     * What it takes on this Mac, once; none when the runtime cannot tell
+     * it apart from the Spaces' own data.
+     */
+    bytes?: bigint,
+    /**
+     * Local Spaces that use it, this one included.
+     */
+    sharedWith: number
+}
+
+/**
+ * Generated factory for {@link AppSharedBase} record objects.
+ */
+export const AppSharedBase = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppSharedBase, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppSharedBase>,
+    });
+})();
+
+const FfiConverterTypeAppSharedBase = (() => {
+    type TypeName = AppSharedBase;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                key: FfiConverterString.read(from),
+                image: FfiConverterString.read(from),
+                bytes: FfiConverterOptionalUInt64.read(from),
+                sharedWith: FfiConverterUInt32.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.key, into);
+            FfiConverterString.write(value.image, into);
+            FfiConverterOptionalUInt64.write(value.bytes, into);
+            FfiConverterUInt32.write(value.sharedWith, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.key) +
+             FfiConverterString.allocationSize(value.image) +
+             FfiConverterOptionalUInt64.allocationSize(value.bytes) +
+             FfiConverterUInt32.allocationSize(value.sharedWith);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type AppSpaceResources = {
     /**
      * `local:<name>`.
@@ -38695,9 +38761,13 @@ export type AppSpaceResources = {
      */
     usage?: AppGuestUsage,
     /**
-     * What it costs this Mac; none for a container.
+     * What it costs this Mac: its own data only, never the base it shares.
      */
-    diskOnHost?: AppDiskOnHost
+    diskOnHost?: AppDiskOnHost,
+    /**
+     * The base image it is a copy-on-write copy of, counted once.
+     */
+    base?: AppSharedBase
 }
 
 /**
@@ -38727,7 +38797,8 @@ const FfiConverterTypeAppSpaceResources = (() => {
                 memoryAllocated: FfiConverterUInt64.read(from),
                 diskAllocated: FfiConverterUInt64.read(from),
                 usage: FfiConverterOptionalTypeAppGuestUsage.read(from),
-                diskOnHost: FfiConverterOptionalTypeAppDiskOnHost.read(from)
+                diskOnHost: FfiConverterOptionalTypeAppDiskOnHost.read(from),
+                base: FfiConverterOptionalTypeAppSharedBase.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -38738,6 +38809,7 @@ const FfiConverterTypeAppSpaceResources = (() => {
             FfiConverterUInt64.write(value.diskAllocated, into);
             FfiConverterOptionalTypeAppGuestUsage.write(value.usage, into);
             FfiConverterOptionalTypeAppDiskOnHost.write(value.diskOnHost, into);
+            FfiConverterOptionalTypeAppSharedBase.write(value.base, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.id) +
@@ -38746,7 +38818,8 @@ const FfiConverterTypeAppSpaceResources = (() => {
              FfiConverterUInt64.allocationSize(value.memoryAllocated) +
              FfiConverterUInt64.allocationSize(value.diskAllocated) +
              FfiConverterOptionalTypeAppGuestUsage.allocationSize(value.usage) +
-             FfiConverterOptionalTypeAppDiskOnHost.allocationSize(value.diskOnHost);
+             FfiConverterOptionalTypeAppDiskOnHost.allocationSize(value.diskOnHost) +
+             FfiConverterOptionalTypeAppSharedBase.allocationSize(value.base);
 
         }
     };
@@ -44311,7 +44384,7 @@ export type AppStreamRow = {
      */
     kind: AppStreamRowKind,
     /**
-     * The one line ("Desktop (1280×800)", a window's title).
+     * The one line ("Desktop", a window's title).
      */
     label: string,
     /**
@@ -69633,6 +69706,9 @@ const FfiConverterOptionalTypeAppGuestUsage = new FfiConverterOptional(FfiConver
 // FfiConverter for AppDiskOnHost | undefined
 const FfiConverterOptionalTypeAppDiskOnHost = new FfiConverterOptional(FfiConverterTypeAppDiskOnHost);
 
+// FfiConverter for AppSharedBase | undefined
+const FfiConverterOptionalTypeAppSharedBase = new FfiConverterOptional(FfiConverterTypeAppSharedBase);
+
 // FfiConverter for Array<AppSpaceResources>
 const FfiConverterSequenceTypeAppSpaceResources = new FfiConverterArray(FfiConverterTypeAppSpaceResources);
 
@@ -71601,6 +71677,7 @@ export default Object.freeze({
     FfiConverterTypeAppShareSheetAction,
     FfiConverterTypeAppShareSheetState,
     FfiConverterTypeAppShareSheetView,
+    FfiConverterTypeAppSharedBase,
     FfiConverterTypeAppSidebarRow,
     FfiConverterTypeAppSidebarSection,
     FfiConverterTypeAppSidebarView,

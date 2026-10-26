@@ -521,9 +521,10 @@ fn disk_usage(path: &std::path::Path) -> (u64, u64) {
             return (0, 0);
         }
         let frag = stat.f_frsize as u64;
-        let total = stat.f_blocks as u64 * frag;
-        let free = stat.f_bfree as u64 * frag;
-        (total, total.saturating_sub(free))
+        sized(
+            (stat.f_blocks as u64).saturating_mul(frag),
+            (stat.f_bfree as u64).saturating_mul(frag),
+        )
     }
     #[cfg(not(unix))]
     {
@@ -534,6 +535,22 @@ fn disk_usage(path: &std::path::Path) -> (u64, u64) {
             .max_by_key(|d| d.mount_point().as_os_str().len())
             .map(|d| (d.total_space(), d.total_space() - d.available_space()))
             .unwrap_or((0, 0))
+    }
+}
+
+/// Sizes at or above this are "unlimited" sentinels, not sizes (gVisor's
+/// root overlay reports `MaxInt64` bytes; no volume holds an exbibyte).
+const SIZE_SENTINEL_FLOOR: u64 = 1 << 60;
+
+/// `(total, used)` from a file system's size and free bytes. One with no
+/// size of its own (gVisor's root overlay) reports total 0, the contract's
+/// "no size", and what it holds as used: never the sentinel.
+fn sized(total: u64, free: u64) -> (u64, u64) {
+    let used = total.saturating_sub(free);
+    if total >= SIZE_SENTINEL_FLOOR {
+        (0, if used >= SIZE_SENTINEL_FLOOR { 0 } else { used })
+    } else {
+        (total, used)
     }
 }
 
@@ -1335,4 +1352,25 @@ fn cpu_usage() -> (u32, f64) {
         s.last = Some(s.system.global_cpu_usage() as f64);
     }
     (s.system.cpus().len() as u32, s.last.unwrap_or(0.0))
+}
+
+#[cfg(test)]
+mod sized_tests {
+    use super::sized;
+
+    #[test]
+    fn a_file_system_with_no_size_reports_none_never_the_sentinel() {
+        // gVisor's root overlay: MaxInt64 rounded down to a page.
+        let total = (i64::MAX as u64) & !4095;
+        assert_eq!(sized(total, total - 241_664), (0, 241_664));
+        assert_eq!(sized(i64::MAX as u64, i64::MAX as u64), (0, 0));
+        assert_eq!(sized(u64::MAX, 0), (0, 0));
+    }
+
+    #[test]
+    fn a_real_disk_reports_its_size() {
+        let gib = 1u64 << 30;
+        assert_eq!(sized(64 * gib, 40 * gib), (64 * gib, 24 * gib));
+        assert_eq!(sized(0, 0), (0, 0));
+    }
 }

@@ -953,7 +953,8 @@ fn detail_facts(
         if u.memory_limited && u.memory_total > 0 {
             facts.push(fact("Memory", usage_text(u.memory_used, u.memory_total)));
         }
-        if u.disk_limited && u.disk_total > 0 {
+        // Never a sentinel ("unlimited" as 2^63): only a real size.
+        if u.disk_limited && crate::resources::known_size(u.disk_total).is_some() {
             facts.push(fact("Storage", usage_text(u.disk_used, u.disk_total)));
         }
     }
@@ -1734,6 +1735,36 @@ mod tests {
             ["relay:s1"]
         );
         assert!(hosted_rows(&spaces, "local:a", "").is_empty());
+    }
+
+    #[test]
+    fn a_storage_fact_never_shows_a_sentinel() {
+        let space = super::super::row_to_space(
+            &local_row("local:o", Some("ghcr.io/trycua/linux:24.04"), None, None),
+            0,
+        );
+        for total in [i64::MAX as u64, u64::MAX, 0] {
+            let usage = SpaceUsage {
+                disk_used: 1 << 20,
+                disk_total: total,
+                disk_limited: true,
+                ..Default::default()
+            };
+            let d = detail_live(&space, Some(&usage), None);
+            assert_eq!(fact_of(&d, "Storage"), None, "{total}");
+        }
+        let real = SpaceUsage {
+            disk_used: 2 << 30,
+            disk_total: 4 << 30,
+            disk_limited: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            fact_of(&detail_live(&space, Some(&real), None), "Storage")
+                .unwrap()
+                .value,
+            "2 GB / 4 GB"
+        );
     }
 
     #[test]

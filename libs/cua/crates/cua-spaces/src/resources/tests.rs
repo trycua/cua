@@ -83,7 +83,7 @@ fn space(id: &str) -> SpaceResources {
             memory_total: 8 * GIB,
             memory_limited: true,
             disk_used: 20 * GIB,
-            disk_total: 80 * GIB,
+            disk_total: Some(80 * GIB),
             disk_limited: true,
             ..Default::default()
         }),
@@ -92,6 +92,7 @@ fn space(id: &str) -> SpaceResources {
             allocated: 31 * GIB,
             shares_space: true,
         }),
+        base: None,
     }
 }
 
@@ -233,4 +234,149 @@ fn events_have_a_stable_json_shape() {
     assert_eq!(v["type"], "lowDisk");
     assert_eq!(v["value"]["level"], "critical");
     assert_eq!(serde_json::from_value::<ResourcesEvent>(v).unwrap(), e);
+}
+
+/// gVisor's root overlay: `MaxInt64` rounded down to a page.
+const GVISOR_UNLIMITED: u64 = (i64::MAX as u64) & !4095;
+
+#[test]
+fn a_size_that_is_a_sentinel_is_no_size() {
+    use super::known_size;
+    for sentinel in [i64::MAX as u64, u64::MAX, GVISOR_UNLIMITED, 0] {
+        assert_eq!(known_size(sentinel), None, "{sentinel}");
+    }
+    assert_eq!(known_size(80 * GIB), Some(80 * GIB));
+    assert_eq!(known_size(1), Some(1));
+}
+
+#[test]
+fn a_guest_with_an_unlimited_root_reports_no_disk_size() {
+    let u = GuestUsage::from(crate::stream::Usage {
+        disk_used: 241_664,
+        disk_total: GVISOR_UNLIMITED,
+        ..Default::default()
+    });
+    assert_eq!(u.disk_total, None);
+    assert_eq!(u.disk_used, 241_664);
+    // A VM's own disk keeps its size.
+    let vm = GuestUsage::from(crate::stream::Usage {
+        disk_used: 20 * GIB,
+        disk_total: 80 * GIB,
+        disk_limited: true,
+        ..Default::default()
+    });
+    assert_eq!((vm.disk_total, vm.disk_limited), (Some(80 * GIB), true));
+}
+
+#[test]
+fn json_from_an_older_daemon_never_carries_a_sentinel() {
+    for raw in [
+        "9223372036854775807",
+        "18446744073709551615",
+        "-1",
+        "0",
+        "null",
+    ] {
+        let u: GuestUsage = serde_json::from_str(&format!(
+            r#"{{"cpuCount":2,"cpuPercent":1,"loadAverage1m":0,"memoryUsed":1,"memoryTotal":2,"memoryLimited":true,"diskUsed":5,"diskTotal":{raw},"diskLimited":false}}"#
+        ))
+        .unwrap();
+        assert_eq!(u.disk_total, None, "{raw}");
+    }
+    let u: GuestUsage = serde_json::from_str(
+        r#"{"cpuCount":2,"cpuPercent":1,"loadAverage1m":0,"memoryUsed":1,"memoryTotal":2,"memoryLimited":true,"diskUsed":5,"diskLimited":true}"#,
+    )
+    .unwrap();
+    assert_eq!(u.disk_total, None);
+}
+
+#[test]
+fn the_wire_from_an_older_daemon_never_carries_a_sentinel() {
+    use cua_proto::daemon::v1 as pb;
+    for sentinel in [i64::MAX as u64, u64::MAX, GVISOR_UNLIMITED, 0] {
+        let s = SpaceResources::from(pb::SpaceResources {
+            id: "local:a".into(),
+            usage: Some(pb::GuestUsage {
+                disk_used: 1_000,
+                disk_total: sentinel,
+                disk_limited: true,
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        let u = s.usage.unwrap();
+        assert_eq!((u.disk_total, u.disk_limited), (None, false), "{sentinel}");
+    }
+}
+
+#[test]
+fn shared_bases_count_each_base_once() {
+    use super::disk::{BaseMeasure, shared_bases};
+    let m = |key: &str, bytes: Option<u64>| {
+        Some(BaseMeasure {
+            key: key.into(),
+            bytes,
+        })
+    };
+    let ubuntu = "ghcr.io/trycua/linux:24.04".to_string();
+    let macos = "ghcr.io/trycua/macos:26".to_string();
+    let out = shared_bases(&[
+        // Copy-on-write: two containers on one image.
+        (ubuntu.clone(), m("sha256:u", Some(3 * GIB))),
+        (ubuntu.clone(), m("sha256:u", Some(3 * GIB))),
+        // The last user of its base.
+        (macos.clone(), m("sha256:m", Some(25 * GIB))),
+        // Not copy-on-write (or a runtime that keeps its base apart).
+        ("x".into(), None),
+        // Can't tell its own data from the base's.
+        ("ghcr.io/trycua/windows:11".into(), m("sha256:w", None)),
+    ]);
+    let u = out[0].clone().unwrap();
+    assert_eq!(
+        (u.bytes, u.shared_with, u.image.as_str()),
+        (Some(3 * GIB), 2, ubuntu.as_str())
+    );
+    assert_eq!(out[1], out[0]);
+    let last = out[2].clone().unwrap();
+    assert_eq!((last.bytes, last.shared_with), (Some(25 * GIB), 1));
+    assert_eq!(out[3], None);
+    let w = out[4].clone().unwrap();
+    assert_eq!((w.bytes, w.shared_with), (None, 1));
+}
+
+#[test]
+fn clones_of_one_base_report_the_most_any_shares() {
+    use super::disk::{BaseMeasure, shared_bases, shared_blocks};
+    // A clone that changed more shares fewer blocks with its base.
+    let a = DiskOnHost {
+        bytes: Some(6 * GIB),
+        allocated: 31 * GIB,
+        shares_space: true,
+    };
+    let b = DiskOnHost {
+        bytes: Some(10 * GIB),
+        allocated: 30 * GIB,
+        shares_space: true,
+    };
+    let unknown = DiskOnHost {
+        bytes: None,
+        allocated: 30 * GIB,
+        shares_space: true,
+    };
+    assert_eq!(shared_blocks(&unknown), None);
+    let m = |d: &DiskOnHost| {
+        Some(BaseMeasure {
+            key: "macos".into(),
+            bytes: shared_blocks(d),
+        })
+    };
+    let out = shared_bases(&[
+        ("macos".into(), m(&a)),
+        ("macos".into(), m(&b)),
+        ("macos".into(), m(&unknown)),
+    ]);
+    for s in &out {
+        let s = s.clone().unwrap();
+        assert_eq!((s.bytes, s.shared_with), (Some(25 * GIB), 3));
+    }
 }

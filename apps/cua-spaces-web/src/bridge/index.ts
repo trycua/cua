@@ -198,6 +198,7 @@ export {
   type DiskWarning,
   type GuestUsage,
   type ResourcesSnapshot,
+  type SharedBase,
   type SpaceResources,
 } from "./resources";
 export {

@@ -11513,9 +11513,10 @@ export type GuestUsage = {
      */
     diskUsed: bigint,
     /**
-     * Disk size, bytes.
+     * Disk size, bytes; absent when the guest's file system has no size
+     * of its own (gVisor's root overlay) or did not say. Never a sentinel.
      */
-    diskTotal: bigint,
+    diskTotal?: bigint,
     /**
      * `disk_total` is the guest's own disk.
      */
@@ -11550,7 +11551,7 @@ const FfiConverterTypeGuestUsage = (() => {
                 memoryTotal: FfiConverterUInt64.read(from),
                 memoryLimited: FfiConverterBool.read(from),
                 diskUsed: FfiConverterUInt64.read(from),
-                diskTotal: FfiConverterUInt64.read(from),
+                diskTotal: FfiConverterOptionalUInt64.read(from),
                 diskLimited: FfiConverterBool.read(from)
             };
         }
@@ -11562,7 +11563,7 @@ const FfiConverterTypeGuestUsage = (() => {
             FfiConverterUInt64.write(value.memoryTotal, into);
             FfiConverterBool.write(value.memoryLimited, into);
             FfiConverterUInt64.write(value.diskUsed, into);
-            FfiConverterUInt64.write(value.diskTotal, into);
+            FfiConverterOptionalUInt64.write(value.diskTotal, into);
             FfiConverterBool.write(value.diskLimited, into);
         }
         allocationSize(value: TypeName): number {
@@ -11573,7 +11574,7 @@ const FfiConverterTypeGuestUsage = (() => {
              FfiConverterUInt64.allocationSize(value.memoryTotal) +
              FfiConverterBool.allocationSize(value.memoryLimited) +
              FfiConverterUInt64.allocationSize(value.diskUsed) +
-             FfiConverterUInt64.allocationSize(value.diskTotal) +
+             FfiConverterOptionalUInt64.allocationSize(value.diskTotal) +
              FfiConverterBool.allocationSize(value.diskLimited);
 
         }
@@ -15847,6 +15848,74 @@ const FfiConverterTypeResolvedImage = (() => {
 })();
 
 /**
+ * A base image several Spaces share copy-on-write (a container image's
+ * layers, the image a VM disk was cloned from).
+ */
+export type SharedBase = {
+    /**
+     * Which base: Spaces with the same key share the same blocks.
+     */
+    key: string,
+    /**
+     * The image reference it came from (`ghcr.io/trycua/linux:24.04`).
+     */
+    image: string,
+    /**
+     * What it takes on this computer, once for all its Spaces; absent when
+     * the runtime cannot tell it apart from the Spaces' own data.
+     */
+    bytes?: bigint,
+    /**
+     * Local Spaces that use it, this one included.
+     */
+    sharedWith: number
+}
+
+/**
+ * Generated factory for {@link SharedBase} record objects.
+ */
+export const SharedBase = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<SharedBase, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<SharedBase>,
+    });
+})();
+
+const FfiConverterTypeSharedBase = (() => {
+    type TypeName = SharedBase;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                key: FfiConverterString.read(from),
+                image: FfiConverterString.read(from),
+                bytes: FfiConverterOptionalUInt64.read(from),
+                sharedWith: FfiConverterUInt32.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.key, into);
+            FfiConverterString.write(value.image, into);
+            FfiConverterOptionalUInt64.write(value.bytes, into);
+            FfiConverterUInt32.write(value.sharedWith, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.key) +
+             FfiConverterString.allocationSize(value.image) +
+             FfiConverterOptionalUInt64.allocationSize(value.bytes) +
+             FfiConverterUInt32.allocationSize(value.sharedWith);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
  * One extra Space on this Mac.
  */
 export type SpaceResources = {
@@ -15875,9 +15944,16 @@ export type SpaceResources = {
      */
     usage?: GuestUsage,
     /**
-     * What it costs this Mac; absent for a container.
+     * What it costs this Mac: its own data only, never the base it
+     * shares; absent when there is nothing to measure.
      */
-    diskOnHost?: DiskOnHost
+    diskOnHost?: DiskOnHost,
+    /**
+     * The base image it is a copy-on-write copy of, counted once for all
+     * the Spaces that share it; absent when it has none or the runtime
+     * cannot tell it apart.
+     */
+    base?: SharedBase
 }
 
 /**
@@ -15907,7 +15983,8 @@ const FfiConverterTypeSpaceResources = (() => {
                 memoryAllocated: FfiConverterUInt64.read(from),
                 diskAllocated: FfiConverterUInt64.read(from),
                 usage: FfiConverterOptionalTypeGuestUsage.read(from),
-                diskOnHost: FfiConverterOptionalTypeDiskOnHost.read(from)
+                diskOnHost: FfiConverterOptionalTypeDiskOnHost.read(from),
+                base: FfiConverterOptionalTypeSharedBase.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -15918,6 +15995,7 @@ const FfiConverterTypeSpaceResources = (() => {
             FfiConverterUInt64.write(value.diskAllocated, into);
             FfiConverterOptionalTypeGuestUsage.write(value.usage, into);
             FfiConverterOptionalTypeDiskOnHost.write(value.diskOnHost, into);
+            FfiConverterOptionalTypeSharedBase.write(value.base, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.id) +
@@ -15926,7 +16004,8 @@ const FfiConverterTypeSpaceResources = (() => {
              FfiConverterUInt64.allocationSize(value.memoryAllocated) +
              FfiConverterUInt64.allocationSize(value.diskAllocated) +
              FfiConverterOptionalTypeGuestUsage.allocationSize(value.usage) +
-             FfiConverterOptionalTypeDiskOnHost.allocationSize(value.diskOnHost);
+             FfiConverterOptionalTypeDiskOnHost.allocationSize(value.diskOnHost) +
+             FfiConverterOptionalTypeSharedBase.allocationSize(value.base);
 
         }
     };
@@ -45565,6 +45644,9 @@ const FfiConverterOptionalTypeGuestUsage = new FfiConverterOptional(FfiConverter
 // FfiConverter for DiskOnHost | undefined
 const FfiConverterOptionalTypeDiskOnHost = new FfiConverterOptional(FfiConverterTypeDiskOnHost);
 
+// FfiConverter for SharedBase | undefined
+const FfiConverterOptionalTypeSharedBase = new FfiConverterOptional(FfiConverterTypeSharedBase);
+
 // FfiConverter for Array<SpaceResources>
 const FfiConverterSequenceTypeSpaceResources = new FfiConverterArray(FfiConverterTypeSpaceResources);
 
@@ -47581,6 +47663,7 @@ export default Object.freeze({
     FfiConverterTypeShare,
     FfiConverterTypeShareAccess,
     FfiConverterTypeShareCheck,
+    FfiConverterTypeSharedBase,
     FfiConverterTypeSiteLoginOptions,
     FfiConverterTypeSiteLoginReport,
     FfiConverterTypeSnapshotFallbackOptions,

@@ -1391,7 +1391,7 @@ pub struct AppStreamRow {
     pub id: String,
     /// Desktop or window.
     pub kind: AppStreamRowKind,
-    /// The one line ("Desktop (1280×800)", a window's title).
+    /// The one line ("Desktop", a window's title).
     pub label: String,
     /// The full label, for the tooltip when it is truncated.
     pub help: String,
@@ -11407,8 +11407,10 @@ pub struct AppGuestUsage {
     pub memory_limited: bool,
     /// Disk in use, bytes.
     pub disk_used: u64,
-    /// Disk size, bytes.
-    pub disk_total: u64,
+    /// Disk size, bytes; none when the guest's file system has no size of
+    /// its own. A sentinel (`i64::MAX`, `u64::MAX`, -1) or 0 reads as none
+    /// ([`known_size`]), so no shell ever shows one.
+    pub disk_total: Option<u64>,
     /// `disk_total` is the guest's own disk.
     pub disk_limited: bool,
 }
@@ -11423,6 +11425,21 @@ pub struct AppDiskOnHost {
     pub allocated: u64,
     /// Part of it is shared with other copies.
     pub shares_space: bool,
+}
+
+/// A base image several Spaces share copy-on-write.
+pub type AppSharedBase = core::resources::SharedBase;
+#[uniffi::remote(Record)]
+pub struct AppSharedBase {
+    /// Spaces with the same key share the same blocks.
+    pub key: String,
+    /// The image reference it came from (`ghcr.io/trycua/linux:24.04`).
+    pub image: String,
+    /// What it takes on this Mac, once; none when the runtime cannot tell
+    /// it apart from the Spaces' own data.
+    pub bytes: Option<u64>,
+    /// Local Spaces that use it, this one included.
+    pub shared_with: u32,
 }
 
 /// One extra Space on this Mac.
@@ -11441,8 +11458,10 @@ pub struct AppSpaceResources {
     pub disk_allocated: u64,
     /// The guest's own numbers; none while it is off or unreachable.
     pub usage: Option<AppGuestUsage>,
-    /// What it costs this Mac; none for a container.
+    /// What it costs this Mac: its own data only, never the base it shares.
     pub disk_on_host: Option<AppDiskOnHost>,
+    /// The base image it is a copy-on-write copy of, counted once.
+    pub base: Option<AppSharedBase>,
 }
 
 /// One sample of everything (`Spaces.resources`).

@@ -99,8 +99,10 @@ cua-host = { workspace = true, features = ["testing"] }
 cua-daemon = { workspace = true, features = ["server", "client", "test-fixtures"] }
 cua-spacesd-client = { workspace = true, features = ["testing"] }
 cua-sandbox-core = { workspace = true, features = ["testing"] }
-# The scripted cloud for `cua cloud add aws`'s create-all-or-none tests.
-cua-byoc = { workspace = true, features = ["aws", "testing"] }
+# The scripted cloud for `cua cloud add aws`'s create-all-or-none tests
+# (built only with `byoc`, which brings the AWS provider itself, so plain
+# `cargo test -p cua-cli` does not compile the AWS SDK).
+cua-byoc = { workspace = true, features = ["testing"] }
 tempfile.workspace = true
 # The default log filter test emits events.
 tracing.workspace = true

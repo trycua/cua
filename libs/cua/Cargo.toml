@@ -225,6 +225,19 @@ cua-media-client = { path = "crates/cua-media-client", default-features = false 
 [profile.release]
 strip = "symbols"
 
+# Dev and test builds: line tables only for the workspace (backtraces keep
+# file:line; full variable info is what made target dirs tens of GB), and
+# no debug info for dependencies. macOS already keeps debug info unpacked
+# (split-debuginfo = "unpacked" is cargo's default there), so linking never
+# copies it. For a debugger session set CARGO_PROFILE_DEV_DEBUG=full (the
+# workspace crates; dependencies stay without). The release profile is
+# unchanged.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
 # SHA-256 over multi-GiB transfers is unusably slow unoptimised; keep test
 # builds fast without making every dependency release-mode.
 [profile.dev.package.sha2]

@@ -863,7 +863,8 @@ impl QemuRuntime {
         )
         .await?;
         let res = self.launch_admitted(st, spec, boot, persist).await;
-        if res.is_err() {
+        // Refused by a start that owns the TPM: nothing here was acquired.
+        if res.as_ref().is_err_and(|e| !tpm_claim_refused(e)) {
             self.release(&st.name);
             let _ = self.stop_tpm(st).await;
         }
@@ -1694,7 +1695,7 @@ impl QemuRuntime {
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
         Err(VmmError::invalid(format!(
-            "the TPM of '{}' is being started or copied; try again",
+            "the TPM of '{}' {TPM_CLAIM_REFUSED}",
             st.name
         )))
     }
@@ -2560,8 +2561,12 @@ impl Runtime for QemuRuntime {
                     keep_ports: spec.labels.contains_key(KEEP_PORTS_LABEL),
                 };
                 if let Err(e) = self.launch(&mut st, spec, boot, true).await {
-                    let _ = self.force_stop(&mut st, Duration::ZERO).await;
-                    let _ = self.save(&st);
+                    // Another start owns the VM: its state and processes
+                    // are not ours to stop or overwrite.
+                    if !tpm_claim_refused(&e) {
+                        let _ = self.force_stop(&mut st, Duration::ZERO).await;
+                        let _ = self.save(&st);
+                    }
                     return Err(e);
                 }
                 st.last_start = Some("cold".into());
@@ -4602,6 +4607,13 @@ mod tests {
     }
 }
 
+const TPM_CLAIM_REFUSED: &str = "is being started or copied; try again";
+
+/// Whether `e` is [`QemuRuntime::tpm_claim`]'s refusal.
+fn tpm_claim_refused(e: &VmmError) -> bool {
+    matches!(e, VmmError::Invalid(m) if m.ends_with(TPM_CLAIM_REFUSED))
+}
+
 /// Holds a VM's name in [`QemuRuntime::tpm_busy`] until dropped.
 struct TpmBusy {
     set: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
@@ -4658,14 +4670,7 @@ fn swtpm_state(pid: u32, record: &Path, tpm_dir: &Path) -> Tpm {
             args.contains(&file.as_bytes()) && args.contains(&dir.as_bytes()),
         )
     } else {
-        let exe = cmd.split_once(" socket ").map_or_else(
-            || cmd.split_whitespace().next().unwrap_or_default(),
-            |(e, _)| e,
-        );
-        (
-            Path::new(exe).file_name().is_some_and(|n| n == "swtpm"),
-            names_dir_text(&cmd, &file, &dir),
-        )
+        text_identity(&cmd, &file, &dir)
     };
     if is_swtpm && ours {
         Tpm::Ours
@@ -4679,6 +4684,19 @@ fn swtpm_state(pid: u32, record: &Path, tpm_dir: &Path) -> Tpm {
 /// `tpm backup`) can pass for it.
 fn names_dir_text(cmd: &str, file: &str, dir: &str) -> bool {
     cmd.ends_with(&format!("--pid {file} --tpmstate {dir}"))
+}
+
+/// (is swtpm, is this launch's) from `ps` text: the program is the text
+/// before the `socket` subcommand.
+fn text_identity(cmd: &str, file: &str, dir: &str) -> (bool, bool) {
+    let exe = cmd.split_once(" socket ").map_or_else(
+        || cmd.split_whitespace().next().unwrap_or_default(),
+        |(e, _)| e,
+    );
+    (
+        Path::new(exe).file_name().is_some_and(|n| n == "swtpm"),
+        names_dir_text(cmd, file, dir),
+    )
 }
 
 /// The pid a swtpm record holds.

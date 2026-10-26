@@ -207,6 +207,7 @@ pub(super) fn fake_swtpm_link(dir: &Path) -> PathBuf {
 /// the `ps`-text check (which must end with the record and directory).
 fn fake_args(record: &Path, tpm_dir: &Path) -> Vec<String> {
     [
+        "socket",
         "--exact",
         "qemu::tpm_tests::fake_swtpm",
         "--nocapture",
@@ -482,6 +483,39 @@ fn cancelled_launch_cleans_up_before_settle_returns() {
     );
 }
 
+/// A start refused because another start owns the TPM acquired nothing, so
+/// it must not stop that start's swtpm.
+#[tokio::test]
+async fn refused_start_leaves_the_owning_starts_tpm() {
+    if Arch::host() != Arch::Aarch64 || host::HostOs::current() == host::HostOs::Windows {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let runtime = QemuRuntime::new(QemuConfig {
+        root: tmp.path().into(),
+        ..Default::default()
+    });
+    let dir = runtime.dir("vm");
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut st = tpm_state("vm", &dir);
+    let link = fake_swtpm_link(tmp.path());
+    let record = dir.join("swtpm.a.pid");
+    let mut fake = spawn_fake(&link, &record, &dir.join("tpm"));
+    // Start A: holds the claim with its swtpm running.
+    let _a = runtime.tpm_claim(&st, false).await.unwrap();
+    let spec = StartSpec::new("vm", ImageSource::Existing);
+    let e = runtime
+        .launch(&mut st, &spec, Boot::default(), true)
+        .await
+        .unwrap_err();
+    assert!(tpm_claim_refused(&e), "{e}");
+    assert!(crate::cleanup::settle(Duration::from_secs(10)).await);
+    assert!(fake.try_wait().unwrap().is_none());
+    assert!(record.exists());
+    fake.kill().unwrap();
+    fake.wait().unwrap();
+}
+
 #[tokio::test]
 async fn a_guard_without_pids_touches_nothing() {
     let tmp = tempfile::tempdir().unwrap();
@@ -571,6 +605,13 @@ fn identity_survives_a_spaced_executable_and_the_legacy_pidfile() {
     let record = run.join("swtpm.a.pid");
     let mut fake = spawn_fake(&link, &record, &tpm);
     assert_eq!(swtpm_state(fake.id(), &record, &tpm), Tpm::Ours);
+    // The non-Linux path: the whole identity from the `ps` text.
+    let cmd = host::pid_command(fake.id()).unwrap();
+    let (f, d) = (
+        format!("file={}", record.display()),
+        format!("dir={}", tpm.display()),
+    );
+    assert_eq!(text_identity(&cmd, &f, &d), (true, true), "{cmd}");
     fake.kill().unwrap();
     fake.wait().unwrap();
     // The previous launch script's spelling of the shared pidfile.

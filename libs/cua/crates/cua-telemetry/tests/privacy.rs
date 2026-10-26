@@ -1846,3 +1846,76 @@ fn sdk_test_runs_are_marked_synthetic() {
     assert!(!synthetic("cli", &[("PYTEST_CURRENT_TEST", "t.py::x")]));
     assert!(synthetic("cli", &[("CUA_TELEMETRY_SYNTHETIC", "1")]));
 }
+
+#[test]
+fn runtime_failures_keep_the_parent_class_and_add_a_sub_kind() {
+    let create = |variant: &'static str, outcome| {
+        events::space_create(
+            &events::SpaceCreate {
+                on: "local",
+                guest_os: "linux",
+                kind: "container",
+                last_phase: "preparing",
+                stalled: false,
+                gpu: false,
+                error_variant: variant,
+                retry_attempt: 0,
+                error_subclass: "",
+            },
+            outcome,
+            Duration::from_secs(3),
+        )
+    };
+    let e = create("runtime.container_start_failed", Outcome::Error);
+    assert_eq!(e.props["error_kind"], "runtime");
+    assert_eq!(e.props["runtime_kind"], "container_start_failed");
+    // A bare `Runtime` (older shells) is the parent with no known cause.
+    let e = create("Runtime", Outcome::Error);
+    assert_eq!(e.props["error_kind"], "runtime");
+    assert_eq!(e.props["runtime_kind"], "unclassified");
+    // Only schema words come out, never what was sent in.
+    let e = create("runtime.maya@example.com", Outcome::Error);
+    assert_eq!(e.props["error_kind"], "runtime");
+    assert_eq!(e.props["runtime_kind"], "unclassified");
+    let e = create("runtime.none", Outcome::Error);
+    assert_eq!(e.props["runtime_kind"], "unclassified");
+    // Other kinds and successes have none.
+    assert_eq!(
+        create("InsufficientDisk", Outcome::Error).props["runtime_kind"],
+        "none"
+    );
+    assert_eq!(
+        create("runtime.memory_limit", Outcome::Ok).props["runtime_kind"],
+        "none"
+    );
+    assert_eq!(
+        create("runtime.memory_limit", Outcome::Ok).props["error_kind"],
+        "none"
+    );
+    // The SDK and a host's daemon report it the same way.
+    let sb = events::sandbox_created(
+        &events::SandboxCreate {
+            on: "local",
+            kind: "vm",
+            ..Default::default()
+        },
+        Outcome::Error,
+        Some("runtime.lume_unreachable"),
+        Duration::from_secs(1),
+    );
+    assert_eq!(sb.props["error_kind"], "runtime");
+    assert_eq!(sb.props["runtime_kind"], "lume_unreachable");
+    let host = events::host_space_provided(
+        "vm",
+        "macos",
+        Outcome::Error,
+        Some("runtime.vm_stopped_early"),
+    );
+    assert_eq!(host.props["error_kind"], "runtime");
+    assert_eq!(host.props["runtime_kind"], "vm_stopped_early");
+    let ok = events::host_space_provided("vm", "macos", Outcome::Ok, None);
+    assert_eq!(ok.props["runtime_kind"], "none");
+    for e in [&sb, &host] {
+        assert!(schema::RUNTIME_KINDS.contains(&e.props["runtime_kind"].as_str().unwrap()));
+    }
+}

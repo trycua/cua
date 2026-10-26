@@ -205,6 +205,29 @@ pub const ERROR_KINDS: &[&str] = &[
     "user_cancelled",
     "other",
 ];
+/// Why a `runtime` create failure happened, when `error_kind` is `runtime`
+/// (the parent class stays, so dashboards keep working): the real error
+/// path behind it, as a fixed word chosen on device (`cua-create-failure`);
+/// `none` for any other `error_kind`, `unclassified` when no path is known.
+pub const RUNTIME_KINDS: &[&str] = &[
+    "none",
+    "linux_runtime_start_failed",
+    "linux_runtime_not_ready",
+    "gvisor_unavailable",
+    "runtime_download_failed",
+    "runtime_path_too_long",
+    "memory_limit",
+    "unsupported_hardware",
+    "open_file_limit",
+    "lume_outdated",
+    "lume_unreachable",
+    "vm_stopped_early",
+    "qemu_start_failed",
+    "image_arch_mismatch",
+    "container_start_failed",
+    "container_engine_error",
+    "unclassified",
+];
 pub const DURATIONS: &[&str] = &[
     "lt_100ms",
     "100_999ms",
@@ -746,6 +769,11 @@ const ERROR_KIND: Prop = p(
     Kind::Enum(ERROR_KINDS),
     "Typed error category (the error enum variant, or a fixed cause word for a failed create); never the message.",
 );
+const RUNTIME_KIND: Prop = p(
+    "runtime_kind",
+    Kind::Enum(RUNTIME_KINDS),
+    "A failed create whose error_kind is runtime: the cause behind it, as a fixed word (linux_runtime_start_failed, vm_stopped_early, container_start_failed, ..., unclassified); none for any other error_kind. Never the message.",
+);
 const DURATION: Prop = p(
     "duration_bucket",
     Kind::Enum(DURATIONS),
@@ -881,7 +909,7 @@ pub const EVENTS: &[EventSpec] = &[
     },
     EventSpec {
         name: event::SANDBOX_CREATED,
-        version: 2,
+        version: 3,
         tier: Tier::Usage,
         sample_rate: 1.0,
         products: CLIENTS,
@@ -897,6 +925,7 @@ pub const EVENTS: &[EventSpec] = &[
             p("guest_os", Kind::Enum(GUEST_OS), "Guest OS family."),
             OUTCOME,
             ERROR_KIND,
+            RUNTIME_KIND,
             DURATION,
             p("with_overlays", Kind::Bool, "Binaries were injected."),
             p("with_build", Kind::Bool, "Image layers were built."),
@@ -1405,6 +1434,7 @@ pub const EVENTS: &[EventSpec] = &[
             p("kind", Kind::Enum(SANDBOX_KINDS), "container or vm."),
             OUTCOME,
             ERROR_KIND,
+            RUNTIME_KIND,
             p(
                 "failed_phase",
                 Kind::Enum(CREATE_PHASES),
@@ -1527,7 +1557,7 @@ pub const EVENTS: &[EventSpec] = &[
     },
     EventSpec {
         name: event::HOST_SPACE_PROVIDED,
-        version: 2,
+        version: 3,
         tier: Tier::Usage,
         sample_rate: 1.0,
         products: &["daemon"],
@@ -1536,6 +1566,7 @@ pub const EVENTS: &[EventSpec] = &[
             p("guest_os", Kind::Enum(GUEST_OS), "Guest OS family."),
             OUTCOME,
             ERROR_KIND,
+            RUNTIME_KIND,
         ],
         purpose: "Host Spaces use: Spaces a host computer created for the account's other devices.",
     },

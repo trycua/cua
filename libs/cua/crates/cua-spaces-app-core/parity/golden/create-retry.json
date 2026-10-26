@@ -246,7 +246,7 @@
             ],
             "fix": "It failed twice for the same reason. Run `cua doctor` in Terminal to check what's wrong, or see the details. [Copy cua doctor: copy-command cua doctor]",
             "id": "pending:1",
-            "previewText": "local runtime: the built-in Linux runtime did not start: exiting, status 1",
+            "previewText": "The Linux engine that Cua sets up on this Mac did not start. Quit Cua and open it again, then try again. If it keeps happening, open Settings and remove the host setup, then create the Space again.",
             "progress": null,
             "progressText": null
           }
@@ -256,7 +256,7 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux Box [spaces.status.failed] - local runtime: the built-in Linux runtime did not start: exiting, status 1"
+          "os-linux Box [spaces.status.failed] - The Linux engine that Cua sets up on this Mac did not start. Quit Cua and open it again, then try again. If it keeps happening, open Settings and remove the host setup, then create the Space again."
         ],
         "tiles": [
           "os-linux Box, Linux, This Mac, Failed - Failed"

@@ -73,8 +73,140 @@ pub fn create_failure_kind<'v>(
     match flat.as_str() {
         "timeout" => timeout_in(phase),
         "" | "none" => "other",
+        // The parent class stays `runtime`; the sub-kind rides along as
+        // `runtime.<sub>` (see [`RUNTIME_KINDS`]).
+        "runtime" => runtime_with_kind(&message.to_ascii_lowercase()),
         _ => variant,
     }
+}
+
+/// The `runtime.<sub>` word for a `Runtime` error no other rule named.
+fn runtime_with_kind(l: &str) -> &'static str {
+    let sub = runtime_kind_of_text(l);
+    RUNTIME_KINDS
+        .iter()
+        .find(|(k, _)| *k == sub)
+        .map(|(_, composite)| *composite)
+        .unwrap_or("runtime.unclassified")
+}
+
+/// The sub-kind of a `runtime` failure, from the error text (lowercase).
+/// Always one of [`RUNTIME_KINDS`]; `unclassified` when no real error path
+/// names it, so a dashboard can still see how much is left.
+pub fn runtime_kind_of_text(l: &str) -> &'static str {
+    // The built-in Linux runtime (Colima/Lima VM that runs Docker on a Mac).
+    if has(l, &["without gvisor", "gvisor", "runsc"]) {
+        return "gvisor_unavailable";
+    }
+    if has(
+        l,
+        &[
+            "download the built-in",
+            "built-in lume download",
+            "built-in linux runtime download",
+            "did not match its checksum",
+            "larger than its pin",
+            "gave no pull token",
+            "the built-in lume is not validly signed",
+            "the built-in lume did not install",
+            "the built-in linux runtime did not install",
+        ],
+    ) {
+        return "runtime_download_failed";
+    }
+    if l.contains("built-in linux runtime cannot run from") || l.contains("unix sockets allow") {
+        return "runtime_path_too_long";
+    }
+    if has(
+        l,
+        &[
+            "docker engine does not answer",
+            "did not answer ping",
+            "did not start within 10 minutes",
+            "is stopped (the built-in linux runtime is not running)",
+        ],
+    ) {
+        return "linux_runtime_not_ready";
+    }
+    if has(l, &["the built-in linux runtime did not start", "colima "]) {
+        return "linux_runtime_start_failed";
+    }
+    if has(
+        l,
+        &[
+            "linux spaces can use at most",
+            "give it less memory",
+            "asks for ",
+            "stop your running linux spaces",
+        ],
+    ) && l.contains("memory")
+    {
+        return "memory_limit";
+    }
+    if l.contains("need a mac with apple silicon") {
+        return "unsupported_hardware";
+    }
+    if has(
+        l,
+        &[
+            "too many open files",
+            "os error 24",
+            "emfile",
+            "open-file limit",
+        ],
+    ) {
+        return "open_file_limit";
+    }
+    if (l.contains("lume") && has(l, &["older than", "or newer"])) || l.contains("needs lume") {
+        return "lume_outdated";
+    }
+    if l.contains("lume serve") || l.contains("lume request failed") || l.contains("lume api 5") {
+        return "lume_unreachable";
+    }
+    if has(
+        l,
+        &[
+            "stopped while booting",
+            "never started (",
+            "disappeared while booting",
+            "exited while waiting for",
+            "qemu started but vm status",
+        ],
+    ) {
+        return "vm_stopped_early";
+    }
+    if (l.contains("qemu") && l.contains("failed (exit"))
+        || l.contains("could not launch")
+        || l.starts_with("qmp:")
+        || l.contains("qmp: ")
+    {
+        return "qemu_start_failed";
+    }
+    if has(
+        l,
+        &[
+            "exec format error",
+            "does not match the detected host platform",
+        ],
+    ) {
+        return "image_arch_mismatch";
+    }
+    if has(
+        l,
+        &[
+            "oci runtime",
+            "failed to create task",
+            "failed to start container",
+            "exited right after start",
+        ],
+    ) || (l.contains("container '") && l.contains("exited"))
+    {
+        return "container_start_failed";
+    }
+    if l.contains("container engine: ") || l.contains("sidecar ") {
+        return "container_engine_error";
+    }
+    "unclassified"
 }
 
 fn flatten(variant: &str) -> String {
@@ -184,7 +316,7 @@ fn from_text(message: &str, phase: &str, local: bool) -> Option<&'static str> {
     }
     // The local runtime (Docker, Podman, Lume, QEMU).
     if local {
-        if l.contains("permission denied") {
+        if has(&l, &["permission denied", "operation not permitted"]) {
             return Some("runtime_permission");
         }
         if l.contains(" is not running: ")
@@ -195,6 +327,9 @@ fn from_text(message: &str, phase: &str, local: bool) -> Option<&'static str> {
                     "is the docker daemon running",
                     "docker desktop is not running",
                     "lume is not running",
+                    // Docker Desktop on Windows: its named pipe is not there.
+                    "pipe/docker_engine",
+                    "pipe\\docker_engine",
                 ],
             )
         {
@@ -418,6 +553,107 @@ pub const TEXT_KINDS: &[&str] = &[
     "timeout",
 ];
 
+/// Every `runtime_kind` word: the parent class `runtime` split by the real
+/// error path behind it, as `(sub-kind, "runtime.<sub-kind>")`. The second
+/// form is what [`create_failure_kind`] returns; `cua-telemetry` reads it
+/// back into `error_kind=runtime` plus `runtime_kind=<sub-kind>`.
+pub const RUNTIME_KINDS: &[(&str, &str)] = &[
+    (
+        "linux_runtime_start_failed",
+        "runtime.linux_runtime_start_failed",
+    ),
+    ("linux_runtime_not_ready", "runtime.linux_runtime_not_ready"),
+    ("gvisor_unavailable", "runtime.gvisor_unavailable"),
+    ("runtime_download_failed", "runtime.runtime_download_failed"),
+    ("runtime_path_too_long", "runtime.runtime_path_too_long"),
+    ("memory_limit", "runtime.memory_limit"),
+    ("unsupported_hardware", "runtime.unsupported_hardware"),
+    ("open_file_limit", "runtime.open_file_limit"),
+    ("lume_outdated", "runtime.lume_outdated"),
+    ("lume_unreachable", "runtime.lume_unreachable"),
+    ("vm_stopped_early", "runtime.vm_stopped_early"),
+    ("qemu_start_failed", "runtime.qemu_start_failed"),
+    ("image_arch_mismatch", "runtime.image_arch_mismatch"),
+    ("container_start_failed", "runtime.container_start_failed"),
+    ("container_engine_error", "runtime.container_engine_error"),
+    ("unclassified", "runtime.unclassified"),
+];
+
+/// The sub-kind word in a `runtime.<sub-kind>` kind, if it is one.
+pub fn runtime_sub_kind(kind: &str) -> Option<&'static str> {
+    RUNTIME_KINDS
+        .iter()
+        .find(|(_, composite)| *composite == kind)
+        .map(|(sub, _)| *sub)
+}
+
+/// A plain sentence for a kind (a [`TEXT_KINDS`] word or a `runtime.<sub>`
+/// word) that says what happened and what to do next. No jargon, no raw
+/// error text. `None` for kinds whose own message is already the best text.
+pub fn user_text(kind: &str) -> Option<&'static str> {
+    let sub = runtime_sub_kind(kind).unwrap_or(kind);
+    Some(match sub {
+        "linux_runtime_start_failed" => {
+            "The Linux engine that Cua sets up on this Mac did not start. Quit Cua and open it again, then try again. If it keeps happening, open Settings and remove the host setup, then create the Space again."
+        }
+        "linux_runtime_not_ready" => {
+            "The Linux engine started but did not become ready in time. Wait a minute, then try again. If it keeps happening, restart your Mac."
+        }
+        "gvisor_unavailable" => {
+            "The safe sandbox layer for Linux Spaces (gVisor) is not working on this computer. Remove the host setup in Settings and try again."
+        }
+        "runtime_download_failed" => {
+            "A file Cua needs to run Spaces did not download correctly. Check your internet connection, then try again."
+        }
+        "runtime_path_too_long" => {
+            "Cua's folder is in a place with too long a name. Set the CUA_HOME setting to a shorter folder, such as /tmp/cua, then try again."
+        }
+        "memory_limit" => {
+            "This Space asks for more memory than this computer can give it. Pick a smaller memory size, or stop other Linux Spaces first, then try again."
+        }
+        "unsupported_hardware" => {
+            "macOS Spaces need a Mac with an Apple chip (M1 or newer). Create a Linux Space instead."
+        }
+        "open_file_limit" => {
+            "This computer has too many files open at once. Close some apps, then try again. If it keeps happening, restart your computer."
+        }
+        "lume_outdated" => {
+            "The tool that runs macOS Spaces on this Mac is too old. Update it, or choose the built-in one in Settings, then try again."
+        }
+        "lume_unreachable" => {
+            "The tool that runs macOS Spaces on this Mac did not answer. Quit Cua and open it again, then try again."
+        }
+        "vm_stopped_early" => {
+            "The Space's virtual computer stopped while it was starting. Try again. If it keeps happening, restart your computer."
+        }
+        "qemu_start_failed" => {
+            "The virtual computer could not start. Try again. If it keeps happening, restart your computer and check that nothing else is using virtualization."
+        }
+        "image_arch_mismatch" => {
+            "This image was built for a different kind of chip than this computer has. Pick an image that supports your computer."
+        }
+        "container_start_failed" => {
+            "The Space started and then stopped right away. Try again. If it keeps happening, pick a different image."
+        }
+        "container_engine_error" => {
+            "Docker reported a problem while setting up the Space. Make sure Docker is running and up to date, then try again."
+        }
+        "unclassified" => {
+            "Something went wrong while starting the Space on this computer. Try again. If it keeps happening, send a diagnostic report from Settings so we can look into it."
+        }
+        "runtime_not_running" => {
+            "Docker is not running. Open Docker, wait until it says it is running, then try again."
+        }
+        "runtime_permission" => {
+            "Cua is not allowed to use Docker on this computer. Make sure your user can use Docker (on Linux, add yourself to the docker group and sign in again), then try again."
+        }
+        "port_in_use" => {
+            "Another app is already using a port this Space needs. Close the other app, or stop the Space that uses it, then try again."
+        }
+        _ => return None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -534,7 +770,7 @@ mod tests {
             kind("dns error: no such host", "pulling", "Runtime"),
             "image_pull_network"
         );
-        assert_eq!(k("something nobody has seen"), "Runtime");
+        assert_eq!(k("something nobody has seen"), "runtime.unclassified");
         assert_eq!(kind("something nobody has seen", "", ""), "other");
     }
 
@@ -768,7 +1004,7 @@ mod tests {
             kind("create was cancelled by user", "pulling", ""),
             "cancelled"
         );
-        assert_eq!(kind("boom", "preparing", "Runtime"), "Runtime");
+        assert_eq!(kind("boom", "preparing", "Runtime"), "runtime.unclassified");
         assert_eq!(kind("boom", "preparing", "Env"), "Env");
         assert_eq!(kind("boom", "preparing", ""), "other");
         assert_eq!(kind("", "", ""), "other");
@@ -783,5 +1019,218 @@ mod tests {
         let k = kind(secret, "pulling", "");
         assert!(cua_telemetry::schema::ERROR_KINDS.contains(&k));
         assert!(!k.contains("maya"));
+    }
+
+    fn rk(message: &str) -> &'static str {
+        // A `Runtime` error no other rule names, any phase.
+        let k = kind(message, "preparing", "Runtime");
+        runtime_sub_kind(k)
+            .unwrap_or_else(|| panic!("{message:?} gave {k}, not a runtime sub-kind"))
+    }
+
+    #[test]
+    fn runtime_splits_by_real_error_path() {
+        // Built-in Linux runtime (Colima) on a Mac.
+        assert_eq!(
+            rk("the built-in Linux runtime did not start: fatal: vz driver failed"),
+            "linux_runtime_start_failed"
+        );
+        assert_eq!(
+            rk("colima start --profile cua: exit status 1"),
+            "linux_runtime_start_failed"
+        );
+        assert_eq!(
+            rk("the built-in Linux runtime started but its Docker engine does not answer"),
+            "linux_runtime_not_ready"
+        );
+        assert_eq!(
+            rk("the built-in Linux runtime did not start within 10 minutes"),
+            "linux_runtime_not_ready"
+        );
+        assert_eq!(
+            rk("container engine at unix:///x.sock did not answer ping: closed"),
+            "linux_runtime_not_ready"
+        );
+        assert_eq!(
+            rk(
+                "the built-in Linux runtime booted without gVisor (no runsc); remove it and try again"
+            ),
+            "gvisor_unavailable"
+        );
+        assert_eq!(
+            rk("download the built-in Linux runtime: error sending request"),
+            "runtime_download_failed"
+        );
+        assert_eq!(
+            rk("the built-in Lume download did not match its checksum (got abc); try again"),
+            "runtime_download_failed"
+        );
+        assert_eq!(
+            rk(
+                "the built-in Linux runtime cannot run from /Users/x/long (its path is 120 bytes; Unix sockets allow 103): set CUA_HOME to a shorter directory"
+            ),
+            "runtime_path_too_long"
+        );
+        assert_eq!(
+            rk(
+                "This Linux Space asks for 16 GB of memory, but Linux Spaces can use at most 11 GB on this Mac. Give it less memory."
+            ),
+            "memory_limit"
+        );
+        assert_eq!(
+            rk("lume: macOS Spaces need a Mac with Apple silicon"),
+            "unsupported_hardware"
+        );
+        assert_eq!(
+            rk("accept: Too many open files (os error 24)"),
+            "open_file_limit"
+        );
+        assert_eq!(
+            rk(
+                "lume serve at http://127.0.0.1:7777 is Lume 0.2, and macOS Spaces need Lume 0.3 or newer is not usable"
+            ),
+            "lume_outdated"
+        );
+        assert_eq!(
+            rk(
+                "started `lume serve` but http://127.0.0.1:7777 did not answer within 30s (see serve.log)"
+            ),
+            "lume_unreachable"
+        );
+        assert_eq!(
+            rk("lume request failed: connection closed"),
+            "lume_unreachable"
+        );
+        assert_eq!(rk("lume VM 'a' stopped while booting"), "vm_stopped_early");
+        assert_eq!(
+            rk("lume VM 'a' never started (60s after `lume run`)"),
+            "vm_stopped_early"
+        );
+        assert_eq!(
+            rk("qemu for 'a' exited while waiting for Tcp(22) (see qemu.log)"),
+            "vm_stopped_early"
+        );
+        assert_eq!(
+            rk("`/usr/bin/qemu-system-x86_64 (see cmdline)` failed (exit None): bad drive"),
+            "qemu_start_failed"
+        );
+        assert_eq!(
+            rk("could not launch /usr/bin/qemu: nope"),
+            "qemu_start_failed"
+        );
+        assert_eq!(rk("QMP: connection lost"), "qemu_start_failed");
+        assert_eq!(rk("fork/exec: exec format error"), "image_arch_mismatch");
+        assert_eq!(
+            rk("container 'a' exited (code 1) before Tcp(8000) passed; see `docker logs a`"),
+            "container_start_failed"
+        );
+        assert_eq!(
+            rk("container 'a' exited right after start (status Stopped)"),
+            "container_start_failed"
+        );
+        assert_eq!(
+            rk("container engine: create container: OCI runtime create failed"),
+            "container_start_failed"
+        );
+        assert_eq!(
+            rk("container engine: inspect a: something odd"),
+            "container_engine_error"
+        );
+        assert_eq!(rk("nobody has seen this"), "unclassified");
+        assert_eq!(rk(""), "unclassified");
+    }
+
+    #[test]
+    fn a_runtime_sub_kind_only_applies_to_the_runtime_class() {
+        // Another enum case keeps its own word.
+        assert_eq!(
+            kind("lume VM 'a' stopped while booting", "booting", "Other"),
+            "Other"
+        );
+        assert_eq!(kind("lume VM 'a' stopped while booting", "", ""), "other");
+        // Text that names a precise cause still wins.
+        assert_eq!(
+            kind("write: No space left on device", "preparing", "Runtime"),
+            "insufficient_disk"
+        );
+    }
+
+    #[test]
+    fn runtime_sub_kinds_are_consistent() {
+        for (sub, composite) in RUNTIME_KINDS {
+            assert_eq!(*composite, format!("runtime.{sub}"));
+            assert_eq!(runtime_sub_kind(composite), Some(*sub));
+            assert!(
+                cua_telemetry::schema::RUNTIME_KINDS.contains(sub),
+                "{sub} missing from the telemetry schema"
+            );
+            assert!(user_text(composite).is_some(), "{sub} has no user text");
+        }
+        assert_eq!(
+            RUNTIME_KINDS.len(),
+            // `none` is the schema's word for every other error kind.
+            cua_telemetry::schema::RUNTIME_KINDS.len() - 1
+        );
+        assert_eq!(runtime_sub_kind("Runtime"), None);
+        assert_eq!(runtime_sub_kind("runtime"), None);
+    }
+
+    #[test]
+    fn user_text_is_plain() {
+        let mut kinds: Vec<&str> = RUNTIME_KINDS.iter().map(|(_, c)| *c).collect();
+        kinds.extend(["runtime_not_running", "runtime_permission", "port_in_use"]);
+        for k in kinds {
+            let t = user_text(k).expect(k);
+            assert!(
+                !t.contains('\u{2014}') && !t.contains('\u{2013}'),
+                "{k}: dash"
+            );
+            assert!(!t.contains("--"), "{k}");
+            for jargon in [
+                "hypervisor",
+                "daemon",
+                "socket",
+                "relay",
+                "MCP",
+                "exit code",
+            ] {
+                assert!(
+                    !t.to_lowercase().contains(&jargon.to_lowercase()),
+                    "{k}: {jargon}"
+                );
+            }
+            assert!(t.ends_with('.'));
+        }
+        assert_eq!(user_text("insufficient_disk"), None);
+    }
+
+    #[test]
+    fn docker_not_running_and_permission_variants() {
+        assert_eq!(
+            kind(
+                "open //./pipe/docker_engine: The system cannot find the file specified.",
+                "preparing",
+                "Runtime"
+            ),
+            "runtime_not_running"
+        );
+        assert_eq!(
+            kind(
+                "operation not permitted (os error 1)",
+                "preparing",
+                "Runtime"
+            ),
+            "runtime_permission"
+        );
+    }
+
+    #[test]
+    fn a_runtime_sub_kind_never_carries_the_message() {
+        let k = kind(
+            "container 'maya-laptop' exited (code 1) at /Users/maya/x for maya@example.com",
+            "booting",
+            "Runtime",
+        );
+        assert_eq!(k, "runtime.container_start_failed");
     }
 }

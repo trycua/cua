@@ -30,6 +30,33 @@ error text.
 | `cloud_ended` | The create asked for Cua Cloud, which has ended. The create is refused up front; it is not a failure to fix. |
 | `cancelled` | You cancelled the create. |
 
+## `runtime_kind`
+
+`runtime` stays the parent class, so existing charts keep working. When
+`error_kind` is `runtime`, the same events also send `runtime_kind`, a fixed
+word for the cause. It is `none` for every other `error_kind`, and
+`unclassified` when nothing names the cause (older versions send no
+`runtime_kind`).
+
+| `runtime_kind` | Cause |
+|---|---|
+| `linux_runtime_start_failed` | The Linux engine Cua sets up on a Mac did not start. |
+| `linux_runtime_not_ready` | That engine started but did not answer in time. |
+| `gvisor_unavailable` | The gVisor sandbox layer for Linux containers is not working. |
+| `runtime_download_failed` | A file the built-in runtime needs did not download or did not verify. |
+| `runtime_path_too_long` | Cua's folder path is too long for the built-in Linux runtime. |
+| `memory_limit` | The Space asks for more memory than the Mac allows Linux Spaces. |
+| `unsupported_hardware` | macOS Spaces need a Mac with Apple silicon. |
+| `open_file_limit` | The machine hit its open-file limit. |
+| `lume_outdated` | The Lume that runs macOS Spaces is older than Cua needs. |
+| `lume_unreachable` | Lume did not answer. |
+| `vm_stopped_early` | The VM stopped, never started, or disappeared while booting. |
+| `qemu_start_failed` | QEMU could not start the VM. |
+| `image_arch_mismatch` | The image does not run on this chip. |
+| `container_start_failed` | The container exited right after it started. |
+| `container_engine_error` | The container engine reported another error. |
+| `unclassified` | No known cause matched. |
+
 Otherwise it is the error's type (for example `unauthenticated`, `timeout`,
 `runtime`), and `other` only when nothing names the cause. A failed create
 never reports `none`.

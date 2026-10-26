@@ -551,6 +551,8 @@ with tempfile.TemporaryDirectory() as tmp:
                 ).splitlines()
                 self.assertTrue(windows)
                 sentinel.activate()
+                # A display reused across runs may still hold the pointer at the move target below.
+                subprocess.run(["xdotool", "mousemove", "10", "10"], check=True, timeout=10)
                 sentinel.toggle_armed()
                 time.sleep(2.5)
                 other = desktop.start_app(

@@ -98,7 +98,6 @@ struct NavigationCommands: View {
 /// type in the core's order (`appPaletteRank`, the React palette's too).
 struct CommandPaletteView: View {
     let model: AppModel
-    @Environment(\.openSettings) private var openSettings
     @State private var query = ""
     @State private var active = 0
     @FocusState private var focused: Bool
@@ -230,7 +229,7 @@ struct CommandPaletteView: View {
                 model.selection = .notifications
             },
             Command(id: "nav:settings", entry: entry("Go to", chrome.settingsLabel, keywords: "page preferences"),
-                    symbol: "gearshape", shortcut: SharedShortcuts.label("nav.settings")) { openSettings() },
+                    symbol: "gearshape", shortcut: SharedShortcuts.label("nav.settings")) { MainUIRouter(model: model).openSettings() },
             Command(id: "nav:checklist", entry: entry("Go to", "Getting started", keywords: "checklist steps tour help first"),
                     symbol: "checklist") { model.openGettingStarted() },
         ]

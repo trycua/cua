@@ -14,15 +14,6 @@ public struct PendingTeleport: Equatable {
     public var files: [String]
 }
 
-/// The Settings window's tabs.
-public enum SettingsTab: Hashable, Sendable {
-    case general
-    case agents
-    case devices
-    case experiments
-    case about
-}
-
 /// What the main window shows.
 public enum MainSelection: Hashable {
     case space(String)
@@ -114,10 +105,6 @@ public final class AppModel {
     public let cloud: CloudModel
     /// The cloud hosts the elastic pool added (Machines), read-only.
     public let elastic: ElasticModel
-    /// The Settings tab showing.
-    public var settingsTab: SettingsTab = .general
-    /// A Settings section to scroll to when Settings opens (captures).
-    public var settingsSection: String?
     /// The Cua account, the telemetry switch and the coding agents.
     let account: AccountRunning?
     let telemetry: TelemetryRunning?
@@ -1805,8 +1792,8 @@ public final class AppModel {
 
     /// Reads the usage-data switch alone. The web page gets it with its
     /// Settings snapshot (`settings.get`) and drops every usage signal while
-    /// that has none, so it cannot wait for the native Settings view's
-    /// `loadSettings` (the page runs signed out, before any Settings view).
+    /// that has none, so it cannot wait for `loadSettings` (the page runs
+    /// signed out, before Settings opens).
     public func refreshTelemetry() {
         telemetryInput = telemetry?.status()
     }

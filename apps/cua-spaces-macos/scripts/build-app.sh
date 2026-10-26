@@ -12,7 +12,7 @@
 # (the app installs it onto PATH on first launch, like the Tauri app's
 # sidecar), Sparkle.framework (the updater, from the pinned SwiftPM
 # artifact, with its XPC services) in Contents/Frameworks and the
-# third-party notices (Settings, About, Acknowledgements), the host
+# third-party notices (THIRD_PARTY_NOTICES.md in Resources), the host
 # service (the pinned cua-spacesd from scripts/fetch-spacesd.sh, or
 # $CUA_SPACESD_BIN, in Contents/Helpers; the app's own executable runs it as
 # its login item, whose SMAppService plist is in

@@ -189,10 +189,11 @@ speaks it as is:
   `spaces.createProgress` events until it answers with the Space (or
   `cancelled`). The app's own New Space items (⌘N, the menu bar, a machine's
   "New Space on…") send `spaces.newRequested {on}`, which opens the wizard;
-  the native sheet is the fallback while New UI is off. The app menu's
-  Settings command (⌘,) sends `settings.openRequested` while the New UI
-  window is in front, and the page goes to Settings (also with no focus in
-  its web view). While New UI is on, the notch and the menu bar item send
+  the native sheet is the fallback while New UI is off. The app's
+  Settings items (⌘,, the menu bar item, the notch; New UI on or off) send
+  `settings.openRequested` while the window is open, or open it at
+  `/settings`, and the page goes to Settings (also with no focus in its web
+  view). The Mac app has no native Settings window. While New UI is on, the notch and the menu bar item send
   `route.openRequested {path}` (a Space's tile `/spaces/<id>`, with
   `?dropped=[names]` for a drop on it; the list `/spaces`; Settings
   `/settings`), and the page goes there.

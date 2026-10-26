@@ -141,6 +141,7 @@ fn from_text(message: &str, phase: &str, local: bool) -> Option<&'static str> {
         return Some(local_network::DENIED);
     }
     if l.contains("virtualmachinelimitexceeded")
+        || l.contains("running macos guests reached")
         || (has(&l, &["virtual machine", "vms"])
             && l.contains("limit")
             && has(&l, &["exceed", "maximum", "reached"]))
@@ -621,6 +622,14 @@ mod tests {
         );
         assert_eq!(
             kind("VZErrorDomain virtualMachineLimitExceeded", "booting", ""),
+            "vm_limit"
+        );
+        assert_eq!(
+            kind(
+                "lume API 409: VM start rejected: host limit of 2 running macOS guests reached",
+                "booting",
+                ""
+            ),
             "vm_limit"
         );
         assert_eq!(

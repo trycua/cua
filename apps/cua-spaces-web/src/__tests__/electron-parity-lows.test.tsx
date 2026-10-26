@@ -49,8 +49,9 @@ describe.skipIf(!wasmBuilt)("Electron parity, the small things", () => {
     for (const host of ["electron", "demo"] as const) {
       await mount("/settings/experiments", host);
       await waitFor(() => expect(q("[data-settings-tab=advanced]")).not.toBeNull(), { timeout: 8000 });
+      // The tab draws before the host's experiments answer: wait for its rows.
+      await waitFor(() => expect(document.querySelectorAll("[data-setting-row^='experiment:']").length).toBeGreaterThan(0));
       expect(q('[data-setting-row="experiment:classic_ui"]')).toBeNull();
-      expect(document.querySelectorAll("[data-setting-row^='experiment:']").length).toBeGreaterThan(0);
       cleanup();
     }
   });

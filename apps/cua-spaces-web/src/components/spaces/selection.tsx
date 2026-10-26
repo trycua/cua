@@ -23,6 +23,14 @@ export function selectable(item: SpaceItem): boolean {
   return item.mine ? item.access.canDelete && canDelete(item.space) : item.access.canLeave;
 }
 
+/** Why it can't be ticked (the checkbox still shows, dimmed, saying this); null when it can. */
+export function unselectableReason(item: SpaceItem): string | null {
+  if (selectable(item)) return null;
+  if (item.state === "creating") return "It can be selected once it's created";
+  if (item.state === "deleting") return "It's being deleted";
+  return item.mine ? "This Space can't be deleted here" : "You can't leave this Space";
+}
+
 /** Stopped and yours to delete: what Select stopped picks. */
 export const stoppedDeletable = (item: SpaceItem) => item.state === "stopped" && item.mine && selectable(item);
 
@@ -112,6 +120,7 @@ export function useSelection(shown: readonly SpaceItem[], paused: boolean): Sele
 export function SelectBox({ item, selection, onPicture = false, className }: { item: SpaceItem; selection: Selection; onPicture?: boolean; className?: string }) {
   const on = selection.has(item.space.id);
   const can = selectable(item);
+  const why = can || on ? null : unselectableReason(item);
   return (
     <button
       type="button"
@@ -119,7 +128,11 @@ export function SelectBox({ item, selection, onPicture = false, className }: { i
       aria-checked={on}
       aria-label={`Select ${item.space.name}`}
       aria-disabled={!can || undefined}
+      aria-description={why ?? undefined}
+      title={why ?? undefined}
       data-select={item.space.id}
+      // Over a tile's picture: cut out of a live tile's native video while it shows (`lib/video-slots.ts`).
+      data-video-hole={onPicture ? "" : undefined}
       onClick={(e) => {
         e.preventDefault();
         e.stopPropagation();

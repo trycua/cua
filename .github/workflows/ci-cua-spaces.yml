@@ -240,7 +240,7 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.changes.outputs.native == 'true' && '[{"name":"macos-dmg","os":"macos-26-xlarge","bundles":"app,dmg"},{"name":"windows-nsis-msi","os":"cua-windows-8core","bundles":"nsis,msi"},{"name":"linux-deb-appimage","os":"ubuntu-22.04","bundles":"deb,appimage"}]' || '[{"name":"linux-deb-appimage","os":"ubuntu-22.04","bundles":"deb,appimage"}]') }}
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os == 'macos-26-xlarge' && ((contains(fromJSON('["push","merge_group","workflow_dispatch"]'), github.event_name) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON(vars.MAC_RUNNER_LABELS || '"macos-26-xlarge"') || 'macos-26-xlarge') || matrix.os }}
     # A cold Windows bundle takes about 1 h 45 min (the sidecar release build
     # alone is ~50 min). Fail a real hang instead of holding a runner for the
     # 6 h default.

@@ -20,3 +20,5 @@ self-hosted-runner:
     - cua-linux-16core
     - cua-windows-8core
     - macos-26-xlarge
+    # Self-hosted Mac CI runners (repo variable MAC_RUNNER_LABELS, docs/ci/self-hosted-mac-runners.md).
+    - cua-ci

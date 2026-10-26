@@ -129,7 +129,10 @@ jobs:
   ffi:
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: Cua Spaces app library (built once)
-    runs-on: macos-26-xlarge
+    # MAC_RUNNER_LABELS (repo variable, JSON) moves this job to the self-hosted Macs
+    # for push, merge_group, workflow_dispatch and same-repo PRs. Unset: macos-26-xlarge.
+    # See docs/ci/self-hosted-mac-runners.md.
+    runs-on: ${{ ((contains(fromJSON('["push","merge_group","workflow_dispatch"]'), github.event_name) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON(vars.MAC_RUNNER_LABELS || '"macos-26-xlarge"') || 'macos-26-xlarge') }}
     env:
       CARGO_BUILD_JOBS: 4
       # The slice cache key names the repository (same value as the producer).
@@ -177,7 +180,10 @@ jobs:
   swift-tests:
     name: SwiftUI app (swift tests, bridge contract)
     needs: ffi
-    runs-on: macos-26-xlarge
+    # MAC_RUNNER_LABELS (repo variable, JSON) moves this job to the self-hosted Macs
+    # for push, merge_group, workflow_dispatch and same-repo PRs. Unset: macos-26-xlarge.
+    # See docs/ci/self-hosted-mac-runners.md.
+    runs-on: ${{ ((contains(fromJSON('["push","merge_group","workflow_dispatch"]'), github.event_name) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON(vars.MAC_RUNNER_LABELS || '"macos-26-xlarge"') || 'macos-26-xlarge') }}
     steps:
       - uses: actions/checkout@v4
       - name: Download the Cua Spaces app library
@@ -285,7 +291,10 @@ jobs:
   app-bundle:
     name: SwiftUI app (bundle, launch check, XCUITest)
     needs: ffi
-    runs-on: macos-26-xlarge
+    # MAC_RUNNER_LABELS (repo variable, JSON) moves this job to the self-hosted Macs
+    # for push, merge_group, workflow_dispatch and same-repo PRs. Unset: macos-26-xlarge.
+    # See docs/ci/self-hosted-mac-runners.md.
+    runs-on: ${{ ((contains(fromJSON('["push","merge_group","workflow_dispatch"]'), github.event_name) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON(vars.MAC_RUNNER_LABELS || '"macos-26-xlarge"') || 'macos-26-xlarge') }}
     steps:
       - uses: actions/checkout@v4
       - name: Download the Cua Spaces app library

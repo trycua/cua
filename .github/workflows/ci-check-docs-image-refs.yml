@@ -12,7 +12,6 @@ on:
   pull_request:
     paths:
       - "docs/**"
-      - "skills/**"
       - "README.md"
       - "libs/**/README.md"
       - "libs/cua/crates/cua-image/src/canonical.rs"

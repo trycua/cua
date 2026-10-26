@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Vendors the upstream default skills into libs/cua/skills/ (bundled into
-# cua-agent-setup with include_dir). cua-sandboxes and cua-spaces live only
-# here; cua-driver and gui-automation are copies of their canonical sources.
+# cua-agent-setup with include_dir). cua-driver is a copy of its canonical
+# source; the other skills live only here.
 #
 # Usage: scripts/sync-skills.sh [--check]
 set -euo pipefail
@@ -12,7 +12,6 @@ check=0
 
 pairs=(
   "$repo/libs/cua-driver/rust/Skills/cua-driver:$here/skills/cua-driver"
-  "$repo/skills/gui-automation:$here/skills/gui-automation"
 )
 status=0
 for pair in "${pairs[@]}"; do

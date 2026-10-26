@@ -82,7 +82,7 @@ line declares how CI runs it, in the docs code-block policy's terms:
 ```
 
 The generator embeds the file under that item as a `test=` block with a
-stable id, so the docs-blocks suite (`tests/e2e/cua-sdk/run.py --lanes docs`)
+stable id, so the docs-blocks suite (`libs/cua/tests/e2e/cua-sdk/run.py --lanes docs`)
 runs it from the page. An example whose target does not exist fails the
 generator.
 

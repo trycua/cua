@@ -10,7 +10,7 @@
 //! refuses and types nothing, and an approval reaches the Space's cua-driver
 //! (the mock has none, so the fill fails there, audited). The real fill
 //! against a real browser is the opt-in Docker e2e
-//! (`tests/e2e/run-site-login-e2e.sh`).
+//! (`libs/cua/tests/e2e/run-site-login-e2e.sh`).
 //!
 //! Host-safe: the vault is a passphrase vault in a temp dir, presence is a
 //! fake, the Chrome profile lives in a temp home read through a `FakeHost`

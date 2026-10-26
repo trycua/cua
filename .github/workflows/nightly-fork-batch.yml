@@ -77,7 +77,7 @@ jobs:
           node-version: "22"
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6
       - name: Build the SDK, CLI, bindings, reference disk and QEMU
-        run: tests/e2e/cua-sdk/ci-setup.sh --images --disks
+        run: libs/cua/tests/e2e/cua-sdk/ci-setup.sh --images --disks
       - name: Start the cua daemon
         run: |
           arch=$(uname -m); case "$arch" in aarch64|arm64) arch=arm64 ;; *) arch=amd64 ;; esac

@@ -6,7 +6,7 @@ name: "CD: Image omarchy"
 #
 #   build     cua images build (guest tree + VM disk)
 #   gates     cua-spacesd doctor --strict under QEMU+KVM (local token, claim
-#             share); tests/e2e/omarchy/omarchy_e2e.py (click, type, Hyprland
+#             share); libs/cua/tests/e2e/omarchy/omarchy_e2e.py (click, type, Hyprland
 #             window action, both cua-driver MCPs, overlay screenshots)
 #   stage     the content digest; the doctored disk saved
 #   push      the doctored disk as ghcr.io/trycua/omarchy:<ci tag>-amd64
@@ -49,7 +49,7 @@ on:
       - "libs/cua/crates/cua-cli/src/image_build.rs"
       - "libs/cua/crates/cua-cli/src/image_release.rs"
       - "libs/cua/crates/cua-image/src/publish.rs"
-      - "tests/e2e/omarchy/**"
+      - "libs/cua/tests/e2e/omarchy/**"
       - ".github/workflows/cd-image-omarchy.yml"
   schedule:
     # Daily 05:23 UTC: tracks the Omarchy edge channel (see above).

@@ -3,7 +3,7 @@ name: "E2E: public compat examples"
 # Other providers' own quickstarts, examples, SDK test suites and popular
 # open-source integrations (E2B, Daytona, Modal), run UNMODIFIED against Cua
 # through `cua run --compat <provider>`. Nothing third-party is vendored: the
-# manifest (tests/compat/examples/manifest.json) pins a repository, a commit
+# manifest (libs/cua/tests/compat/examples/manifest.json) pins a repository, a commit
 # and a path with the SPDX license read from the upstream LICENSE; the runner
 # fetches each pinned tree at test time, checks the git tree id and the license
 # file hash, and ships it to a job Space. The job installs its dependencies
@@ -29,8 +29,8 @@ name: "E2E: public compat examples"
 on:
   pull_request:
     paths:
-      - "tests/compat/examples/**"
-      - "tests/compat/SDK_VERSIONS.json"
+      - "libs/cua/tests/compat/examples/**"
+      - "libs/cua/tests/compat/SDK_VERSIONS.json"
       - ".github/workflows/e2e-compat-examples.yml"
   schedule:
     - cron: "47 5 * * *"
@@ -69,15 +69,15 @@ jobs:
         with:
           python-version: "3.12"
       - name: The manifest is valid
-        run: python tests/compat/examples/run.py lint
+        run: python libs/cua/tests/compat/examples/run.py lint
       - name: Pinned trees, tree ids and license hashes still match; Python sources compile
         env:
           CUA_EXAMPLES_WORK: ${{ runner.temp }}
-        run: python tests/compat/examples/run.py verify --compile
+        run: python libs/cua/tests/compat/examples/run.py verify --compile
       - name: Every job bundle builds (no job runs)
         env:
           CUA_EXAMPLES_WORK: ${{ runner.temp }}
-        run: python tests/compat/examples/run.py run --dry --no-warm --out "$RUNNER_TEMP/dry"
+        run: python libs/cua/tests/compat/examples/run.py run --dry --no-warm --out "$RUNNER_TEMP/dry"
 
   nightly:
     name: examples on real Spaces (QEMU)
@@ -102,7 +102,7 @@ jobs:
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6
       - name: Build cua (Cua Spaces build) and the reference images
         run: |
-          tests/e2e/cua-sdk/ci-setup.sh --images --disks
+          libs/cua/tests/e2e/cua-sdk/ci-setup.sh --images --disks
           (cd libs/cua && cargo build --locked -p cua-spaces-cli)
           echo "CUA=$PWD/libs/cua/target/debug/cua" >>"$GITHUB_ENV"
       - name: Start the daemon
@@ -130,7 +130,7 @@ jobs:
         run: |
           rc=0
           for p in ${{ steps.gateways.outputs.providers }}; do
-            python tests/compat/examples/run.py run --provider "$p" --sdk "$SDK" ${IDS:+--ids "$IDS"} \
+            python libs/cua/tests/compat/examples/run.py run --provider "$p" --sdk "$SDK" ${IDS:+--ids "$IDS"} \
               --out "$RUNNER_TEMP/examples-out/$p" || rc=1
           done
           exit $rc

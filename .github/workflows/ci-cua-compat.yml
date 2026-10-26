@@ -22,7 +22,7 @@ on:
       - "libs/cua/crates/cua-compat/**"
       - "libs/cua/crates/cua-cli/src/compat_cmd.rs"
       - "libs/cua/crates/cua-spacesd-client/src/testing.rs"
-      - "tests/compat/**"
+      - "libs/cua/tests/compat/**"
       - ".github/workflows/ci-cua-compat.yml"
   # Main keeps the Rust cache family (libs-cua-compat, Linux and macOS) warm
   # for the pull request runs above; the weekly run alone let it expire.
@@ -32,7 +32,7 @@ on:
       - "libs/cua/crates/cua-compat/**"
       - "libs/cua/crates/cua-cli/src/compat_cmd.rs"
       - "libs/cua/crates/cua-spacesd-client/src/testing.rs"
-      - "tests/compat/**"
+      - "libs/cua/tests/compat/**"
       - ".github/workflows/ci-cua-compat.yml"
   schedule:
     - cron: "41 6 * * 1"
@@ -89,9 +89,9 @@ jobs:
         working-directory: libs/cua
         run: cargo test --locked -p cua-compat --features testing
       - name: E2B SDK (pinned and latest) over mock Spaces
-        run: tests/compat/run_hermetic.sh e2b
+        run: libs/cua/tests/compat/run_hermetic.sh e2b
       - name: Daytona SDK (pinned and latest) over mock Spaces
-        run: tests/compat/run_hermetic.sh daytona
+        run: libs/cua/tests/compat/run_hermetic.sh daytona
 
   surface:
     name: E2B SDK surface
@@ -107,15 +107,15 @@ jobs:
       - name: Pinned SDK matches its snapshot
         run: |
           python -m venv /tmp/pinned
-          /tmp/pinned/bin/pip install -q "e2b==$(cat tests/compat/e2b/PINNED)"
-          /tmp/pinned/bin/python tests/compat/e2b/surface.py --diff "tests/compat/e2b/fixtures/surface-$(cat tests/compat/e2b/PINNED).json"
+          /tmp/pinned/bin/pip install -q "e2b==$(cat libs/cua/tests/compat/e2b/PINNED)"
+          /tmp/pinned/bin/python libs/cua/tests/compat/e2b/surface.py --diff "libs/cua/tests/compat/e2b/fixtures/surface-$(cat libs/cua/tests/compat/e2b/PINNED).json"
       - name: Latest SDK matches the newest snapshot (drift)
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: |
           python -m venv /tmp/latest
           /tmp/latest/bin/pip install -q -U e2b
-          newest=$(ls tests/compat/e2b/fixtures/surface-*.json | sort -V | tail -1)
-          /tmp/latest/bin/python tests/compat/e2b/surface.py --diff "$newest"
+          newest=$(ls libs/cua/tests/compat/e2b/fixtures/surface-*.json | sort -V | tail -1)
+          /tmp/latest/bin/python libs/cua/tests/compat/e2b/surface.py --diff "$newest"
 
   live-e2b:
     name: live E2B conformance (drift)
@@ -135,15 +135,15 @@ jobs:
         if: env.E2B_API_KEY != ''
         run: |
           set -e
-          pinned=$(cat tests/compat/e2b/PINNED)
-          newest=$(ls tests/compat/e2b/fixtures/e2b-*.json | sort -V | tail -1)
+          pinned=$(cat libs/cua/tests/compat/e2b/PINNED)
+          newest=$(ls libs/cua/tests/compat/e2b/fixtures/e2b-*.json | sort -V | tail -1)
           for spec in "e2b==$pinned" "e2b"; do
             python -m venv "/tmp/v-$spec"
             "/tmp/v-$spec/bin/pip" install -q -U "$spec"
-            "/tmp/v-$spec/bin/python" tests/compat/e2b/conformance.py > "/tmp/run-$spec.json"
+            "/tmp/v-$spec/bin/python" libs/cua/tests/compat/e2b/conformance.py > "/tmp/run-$spec.json"
           done
-          python tests/compat/e2b/compare.py "tests/compat/e2b/fixtures/e2b-$pinned.json" "/tmp/run-e2b==$pinned.json"
-          python tests/compat/e2b/compare.py "$newest" "/tmp/run-e2b.json"
+          python libs/cua/tests/compat/e2b/compare.py "libs/cua/tests/compat/e2b/fixtures/e2b-$pinned.json" "/tmp/run-e2b==$pinned.json"
+          python libs/cua/tests/compat/e2b/compare.py "$newest" "/tmp/run-e2b.json"
       - name: No E2B_API_KEY secret
         if: env.E2B_API_KEY == ''
         run: echo "::warning::E2B_API_KEY is not set; the live E2B drift check was skipped"

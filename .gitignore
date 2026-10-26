@@ -233,3 +233,6 @@ libs/cua-driver-bench/**/results/
 !libs/cua/crates/cua-spaces/src/build/
 # Agent worktrees: never commit them (git add -A would add them as gitlinks)
 .claude/worktrees/
+
+# Personal editor settings
+.vscode/

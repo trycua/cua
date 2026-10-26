@@ -23,7 +23,7 @@ on:
   pull_request:
     paths:
       - ".github/workflows/docs-nightly.yml"
-      - "tests/e2e/cua-sdk/docs/shell_lane.py"
+      - "libs/cua/tests/e2e/cua-sdk/docs/shell_lane.py"
 
 permissions:
   contents: read
@@ -50,7 +50,7 @@ jobs:
         shell: pwsh
         env:
           CUA_E2E_RESULTS: ${{ runner.temp }}/docs-windows
-        run: python tests/e2e/cua-sdk/docs/shell_lane.py --lane windows --first cua-driver/guides/operate.mdx
+        run: python libs/cua/tests/e2e/cua-sdk/docs/shell_lane.py --lane windows --first cua-driver/guides/operate.mdx
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
@@ -68,7 +68,7 @@ jobs:
       - name: Run the lume lane
         env:
           CUA_E2E_RESULTS: ${{ runner.temp }}/docs-lume
-        run: python3 tests/e2e/cua-sdk/docs/shell_lane.py --lane lume --first lume/quickstart.mdx
+        run: python3 libs/cua/tests/e2e/cua-sdk/docs/shell_lane.py --lane lume --first lume/quickstart.mdx
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
@@ -87,9 +87,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Build the SDK and fixtures
-        run: tests/e2e/cua-sdk/ci-setup.sh
+        run: libs/cua/tests/e2e/cua-sdk/ci-setup.sh
       - name: Run the e2e lume lane
-        run: python3 tests/e2e/cua-sdk/run.py --lanes lume --langs rust --strict --out "$RUNNER_TEMP/cua-e2e-lume"
+        run: python3 libs/cua/tests/e2e/cua-sdk/run.py --lanes lume --langs rust --strict --out "$RUNNER_TEMP/cua-e2e-lume"
       - name: Matrix summary
         if: always()
         run: cat "$RUNNER_TEMP/cua-e2e-lume/matrix.md" >>"$GITHUB_STEP_SUMMARY" || true

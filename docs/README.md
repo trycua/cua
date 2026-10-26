@@ -41,8 +41,8 @@ are exempt because their generator's check owns them. The lanes:
 | --- | --- | --- |
 | `cli-shape` | every `cua`, `cua-driver` and `lume` command parses against the CLI's generated definition | every PR (`docs:check-blocks`) |
 | `config` | JSON, YAML and TOML parse, and match `schema="<name>"` | every PR (`docs:check-blocks`, needs `uv`) |
-| `docs` | Python and TypeScript blocks, hermetically; `prelude="fakefleet"` runs cloud code against a fake Fleet | PR (`tests/e2e/cua-sdk`) |
-| `container` | blocks that start local sandboxes (Docker, gVisor) | PR (`tests/e2e/cua-sdk`) |
+| `docs` | Python and TypeScript blocks, hermetically; `prelude="fakefleet"` runs cloud code against a fake Fleet | PR (`libs/cua/tests/e2e/cua-sdk`) |
+| `container` | blocks that start local sandboxes (Docker, gVisor) | PR (`libs/cua/tests/e2e/cua-sdk`) |
 | `fleet` | whole scripts against live Fleet | nightly |
 | `windows`, `lume` | shell blocks on a disposable Windows or macOS machine | nightly |
 | `terraform` | `terraform init` and `validate` | PR |
@@ -51,10 +51,10 @@ are exempt because their generator's check owns them. The lanes:
 | `excerpt` | the block is byte-identical to `source="<path>#<region>"` in a sample CI builds | every PR (`docs:check-blocks`) |
 
 Run the Python and container lanes with
-`python3 tests/e2e/cua-sdk/run.py --lanes docs --langs py --strict` (add
+`python3 libs/cua/tests/e2e/cua-sdk/run.py --lanes docs --langs py --strict` (add
 `container` with Docker running). `session="..."` scopes blocks that build on
 each other; `prelude="..."` adds hidden setup (see
-`tests/e2e/cua-sdk/docs/preludes/README.md`). Blocks that predate the
+`libs/cua/tests/e2e/cua-sdk/docs/preludes/README.md`). Blocks that predate the
 rule are listed in `docs/code-block-baseline.json`, which may only shrink: after
 deciding a baselined block, run `python3 ../tests/e2e/cua-sdk/docs/extract.py --update-baseline`.
 A new or edited block must be decided before it merges.

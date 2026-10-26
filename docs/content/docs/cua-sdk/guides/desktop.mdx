@@ -246,7 +246,7 @@ from: each image's OS, container or VM form, runtimes, whether it ships
 cua-spacesd, and its browsers. `browser_tools: true` marks the images whose
 browser the Cua Driver browser tools drive.
 
-```python test="excerpt" id="browse-discover" source="tests/e2e/browse/e2e_browse.py#discover"
+```python test="excerpt" id="browse-discover" source="libs/cua/tests/e2e/browse/e2e_browse.py#discover"
 cat = await agent.ok("images_list", {"browser": True})
 images = [i for i in cat["images"] if i["browser_tools"]]
 ```
@@ -265,7 +265,7 @@ throwaway profile, and binds the window for the browser tools. With `url` it
 also opens a first page. It returns the sandbox `id` and the `session`,
 `target_id` and `tab_id` that every browser call takes.
 
-```python test="excerpt" id="browse-create" source="tests/e2e/browse/e2e_browse.py#create"
+```python test="excerpt" id="browse-create" source="libs/cua/tests/e2e/browse/e2e_browse.py#create"
 sb = await agent.ok("sandbox_create", create)
 space = sb["id"]
 ids = {
@@ -296,7 +296,7 @@ the tool's own arguments:
 
 A small helper keeps the calls short:
 
-```python test="excerpt" id="browse-helpers" source="tests/e2e/browse/e2e_browse.py#helpers"
+```python test="excerpt" id="browse-helpers" source="libs/cua/tests/e2e/browse/e2e_browse.py#helpers"
 async def driver(tool: str, **args) -> dict:
     return await agent.ok(
         "call_tool", {"space": space, "tool": tool, "arguments": {**ids, **args}}
@@ -318,7 +318,7 @@ The sandbox is a whole computer, so you can also serve your app in it
 (`space_write`, `space_bash`) and browse `http://127.0.0.1:<port>`. This fills
 and submits a form:
 
-```python test="excerpt" id="browse-fill" source="tests/e2e/browse/e2e_browse.py#fill"
+```python test="excerpt" id="browse-fill" source="libs/cua/tests/e2e/browse/e2e_browse.py#fill"
 await driver("browser_navigate", url=f"http://127.0.0.1:{FORM_PORT}/")
 # One read; its refs stay valid until the page changes.
 page = await read()
@@ -342,7 +342,7 @@ Delete the sandbox, or sign out there, to end them.
 
 ### Clean up
 
-```python test="excerpt" id="browse-cleanup" source="tests/e2e/browse/e2e_browse.py#cleanup"
+```python test="excerpt" id="browse-cleanup" source="libs/cua/tests/e2e/browse/e2e_browse.py#cleanup"
 await agent.call("sandbox_delete", {"name": space})
 ```
 

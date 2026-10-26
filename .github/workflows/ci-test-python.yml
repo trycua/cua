@@ -164,6 +164,7 @@ jobs:
         run: >
           uv run --frozen pytest tests -p no:cacheprovider --timeout=120 -ra
           --ignore=tests/live
+          --ignore=tests/integration
           --ignore=tests/test_runtime.py
           --ignore=tests/test_snapshots.py
           --ignore=tests/test_windows_timing.py

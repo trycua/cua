@@ -7,7 +7,7 @@ name: "CI: OCI images as Spaces"
 #                supervisor runs a command with that command's status;
 #   containers   alpine:3.20 and python:3.12-slim become Spaces on the
 #                runner's Docker engine (runc): a command, a file up and
-#                back, and a port forward (tests/e2e/local-runtimes/tests/
+#                back, and a port forward (libs/cua/tests/e2e/local-runtimes/tests/
 #                oci_any.rs). The microVM kinds run in ci-cua-microvm.yml and
 #                on Apple silicon (see CUA_E2E_OCI_ANY_KINDS).
 
@@ -19,7 +19,7 @@ on:
       - "libs/cua/crates/cua-vmm/src/container/**"
       - "libs/cua/crates/cua-vmm/src/microvm/**"
       - "libs/cua/crates/cua-daemon/src/local.rs"
-      - "tests/e2e/local-runtimes/tests/oci_any.rs"
+      - "libs/cua/tests/e2e/local-runtimes/tests/oci_any.rs"
       - ".github/workflows/ci-cua-oci-spacesd.yml"
   push:
     branches: [main]
@@ -97,13 +97,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.97.1
       - uses: ./.github/actions/rust-cache
         with:
-          workspaces: "tests/e2e/local-runtimes -> target"
+          workspaces: "libs/cua/tests/e2e/local-runtimes -> target"
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: cua-spacesd-linux-x86_64
           path: ${{ runner.temp }}/static
       - name: Any OCI image is a full Space
-        working-directory: tests/e2e/local-runtimes
+        working-directory: libs/cua/tests/e2e/local-runtimes
         env:
           CUA_E2E_OCI_ANY: "1"
           CUA_E2E_OCI_ANY_KINDS: container

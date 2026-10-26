@@ -1,7 +1,7 @@
 //! The Daytona git toolbox at the wire over mock Spaces: authorization,
 //! request validation and error shapes (the parts that need no guest
 //! shell). Behaviour against a real git is covered by the shared SDK suite
-//! (tests/compat/daytona, `git.*` cases).
+//! (libs/cua/tests/compat/daytona, `git.*` cases).
 
 use cua_compat::backend::mock::MockBackend;
 use cua_compat::{Gateway, GatewayOptions, Provider};

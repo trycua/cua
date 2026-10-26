@@ -1,7 +1,7 @@
 //! `cua share` and the `share`, `share_list` and `share_stop` MCP tools
 //! against a real daemon that is a signed-in relay host.
 //!
-//! The relay and the host's cua-spacesd are `share_relay.py` (tests/e2e/
+//! The relay and the host's cua-spacesd are `share_relay.py` (libs/cua/tests/e2e/
 //! cua-sdk/fixtures): just enough of both to put a request, with the
 //! account the relay would verify, on the daemon's share gateway socket.
 //! Everything on the daemon side is real. Unix only (the gateway is a Unix

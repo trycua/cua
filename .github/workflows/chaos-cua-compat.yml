@@ -14,14 +14,14 @@ name: "Chaos: cua-compat leak checks"
 #                 Linux vm Spaces (QEMU) with the same fault classes plus
 #                 process kills inside Spaces, over many seeds, then the host
 #                 inventory diff (cua-chaos). Longer campaigns on AWS and
-#                 elastic pool hosts are run by tests/compat/chaos/aws-campaign.sh.
+#                 elastic pool hosts are run by libs/cua/tests/compat/chaos/aws-campaign.sh.
 
 on:
   pull_request:
     paths:
       - "libs/cua/crates/cua-chaos/**"
       - "libs/cua/crates/cua-compat/**"
-      - "tests/compat/chaos/**"
+      - "libs/cua/tests/compat/chaos/**"
       - ".github/workflows/chaos-cua-compat.yml"
   schedule:
     - cron: "17 3 * * *"
@@ -92,7 +92,7 @@ jobs:
           python-version: "3.13"
       - name: Build cua (Cua Spaces build), cua-chaos and the reference images
         run: |
-          tests/e2e/cua-sdk/ci-setup.sh --images --disks
+          libs/cua/tests/e2e/cua-sdk/ci-setup.sh --images --disks
           (cd libs/cua && cargo build --locked -p cua-spaces-cli -p cua-chaos)
           echo "CUA=$PWD/libs/cua/target/debug/cua" >>"$GITHUB_ENV"
           echo "CHAOS=$PWD/libs/cua/target/debug/cua-chaos" >>"$GITHUB_ENV"
@@ -102,7 +102,7 @@ jobs:
         env:
           SEEDS: ${{ inputs.seeds || '0..40' }}
           CHAOS_WORK: ${{ runner.temp }}/chaos
-        run: tests/compat/chaos/run-real.sh e2b "$SEEDS" -- --on local --kind vm --image "vm:$LINUX_DISK"
+        run: libs/cua/tests/compat/chaos/run-real.sh e2b "$SEEDS" -- --on local --kind vm --image "vm:$LINUX_DISK"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:

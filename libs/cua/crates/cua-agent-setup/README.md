@@ -105,10 +105,9 @@ list a skill twice when another agent that reads only `~/.agents/skills`
 
 `libs/cua/skills/` is bundled with `include_dir`:
 
-- `cua-driver` and `gui-automation` are copies of
-  `libs/cua-driver/rust/Skills/cua-driver` and `skills/gui-automation`.
-  `scripts/sync-skills.sh` refreshes them; `--check` fails on drift.
-- `cua-sandboxes`, `cua-spaces` and `cua-volume` live only here.
+- `cua-driver` is a copy of `libs/cua-driver/rust/Skills/cua-driver`.
+  `scripts/sync-skills.sh` refreshes it; `--check` fails on drift.
+- `cua-sandboxes`, `cua-spaces`, `cua-volume` and `gui-automation` live only here.
 
 ## Tests
 

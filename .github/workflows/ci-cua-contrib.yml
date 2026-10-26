@@ -26,7 +26,7 @@ on:
       - "libs/cua-bench/cua_bench/**"
       - "docs/content/docs/cua-sdk/guides/local-runtimes.mdx"
       - ".github/actions/cua-sandbox/**"
-      - "tests/e2e/cua-sdk/python/test_docs_blocks.py"
+      - "libs/cua/tests/e2e/cua-sdk/python/test_docs_blocks.py"
       - ".github/workflows/ci-cua-contrib.yml"
   push:
     branches: [main]
@@ -40,7 +40,7 @@ on:
       - "libs/cua-bench/cua_bench/**"
       - "docs/content/docs/cua-sdk/guides/contrib-providers.mdx"
       - ".github/actions/cua-sandbox/**"
-      - "tests/e2e/cua-sdk/python/test_docs_blocks.py"
+      - "libs/cua/tests/e2e/cua-sdk/python/test_docs_blocks.py"
       - ".github/workflows/ci-cua-contrib.yml"
   workflow_dispatch:
 
@@ -197,7 +197,7 @@ jobs:
           uv sync --frozen --extra dev
           uv run --frozen pytest -q -p no:cacheprovider -rA cua_bench/tests/test_contrib_e2e.py
       - name: Contrib docs blocks
-        working-directory: tests/e2e/cua-sdk/python
+        working-directory: libs/cua/tests/e2e/cua-sdk/python
         run: >
           uv run --no-project --python 3.12 --with pytest==8.3.3
           python -m pytest -q -p no:cacheprovider test_docs_blocks.py -k contrib

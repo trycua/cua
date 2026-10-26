@@ -2,7 +2,7 @@
 """The "Run a coding agent in a sandbox" docs page, as one runnable script.
 
 The page's Python blocks are the `docs:<id>` regions below, byte for byte
-(`test="excerpt"`, checked by tests/e2e/cua-sdk/docs/extract.py --lint).
+(`test="excerpt"`, checked by libs/cua/tests/e2e/cua-sdk/docs/extract.py --lint).
 
     ANTHROPIC_API_KEY=... python tour.py                      # a real key
     ANTHROPIC_API_KEY=$MOCK_KEY OPENAI_API_KEY=$MOCK_KEY python tour.py \

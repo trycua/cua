@@ -7,7 +7,7 @@
 //! refusal is a line in the host's hash-chained Spaces audit. The driver
 //! side (relay callers, the desktop kept private) is tested in
 //! cua-spacesd-server (`tests/host_spaces.rs`); the whole path in the
-//! opt-in e2e (`tests/e2e/run-host-spaces-e2e.sh`).
+//! opt-in e2e (`libs/cua/tests/e2e/run-host-spaces-e2e.sh`).
 
 use async_trait::async_trait;
 use cua_host::provided::{self, ProvidedSpace};

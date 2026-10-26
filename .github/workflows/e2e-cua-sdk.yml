@@ -1,7 +1,7 @@
 name: "E2E: cua SDK"
 
 # The guides as tests (plan §3.5), in Python, TypeScript and Rust:
-# tests/e2e/cua-sdk (see its scenarios.json for the guide x lane registry).
+# libs/cua/tests/e2e/cua-sdk (see its scenarios.json for the guide x lane registry).
 #
 #   pull_request   hermetic (fixtures, daemon) + container (docker + gVisor on
 #                  the locally built reference images) + docs blocks: five
@@ -14,7 +14,7 @@ name: "E2E: cua SDK"
 #   dispatch       any lane set.
 #
 # Lume needs a macOS host with nested virtualization, which hosted runners
-# lack: run `tests/e2e/cua-sdk/run.py --lanes lume --langs rust` on a Mac.
+# lack: run `libs/cua/tests/e2e/cua-sdk/run.py --lanes lume --langs rust` on a Mac.
 
 on:
   pull_request:
@@ -42,9 +42,7 @@ on:
       - "libs/cua-driver/rust/Skills/**"
       - "libs/cua-driver/rust/include/**"
       - "libs/cua-driver/wayland-helper/**"
-      - "tests/e2e/cua-sdk/**"
-      # The browse-the-web scenario's MCP client session.
-      - "tests/e2e/browse/**"
+      # libs/cua/** above covers libs/cua/tests/e2e/{cua-sdk,browse}.
       # Every docs page: tagged blocks run in the docs lane, and any page
       # (reference/**, cua-sdk/index.mdx, how-to-guides/spaces/**, ...) can gain one.
       # The `changes` job lets through only a change to a fenced code block.
@@ -163,16 +161,16 @@ jobs:
         with:
           workspaces: |
             libs/cua
-            tests/e2e/cua-sdk/rust
+            libs/cua/tests/e2e/cua-sdk/rust
             libs/cua-spacesd
           key: cua-e2e
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
       - name: Build the release SDK and stage it for Python and Node
-        run: tests/e2e/cua-sdk/ci-setup.sh --only sdk,stage
+        run: libs/cua/tests/e2e/cua-sdk/ci-setup.sh --only sdk,stage
       - name: Pack
-        run: tests/e2e/cua-sdk/ci-artifacts.sh pack sdk "$RUNNER_TEMP/build"
+        run: libs/cua/tests/e2e/cua-sdk/ci-artifacts.sh pack sdk "$RUNNER_TEMP/build"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: cua-e2e-build-sdk
@@ -197,7 +195,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Unit-test the shard planner and the runner helpers
-        run: python3 -m unittest tests/e2e/cua-sdk/test_sharding.py tests/e2e/cua-sdk/test_run_janitor.py
+        run: python3 -m unittest libs/cua/tests/e2e/cua-sdk/test_sharding.py libs/cua/tests/e2e/cua-sdk/test_run_janitor.py
       - uses: ./.github/actions/linux-rust-prep
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
@@ -209,7 +207,7 @@ jobs:
         with:
           workspaces: |
             libs/cua
-            tests/e2e/cua-sdk/rust
+            libs/cua/tests/e2e/cua-sdk/rust
             libs/cua-spacesd
           key: cua-e2e
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -218,9 +216,9 @@ jobs:
       # The wasm build generates its bindings from the debug cua-sdk library,
       # so it follows the debug build on this runner.
       - name: Build the debug CLI, the TypeScript package and the wasm browser build
-        run: tests/e2e/cua-sdk/ci-setup.sh --only cli,web
+        run: libs/cua/tests/e2e/cua-sdk/ci-setup.sh --only cli,web
       - name: Pack
-        run: tests/e2e/cua-sdk/ci-artifacts.sh pack cli "$RUNNER_TEMP/build"
+        run: libs/cua/tests/e2e/cua-sdk/ci-artifacts.sh pack cli "$RUNNER_TEMP/build"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: cua-e2e-build-cli
@@ -255,7 +253,7 @@ jobs:
         with:
           workspaces: |
             libs/cua
-            tests/e2e/cua-sdk/rust
+            libs/cua/tests/e2e/cua-sdk/rust
             libs/cua-spacesd
           key: cua-e2e
       # An image without cua-spacesd gets the static musl build injected, so
@@ -270,9 +268,9 @@ jobs:
           bash packaging/release/check-static-binary.sh target/x86_64-unknown-linux-musl/static/cua-spacesd
           chmod +x target/x86_64-unknown-linux-musl/static/cua-spacesd
       - name: Build the test fixtures
-        run: tests/e2e/cua-sdk/ci-setup.sh --only fixtures
+        run: libs/cua/tests/e2e/cua-sdk/ci-setup.sh --only fixtures
       - name: Pack
-        run: tests/e2e/cua-sdk/ci-artifacts.sh pack fixtures "$RUNNER_TEMP/build"
+        run: libs/cua/tests/e2e/cua-sdk/ci-artifacts.sh pack fixtures "$RUNNER_TEMP/build"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: cua-e2e-build-fixtures
@@ -305,15 +303,15 @@ jobs:
         with:
           workspaces: |
             libs/cua
-            tests/e2e/cua-sdk/rust
+            libs/cua/tests/e2e/cua-sdk/rust
             libs/cua-spacesd
           key: cua-e2e
       # The Rust half's own build (its own target directory), done once here
       # instead of inside `cargo test` on every shard.
       - name: Build the Rust half's test binaries
-        run: tests/e2e/cua-sdk/ci-setup.sh --only rust-tests
+        run: libs/cua/tests/e2e/cua-sdk/ci-setup.sh --only rust-tests
       - name: Pack
-        run: tests/e2e/cua-sdk/ci-artifacts.sh pack rust-tests "$RUNNER_TEMP/build"
+        run: libs/cua/tests/e2e/cua-sdk/ci-artifacts.sh pack rust-tests "$RUNNER_TEMP/build"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: cua-e2e-build-rust-tests
@@ -344,9 +342,9 @@ jobs:
       # cua-spacesd builds in a rust container and the three images on top,
       # all in the runner's docker.
       - name: Build the reference images
-        run: tests/e2e/cua-sdk/ci-setup.sh --images --only images
+        run: libs/cua/tests/e2e/cua-sdk/ci-setup.sh --images --only images
       - name: Pack
-        run: tests/e2e/cua-sdk/ci-artifacts.sh pack images "$RUNNER_TEMP/build"
+        run: libs/cua/tests/e2e/cua-sdk/ci-artifacts.sh pack images "$RUNNER_TEMP/build"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: cua-e2e-build-images
@@ -391,7 +389,7 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Unpack the builds, install gVisor, load the images
-        run: tests/e2e/cua-sdk/ci-artifacts.sh prepare "$RUNNER_TEMP/build"
+        run: libs/cua/tests/e2e/cua-sdk/ci-artifacts.sh prepare "$RUNNER_TEMP/build"
       - name: Run this shard of the suite
         env:
           LANES: ${{ github.event_name == 'workflow_dispatch' && inputs.lanes || 'hermetic,container' }}
@@ -405,9 +403,9 @@ jobs:
           # refused the suite's 4 GiB image builds with 7.5 GiB still free.
           CUA_DISK_MIN_FREE: 2GiB
         run: >
-          python3 tests/e2e/cua-sdk/run.py --lanes "$LANES" --langs "$LANGS" --strict
+          python3 libs/cua/tests/e2e/cua-sdk/run.py --lanes "$LANES" --langs "$LANGS" --strict
           --shard "${{ matrix.shard }}/$E2E_SHARDS"
-          --rust-prebuilt tests/e2e/cua-sdk/rust/prebuilt
+          --rust-prebuilt libs/cua/tests/e2e/cua-sdk/rust/prebuilt
           --out "$RUNNER_TEMP/cua-e2e"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
@@ -448,14 +446,14 @@ jobs:
         env:
           LANES: ${{ github.event_name == 'workflow_dispatch' && inputs.lanes || 'hermetic,container' }}
           LANGS: ${{ github.event_name == 'workflow_dispatch' && inputs.langs || 'py,ts,rust' }}
-        run: python3 tests/e2e/cua-sdk/run.py --matrix-only --lanes "$LANES" --langs "$LANGS" --strict --out "$RUNNER_TEMP/cua-e2e"
+        run: python3 libs/cua/tests/e2e/cua-sdk/run.py --matrix-only --lanes "$LANES" --langs "$LANGS" --strict --out "$RUNNER_TEMP/cua-e2e"
       - name: Shards covered the whole plan
         if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
           {
             printf '## Shards (predicted vs measured seconds)\n\n```\n'
-            python3 tests/e2e/cua-sdk/sharding.py check "$RUNNER_TEMP"/shards/cua-e2e-shard-* --shards "$E2E_SHARDS" | tee /dev/stderr
+            python3 libs/cua/tests/e2e/cua-sdk/sharding.py check "$RUNNER_TEMP"/shards/cua-e2e-shard-* --shards "$E2E_SHARDS" | tee /dev/stderr
             printf '```\n'
           } >>"$GITHUB_STEP_SUMMARY"
       - name: Matrix summary
@@ -494,7 +492,7 @@ jobs:
         with:
           workspaces: |
             libs/cua
-            tests/e2e/cua-sdk/rust
+            libs/cua/tests/e2e/cua-sdk/rust
             libs/cua-spacesd
           key: cua-e2e
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -502,12 +500,12 @@ jobs:
           node-version: "22"
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6
       - name: Build the SDK, fixtures, bindings, images, disks and runtimes
-        run: tests/e2e/cua-sdk/ci-setup.sh --images --disks
+        run: libs/cua/tests/e2e/cua-sdk/ci-setup.sh --images --disks
       # Cua Cloud has ended (CUA-1854): Fleet refuses the old live lane, so
       # the nightly runs only the lanes that need no cloud account.
       - name: Run the suite
         run: >
-          python3 tests/e2e/cua-sdk/run.py --lanes cua-sandbox,qemu
+          python3 libs/cua/tests/e2e/cua-sdk/run.py --lanes cua-sandbox,qemu
           --langs py,ts,rust --strict --out "$RUNNER_TEMP/cua-e2e"
       - name: Matrix summary
         if: always()

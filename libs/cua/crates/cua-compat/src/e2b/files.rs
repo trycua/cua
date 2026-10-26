@@ -524,7 +524,7 @@ async fn finish_written(
 mod tests {
     use super::*;
 
-    /// Signatures the real SDK made (`tests/compat/e2b/gen_signature_vectors.py`).
+    /// Signatures the real SDK made (`libs/cua/tests/compat/e2b/gen_signature_vectors.py`).
     #[test]
     fn signatures_match_the_sdk_vectors() {
         let v: Value = serde_json::from_str(include_str!(

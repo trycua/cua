@@ -1,0 +1,59 @@
+{
+  "_doc": "The SDK versions Cua claims to support, in one place. `pinned` is what PR CI and the examples suite run; `claimed` lists every version with a committed fixture or a passing run; the weekly drift workflow (compat-drift.yml) also tests the latest release of each package. libs/cua/tests/compat/<provider>/PINNED must equal py.pinned (examples/run.py lint checks it). Provider agents: add a version to `claimed` only with a fixture and a green run.",
+  "e2b": {
+    "py": {
+      "package": "e2b",
+      "pinned": "2.42.0",
+      "claimed": [
+        "2.42.0",
+        "2.56.0",
+        "2.58.0"
+      ]
+    },
+    "py_code_interpreter": {
+      "package": "e2b-code-interpreter",
+      "pinned": null,
+      "claimed": []
+    },
+    "ts": {
+      "package": "e2b",
+      "pinned": "2.42.0",
+      "claimed": [
+        "2.42.0",
+        "2.56.0",
+        "2.58.0"
+      ]
+    }
+  },
+  "daytona": {
+    "py": {
+      "package": "daytona",
+      "pinned": "0.225.0",
+      "claimed": [
+        "0.225.0"
+      ]
+    },
+    "ts": {
+      "package": "@daytona/sdk",
+      "pinned": "0.225.0",
+      "claimed": [
+        "0.225.0"
+      ]
+    }
+  },
+  "modal": {
+    "py": {
+      "package": "modal",
+      "pinned": "1.6.2",
+      "claimed": [
+        "1.6.2"
+      ]
+    },
+    "ts": {
+      "package": "modal",
+      "pinned": null,
+      "claimed": [],
+      "note": "surface fixture only (modal npm 0.11.1); the gateway targets the Python SDK"
+    }
+  }
+}

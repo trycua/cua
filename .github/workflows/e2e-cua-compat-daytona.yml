@@ -51,7 +51,7 @@ jobs:
         run: sudo apt-get install -y -q ffmpeg
       - name: Build cua (Cua Spaces build) and the reference images
         run: |
-          tests/e2e/cua-sdk/ci-setup.sh --images --disks
+          libs/cua/tests/e2e/cua-sdk/ci-setup.sh --images --disks
           (cd libs/cua && cargo build --locked -p cua-spaces-cli)
           echo "CUA=$PWD/libs/cua/target/debug/cua" >>"$GITHUB_ENV"
           arch=$(uname -m); case "$arch" in aarch64|arm64) a=arm64;; *) a=amd64;; esac
@@ -61,4 +61,4 @@ jobs:
           "$CUA" daemon start --foreground >"$RUNNER_TEMP/daemon.log" 2>&1 &
           for i in $(seq 100); do "$CUA" daemon status >/dev/null 2>&1 && break; sleep 0.3; done
       - name: Daytona SDK cases (pinned) on QEMU Spaces
-        run: OUT="$RUNNER_TEMP/compat-daytona" tests/compat/daytona/run_space.sh --on local --kind vm --image "vm:$LINUX_DISK"
+        run: OUT="$RUNNER_TEMP/compat-daytona" libs/cua/tests/compat/daytona/run_space.sh --on local --kind vm --image "vm:$LINUX_DISK"

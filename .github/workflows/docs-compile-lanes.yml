@@ -2,7 +2,7 @@ name: "Docs: Swift, Kotlin and Rust blocks compile"
 
 # Docs code blocks tagged test="swift" or test="kotlin" compile against the
 # cua SDK's Swift package and Kotlin binding in this repository
-# (tests/e2e/cua-sdk/docs/compile_lane.py). Compile-only: the blocks are
+# (libs/cua/tests/e2e/cua-sdk/docs/compile_lane.py). Compile-only: the blocks are
 # wrapped in a function in a library target, so no Rust library is built or
 # linked and nothing runs. Blocks tagged test="rust" type-check (cargo check)
 # against libs/cua/crates/cua-sdk, so a public API change that breaks a Rust
@@ -17,9 +17,9 @@ on:
       - "libs/cua/crates/**"
       - "libs/cua/Cargo.toml"
       - "libs/cua/Cargo.lock"
-      - "tests/e2e/cua-sdk/docs/compile_lane.py"
-      - "tests/e2e/cua-sdk/docs/extract.py"
-      - "tests/e2e/cua-sdk/docs/preludes/**"
+      - "libs/cua/tests/e2e/cua-sdk/docs/compile_lane.py"
+      - "libs/cua/tests/e2e/cua-sdk/docs/extract.py"
+      - "libs/cua/tests/e2e/cua-sdk/docs/preludes/**"
       - ".github/workflows/docs-compile-lanes.yml"
   # Main keeps the Rust cache (docs-rust) warm for the pull request runs above.
   push:
@@ -31,9 +31,9 @@ on:
       - "libs/cua/crates/**"
       - "libs/cua/Cargo.toml"
       - "libs/cua/Cargo.lock"
-      - "tests/e2e/cua-sdk/docs/compile_lane.py"
-      - "tests/e2e/cua-sdk/docs/extract.py"
-      - "tests/e2e/cua-sdk/docs/preludes/**"
+      - "libs/cua/tests/e2e/cua-sdk/docs/compile_lane.py"
+      - "libs/cua/tests/e2e/cua-sdk/docs/extract.py"
+      - "libs/cua/tests/e2e/cua-sdk/docs/preludes/**"
       - ".github/workflows/docs-compile-lanes.yml"
   workflow_dispatch:
 
@@ -63,7 +63,7 @@ jobs:
       - name: Compile the Swift blocks
         env:
           CUA_E2E_RESULTS: ${{ runner.temp }}/docs-swift
-        run: python3 tests/e2e/cua-sdk/docs/compile_lane.py --lane swift
+        run: python3 libs/cua/tests/e2e/cua-sdk/docs/compile_lane.py --lane swift
 
   kotlin:
     # Not on main pushes: those exist to keep the rust lane's cache warm.
@@ -78,7 +78,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Compile the Kotlin blocks
-        run: python3 tests/e2e/cua-sdk/docs/compile_lane.py --lane kotlin
+        run: python3 libs/cua/tests/e2e/cua-sdk/docs/compile_lane.py --lane kotlin
 
   rust:
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
@@ -102,4 +102,4 @@ jobs:
           workspaces: ". -> target-docs-rust"
           shared-key: docs-rust
       - name: Type-check the Rust blocks
-        run: python3 tests/e2e/cua-sdk/docs/compile_lane.py --lane rust
+        run: python3 libs/cua/tests/e2e/cua-sdk/docs/compile_lane.py --lane rust

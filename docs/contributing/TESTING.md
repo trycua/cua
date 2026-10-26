@@ -9,9 +9,9 @@ truth.
 
 | Area                         | Deterministic tests                                        | Integration or E2E owner                                                          |
 | ---------------------------- | ---------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| cua SDK and CLI (`libs/cua`) | Cargo tests, proto lint/breaking, binding drift, per-language smoke tests | `tests/e2e/cua-sdk` (**E2E: cua SDK**)                               |
+| cua SDK and CLI (`libs/cua`) | Cargo tests, proto lint/breaking, binding drift, per-language smoke tests | `libs/cua/tests/e2e/cua-sdk` (**E2E: cua SDK**)                               |
 | cua-spacesd               | Cargo tests and the in-process conformance suite           | Linux core tests and relay E2E in Docker                                          |
-| Python SDKs                  | Package `tests/` directories with pytest                   | Package-specific integration tests and `tests/integration`                        |
+| Python SDKs                  | Package `tests/` directories with pytest                   | Package-specific integration tests (`libs/python/cua-sandbox/tests/integration`)                        |
 | cua-sandbox                  | Hermetic pytest suite on the cua SDK                       | **E2E: cua SDK** (`cua-sandbox` lane)                                             |
 | TypeScript SDKs              | Package Vitest/typecheck scripts                           | Package-owned integration tests                                                   |
 | cua-driver                   | Rust unit, schema, protocol, and compile tests             | Canonical Rust desktop harnesses on Windows, macOS, Linux X11, and Linux Wayland  |
@@ -79,8 +79,8 @@ and Rust, per lane (`hermetic`, `container`, `qemu`, `lume`, `cua-sandbox`,
 opt-in:
 
 ```bash
-tests/e2e/cua-sdk/ci-setup.sh --images
-python3 tests/e2e/cua-sdk/run.py --lanes hermetic,container --langs py,ts,rust
+libs/cua/tests/e2e/cua-sdk/ci-setup.sh --images
+python3 libs/cua/tests/e2e/cua-sdk/run.py --lanes hermetic,container --langs py,ts,rust
 ```
 
 ## cua-spacesd
@@ -187,7 +187,7 @@ The production build validates MDX compilation and static route generation.
 Curated MDX changes do not need a product build. `docs:check-blocks` checks that
 every code block declares how it is tested (and runs the static cli-shape and
 config lanes); the runnable blocks run with
-`python3 tests/e2e/cua-sdk/run.py --lanes docs --langs py --strict`. Generated
+`python3 libs/cua/tests/e2e/cua-sdk/run.py --lanes docs --langs py --strict`. Generated
 reference changes also run the owning generator's check (`pnpm docs:check:<name>`,
 listed by `pnpm docs:list`); `pnpm docs:check` is the explicit full audit. See
 [`docs/README.md`](../README.md) for details.

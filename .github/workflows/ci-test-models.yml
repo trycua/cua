@@ -124,7 +124,7 @@ jobs:
         timeout-minutes: 20
         continue-on-error: true
         run: |
-          cd tests/agent_loop_testing
+          cd libs/python/agent/tests/agent_loop_testing
           uv run python agent_test.py --model "${{ matrix.model }}"
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -207,7 +207,7 @@ jobs:
         with:
           name: test-results-${{ matrix.model }}
           path: |
-            tests/agent_loop_testing/test_images/
+            libs/python/agent/tests/agent_loop_testing/test_images/
             *.log
           if-no-files-found: ignore
           retention-days: 7

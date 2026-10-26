@@ -38,7 +38,7 @@ Any file outside every area below also counts as shared.
 | `spacesd` | `libs/cua-spacesd/**` | 19 | `cd-image-linux`, `ci-cua-oci-spacesd`, `ci-cua-relay-image`, `ci-cua-sandbox-doctor`, `ci-cua-sdk`, `ci-cua-spacesd`, `ci-openkoalabot-example-tauri`, `ci-test-python`, `e2e-cua-sdk` |
 | `driver-rust` | `libs/cua-driver/rust/**` | 30 | `ci-check-docs`, `ci-cua-sandbox-doctor`, `ci-cua-spacesd`, `ci-rust-linux`, `ci-rust-macos`, `ci-rust-windows`, `e2e-cua-sdk`, `e2e-rust-linux` |
 | `driver` | `libs/cua-driver/**`, `libs/cua-driver-bench/**` | 35 | `ci-check-docs`, `ci-cua-sandbox-doctor`, `ci-cua-spacesd`, `ci-rust-linux`, `ci-rust-macos`, `ci-rust-windows`, `e2e-cua-sdk`, `e2e-rust-linux` |
-| `cua` | `libs/cua/**`, `tests/e2e/**` | 44 | `cd-image-linux`, `ci-check-docs`, `ci-cua-oci-spacesd`, `ci-cua-relay-image`, `ci-cua-sandbox-doctor`, `ci-cua-sdk`, `ci-cua-spaces-macos`, `ci-cua-spaces-web`, `ci-cua-spaces`, `ci-cua-spacesd`, `ci-openkoalabot-example-tauri`, `ci-test-python`, `e2b-bindings`, `e2e-cua-sdk` |
+| `cua` | `libs/cua/**`, `libs/cua/tests/e2e/**` | 44 | `cd-image-linux`, `ci-check-docs`, `ci-cua-oci-spacesd`, `ci-cua-relay-image`, `ci-cua-sandbox-doctor`, `ci-cua-sdk`, `ci-cua-spaces-macos`, `ci-cua-spaces-web`, `ci-cua-spaces`, `ci-cua-spacesd`, `ci-openkoalabot-example-tauri`, `ci-test-python`, `e2b-bindings`, `e2e-cua-sdk` |
 | `images` | `libs/images/**`, `scripts/images/**` | 19 | `cd-image-linux`, `ci-check-docs`, `ci-cua-spaces-macos`, `ci-cua-spacesd`, `e2e-cua-sdk` |
 | `spaces-web` | `apps/cua-spaces-web/**`, `apps/cua-spaces-desktop/**` | 7 | `ci-cua-spaces-macos`, `ci-cua-spaces-web` |
 | `spaces-app` | `apps/cua-spaces/**` | 7 | `ci-cua-spaces-web`, `ci-cua-spaces` |
@@ -48,7 +48,7 @@ Any file outside every area below also counts as shared.
 | `lume` | `libs/lume/**`, `libs/lumier/**`, `libs/spaces-sdk-swift/**` | 11 | `ci-check-docs`, `ci-cua-sdk`, `ci-cua-spaces-macos`, `ci-swift-lume` |
 | `containers` | `libs/kasm/**`, `libs/qemu-docker/**`, `libs/xfce/**`, `libs/xfce-cua/**` | 11 | none of the slow jobs |
 | `docs` | `docs/**`, `skills/**` | 17 | `ci-check-docs`, `e2e-cua-sdk` |
-| `compat` | `tests/compat/**` | 11 | none of the slow jobs |
+| `compat` | `libs/cua/tests/compat/**` | 11 | none of the slow jobs |
 | `installers` | `scripts/install/**` | 6 | none of the slow jobs |
 | `examples` | `examples/**` | 5 | `ci-openkoalabot-example-tauri` |
 

@@ -147,7 +147,7 @@ libs/images/build.sh manifest localhost:5000/linux pr-1234abcd
 
 ### Refresh the images the tests use
 
-The e2e suite (`tests/e2e/cua-sdk`) and the spacesd conformance runner default to `cua-e2e-local/linux:docker-local-<arch>`. A cached tag keeps the driver it was built with, so rebuild it after changing `libs/cua-spacesd`:
+The e2e suite (`libs/cua/tests/e2e/cua-sdk`) and the spacesd conformance runner default to `cua-e2e-local/linux:docker-local-<arch>`. A cached tag keeps the driver it was built with, so rebuild it after changing `libs/cua-spacesd`:
 
 ```bash
 libs/images/linux/build-spacesd-linux.sh     # host arch driver into dist/<arch>/

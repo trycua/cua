@@ -24,7 +24,7 @@ on:
       - "libs/cua-bench/**"
       - "libs/cua-bench-rl/**"
       - "examples/**"
-      - "tests/e2e/**"
+      - "libs/cua/tests/e2e/**"
       - "scripts/spdx-headers.py"
       - ".github/workflows/ci-spdx-headers.yml"
   push:

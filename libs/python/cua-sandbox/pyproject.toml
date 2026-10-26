@@ -91,11 +91,7 @@ ignore = ["E501"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = [
-    "tests",
-    "../../../tests/integration/sandbox_sdk",
-    "../../../tests/integration/sandbox_cli",
-]
+testpaths = ["tests"]
 
 [dependency-groups]
 dev = [

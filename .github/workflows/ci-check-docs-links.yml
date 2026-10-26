@@ -20,7 +20,7 @@ on:
       - "scripts/check-no-em-dash.sh"
       - "docs/code-block-policy.json"
       - "docs/code-block-baseline.json"
-      - "tests/e2e/cua-sdk/docs/**"
+      - "libs/cua/tests/e2e/cua-sdk/docs/**"
       - "scripts/docs-generators/cli-specs/**"
       # Tutorial excerpts must match their #region in these sources.
       - "examples/openkoalabot-example-ts/**"
@@ -56,7 +56,7 @@ jobs:
           persist-credentials: false
 
       - name: Test the linter
-        run: python3 -m unittest discover -s tests/e2e/cua-sdk/docs -p 'test_*.py'
+        run: python3 -m unittest discover -s libs/cua/tests/e2e/cua-sdk/docs -p 'test_*.py'
 
       - name: Every fence has a disposition; the baseline only shrinks
         env:
@@ -66,17 +66,17 @@ jobs:
           if git show "$BASE_SHA:docs/code-block-baseline.json" > "$RUNNER_TEMP/base-baseline.json" 2>/dev/null; then
             args=(--baseline-base "$RUNNER_TEMP/base-baseline.json")
           fi
-          python3 tests/e2e/cua-sdk/docs/extract.py --lint "${args[@]}"
+          python3 libs/cua/tests/e2e/cua-sdk/docs/extract.py --lint "${args[@]}"
 
       - name: CLI-shape lane (cua, cua-driver and lume commands parse)
-        run: python3 tests/e2e/cua-sdk/docs/cli_shape.py
+        run: python3 libs/cua/tests/e2e/cua-sdk/docs/cli_shape.py
 
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6
 
       - name: Config lane (JSON / YAML / TOML blocks parse and match their schema)
         run: >
           uv run --no-project --python 3.12 --with pyyaml==6.0.2 --with jsonschema==4.23.0
-          python3 tests/e2e/cua-sdk/docs/config_lane.py
+          python3 libs/cua/tests/e2e/cua-sdk/docs/config_lane.py
 
   check-internal-links:
     name: Check Internal Links (next-validate-link)

@@ -1,7 +1,7 @@
 //! The E2B gateway over mock Spaces, at the wire: REST auth and errors,
 //! Connect unary and streaming calls, envd tokens, signed file URLs and
 //! the TLS host router (traffic tokens included). The unmodified Python
-//! SDK is driven against the same gateway by tests/compat/e2b.
+//! SDK is driven against the same gateway by libs/cua/tests/compat/e2b.
 
 use cua_compat::backend::mock::MockBackend;
 use cua_compat::{Gateway, GatewayOptions, Provider};

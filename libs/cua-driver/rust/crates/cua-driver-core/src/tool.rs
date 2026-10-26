@@ -1704,22 +1704,25 @@ impl ToolRegistry {
             .and_then(Value::as_str)
             .map(str::to_owned);
         let in_batch = crate::step_pacing::in_batch();
-        let tool = renamed_tool(name).unwrap_or(name);
-        let post_action_wait = if crate::post_action_wait::accepts(tool) {
-            match crate::post_action_wait::from_args(tool, &args) {
-                Ok(wait) => wait,
-                Err((message, structured)) => {
-                    return ToolResult::error(message).with_structured(structured);
-                }
-            }
-        } else {
-            crate::post_action_wait::PostActionWait::Default
+        let tool = match name {
+            "type_text_chars" => "type_text",
+            other => renamed_tool(other).unwrap_or(other),
         };
-        let mut result = crate::post_action_wait::scope(
-            post_action_wait,
-            self.invoke_authorized_unannotated(name, args, context, evidence),
-        )
-        .await;
+        let wait = if crate::post_action_wait::accepts(tool) {
+            crate::post_action_wait::from_args(tool, &args)
+        } else {
+            Ok(crate::post_action_wait::PostActionWait::Default)
+        };
+        let mut result = match wait {
+            Ok(wait) => {
+                crate::post_action_wait::scope(
+                    wait,
+                    self.invoke_authorized_unannotated(name, args, context, evidence),
+                )
+                .await
+            }
+            Err((message, structured)) => ToolResult::error(message).with_structured(structured),
+        };
         crate::recovery_hint::annotate(tool, &seed, &mut result);
         crate::batch_nudge::annotate(tool, session.as_deref(), in_batch, &mut result);
         result
@@ -5001,6 +5004,50 @@ resources:
     }
 
     #[tokio::test]
+    async fn dispatch_resolves_type_text_chars_before_reading_the_wait() {
+        use crate::post_action_wait::{PostActionWait, SKIP_SUPPORTED};
+        use serde_json::json;
+        if !SKIP_SUPPORTED {
+            return;
+        }
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let mut registry = super::ToolRegistry::new();
+        registry.register(Box::new(WaitProbe {
+            seen: seen.clone(),
+            def: super::ToolDef {
+                name: "type_text".into(),
+                description: "test input".into(),
+                input_schema: json!({"type": "object", "properties": {}, "additionalProperties": false}),
+                read_only: false,
+                destructive: false,
+                idempotent: false,
+                open_world: false,
+            },
+        }));
+        let registry = Arc::new(registry);
+        let ok = registry
+            .invoke_with_context(
+                "type_text_chars",
+                json!({"post_action_wait": "none"}),
+                standard_context(),
+            )
+            .await;
+        assert_ne!(ok.is_error, Some(true), "{ok:?}");
+        assert_eq!(seen.lock().unwrap().as_slice(), &[PostActionWait::None]);
+        for value in [json!(null), json!("off")] {
+            let r = registry
+                .invoke_with_context(
+                    "type_text_chars",
+                    json!({"post_action_wait": value}),
+                    standard_context(),
+                )
+                .await;
+            assert_eq!(r.structured_content.unwrap()["code"], "invalid_arguments");
+        }
+        assert_eq!(seen.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
     async fn dispatch_runs_the_action_under_its_post_action_wait() {
         use crate::post_action_wait::{
             current, PostActionWait, POST_ACTION_WAIT_ARG, POST_ACTION_WAIT_TOOLS, SKIP_SUPPORTED,
@@ -5088,6 +5135,9 @@ resources:
                     standard_context(),
                 )
                 .await;
+            if SKIP_SUPPORTED {
+                assert!(result.structured_content.as_ref().unwrap()["hint"].is_string());
+            }
             assert_eq!(refusal_code(result), "invalid_arguments", "{value}");
         }
         assert_eq!(

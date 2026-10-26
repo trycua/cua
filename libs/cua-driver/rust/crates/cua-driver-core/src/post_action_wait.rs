@@ -86,7 +86,8 @@ pub fn schema() -> Value {
                         foreground change). \"none\" returns as soon as the input is delivered \
                         and says window changes were not observed; the watch keeps running in \
                         the background and a change it sees is reported on the next action's \
-                        result."
+                        result. Only paths that already observe window changes are affected; \
+                        for example a right_click that does not watch is unchanged."
     })
 }
 

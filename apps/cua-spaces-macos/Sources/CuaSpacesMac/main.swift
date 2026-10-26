@@ -24,10 +24,19 @@ if CommandLine.arguments.dropFirst().first == "--check-launch-only" {
 // build changes nothing here.
 TargetEnvironment.pinChannel()
 
+let launchArgs = Array(CommandLine.arguments.dropFirst()).filter { !$0.hasPrefix("-psn_") }
+
 // Crash reporting, as early as the switch can be read (it lives in the
 // channel's home, settled above) and before the Rust core or the daemon start:
 // it sets the CUA_CRASH_* variables they inherit. Off without a DSN or consent.
-CrashReporting.start()
+// The host service sets only those variables for its cua-spacesd: the Swift
+// SDK would check the windowless helper in with LaunchServices as the app,
+// and opening Cua Spaces would then fail while the service runs.
+if HelperService.isServiceCommand(launchArgs) {
+    CrashReporting.prepareService()
+} else {
+    CrashReporting.start()
+}
 
 // The host service, run by this same executable so every permission is the
 // app's ("Cua Spaces"; ServiceLauncher.swift), before anything else:
@@ -41,7 +50,6 @@ CrashReporting.start()
 //    SMAppService, which only this bundle's own code may register. cua-host's
 //    app-helper runner runs it (from the app's SDK and from the `cua` CLI);
 //    prints `{"status": ...}` (and `"error"`).
-let launchArgs = Array(CommandLine.arguments.dropFirst()).filter { !$0.hasPrefix("-psn_") }
 if launchArgs.first == "--service-helper" {
     if launchArgs.dropFirst().first == "run" { ServiceLauncher.serve() }
     exit(HelperService.run(Array(launchArgs.dropFirst())))

@@ -122,4 +122,18 @@ struct HelperServiceTests {
         if let born, let started { #expect(!HelperService.isStale(serviceStarted: started, daemonInstalled: born)) }
         #expect(HelperService.processStart(-1) == nil)
     }
+
+    /// The host service and its commands never start the Sentry SDK (or
+    /// anything else that checks a process in with LaunchServices); the app
+    /// does. scripts/tests/helper-not-an-app.sh checks the built bundle.
+    @Test func theServiceCommandsAreNotTheApp() {
+        for args in [["--service-helper", "run"], ["--service-helper", "status"], ["check-permissions"], ["preflight-permissions"]] {
+            #expect(HelperService.isServiceCommand(args), "\(args)")
+        }
+        for args in [[], ["-NSDocumentRevisionsDebugMode", "YES"], ["--check-launch-only"], ["cua://add/ABCD"]] {
+            #expect(!HelperService.isServiceCommand(args), "\(args)")
+        }
+        // This test process is not an app another service could be mistaken for.
+        #expect(!HelperService.serviceHoldsAppEntry(servicePid: getpid(), bundleId: "com.trycua.spaces.macos"))
+    }
 }

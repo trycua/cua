@@ -340,7 +340,7 @@ describe("<StreamSurface> in the Electron shell", () => {
     act(() => sessions[0]!.options.onFrame?.(1280, 800));
     await waitFor(() => expect(container.querySelector('[data-stream-state="live"]')).toBeTruthy());
     expect(container.querySelector('[data-stream-surface="local:a"] canvas[data-webcodecs="full"]')).toBeTruthy();
-    expect(getByText("Click the desktop to control it.")).toBeTruthy();
+    expect(container.querySelector("[data-video-focus]")).toBeNull();
 
     // A click gives it the keyboard; the line says how to give it back, in this platform's keys.
     vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");

@@ -278,7 +278,11 @@ extension WebUIBridge {
             } else {
                 throw Failure.notFound("no window \(row)")
             }
-            if type == "open" { stream.pips.popOut(source) } else { stream.pips.popIn(source) }
+            if type == "open" {
+                try await popOut(source, of: try spaceId(args), stream: stream)
+            } else {
+                stream.pips.popIn(source)
+            }
             return stream.rows.openRows(openKeys: stream.pips.openKeys)
 
         // This machine
@@ -752,8 +756,42 @@ extension WebUIBridge {
         let s = (rows: StreamRowsModel(space: space, provider: provider, backend: model.backend),
                  pips: StreamPiPSet(provider: provider))
         streams[id] = s
+        watchPanels(of: id, pips: s.pips, rows: s.rows)
         return s
     }
+
+    /// Pops a source out. The desktop shows this window's own viewer
+    /// session (the inline desktop's), held while the panel is open: no
+    /// second stream opens, and closing the panel hands the same live
+    /// session back to the page, with no reconnect. A window (or a window
+    /// with no native video) gets a session of its own.
+    func popOut(_ source: StreamSource, of id: String,
+                stream: (rows: StreamRowsModel, pips: StreamPiPSet)) async throws {
+        guard source == .desktop, !stream.pips.isOpen(.desktop), let surfaces = host?.videoSurfaces else {
+            stream.pips.popOut(source)
+            return
+        }
+        let session = try await surfaces.holdViewer(spaceId: id)
+        heldDesktops.insert(id)
+        stream.pips.popOut(.desktop, sharing: session)
+    }
+
+    /// Follows a Space's open panels: tells the page when they change (a
+    /// panel closed by its own button), and lets go of the viewer session a
+    /// closed desktop panel held.
+    func watchPanels(of id: String, pips: StreamPiPSet, rows: StreamRowsModel) {
+        pipWatches[id] = pips.$openKeys.dropFirst().removeDuplicates().sink { [weak self, weak rows] keys in
+            guard let self else { return }
+            if !keys.contains(StreamSource.desktop.pipKey), self.heldDesktops.remove(id) != nil {
+                self.host?.videoSurfaces?.releaseViewer(spaceId: id)
+            }
+            let open = rows?.openRows(openKeys: keys) ?? []
+            self.host?.emit(Self.pipChangedEvent, payload: ["spaceId": id, "open": open])
+        }
+    }
+
+    /// The page's `PIP_CHANGED_EVENT` (apps/cua-spaces-web/src/bridge/space-detail.ts).
+    static let pipChangedEvent = "stream.pipChanged"
 
     /// Closes and drops the streams of Spaces that are gone (a loaded
     /// roster only: an empty one is a launch, not a deletion).
@@ -763,6 +801,7 @@ extension WebUIBridge {
         for id in streams.keys where !ids.contains(id) {
             streams[id]?.pips.popInAll()
             streams[id] = nil
+            pipWatches[id] = nil
         }
     }
 

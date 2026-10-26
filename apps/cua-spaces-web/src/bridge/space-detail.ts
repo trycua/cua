@@ -41,6 +41,9 @@ export const THIS_MACHINE_ID = "this-mac";
 
 export const USAGE_REFRESH_MS = 10_000;
 export const WINDOWS_REFRESH_MS = 5_000;
+/** The host's raw `cua:event` when its picture-in-picture panels change by
+ * themselves (`{ spaceId, open: rows }`; the SwiftUI app's `stream.pipChanged`). */
+export const PIP_CHANGED_EVENT = "stream.pipChanged";
 /** How often a shown Space's agent runs are read (`AgentRunsModel.poll`). */
 export const RUNS_REFRESH_MS = 4_000;
 
@@ -189,7 +192,24 @@ export class SpaceDetailStore {
   constructor(
     private readonly adapter: DataAdapter,
     private readonly core: CoreClient,
-  ) {}
+  ) {
+    globalThis.window?.addEventListener?.("cua:event", this.onHostEvent);
+  }
+
+  /**
+   * The host closed or opened a picture-in-picture panel by itself (the
+   * panel's own close button): the page hears it now, not on the next
+   * windows read (`WINDOWS_REFRESH_MS`), so the inline desktop is back at
+   * once (`PIP_CHANGED_EVENT`).
+   */
+  private onHostEvent = (e: Event): void => {
+    const detail = (e as CustomEvent<{ event?: string; payload?: { spaceId?: unknown; open?: unknown } | null }>).detail;
+    if (detail?.event !== PIP_CHANGED_EVENT) return;
+    const { spaceId, open } = detail.payload ?? {};
+    if (typeof spaceId !== "string" || !Array.isArray(open) || this.held.has(spaceId)) return;
+    const rows = open.filter((r): r is string => typeof r === "string");
+    this.patch(spaceId, { open: pipReduce(this.core, this.get(spaceId).open, { type: "synced", rows }) });
+  };
 
   subscribe = (l: () => void): (() => void) => {
     this.listeners.add(l);
@@ -298,6 +318,7 @@ export class SpaceDetailStore {
 
   dispose(): void {
     this.disposed = true;
+    globalThis.window?.removeEventListener?.("cua:event", this.onHostEvent);
     for (const w of this.watched.values()) w.timers.forEach(clearTimeout);
     this.watched.clear();
     this.listeners.clear();

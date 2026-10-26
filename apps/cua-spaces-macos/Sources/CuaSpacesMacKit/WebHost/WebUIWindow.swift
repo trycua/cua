@@ -510,6 +510,12 @@ final class WebUIWebView: WKWebView {
     var dragRegions: [CGRect]?
     var titlebarLeftInset: CGFloat = WebUIWindowController.fallbackLeftInset
 
+    /// The first click on a window that is not frontmost (System Settings is,
+    /// or the app was reopened behind it) must reach the page. WKWebView
+    /// refuses it by default, so "Allow" on the permissions step only brought
+    /// the window forward and opened nothing (CUA-2342).
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
     override func mouseDown(with event: NSEvent) {
         guard let window, isDragPoint(event) else { return super.mouseDown(with: event) }
         if event.clickCount == 2 {

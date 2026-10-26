@@ -51,6 +51,13 @@ public enum PermissionGuide {
 
     private static var controller: PermissionFlowController?
 
+    /// How a pane is opened, what the guide draws over it, and what runs on
+    /// a grant. Replaced in tests, which must not open System Settings or
+    /// draw panels.
+    nonisolated(unsafe) static var openPane: (URL) -> Void = { NSWorkspace.shared.open($0) }
+    nonisolated(unsafe) static var showsGuide = true
+    nonisolated(unsafe) static var grantedHook: ((PermissionFlowPane) -> Void)?
+
     // MARK: - Listed or not (CUA-2283)
 
     /// What the guide tells the person to do in a pane's list.
@@ -85,7 +92,34 @@ public enum PermissionGuide {
 
     /// The line of the switch-on hint.
     nonisolated static func switchOnText(appName: String) -> String {
-        "Switch on \(appName) in the list."
+        "Turn on \(appName) in System Settings, then come back."
+    }
+
+    /// Where one permission stands. macOS never prompts again once it is
+    /// denied or switched off, so only the first ask may use its own prompt;
+    /// after that "Allow" means opening the pane.
+    enum State: Equatable {
+        case notDetermined, off, granted
+    }
+
+    /// Granted comes from the preflight call; the app having a row in the
+    /// list (seen granted once, see `isListed`) tells off from not asked.
+    nonisolated static func state(granted: Bool, listed: Bool) -> State {
+        granted ? .granted : (listed ? .off : .notDetermined)
+    }
+
+    /// Polls until `pane` reads as granted (true) or `deadline` passes (false),
+    /// so the step completes without a second click.
+    nonisolated static func waitForGrant(_ pane: PermissionFlowPane,
+                                         read: () async -> Set<PermissionFlowPane>,
+                                         interval: Duration, giveUpAfter: Duration) async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now + giveUpAfter
+        while !Task.isCancelled, clock.now < deadline {
+            if await read().contains(pane) { return true }
+            try? await Task.sleep(for: interval)
+        }
+        return false
     }
 
     private static var hint: NSPanel?
@@ -175,8 +209,13 @@ public enum PermissionGuide {
         // Already in the list: say "switch on", not "drag".
         if instruction(for: pane, listed: isListed(pane)) == .switchOn, let u = URL(string: url) {
             controller?.closePanel()
-            NSWorkspace.shared.open(u)
-            showSwitchOnHint(for: pane, url: url)
+            openPane(u)
+            if showsGuide { showSwitchOnHint(for: pane, url: url) }
+            watch(pane)
+            return true
+        }
+        guard showsGuide else {
+            if let u = URL(string: url) { openPane(u) }
             watch(pane)
             return true
         }
@@ -239,7 +278,7 @@ public enum PermissionGuide {
 
     /// The answer `preflight-permissions` gives (run by main.swift).
     public nonisolated static func preflightReport() -> String {
-        "screen-recording=\(CGPreflightScreenCaptureAccess() ? 1 : 0) accessibility=\(AXIsProcessTrusted() ? 1 : 0)"
+        "screen-recording=\(PermissionRequester.screenRecordingGranted() ? 1 : 0) accessibility=\(PermissionRequester.accessibilityGranted() ? 1 : 0)"
     }
 
     /// What follows a grant.
@@ -293,6 +332,7 @@ public enum PermissionGuide {
     private static func granted(_ pane: PermissionFlowPane, others: Set<PermissionFlowPane>) {
         watching = nil
         reopening?.cancel()
+        if let hook = grantedHook { return hook(pane) }
         controller?.closePanel()
         closeHint()
         let followUp = {

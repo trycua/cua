@@ -2,13 +2,14 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { XIcon } from "lucide-react";
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { harnessName, useBridge, type SpaceFact, type SpaceThread, type StreamRow, type ThreadAttachment, type ThreadView as PostView } from "@/bridge";
 import { Dialog, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "@/components/ui/toast";
 
 import { AddAgentSheet } from "@/components/add-agent/add-agent-sheet";
+import { registerAddAgent } from "@/components/add-agent/add-agent-launcher";
 
 import { CallSplit } from "./call-split";
 import { Composer } from "./composer";
@@ -42,6 +43,7 @@ export function SpaceCall({
   view,
   onStream,
   presence,
+  onShare,
 }: {
   /** The Space's id (Add an agent joins agents to it). */
   spaceId: string;
@@ -68,6 +70,8 @@ export function SpaceCall({
   /** Opens a row in its own window. */
   onStream: (row: StreamRow) => void;
   presence?: MemberPresence;
+  /** Opens Share for this Space (Add an agent offers it; absent: sharing isn't offered here). */
+  onShare?: () => void;
 }) {
   const { core, data } = useBridge();
   const [folded, setFolded] = useState(false);
@@ -77,6 +81,10 @@ export function SpaceCall({
     () => buildRoster({ members: thread.members, shares: thread.shares, entries: thread.entries, me: thread.me, identity, role: thread.role, harnessName: (h) => harnessName(core, h) }),
     [thread.members, thread.shares, thread.entries, thread.me, thread.role, identity, core],
   );
+  // Anyone who can post can add an agent; a guest only reads.
+  const canAddAgent = thread.status === "ready" && thread.role !== "guest";
+  // Share's "Add an agent" opens this page's sheet for this Space.
+  useEffect(() => (canAddAgent ? registerAddAgent(spaceId, () => setAddOpen(true)) : undefined), [canAddAgent, spaceId]);
   const harnessOf = (handle: string) => roster.agents.find((a) => a.name === handle)?.harness ?? "";
   // Attachments are Cua Volume paths: show the file where the Volume is mounted.
   const openAttachment = (a: ThreadAttachment) => {
@@ -140,11 +148,20 @@ export function SpaceCall({
           // The owner and admins change agents' rights (a daemon that does not say your role: you are its owner).
           onSetRights={thread.role === null || thread.role === "owner" || thread.role === "admin" ? thread.setRights : undefined}
           onRemoveAgent={thread.removeAgent ?? undefined}
-          // Anyone who can post can add an agent; a guest only reads.
-          onAddAgent={thread.status === "ready" && thread.role !== "guest" ? () => setAddOpen(true) : undefined}
+          onAddAgent={canAddAgent ? () => setAddOpen(true) : undefined}
         />
       </div>
-      <AddAgentSheet open={addOpen} onOpenChange={setAddOpen} space={{ id: spaceId, name: spaceName }} role={thread.role} taken={roster.agents.map((a) => a.name)} />
+      <AddAgentSheet open={addOpen} onOpenChange={setAddOpen} space={{ id: spaceId, name: spaceName }} role={thread.role} taken={roster.agents.map((a) => a.name)}
+        onShare={
+          onShare
+            ? () => {
+                // One sheet at a time: this one closes, then Share opens in its place.
+                setAddOpen(false);
+                onShare();
+              }
+            : undefined
+        }
+      />
       <Dialog open={moreOpen} onOpenChange={setMoreOpen}>
         <DialogPopup data-call-more-sheet="" className="top-[8vh] flex max-h-[84vh] w-[min(820px,calc(100vw-2rem))] flex-col">
           <div className="flex h-12 shrink-0 items-center justify-between border-b pr-3 pl-5">

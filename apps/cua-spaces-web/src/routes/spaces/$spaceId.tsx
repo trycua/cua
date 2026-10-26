@@ -451,6 +451,7 @@ function SpaceDetailPage() {
           onSelect={(row) => setShown(row.kind === "window" ? { spaceId: space.id, row: row.id } : null)}
           view={shownView}
           onStream={(row) => void onPip(row)}
+          onShare={shareAction?.enabled ? share : undefined}
         />
         {dialogs}
       </>

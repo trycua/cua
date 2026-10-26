@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: FSL-1.1-MIT
-# Copyright (c) 2026 Cua AI, Inc.
 
 # Prints one hash of everything that can change the shipped bytes of Cua
 # Spaces at REV (default HEAD): the git trees of the release inputs. The same

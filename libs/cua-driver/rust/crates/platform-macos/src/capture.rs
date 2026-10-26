@@ -40,6 +40,7 @@
 //! its fallback and reports that it could not exclude the overlay.
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+pub use cua_driver_core::image_utils::{CapturedImage, RgbaFrame};
 use objc2::rc::autoreleasepool;
 use std::collections::HashMap;
 use std::hash::Hash;
@@ -213,14 +214,15 @@ impl Drop for SecureCapturePath {
 /// On non-empty native success, returns those bytes without invoking
 /// fallback. When both paths fail, the error message preserves both
 /// contexts. Closures are not required to be `Send`/`Sync`.
-fn capture_window_with_backends<N, F>(
+fn capture_window_with_backends<T, N, F>(
     window_id: u32,
     native: N,
     fallback: F,
-) -> anyhow::Result<Vec<u8>>
+) -> anyhow::Result<T>
 where
-    N: FnOnce(u32) -> anyhow::Result<Vec<u8>>,
-    F: FnOnce(u32) -> anyhow::Result<Vec<u8>>,
+    T: CaptureOutput,
+    N: FnOnce(u32) -> anyhow::Result<T>,
+    F: FnOnce(u32) -> anyhow::Result<T>,
 {
     match native(window_id) {
         Ok(bytes) if !bytes.is_empty() => Ok(bytes),
@@ -238,6 +240,24 @@ where
                  shell fallback: {fallback_err:#}"
             )),
         },
+    }
+}
+
+/// What a window capture backend returns: PNG bytes, or a
+/// [`CapturedImage`] that may still hold raw pixels.
+trait CaptureOutput {
+    fn is_empty(&self) -> bool;
+}
+
+impl CaptureOutput for Vec<u8> {
+    fn is_empty(&self) -> bool {
+        self.as_slice().is_empty()
+    }
+}
+
+impl CaptureOutput for CapturedImage {
+    fn is_empty(&self) -> bool {
+        CapturedImage::is_empty(self)
     }
 }
 
@@ -548,17 +568,20 @@ fn window_capture_config(
         .with_shows_cursor(false)
 }
 
-/// Single-frame capture + RGBA/PNG encode from an existing plan.
+/// Single-frame capture from an existing plan, kept as raw RGBA pixels.
 ///
 /// https://developer.apple.com/documentation/screencapturekit/scscreenshotmanager
-fn capture_window_from_plan(window_id: u32, plan: &WindowCapturePlan) -> anyhow::Result<Vec<u8>> {
+fn capture_window_from_plan(
+    window_id: u32,
+    plan: &WindowCapturePlan,
+) -> anyhow::Result<CapturedImage> {
     use screencapturekit::screenshot_manager::SCScreenshotManager;
 
     let image = SCScreenshotManager::capture_image(&plan.filter, &plan.config).map_err(|e| {
         anyhow::anyhow!("SCScreenshotManager::capture_image failed for window {window_id}: {e}")
     })?;
 
-    cgimage_to_png(&image, &format!("window {window_id}"))
+    cgimage_to_rgba(&image, &format!("window {window_id}")).map(CapturedImage::Rgba)
 }
 
 /// Encode a ScreenCaptureKit `CGImage` as PNG after checking its geometry.
@@ -566,6 +589,15 @@ fn cgimage_to_png(
     image: &screencapturekit::screenshot_manager::CGImage,
     label: &str,
 ) -> anyhow::Result<Vec<u8>> {
+    let frame = cgimage_to_rgba(image, label)?;
+    cua_driver_core::image_utils::encode_rgba_to_png(&frame.rgba, frame.width, frame.height)
+}
+
+/// Read a ScreenCaptureKit `CGImage`'s RGBA pixels after checking its geometry.
+fn cgimage_to_rgba(
+    image: &screencapturekit::screenshot_manager::CGImage,
+    label: &str,
+) -> anyhow::Result<RgbaFrame> {
     use screencapturekit::screenshot_manager::CGImageExt;
 
     let w = checked_image_dim(image.width(), "CGImage width")?;
@@ -586,24 +618,28 @@ fn cgimage_to_png(
         );
     }
 
-    cua_driver_core::image_utils::encode_rgba_to_png(&rgba, w, h)
+    Ok(RgbaFrame {
+        width: w,
+        height: h,
+        rgba,
+    })
 }
 
-enum CaptureIdentityValidation {
-    Matched(Vec<u8>),
+enum CaptureIdentityValidation<T = CapturedImage> {
+    Matched(T),
     Changed(WindowCaptureIdentity),
 }
 
 /// Do not release bytes until WindowServer confirms that the window still has
 /// the identity the plan was built for. The injected form keeps the TOCTOU
 /// contract deterministic and independently testable.
-fn capture_then_validate_identity<C, I>(
+fn capture_then_validate_identity<T, C, I>(
     expected_identity: WindowCaptureIdentity,
     capture: C,
     current_identity: I,
-) -> anyhow::Result<CaptureIdentityValidation>
+) -> anyhow::Result<CaptureIdentityValidation<T>>
 where
-    C: FnOnce() -> anyhow::Result<Vec<u8>>,
+    C: FnOnce() -> anyhow::Result<T>,
     I: FnOnce() -> anyhow::Result<WindowCaptureIdentity>,
 {
     let bytes = capture()?;
@@ -638,7 +674,7 @@ fn retry_after_identity_change(
     window_id: u32,
     stale_plan: &std::sync::Arc<WindowCapturePlan>,
     actual_identity: WindowCaptureIdentity,
-) -> anyhow::Result<Vec<u8>> {
+) -> anyhow::Result<CapturedImage> {
     evict_window_capture_plan(window_id, stale_plan);
     let rebuilt = build_window_capture_plan(window_id, actual_identity)?;
     {
@@ -666,7 +702,7 @@ fn retry_after_identity_change(
 /// Uses a desktop-independent window filter and `SCScreenshotManager` —
 /// see module docs for Apple + crate source URLs. No subprocess/temp/base64.
 /// Warm hits reuse a bounded two-second filter/config plan cache.
-fn screenshot_window_bytes_sck_inner(window_id: u32) -> anyhow::Result<Vec<u8>> {
+fn screenshot_window_bytes_sck_inner(window_id: u32) -> anyhow::Result<CapturedImage> {
     let identity = current_window_capture_identity(window_id)?;
     let cached = {
         let mut cache = lock_window_plan_cache();
@@ -747,7 +783,7 @@ fn screenshot_window_bytes_sck_inner(window_id: u32) -> anyhow::Result<Vec<u8>> 
 /// Bound the dependency's synchronous callback wrappers without permitting an
 /// unbounded number of detached workers. Ownership of the gate permit and all
 /// ScreenCaptureKit/CF objects stays on the worker until it really returns.
-fn screenshot_window_bytes_sck(window_id: u32) -> anyhow::Result<Vec<u8>> {
+fn screenshot_window_bytes_sck(window_id: u32) -> anyhow::Result<CapturedImage> {
     run_native_capture_worker(
         native_capture_gate(),
         WINDOW_CAPTURE_NATIVE_TIMEOUT,
@@ -767,17 +803,23 @@ fn screenshot_window_bytes_sck(window_id: u32) -> anyhow::Result<Vec<u8>> {
 /// Tries ScreenCaptureKit first; falls back to the `screencapture` CLI on
 /// native error or empty output.
 pub fn screenshot_window_bytes(window_id: u32) -> anyhow::Result<Vec<u8>> {
+    screenshot_window_image(window_id)?.into_png()
+}
+
+/// Capture a window by its `window_id` (CGWindowID), keeping the raw pixels
+/// when the backend has them so the caller resizes and encodes only once
+/// ([`CapturedImage::encode`]). Same backends and fallbacks as
+/// [`screenshot_window_bytes`].
+pub fn screenshot_window_image(window_id: u32) -> anyhow::Result<CapturedImage> {
     refuse_without_direct_capture_consent()?;
     let off_space = crate::windows::window_on_current_space_by_id(window_id) == Some(false);
     capture_window_with_space_route(
         window_id,
         off_space,
         |id| {
-            capture_window_with_backends(
-                id,
-                screenshot_window_bytes_sck,
-                screenshot_window_bytes_shell,
-            )
+            capture_window_with_backends(id, screenshot_window_bytes_sck, |id| {
+                screenshot_window_bytes_shell(id).map(CapturedImage::Png)
+            })
         },
         screenshot_window_bytes_skylight,
     )
@@ -789,15 +831,16 @@ pub fn screenshot_window_bytes(window_id: u32) -> anyhow::Result<Vec<u8>> {
 /// SkyLight capture goes first and the public chain is the fallback. On the
 /// current Space the public chain goes first and SkyLight is the last resort.
 /// When everything fails the error keeps every backend's context.
-fn capture_window_with_space_route<P, S>(
+fn capture_window_with_space_route<T, P, S>(
     window_id: u32,
     off_space: bool,
     public: P,
     skylight: S,
-) -> anyhow::Result<Vec<u8>>
+) -> anyhow::Result<T>
 where
-    P: FnOnce(u32) -> anyhow::Result<Vec<u8>>,
-    S: FnOnce(u32) -> anyhow::Result<Vec<u8>>,
+    T: CaptureOutput,
+    P: FnOnce(u32) -> anyhow::Result<T>,
+    S: FnOnce(u32) -> anyhow::Result<T>,
 {
     if off_space {
         let skylight_err = match skylight(window_id) {
@@ -827,20 +870,20 @@ where
 }
 
 /// Off-Space capture through `SLSHWCaptureWindowList` (see module docs).
-fn screenshot_window_bytes_skylight(window_id: u32) -> anyhow::Result<Vec<u8>> {
+fn screenshot_window_bytes_skylight(window_id: u32) -> anyhow::Result<CapturedImage> {
     let image = crate::input::skylight::hw_capture_window(window_id).ok_or_else(|| {
         anyhow::anyhow!("SLSHWCaptureWindowList returned no image for window {window_id}")
     })?;
-    core_cgimage_to_png(&image, &format!("window {window_id}"))
+    core_cgimage_to_rgba(&image, &format!("window {window_id}")).map(CapturedImage::Rgba)
 }
 
-/// Encode a CoreGraphics image of any pixel layout as an RGBA PNG by drawing
-/// it into an RGBA8 bitmap. Fails on a fully transparent image, which is what
-/// WindowServer hands back for a window with no backing store.
-fn core_cgimage_to_png(
+/// Read a CoreGraphics image of any pixel layout as straight-alpha RGBA8 by
+/// drawing it into an RGBA8 bitmap. Fails on a fully transparent image, which
+/// is what WindowServer hands back for a window with no backing store.
+fn core_cgimage_to_rgba(
     image: &core_graphics::image::CGImage,
     label: &str,
-) -> anyhow::Result<Vec<u8>> {
+) -> anyhow::Result<RgbaFrame> {
     use core_graphics::base::{kCGBitmapByteOrder32Big, kCGImageAlphaPremultipliedLast};
     use core_graphics::color_space::CGColorSpace;
     use core_graphics::context::CGContext;
@@ -872,7 +915,11 @@ fn core_cgimage_to_png(
     if !unpremultiply_rgba(&mut rgba) {
         anyhow::bail!("capture of {label} is fully transparent (no window content)");
     }
-    cua_driver_core::image_utils::encode_rgba_to_png(&rgba, w, h)
+    Ok(RgbaFrame {
+        width: w,
+        height: h,
+        rgba,
+    })
 }
 
 /// Convert premultiplied RGBA8 to straight alpha in place. Returns whether
@@ -1241,7 +1288,7 @@ mod tests {
 
     #[test]
     fn space_route_errors_keep_every_backend_context() {
-        let off = capture_window_with_space_route(
+        let off = capture_window_with_space_route::<Vec<u8>, _, _>(
             7,
             true,
             |_| anyhow::bail!("public denied"),
@@ -1256,7 +1303,7 @@ mod tests {
             "{off}"
         );
 
-        let on = capture_window_with_space_route(
+        let on = capture_window_with_space_route::<Vec<u8>, _, _>(
             7,
             false,
             |_| anyhow::bail!("public denied"),
@@ -1286,7 +1333,7 @@ mod tests {
     }
 
     #[test]
-    fn core_cgimage_to_png_round_trips_pixels() {
+    fn core_cgimage_to_rgba_reads_pixels() {
         use core_graphics::base::{kCGBitmapByteOrder32Big, kCGImageAlphaPremultipliedLast};
         use core_graphics::color_space::CGColorSpace;
         use core_graphics::context::CGContext;
@@ -1302,8 +1349,9 @@ mod tests {
         );
         ctx.data().copy_from_slice(&[255u8, 0, 0, 255].repeat(6));
         let image = ctx.create_image().expect("image from bitmap");
-        let png = core_cgimage_to_png(&image, "test").expect("encode");
-        assert_eq!(png_dimensions(&png).expect("dims"), (3, 2));
+        let frame = core_cgimage_to_rgba(&image, "test").expect("read");
+        assert_eq!((frame.width, frame.height), (3, 2));
+        assert_eq!(frame.rgba, [255u8, 0, 0, 255].repeat(6));
 
         let mut clear = CGContext::create_bitmap_context(
             None,
@@ -1316,7 +1364,7 @@ mod tests {
         );
         clear.data().fill(0);
         let image = clear.create_image().expect("image from bitmap");
-        let err = core_cgimage_to_png(&image, "test").expect_err("blank image fails");
+        let err = core_cgimage_to_rgba(&image, "test").expect_err("blank image fails");
         assert!(err.to_string().contains("fully transparent"), "{err}");
     }
 
@@ -1373,7 +1421,7 @@ mod tests {
 
     #[test]
     fn capture_error_preserves_native_and_fallback_contexts() {
-        let error = capture_window_with_backends(
+        let error = capture_window_with_backends::<Vec<u8>, _, _>(
             42,
             |_| anyhow::bail!("native denied"),
             |_| anyhow::bail!("fallback denied"),

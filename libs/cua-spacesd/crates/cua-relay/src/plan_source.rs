@@ -499,7 +499,7 @@ impl Inner {
         let reply: EntitlementsReply = r
             .json()
             .await
-            .map_err(|e| format!("{ANSWERED} answer: {e}"))?;
+            .map_err(|e| format!("{ANSWERED} answer: {}", e.without_url()))?;
         Ok(assignment_from(&reply))
     }
 }
@@ -612,6 +612,21 @@ mod tests {
             m.contains("cua_relay_plans_users_cached{plan=\"pro\"} 1"),
             "{m}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_failed_lookup_never_names_the_account_in_its_error() {
+        // The entitlements URL carries the account id; a connection error
+        // must not repeat it (it ends up in a WARN log line).
+        let org = Arc::new(OrgAccess::new(crate::org_access::OrgAccessConfig {
+            api_url: Some("http://127.0.0.1:9".into()),
+            ..Default::default()
+        }));
+        let plans = EntitlementPlans::new(org, None);
+        let err = plans.inner.fetch("acct-5f0c-secret-sub").await.unwrap_err();
+        assert!(err.starts_with("Spaces API"), "{err}");
+        assert!(!err.contains("acct-5f0c-secret-sub"), "{err}");
+        assert!(!err.contains("/internal/v1/entitlements"), "{err}");
     }
 
     #[tokio::test]

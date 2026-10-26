@@ -62,6 +62,11 @@ for public ones), so a shared app sees its own root, its links work, and one
 share's cookies never reach another. The sign-in cookie is limited to that one
 share and lasts at most 12 hours. Public links need no sign-in.
 
+On cua.ai the domain is `m.cua.sh`, kept apart from `cua.ai` so a shared page
+can never set cookies for your account's sites. Links made before the move
+(`https://relay.cua.ai/m/<machine>/share/…`) still work: a browser that opens
+one is sent to the same share on `m.cua.sh`.
+
 <Callout type="warn">
   The browser sign-in needs the relay's web client configured by the relay
   operator (`CUA_RELAY_WEB_CLIENT_ID` and a host domain; see "Share links" in

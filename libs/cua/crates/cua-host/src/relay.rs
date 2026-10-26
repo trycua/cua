@@ -152,7 +152,9 @@ pub struct Machine {
     /// Unix seconds of the current session.
     #[serde(default)]
     pub connected_at: Option<u64>,
-    /// `<relay>/m/<id>`: the spacesd URL clients connect to.
+    /// The machine's spacesd URL as the relay lists it: `https://<id>.<host
+    /// domain>` on a relay with a host domain (cua.ai: `m.cua.sh`), else
+    /// `<relay>/m/<id>`. `<relay>/m/<id>` works on the hosted relay too.
     #[serde(default)]
     pub url: String,
     /// Allowlist (owner view only): accounts with full use (editors).

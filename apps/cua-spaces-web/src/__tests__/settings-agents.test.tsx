@@ -116,7 +116,7 @@ describe.skipIf(!wasmBuilt)("Settings, Connected apps", () => {
 });
 
 describe.skipIf(!wasmBuilt)("a newly installed coding app", () => {
-  const seen = ["claude-code", "codex", "openclaw", "cursor"];
+  const seen = ["claude-code", "codex", "openclaw", "cursor", "vscode"];
 
   it("is set up with a notice and Undo when the person said yes", { timeout: 20_000 }, async () => {
     setConnectedAppsState({ known: seen, off: [], auto: true });

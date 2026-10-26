@@ -8,7 +8,7 @@
 
 import { createMemoryHistory, createRouter, RouterProvider } from "@tanstack/react-router";
 import { render } from "@testing-library/react";
-import { afterEach, beforeEach } from "vitest";
+import { afterEach, beforeAll, beforeEach } from "vitest";
 import type { DataAdapter } from "@/bridge/adapter";
 import type { MachinesView } from "@/bridge/contracts/host";
 import type { CreatingElsewhere, ListStatus } from "@/bridge/contracts/spaces";
@@ -61,6 +61,19 @@ export interface TestHost {
   demo?: DemoOptions;
 }
 
+/**
+ * Every page's code, once per test file, before its tests: routes are split
+ * into chunks (autoCodeSplitting), and a file's first import of one is a
+ * cold transform. With every worker starting at once on a loaded machine,
+ * those took longer than a test's waitFor (5 s), and a test that visits
+ * three pages longer than its own timeout. Loaded here, they never count
+ * against what a test waits for; a hook has its own budget for it.
+ */
+beforeAll(async () => {
+  const router = createRouter({ routeTree, history: createMemoryHistory({ initialEntries: ["/"] }) });
+  await Promise.all(Object.values(router.routesById).map((route) => router.loadRouteChunk(route as never)));
+}, 120_000);
+
 /** The routers mounted by the running test: a navigation the app started (a
  * create that finishes sends the person to the new Space) may still be
  * loading when the test ends, and a router that settles after jsdom is gone
@@ -105,6 +118,13 @@ export async function mountApp(path: string, host: TestHost = { failsCreates: tr
   };
   const router = createRouter({ routeTree, history: createMemoryHistory({ initialEntries: [path] }) });
   mounted.push(router);
+  // The first page's code before it renders, as the app has it from its
+  // bundle: routes are split into chunks (autoCodeSplitting), and a test
+  // file's first import of one is a cold transform that, with every worker
+  // starting at once on a loaded machine, took longer than a test's
+  // waitFor (5 s) by itself. Loading it here keeps that out of what tests
+  // wait for: they wait only for what the page does.
+  await router.load();
   const hooks = {} as { spaces: SpacesHook; machines: ReturnType<typeof useMachines>; core: ReturnType<typeof useBridge>["core"] };
   function Probe() {
     hooks.spaces = useSpaces();

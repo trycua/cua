@@ -224,6 +224,19 @@ pub struct ScreenshotOptions {
 }
 ```
 
+### `SharedBase`
+
+A base image several Spaces share copy-on-write (a ...
+
+```rust
+pub struct SharedBase {
+  pub key: String,
+  pub image: String,
+  pub bytes: Option<u64>,
+  pub shared_with: u32,
+}
+```
+
 ### `SpacesdCapabilities`
 
 `SystemService.GetCapabilities`, summarized.

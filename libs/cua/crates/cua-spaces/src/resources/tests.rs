@@ -329,7 +329,7 @@ fn shared_bases_count_each_base_once() {
         // Not copy-on-write (or a runtime that keeps its base apart).
         ("x".into(), None),
         // Can't tell its own data from the base's.
-        ("ghcr.io/trycua/windows:11".into(), m("sha256:w", None)),
+        ("example.org/windows:11".into(), m("sha256:w", None)),
     ]);
     let u = out[0].clone().unwrap();
     assert_eq!(

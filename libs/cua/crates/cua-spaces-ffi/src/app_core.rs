@@ -2619,6 +2619,8 @@ pub fn app_telemetry_start(version: String, onboarding_eligible: Option<bool>) -
     cua_sdk::support::spawn(async {
         cua_sdk::telemetry_sync_account().await;
     });
+    // Crash reports for the core (no-op without CUA_CRASH_DSN or consent).
+    cua_crash::start_for_process("core");
     core::telemetry::start_with(t, onboarding_eligible)
 }
 
@@ -2627,7 +2629,11 @@ pub fn app_telemetry_start(version: String, onboarding_eligible: Option<bool>) -
 /// were queued.
 #[uniffi::export]
 pub fn app_telemetry_record(signals: Vec<AppTelemetrySignal>) -> u32 {
-    core::telemetry::record(cua_telemetry::global(), &signals) as u32
+    let queued = core::telemetry::record(cua_telemetry::global(), &signals) as u32;
+    // The "Share usage data" switch may have changed: close crash reporting
+    // when consent was withdrawn.
+    cua_crash::refresh_consent();
+    queued
 }
 
 /// The app started (`app_launched`).

@@ -1924,8 +1924,37 @@ impl DeviceStore {
         };
         let ttl = self.policy.ttl_secs;
         let step = RENEW_STEP_SECS.min(ttl / 2);
-        let until = self
-            .mutate(|state| {
+        // The common case moves nothing that must survive a restart: the
+        // device was renewed within the last step, so only its last-seen
+        // time changes, in memory (written with the next real change).
+        // Rewriting and fsyncing the whole devices file on every session
+        // held the devices lock for the write, and a reconnecting fleet
+        // opens several sessions a second (CUA-2323).
+        let kept = {
+            let mut state = self.state.lock().expect("devices");
+            match state.devices.get_mut(device) {
+                Some(d) if d.state(now) == DeviceState::Enrolled => {
+                    let current = d.enrolled_until.unwrap_or(now);
+                    (now + ttl <= current.saturating_add(step)).then(|| {
+                        d.last_seen = Some(now);
+                        current
+                    })
+                }
+                // Revoked or expired since the read above: `mutate` below
+                // leaves it as it is.
+                _ => None,
+            }
+        };
+        let until = if let Some(current) = kept {
+            // One audit line per device per interval, like other access.
+            self.audit_throttled(
+                &format!("session:{device}"),
+                account,
+                AuditEvent::new("device_session").device(Some(device)),
+            );
+            current
+        } else {
+            self.mutate(|state| {
                 let mut until = until;
                 if let Some(d) = state.devices.get_mut(device) {
                     d.last_seen = Some(now);
@@ -1947,7 +1976,8 @@ impl DeviceStore {
                 );
                 Ok(until)
             })
-            .unwrap_or(until);
+            .unwrap_or(until)
+        };
         let expires = (now + self.policy.session_ttl_secs).min(until);
         let token = new_session_token();
         let mut guard = self.sessions.lock().expect("sessions");
@@ -3421,6 +3451,35 @@ pub(crate) mod tests {
         let revoked_until = until();
         assert!(session(&store, "acct", &key).is_err());
         assert_eq!(until(), revoked_until);
+    }
+
+    /// CUA-2323: a session that renews nothing does not rewrite the
+    /// devices file (a reconnecting fleet opened several a second, each a
+    /// full rewrite and fsync under the devices lock), and its audit line
+    /// is throttled per device.
+    #[cfg(unix)]
+    #[test]
+    fn a_session_that_renews_nothing_leaves_the_devices_file_alone() {
+        use std::os::unix::fs::MetadataExt as _;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("devices.json");
+        let store = DeviceStore::open(path.clone(), enforcing()).unwrap();
+        let key = TestKey::new();
+        register(&store, "acct", &key, true, Some(now_secs())).unwrap();
+        let before = std::fs::metadata(&path).unwrap().ino();
+        let raw = std::fs::read(&path).unwrap();
+        for _ in 0..5 {
+            session(&store, "acct", &key).unwrap();
+        }
+        assert_eq!(std::fs::metadata(&path).unwrap().ino(), before);
+        assert_eq!(std::fs::read(&path).unwrap(), raw);
+        assert!(store.get(&key.id()).unwrap().last_seen.is_some());
+        let sessions = store
+            .audit_log("acct", 100)
+            .iter()
+            .filter(|e| e.kind == "device_session")
+            .count();
+        assert_eq!(sessions, 1);
     }
 
     #[test]

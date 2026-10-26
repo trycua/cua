@@ -234,7 +234,7 @@ export interface FirstRunDevicesView {
 export interface FirstRunPermissionsView {
   title: string;
   lede: string;
-  /** `screen-recording`, `accessibility`: `ok`, `fix` (Allow), `checking`. */
+  /** `screen-recording`, `accessibility`, `local-network`: `ok`, `fix` (Allow), `checking`. */
   rows: FirstRunRow[];
   note: string;
   /** "Continue" once both are granted. */
@@ -246,7 +246,7 @@ export interface FirstRunPermissionsView {
 export type FirstRunRowState = "checking" | "ok" | "fix";
 
 export interface FirstRunRow {
-  id: "agent" | "computer" | "account" | "screen-recording" | "accessibility";
+  id: "agent" | "computer" | "account" | "screen-recording" | "accessibility" | "local-network";
   state: FirstRunRowState;
   title: string;
   note: string;

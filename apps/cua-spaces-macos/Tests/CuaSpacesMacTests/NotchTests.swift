@@ -593,13 +593,4 @@ struct LaunchTests {
         CuaSpacesMacApp.ignoreSavedWindowState(defaults)
         #expect(defaults.bool(forKey: "ApplePersistenceIgnoreState"))
     }
-
-    /// With New UI on, or the first run due (it is the web UI's onboarding),
-    /// a launch opens the New UI window, not the native main window.
-    @Test func newUIOrAFirstRunOpensItsWindowAtLaunchInsteadOfTheMainWindow() {
-        #expect(CuaSpacesMacApp.opensWebUIAtLaunch(webUi: true, onboarded: true))
-        #expect(CuaSpacesMacApp.opensWebUIAtLaunch(webUi: true, onboarded: false))
-        #expect(!CuaSpacesMacApp.opensWebUIAtLaunch(webUi: false, onboarded: true))
-        #expect(CuaSpacesMacApp.opensWebUIAtLaunch(webUi: false, onboarded: false))
-    }
 }

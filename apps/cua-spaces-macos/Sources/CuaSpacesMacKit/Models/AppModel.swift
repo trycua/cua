@@ -230,6 +230,8 @@ public final class AppModel {
         }
         self.host.onChange = { [weak self] in self?.recompose() }
         followChecklist()
+        // No notification prompt before the first run is done.
+        PermissionRequester.firstRunDone = { [weak onboarding] in onboarding?.completed ?? false }
         // Done's "Launch at login" checkbox is the user's choice.
         onboarding.onLaunchAtLogin = { [weak self] on in self?.setLaunchAtLogin(on) }
         // Which experiments are on: the day's `cua_app_active` carries them.
@@ -950,16 +952,9 @@ public final class AppModel {
 
     // MARK: - New Space
 
-    /// Opens New UI's New Space wizard (`on`: "Run on" preset, or nil);
-    /// false when there is no New UI window to show it in. Set by the New UI
-    /// window while the `web_ui` experiment is on.
+    /// Opens the web UI's New Space wizard (`on`: "Run on" preset, or nil);
+    /// false when there is no window to show it in. Set at launch.
     public var openWebNewSpace: ((_ on: String?) -> Bool)?
-    /// Puts the New UI window in the native main window's place (the
-    /// `web_ui` experiment was turned on).
-    public var openWebUI: (() -> Void)?
-    /// Closes the New UI window and puts the native one in its place (the
-    /// `web_ui` experiment was turned off).
-    public var closeWebUI: (() -> Void)?
     /// The first run is due again (Settings, Welcome, Show again): opens its
     /// window (the web onboarding), which nothing else would while only
     /// Settings is up.
@@ -973,8 +968,8 @@ public final class AppModel {
         wizard.send(.choosePlacement(on: on))
     }
 
-    /// New Space: New UI's wizard while the `web_ui` experiment is on, else
-    /// (the fallback) the native sheet.
+    /// New Space: the web UI's wizard (the native sheet only without one,
+    /// in tests).
     /// `quick`: the empty home's one click: that OS's default Space, created at once
     /// when the core says it can be; else New Space opens on it and says why.
     public func openNewSpace(quick os: AppSpaceOs? = nil) async {
@@ -983,7 +978,7 @@ public final class AppModel {
     }
 
     private func openInWebUI(on: String?) -> Bool {
-        guard settings.experiments.webUi, let open = openWebNewSpace else { return false }
+        guard let open = openWebNewSpace else { return false }
         return open(on)
     }
 
@@ -1229,6 +1224,37 @@ public final class AppModel {
     /// on this Mac (the core's steps; nil in fixtures and tests that do not
     /// set one).
     public var localNetworkGate: LocalNetworkGate?
+
+    /// What the daemon found when it last tried this Mac's local network:
+    /// true allowed, false blocked, nil not known yet. The daemon is the
+    /// process that reaches the macOS VMs, and macOS decides Local Network
+    /// per process, so the app's own connect (`localNetworkGate`) can pass
+    /// while the daemon is still blocked. The daemon's connect is also what
+    /// makes macOS ask, so this runs where the person expects it: the
+    /// permissions page.
+    public private(set) var daemonLocalNetworkAllowed: Bool?
+    private var daemonLocalNetworkAt = Date.distantPast
+    private var daemonLocalNetworkBusy = false
+
+    /// Asks the daemon (its machine check, `machine.local_network`) and
+    /// remembers the answer; at most once per `minimum` seconds.
+    public func checkLocalNetworkFromDaemon(every minimum: TimeInterval = 4) async {
+        guard !daemonLocalNetworkBusy, Date().timeIntervalSince(daemonLocalNetworkAt) >= minimum else { return }
+        daemonLocalNetworkBusy = true
+        defer {
+            daemonLocalNetworkBusy = false
+            daemonLocalNetworkAt = Date()
+        }
+        let backend = self.backend
+        let answer = await withTimeout(seconds: 20) { try await backend.machineHealth(machine: nil) }
+        guard case .success(let health) = answer,
+              let check = health.checks.first(where: { $0.id == "machine.local_network" }) else { return }
+        switch check.status {
+        case "pass": daemonLocalNetworkAllowed = true
+        case "fail": daemonLocalNetworkAllowed = false
+        default: break
+        }
+    }
 
     /// How long the daemon may take to take a create (its first progress
     /// report, "Preparing", comes as it starts): past it the create fails
@@ -1718,13 +1744,9 @@ public final class AppModel {
         if settings.experiments != before { applyExperiments(before: before, after: settings.experiments) }
     }
 
-    /// What follows a change of the switches: an open New
-    /// Space, and the New UI's window in place of the native one (or back).
+    /// What follows a change of the switches: an open New Space.
     private func applyExperiments(before: AppExperiments, after: AppExperiments) {
         guard before != after else { return }
-        // New UI on: its window takes the native one's place; off: the reverse.
-        if !before.webUi, after.webUi { openWebUI?() }
-        if before.webUi, !after.webUi { closeWebUI?() }
         wizard.update(env: wizardEnv(from: wizard.env))
         // The Volume page went with Cua Volume: back to the Spaces.
         if selection == .drive, chrome.volumeLabel == nil { selection = nil }
@@ -1887,6 +1909,10 @@ public final class AppModel {
                 // The switch sits beside the usage note (the first run's
                 // Welcome, Settings): the notice was seen.
                 telemetry?.acknowledgeNotice()
+                // Crash reports follow the switch: off closes the reporter now.
+                if let input = telemetryInput {
+                    CrashReporting.switchChanged(enabled: input.enabled, noticeShown: true)
+                }
             } catch {
                 show(error: LiveSpacesBackend.words(error))
             }

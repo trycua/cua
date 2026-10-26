@@ -524,6 +524,98 @@ pub fn default_discovery_path() -> PathBuf {
     cua_home().join("daemon.json")
 }
 
+/// One daemon per home: an exclusive lock on `daemon.lock` next to the
+/// discovery file, held for the life of the process (the OS drops it when
+/// the process ends, however it ends). A daemon started while another still
+/// runs for the same home (an app restarting its daemon while the old one
+/// winds down) waits for it, then refuses: two daemons would serve the same
+/// Spaces, state and Keyvault socket.
+#[derive(Debug)]
+pub struct InstanceLock {
+    _file: Option<std::fs::File>,
+}
+
+/// The daemon holding an [`InstanceLock`] (its pid, when it wrote one).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstanceHeld {
+    /// The lock file.
+    pub path: PathBuf,
+    /// The pid written in it.
+    pub pid: Option<u32>,
+}
+
+impl std::fmt::Display for InstanceHeld {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.pid {
+            Some(pid) => write!(f, "another cua daemon (pid {pid}) runs for this home"),
+            None => write!(f, "another cua daemon runs for this home"),
+        }?;
+        write!(
+            f,
+            " (it holds {}); stop it with `cua daemon stop` first",
+            self.path.display()
+        )
+    }
+}
+
+impl InstanceLock {
+    /// The lock of the default home.
+    pub fn path() -> PathBuf {
+        cua_home().join("daemon.lock")
+    }
+
+    /// Takes the lock at `path`, waiting up to `wait` for a daemon that
+    /// holds it to exit.
+    pub fn acquire(
+        path: &std::path::Path,
+        wait: std::time::Duration,
+    ) -> std::result::Result<Self, InstanceHeld> {
+        use std::io::{Seek, Write};
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let held = || InstanceHeld {
+            path: path.to_path_buf(),
+            pid: std::fs::read_to_string(path)
+                .ok()
+                .and_then(|s| s.trim().parse().ok()),
+        };
+        let mut file = match std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(path)
+        {
+            Ok(f) => f,
+            // A home it cannot write: no guard rather than no daemon.
+            Err(e) => {
+                tracing::warn!(path = %path.display(), error = %e, "no single-instance lock");
+                return Ok(Self { _file: None });
+            }
+        };
+        let deadline = std::time::Instant::now() + wait;
+        loop {
+            match file.try_lock() {
+                Ok(()) => break,
+                Err(std::fs::TryLockError::WouldBlock) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                Err(std::fs::TryLockError::WouldBlock) => return Err(held()),
+                Err(std::fs::TryLockError::Error(e)) => {
+                    tracing::warn!(path = %path.display(), error = %e, "no single-instance lock");
+                    return Ok(Self { _file: Some(file) });
+                }
+            }
+        }
+        let _ = file.set_len(0);
+        let _ = file.rewind();
+        let _ = write!(file, "{}", std::process::id());
+        let _ = file.flush();
+        Ok(Self { _file: Some(file) })
+    }
+}
+
 /// What every caller shows when no daemon listens: [`Error::DaemonNotRunning`].
 pub const DAEMON_NOT_RUNNING: &str =
     "The Cua daemon isn't running. Start Cua, or run `cua daemon start`.";
@@ -981,5 +1073,42 @@ mod tests {
         let (a, b) = (random_token(), random_token());
         assert_ne!(a, b);
         assert!(a.len() >= 43);
+    }
+}
+
+#[cfg(test)]
+mod instance_lock_tests {
+    use super::*;
+    use std::time::Duration;
+
+    /// One daemon per home: a second one waits for the first, then
+    /// refuses naming its pid; once the first is gone the lock is free.
+    #[test]
+    fn a_second_daemon_for_the_same_home_is_refused() {
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("daemon.lock");
+        let first = InstanceLock::acquire(&path, Duration::ZERO).unwrap();
+        let started = std::time::Instant::now();
+        let held = InstanceLock::acquire(&path, Duration::from_millis(300)).unwrap_err();
+        assert!(started.elapsed() >= Duration::from_millis(300));
+        assert_eq!(held.pid, Some(std::process::id()));
+        assert!(held.to_string().contains("cua daemon stop"), "{held}");
+        drop(first);
+        InstanceLock::acquire(&path, Duration::ZERO).unwrap();
+    }
+
+    /// A daemon waiting for the lock gets it when the old one exits within
+    /// the wait (an app restarting its daemon).
+    #[test]
+    fn the_lock_is_taken_once_the_old_daemon_exits() {
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("daemon.lock");
+        let first = InstanceLock::acquire(&path, Duration::ZERO).unwrap();
+        let t = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(200));
+            drop(first);
+        });
+        InstanceLock::acquire(&path, Duration::from_secs(5)).unwrap();
+        t.join().unwrap();
     }
 }

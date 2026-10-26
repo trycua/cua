@@ -29,6 +29,12 @@ import PackageDescription
 // Its strings ship as a SwiftPM resource bundle, which build-app.sh copies
 // into Contents/Resources like ours.
 //
+// sentry-cocoa (pinned; Package.resolved) reports crashes (CrashReporting.swift,
+// config/spaces-crash-reporting.json). The `Sentry` product is the static
+// library: it links into the executable, so the bundle gains no framework to
+// embed or sign. (`Sentry-Dynamic` would; do not switch to it without
+// teaching build-app.sh and build-release.sh to embed and sign it like Sparkle.)
+//
 // UI tests (XCUITest) live in UITests/ and build through project.yml
 // (XcodeGen) on a macOS runner with Xcode.
 let package = Package(
@@ -46,6 +52,7 @@ let package = Package(
         .package(name: "CuaSpacesNotch", path: "../../libs/spaces-notch-swift"),
         .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.10.0"),
         .package(url: "https://github.com/jaywcjlove/PermissionFlow", exact: "2.11.4"),
+        .package(url: "https://github.com/getsentry/sentry-cocoa", exact: "9.31.0"),
     ],
     targets: [
         .target(
@@ -59,6 +66,7 @@ let package = Package(
                 .product(name: "CuaSpacesNotchUI", package: "CuaSpacesNotch"),
                 .product(name: "Sparkle", package: "Sparkle"),
                 .product(name: "PermissionFlow", package: "PermissionFlow"),
+                .product(name: "Sentry", package: "sentry-cocoa"),
             ],
             path: "Sources/CuaSpacesMacKit",
             resources: [.process("Resources")],

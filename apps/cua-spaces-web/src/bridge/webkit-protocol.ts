@@ -134,6 +134,7 @@ export const WEBKIT_METHODS = [
   "telemetry.track",
   "telemetry.linkNotice",
   "telemetry.acknowledgeLinkNotice",
+  "crashReporting.config",
   "spaces.usage",
   "spaces.windows",
   "stream.pip",

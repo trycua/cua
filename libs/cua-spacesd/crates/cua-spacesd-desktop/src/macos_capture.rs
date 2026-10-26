@@ -193,6 +193,10 @@ fn start_inner(
     encoder: Option<Arc<MacosH264Encoder>>,
     native_geometry: Arc<dyn Fn(u32, u32) + Send + Sync>,
 ) -> Result<Arc<dyn CaptureLease>, ProviderError> {
+    // `SCShareableContent::get` raises macOS's Screen Recording prompt when it
+    // is not granted. Only the app's permissions step may do that, so a
+    // capture asked for before it fails here without asking.
+    ensure_screen_recording(screen_recording_granted())?;
     let content = SCShareableContent::get().map_err(capture_error)?;
     let located = locate(&content, source).ok_or_else(|| {
         ProviderError::new(
@@ -540,6 +544,27 @@ fn monotonic_sample_timestamp_us(timestamp: screencapturekit::cm::CMTime, last: 
     }
 }
 
+/// Screen Recording is granted to this process, read without asking
+/// (`CGPreflightScreenCaptureAccess` never prompts).
+fn screen_recording_granted() -> bool {
+    #[link(name = "CoreGraphics", kind = "framework")]
+    unsafe extern "C" {
+        fn CGPreflightScreenCaptureAccess() -> bool;
+    }
+    // SAFETY: no arguments; reads this process's TCC state.
+    unsafe { CGPreflightScreenCaptureAccess() }
+}
+
+fn ensure_screen_recording(granted: bool) -> Result<(), ProviderError> {
+    if granted {
+        return Ok(());
+    }
+    Err(ProviderError::new(
+        ProviderErrorCode::ConsentRequired,
+        "Screen Recording is not granted to Cua Spaces yet",
+    ))
+}
+
 fn capture_error(error: SCError) -> ProviderError {
     ProviderError::new(
         match screen_capture_error_reason(&error) {
@@ -568,6 +593,13 @@ fn screen_capture_error_reason(error: &SCError) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn capture_without_screen_recording_fails_before_any_prompting_call() {
+        assert!(ensure_screen_recording(true).is_ok());
+        let err = ensure_screen_recording(false).unwrap_err();
+        assert_eq!(err.code, ProviderErrorCode::ConsentRequired);
+    }
 
     #[test]
     fn dimensions_preserve_aspect_ratio_and_cap_long_edge() {

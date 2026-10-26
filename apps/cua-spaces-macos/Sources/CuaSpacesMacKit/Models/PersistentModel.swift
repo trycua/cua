@@ -369,7 +369,6 @@ public final class PersistentModel {
 @MainActor
 final class AgentNotifier {
     static let shared = AgentNotifier()
-    private var authorized: Bool?
 
     func post(_ note: AppSystemNote) {
         guard DeviceNotifier.available else { return }
@@ -381,10 +380,7 @@ final class AgentNotifier {
         content.body = note.body
         let request = UNNotificationRequest(identifier: "agent-\(note.id)", content: content, trigger: nil)
         Task {
-            if authorized == nil {
-                authorized = (try? await center.requestAuthorization(options: [.alert, .sound])) ?? false
-            }
-            guard authorized == true else { return }
+            guard await PermissionRequester.notificationsAuthorized(center) else { return }
             try? await center.add(request)
         }
     }

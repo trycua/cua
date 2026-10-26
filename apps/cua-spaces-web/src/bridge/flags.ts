@@ -18,10 +18,16 @@
 
 import { useSyncExternalStore } from "react";
 
-/** `upsell_cards`: the cards that offer Pro or Teams when a limit stops you. */
-export type FlagName = "upsell_cards";
+/**
+ * - `upsell_cards`: the cards that offer Pro or Teams when a limit stops you.
+ * - `spaces_ask_first_home`: the "Ask first" Home experiment (CUA-2346): a
+ *   Home page that asks what you want done, starts it on a fresh computer and
+ *   follows it as a conversation. Settings → Advanced → Labs turns it on for
+ *   this device.
+ */
+export type FlagName = "upsell_cards" | "spaces_ask_first_home";
 
-const DEFAULTS: Record<FlagName, boolean> = { upsell_cards: false };
+const DEFAULTS: Record<FlagName, boolean> = { upsell_cards: false, spaces_ask_first_home: false };
 
 const key = (name: FlagName) => `cua.flag.${name}`;
 let remote: Partial<Record<FlagName, boolean>> = {};

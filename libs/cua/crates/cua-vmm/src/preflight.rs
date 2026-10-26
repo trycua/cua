@@ -67,6 +67,13 @@ pub fn request(guest: Guest, runs: Runs, needed_bytes: Option<u64>) -> Request {
 
 /// Finds what `req` needs to know about this machine.
 pub async fn gather(req: &Request) -> Facts {
+    gather_waiting(req, std::time::Duration::ZERO).await
+}
+
+/// [`gather`] for a create that is about to start: a Mac that cannot reach
+/// its local network gets `patience` for someone to answer macOS's prompt
+/// (the probe's own connect raises it) before it counts as blocked.
+pub async fn gather_waiting(req: &Request, patience: std::time::Duration) -> Facts {
     let mut facts = Facts {
         free_bytes: crate::disk::space(&crate::host::cua_home())
             .ok()
@@ -80,7 +87,7 @@ pub async fn gather(req: &Request) -> Facts {
         facts.virtualization = virtualization(req.host);
     }
     if req.host == Host::Macos && req.guest == Guest::Macos {
-        facts.local_network_blocked = local_network_blocked().await;
+        facts.local_network_blocked = local_network_blocked(patience).await;
     }
     facts
 }
@@ -202,18 +209,23 @@ fn windows_hypervisor_platform_off() -> bool {
         .exists()
 }
 
-async fn local_network_blocked() -> bool {
+/// Whether this process is blocked from the local network the macOS VMs
+/// are on. A running VM is the best test; with none (a first create), a
+/// connect to the router from this process says the same, and is what makes
+/// macOS ask, in the daemon's name, before anything is pulled.
+async fn local_network_blocked(patience: std::time::Duration) -> bool {
+    use cua_create_failure::local_network::Access;
     #[cfg(feature = "lume")]
     {
-        matches!(
+        use crate::local_network::Probe;
+        if matches!(
             crate::local_network::probe(&crate::local_network::lume_base()).await,
-            crate::local_network::Probe::Blocked { .. }
-        )
+            Probe::Reached { .. }
+        ) {
+            return false;
+        }
     }
-    #[cfg(not(feature = "lume"))]
-    {
-        false
-    }
+    crate::local_network::wait_for_lan_access(patience).await == Access::Blocked
 }
 
 #[cfg(test)]

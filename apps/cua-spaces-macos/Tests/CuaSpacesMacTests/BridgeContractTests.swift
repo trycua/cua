@@ -43,7 +43,7 @@ struct BridgeContractTests {
                              settingsPath: dir.appendingPathComponent("settings.json").path,
                              telemetry: FixtureTelemetry())
         let bridge = WebUIBridge(model: model, allowedOrigins: [])
-        bridge.actions = WebUIActions(openSpace: { _ in }, openMain: {})
+        bridge.actions = WebUIActions(openSpace: { _ in })
         // The CLI's plan on temp folders, not this Mac's ~/.local/bin.
         let cliDir = dir.appendingPathComponent("cli").path
         bridge.makeCliInstaller = {
@@ -196,7 +196,7 @@ struct BridgeContractTests {
         await model.refresh()
         await model.keyvault.refresh()
         let bridge = WebUIBridge(model: model, allowedOrigins: [])
-        bridge.actions = WebUIActions(openSpace: { _ in }, openMain: {})
+        bridge.actions = WebUIActions(openSpace: { _ in })
         // The CLI's plan on temp folders, not this Mac's ~/.local/bin.
         let cliDir = dir.appendingPathComponent("cli").path
         bridge.makeCliInstaller = {
@@ -252,7 +252,7 @@ struct BridgeContractTests {
             ("storage.get", [:]), ("storage.run", ["request": ["kind": "clear-cache"]]),
             ("notifications.list", [:]), ("notifications.markRead", ["ids": ["n1"]]), ("notifications.markAllRead", [:]),
             ("telemetry.track", ["signals": [["type": "step", "step": "app_launched", "ok": true]]]),
-            ("telemetry.linkNotice", [:]), ("telemetry.acknowledgeLinkNotice", [:]),
+            ("telemetry.linkNotice", [:]), ("telemetry.acknowledgeLinkNotice", [:]), ("crashReporting.config", [:]),
             ("spaces.usage", ["spaceId": space]), ("spaces.windows", ["spaceId": space]),
             ("spaces.thumbnail", ["spaceId": space]),
             ("spaces.droppedFiles", ["names": ["notes.txt"]]), ("spaces.chooseFiles", [:]),

@@ -96,6 +96,8 @@ const DENY_FOR: Duration = Duration::from_secs(30);
 /// relay: the node's own backoff keeps well under this).
 const MAX_CONNECTS_PER_WINDOW: usize = 10;
 const CONNECT_WINDOW: Duration = Duration::from_secs(60);
+/// How long a refused connect is held open before the refusal is sent.
+const LIMITED_HOLD_S: u64 = 5;
 /// A node that keeps being refused is logged on its first refusal, then once
 /// per this interval with the count since (a client stuck in a reconnect loop
 /// would otherwise flood the logs).
@@ -112,6 +114,9 @@ enum LimitedLog {
     /// Already logged this interval.
     Quiet,
 }
+
+/// Least time between two network map recomputations.
+const RECOMPUTE_GAP: Duration = Duration::from_millis(250);
 
 const ATTRIBUTE_EVERY: Duration = Duration::from_secs(5);
 /// Relayed packets of a pair are noted at most this often.
@@ -645,7 +650,15 @@ pub fn spawn(relay: &Relay) {
                 _ = tick.tick() => {}
                 _ = r.mesh.kick.notified() => {}
             }
-            recompute(&r);
+            // Off the async workers: a pass reads stores that may wait on
+            // the disk and grows with connections x nodes (CUA-2323).
+            let relay = r.clone();
+            if let Err(e) = tokio::task::spawn_blocking(move || recompute(&relay)).await {
+                tracing::error!(error = %e, "mesh map recomputation failed");
+            }
+            // Changes that came in meanwhile (a reconnecting fleet sends
+            // several a second) are folded into the next pass.
+            tokio::time::sleep(RECOMPUTE_GAP).await;
         }
     });
     let r = relay.clone();
@@ -677,9 +690,51 @@ pub fn spawn(relay: &Relay) {
     });
 }
 
+/// What one recomputation reads of the rest of the relay, looked up once
+/// per node or machine rather than once per (connection, peer) pair: with
+/// hundreds of connections and thousands of known nodes the per-pair
+/// lookups (each a lock and a clone) made one recomputation take seconds
+/// (CUA-2323).
+struct MapInputs {
+    /// Per account client node: whether its device is still good.
+    device_ok: HashMap<PublicKey, bool>,
+    /// Per account machine id: its directory record, if any.
+    records: HashMap<String, Option<crate::directory::MachineRecord>>,
+}
+
+impl MapInputs {
+    fn gather(relay: &Relay, nodes: &HashMap<PublicKey, Node>) -> Self {
+        let mut device_ok = HashMap::new();
+        let mut records = HashMap::new();
+        for n in nodes.values() {
+            match &n.owner {
+                Owner::Account { .. } => {
+                    device_ok.insert(n.node_key, client_device_ok(relay, n));
+                }
+                Owner::Machine { id, registrant } if registrant.starts_with("account:") => {
+                    records
+                        .entry(id.clone())
+                        .or_insert_with(|| relay.directory.get(id));
+                }
+                _ => {}
+            }
+        }
+        Self { device_ok, records }
+    }
+
+    fn device_ok(&self, node: &Node) -> bool {
+        self.device_ok.get(&node.node_key).copied().unwrap_or(true)
+    }
+
+    fn record(&self, id: &str) -> Option<&crate::directory::MachineRecord> {
+        self.records.get(id).and_then(Option::as_ref)
+    }
+}
+
 /// The peers `node` may talk to.
 fn peers_for(
     relay: &Relay,
+    inputs: &MapInputs,
     node: &Node,
     nodes: &HashMap<PublicKey, Node>,
     online: &HashSet<PublicKey>,
@@ -690,37 +745,39 @@ fn peers_for(
         (Owner::Machine { id, registrant }, NodeKind::Machine) => {
             let record = registrant
                 .starts_with("account:")
-                .then(|| relay.directory.get(id))
+                .then(|| inputs.record(id))
                 .flatten();
             for c in nodes.values().filter(|c| c.kind == NodeKind::Client) {
-                let paired = pairs.contains(&(id.clone(), c.node_key));
                 let device = match &c.owner {
                     Owner::Account { device, .. } => device.as_deref(),
                     _ => None,
                 };
-                let grant = match (&record, c.identity()) {
-                    (Some(r), Some(who)) if r.sharing && client_device_ok(relay, c) => {
-                        mesh_role(relay, r, &who, device).map(|role| Grant {
-                            user: who.user.clone(),
-                            account: who.account.clone(),
-                            email: who.email.clone(),
-                            name: who.name.clone(),
-                            role: role.as_str().to_owned(),
-                            device: device.map(str::to_owned),
-                        })
-                    }
-                    _ => None,
+                // Only a shared machine grants anything: the identity is
+                // built only then (this loop runs for every known client).
+                let grant = match record
+                    .filter(|r| r.sharing && inputs.device_ok(c))
+                    .zip(c.identity())
+                {
+                    Some((r, who)) => mesh_role(relay, r, &who, device).map(|role| Grant {
+                        user: who.user.clone(),
+                        account: who.account.clone(),
+                        email: who.email.clone(),
+                        name: who.name.clone(),
+                        role: role.as_str().to_owned(),
+                        device: device.map(str::to_owned),
+                    }),
+                    None => None,
                 };
                 if grant.is_some() {
                     out.push(c.info(online.contains(&c.node_key), grant));
-                } else if paired && record.is_none() {
+                } else if record.is_none() && pairs.contains(&(id.clone(), c.node_key)) {
                     out.push(c.info(online.contains(&c.node_key), None));
                 }
             }
             // The account's other machines (CUA-1783): its own hosts reach
             // each other (a gang's rank traffic), never another account's,
             // never a static machine, and never a Space a host provides.
-            if let Some(r) = record.as_ref().filter(|r| r.host.is_none()) {
+            if let Some(r) = record.filter(|r| r.host.is_none()) {
                 for m in nodes
                     .values()
                     .filter(|m| m.kind == NodeKind::Machine && m.node_key != node.node_key)
@@ -735,7 +792,7 @@ fn peers_for(
                     if theirs != registrant || other == id {
                         continue;
                     }
-                    let Some(o) = relay.directory.get(other) else {
+                    let Some(o) = inputs.record(other) else {
                         continue;
                     };
                     if o.owner.id != r.owner.id || o.host.is_some() {
@@ -757,7 +814,7 @@ fn peers_for(
         }
         (_, NodeKind::Client) => {
             let who = node.identity();
-            let device_ok = who.is_none() || client_device_ok(relay, node);
+            let device_ok = who.is_none() || inputs.device_ok(node);
             let device = match &node.owner {
                 Owner::Account { device, .. } => device.as_deref(),
                 _ => None,
@@ -769,8 +826,8 @@ fn peers_for(
                 let allowed = if registrant.starts_with("account:") {
                     device_ok
                         && who.as_ref().is_some_and(|who| {
-                            relay.directory.get(id).is_some_and(|r| {
-                                r.sharing && mesh_role(relay, &r, who, device).is_some()
+                            inputs.record(id).is_some_and(|r| {
+                                r.sharing && mesh_role(relay, r, who, device).is_some()
                             })
                         })
                 } else {
@@ -830,64 +887,110 @@ fn client_device_ok(relay: &Relay, node: &Node) -> bool {
     }
 }
 
+/// One connection's new network map, computed off the locks.
+struct MapUpdate {
+    key: PublicKey,
+    generation: u64,
+    /// The map to send and its hash, or why the connection is cut.
+    outcome: Result<(String, u64), (u16, &'static str)>,
+}
+
+/// Recomputes every connection's network map and sends the ones that
+/// changed.
+///
+/// Blocking: it reads the device and directory stores (which may wait on a
+/// write to disk) and costs O(connections x nodes), so the coordinator runs
+/// it on the blocking pool. The connection table is locked only to take a
+/// snapshot and to apply the result, never while maps are computed: every
+/// relayed packet looks its destination up in that table (CUA-2323).
 fn recompute(relay: &Relay) {
     let mesh = &relay.mesh;
     let nodes = mesh.nodes.lock().expect("nodes").clone();
     let pairs = mesh.pairs.lock().expect("pairs").clone();
-    let mut conns = mesh.conns.lock().expect("conns");
-    let online: HashSet<PublicKey> = conns.keys().copied().collect();
-    let mut cut = Vec::new();
+    let (online, conns): (HashSet<PublicKey>, Vec<_>) = {
+        let conns = mesh.conns.lock().expect("conns");
+        (
+            conns.keys().copied().collect(),
+            conns
+                .iter()
+                .map(|(k, c)| (*k, c.generation, c.since, c.allowed.clone()))
+                .collect(),
+        )
+    };
     let denied = {
         let mut d = mesh.denied.lock().expect("denied");
         let now = Instant::now();
         d.retain(|_, until| *until > now);
         d.clone()
     };
-    for (key, conn) in conns.iter_mut() {
-        let Some(node) = nodes.get(key) else { continue };
+    let inputs = MapInputs::gather(relay, &nodes);
+    let mut updates = Vec::with_capacity(conns.len());
+    for (key, generation, since, allowed) in conns {
+        let Some(node) = nodes.get(&key) else {
+            continue;
+        };
+        let mut update = |outcome| {
+            updates.push(MapUpdate {
+                key,
+                generation,
+                outcome,
+            })
+        };
         if matches!(node.owner, Owner::Account { .. }) {
-            if !client_device_ok(relay, node) {
-                cut.push((
-                    *key,
+            if !inputs.device_ok(node) {
+                update(Err((
                     proto::CLOSE_DEVICE,
                     "the device is no longer enrolled or was revoked",
-                ));
+                )));
                 continue;
             }
-            if conn.since.elapsed() > MAX_ACCOUNT_SESSION {
-                cut.push((
-                    *key,
+            if since.elapsed() > MAX_ACCOUNT_SESSION {
+                update(Err((
                     proto::CLOSE_SESSION_MAX,
                     "the session reached its maximum age: reconnect with a fresh token",
-                ));
+                )));
                 continue;
             }
         }
-        let mut peers = peers_for(relay, node, &nodes, &online, &pairs);
+        let mut peers = peers_for(relay, &inputs, node, &nodes, &online, &pairs);
         // A peer whose new session an enforced plan refused is left out of
         // the machine's map for a while: the machine drops it (no WireGuard
         // session, no relayed packets) and the peer is told the plan's
         // limit nowhere else, so the same rule holds for a modified client.
-        peers.retain(|p| !denied.contains_key(&(*key, p.node_key)));
-        let json = serde_json::to_string(&ServerMsg::Netmap {
-            peers: peers.clone(),
-        })
-        .expect("netmap json");
+        peers.retain(|p| !denied.contains_key(&(key, p.node_key)));
+        *allowed.write().expect("allowed") = peers.iter().map(|p| p.node_key).collect();
+        let json = serde_json::to_string(&ServerMsg::Netmap { peers }).expect("netmap json");
         let mut h = std::collections::hash_map::DefaultHasher::new();
         json.hash(&mut h);
         let hash = h.finish();
-        *conn.allowed.write().expect("allowed") = peers.iter().map(|p| p.node_key).collect();
-        if hash != conn.netmap_hash {
-            conn.netmap_hash = hash;
-            let _ = conn.tx.try_send(Message::Text(json.into()));
+        update(Ok((json, hash)));
+    }
+    {
+        let mut conns = mesh.conns.lock().expect("conns");
+        for u in updates {
+            // A connection that was replaced meanwhile gets its own map on
+            // the next pass.
+            let Some(conn) = conns
+                .get_mut(&u.key)
+                .filter(|c| c.generation == u.generation)
+            else {
+                continue;
+            };
+            match u.outcome {
+                Ok((json, hash)) => {
+                    if hash != conn.netmap_hash {
+                        conn.netmap_hash = hash;
+                        let _ = conn.tx.try_send(Message::Text(json.into()));
+                    }
+                }
+                Err((code, reason)) => {
+                    if let Some(conn) = conns.remove(&u.key) {
+                        let _ = conn.tx.try_send(close(code, reason));
+                    }
+                }
+            }
         }
     }
-    for (key, code, reason) in cut {
-        if let Some(conn) = conns.remove(&key) {
-            let _ = conn.tx.try_send(close(code, reason));
-        }
-    }
-    drop(conns);
     let now = Instant::now();
     mesh.pending
         .lock()
@@ -1061,9 +1164,15 @@ pub(crate) async fn connect(
         Ok(o) => o,
         Err(r) => return r,
     };
+    // The client's own name and version (cua-mesh/x.y.z; older clients send
+    // none), for the logs of a loop.
+    let agent = headers
+        .get(header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .map_or_else(|| "none".to_owned(), |ua| ua.chars().take(80).collect());
     upgrade
         .max_message_size(proto::MAX_RELAY_PACKET + 64)
-        .on_upgrade(move |socket| async move { session(relay, owner, socket).await })
+        .on_upgrade(move |socket| async move { session(relay, owner, agent, socket).await })
 }
 
 #[allow(clippy::result_large_err)]
@@ -1149,7 +1258,7 @@ async fn authenticate(relay: &Relay, headers: &HeaderMap) -> Result<Owner, Respo
     }
 }
 
-async fn session(relay: Relay, owner: Owner, socket: WebSocket) {
+async fn session(relay: Relay, owner: Owner, agent: String, socket: WebSocket) {
     let (mut sink, mut stream) = socket.split();
     let server = SecretKey::generate();
     let nonce = hex::encode(rand::random::<[u8; 16]>());
@@ -1222,17 +1331,22 @@ async fn session(relay: Relay, owner: Owner, socket: WebSocket) {
     if let Err(wait) = mesh.admit(&node_key, Instant::now()) {
         match mesh.limited_log(&node_key, Instant::now()) {
             LimitedLog::First => {
-                tracing::warn!(node = %node_key.short(), ?kind, retry_after_s = wait, "mesh node connects too often");
+                tracing::warn!(node = %node_key.short(), ?kind, %agent, retry_after_s = wait, "mesh node connects too often");
             }
             LimitedLog::Summary(refused) => {
                 tracing::warn!(
-                    node = %node_key.short(), ?kind, refused,
+                    node = %node_key.short(), ?kind, %agent, refused,
                     interval_s = LIMITED_LOG_INTERVAL.as_secs(),
                     "mesh node still connects too often"
                 );
             }
             LimitedLog::Quiet => {}
         }
+        // Clients before the 0.16 backoff ignore the retry-after and come
+        // straight back: holding the socket open for a few seconds first
+        // slows them to a fraction of the pace, and costs the relay a
+        // parked task.
+        tokio::time::sleep(Duration::from_secs(wait.min(LIMITED_HOLD_S))).await;
         let _ = sink
             .send(close(
                 proto::CLOSE_RATE_LIMITED,
@@ -1362,7 +1476,7 @@ async fn session(relay: Relay, owner: Owner, socket: WebSocket) {
         // The same node reconnected: the newer connection wins. A live old
         // connection means a second process holds this node key; it is told
         // so, and a node that keeps hearing it stops reconnecting.
-        tracing::info!(node = %node_key.short(), "mesh node replaced its older connection");
+        tracing::info!(node = %node_key.short(), %agent, "mesh node replaced its older connection");
         let _ = old.tx.try_send(close(
             proto::CLOSE_REPLACED,
             "replaced: another connection with the same node key took over",
@@ -1963,6 +2077,62 @@ mod tests {
             .unwrap()
             .values()
             .all(|n| n.endpoints.is_empty()));
+    }
+
+    /// CUA-2323: while a map recomputation waits on a store (a device or
+    /// directory write that is fsyncing), relayed packets still find their
+    /// destination: the connection table is not held meanwhile.
+    #[test]
+    fn a_recomputation_waiting_on_a_store_never_holds_the_connection_table() {
+        let relay = Relay::new(crate::server::RelayConfig::default());
+        let mesh = relay.mesh.clone();
+        let key = SecretKey::generate().public();
+        mesh.nodes.lock().unwrap().insert(
+            key,
+            Node {
+                node_key: key,
+                disco_key: SecretKey::generate().public(),
+                quic_pin: "pin".into(),
+                kind: NodeKind::Machine,
+                owner: Owner::Machine {
+                    id: "machine-0001".into(),
+                    registrant: "account:ada".into(),
+                },
+                name: "m".into(),
+                endpoints: vec![],
+                version: 1,
+                last_seen: crate::assertion::now_secs(),
+                ephemeral: false,
+            },
+        );
+        let (tx, mut rx) = mpsc::channel(8);
+        mesh.conns.lock().unwrap().insert(
+            key,
+            Conn {
+                tx,
+                generation: 1,
+                since: Instant::now(),
+                allowed: Arc::default(),
+                netmap_hash: 0,
+            },
+        );
+        let held = relay.directory.hold_lock();
+        let worker = {
+            let relay = relay.clone();
+            std::thread::spawn(move || recompute(&relay))
+        };
+        // The recomputation is now stuck on the directory.
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(!worker.is_finished(), "it waits on the directory");
+        assert!(
+            mesh.conns.try_lock().is_ok(),
+            "the connection table stays free while it waits"
+        );
+        drop(held);
+        worker.join().unwrap();
+        // And the map still goes out once the store answers.
+        assert!(matches!(rx.try_recv(), Ok(Message::Text(_))));
+        assert_ne!(mesh.conns.lock().unwrap()[&key].netmap_hash, 0);
     }
 
     #[cfg(feature = "hosted")]

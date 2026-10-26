@@ -58,3 +58,36 @@ Every event carries: `telemetry_schema_version`, `event_version`, `product`
 
 Teleport caller kinds and how session deliveries are counted:
 [How events are counted](/cua-sdk/concepts/telemetry-counting).
+
+## Crash and error reports
+
+The Cua Spaces app (the macOS app, and the Windows and Linux app) reports
+crashes and unexpected errors to Sentry, so a bad release is caught before it
+reaches everyone: the staged rollout stops advancing when the share of
+crash-free launches of a new version falls behind the previous one. The
+switch is the same as for usage data: "Share usage data to help improve Cua"
+(Settings, Privacy), `cua telemetry off`, `CUA_TELEMETRY=0` or `DO_NOT_TRACK=1`.
+Off means nothing is sent, and a report that was waiting to be sent is dropped.
+Nothing is sent before the first-run notice has been shown. A switch turned
+on while the app runs takes effect at the next launch.
+
+| Property | What it is | Why |
+|---|---|---|
+| `release` | `cua-spaces-desktop@` and the app version | Which version crashed. |
+| `environment` | `stable`, `beta` or `local` | Which channel. |
+| `shell`, `component` | `swift` or `electron`; `shell`, `ui`, `core` or `daemon` | Which part of the app failed. |
+| Operating system, CPU type | For example macOS 26, `arm64` | Crashes that depend on the platform. |
+| Call stack | Function names and Cua source file names of the failing code, memory addresses, the list of loaded libraries | Finding the bug. Symbols are matched on our side from files uploaded when the release is built. |
+| Crash dump | On a native crash of the Windows, Linux or Electron app: a snapshot of the crashed process. Sentry removes the stack memory on its servers (a project scrubbing rule), keeping addresses and library names | Finding crashes in native code. |
+| Session | One per app launch: started, ended normally, or crashed. No identifier of you or your machine | The crash-free share per version. |
+
+Before anything leaves the app, it is cleaned:
+
+- Error messages are removed (they can carry Space names, file names or emails). The error type and call stack stay.
+- Folders under your home folder are shown as `~`, email addresses as `[email]`, and the computer's name is dropped.
+- No screenshots, no session replay, no screen or accessibility content, no clicks, typed text or console output, no performance traces.
+- No IP address is stored: IP collection is off and no user is attached to a report.
+
+The Spaces app, its web interface and its Rust core and daemon share one
+Sentry project (`cua-spaces-desktop`). Tests feed paths, emails and host names
+through the cleaning step and check that none survive.

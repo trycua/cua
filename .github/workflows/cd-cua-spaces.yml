@@ -522,6 +522,15 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
+      # Crash reports (CUA-2343) are readable only with these symbols in Sentry.
+      - name: Upload the macOS dSYMs to Sentry
+        uses: ./.github/actions/sentry-upload
+        with:
+          token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          version: ${{ steps.version.outputs.version }}
+          kind: debug-files
+          path: ${{ runner.temp }}/spaces-app/cua-spaces-*-dSYMs.zip
+
       - name: Notarize and staple the app
         if: steps.signing.outputs.apple == 'true'
         env:
@@ -1113,9 +1122,27 @@ jobs:
           node-version: 22
       - name: Build the web UI
         working-directory: apps/cua-spaces-web
+        env:
+          # Hidden source maps next to the bundles, uploaded to Sentry below and
+          # deleted before the artifact, so they never ship in the app.
+          CUA_SOURCEMAPS: "1"
         run: |
           pnpm install --ignore-workspace --frozen-lockfile
           pnpm build
+      - name: Resolve version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then VERSION="${{ github.event.inputs.version }}"; else VERSION="${GITHUB_REF_NAME#cua-spaces-v}"; fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Upload the web UI source maps to Sentry
+        uses: ./.github/actions/sentry-upload
+        with:
+          token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          version: ${{ steps.version.outputs.version }}
+          kind: sourcemaps
+          path: apps/cua-spaces-web/dist
+          url-prefix: "~/"
+          delete-maps: "true"
       - uses: actions/upload-artifact@v4
         with:
           name: spaces-web-dist
@@ -1721,6 +1748,18 @@ jobs:
           CUA_SPACES_VERSION: ${{ needs.electron-plan.outputs.version }}
           CUA_SPACES_BUILD_NUMBER: ${{ github.run_number }}
         run: pnpm dist:linux
+      # The Electron main process's source maps stay out of the app (electron-builder
+      # drops *.map): Sentry gets them here, matched by release and file URL.
+      - name: Upload the Electron main source maps to Sentry
+        if: matrix.arch == 'x64'
+        uses: ./.github/actions/sentry-upload
+        with:
+          token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          version: ${{ needs.electron-plan.outputs.version }}
+          kind: sourcemaps
+          path: apps/cua-spaces-desktop/dist-electron
+          url-prefix: "app:///dist-electron"
+          inject: "false"
       - name: Collect the assets
         env:
           ARCH: ${{ matrix.arch }}

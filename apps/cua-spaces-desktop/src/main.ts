@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import * as path from "node:path";
 import { app, BrowserWindow, dialog, nativeTheme, Notification, screen, shell } from "electron";
+import { initCrashReporting } from "./crash-reporting-main";
 import { createBridge } from "./bridge";
 import { hasBrowser } from "./browser";
 import { appBuild } from "./bundle-version";
@@ -60,6 +61,9 @@ if (process.platform === "linux") {
   app.setDesktopName(`${LINUX_ID}.desktop`);
 }
 if (process.env.CUA_SPACES_USER_DATA) app.setPath("userData", process.env.CUA_SPACES_USER_DATA);
+// Crash reporting as early as the app's name and data folder are settled (Sentry keeps its queue
+// and the Crashpad reports there) and before the native library loads, which reads CUA_CRASH_*.
+initCrashReporting();
 // The page decodes Spaces' video with WebCodecs: on the GPU where it can (gpu.ts).
 applyVideoDecodeSwitches(app.commandLine, process.platform, process.env);
 // macOS: Chromium's cookie key stays out of the keychain, so its prompt can't freeze the app (chromium-keychain.ts).

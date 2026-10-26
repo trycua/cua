@@ -29,7 +29,8 @@ def feeds(staging, interval, pub=PUB, title="0.16.0"):
 
 def args(**kw):
     a = argparse.Namespace(min_age_hours=24, min_installs=15, min_create_events=30, max_create_error_delta=10.0,
-                           min_update_events=20, max_update_failure_delta=15.0)
+                           min_update_events=20, max_update_failure_delta=15.0,
+                           min_sessions=100, max_crash_free_drop=0.5, min_crash_free=99.0)
     a.__dict__.update(kw)
     return a
 
@@ -52,6 +53,7 @@ def fake(installs=40, new_create=(50, 5), old_create=(100, 10), new_update=(100,
     return q
 
 
+CR = lambda: {"gate": "crash", "status": "pass", "detail": "ok"}  # noqa: E731
 OK = lambda: ra.gate_incident("k", lambda: {"incidents": []})  # noqa: E731
 
 
@@ -71,10 +73,51 @@ class State(unittest.TestCase):
         self.assertTrue(ra.read_state(feeds("10", ra.rr.HOLD_SECONDS, title="0.16.1"))["problem"] is None)
 
 
+def sessions(**by_version):
+    """A Sentry stand-in: version -> (sessions, crash-free fraction)."""
+    return lambda v: by_version[v]
+
+
+NOW = PUB + timedelta(hours=25)
+CFG = {"org": "trycua", "project": "cua-spaces-desktop"}
+
+
+def crash(new, prev, token="t", **kw):
+    return ra.gate_crash(token, "0.16.0", "0.15.0", PUB, NOW, args(**kw), cfg=CFG, fetch=sessions(**{"0.16.0": new, "0.15.0": prev}))
+
+
+class CrashGate(unittest.TestCase):
+    def test_within_half_a_point_passes(self):
+        self.assertEqual(crash((500, 0.992), (5000, 0.996))["status"], "pass")
+
+    def test_more_than_half_a_point_below_fails(self):
+        g = crash((500, 0.985), (5000, 0.996))
+        self.assertEqual(g["status"], "fail")
+        self.assertIn("drop +1.10", g["detail"])
+
+    def test_better_than_before_passes(self):
+        self.assertEqual(crash((500, 0.999), (5000, 0.99))["status"], "pass")
+
+    def test_too_few_sessions_waits(self):
+        self.assertEqual(crash((99, 0.5), (5000, 0.996))["status"], "wait")
+
+    def test_no_baseline_uses_the_floor(self):
+        self.assertEqual(crash((500, 0.995), (0, None))["status"], "pass")
+        self.assertEqual(crash((500, 0.97), (3, 1.0))["status"], "fail")
+
+    def test_no_token_skips_and_errors_wait(self):
+        self.assertEqual(crash((500, 1.0), (500, 1.0), token="")["status"], "skip")
+
+        def boom(v):
+            raise OSError("down")
+        g = ra.gate_crash("t", "0.16.0", "0.15.0", PUB, NOW, args(), cfg=CFG, fetch=boom)
+        self.assertEqual(g["status"], "wait")
+
+
 class Decide(unittest.TestCase):
-    def go(self, hours=25, hold="", q=None, stage="10"):
+    def go(self, hours=25, hold="", q=None, stage="10", crash=None):
         s = ra.read_state(feeds("10", ra.rr.HOLD_SECONDS)) if stage == "10" else ra.read_state(feeds(stage, None))
-        return ra.decide(s, PUB + timedelta(hours=hours), args(), q=q or fake(), incident=OK(), hold=hold)
+        return ra.decide(s, PUB + timedelta(hours=hours), args(), q=q or fake(), incident=OK(), hold=hold, crash=crash or CR())
 
     def test_advance(self):
         d = self.go()
@@ -97,6 +140,11 @@ class Decide(unittest.TestCase):
         s = ra.read_state(feeds("10", ra.rr.HOLD_SECONDS))
         inc = ra.gate_incident("k", lambda: {"incidents": [{"reference": "INC-9", "name": "Spaces relay down"}]})
         self.assertEqual(ra.decide(s, PUB + timedelta(hours=30), args(), q=fake(), incident=inc)["action"], "pause")
+
+    def test_crash_gate_pauses(self):
+        bad = {"gate": "crash", "status": "fail", "detail": "crash-free sessions dropped"}
+        d = self.go(crash=bad)
+        self.assertEqual(d["action"], "pause")
 
     def test_hold_blocks_advance_not_pause(self):
         self.assertEqual(self.go(hold="label")["action"], "hold")

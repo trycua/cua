@@ -5,7 +5,7 @@ import { useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncE
 import type { BridgeMode, DataAdapter } from "./adapter";
 import { BridgeContext, type BridgeContextValue } from "./BridgeProvider";
 import type { CoreClient } from "./core";
-import type { AgentSetupRow } from "./contracts/agents";
+import type { AgentMessageSent, AgentSetupRow, AgentStarted, AgentStartRequest } from "./contracts/agents";
 import type { MachinesView, OnboardingMode, PermissionHint, SignInStart } from "./contracts/host";
 import type {
   OnboardingAction,
@@ -354,6 +354,10 @@ export interface AgentsHook extends Resource<AgentsData> {
   /** Stops the run, saves the agent's home and holds its routines. */
   pauseAgent(name: string): Promise<void>;
   resumeAgent(name: string): Promise<void>;
+  /** Starts a coding agent in a Space (`agents.start`). */
+  startRun(req: AgentStartRequest): Promise<AgentStarted>;
+  /** Sends a reply to a run (`agents.message`). */
+  sendMessage(run: RunRef, text: string, force?: boolean): Promise<AgentMessageSent>;
   /** The coding agents on this machine and what cua set up for each. */
   agentSetup(): Promise<AgentSetupRow[]>;
   /** Adds the cua skills and MCP server to `agents`, or to every installed agent. */
@@ -368,6 +372,8 @@ export function useAgents(): AgentsHook {
     ...r,
     pauseAgent: (name) => run((s) => s.pauseAgent(name)),
     resumeAgent: (name) => run((s) => s.resumeAgent(name)),
+    startRun: (req) => run((s) => s.startRun(req)),
+    sendMessage: (ref, text, force) => run((s) => s.sendToRun(ref, text, force)),
     agentSetup: () => run((s) => s.agentSetup()),
     configureAgents: (agents) => run((s) => s.configureAgents(agents ?? null)),
   };

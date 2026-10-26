@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { useAbout, useBridge, useExperiments, useMachines, useSession, useSettings, useThisMachine, type SettingsOption, type SettingsRow as CoreRow } from "@/bridge";
+import { setFlagOverride, useAbout, useBridge, useExperiments, useFlag, useMachines, useSession, useSettings, useThisMachine, type SettingsOption, type SettingsRow as CoreRow } from "@/bridge";
 import { aboutView } from "@/bridge/settings-derive";
 import { SettingsGroup } from "@/components/settings-group";
 import { CoreSettingsRow } from "@/components/settings/core-section";
@@ -15,7 +15,7 @@ const SELF_HOSTED = "self-hosted";
 const BETA_HELP = "New features sooner, with rough edges. Back on Stable, this version stays until a newer stable release.";
 
 /** Experiments that stay as Labs. "Your cloud" and "Sharing" have no switch any more: the plan decides on the server. */
-const LABS = new Set(["experiment:cua_volume", "experiment:classic_ui"]);
+const LABS = new Set(["experiment:cua_volume"]);
 
 /** The software choices in plain words (the core says Built-in and System). */
 const RUNTIME_LABEL: Record<string, string> = { "macos-runtime": "Mac computers", "linux-runtime": "Linux computers" };
@@ -101,22 +101,45 @@ function EarlyReleases() {
   );
 }
 
-/** Cua Volume and, on the Mac-native app, the previous window. Off hides; nothing set up is undone. */
+/** The "Ask first" Home (`spaces_ask_first_home`): a switch for this device only. */
+function askFirstRow(on: boolean): CoreRow {
+  return {
+    id: "flag:spaces_ask_first_home",
+    kind: "toggle",
+    label: "Try the new Home",
+    value: null,
+    button: null,
+    options: [
+      { id: "on", label: "On", active: on },
+      { id: "off", label: "Off", active: !on },
+    ],
+    enabled: true,
+    help: null,
+    linkLabel: null,
+    linkUrl: null,
+    placeholder: null,
+  };
+}
+
+/** Cua Volume and the new Home. Off hides; nothing set up is undone. */
 function Labs() {
   const { data, chooseExperiment } = useExperiments();
-  const { mode } = useBridge();
-  const rows = (data?.page?.sections.flatMap((s) => s.rows) ?? []).filter((r) => LABS.has(r.id) && !(mode === "electron" && r.id === "experiment:classic_ui"));
-  if (rows.length === 0) return null;
+  const askFirst = useFlag("spaces_ask_first_home");
+  const rows = (data?.page?.sections.flatMap((s) => s.rows) ?? []).filter((r) => LABS.has(r.id));
   const note: Record<string, string> = {
     "experiment:cua_volume": "Memory and files your agents share across every Space.",
-    "experiment:classic_ui": "Mac-native app only.",
   };
   return (
     <SettingsGroup title="Labs">
+      <CoreSettingsRow
+        row={askFirstRow(askFirst)}
+        description="Home asks what you want done, then does it on a fresh computer you can watch. On this device only."
+        onChoose={(_, option) => setFlagOverride("spaces_ask_first_home", option === "on")}
+      />
       {rows.map((r) => (
         <CoreSettingsRow
           key={r.id}
-          row={r.id === "experiment:classic_ui" ? { ...r, label: "Use the previous Spaces window" } : r}
+          row={r}
           description={note[r.id]}
           onChoose={(row, option) => void chooseExperiment(row.id, option).catch(toastError("Couldn't change the setting"))}
         />

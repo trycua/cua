@@ -33,6 +33,19 @@ struct WebUIHostTests {
         #expect(WebUISchemeHandler.mime("wasm") == "application/wasm")
     }
 
+    /// About's Acknowledgements reads the app's bundled notices at
+    /// `/__app/THIRD_PARTY_NOTICES.md`; no other app file is reachable.
+    @Test func theSchemeHandlerServesTheBundledNoticesAndNothingElseOfTheApp() {
+        let notices = URL(fileURLWithPath: "/tmp/THIRD_PARTY_NOTICES.md")
+        let h = WebUISchemeHandler(root: nil, appFiles: ["THIRD_PARTY_NOTICES.md": notices])
+        #expect(h.appFile("/__app/THIRD_PARTY_NOTICES.md") == notices)
+        #expect(h.appFile("/__app/../Info.plist") == nil)
+        #expect(h.appFile("/__app/Info.plist") == nil)
+        #expect(h.appFile("/THIRD_PARTY_NOTICES.md") == nil)
+        // A debug build finds the checkout's copy.
+        #expect(WebUISchemeHandler.bundledAppFiles()["THIRD_PARTY_NOTICES.md"] != nil)
+    }
+
     @Test func coreRecordsEncodeAsPlainValues() {
         let x = AppExperiments(cuaVolume: true, yourCloud: false, sharing: false, webUi: true)
         let v = BridgeValue.encode(x) as? [String: Any]
@@ -459,16 +472,13 @@ struct WebUIHostTests {
         #expect(await failure(bridge, "spaces.create", ["config": config, "pendingId": "pending:web-2"]) == "cancelled")
     }
 
-    /// While New UI is on, New Space opens its wizard; the native sheet is
-    /// the fallback.
-    @Test func newSpaceOpensTheWebWizardWhileNewUIIsOn() async {
+    /// New Space opens the web wizard, whatever an older build saved for
+    /// the New UI.
+    @Test func newSpaceOpensTheWebWizard() async {
         let (_, model) = bridge()
         var asked: [String?] = []
         model.openWebNewSpace = { on in asked.append(on); return true }
-        await model.openNewSpace()
-        #expect(asked.isEmpty && model.showingNewSpace)
-        model.cancelNewSpace()
-        model.settings.experiments.webUi = true
+        model.settings.experiments.webUi = false
         await model.openNewSpace()
         await model.openNewSpace(on: "host:m1")
         #expect(asked == [nil, "host:m1"])
@@ -662,16 +672,6 @@ struct WebUIHostTests {
         _ = try await bridge.handle("settings.choose", ["row": "welcome", "option": "show"])
         #expect(!model.onboarding.completed)
         #expect(opened == 1, "its window opens, even with only Settings up")
-    }
-
-    @Test func turningNewUIOffClosesItsWindow() {
-        let (_, model) = bridge()
-        var closed = 0
-        model.closeWebUI = { closed += 1 }
-        model.chooseExperiment(row: "experiment:web_ui", option: "on")
-        #expect(closed == 0)
-        model.chooseExperiment(row: "experiment:web_ui", option: "off")
-        #expect(closed == 1)
     }
 
     @Test func theNewUIWindowComesBackWhereItWas() {

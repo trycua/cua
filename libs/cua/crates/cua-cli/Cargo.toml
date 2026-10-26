@@ -53,6 +53,7 @@ cua-byoc = { workspace = true, optional = true, features = ["aws"] }
 # The `cluster_*` MCP tools: a client of the cluster coordinator's API.
 # Anonymous usage telemetry (`cua telemetry`, the first-run notice).
 cua-telemetry.workspace = true
+cua-crash.workspace = true
 async-trait.workspace = true
 cua-proto = { workspace = true, features = ["client", "serde"] }
 cua-spaces = { path = "../cua-spaces", default-features = false, features = ["mcp", "spaces-hotspot"] }

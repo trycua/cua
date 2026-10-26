@@ -15,6 +15,8 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SettingsRouteRouteImport } from './routes/settings/route'
 import { Route as AgentsIndexRouteImport } from './routes/agents/index'
+import { Route as HomeIndexRouteImport } from './routes/home/index'
+import { Route as HomeTaskIdRouteImport } from './routes/home/$taskId'
 import { Route as KeyvaultIndexRouteImport } from './routes/keyvault/index'
 import { Route as MachinesIndexRouteImport } from './routes/machines/index'
 import { Route as NotificationsIndexRouteImport } from './routes/notifications/index'
@@ -44,6 +46,16 @@ const SettingsRouteRoute = SettingsRouteRouteImport.update({
 const AgentsIndexRoute = AgentsIndexRouteImport.update({
   id: '/agents/',
   path: '/agents/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HomeIndexRoute = HomeIndexRouteImport.update({
+  id: '/home/',
+  path: '/home/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HomeTaskIdRoute = HomeTaskIdRouteImport.update({
+  id: '/home/$taskId',
+  path: '/home/$taskId',
   getParentRoute: () => rootRouteImport,
 } as any)
 const KeyvaultIndexRoute = KeyvaultIndexRouteImport.update({
@@ -125,6 +137,7 @@ const VolumeIndexRoute = VolumeIndexRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/settings': typeof SettingsRouteRouteWithChildren
+  '/home/$taskId': typeof HomeTaskIdRoute
   '/settings/about': typeof SettingsAboutRoute
   '/settings/advanced': typeof SettingsAdvancedRoute
   '/settings/agents': typeof SettingsAgentsRoute
@@ -134,6 +147,7 @@ export interface FileRoutesByFullPath {
   '/settings/general': typeof SettingsGeneralRoute
   '/spaces/$spaceId': typeof SpacesSpaceIdRoute
   '/agents/': typeof AgentsIndexRoute
+  '/home/': typeof HomeIndexRoute
   '/keyvault/': typeof KeyvaultIndexRoute
   '/machines/': typeof MachinesIndexRoute
   '/notifications/': typeof NotificationsIndexRoute
@@ -144,6 +158,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/home/$taskId': typeof HomeTaskIdRoute
   '/settings/about': typeof SettingsAboutRoute
   '/settings/advanced': typeof SettingsAdvancedRoute
   '/settings/agents': typeof SettingsAgentsRoute
@@ -153,6 +168,7 @@ export interface FileRoutesByTo {
   '/settings/general': typeof SettingsGeneralRoute
   '/spaces/$spaceId': typeof SpacesSpaceIdRoute
   '/agents': typeof AgentsIndexRoute
+  '/home': typeof HomeIndexRoute
   '/keyvault': typeof KeyvaultIndexRoute
   '/machines': typeof MachinesIndexRoute
   '/notifications': typeof NotificationsIndexRoute
@@ -165,6 +181,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/settings': typeof SettingsRouteRouteWithChildren
+  '/home/$taskId': typeof HomeTaskIdRoute
   '/settings/about': typeof SettingsAboutRoute
   '/settings/advanced': typeof SettingsAdvancedRoute
   '/settings/agents': typeof SettingsAgentsRoute
@@ -174,6 +191,7 @@ export interface FileRoutesById {
   '/settings/general': typeof SettingsGeneralRoute
   '/spaces/$spaceId': typeof SpacesSpaceIdRoute
   '/agents/': typeof AgentsIndexRoute
+  '/home/': typeof HomeIndexRoute
   '/keyvault/': typeof KeyvaultIndexRoute
   '/machines/': typeof MachinesIndexRoute
   '/notifications/': typeof NotificationsIndexRoute
@@ -187,6 +205,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/settings'
+    | '/home/$taskId'
     | '/settings/about'
     | '/settings/advanced'
     | '/settings/agents'
@@ -196,6 +215,7 @@ export interface FileRouteTypes {
     | '/settings/general'
     | '/spaces/$spaceId'
     | '/agents/'
+    | '/home/'
     | '/keyvault/'
     | '/machines/'
     | '/notifications/'
@@ -206,6 +226,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/home/$taskId'
     | '/settings/about'
     | '/settings/advanced'
     | '/settings/agents'
@@ -215,6 +236,7 @@ export interface FileRouteTypes {
     | '/settings/general'
     | '/spaces/$spaceId'
     | '/agents'
+    | '/home'
     | '/keyvault'
     | '/machines'
     | '/notifications'
@@ -226,6 +248,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/settings'
+    | '/home/$taskId'
     | '/settings/about'
     | '/settings/advanced'
     | '/settings/agents'
@@ -235,6 +258,7 @@ export interface FileRouteTypes {
     | '/settings/general'
     | '/spaces/$spaceId'
     | '/agents/'
+    | '/home/'
     | '/keyvault/'
     | '/machines/'
     | '/notifications/'
@@ -247,8 +271,10 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   SettingsRouteRoute: typeof SettingsRouteRouteWithChildren
+  HomeTaskIdRoute: typeof HomeTaskIdRoute
   SpacesSpaceIdRoute: typeof SpacesSpaceIdRoute
   AgentsIndexRoute: typeof AgentsIndexRoute
+  HomeIndexRoute: typeof HomeIndexRoute
   KeyvaultIndexRoute: typeof KeyvaultIndexRoute
   MachinesIndexRoute: typeof MachinesIndexRoute
   NotificationsIndexRoute: typeof NotificationsIndexRoute
@@ -278,6 +304,20 @@ declare module '@tanstack/react-router' {
       path: '/agents'
       fullPath: '/agents/'
       preLoaderRoute: typeof AgentsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/home/': {
+      id: '/home/'
+      path: '/home'
+      fullPath: '/home/'
+      preLoaderRoute: typeof HomeIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/home/$taskId': {
+      id: '/home/$taskId'
+      path: '/home/$taskId'
+      fullPath: '/home/$taskId'
+      preLoaderRoute: typeof HomeTaskIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/keyvault/': {
@@ -417,8 +457,10 @@ const SettingsRouteRouteWithChildren = SettingsRouteRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   SettingsRouteRoute: SettingsRouteRouteWithChildren,
+  HomeTaskIdRoute: HomeTaskIdRoute,
   SpacesSpaceIdRoute: SpacesSpaceIdRoute,
   AgentsIndexRoute: AgentsIndexRoute,
+  HomeIndexRoute: HomeIndexRoute,
   KeyvaultIndexRoute: KeyvaultIndexRoute,
   MachinesIndexRoute: MachinesIndexRoute,
   NotificationsIndexRoute: NotificationsIndexRoute,

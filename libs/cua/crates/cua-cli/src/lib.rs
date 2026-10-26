@@ -2408,6 +2408,20 @@ async fn daemon_start(
             "the daemon did not start within 10 s".into(),
         ));
     }
+    // One daemon per home: one still winding down (stopped, or an app
+    // restarting it) is waited for, never run next to.
+    let lock_path = discovery
+        .parent()
+        .map(|d| d.join("daemon.lock"))
+        .unwrap_or_else(cua_daemon::InstanceLock::path);
+    let _instance = {
+        let path = lock_path.clone();
+        let wait = cua_daemon::server::SHUTDOWN_GRACE + Duration::from_secs(5);
+        tokio::task::spawn_blocking(move || cua_daemon::InstanceLock::acquire(&path, wait))
+            .await
+            .map_err(util::internal)?
+            .map_err(|held| CuaError::InvalidArgument(held.to_string()))?
+    };
     // A daemon holds a descriptor per Space, client and stream: dozens of
     // concurrent creates exhausted macOS's default soft limit of 256.
     if let Some((before, after)) = util::raise_open_file_limit() {
@@ -2516,12 +2530,15 @@ async fn daemon_start(
             .unwrap_or_default(),
         h.loopback_url.clone().unwrap_or_default()
     );
+    // SIGTERM and Ctrl-C stop it cleanly, within a bounded time.
     let trigger = h.shutdown_trigger();
     tokio::spawn(async move {
-        let _ = tokio::signal::ctrl_c().await;
+        cua_daemon::server::stop_signal().await;
         let _ = trigger.send(true);
     });
-    h.wait().await;
+    if !h.wait_bounded(cua_daemon::server::SHUTDOWN_GRACE).await {
+        eprintln!("cua daemon: shutdown took too long; exiting");
+    }
     Ok(0)
 }
 
@@ -2801,6 +2818,17 @@ pub fn main() {
     telemetry.set_notice_mode(notice_mode(
         std::env::var("CUA_DAEMON_STARTED_BY").ok().as_deref(),
     ));
+    // Crash reports (opt-in, only when the Spaces shell passed a DSN) come
+    // from the daemon process itself, not the `cua daemon start` launcher.
+    let crash_guard = matches!(
+        cli.command,
+        Command::Daemon(DaemonCmd::Start {
+            foreground: true,
+            ..
+        })
+    )
+    .then(|| cua_crash::init_from_env("daemon"))
+    .flatten();
     // The first-run notice goes to stderr before anything could be sent
     // (not for `cua telemetry` / `cua config`, which are how you answer it).
     if record && !matches!(cli.command, Command::Config(_)) {
@@ -2895,6 +2923,8 @@ pub fn main() {
         }
     });
     let _ = std::io::stdout().flush();
+    // `process::exit` skips destructors: flush crash reports explicitly.
+    drop(crash_guard);
     // Telemetry never holds the exit up for more than this; what is left
     // goes to the offline spool, which the cua daemon (or the next command)
     // sends. A round trip to the collector often takes longer than this, and

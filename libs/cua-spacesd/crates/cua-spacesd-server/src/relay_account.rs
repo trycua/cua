@@ -180,25 +180,64 @@ pub fn color_for(id: &str) -> String {
 }
 
 /// Maps verified claims to the presence principal. Color and kind may come
-/// from the client's own `x-cua-principal-bin`; identity never does. Only
-/// the owner may present itself as an agent: an account the Space was
-/// shared with is always a human (its input is a human-origin session).
-pub fn principal_for(claims: &AssertionClaims, client: Option<&Principal>) -> Principal {
-    let display_name = claims
+/// from the client's own `x-cua-principal-bin`; identity never does.
+///
+/// A caller with edit access (`editor`: the owner, or an account the machine
+/// is shared with to edit) may present itself as an agent acting for its
+/// account (CUA-1750): the id is `<account sub>/<client's agent id>` and the
+/// name `<agent label> (<account name>)`, so the agent is a participant of
+/// its own and always attributed to the verified account. A view-only
+/// caller is always a human. Access itself is decided before this, by
+/// [`HostPolicy::authorize`]; the kind grants nothing.
+pub fn principal_for(
+    claims: &AssertionClaims,
+    client: Option<&Principal>,
+    editor: bool,
+) -> Principal {
+    let user = claims
         .name
         .clone()
         .or_else(|| claims.email.clone())
         .unwrap_or_else(|| claims.sub.clone());
+    let agent = client.filter(|p| editor && p.kind == PrincipalKind::Agent as i32);
+    let (id, display_name, kind) = match agent {
+        Some(p) => {
+            let suffix: String =
+                p.id.chars()
+                    .filter(|c| c.is_ascii_alphanumeric() || matches!(c, ':' | '_' | '-'))
+                    .take(64)
+                    .collect();
+            let suffix = if suffix.is_empty() {
+                "agent".into()
+            } else {
+                suffix
+            };
+            let label: String = p
+                .display_name
+                .trim()
+                .chars()
+                .filter(|c| !c.is_control())
+                .take(40)
+                .collect();
+            let label = if label.is_empty() {
+                "Agent".into()
+            } else {
+                label
+            };
+            (
+                format!("{}/{suffix}", claims.sub),
+                format!("{label} ({user})"),
+                PrincipalKind::Agent as i32,
+            )
+        }
+        None => (claims.sub.clone(), user, PrincipalKind::Human as i32),
+    };
     let color = client
         .map(|p| p.color.clone())
         .filter(|c| c.len() == 7 && c.starts_with('#'))
-        .unwrap_or_else(|| color_for(&claims.sub));
-    let kind = client
-        .map(|p| p.kind)
-        .filter(|k| *k == PrincipalKind::Agent as i32 && claims.role == "owner")
-        .unwrap_or(PrincipalKind::Human as i32);
+        .unwrap_or_else(|| color_for(&id));
     Principal {
-        id: claims.sub.clone(),
+        id,
         display_name,
         color,
         kind,
@@ -289,7 +328,7 @@ impl ExternalAuthenticator for RelayAssertionAuth {
                 .or(self.link.owner().as_deref())
                 .is_some_and(|o| o == claims.acct);
             Ok(ExternalGrant {
-                principal: principal_for(&claims, client.as_ref()),
+                principal: principal_for(&claims, client.as_ref(), access == Access::Full),
                 view_only: access == Access::ViewOnly,
                 host_only: !policy.share_desktop,
                 account: Some(crate::auth::RelayCaller {
@@ -327,6 +366,57 @@ mod tests {
             jti: "j".into(),
             teams: Vec::new(),
         }
+    }
+
+    fn agent(id: &str, name: &str) -> Principal {
+        Principal {
+            id: id.into(),
+            display_name: name.into(),
+            color: String::new(),
+            kind: PrincipalKind::Agent as i32,
+        }
+    }
+
+    /// CUA-1750: an editor's agent is an agent attributed to its account; a
+    /// viewer's never is; the client never picks the account part.
+    #[test]
+    fn editors_may_act_as_their_own_agents() {
+        let bob = claims("bob", "shared", Some("bob@x.io"));
+        let p = principal_for(
+            &bob,
+            Some(&agent("agent:claude-code-42", "Claude Code")),
+            true,
+        );
+        assert_eq!(p.kind, PrincipalKind::Agent as i32);
+        assert_eq!(p.id, "bob/agent:claude-code-42");
+        assert_eq!(p.display_name, "Claude Code (User bob)");
+
+        // View-only: always the human account.
+        let p = principal_for(&bob, Some(&agent("agent:x", "X")), false);
+        assert_eq!(p.kind, PrincipalKind::Human as i32);
+        assert_eq!(p.id, "bob");
+        assert_eq!(p.display_name, "User bob");
+
+        // The client can't smuggle another identity or markup into the id.
+        let p = principal_for(&bob, Some(&agent("../ada/ <b>\n", "")), true);
+        assert_eq!(p.id, "bob/adab");
+        assert_eq!(p.display_name, "Agent (User bob)");
+        let p = principal_for(&bob, Some(&agent("", &"n".repeat(500))), true);
+        assert_eq!(p.id, "bob/agent");
+        assert_eq!(p.display_name.len(), 40 + " (User bob)".len());
+
+        // A human principal stays the account, owner or not.
+        let human = Principal {
+            id: "spoofed".into(),
+            kind: PrincipalKind::Human as i32,
+            ..Principal::default()
+        };
+        let p = principal_for(&claims("ada", "owner", None), Some(&human), true);
+        assert_eq!(
+            (p.id.as_str(), p.kind),
+            ("ada", PrincipalKind::Human as i32)
+        );
+        assert_eq!(principal_for(&bob, None, true).id, "bob");
     }
 
     #[test]

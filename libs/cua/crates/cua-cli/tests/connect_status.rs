@@ -47,15 +47,17 @@ fn report_fields(cli: &Value, like: &Value) -> Value {
             .unwrap()
             .iter()
             .enumerate()
-            .map(|(i, row)| match (row.as_object(), like.get(i).and_then(Value::as_object)) {
-                (Some(row), Some(want)) => Value::Object(
-                    row.iter()
-                        .filter(|(k, _)| want.contains_key(*k))
-                        .map(|(k, v)| (k.clone(), v.clone()))
-                        .collect(),
-                ),
-                _ => row.clone(),
-            })
+            .map(
+                |(i, row)| match (row.as_object(), like.get(i).and_then(Value::as_object)) {
+                    (Some(row), Some(want)) => Value::Object(
+                        row.iter()
+                            .filter(|(k, _)| want.contains_key(*k))
+                            .map(|(k, v)| (k.clone(), v.clone()))
+                            .collect(),
+                    ),
+                    _ => row.clone(),
+                },
+            )
             .collect(),
     )
 }

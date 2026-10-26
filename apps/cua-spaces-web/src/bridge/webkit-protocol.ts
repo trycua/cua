@@ -64,6 +64,8 @@ export const WEBKIT_METHODS = [
   "agents.list",
   "agents.runs",
   "agents.events",
+  "agents.start",
+  "agents.message",
   "agents.pause",
   "agents.resume",
   "agents.setup",

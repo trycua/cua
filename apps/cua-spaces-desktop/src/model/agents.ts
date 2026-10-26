@@ -124,6 +124,29 @@ export class PersistentAgents {
     return this.call("agent_events", args);
   }
 
+  /** Starts a coding agent in a Space (`agent_start`): its answer as is. Saved
+   * provider keys the harness reads are forwarded by the daemon unnamed. */
+  async startRun(
+    space: string,
+    agent: string,
+    prompt: string,
+    o: { repo: string | null; branch: string | null; model: string | null; envFromHost: string[] },
+  ): Promise<Json> {
+    const args: Record<string, unknown> = { space, agent, prompt };
+    if (o.repo) args.repo = o.repo;
+    if (o.branch) args.branch = o.branch;
+    if (o.model) args.model = o.model;
+    if (o.envFromHost.length) args.env_from_host = o.envFromHost;
+    return this.call("agent_start", args);
+  }
+
+  /** Sends a reply to a run (`agent_message`): queued while a turn runs, or the turn is interrupted first with `force`. */
+  async sendMessage(space: string, runId: string, text: string, force: boolean): Promise<Json> {
+    const args: Record<string, unknown> = { space, run_id: runId, text };
+    if (force) args.force = true;
+    return this.call("agent_message", args);
+  }
+
   /** The selected agent's home (files only, recursively), its routines, every
    * computer grant and the recent audit: the core's input records. The web
    * UI's `agents.detail` answers it. */

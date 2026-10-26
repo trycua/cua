@@ -30,7 +30,7 @@
 import { Emitter, HostError, type DataAdapter } from "../adapter";
 import { hostOs, THIS_MACHINE, type HostOs } from "../host-os";
 import { electronTransport, webkitTransport, type HostTransport } from "../transport";
-import type { AgentEventsPage, AgentSetupRow, PersistentAgent, SpaceAgentRun } from "../contracts/agents";
+import type { AgentEventsPage, AgentMessageSent, AgentSetupRow, AgentStarted, PersistentAgent, SpaceAgentRun } from "../contracts/agents";
 import type { CancelOutcome, HostActionId, HostStatus, MachinePageRow, MachineRow, MachinesView, SpacePowerReport } from "../contracts/host";
 import type { HostWindow } from "../detect";
 import {
@@ -649,6 +649,8 @@ export function createWebkitAdapter(
     "agents.runs": async ({ spaceId }) => list(await request("agents.runs", { spaceId })) as SpaceAgentRun[],
     "agents.events": ({ spaceId, runId, cursor, max }) =>
       request<AgentEventsPage>("agents.events", max == null ? { spaceId, runId, cursor } : { spaceId, runId, cursor, max }),
+    "agents.start": (a) => request<AgentStarted>("agents.start", { ...a }),
+    "agents.message": (a) => request<AgentMessageSent>("agents.message", { ...a }),
     "agents.pause": async ({ name }) => {
       await request("agents.pause", { name });
       return null;

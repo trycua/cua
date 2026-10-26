@@ -104,6 +104,7 @@ Each is an existing Tauri command under a host-neutral name:
 | `agents.list` | `agents_tool` `persistent_agent_list` (snake_case mapped to `PersistentAgent`) |
 | `agents.runs` `{spaceId}` | `list_space_agents` |
 | `agents.events` `{spaceId, runId, cursor, max?}` | none yet: unsupported (`TAURI_UNSUPPORTED`) |
+| `agents.start` `{spaceId, agent, prompt, repo?, branch?, model?, envFromHost?}`, `agents.message` `{spaceId, runId, text, force?}` | none yet: unsupported (`TAURI_UNSUPPORTED`) |
 | `agents.pause` / `.resume` `{name}` | `agents_tool` `agent_pause` / `agent_resume` |
 | `agents.setup` / `.configure` `{agents}` | `agent_setup_detect` / `agent_setup_configure` |
 | `agents.detail`, `.readFile`, `.restoreFile`, `.addRoutine`, `.setRoutine`, `.removeRoutine`, `.allowComputer`, `.revokeComputer` | `agents_tool` (the tools `PersistentModel` runs; see `ops/agent-detail.ts`) |
@@ -281,6 +282,8 @@ under a host-neutral name; nothing here is a new mechanism. Types are in
 | `agents.list` | `{}` | `PersistentAgent[]` | `persistent_agent_list` |
 | `agents.runs` | `{ spaceId }` | `SpaceAgentRun[]` | `agent_list` (`list_space_agents`) |
 | `agents.events` | `{ spaceId, runId, cursor, max? }` | `AgentEventsPage` (`{ run_id, status, phase, events, cursor, caught_up }`) | `agent_events` |
+| `agents.start` | `{ spaceId, agent, prompt, repo?, branch?, model?, envFromHost? }` | `AgentStarted` (`{ run_id, agent, ... }`) | unsupported (no Tauri command starts a run) |
+| `agents.message` | `{ spaceId, runId, text, force? }` | `AgentMessageSent` (`{ delivered, run_id, status, phase }`) | unsupported (no Tauri command sends to a run) |
 | `agents.pause` / `agents.resume` | `{ name }` | `null` | `agent_pause` / `agent_resume` |
 | `agents.setup` | `{}` | `AgentSetupRow[]` | `agent_setup_detect` (`cua agents status`) |
 | `agents.configure` | `{ agents: string[] \| null }` | `AgentSetupRow[]` | `agent_setup_configure` (`cua agents setup`) |
@@ -297,7 +300,7 @@ run whose conversation can't be read.
 | Host | Answers |
 |---|---|
 | demo | everything: four persistent agents (Claude Code, Codex, Hermes, OpenClaw) and five runs; `run-ada-7` writes its third turn live for about 25 s after start |
-| tauri | everything except `agents.events` (the Tauri shell has no `agent_events` command, and `agents_tool` doesn't allow it) |
+| tauri | everything except `agents.events`, `agents.start` and `agents.message` (the Tauri shell has no `agent_events`, `agent_start` or `agent_message` command, and `agents_tool` doesn't allow them) |
 | electron | the Swift host's methods (below), as they are ported (`apps/cua-spaces-desktop/test/not-yet.ts`) |
 | webkit | everything, from the SwiftUI app's own models (below); without the daemon the host answers `unsupported` |
 
@@ -312,6 +315,8 @@ which is the `agent_events` result as is):
 | `agents.list` | `{}` | `PersistentAgentInput[]` | `PersistentModel.loadAgents` (`persistent_agent_list`) |
 | `agents.runs` | `{ spaceId }` | `SpaceAgentRun[]` | `AgentRunsModel.refresh` |
 | `agents.events` | `{ spaceId, runId, cursor, max? }` | `agent_events` result | the `agent_events` tool (`AgentRun.events(cursor:)` in the SDK) |
+| `agents.start` | `{ spaceId, agent, prompt, repo?, branch?, model?, envFromHost? }` | `agent_start` result | the `agent_start` tool (`PersistentModel.startRun`); saved provider keys the harness reads go without being named |
+| `agents.message` | `{ spaceId, runId, text, force? }` | `agent_message` result | the `agent_message` tool (`PersistentModel.sendMessage`) |
 | `agents.pause` / `agents.resume` | `{ name }` | `null` | `PersistentModel.send(.pause/.resume)` |
 | `agents.setup` / `agents.configure` | `{}` / `{ agents }` | `AgentSettingsRow[]` | the Settings "AI agents" rows |
 | `agents.signIn` | `{ agent }` | `AgentSettingsRow[]` | the agent's own sign-in on this computer (`codex login`; `AgentSetupRunning.signIn`), returning once it runs |

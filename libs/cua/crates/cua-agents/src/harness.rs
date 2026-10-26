@@ -313,7 +313,9 @@ pub const PROBE_NONE: &str = "none";
 /// Anthropic and OpenAI have their own rows, any other key goes under Other.
 pub fn settings_hint(env: &str) -> String {
     match env {
-        "ANTHROPIC_API_KEY" => "Add an Anthropic API key in Cua Spaces → Settings → Connectors".into(),
+        "ANTHROPIC_API_KEY" => {
+            "Add an Anthropic API key in Cua Spaces → Settings → Connectors".into()
+        }
         "OPENAI_API_KEY" => "Add an OpenAI API key in Cua Spaces → Settings → Connectors".into(),
         other => format!("Add {other} under Other in Cua Spaces → Settings → Connectors"),
     }

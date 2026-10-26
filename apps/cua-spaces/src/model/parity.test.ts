@@ -246,6 +246,7 @@ describe('app core parity flows (webview)', () => {
       'experiments',
       'placement-picker',
       'machines',
+      'checklist',
       'create-stages',
       'first-run',
       'create-retry',

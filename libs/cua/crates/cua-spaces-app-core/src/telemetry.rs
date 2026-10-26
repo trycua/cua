@@ -2435,5 +2435,4 @@ mod tests {
             assert!(checklist(bad).is_empty(), "{bad:?} accepted");
         }
     }
-
 }

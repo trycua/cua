@@ -31,6 +31,9 @@
 //! budget is given (or the link is sealed already); otherwise they keep
 //! today's token on this device.
 
+// Without `federation` (Cua's issuer) only the CLI-sign-in path is built.
+#![cfg_attr(not(feature = "federation"), allow(unused_imports, dead_code))]
+
 use std::sync::Arc;
 
 use cua_sandbox_core::Error;

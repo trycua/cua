@@ -45,7 +45,7 @@ function findFile(dir, name, budget = { n: 0 }) {
 
 test("every contract tool maps to a generated method", () => {
   const rows = spacesApi.spacesToolMethods()
-  assert.equal(rows.length, 115)
+  assert.equal(rows.length, 114)
   const classes = { Spaces: spacesApi.Spaces, Space: spacesApi.Space }
   for (const row of rows) {
     const [cls, method] = row.method.split(".")

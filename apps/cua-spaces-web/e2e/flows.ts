@@ -106,4 +106,8 @@ export const FLOW_PLAN: Record<string, FlowPlan> = {
     status: "skip",
     reason: "The Pro banner and account menu are not drawn yet; bridge/__tests__/spaces-page.test.ts replays this flow through bridge/spaces-page.ts",
   },
+  checklist: {
+    status: "skip",
+    reason: "The host app keeps the checklist and reads what it shows (checklist.observeFrom); the page only draws checklist.view of the host's copy (bridge/__tests__/checklist.test.ts)",
+  },
 };

@@ -39,6 +39,27 @@ fn rows(v: &Value) -> Value {
     v["agents"].clone()
 }
 
+/// `cli`'s rows with only the fields `like`'s rows have.
+fn report_fields(cli: &Value, like: &Value) -> Value {
+    let like = like.as_array().unwrap();
+    Value::Array(
+        cli.as_array()
+            .unwrap()
+            .iter()
+            .enumerate()
+            .map(|(i, row)| match (row.as_object(), like.get(i).and_then(Value::as_object)) {
+                (Some(row), Some(want)) => Value::Object(
+                    row.iter()
+                        .filter(|(k, _)| want.contains_key(*k))
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect(),
+                ),
+                _ => row.clone(),
+            })
+            .collect(),
+    )
+}
+
 async fn mcp_status(h: &Home) -> Value {
     let mut child = h.spawn(&["--embedded", "mcp"]);
     let stdout = child.stdout.take().unwrap();
@@ -106,8 +127,10 @@ fn sdk_status(h: &Home, bin: &Path) -> Value {
 async fn all_three(h: &Home, bin: &Path) -> Value {
     let cli = h.run(&["connect", "status", "--json"]).await;
     cli.ok();
-    let cli = rows(&cli.json());
     let mcp = rows(&mcp_status(h).await);
+    // `--json` also keeps each agent's earlier status fields beside the
+    // row (agents::status_json, for scripts); the rows themselves must agree.
+    let cli = report_fields(&rows(&cli.json()), &mcp);
     let sdk = rows(&sdk_status(h, bin));
     assert_eq!(cli, mcp, "CLI and MCP disagree");
     assert_eq!(cli, sdk, "CLI and the app's SDK call disagree");

@@ -3183,26 +3183,24 @@ mod host_setup_tests {
             (Some(false), Some(true))
         );
         // The default choice, "let my other devices use this computer",
-        // turns on the screen and Spaces; a direct connection only the screen.
+        // turns on the screen and leaves Spaces to the host's default
+        // (cua_host::default_provide_spaces: on for a new relay setup, kept
+        // as it was on a machine set up before); a direct connection only
+        // the screen.
         let o = setup_options_for_request(AppHostSetupRequest {
             mode: "relay".into(),
             ..Default::default()
         })
         .unwrap();
-        assert_eq!(
-            (o.share_desktop, o.provide_spaces),
-            (Some(true), Some(true))
-        );
+        assert_eq!((o.share_desktop, o.provide_spaces), (Some(true), None));
         let o = setup_options_for_request(AppHostSetupRequest {
             mode: "direct".into(),
             direct: Some("10.0.0.2:4000".into()),
             ..Default::default()
         })
         .unwrap();
-        assert_eq!(
-            (o.share_desktop, o.provide_spaces),
-            (Some(true), Some(false))
-        );
+        // Direct mode: the host's default keeps Spaces off.
+        assert_eq!((o.share_desktop, o.provide_spaces), (Some(true), None));
     }
 }
 

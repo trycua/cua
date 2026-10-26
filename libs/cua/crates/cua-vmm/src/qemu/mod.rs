@@ -1351,6 +1351,7 @@ impl QemuRuntime {
         {
             // Off Linux a policy is refused before this (egress::check).
             debug_assert!(netns_rules.is_none());
+            let _ = &record; // TPM VMs are refused above off Unix.
             let log = std::fs::File::create(&log_path)?;
             let child = std::process::Command::new(&bin)
                 .args(&argv)

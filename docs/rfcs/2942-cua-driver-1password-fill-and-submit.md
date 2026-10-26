@@ -150,7 +150,7 @@ lifecycle.
 - Deliver secrets to terminals, shells, clipboards, browser address bars,
   arbitrary content-editable controls, or pixel-only targets in the first
   release.
-- Support visibly unmasked destination fields in the first release.
+- Support visibly unmasked password destination fields in the first release.
 - Make Cua Driver a security boundary against arbitrary unsandboxed code
   running as the same OS principal as the configured provider credential.
 - Prevent the approved destination application or page from reading the value
@@ -1230,7 +1230,7 @@ secret-derived data.
   or OS/platform constraints.
 - Provider-required user presence cannot be synthesized through MCP, terminal,
   or model text.
-- Wrong, stale, unmasked, pixel-only, terminal, shell, clipboard, and address
+- Wrong, stale, unmasked-password, pixel-only, terminal, shell, clipboard, and address
   bar targets fail before provider resolution where possible and always before
   delivery.
 - Secret plaintext is never returned or read back for verification.
@@ -1269,7 +1269,7 @@ contain no typed text, and no retained artifact contains a canary.
 - Accept only a live DOM `input[type=password]` reached through a semantic-v2
   ref in a bound standalone Chrome or Edge target.
 - Refuse legacy refs, custom masked widgets, ARIA-only claims,
-  content-editable, unmasked, address-bar, terminal, and pixel targets.
+  content-editable, unmasked-password, address-bar, terminal, and pixel targets.
 
 - Omit the value and secret-derived length of any populated password field from
   every agent-visible observation (semantic snapshot, accessibility value, DOM
@@ -1469,7 +1469,7 @@ harnesses must never publish the canary in CI summaries or artifacts.
 - Stale refs, wrong origin, redirects, popups, nested frames, navigation during
   resolution, process replacement, runtime restart, focus swap, window swap,
   wrong role, legacy ref, CSS-masked custom control, ARIA-only claim,
-  content-editable, unmasked field, terminal, shell, clipboard, address bar,
+  content-editable, unmasked password field, terminal, shell, clipboard, address bar,
   arbitrary editable, and pixel-only targets fail closed.
 - An allowed target cannot be substituted between provider resolution and
   delivery.

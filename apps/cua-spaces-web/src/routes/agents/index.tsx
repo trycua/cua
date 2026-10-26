@@ -144,7 +144,7 @@ function Overview({ data, onSelect }: { data: AgentsData; onSelect: (s: AgentsSe
             <div
               key={`${r.spaceId}/${r.runId}`}
               data-waiting-run={r.runId}
-              className="flex min-h-12 items-center gap-3 border-l-2 border-l-warning px-4 py-3"
+              className="flex min-h-12 items-center gap-3 px-4 py-3"
             >
               <HarnessMark agent={r.agent} name={r.harnessName} />
               <div className="min-w-0 flex-1">

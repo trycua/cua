@@ -13,12 +13,13 @@ import { StreamSurface } from "@/components/space-detail/stream-surface";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { toastError } from "@/components/ui/toast";
-import { keepTranscript, startErrorView, taskState, TASK_STATE_TEXT, taskTitle, updateAskTask, useAskTasks, type AskTask, type TaskState, type TaskWhere } from "@/lib/ask-first";
+import { keepTranscript, retryTarget, startErrorView, taskState, TASK_STATE_TEXT, taskTitle, updateAskTask, useAskTasks, type AskTask, type TaskState, type TaskWhere } from "@/lib/ask-first";
 import { createProgress, spaceState } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
 
 import { agentName, AppMark, WherePicker } from "./ask-box";
 import { StateDot, taskRun } from "./home";
+import { useWherePick } from "./this-mac-confirm";
 import { useStartTask } from "./use-start-task";
 import { useWhereOptions } from "./where-options";
 
@@ -55,7 +56,8 @@ function TaskView({ task }: { task: AskTask }) {
   const { data: session } = useSession();
   const sharing = useShareSheet();
   const { retry } = useStartTask();
-  const space = spaces?.find((s) => s.id === task.spaceId);
+  // On this Mac there is no other screen to show, share or take over, and nothing to throw away.
+  const space = task.onHost ? undefined : spaces?.find((s) => s.id === task.spaceId);
   const pending = task.pendingId ? spaces?.find((s) => s.id === task.pendingId) : undefined;
   const ref = task.runId && task.spaceId && task.ending !== "thrown" ? { spaceId: task.spaceId, runId: task.runId } : null;
   const live = useAgentTimeline(ref);
@@ -168,7 +170,7 @@ function TaskView({ task }: { task: AskTask }) {
                 <div className="flex justify-end">
                   <div className="max-w-[85%] rounded-2xl rounded-br-md bg-muted px-3.5 py-2 text-[13px] leading-[1.55] whitespace-pre-wrap">{task.prompt}</div>
                 </div>
-                {task.error ? null : <Starting pending={pending} space={space} name={name} />}
+                {task.error ? null : <Starting pending={pending} space={space} name={name} onHost={Boolean(task.onHost)} />}
                 {footer}
               </div>
             </div>
@@ -231,29 +233,34 @@ function TaskView({ task }: { task: AskTask }) {
   );
 }
 
-function CuaLine({ children, tone }: { children: ReactNode; tone?: "bad" }) {
+function CuaLine({ children }: { children: ReactNode }) {
   return (
-    <div className={cn("flex items-start gap-3 rounded-xl border bg-card px-5 py-4 shadow-xs", tone === "bad" && "border-l-2 border-l-destructive")}>
+    <div className="flex items-start gap-3 rounded-xl border bg-card px-5 py-4 shadow-xs">
       <CuaKey size={28} />
       <div className="min-w-0 flex-1 text-[13px] leading-relaxed text-muted-foreground">{children}</div>
     </div>
   );
 }
 
-function Starting({ pending, space, name }: { pending: Space | undefined; space: Space | undefined; name: string }) {
+function Starting({ pending, space, name, onHost }: { pending: Space | undefined; space: Space | undefined; name: string; onHost: boolean }) {
   const making = pending?.progress;
-  const steps = [
-    { text: "Making the computer", done: Boolean(space), now: !space },
-    { text: `Opening ${name} inside it`, done: false, now: Boolean(space) },
-  ];
+  const steps = onHost
+    ? [{ text: `Opening ${name} on this Mac`, done: false, now: true }]
+    : [
+        { text: "Making the computer", done: Boolean(space), now: !space },
+        { text: `Opening ${name} inside it`, done: false, now: Boolean(space) },
+      ];
   return (
     <div className="rounded-xl border bg-card px-5 py-4 shadow-xs" data-ask-starting="">
       <div className="flex items-center gap-3">
         <CuaKey size={28} />
         <div className="flex-1">
-          <div className="text-[15px] font-semibold">Getting a fresh computer ready</div>
+          <div className="text-[15px] font-semibold">{onHost ? "Starting on this Mac" : "Getting a fresh computer ready"}</div>
           <div className="text-[13px] text-muted-foreground">
-            {making?.transfer ?? (making ? `${making.label} ${Math.round(createProgress({ progress: making }) * 100)}%` : "Usually under a minute. The first one takes a few minutes.")}
+            {onHost
+              ? "It works with your own files and apps."
+              : (making?.transfer ??
+                (making ? `${making.label} ${Math.round(createProgress({ progress: making }) * 100)}%` : "Usually under a minute. The first one takes a few minutes."))}
           </div>
         </div>
       </div>
@@ -274,30 +281,39 @@ function Starting({ pending, space, name }: { pending: Space | undefined; space:
  * Change computer right in the card, and the core's own words under
  * Details.
  */
-export function StartFailed({ error, name, onRetry }: { error: string; name: string; onRetry: (where?: TaskWhere) => void }) {
+export function StartFailed({ error, name, host, onRetry }: { error: string; name: string; host: boolean; onRetry: (where?: TaskWhere) => void }) {
   const view = startErrorView(error, name);
   const { kinds, spaces } = useWhereOptions();
+  const [open, setOpen] = useState(false);
+  const pick = useWherePick(name);
   return (
-    <CuaLine tone="bad">
+    <CuaLine>
       <div data-ask-start-failed={view.action}>
         <div className="mb-1 flex items-center gap-2 text-[15px] font-semibold text-foreground">
           <TriangleAlertIcon className="size-4 text-destructive" /> {view.title}
         </div>
         <p>{view.body}</p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
+          {view.action === "set-up-host" ? (
+            <Button className="h-10 px-4" render={<Link to="/machines" />}>
+              Open Computers
+            </Button>
+          ) : null}
           {view.action === "add-key" ? (
             <Button className="h-10 px-4" render={<Link to="/settings/connected-apps" />}>
               Add your key
             </Button>
           ) : null}
           {view.retry ? (
-            <Button variant={view.action === "retry" ? "default" : "outline"} className="h-10 px-4" onClick={() => onRetry()}>
+            <Button variant={view.action === "retry" ? "default" : "outline"} className="h-10 px-4" onClick={() => (host ? pick.choose({ kind: "this-mac" }, onRetry) : onRetry())}>
               <RotateCwIcon /> Try again
             </Button>
           ) : null}
           <WherePicker
             where={null}
-            onWhere={(w) => onRetry(w)}
+            onWhere={(w) => pick.choose(w, onRetry, () => setOpen(true))}
+            open={open}
+            onOpenChange={setOpen}
             kinds={kinds}
             spaces={spaces}
             trigger={
@@ -312,6 +328,7 @@ export function StartFailed({ error, name, onRetry }: { error: string; name: str
           <p className="mt-1 font-mono break-words whitespace-pre-wrap">{error}</p>
         </details>
       </div>
+      {pick.dialog}
     </CuaLine>
   );
 }
@@ -341,7 +358,7 @@ function ThreadFooter({
 }) {
   return (
     <div className="flex flex-col gap-5" data-ask-footer="">
-      {task.error ? <StartFailed error={task.error} name={name} onRetry={onRetry} /> : null}
+      {task.error ? <StartFailed error={task.error} name={name} host={retryTarget(task).kind === "host"} onRetry={onRetry} /> : null}
       {state === "working" ? (
         <p className="flex items-center gap-2 text-xs text-muted-foreground" role="status">
           <StateDot state="working" />
@@ -362,7 +379,7 @@ function ThreadFooter({
         </CuaLine>
       ) : null}
       {state === "needs-you" && needsYou ? (
-        <div className="rounded-xl border border-l-2 border-l-warning bg-card px-5 py-4 shadow-xs" data-ask-needs-you="">
+        <div className="rounded-xl border bg-card px-5 py-4 shadow-xs" data-ask-needs-you="">
           <div className="flex items-start gap-3">
             <AppMark agent={task.agent} size={28} />
             <div className="min-w-0 flex-1">
@@ -388,9 +405,12 @@ function ThreadFooter({
             <CheckIcon className="mt-0.5 size-5 text-success" />
             <div>
               <div className="text-[15px] font-semibold">{name} finished</div>
-              <div className="mt-1 text-[13px] text-muted-foreground">Ask a follow-up below, or decide what happens to the computer.</div>
+              <div className="mt-1 text-[13px] text-muted-foreground">
+                {task.onHost ? "Ask a follow-up below." : "Ask a follow-up below, or decide what happens to the computer."}
+              </div>
             </div>
           </div>
+          {task.onHost ? null : (
           <div className="flex flex-wrap items-center gap-3 border-t px-5 py-3">
             <span className="flex-1 text-[13px] text-muted-foreground">The computer is still on. What should happen to it?</span>
             <Button variant="outline" className="h-11 px-4" onClick={onKeep}>
@@ -400,9 +420,10 @@ function ThreadFooter({
               <Trash2Icon /> Throw it away
             </Button>
           </div>
+          )}
         </div>
       ) : null}
-      {state === "done" ? <p className="text-[12px] text-muted-foreground">Throwing it away deletes the computer. This conversation stays.</p> : null}
+      {state === "done" && !task.onHost ? <p className="text-[12px] text-muted-foreground">Throwing it away deletes the computer. This conversation stays.</p> : null}
       {state === "kept" ? <p className="text-[12px] text-muted-foreground">You kept the computer. It's with your Spaces.</p> : null}
       {state === "thrown" ? <p className="text-[12px] text-muted-foreground">You threw the computer away. This is the conversation as it was.</p> : null}
     </div>
@@ -435,7 +456,11 @@ function Screen({
       : !space
         ? task.ending === "thrown"
           ? "Thrown away"
-          : "Not ready yet"
+          : task.onHost
+            ? state === "working" || state === "stuck"
+              ? "Working on this Mac"
+              : TASK_STATE_TEXT[state]
+            : "Not ready yet"
         : state === "needs-you"
           ? "Waiting for you"
           : state === "working" || state === "stuck"
@@ -494,13 +519,23 @@ function Screen({
 
 function ComputerCard({ task, space }: { task: AskTask; space: Space | undefined }) {
   const os = task.os === "macos" ? "Mac" : task.os === "windows" ? "Windows" : "Linux";
-  const line = !space ? (task.ending === "thrown" ? "Thrown away" : task.error ? "Not made" : "Getting ready") : spaceState(space) === "running" ? "On" : "Off";
+  const line = task.onHost
+    ? "Your own Mac, with your files and apps"
+    : !space
+      ? task.ending === "thrown"
+        ? "Thrown away"
+        : task.error
+          ? "Not made"
+          : "Getting ready"
+      : spaceState(space) === "running"
+        ? "On"
+        : "Off";
   return (
     <div className="rounded-xl border bg-card text-[13px] shadow-xs">
       <div className="flex min-h-12 items-center gap-3 px-4 py-2">
         <OsIcon os={task.os} className="size-4 text-muted-foreground" />
         <div className="min-w-0 flex-1">
-          <div className="font-medium">{space ? space.name : `${os} computer for this task`}</div>
+          <div className="font-medium">{task.onHost ? "This Mac" : space ? space.name : `${os} computer for this task`}</div>
           <div className="text-muted-foreground">{line}</div>
         </div>
         {space ? (

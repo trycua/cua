@@ -558,8 +558,12 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       };
     },
     "agents.start": async ({ spaceId, agent, prompt, repo }) => {
-      const row = findRow(spaceId);
-      if (row.powerState !== "running" || !row.reachable) throw new HostError(`${row.name} is not running`, "space_off");
+      // This Mac's own Space id (its host service shares it on the relay) runs too, like the core's.
+      const own = state.host.configured && state.host.sharing && state.host.machineId ? `relay:${state.host.machineId}` : null;
+      if (spaceId !== own) {
+        const row = findRow(spaceId);
+        if (row.powerState !== "running" || !row.reachable) throw new HostError(`${row.name} is not running`, "space_off");
+      }
       await wait(step);
       const runId = `run-${Math.random().toString(16).slice(2, 8)}`;
       state.runs.push(demoStartedRun(spaceId, runId, agent, prompt, now(), repo));

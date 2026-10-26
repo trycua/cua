@@ -15,6 +15,7 @@ import { realSpaces, spaceState } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
 
 import { agentName, AppMark, AskBox, TASK_AGENTS, type TaskWhere } from "./ask-box";
+import { useWherePick } from "./this-mac-confirm";
 import { useStartTask } from "./use-start-task";
 import { useWhereOptions } from "./where-options";
 
@@ -65,6 +66,8 @@ export function AskFirstHome() {
   const chosenAgent = agent ?? mostUsed ?? TASK_AGENTS.find((a) => installed.has(a.id))?.id ?? "claude-code";
   // A new Linux computer unless you pick; a pick that's no longer offered falls back to it.
   const [picked, setWhere] = useState<TaskWhere | null>(null);
+  const [whereOpen, setWhereOpen] = useState(false);
+  const pick = useWherePick(agentName(chosenAgent));
   const where = currentWhere(picked, kinds, pickable);
   const submit = (prompt = text, w = where) => {
     if (!prompt.trim()) return;
@@ -92,7 +95,9 @@ export function AskFirstHome() {
           installed={installed}
           mostUsed={mostUsed}
           where={where}
-          onWhere={setWhere}
+          onWhere={(w) => pick.choose(w, setWhere, () => setWhereOpen(true))}
+          whereOpen={whereOpen}
+          onWhereOpen={setWhereOpen}
           kinds={kinds}
           spaces={pickable}
           busy={false}
@@ -128,6 +133,7 @@ export function AskFirstHome() {
         )}
         {!first && realSpaces(spaces ?? []).length > 0 ? <YourSpaces spaces={realSpaces(spaces ?? [])} /> : null}
       </div>
+      {pick.dialog}
     </div>
   );
 }
@@ -165,13 +171,13 @@ function TaskRow({ task, run, state, space }: { task: AskTask; run: AgentRunSumm
       : state === "didnt-start" && task.error
         ? `Didn't start: ${startErrorView(task.error, agentName(task.agent)).title}`
         : TASK_STATE_TEXT[state];
-  const where = task.ending === "thrown" ? "Thrown away" : (space?.name ?? "");
+  const where = task.ending === "thrown" ? "Thrown away" : task.onHost ? "This Mac" : (space?.name ?? "");
   return (
     <Link
       to="/home/$taskId"
       params={{ taskId: task.id }}
       data-task-row={task.id}
-      className={cn("flex min-h-[72px] items-center gap-4 px-5 py-3 hover:bg-accent/60", (state === "needs-you" || state === "stuck") && "border-l-2 border-l-warning")}
+      className="flex min-h-[72px] items-center gap-4 px-5 py-3 hover:bg-accent/60"
     >
       <AppMark agent={task.agent} size={36} />
       <div className="min-w-0 flex-1">

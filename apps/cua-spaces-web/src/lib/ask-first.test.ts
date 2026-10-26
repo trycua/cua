@@ -12,7 +12,11 @@ import {
   askTasks,
   currentWhere,
   defaultWhere,
-  HOST_TARGET_ERROR,
+  HOST_NOT_SHARED,
+  hostSpaceId,
+  setThisMacConfirmed,
+  thisMacConfirmed,
+  thisMacConfirmText,
   mostUsedAgent,
   orderTasks,
   pickableSpaces,
@@ -92,6 +96,7 @@ const row = (id: string, more: Partial<Space> = {}): Space => ({ id, name: id, o
 const thisMac = row("this-mac", { name: "This computer", os: "macos", status: "local", provider: "local" });
 const LINUX: NewKind = { os: "linux", note: "Free.", blocked: null };
 const MAC: NewKind = { os: "macos", note: "Free.", blocked: null };
+const shared = { configured: true, mode: "relay" as const, machineId: "m-ada-mbp", sharing: true, shareDesktop: true };
 
 describe("where a task runs", () => {
   it("maps each pick to what agents.start is pointed at", () => {
@@ -100,20 +105,31 @@ describe("where a task runs", () => {
     // A local Space and a cloud Space are passed by their own ids.
     expect(taskTarget({ kind: "space", space: row("local:aurora", { provider: "local" }) })).toEqual({ kind: "space", spaceId: "local:aurora" });
     expect(taskTarget({ kind: "space", space: row("cloud:ci-box", { provider: "direct", cloud: "aws" }) })).toEqual({ kind: "space", spaceId: "cloud:ci-box" });
-    expect(taskTarget({ kind: "space", space: row("relay:mac-mini/qa-windows", { provider: "relay", host: "mac-mini" }) })).toEqual({ kind: "space", spaceId: "relay:mac-mini/qa-windows" });
-    // This Mac's own desktop (and another machine's) is never passed as a Space id.
+    // This Mac (its own row, or the picker's This Mac) starts on its host Space id.
+    expect(taskTarget({ kind: "this-mac" })).toEqual({ kind: "host" });
     expect(taskTarget({ kind: "space", space: thisMac })).toEqual({ kind: "host" });
-    expect(taskTarget({ kind: "space", space: row("relay:96fedb7e1be65c3d", { provider: "relay" }) })).toEqual({ kind: "host" });
+  });
+
+  it("finds this Mac's own Space id from its host service", () => {
+    expect(hostSpaceId(shared)).toBe("relay:m-ada-mbp");
+    expect(hostSpaceId({ ...shared, mode: "direct", machineId: null, directUrl: "http://10.0.0.5:3211" })).toBe("direct:10.0.0.5:3211");
+    // Not set up, not sharing, or not sharing its desktop: no Space id, so the start says how to fix it.
+    expect(hostSpaceId(null)).toBeNull();
+    expect(hostSpaceId({ ...shared, configured: false })).toBeNull();
+    expect(hostSpaceId({ ...shared, sharing: false })).toBeNull();
+    expect(hostSpaceId({ ...shared, shareDesktop: false })).toBeNull();
   });
 
   it("retries on the task's own computer, or makes a new one", () => {
-    expect(retryTarget({ spaceId: null, os: "linux" }, [])).toEqual({ kind: "create", os: "linux" });
-    expect(retryTarget({ spaceId: "local:aurora", os: "linux" }, [row("local:aurora")])).toEqual({ kind: "space", spaceId: "local:aurora" });
-    expect(retryTarget({ spaceId: "this-mac", os: "macos" }, undefined)).toEqual({ kind: "host" });
+    expect(retryTarget({ spaceId: null, os: "linux" })).toEqual({ kind: "create", os: "linux" });
+    expect(retryTarget({ spaceId: "local:aurora", os: "linux" })).toEqual({ kind: "space", spaceId: "local:aurora" });
+    expect(retryTarget({ spaceId: "relay:m-ada-mbp", os: "macos", onHost: true })).toEqual({ kind: "host" });
+    // A task from before: the pseudo-id now starts on this Mac's Space id.
+    expect(retryTarget({ spaceId: "this-mac", os: "macos" })).toEqual({ kind: "host" });
   });
 
-  it("never offers this Mac's own desktop, or a Space that isn't on", () => {
-    const spaces = [thisMac, row("local:aurora"), row("local:off", { power: { control: "stop", off: true } as Space["power"] }), row("relay:96fedb7e1be65c3d", { provider: "relay" })];
+  it("lists running Spaces; this Mac has its own row in the picker", () => {
+    const spaces = [thisMac, row("local:aurora"), row("local:off", { power: { control: "stop", off: true } as Space["power"] })];
     expect(pickableSpaces(spaces).map((s) => s.id)).toEqual(["local:aurora"]);
   });
 
@@ -121,7 +137,6 @@ describe("where a task runs", () => {
     expect(defaultWhere([MAC, LINUX])).toEqual({ kind: "new", os: "linux" });
     expect(defaultWhere([])).toEqual({ kind: "new", os: "linux" });
     expect(defaultWhere([{ ...LINUX, blocked: "Needs Docker" }, MAC])).toEqual({ kind: "new", os: "macos" });
-    // Running Spaces, this Mac included, never change the default.
     expect(currentWhere(null, [LINUX, MAC], [row("local:aurora")])).toEqual({ kind: "new", os: "linux" });
   });
 
@@ -129,9 +144,23 @@ describe("where a task runs", () => {
     const aurora = row("local:aurora");
     expect(currentWhere({ kind: "space", space: aurora }, [LINUX], [aurora])).toEqual({ kind: "space", space: aurora });
     expect(currentWhere({ kind: "space", space: aurora }, [LINUX], [])).toEqual({ kind: "new", os: "linux" });
-    expect(currentWhere({ kind: "space", space: thisMac }, [LINUX], pickableSpaces([thisMac]))).toEqual({ kind: "new", os: "linux" });
+    expect(currentWhere({ kind: "this-mac" }, [LINUX], [])).toEqual({ kind: "this-mac" });
     expect(currentWhere({ kind: "new", os: "macos" }, [LINUX, MAC], [])).toEqual({ kind: "new", os: "macos" });
     expect(currentWhere({ kind: "new", os: "windows" }, [LINUX], [])).toEqual({ kind: "new", os: "linux" });
+  });
+
+  it("remembers the answer to Work on this Mac? on this device until Settings resets it", () => {
+    expect(thisMacConfirmed()).toBe(false);
+    setThisMacConfirmed(true);
+    expect(thisMacConfirmed()).toBe(true);
+    expect(localStorage.getItem("cua.askFirst.thisMacOk")).toBe("1");
+    setThisMacConfirmed(false);
+    expect(thisMacConfirmed()).toBe(false);
+  });
+
+  it("says plainly what working on this Mac means", () => {
+    expect(thisMacConfirmText("Codex").description).toContain("Codex will work directly on this Mac, with your files and apps. It can't be undone by throwing the computer away.");
+    expect(thisMacConfirmText("Codex").description).toContain("doesn't ask before each step");
   });
 });
 
@@ -143,9 +172,8 @@ describe("a start that failed", () => {
   });
 
   it("says what went wrong in plain words, with one thing to do", () => {
-    const thisMacView = startErrorView(CORE_NOT_FOUND, "Codex");
-    expect(thisMacView).toMatchObject({ title: "Agents can't work on this Mac itself", action: "change-computer", retry: false });
-    expect(startErrorView(HOST_TARGET_ERROR, "Codex").title).toBe("Agents can't work on this Mac itself");
+    expect(startErrorView(CORE_NOT_FOUND, "Codex")).toMatchObject({ title: "Couldn't start on this Mac", action: "retry", retry: true });
+    expect(startErrorView(HOST_NOT_SHARED, "Codex")).toMatchObject({ title: "This Mac isn't set up for tasks yet", action: "set-up-host", retry: true });
     expect(startErrorView('Space "local:gone" (use its id, such as local:<name> or cloud:<name>, or add it with add_space) not found', "Codex")).toMatchObject({
       title: "Couldn't find that computer",
       body: "It may have been deleted or renamed. Pick another one.",
@@ -159,9 +187,9 @@ describe("a start that failed", () => {
   });
 
   it("never shows the core's jargon in the headline or the line under it", () => {
-    for (const raw of [CORE_NOT_FOUND, "Space \"x\" not found", "boom", "OPENAI_API_KEY is not set"]) {
+    for (const raw of [CORE_NOT_FOUND, HOST_NOT_SHARED, 'Space "x" not found', "boom", "OPENAI_API_KEY is not set"]) {
       const v = startErrorView(raw, "Codex");
-      expect(`${v.title} ${v.body}`).not.toMatch(/add_space|local:<|cloud:<|this-mac|API_KEY/);
+      expect(`${v.title} ${v.body}`).not.toMatch(/add_space|local:<|cloud:<|this-mac|API_KEY|host service/);
     }
   });
 });

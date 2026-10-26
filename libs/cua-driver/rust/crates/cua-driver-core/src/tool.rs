@@ -3695,6 +3695,27 @@ mod runtime_isolation_tests {
         def: super::ToolDef,
     }
 
+    /// Records the post-action wait each invocation runs under.
+    struct WaitProbe {
+        seen: Arc<Mutex<Vec<crate::post_action_wait::PostActionWait>>>,
+        def: super::ToolDef,
+    }
+
+    #[async_trait::async_trait]
+    impl super::Tool for WaitProbe {
+        fn def(&self) -> &super::ToolDef {
+            &self.def
+        }
+
+        async fn invoke(&self, _args: serde_json::Value) -> crate::protocol::ToolResult {
+            self.seen
+                .lock()
+                .unwrap()
+                .push(crate::post_action_wait::current());
+            crate::protocol::ToolResult::text("input delivered")
+        }
+    }
+
     struct AttestedProbe {
         hits: Arc<AtomicUsize>,
         scope: serde_json::Value,
@@ -4975,6 +4996,103 @@ resources:
         assert_eq!(
             hits.load(Ordering::SeqCst),
             1,
+            "must refuse before invocation"
+        );
+    }
+
+    #[tokio::test]
+    async fn dispatch_runs_the_action_under_its_post_action_wait() {
+        use crate::post_action_wait::{
+            current, PostActionWait, POST_ACTION_WAIT_ARG, POST_ACTION_WAIT_TOOLS, SKIP_SUPPORTED,
+        };
+        use serde_json::json;
+        let schema = json!({"type": "object", "properties": {}, "additionalProperties": false});
+        for tool in POST_ACTION_WAIT_TOOLS {
+            let advertised = super::advertised_runtime_input_schema(tool, &schema);
+            assert_eq!(
+                advertised["properties"].get(POST_ACTION_WAIT_ARG).is_some(),
+                SKIP_SUPPORTED,
+                "{tool}"
+            );
+        }
+
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let mut registry = super::ToolRegistry::new();
+        registry.register(Box::new(WaitProbe {
+            seen: seen.clone(),
+            def: super::ToolDef {
+                name: "click".into(),
+                description: "test input".into(),
+                input_schema: schema,
+                read_only: false,
+                destructive: false,
+                idempotent: false,
+                open_world: false,
+            },
+        }));
+        let registry = Arc::new(registry);
+        let refusal_code = |result: crate::protocol::ToolResult| {
+            assert_eq!(result.is_error, Some(true), "{result:?}");
+            let structured = result.structured_content.expect("structured refusal");
+            if SKIP_SUPPORTED {
+                structured["code"].clone()
+            } else {
+                structured["refusal"]["code"].clone()
+            }
+        };
+
+        // Omitted keeps the wait.
+        let result = registry
+            .invoke_with_context("click", json!({}), standard_context())
+            .await;
+        assert_ne!(result.is_error, Some(true), "{result:?}");
+
+        // "default" and "none" reach the adapter through the task-local scope
+        // on macOS; elsewhere the closed schema refuses the argument.
+        for value in ["default", "none"] {
+            let result = registry
+                .invoke_with_context(
+                    "click",
+                    json!({"post_action_wait": value}),
+                    standard_context(),
+                )
+                .await;
+            if SKIP_SUPPORTED {
+                assert_ne!(result.is_error, Some(true), "{result:?}");
+            } else {
+                assert_eq!(refusal_code(result), "invalid_arguments", "{value}");
+            }
+        }
+        let expected: &[PostActionWait] = if SKIP_SUPPORTED {
+            &[
+                PostActionWait::Default,
+                PostActionWait::Default,
+                PostActionWait::None,
+            ]
+        } else {
+            &[PostActionWait::Default]
+        };
+        assert_eq!(seen.lock().unwrap().as_slice(), expected);
+        assert_eq!(
+            current(),
+            PostActionWait::Default,
+            "the choice must not leak"
+        );
+
+        // Values outside the enum, null included, never reach the tool.
+        for value in [json!(null), json!("off"), json!(0)] {
+            let result = registry
+                .invoke_with_context(
+                    "click",
+                    json!({"post_action_wait": value}),
+                    standard_context(),
+                )
+                .await;
+            assert_eq!(refusal_code(result), "invalid_arguments", "{value}");
+        }
+        assert_eq!(
+            seen.lock().unwrap().as_slice(),
+            expected,
             "must refuse before invocation"
         );
     }

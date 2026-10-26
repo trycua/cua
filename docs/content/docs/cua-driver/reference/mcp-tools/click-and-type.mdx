@@ -57,6 +57,7 @@ Click a target pid. Prefer `element_token` (from get_window_state): it identifie
 | <span id="click--macos--from_zoom"></span>`from_zoom` | `boolean` |  | x and y are in the last zoom image for this pid. |
 | <span id="click--macos--modifier"></span>`modifier` | `string[]` |  | Modifier keys: cmd, shift, option/alt, ctrl. |
 | <span id="click--macos--pid"></span>`pid` | `integer` |  | Target process ID. Optional with element_token (it carries the pid). |
+| <span id="click--macos--post_action_wait"></span>`post_action_wait` | `"default" \| "none"` |  | Whether the result waits for the post-action window-change report (default "default": up to 300 ms for a new window, menu, dialog or foreground change). "none" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. |
 | <span id="click--macos--scope"></span>`scope` | `"window" \| "desktop"` |  | Default "window". "desktop": x,y with no pid/window_id are true screen pixels from get_desktop_state. |
 | <span id="click--macos--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
 | <span id="click--macos--window_id"></span>`window_id` | `integer` |  | Target window ID. Omit with element_token. |
@@ -136,7 +137,6 @@ Windows-only convenience: `button: "left"|"right"|"middle"` switches the mouse b
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="click--element_token"></span>`element_token` | `string` |  | Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is "s0000002a:11" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it. |
-| <span id="click--post_action_wait"></span>`post_action_wait` | `"default" \| "none"` |  | Whether the result waits for the post-action window-change report (default "default": up to 300 ms for a new window, menu, dialog or foreground change). "none" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. macOS only; refused with unsupported_platform elsewhere. |
 | <span id="click--target"></span>`target` | `object` |  | Exact window (kind "window", with pid and window_id) or desktop (kind "desktop", with display_id). "primary" is the portable desktop target. |
 | <span id="click--target-display_id"></span>`target.display_id` | `string` |  | Display id. Required when kind is desktop; use "primary". |
 | <span id="click--target-kind"></span>`target.kind` | `"window" \| "desktop"` |  | window requires pid and window_id; desktop requires display_id. |
@@ -165,6 +165,7 @@ Pixel path (x, y provided): two down/up pairs ~80 ms apart at the given coordina
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="double_click--macos--delivery_mode"></span>`delivery_mode` | `"background" \| "foreground"` |  | Best-effort-background ladder rung (default "background"). "background": inject without fronting or raising the target; no focus steal. "foreground": briefly front the target, act, then restore the prior frontmost; the explicit last resort when a background attempt didn't land. Re-call with "foreground" only for the action that needs it. |
+| <span id="double_click--macos--post_action_wait"></span>`post_action_wait` | `"default" \| "none"` |  | Whether the result waits for the post-action window-change report (default "default": up to 300 ms for a new window, menu, dialog or foreground change). "none" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. |
 | <span id="double_click--macos--window_id"></span>`window_id` | `integer` |  | CGWindowID. Omit when element_token is supplied (the token carries it). |
 | <span id="double_click--macos--x"></span>`x` | `number` |  | Screen X coordinate (pixel path). |
 | <span id="double_click--macos--y"></span>`y` | `number` |  | Screen Y coordinate (pixel path). |
@@ -217,7 +218,6 @@ Exactly one of `element_token` or (`x` AND `y`) must be provided. `pid` is requi
 | --- | --- | --- | --- |
 | <span id="double_click--element_token"></span>`element_token` | `string` |  | Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is "s0000002a:11" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it. |
 | <span id="double_click--pid"></span>`pid` | `integer` |  | Target process ID. Optional with element_token (the token carries the pid). |
-| <span id="double_click--post_action_wait"></span>`post_action_wait` | `"default" \| "none"` |  | Whether the result waits for the post-action window-change report (default "default": up to 300 ms for a new window, menu, dialog or foreground change). "none" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. macOS only; refused with unsupported_platform elsewhere. |
 | <span id="double_click--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
 
 ### `right_click`
@@ -241,6 +241,7 @@ Exactly one of `element_token` or (`x` AND `y`) must be provided. `pid` is requi
 | --- | --- | --- | --- |
 | <span id="right_click--macos--delivery_mode"></span>`delivery_mode` | `"background" \| "foreground"` |  | Best-effort-background ladder rung (default "background"). "background": inject without fronting or raising the target; no focus steal. "foreground": briefly front the target, act, then restore the prior frontmost; the explicit last resort when a background attempt didn't land. Re-call with "foreground" only for the action that needs it. |
 | <span id="right_click--macos--modifier"></span>`modifier` | `string[]` |  | Modifier keys held during the right-click: cmd/shift/option/ctrl. Pixel path only. |
+| <span id="right_click--macos--post_action_wait"></span>`post_action_wait` | `"default" \| "none"` |  | Whether the result waits for the post-action window-change report (default "default": up to 300 ms for a new window, menu, dialog or foreground change). "none" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. |
 | <span id="right_click--macos--window_id"></span>`window_id` | `integer` |  | CGWindowID. Omit when element_token is supplied (the token carries it). |
 | <span id="right_click--macos--x"></span>`x` | `number` |  | X in window-local screenshot pixels. Must be provided together with y. |
 | <span id="right_click--macos--y"></span>`y` | `number` |  | Y in window-local screenshot pixels. Must be provided together with x. |
@@ -294,7 +295,6 @@ Exactly one of `element_token` or (`x` AND `y`) must be provided. `pid` is requi
 | --- | --- | --- | --- |
 | <span id="right_click--element_token"></span>`element_token` | `string` |  | Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is "s0000002a:11" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it. |
 | <span id="right_click--pid"></span>`pid` | `integer` |  | Target process ID. Optional with element_token (the token carries the pid). |
-| <span id="right_click--post_action_wait"></span>`post_action_wait` | `"default" \| "none"` |  | Whether the result waits for the post-action window-change report (default "default": up to 300 ms for a new window, menu, dialog or foreground change). "none" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. macOS only; refused with unsupported_platform elsewhere. |
 | <span id="right_click--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
 
 ## Typing tools
@@ -320,6 +320,7 @@ Web content (browser tabs, Slack, VS Code): AXValue is not proof the DOM saw the
 | <span id="type_text--macos--delivery_mode"></span>`delivery_mode` | `"background" \| "foreground"` |  | Default "background": AX insert, then CGEvent keys, no focus steal. "foreground": front the window, type, restore; last resort for surfaces (WhatsApp/Catalyst) where background keys do not land. |
 | <span id="type_text--macos--element_token"></span>`element_token` | `string` |  | Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is "s0000002a:11" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it. |
 | <span id="type_text--macos--pid"></span>`pid` | `integer` |  | Target process ID. |
+| <span id="type_text--macos--post_action_wait"></span>`post_action_wait` | `"default" \| "none"` |  | Whether the result waits for the post-action window-change report (default "default": up to 300 ms for a new window, menu, dialog or foreground change). "none" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. |
 | <span id="type_text--macos--scope"></span>`scope` | `"window" \| "desktop"` | `"window"` | "desktop" with no pid/window_id types into the frontmost app. |
 | <span id="type_text--macos--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
 | <span id="type_text--macos--text"></span>`text` | `string` | required | Text to insert. |
@@ -380,7 +381,6 @@ Special keys (Return, Escape, arrows, Tab) go through `press_key` / `hotkey`: th
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="type_text--post_action_wait"></span>`post_action_wait` | `"default" \| "none"` |  | Whether the result waits for the post-action window-change report (default "default": up to 300 ms for a new window, menu, dialog or foreground change). "none" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. macOS only; refused with unsupported_platform elsewhere. |
 | <span id="type_text--target"></span>`target` | `object` |  | Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the primary desktop (`kind="desktop"`, `display_id="primary"`). |
 | <span id="type_text--target-display_id"></span>`target.display_id` | `string` |  | Display id. Required when kind is desktop; use "primary". |
 | <span id="type_text--target-kind"></span>`target.kind` | `"window" \| "desktop"` |  | window requires pid and window_id; desktop requires display_id. |
@@ -419,6 +419,7 @@ Confirmed only when a native AX value/selection read-back changes; otherwise `ef
 | <span id="press_key--macos--key"></span>`key` | `string` | required | Key name. |
 | <span id="press_key--macos--modifiers"></span>`modifiers` | `string[]` |  | cmd, shift, option/alt, ctrl, fn. |
 | <span id="press_key--macos--pid"></span>`pid` | `integer` |  | Target process ID. |
+| <span id="press_key--macos--post_action_wait"></span>`post_action_wait` | `"default" \| "none"` |  | Whether the result waits for the post-action window-change report (default "default": up to 300 ms for a new window, menu, dialog or foreground change). "none" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. |
 | <span id="press_key--macos--scope"></span>`scope` | `"window" \| "desktop"` | `"window"` | "desktop" with no pid/window_id sends to the frontmost app. |
 | <span id="press_key--macos--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
 | <span id="press_key--macos--window_id"></span>`window_id` | `integer` |  | Target window; required for foreground. Does not raise by itself. |
@@ -478,7 +479,6 @@ Key vocabulary: return, tab, escape, up/down/left/right, space, delete, home, en
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="press_key--element_token"></span>`element_token` | `string` |  | Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is "s0000002a:11" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it. |
-| <span id="press_key--post_action_wait"></span>`post_action_wait` | `"default" \| "none"` |  | Whether the result waits for the post-action window-change report (default "default": up to 300 ms for a new window, menu, dialog or foreground change). "none" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. macOS only; refused with unsupported_platform elsewhere. |
 | <span id="press_key--target"></span>`target` | `object` |  | Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the primary desktop (`kind="desktop"`, `display_id="primary"`). |
 | <span id="press_key--target-display_id"></span>`target.display_id` | `string` |  | Display id. Required when kind is desktop; use "primary". |
 | <span id="press_key--target-kind"></span>`target.kind` | `"window" \| "desktop"` |  | window requires pid and window_id; desktop requires display_id. |
@@ -513,6 +513,7 @@ Recognized modifiers: cmd/command, shift, option/alt, ctrl/control, fn. Non-modi
 | <span id="hotkey--macos--delivery_mode"></span>`delivery_mode` | `"background" \| "foreground"` |  | Best-effort-background ladder rung (default "background"). "background": inject without fronting or raising the target; no focus steal. "foreground": briefly front the target, act, then restore the prior frontmost; the explicit last resort when a background attempt didn't land. Re-call with "foreground" only for the action that needs it. |
 | <span id="hotkey--macos--keys"></span>`keys` | `string[]` | required | Modifier(s) and one non-modifier key, e.g. ["cmd", "c"]. Items: 2 to any. |
 | <span id="hotkey--macos--pid"></span>`pid` | `integer` |  | Target process ID. Required with x, y; optional with element_token (the token carries the pid). |
+| <span id="hotkey--macos--post_action_wait"></span>`post_action_wait` | `"default" \| "none"` |  | Whether the result waits for the post-action window-change report (default "default": up to 300 ms for a new window, menu, dialog or foreground change). "none" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. |
 | <span id="hotkey--macos--scope"></span>`scope` | `"window" \| "desktop"` | `"window"` | Use desktop with no pid/window_id to send the chord to the frontmost application. |
 | <span id="hotkey--macos--window_id"></span>`window_id` | `integer` |  | Target window. Required for delivery_mode:"foreground" (the NSMenu activation needs a window). Does NOT itself raise the window: raising is gated on delivery_mode. |
 | <span id="hotkey--macos--x"></span>`x` | `number` |  | Screenshot-pixel X: the element px action form: pixel-click there to focus, then send the combo (so e.g. Cmd+V pastes into that field). Pass with y. Use for Chromium/Electron surfaces the background combo can't reach. |
@@ -572,7 +573,6 @@ Recognized modifiers: ctrl/control, shift, alt, win/windows. Non-modifier keys u
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="hotkey--element_token"></span>`element_token` | `string` |  | Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is "s0000002a:11" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it. |
-| <span id="hotkey--post_action_wait"></span>`post_action_wait` | `"default" \| "none"` |  | Whether the result waits for the post-action window-change report (default "default": up to 300 ms for a new window, menu, dialog or foreground change). "none" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. macOS only; refused with unsupported_platform elsewhere. |
 | <span id="hotkey--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
 | <span id="hotkey--target"></span>`target` | `object` |  | Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the primary desktop (`kind="desktop"`, `display_id="primary"`). |
 | <span id="hotkey--target-display_id"></span>`target.display_id` | `string` |  | Display id. Required when kind is desktop; use "primary". |
@@ -605,6 +605,7 @@ A Finder file name cell (list or icon view, not being edited) is renamed through
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
+| <span id="set_value--macos--post_action_wait"></span>`post_action_wait` | `"default" \| "none"` |  | Whether the result waits for the post-action window-change report (default "default": up to 300 ms for a new window, menu, dialog or foreground change). "none" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. |
 | <span id="set_value--macos--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
 | <span id="set_value--macos--value"></span>`value` | `string` | required | New value, coerced to the element's type. |
 | <span id="set_value--macos--window_id"></span>`window_id` | `integer` |  | Window ID. Omit with element_token. |
@@ -652,7 +653,6 @@ For free-form text entry that the target accepts via keystrokes only, prefer `ty
 | --- | --- | --- | --- |
 | <span id="set_value--element_token"></span>`element_token` | `string` |  | Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is "s0000002a:11" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it. |
 | <span id="set_value--pid"></span>`pid` | `integer` |  | Target process ID. Optional with element_token (the token carries the pid). |
-| <span id="set_value--post_action_wait"></span>`post_action_wait` | `"default" \| "none"` |  | Whether the result waits for the post-action window-change report (default "default": up to 300 ms for a new window, menu, dialog or foreground change). "none" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. macOS only; refused with unsupported_platform elsewhere. |
 
 **Example arguments**
 

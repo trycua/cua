@@ -17,7 +17,8 @@
 //! adapters read [`current`]. Only macOS implements the skip: the Linux X11
 //! foreground transaction uses its window watch as delivery evidence, and the
 //! Windows adapter does not watch for window changes after an action. On those
-//! platforms `"none"` is refused with `unsupported_platform`.
+//! platforms the argument is not advertised, and the closed action schemas
+//! refuse it as an unknown argument.
 
 use std::future::Future;
 
@@ -68,9 +69,11 @@ pub fn current() -> PostActionWait {
     CURRENT.try_with(|wait| *wait).unwrap_or_default()
 }
 
-/// Whether `tool` accepts [`POST_ACTION_WAIT_ARG`].
+/// Whether `tool` accepts [`POST_ACTION_WAIT_ARG`] on this platform. Only
+/// macOS implements the skip; elsewhere the argument is not advertised, so the
+/// closed action schemas refuse it as an unknown argument.
 pub fn accepts(tool: &str) -> bool {
-    POST_ACTION_WAIT_TOOLS.contains(&tool)
+    SKIP_SUPPORTED && POST_ACTION_WAIT_TOOLS.contains(&tool)
 }
 
 /// The JSON schema of [`POST_ACTION_WAIT_ARG`].
@@ -83,48 +86,24 @@ pub fn schema() -> Value {
                         foreground change). \"none\" returns as soon as the input is delivered \
                         and says window changes were not observed; the watch keeps running in \
                         the background and a change it sees is reported on the next action's \
-                        result. macOS only; refused with unsupported_platform elsewhere."
+                        result."
     })
 }
 
 /// Read the caller's choice from a `tool` call's arguments. `Err` carries the
-/// message and structured content of the refusal for an invalid value or an
-/// unsupported platform.
+/// message and structured content of the `invalid_arguments` refusal.
 pub fn from_args(tool: &str, args: &Value) -> Result<PostActionWait, (String, Value)> {
-    resolve(tool, args.get(POST_ACTION_WAIT_ARG), SKIP_SUPPORTED)
-}
-
-/// [`from_args`] with the platform support passed in. Pure.
-fn resolve(
-    tool: &str,
-    value: Option<&Value>,
-    skip_supported: bool,
-) -> Result<PostActionWait, (String, Value)> {
-    let refusal = |code: &str, detail: String| {
-        (
-            format!("{tool}: {detail}"),
-            json!({ "code": code, "tool": tool, "detail": detail }),
-        )
-    };
-    match value {
-        None | Some(Value::Null) => Ok(PostActionWait::Default),
+    match args.get(POST_ACTION_WAIT_ARG) {
+        None => Ok(PostActionWait::Default),
         Some(Value::String(s)) if s == "default" => Ok(PostActionWait::Default),
-        Some(Value::String(s)) if s == "none" => {
-            if skip_supported {
-                Ok(PostActionWait::None)
-            } else {
-                Err(refusal(
-                    "unsupported_platform",
-                    "post_action_wait \"none\" is only implemented on macOS; omit it or pass \
-                     \"default\""
-                        .into(),
-                ))
-            }
+        Some(Value::String(s)) if s == "none" => Ok(PostActionWait::None),
+        Some(other) => {
+            let detail = format!("post_action_wait must be \"default\" or \"none\", got {other}");
+            Err((
+                format!("{tool}: {detail}"),
+                json!({ "code": "invalid_arguments", "tool": tool, "detail": detail }),
+            ))
         }
-        Some(other) => Err(refusal(
-            "invalid_arguments",
-            format!("post_action_wait must be \"default\" or \"none\", got {other}"),
-        )),
     }
 }
 
@@ -133,33 +112,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn omitted_null_and_default_keep_the_wait() {
-        for value in [None, Some(Value::Null), Some(json!("default"))] {
-            assert_eq!(
-                resolve("click", value.as_ref(), true).unwrap(),
-                PostActionWait::Default
-            );
+    fn omitted_and_default_keep_the_wait() {
+        for args in [json!({}), json!({"post_action_wait": "default"})] {
+            assert_eq!(from_args("click", &args).unwrap(), PostActionWait::Default);
         }
     }
 
     #[test]
-    fn none_skips_the_wait_where_supported() {
+    fn none_skips_the_wait() {
         assert_eq!(
-            resolve("click", Some(&json!("none")), true).unwrap(),
+            from_args("click", &json!({"post_action_wait": "none"})).unwrap(),
             PostActionWait::None
         );
     }
 
     #[test]
-    fn none_is_refused_where_unsupported() {
-        let (_, structured) = resolve("click", Some(&json!("none")), false).unwrap_err();
-        assert_eq!(structured["code"], "unsupported_platform");
-    }
-
-    #[test]
     fn other_values_are_invalid() {
-        for value in [json!("off"), json!(0), json!(true)] {
-            let (_, structured) = resolve("click", Some(&value), true).unwrap_err();
+        for value in [json!(null), json!("off"), json!(0), json!(true)] {
+            let (_, structured) =
+                from_args("click", &json!({"post_action_wait": value})).unwrap_err();
             assert_eq!(structured["code"], "invalid_arguments", "{value}");
         }
     }

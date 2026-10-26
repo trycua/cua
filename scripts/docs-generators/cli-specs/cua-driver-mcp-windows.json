@@ -584,14 +584,6 @@
       "description": "Target process ID for window scope. Optional with element_token (the token carries the pid). Omit with scope=desktop for screen-absolute coordinates from get_desktop_state.",
       "type": "integer"
      },
-     "post_action_wait": {
-      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. macOS only; refused with unsupported_platform elsewhere.",
-      "enum": [
-       "default",
-       "none"
-      ],
-      "type": "string"
-     },
      "scope": {
       "default": "window",
       "description": "Coordinate frame (default \"window\"). Pass \"desktop\" with x,y and no pid/window_id for a screen-absolute click in get_desktop_state coordinates.",
@@ -690,14 +682,6 @@
       "description": "Target process ID. Optional with element_token (the token carries the pid).",
       "type": "integer"
      },
-     "post_action_wait": {
-      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. macOS only; refused with unsupported_platform elsewhere.",
-      "enum": [
-       "default",
-       "none"
-      ],
-      "type": "string"
-     },
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
       "type": "string"
@@ -755,14 +739,6 @@
      "pid": {
       "description": "Target process ID. Optional with element_token (the token carries the pid).",
       "type": "integer"
-     },
-     "post_action_wait": {
-      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. macOS only; refused with unsupported_platform elsewhere.",
-      "enum": [
-       "default",
-       "none"
-      ],
-      "type": "string"
      },
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
@@ -839,14 +815,6 @@
      "pid": {
       "description": "Target process ID.",
       "type": "integer"
-     },
-     "post_action_wait": {
-      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. macOS only; refused with unsupported_platform elsewhere.",
-      "enum": [
-       "default",
-       "none"
-      ],
-      "type": "string"
      },
      "scope": {
       "description": "Use desktop with no pid/window_id for screen-absolute coordinates.",
@@ -952,14 +920,6 @@
       "description": "Target process ID.",
       "type": "integer"
      },
-     "post_action_wait": {
-      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. macOS only; refused with unsupported_platform elsewhere.",
-      "enum": [
-       "default",
-       "none"
-      ],
-      "type": "string"
-     },
      "scope": {
       "description": "Use desktop with no pid/window_id to type into the current foreground application.",
       "enum": [
@@ -1064,14 +1024,6 @@
       "description": "Target process ID.",
       "type": "integer"
      },
-     "post_action_wait": {
-      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. macOS only; refused with unsupported_platform elsewhere.",
-      "enum": [
-       "default",
-       "none"
-      ],
-      "type": "string"
-     },
      "scope": {
       "description": "Use desktop with no pid/window_id to send the key to the current foreground application.",
       "enum": [
@@ -1169,14 +1121,6 @@
       "description": "Target process ID.",
       "type": "integer"
      },
-     "post_action_wait": {
-      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. macOS only; refused with unsupported_platform elsewhere.",
-      "enum": [
-       "default",
-       "none"
-      ],
-      "type": "string"
-     },
      "scope": {
       "description": "Use desktop with no pid/window_id to send the hotkey to the current foreground application.",
       "enum": [
@@ -1266,14 +1210,6 @@
       "description": "Target process ID. Optional with element_token (the token carries the pid).",
       "type": "integer"
      },
-     "post_action_wait": {
-      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. macOS only; refused with unsupported_platform elsewhere.",
-      "enum": [
-       "default",
-       "none"
-      ],
-      "type": "string"
-     },
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
       "type": "string"
@@ -1342,14 +1278,6 @@
      "pid": {
       "description": "Target process ID for window scope. Optional with element_token (the token carries the pid). Omit with scope=desktop for screen-absolute coordinates from get_desktop_state.",
       "type": "integer"
-     },
-     "post_action_wait": {
-      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. macOS only; refused with unsupported_platform elsewhere.",
-      "enum": [
-       "default",
-       "none"
-      ],
-      "type": "string"
      },
      "scope": {
       "default": "window",

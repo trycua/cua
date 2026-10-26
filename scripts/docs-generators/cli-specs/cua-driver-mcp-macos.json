@@ -546,7 +546,7 @@
       "type": "integer"
      },
      "post_action_wait": {
-      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. macOS only; refused with unsupported_platform elsewhere.",
+      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result.",
       "enum": [
        "default",
        "none"
@@ -641,7 +641,7 @@
       "type": "integer"
      },
      "post_action_wait": {
-      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. macOS only; refused with unsupported_platform elsewhere.",
+      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result.",
       "enum": [
        "default",
        "none"
@@ -703,7 +703,7 @@
       "type": "integer"
      },
      "post_action_wait": {
-      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. macOS only; refused with unsupported_platform elsewhere.",
+      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result.",
       "enum": [
        "default",
        "none"
@@ -787,7 +787,7 @@
       "type": "integer"
      },
      "post_action_wait": {
-      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. macOS only; refused with unsupported_platform elsewhere.",
+      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result.",
       "enum": [
        "default",
        "none"
@@ -900,7 +900,7 @@
       "type": "integer"
      },
      "post_action_wait": {
-      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. macOS only; refused with unsupported_platform elsewhere.",
+      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result.",
       "enum": [
        "default",
        "none"
@@ -1013,7 +1013,7 @@
       "type": "integer"
      },
      "post_action_wait": {
-      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. macOS only; refused with unsupported_platform elsewhere.",
+      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result.",
       "enum": [
        "default",
        "none"
@@ -1119,7 +1119,7 @@
       "type": "integer"
      },
      "post_action_wait": {
-      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. macOS only; refused with unsupported_platform elsewhere.",
+      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result.",
       "enum": [
        "default",
        "none"
@@ -1209,7 +1209,7 @@
       "type": "integer"
      },
      "post_action_wait": {
-      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. macOS only; refused with unsupported_platform elsewhere.",
+      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result.",
       "enum": [
        "default",
        "none"
@@ -1286,7 +1286,7 @@
       "type": "integer"
      },
      "post_action_wait": {
-      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. macOS only; refused with unsupported_platform elsewhere.",
+      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result.",
       "enum": [
        "default",
        "none"

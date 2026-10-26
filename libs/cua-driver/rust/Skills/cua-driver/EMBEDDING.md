@@ -296,7 +296,8 @@ result to wait for the window watch. Each action that waits for it (`click`,
   remainder of a quiet watch above, so focus protection is unchanged and a
   window that opens is reported on the next action's result.
 
-Linux and Windows refuse `"none"` with `unsupported_platform`: the Linux X11
+Linux and Windows do not advertise `post_action_wait`, and their action
+schemas refuse it as an unknown argument (`invalid_arguments`): the Linux X11
 foreground transaction uses its window watch as delivery evidence, and the
 Windows adapter does not wait for window changes after an action.
 

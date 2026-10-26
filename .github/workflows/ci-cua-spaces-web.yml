@@ -91,7 +91,7 @@ jobs:
           FLAKY_RESULTS_OUT: ${{ runner.temp }}/flaky-vitest/web.json
         run: >-
           "$GITHUB_WORKSPACE/.github/scripts/flaky/flaky.sh" run --suite spaces-web-vitest --format vitest --results "$FLAKY_RESULTS_OUT" --
-          pnpm test --retry=1 --reporter=default --reporter="$GITHUB_WORKSPACE/.github/flaky/vitest-reporter.mjs"
+          pnpm test -- --retry=1 --reporter=default --reporter="$GITHUB_WORKSPACE/.github/flaky/vitest-reporter.mjs"
       - name: Web UI build
         working-directory: apps/cua-spaces-web
         run: pnpm build
@@ -101,7 +101,7 @@ jobs:
           FLAKY_RESULTS_OUT: ${{ runner.temp }}/flaky-vitest/desktop.json
         run: |
           "$GITHUB_WORKSPACE/.github/scripts/flaky/flaky.sh" run --suite spaces-desktop-vitest --format vitest --results "$FLAKY_RESULTS_OUT" -- \
-            pnpm test --retry=1 --reporter=default --reporter="$GITHUB_WORKSPACE/.github/flaky/vitest-reporter.mjs"
+            pnpm test -- --retry=1 --reporter=default --reporter="$GITHUB_WORKSPACE/.github/flaky/vitest-reporter.mjs"
           pnpm build
       - uses: ./.github/actions/flaky-upload
         if: always()

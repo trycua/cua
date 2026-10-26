@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: FSL-1.1-MIT
-# Copyright (c) 2026 Cua AI, Inc.
 """Flaky-test handling for CI: report, quarantine, and file issues.
 
 The test runners retry once themselves (cargo nextest `retries = 1`, vitest

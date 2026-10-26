@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: FSL-1.1-MIT
-// Copyright (c) 2026 Cua AI, Inc.
-
 // Vitest reporter for CI flaky-test handling (.github/scripts/flaky/flaky.py).
 // Writes one row per test to $FLAKY_RESULTS_OUT: "flaky" when the test passed
 // only on a retry, "failed" when it failed after its retries. Does nothing

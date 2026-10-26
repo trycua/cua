@@ -13,7 +13,7 @@ import type { AgentSetupRow, PersistentAgent } from "../contracts/agents";
 import type { MachineRow, OnboardingState } from "../contracts/host";
 import type { KvItem } from "../contracts/keyvault";
 import type { UpdateState } from "../contracts/settings";
-import type { SpaceOs, SpaceRow } from "../contracts/spaces";
+import type { CreatingElsewhere, SpaceOs, SpaceRow } from "../contracts/spaces";
 import {
   DEFAULT_SETTINGS,
   type HostEvent,
@@ -47,7 +47,7 @@ import type { CliInstallPlan } from "../contracts/first-run";
 import { unsupportedChecklistOps } from "../ops/checklist";
 import { demoTeleportHandlers } from "./demo/teleport";
 import { createDemoSettings } from "./demo/settings";
-import { demoAgentSetup, demoPersistentAgents, demoRunRecords, runAt, writtenEvents, type DemoRunRecord } from "./demo-agents";
+import { demoAgentSetup, demoPersistentAgents, demoReply, demoRunRecords, demoStartedRun, runAt, writtenEvents, type DemoRunRecord } from "./demo-agents";
 import { demoVolumeHandlers, demoVolumeState, type DemoVolumeState } from "./demo/volume";
 import { demoHostSetupHandlers, demoHostSetupState, type DemoHostSetupState } from "./demo/host-setup";
 import { demoSpaceDetailHandlers, demoSpaceDetailState, type DemoSpaceDetailState } from "./demo/space-detail";
@@ -85,14 +85,16 @@ export interface DemoOptions {
   /** The relay allowance: `idle` (free, no live session, so prompts can show),
    * `warn` (80% of the hours), `limit` (used up), `pro` or `teams`. */
   usage?: "idle" | "warn" | "limit" | "pro" | "teams";
-  /** Which agents are on this computer (`?demo=agents-none`, `?demo=agents-codex`); all of them by default. */
-  agents?: "none" | "codex";
+  /** Which agents are on this computer (`?demo=agents-none`, `?demo=agents-codex`); all of them by default. `unset`: all found, none set up for Cua yet, without the first-run onboarding. */
+  agents?: "none" | "codex" | "unset";
+  /** Coding agents whose config file Cua can't write (setup fails with a permission error), by id. */
+  agentsReadOnly?: string[];
   /** This Mac's free disk: `low` (`?demo=low-disk`) or `full` (`?demo=disk-full`). */
   disk?: "low" | "full";
   /** The machine the demo runs on: a Mac on Apple silicon unless set (the
    * Electron shell passes its own system and architecture). */
   platform?: DemoPlatform;
-  /** Where the updater is at start (`?demo=update-ready`, `?demo=update-downloading`). */
+  /** Where the updater is at start (`?demo=update-ready`, `?demo=update-downloading`, `?demo=update-error`). */
   update?: Partial<UpdateState>;
   /** A This Mac prompt to show (`?demo=nudge-second-agent`, `?demo=nudge-risky`). */
   nudge?: "second-agent" | "risky";
@@ -105,7 +107,15 @@ export interface DemoOptions {
    * set; `local` is a Local build's (`?demo=cli-local`), `missing` one
    * not installed (`?demo=cli-missing`). */
   cli?: "local" | "missing";
+  /** Another of your computers is creating a Space (`?demo=creating-elsewhere`):
+   * the Mac mini, a macOS Space 40% of the way (CUA-2349). */
+  creatingElsewhere?: boolean;
 }
+
+/** What the Mac mini is creating (`?demo=creating-elsewhere`). */
+export const DEMO_CREATING_ELSEWHERE: CreatingElsewhere[] = [
+  { machineId: "mac-mini", machineName: "Mac mini", name: "browser-qa", os: "macos", phase: "pulling", percent: 40 },
+];
 
 /** The SDK's words for the failures `failCreates` plays. */
 export const DEMO_CREATE_FAILURES = {
@@ -119,8 +129,10 @@ const DEMO_NOTES = "https://github.com/trycua/cua/releases/tag/cua-spaces-v0.9.3
  * `?demo=empty` (no Spaces yet), `?demo=keychain` (the startup screen),
  * `?demo=mac-host` (New Space options and the Keyvault's Settings rows in the
  * SwiftUI host's shape), `?demo=unenrolled` (this device not enrolled),
- * `?demo=update-ready` (an update is downloaded), `?demo=update-downloading`,
- * and `?demo=low-disk` / `?demo=disk-full` (This Mac almost out of space). */
+ * `?demo=agents-readonly` (Cua can't write Hermes's config),
+ * `?demo=update-ready` (an update is downloaded), `?demo=update-downloading`, `?demo=update-error`,
+ * `?demo=low-disk` / `?demo=disk-full` (This Mac almost out of space), and
+ * `?demo=creating-elsewhere` (the Mac mini is creating a Space). */
 export function demoOptionsFromSearch(search: string): DemoOptions {
   const flags = new Set((new URLSearchParams(search).get("demo") ?? "").split(",").filter(Boolean));
   return {
@@ -138,15 +150,20 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     unenrolled: flags.has("unenrolled"),
     usage: (["idle", "warn", "limit", "pro", "teams"] as const).find((u) => flags.has(`usage-${u}`)),
     agents: (["none", "codex"] as const).find((a) => flags.has(`agents-${a}`)),
+    // `?demo=agents-readonly`: Hermes's config file can't be written, so setting it up fails.
+    ...(flags.has("agents-readonly") ? { agentsReadOnly: ["hermes"] } : {}),
     nudge: (["second-agent", "risky"] as const).find((n) => flags.has(`nudge-${n}`)),
     disk: flags.has("disk-full") ? "full" : flags.has("low-disk") ? "low" : undefined,
     cli: flags.has("cli-local") ? "local" : flags.has("cli-missing") ? "missing" : undefined,
+    creatingElsewhere: flags.has("creating-elsewhere"),
     failCreates: flags.has("create-fail-runtime") ? "runtime-once" : flags.has("create-fail-disk") ? "disk" : undefined,
     ...(flags.has("update-ready")
       ? { update: { status: "downloaded" as const, version: "0.9.3", percent: 100, notesUrl: DEMO_NOTES } }
       : flags.has("update-downloading")
         ? { update: { status: "downloading" as const, version: "0.9.3", percent: 42, notesUrl: DEMO_NOTES } }
-        : {}),
+        : flags.has("update-error")
+          ? { update: { status: "error" as const, message: "The network connection was lost." } }
+          : {}),
   };
 }
 
@@ -193,7 +210,8 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     agents: demoPersistentAgents(now()),
     // A named allowance is for showing the prompts, which wait for no agent run.
     runs: options.usage ? [] : demoRunRecords(now()),
-    agentSetup: demoAgentSetup(options.onboarded === false, options.agents === "none" ? [] : options.agents === "codex" ? ["codex"] : null),
+    readOnlyAgents: options.agentsReadOnly ?? [],
+    agentSetup: demoAgentSetup(options.onboarded === false || options.agents === "unset", options.agents === "none" ? [] : options.agents === "codex" ? ["codex"] : null),
     platform: options.platform ?? MAC_DEMO_PLATFORM,
     paired: [],
     renamed: {},
@@ -289,13 +307,10 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     return withDemoCopies(o, state, now());
   };
   const session = (): SessionSnapshot => ({
-    fleet: {
+    account: {
       configured: Boolean(state.identity),
       authMode: state.identity ? "user" : "none",
-      baseUrl: "https://api.cua.ai",
-      tokenUrl: "https://auth.cua.ai/oauth/token",
       identity: state.identity,
-      namespaces: state.identity ? ["ada"] : [],
     },
     onboarding: { ...state.onboarding },
     daemon: { connected: true, version: "0.6.0", socketPath: "~/.cua/daemon.sock" },
@@ -552,6 +567,28 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
         caught_up: page.length === after.length,
       };
     },
+    "agents.start": async ({ spaceId, agent, prompt, repo }) => {
+      // This Mac's own Space id (its host service shares it on the relay) runs too, like the core's.
+      const own = state.host.configured && state.host.sharing && state.host.machineId ? `relay:${state.host.machineId}` : null;
+      if (spaceId !== own) {
+        const row = findRow(spaceId);
+        if (row.powerState !== "running" || !row.reachable) throw new HostError(`${row.name} is not running`, "space_off");
+      }
+      await wait(step);
+      const runId = `run-${Math.random().toString(16).slice(2, 8)}`;
+      state.runs.push(demoStartedRun(spaceId, runId, agent, prompt, now(), repo));
+      emit({ type: "agents.changed" });
+      return { run_id: runId, agent, space: spaceId };
+    },
+    "agents.message": async ({ spaceId, runId, text }) => {
+      const rec = state.runs.find((r) => r.space === spaceId && r.run.runId === runId);
+      if (!rec) throw new HostError(`no run ${runId} in ${spaceId}`, "not_found");
+      const busy = runAt(rec, now()).status === "running";
+      demoReply(rec, text, now());
+      emit({ type: "agents.changed" });
+      const run = runAt(rec, now());
+      return { delivered: true, run_id: runId, status: run.status, phase: run.phase, reason: busy ? "queued after the current turn" : "" };
+    },
     "agents.pause": async ({ name }) => {
       const agent = findAgent(name);
       await wait(step);
@@ -594,7 +631,11 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       await wait(step);
       const wanted = (r: AgentSetupRow) => r.installed && (agents === null || agents.includes(r.agent));
       state.agentSetup = state.agentSetup.map((r) =>
-        wanted(r) ? { ...r, configured: true, skillsInstalled: r.skillsTotal, detail: "Skills and MCP server set up" } : r,
+        wanted(r)
+          ? state.readOnlyAgents.includes(r.agent)
+            ? { ...r, configured: false, skillsInstalled: 0, detail: "Permission denied (os error 13)" }
+            : { ...r, configured: true, skillsInstalled: r.skillsTotal, detail: "Skills and MCP server set up" }
+          : r,
       );
       // The demo plays the agent's first request a little later: a line in this computer's access log.
       const used = state.agentSetup.find(wanted);
@@ -650,6 +691,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       return handler(args);
     },
     subscribe: (l) => events.subscribe(l),
+    ...(options.creatingElsewhere ? { creatingElsewhere: () => DEMO_CREATING_ELSEWHERE } : {}),
     dispose() {
       for (const t of timers) clearTimeout(t);
       timers.clear();
@@ -676,6 +718,7 @@ export interface DemoState extends DemoLinksStateField, DemoTelemetryState, Demo
   agents: PersistentAgent[];
   runs: DemoRunRecord[];
   agentSetup: AgentSetupRow[];
+  readOnlyAgents: string[];
   volume: DemoVolumeState;
   platform: DemoPlatform;
   /** Machines added with a pairing code ("Add a machine"). */

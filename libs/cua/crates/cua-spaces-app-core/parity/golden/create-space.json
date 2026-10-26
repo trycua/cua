@@ -47,7 +47,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.2 GB initially; grows with use"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "auto",
@@ -163,7 +163,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.2 GB initially; grows with use"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "auto",
@@ -222,7 +222,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.2 GB initially; grows with use"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "auto",
@@ -281,66 +281,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.2 GB initially; grows with use"
-        ],
-        "resourcesError": null,
-        "runtime": "auto",
-        "runtimes": [
-          "auto",
-          "gvisor",
-          "runc"
-        ],
-        "step": 0
-      },
-      "wizard": "set-placement"
-    },
-    {
-      "frame": {
-        "address": {
-          "canSubmit": false,
-          "error": null,
-          "submit": null,
-          "submitLabel": "Add Space"
-        },
-        "canContinue": true,
-        "cpusText": "2 cores",
-        "disk": null,
-        "fields": [
-          "os: System",
-          "image: Image [ghcr.io/org/app:tag]",
-          "placement: Run on",
-          "kind: Kind (advanced)",
-          "runtime: Runtime (advanced)",
-          "connect-cloud: Connect a cloud…",
-          "connect-by-address: Connect by address…"
-        ],
-        "gpu": null,
-        "image": "ghcr.io/trycua/linux:24.04",
-        "imageField": {
-          "custom": false,
-          "error": null,
-          "open": false,
-          "rows": [],
-          "text": "ghcr.io/trycua/linux:24.04"
-        },
-        "kinds": [
-          "container",
-          "vm"
-        ],
-        "labels": "Cancel | Back | Advanced",
-        "memoryText": "4 GB",
-        "nameInvalid": false,
-        "placement": "local",
-        "placementError": null,
-        "placements": [
-          "local"
-        ],
-        "price": null,
-        "primaryLabel": "Continue",
-        "ranges": "cpus 1-8, memory 2-16",
-        "resourceFacts": [
-          "Kind: Container",
-          "Disk: 3.0 GB–7.2 GB initially; grows with use"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "auto",
@@ -456,7 +397,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.2 GB initially; grows with use"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "auto",
@@ -515,7 +456,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.2 GB initially; grows with use"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "gvisor",
@@ -581,7 +522,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.2 GB initially; grows with use"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "gvisor",
@@ -647,7 +588,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.2 GB initially; grows with use"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "gvisor",
@@ -713,7 +654,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.2 GB initially; grows with use"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "gvisor",
@@ -772,7 +713,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.2 GB initially; grows with use"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "gvisor",
@@ -1181,7 +1122,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.2 GB initially; grows with use"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "gvisor",
@@ -2179,7 +2120,7 @@
         "summary": [
           "System: Linux",
           "Image: ghcr.io/acme/desktop:1.2",
-          "Runs on: This Mac",
+          "Runs on: Linux, on this Mac",
           "Kind: Container",
           "Runtime: gVisor container on this Mac",
           "Resources: 4 cores, 8 GB memory",

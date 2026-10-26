@@ -3,9 +3,6 @@
 //! Platform renderers (macOS, Windows, Linux) depend on this crate for:
 //! - `CursorConfig` — theme, accessibility, visibility, and motion settings
 //! - `MotionConfig` — glide duration, spring, dwell, idle-hide timings
-//! - `CubicBezier` — Bezier path math (from Cua Driver's Swift `Bezier.swift` /
-//!   `CursorMotionPath.swift`; arc-length helper after trope-cua, see
-//!   THIRD_PARTY_NOTICES.md)
 //! - `trajectory` — the motion styles, timing and effect geometry, which live
 //!   in the `cua-cursor-motion` crate (shared with the `@trycua/cursor-motion` web package)
 //! - `OverlayCommand` — messages sent from MCP tools to the overlay thread
@@ -14,7 +11,6 @@
 
 pub mod badge_glyphs;
 pub mod badge_mode;
-pub mod bezier;
 pub mod capture_exclusion;
 pub mod capture_utils;
 pub mod motion;
@@ -32,7 +28,6 @@ pub mod z_order;
 
 pub use badge_glyphs::{BadgeChip, BadgeGlyph};
 pub use badge_mode::BadgeMode;
-pub use bezier::CubicBezier;
 pub use motion::{
     MotionConfig, MotionEffects, MotionStyle, MotionTiming, ResolvedEffects, Spring,
     DEFAULT_FIXED_MS,

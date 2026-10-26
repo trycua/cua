@@ -47,6 +47,7 @@ import type {
   FirstRunOffer,
   FirstRunPermissionsView,
   FirstRunPlan,
+  FirstRunRow,
   FirstRunStep,
   FirstRunTodos,
   FirstRunView,
@@ -187,7 +188,7 @@ function fallbackView(input: FirstRunInput): FirstRunView {
         ...base,
         cli: {
           title: present ? "Cua is ready in Terminal." : "Use Cua from the Terminal.",
-          lede: `Type ${name} in Terminal to make and use Spaces, for you and your agents.`,
+          lede: `Type ${name} in Terminal to make and use Spaces. Your agents can use it too.`,
           name,
           facts: plan ? [{ label: present ? "Installed at" : "Installs", value: input.cli?.installed ?? plan.target }] : [],
           status: present ? "Installed." : "Not installed.",
@@ -207,14 +208,14 @@ function fallbackView(input: FirstRunInput): FirstRunView {
         ...base,
         connect: {
           title: "Pick your agent.",
-          lede: `Found on ${place}. You can add more later.`,
+          lede: `Cua found these on ${place}. Connect the ones you want to use with Cua.`,
           agents: found.map((a) => {
             const on = connected.includes(a);
             return { agent: a.agent, name: a.name, file: a.mcpConfig ?? null, connected: on, action: on ? null : { id: "connect", label: "Connect" }, note: on ? "Connected" : null };
           }),
           alternatives: [],
           credentials: [],
-          credentialsNote: `They stay on ${place}.`,
+          credentialsNote: `Sign-ins and keys stay on ${place}.`,
           primary: { id: "continue", label: "Continue" },
           secondary: connected.length ? null : { id: "skip", label: "Skip" },
           error: input.connectError,
@@ -224,27 +225,30 @@ function fallbackView(input: FirstRunInput): FirstRunView {
       return {
         ...base,
         devices: {
-          title: input.signedIn ? `${Place} is in your account.` : "Connect your other devices.",
-          lede: `Sign in once, and your other computers reach ${place}'s Spaces.`,
+          title: input.signedIn ? `${Place} is in your account.` : "Add your other computers.",
+          lede: `Sign in to Cua here and on your other computers. Then they can all use ${place}'s Spaces.`,
           rows: [
-            { title: "Your other computers", note: `They join ${place}'s pool` },
+            { title: "Your other computers", note: "Sign in on each one" },
             { title: "Your cloud", note: "Hetzner, AWS, Google Cloud or Modal" },
           ],
           status: null,
-          primary: input.signedIn ? { id: "continue", label: "Continue" } : { id: "sign-in", label: "Sign in to connect" },
+          primary: input.signedIn ? { id: "continue", label: "Continue" } : { id: "sign-in", label: "Sign in" },
           secondary: input.signedIn ? null : { id: "not-now", label: "Not now" },
-          note: input.signedIn ? null : `${Place} works without it.`,
+          note: input.signedIn ? null : `Not now keeps Cua on ${place} only. You can sign in later.`,
         },
       };
     case "permissions": {
       const host = input.host;
       const known = host?.configured && !input.hostSettingUp ? host : null;
-      const rows = (
-        [
-          ["screen-recording", `See ${place}'s screen`, "So your team and agents can see what's on it.", "Privacy_ScreenCapture"],
-          ["accessibility", "Use the mouse and keyboard", `So they can click and type on ${place}.`, "Privacy_Accessibility"],
-        ] as const
-      ).map(([id, title, note, pane]) => {
+      const localNetwork = Boolean(host?.permissions.some((p) => p.id === "local-network"));
+      const wanted: ReadonlyArray<readonly [FirstRunRow["id"], string, string, string]> = [
+        ["screen-recording", `See ${place}'s screen`, "So your team and agents can see what's on it.", "Privacy_ScreenCapture"],
+        ["accessibility", "Use the mouse and keyboard", `So they can click and type on ${place}.`, "Privacy_Accessibility"],
+        ...(localNetwork
+          ? [["local-network", "Run Spaces on this Mac", "So the macOS Spaces you create here can start and connect.", "Privacy_LocalNetwork"] as const]
+          : []),
+      ];
+      const rows = wanted.map(([id, title, note, pane]) => {
         const missing = known?.permissions.find((p) => p.id === id && !p.granted);
         if (!known) return { id, state: "checking" as const, title, note: `Adding ${place} to your account first…`, action: null, settingsUrl: null };
         if (!missing) return { id, state: "ok" as const, title, note: "Allowed", action: null, settingsUrl: null };
@@ -255,9 +259,11 @@ function fallbackView(input: FirstRunInput): FirstRunView {
         ...base,
         permissions: {
           title: `Share ${place}'s screen.`,
-          lede: `To let your team and agents see and use ${place}, allow two permissions.`,
+          lede: localNetwork
+            ? `Allow three permissions so your team and agents can see and use ${place}, and so macOS Spaces can run on it.`
+            : `Allow two permissions so your team and agents can see and use ${place}.`,
           rows,
-          note: `Allow opens System Settings and shows you where to turn on ${host?.appName || "Cua Spaces"}.`,
+          note: `Allow opens System Settings, where you turn on ${host?.appName || "Cua Spaces"}.`,
           primary: all ? { id: "continue", label: "Continue" } : null,
           secondary: all ? null : { id: "not-now", label: "Not now" },
         },
@@ -269,8 +275,8 @@ function fallbackView(input: FirstRunInput): FirstRunView {
         setup: lead
           ? {
               title: `Try it in ${lead.name}.`,
-              lede: `Paste this. ${lead.name} makes the Space itself.`,
-              prompt: { heading: `Paste this in ${lead.name}`, text: `Make a Linux Space on ${place} and stream the desktop in a new window.`, note: `It runs on ${place}.`, copy: "Copy" },
+              lede: `Paste this request into ${lead.name}. It makes a Space and opens its desktop in a window.`,
+              prompt: { heading: `Paste this in ${lead.name}`, text: `Make a Linux Space on ${place} and show its desktop in a new window.`, note: `The Space runs on ${place}.`, copy: "Copy" },
               status: { id: "agent", state: input.agentUsedAt ? "ok" : "checking", title: input.agentUsedAt ? `${lead.name} used Cua at ${input.agentUsedAt}.` : `Waiting for ${lead.name}…`, note: "", action: null, settingsUrl: null },
               extra: null,
               primary: { id: "done", label: "Done", enabled: true, note: null },
@@ -466,7 +472,7 @@ export interface FirstRunHook {
   connect(agent: string): Promise<void>;
   /** Starts an agent's own sign-in on this computer (`codex login`). */
   signIn(agent: string): Promise<void>;
-  /** A screen's button: `start`, `continue`, `skip`, `not-now` (next screen), `install` (the CLI), `sign-in`, `set-up`, `open-settings`, `allow` (the app's guide to that System Settings pane), `copy`, `add`. */
+  /** A screen's button: `start`, `continue`, `skip`, `not-now` (next screen), `recheck` (read the agents again), `install` (the CLI), `sign-in`, `set-up`, `open-settings`, `allow` (the app's guide to that System Settings pane), `copy`, `add`. */
   act(id: string, settingsUrl?: string | null): Promise<void>;
   /** Copies `text` (the tab shown), else the selected request. */
   copyPrompt(text?: string): Promise<void>;
@@ -523,7 +529,7 @@ export function useScreenPermissions(active = true, pollMs = FIRST_RUN_POLL_MS):
     let live = true;
     const read = () =>
       void adapter
-        .call("host.status", {})
+        .call("host.status", { localNetwork: true })
         .then((h) => live && setHost(h))
         .catch(() => {});
     read();
@@ -608,8 +614,9 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
           .catch(() => live && setAgents((a) => a ?? []));
       }
       if (step === "devices" || step === "permissions" || step === "setup" || s.finishedLater) {
+        // On the permissions page the host also checks Local Network access (which makes macOS ask).
         void adapter
-          .call("host.status", {})
+          .call("host.status", step === "permissions" ? { localNetwork: true } : {})
           .then((h) => live && setHost(h))
           .catch(() => {});
       }
@@ -827,9 +834,15 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
     setConnecting(agent);
     setConnectError(null);
     try {
-      setAgents(await adapter.call("agents.configure", { agents: [agent] }));
-      const was = readFirstRun().picked ?? [];
-      writeFirstRun({ picked: was.includes(agent) ? was : [...was, agent] });
+      const rows = await adapter.call("agents.configure", { agents: [agent] });
+      setAgents(rows);
+      // Only an app Cua really got into counts as picked: one that failed is not "connected".
+      if (rows.find((r) => r.agent === agent)?.configured) {
+        const was = readFirstRun().picked ?? [];
+        writeFirstRun({ picked: was.includes(agent) ? was : [...was, agent] });
+      } else {
+        setConnectError(rows.find((r) => r.agent === agent)?.detail ?? "Cua is not in its settings.");
+      }
     } catch (e) {
       setConnectError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -929,6 +942,9 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
               : session.openExternal(settingsUrl)
             ).catch(() => {});
           }
+          break;
+        case "recheck":
+          // "Check again": the agents are read again below.
           break;
         case "copy":
           await copyPrompt();

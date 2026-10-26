@@ -32,16 +32,15 @@ pub const METHODS: &[&str] = &[
     "spaces.nameOf",
     "spaces.providerOfId",
     "spaces.normalizeProvider",
-    "spaces.cloudNamespaceOf",
     "spaces.sceneForOs",
     "spaces.hasFeature",
     "spaces.sharesDesktop",
-    "spaces.isSpacesPool",
     "spaces.sortByMru",
     "spaces.touchSpace",
     "spaces.countActive",
     "spaces.ambientDots",
     "spaces.statusLine",
+    "spaces.listView",
     "roster.initial",
     "roster.reduce",
     "creates.reduce",
@@ -64,6 +63,7 @@ pub const METHODS: &[&str] = &[
     "stream.pipReduce",
     "stream.pipClick",
     "window.chrome",
+    "window.emptyLinuxDetail",
     "window.menuBar",
     "window.menu",
     "spaces.openableCount",
@@ -365,7 +365,6 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         )),
         "spaces.providerOfId" => out(spaces::provider_of_id(&a.get::<String>("id")?)),
         "spaces.normalizeProvider" => out(spaces::normalize_provider(&a.get::<String>("word")?)),
-        "spaces.cloudNamespaceOf" => out(spaces::cloud_namespace_of(&a.get::<String>("id")?)),
         "spaces.sceneForOs" => out(spaces::scene_for_os(a.get("os")?)),
         "spaces.hasFeature" => out(spaces::has_feature(
             &a.get("space")?,
@@ -375,7 +374,6 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         // or not one of your machines): when it does not, nothing asks its
         // desktop or its processes.
         "spaces.sharesDesktop" => out(sidebar::shares_desktop(&a.get("space")?)),
-        "spaces.isSpacesPool" => out(spaces::is_spaces_pool(&a.get("space")?)),
         "spaces.sortByMru" => out(spaces::sort_by_mru(&a.get::<Vec<Space>>("spaces")?)),
         "spaces.touchSpace" => out(spaces::touch_space(
             &a.get::<Vec<Space>>("spaces")?,
@@ -385,6 +383,7 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         "spaces.countActive" => out(spaces::count_active(&a.get::<Vec<Space>>("spaces")?)),
         "spaces.ambientDots" => out(spaces::ambient_dots(&a.get::<Vec<Space>>("spaces")?)),
         "spaces.statusLine" => out(spaces::status_line(a.get("count")?)),
+        "spaces.listView" => out(spaces::list_view(a.get("input")?)),
         "roster.initial" => out(roster::initial(&a.get::<Vec<Space>>("spaces")?)),
         "roster.reduce" => out(roster::reduce(&a.get("state")?, &a.get("action")?)),
         "localNetwork.applies" => out(local_network::applies(
@@ -482,6 +481,9 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get::<Option<window::ChromeInput>>("input")?
                 .unwrap_or_default(),
         )),
+        "window.emptyLinuxDetail" => {
+            out(window::empty_linux_detail_on(&a.get::<String>("hostArch")?))
+        }
         "window.menu" => out(window::menu(&a.get::<window::MenuInput>("input")?)),
         "spaces.openableCount" => out(spaces::openable_count(&a.get::<Vec<Space>>("spaces")?)),
         "spaces.onCount" => out(spaces::on_count(&a.get::<Vec<Space>>("spaces")?)),

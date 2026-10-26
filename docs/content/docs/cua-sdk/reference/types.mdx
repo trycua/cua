@@ -48,7 +48,7 @@ Renamed members: in Kotlin, objects implement `AutoCloseable`, whose `close()` f
 
 ## All items
 
-307 items. Methods are listed on their object.
+312 items. Methods are listed on their object.
 
 The 10 items of Batched forks are listed on [its page](/cua-sdk/reference/sandbox/fork-batch#all-items).
 
@@ -292,12 +292,15 @@ The 11 items of Processor, memory and disk are listed on [its page](/cua-sdk/ref
 | [`SpaceCreateOptions`](/cua-sdk/reference/spaces#spacecreateoptions-record) | record | Options for `Spaces.create`: the same location / kind / runtime model as sandboxes. |
 | [`SpaceCreateProgress`](/cua-sdk/reference/spaces#spacecreateprogress-record) | record | What a Space create is doing (see `Spaces.create_with_progress`). |
 | [`SpaceCreateResult`](/cua-sdk/reference/spaces#spacecreateresult-record) | record | Result of `Spaces.create`. |
+| [`SpaceCreatingElsewhere`](/cua-sdk/reference/spaces/space#spacecreatingelsewhere-record) | record | A Space another of your computers is creating (`SpaceList.creating`). |
 | [`SpaceDisplay`](/cua-sdk/reference/spaces/space#spacedisplay-record) | record | One of a Space's displays (`Space.displays`). |
 | [`SpaceHotspotStatus`](/cua-sdk/reference/spaces/space#spacehotspotstatus-record) | record | Hotspot state. |
 | [`SpaceInfo`](/cua-sdk/reference/spaces#spaceinfo-record) | record | A registered Space. |
+| [`SpaceList`](/cua-sdk/reference/spaces#spacelist-record) | record | The Spaces known now (`Spaces.list_known`) and how far the read got. |
 | [`SpacePowerReport`](/cua-sdk/reference/spaces#spacepowerreport-record) | record | What `Spaces.stop` or `Spaces.start` did. |
 | [`SpacePresence`](/cua-sdk/reference/spaces/streams#spacepresence) | object | A joined presence session. |
-| [`SpaceRelayRegistration`](/cua-sdk/reference/spaces/space#spacerelayregistration-record) | record | A Space published on the relay (`Spaces.relay_register`). |
+| [`SpaceRelayRegistration`](/cua-sdk/reference/spaces/relay-registration#spacerelayregistration-record) | record | A Space published on the relay (`Spaces.relay_register`). |
+| [`SpaceResizeReport`](/cua-sdk/reference/spaces/resize#spaceresizereport-record) | record | What `Spaces.resize` did: the shape the Space has now. |
 | [`Spaces`](/cua-sdk/reference/spaces#spaces) | object | The Spaces registry: add a machine by URL, provision a local one, and get `Space` handles. |
 | [`spaces_tool_methods`](/cua-sdk/reference/spaces#spaces_tool_methods) | function | Which SDK method covers each Spaces contract tool. |
 | [`SpacesdCapabilities`](/cua-sdk/reference/spacesd#spacesdcapabilities-record) | record | `SystemService.GetCapabilities`, summarized. |
@@ -313,11 +316,13 @@ The 11 items of Processor, memory and disk are listed on [its page](/cua-sdk/ref
 | [`SpaceSendFileOptions`](/cua-sdk/reference/spaces/space#spacesendfileoptions-record) | record | Options for `Space.send_file`. |
 | [`SpaceSendFileReport`](/cua-sdk/reference/spaces/space#spacesendfilereport-record) | record | Result of `Space.send_file`. |
 | [`SpaceSentFile`](/cua-sdk/reference/spaces/space#spacesentfile-record) | record | One file placed by `Space.send_file`. |
-| [`SpaceShareEntry`](/cua-sdk/reference/spaces/space#spaceshareentry-record) | record | One account a Space is shared with. |
-| [`SpaceShares`](/cua-sdk/reference/spaces/space#spaceshares-record) | record | Who a Space is shared with. |
+| [`SpaceShareEntry`](/cua-sdk/reference/spaces/sharing#spaceshareentry-record) | record | One account a Space is shared with. |
+| [`SpaceShares`](/cua-sdk/reference/spaces/sharing#spaceshares-record) | record | Who a Space is shared with. |
 | [`SpacesHost`](/cua-sdk/reference/spaces/host#spaceshost-record) | record | One of your machines that provides Spaces (`Spaces.hosts`). |
 | [`SpacesHostLimit`](/cua-sdk/reference/spaces/host#spaceshostlimit-record) | record | One limit of a host that provides Spaces and how much of it is used. |
 | [`SpacesHostLoad`](/cua-sdk/reference/spaces/host#spaceshostload-record) | record | How busy one of your machines is (its job runner's view). |
+| [`SpacesListListener`](/cua-sdk/reference/spaces/list-watch#spaceslistlistener) | object | Hears that the Space list changed (`Spaces.watch_list`). |
+| [`SpacesListWatch`](/cua-sdk/reference/spaces/list-watch#spaceslistwatch) | object | A running `Spaces.watch_list`. |
 | [`SpacesToolMethod`](/cua-sdk/reference/spaces#spacestoolmethod-record) | record | One row of `SPACES_TOOL_METHODS`. |
 | [`SpaceStreamOptions`](/cua-sdk/reference/spaces/streams#spacestreamoptions-record) | record | What to stream and how. |
 | [`SpaceStreamSession`](/cua-sdk/reference/spaces/streams#spacestreamsession) | object | A live Space media session (see `Space.stream_session`). |

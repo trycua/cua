@@ -1674,13 +1674,13 @@ mod tests {
     #[test]
     fn labels_are_sanitized_and_prefixed() {
         assert_eq!(
-            space_window_label("fleet:ns/claim-1"),
-            "space-fleet-ns-claim-1"
+            space_window_label("relay:ns/claim-1"),
+            "space-relay-ns-claim-1"
         );
         assert_eq!(pip_window_label("abc_DEF-1"), "pip-abc_DEF-1");
         assert_eq!(
-            window_stream_label("fleet:ns/claim-1"),
-            "win-fleet-ns-claim-1"
+            window_stream_label("relay:ns/claim-1"),
+            "win-relay-ns-claim-1"
         );
         assert_eq!(sanitize_label(""), "x");
     }
@@ -1690,8 +1690,8 @@ mod tests {
         // Both the space id and the (rcdp handle) window id are sanitized, so a
         // handle like "0x1f/2" can never break Tauri's label alphabet.
         assert_eq!(
-            winone_window_label("fleet:ns/claim-1", "0x1f/2"),
-            "winone-fleet-ns-claim-1-0x1f-2"
+            winone_window_label("relay:ns/claim-1", "0x1f/2"),
+            "winone-relay-ns-claim-1-0x1f-2"
         );
         // An empty window id still yields a valid, unique-per-space label.
         assert_eq!(winone_window_label("space", ""), "winone-space-x");
@@ -1703,8 +1703,8 @@ mod tests {
     #[test]
     fn primary_winone_label_is_unsuffixed_and_replicas_are_distinct() {
         assert_eq!(
-            winone_window_label_at("fleet:ns/claim-1", "0x1f/2", 1),
-            winone_window_label("fleet:ns/claim-1", "0x1f/2"),
+            winone_window_label_at("relay:ns/claim-1", "0x1f/2", 1),
+            winone_window_label("relay:ns/claim-1", "0x1f/2"),
         );
         let primary = winone_window_label_at("space", "0x1f", 1);
         let replica = winone_window_label_at("space", "0x1f", 2);

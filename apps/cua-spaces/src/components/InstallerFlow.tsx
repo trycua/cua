@@ -31,7 +31,7 @@ import type { DriveMountInput } from "../model/persistent";
 import type { SettingsRow } from "../model/window";
 import type { SpaceOs } from "../model/types";
 import { answerOrNull, createDriveBridge, type DriveBridge } from "../native/drive";
-import type { SignInStart } from "../native/fleet";
+import type { SignInStart } from "../native/spacesBridge";
 import type { HostBridge, HostStatus, OnboardingMode } from "../native/host";
 import type { AgentDetectReport, AgentSetupReport, InstallerBridge } from "../native/installer";
 import { onboardingFinishedSignals, onboardingSignals } from "../model/telemetry";

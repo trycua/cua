@@ -751,6 +751,21 @@ pub struct SpacePower {
     pub message: String,
 }
 
+/// What [`crate::Spaces::resize`] did: the shape the Space has now.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SpaceResize {
+    /// The Space.
+    pub space: String,
+    /// vCPUs.
+    pub cpus: Option<u32>,
+    /// Memory, MiB.
+    pub memory_mb: Option<u64>,
+    /// Disk, GiB (when it was grown).
+    pub disk_gb: Option<u32>,
+    /// What happened, for people.
+    pub message: String,
+}
+
 impl SpacePower {
     /// The report for `space`, now in `state`, turned off with `control`.
     pub fn new(
@@ -762,8 +777,12 @@ impl SpacePower {
         let message = match (state, control) {
             (PowerState::Running, PowerControl::Suspend) => format!("Resumed {space}."),
             (PowerState::Running, PowerControl::Stop) => format!("Started {space}."),
-            (PowerState::Suspended, _) => format!("Suspended {space} (its memory is kept)."),
-            (PowerState::Stopped, _) => format!("Stopped {space} (its disk is kept)."),
+            (PowerState::Suspended, _) => {
+                format!("Suspended {space} (its memory is kept, and still in use).")
+            }
+            (PowerState::Stopped, _) => {
+                format!("Stopped {space} (its disk is kept; its memory is free).")
+            }
         };
         Self {
             space: space.into(),

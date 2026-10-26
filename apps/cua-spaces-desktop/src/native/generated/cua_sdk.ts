@@ -10,7 +10,7 @@
 /* eslint-disable */
 // @ts-nocheck
 import nativeModule from "./cua_sdk-ffi";
-import { type UniffiRustFutureContinuationCallback, type UniffiForeignFutureDroppedCallback, type UniffiForeignFutureDroppedCallbackStruct, type UniffiVTableCallbackInterfaceCuaSdkAudioSink, type UniffiVTableCallbackInterfaceCuaSdkBuildListener, type UniffiVTableCallbackInterfaceCuaSdkFrameSink, type UniffiVTableCallbackInterfaceCuaSdkResourcesListener, type UniffiVTableCallbackInterfaceCuaSdkSpaceCreateListener, type UniffiVTableCallbackInterfaceCuaSdkTeleportApprover,
+import { type UniffiRustFutureContinuationCallback, type UniffiForeignFutureDroppedCallback, type UniffiForeignFutureDroppedCallbackStruct, type UniffiVTableCallbackInterfaceCuaSdkAudioSink, type UniffiVTableCallbackInterfaceCuaSdkBuildListener, type UniffiVTableCallbackInterfaceCuaSdkFrameSink, type UniffiVTableCallbackInterfaceCuaSdkResourcesListener, type UniffiVTableCallbackInterfaceCuaSdkSpaceCreateListener, type UniffiVTableCallbackInterfaceCuaSdkSpacesListListener, type UniffiVTableCallbackInterfaceCuaSdkTeleportApprover,
 } from "./cua_sdk-ffi";
 import { type FfiConverter, type UniffiByteArray, type UniffiGcObject, type UniffiHandle, type UniffiObjectFactory, type UniffiReferenceHolder, type UniffiRustCallStatus, AbstractFfiConverterByteArray, FfiConverterArray, FfiConverterArrayBuffer, FfiConverterBool, FfiConverterFloat64, FfiConverterInt32, FfiConverterInt64, FfiConverterMap, FfiConverterObject, FfiConverterObjectWithCallbacks, FfiConverterOptional, FfiConverterUInt16, FfiConverterUInt32, FfiConverterUInt64, FfiConverterUInt8, RustBuffer, UniffiAbstractObject, UniffiEnum, UniffiError, UniffiInternalError, UniffiResult, UniffiRustCaller, destructorGuardSymbol, pointerLiteralSymbol, uniffiCreateFfiConverterString, uniffiCreateRecord, uniffiRustCallAsync, uniffiTraitInterfaceCall, uniffiTypeNameSymbol, variantOrdinalSymbol,
 } from "@ubjs/core";
@@ -18691,6 +18691,93 @@ const FfiConverterTypeSpaceCreateResult = (() => {
 })();
 
 /**
+ * A Space another of your computers is creating ([`SpaceList::creating`]).
+ */
+export type SpaceCreatingElsewhere = {
+    /**
+     * The computer's relay machine id.
+     */
+    machineId: string,
+    /**
+     * The computer's name.
+     */
+    machineName: string,
+    /**
+     * The Space's name.
+     */
+    name: string,
+    /**
+     * `macos`, `linux`, `windows`, or empty when unknown.
+     */
+    os: string,
+    /**
+     * The create's phase (`preparing`, `pulling`, `booting`, ...).
+     */
+    phase: string,
+    /**
+     * How far along the whole create is, 0 to 100.
+     */
+    percent: number,
+    /**
+     * When the computer published it, unix ms.
+     */
+    updatedAtMs: bigint
+}
+
+/**
+ * Generated factory for {@link SpaceCreatingElsewhere} record objects.
+ */
+export const SpaceCreatingElsewhere = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<SpaceCreatingElsewhere, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<SpaceCreatingElsewhere>,
+    });
+})();
+
+const FfiConverterTypeSpaceCreatingElsewhere = (() => {
+    type TypeName = SpaceCreatingElsewhere;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                machineId: FfiConverterString.read(from),
+                machineName: FfiConverterString.read(from),
+                name: FfiConverterString.read(from),
+                os: FfiConverterString.read(from),
+                phase: FfiConverterString.read(from),
+                percent: FfiConverterUInt32.read(from),
+                updatedAtMs: FfiConverterUInt64.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.machineId, into);
+            FfiConverterString.write(value.machineName, into);
+            FfiConverterString.write(value.name, into);
+            FfiConverterString.write(value.os, into);
+            FfiConverterString.write(value.phase, into);
+            FfiConverterUInt32.write(value.percent, into);
+            FfiConverterUInt64.write(value.updatedAtMs, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.machineId) +
+             FfiConverterString.allocationSize(value.machineName) +
+             FfiConverterString.allocationSize(value.name) +
+             FfiConverterString.allocationSize(value.os) +
+             FfiConverterString.allocationSize(value.phase) +
+             FfiConverterUInt32.allocationSize(value.percent) +
+             FfiConverterUInt64.allocationSize(value.updatedAtMs);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
  * One of a Space's displays ([`Space::displays`]).
  */
 export type SpaceDisplay = {
@@ -18865,6 +18952,91 @@ const FfiConverterTypeSpaceHotspotStatus = (() => {
 })();
 
 /**
+ * The Spaces known now ([`Spaces::list_known`]) and how far the read got.
+ */
+export type SpaceList = {
+    /**
+     * This machine's Spaces, and the account's other computers' as far as
+     * they answered (the last known ones meanwhile).
+     */
+    spaces: Array<SpaceInfo>,
+    /**
+     * Some of the account's computers have not answered yet: the list may
+     * grow, and an empty one is not "no Spaces". Always false from a
+     * daemon that predates it (it answers once every computer did).
+     */
+    incomplete: boolean,
+    /**
+     * How many computers are still being reached (0 when unknown).
+     */
+    reaching: number,
+    /**
+     * The other computers' rows are the last known ones, not yet
+     * confirmed by the relay.
+     */
+    stale: boolean,
+    /**
+     * Why the account's computers could not be read, when they could not.
+     */
+    notice: string,
+    /**
+     * Spaces your other computers are creating now, from what each
+     * published through the relay (empty from a daemon that predates it).
+     */
+    creating: Array<SpaceCreatingElsewhere>
+}
+
+/**
+ * Generated factory for {@link SpaceList} record objects.
+ */
+export const SpaceList = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<SpaceList, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<SpaceList>,
+    });
+})();
+
+const FfiConverterTypeSpaceList = (() => {
+    type TypeName = SpaceList;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                spaces: FfiConverterSequenceTypeSpaceInfo.read(from),
+                incomplete: FfiConverterBool.read(from),
+                reaching: FfiConverterUInt32.read(from),
+                stale: FfiConverterBool.read(from),
+                notice: FfiConverterString.read(from),
+                creating: FfiConverterSequenceTypeSpaceCreatingElsewhere.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterSequenceTypeSpaceInfo.write(value.spaces, into);
+            FfiConverterBool.write(value.incomplete, into);
+            FfiConverterUInt32.write(value.reaching, into);
+            FfiConverterBool.write(value.stale, into);
+            FfiConverterString.write(value.notice, into);
+            FfiConverterSequenceTypeSpaceCreatingElsewhere.write(value.creating, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterSequenceTypeSpaceInfo.allocationSize(value.spaces) +
+             FfiConverterBool.allocationSize(value.incomplete) +
+             FfiConverterUInt32.allocationSize(value.reaching) +
+             FfiConverterBool.allocationSize(value.stale) +
+             FfiConverterString.allocationSize(value.notice) +
+             FfiConverterSequenceTypeSpaceCreatingElsewhere.allocationSize(value.creating);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
  * What [`Spaces::stop`] or [`Spaces::start`] did.
  */
 export type SpacePowerReport = {
@@ -18877,8 +19049,8 @@ export type SpacePowerReport = {
      */
     state: string,
     /**
-     * How it turns off: `suspend` (its memory is kept) or `stop` (its
-     * disk is kept).
+     * How it was turned off: `suspend` (its memory is kept, and still in
+     * use) or `stop` (its disk is kept; its memory is freed).
      */
     power: string,
     /**
@@ -18998,6 +19170,79 @@ const FfiConverterTypeSpaceRelayRegistration = (() => {
              FfiConverterString.allocationSize(value.machine) +
              FfiConverterString.allocationSize(value.url) +
              FfiConverterBool.allocationSize(value.online);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * What [`Spaces::resize`] did: the shape the Space has now.
+ */
+export type SpaceResizeReport = {
+    /**
+     * The Space.
+     */
+    space: string,
+    /**
+     * vCPUs (when changed).
+     */
+    cpus?: number,
+    /**
+     * Memory in MiB (when changed).
+     */
+    memoryMb?: bigint,
+    /**
+     * Disk in GiB (when grown).
+     */
+    diskGb?: number,
+    /**
+     * What happened, for people.
+     */
+    message: string
+}
+
+/**
+ * Generated factory for {@link SpaceResizeReport} record objects.
+ */
+export const SpaceResizeReport = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<SpaceResizeReport, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<SpaceResizeReport>,
+    });
+})();
+
+const FfiConverterTypeSpaceResizeReport = (() => {
+    type TypeName = SpaceResizeReport;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                space: FfiConverterString.read(from),
+                cpus: FfiConverterOptionalUInt32.read(from),
+                memoryMb: FfiConverterOptionalUInt64.read(from),
+                diskGb: FfiConverterOptionalUInt32.read(from),
+                message: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.space, into);
+            FfiConverterOptionalUInt32.write(value.cpus, into);
+            FfiConverterOptionalUInt64.write(value.memoryMb, into);
+            FfiConverterOptionalUInt32.write(value.diskGb, into);
+            FfiConverterString.write(value.message, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.space) +
+             FfiConverterOptionalUInt32.allocationSize(value.cpus) +
+             FfiConverterOptionalUInt64.allocationSize(value.memoryMb) +
+             FfiConverterOptionalUInt32.allocationSize(value.diskGb) +
+             FfiConverterString.allocationSize(value.message);
 
         }
     };
@@ -37916,6 +38161,305 @@ const uniffiTypeSpaceObjectFactory: UniffiObjectFactory<SpaceLike> = (() => {
 const FfiConverterTypeSpace = new FfiConverterObject(uniffiTypeSpaceObjectFactory);
 
 /**
+ * Hears that the Space list changed ([`Spaces::watch_list`]). Called on an
+ * SDK worker thread; return quickly (read the list on your own queue).
+ */
+export interface SpacesListListener {
+
+/**
+ * The list changed (and once at the start): read it again.
+ * `generation` only increases while one daemon runs.
+ */
+    onChanged(generation: bigint): void;
+}
+
+
+/**
+ * Hears that the Space list changed ([`Spaces::watch_list`]). Called on an
+ * SDK worker thread; return quickly (read the list on your own queue).
+ */
+export class SpacesListListenerImpl extends UniffiAbstractObject implements SpacesListListener {
+
+    readonly [uniffiTypeNameSymbol] = "SpacesListListenerImpl";
+    readonly [destructorGuardSymbol]: UniffiGcObject;
+    readonly [pointerLiteralSymbol]: UniffiHandle;
+    // No primary constructor declared for this class.
+private constructor(pointer: UniffiHandle) {
+    super();
+    this[pointerLiteralSymbol] = pointer;
+    this[destructorGuardSymbol] = uniffiTypeSpacesListListenerImplObjectFactory.bless(pointer);
+}
+
+
+
+
+/**
+ * The list changed (and once at the start): read it again.
+ * `generation` only increases while one daemon runs.
+ */
+    onChanged(generation: bigint): void {uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => { nativeModule().uniffi_cua_sdk_fn_method_spaceslistlistener_on_changed(
+                uniffiTypeSpacesListListenerImplObjectFactory.clonePointer(this),
+        FfiConverterUInt64.lower(generation, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    );
+    }
+
+
+    uniffiDestroy(): void {
+        const ptr = (this as any)[destructorGuardSymbol];
+        if (ptr !== undefined) {
+            const pointer = uniffiTypeSpacesListListenerImplObjectFactory.pointer(this);
+            uniffiTypeSpacesListListenerImplObjectFactory.freePointer(pointer);
+            uniffiTypeSpacesListListenerImplObjectFactory.unbless(ptr);
+            delete (this as any)[destructorGuardSymbol];
+        }
+    }
+
+    static instanceOf(obj_: any): obj_ is SpacesListListenerImpl {
+        return uniffiTypeSpacesListListenerImplObjectFactory.isConcreteType(obj_);
+    }
+
+
+}
+
+const uniffiTypeSpacesListListenerImplObjectFactory: UniffiObjectFactory<SpacesListListener> = (() => {
+
+    /// <reference lib="es2021" />
+    const registry = typeof FinalizationRegistry !== 'undefined' ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
+        uniffiTypeSpacesListListenerImplObjectFactory.freePointer(heldValue);
+    }) : null;
+
+    return {
+    create(pointer: UniffiHandle): SpacesListListener {
+        const instance = Object.create(SpacesListListenerImpl.prototype);
+        instance[pointerLiteralSymbol] = pointer;
+        instance[destructorGuardSymbol] = this.bless(pointer);
+        instance[uniffiTypeNameSymbol] = "SpacesListListenerImpl";
+        return instance;
+    },
+
+
+    bless(p: UniffiHandle): UniffiGcObject {
+        const ptr = {
+            p, // make sure this object doesn't get optimized away.
+            markDestroyed: () => undefined,
+        };
+        if (registry) {
+            registry.register(ptr, p, ptr);
+        }
+        return ptr;
+    },
+
+    unbless(ptr_: UniffiGcObject) {
+        if (registry) {
+            registry.unregister(ptr_);
+        }
+    },
+
+    pointer(obj_: SpacesListListener): UniffiHandle {
+        if ((obj_ as any)[destructorGuardSymbol] === undefined) {
+            throw new UniffiInternalError.UnexpectedNullPointer();
+        }
+        return (obj_ as any)[pointerLiteralSymbol];
+    },
+
+    clonePointer(obj_: SpacesListListener): UniffiHandle {
+        const pointer = this.pointer(obj_);
+        return uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => nativeModule().uniffi_cua_sdk_fn_clone_spaceslistlistener(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
+        );
+    },
+
+    freePointer(pointer: UniffiHandle): void {
+        uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => nativeModule().uniffi_cua_sdk_fn_free_spaceslistlistener(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
+        );
+    },
+
+    isConcreteType(obj_: any): obj_ is SpacesListListener {
+        return obj_[destructorGuardSymbol] && obj_[uniffiTypeNameSymbol] === "SpacesListListenerImpl";
+    },
+}})();
+const FfiConverterTypeSpacesListListener = new FfiConverterObjectWithCallbacks(uniffiTypeSpacesListListenerImplObjectFactory);
+
+// Add a vtable for the callbacks that go in SpacesListListener.
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+const uniffiCallbackInterfaceSpacesListListener: { vtable: any; register: () => void; } = {
+    // Create the VTable using a series of closures.
+    // ts automatically converts these into C callback functions.
+    vtable: {
+        on_changed: (
+            uniffiHandle: bigint,
+            generation: bigint,) => {
+            const uniffiMakeCall =
+            ()
+            : void => {
+                const jsCallback = FfiConverterTypeSpacesListListener.lift(uniffiHandle);
+                return jsCallback.onChanged(
+                    FfiConverterUInt64.lift(generation)
+                )
+            };
+            const uniffiResult = UniffiResult.ready<void>();
+            const uniffiHandleSuccess = (obj: any) => {};
+            const uniffiHandleError = (code: number, errBuf: UniffiByteArray) => {
+                UniffiResult.writeError(uniffiResult, code, errBuf);
+            };
+            uniffiTraitInterfaceCall(
+                /*makeCall:*/ uniffiMakeCall,
+                /*handleSuccess:*/ uniffiHandleSuccess,
+                /*handleError:*/ uniffiHandleError,
+                /*lowerString:*/ FfiConverterString.lower.bind(FfiConverterString),
+                /*alloc:*/ nativeModule().rustbuffer_alloc,
+            )
+            return uniffiResult;
+        },
+        uniffi_free: (uniffiHandle: UniffiHandle): void => {
+            // this will throw a stale handle error if the handle isn't found.
+            FfiConverterTypeSpacesListListener.drop(uniffiHandle);
+        },
+        uniffi_clone: (uniffiHandle: UniffiHandle): UniffiHandle => {
+            return FfiConverterTypeSpacesListListener.clone(uniffiHandle);
+        }
+    },
+    register: () => {nativeModule().uniffi_cua_sdk_fn_init_callback_vtable_spaceslistlistener(
+            uniffiCallbackInterfaceSpacesListListener.vtable
+        );
+    },
+};
+
+/**
+ * A running [`Spaces::watch_list`]. Dropping it also stops it.
+ */
+export interface SpacesListWatchLike {
+
+/**
+ * Ends the watch. No call is made after this returns.
+ */
+    stop(): void;
+}
+/**
+ * @deprecated Use `SpacesListWatchLike` instead.
+ */
+export type SpacesListWatchInterface = SpacesListWatchLike;
+
+
+/**
+ * A running [`Spaces::watch_list`]. Dropping it also stops it.
+ */
+export class SpacesListWatch extends UniffiAbstractObject implements SpacesListWatchLike {
+
+    readonly [uniffiTypeNameSymbol] = "SpacesListWatch";
+    readonly [destructorGuardSymbol]: UniffiGcObject;
+    readonly [pointerLiteralSymbol]: UniffiHandle;
+    // No primary constructor declared for this class.
+private constructor(pointer: UniffiHandle) {
+    super();
+    this[pointerLiteralSymbol] = pointer;
+    this[destructorGuardSymbol] = uniffiTypeSpacesListWatchObjectFactory.bless(pointer);
+}
+
+
+
+
+/**
+ * Ends the watch. No call is made after this returns.
+ */
+    stop(): void {uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => { nativeModule().uniffi_cua_sdk_fn_method_spaceslistwatch_stop(
+                uniffiTypeSpacesListWatchObjectFactory.clonePointer(this),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    );
+    }
+
+
+    uniffiDestroy(): void {
+        const ptr = (this as any)[destructorGuardSymbol];
+        if (ptr !== undefined) {
+            const pointer = uniffiTypeSpacesListWatchObjectFactory.pointer(this);
+            uniffiTypeSpacesListWatchObjectFactory.freePointer(pointer);
+            uniffiTypeSpacesListWatchObjectFactory.unbless(ptr);
+            delete (this as any)[destructorGuardSymbol];
+        }
+    }
+
+    static instanceOf(obj_: any): obj_ is SpacesListWatch {
+        return uniffiTypeSpacesListWatchObjectFactory.isConcreteType(obj_);
+    }
+
+
+}
+
+const uniffiTypeSpacesListWatchObjectFactory: UniffiObjectFactory<SpacesListWatchLike> = (() => {
+
+    /// <reference lib="es2021" />
+    const registry = typeof FinalizationRegistry !== 'undefined' ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
+        uniffiTypeSpacesListWatchObjectFactory.freePointer(heldValue);
+    }) : null;
+
+    return {
+    create(pointer: UniffiHandle): SpacesListWatchLike {
+        const instance = Object.create(SpacesListWatch.prototype);
+        instance[pointerLiteralSymbol] = pointer;
+        instance[destructorGuardSymbol] = this.bless(pointer);
+        instance[uniffiTypeNameSymbol] = "SpacesListWatch";
+        return instance;
+    },
+
+
+    bless(p: UniffiHandle): UniffiGcObject {
+        const ptr = {
+            p, // make sure this object doesn't get optimized away.
+            markDestroyed: () => undefined,
+        };
+        if (registry) {
+            registry.register(ptr, p, ptr);
+        }
+        return ptr;
+    },
+
+    unbless(ptr_: UniffiGcObject) {
+        if (registry) {
+            registry.unregister(ptr_);
+        }
+    },
+
+    pointer(obj_: SpacesListWatchLike): UniffiHandle {
+        if ((obj_ as any)[destructorGuardSymbol] === undefined) {
+            throw new UniffiInternalError.UnexpectedNullPointer();
+        }
+        return (obj_ as any)[pointerLiteralSymbol];
+    },
+
+    clonePointer(obj_: SpacesListWatchLike): UniffiHandle {
+        const pointer = this.pointer(obj_);
+        return uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => nativeModule().uniffi_cua_sdk_fn_clone_spaceslistwatch(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
+        );
+    },
+
+    freePointer(pointer: UniffiHandle): void {
+        uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => nativeModule().uniffi_cua_sdk_fn_free_spaceslistwatch(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
+        );
+    },
+
+    isConcreteType(obj_: any): obj_ is SpacesListWatchLike {
+        return obj_[destructorGuardSymbol] && obj_[uniffiTypeNameSymbol] === "SpacesListWatch";
+    },
+}})();
+const FfiConverterTypeSpacesListWatch = new FfiConverterObject(uniffiTypeSpacesListWatchObjectFactory);
+
+/**
  * Receives [`ResourcesEvent`]s from [`Spaces::watch_resources`], in order.
  * Called on an SDK worker thread; return quickly.
  */
@@ -38451,6 +38995,15 @@ export interface SpacesLike {
  */
     list(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<SpaceInfo>>;
 /**
+ * The Spaces known now: this machine's at once, and the account's other
+ * computers as far as they answered within a moment ([`SpaceList`]
+ * says how far the read got). A slow or unreachable relay never holds
+ * up or fails this machine's own Spaces, so an app shows them right
+ * away and reads again while the list is incomplete. [`Spaces::list`]
+ * waits for every computer instead.
+ */
+    listKnown(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SpaceList>;
+/**
  * The Spaces MCP `tools/list` result as JSON (the contract).
  */
     listToolsJson(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<string>;
@@ -38531,6 +39084,14 @@ export interface SpacesLike {
  */
     removePrewarm(id: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<boolean>;
 /**
+ * Gives a local VM Space another shape: `cpus` vCPUs, `memory_mb` MiB
+ * of memory, a disk grown to `disk_gb` GiB (each `None` keeps it). It
+ * shuts down and boots again from its own disk (a stopped one boots),
+ * so its files stay and its memory and processes do not. Returns once
+ * it is ready again.
+ */
+    resize(space: string, cpus: number | undefined, memoryMb: bigint | undefined, diskGb: number | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SpaceResizeReport>;
+/**
  * Resolves an id, legacy id, URL or display name.
  */
     resolve(space: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SpaceInfo>;
@@ -38587,12 +39148,20 @@ export interface SpacesLike {
     start(space: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SpacePowerReport>;
 /**
  * Turns a Space off the way its provider can (`SpaceInfo.power`):
- * suspends it, keeping its memory (a local container or QEMU VM), or
- * stops it, keeping its disk (a local Lume VM; a Space one of your
- * machines provides, which that machine stops). A cloud Space, a Space
- * added by address and your own computers cannot be turned off.
+ * stops it, keeping its disk and freeing its memory (a local VM; a
+ * Space one of your machines provides, which that machine stops), or
+ * suspends it, keeping its memory (a local container that cannot
+ * stop). [`Spaces::suspend`] suspends a local container or QEMU VM on
+ * purpose. A Space added by address and your own computers cannot be
+ * turned off.
  */
     stop(space: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SpacePowerReport>;
+/**
+ * Suspends a local Space (a container or a QEMU VM), keeping its
+ * memory: it resumes where it was, and its memory stays in use until
+ * then. [`Spaces::stop`] stops it instead and frees its memory.
+ */
+    suspend(space: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SpacePowerReport>;
 /**
  * `volume_approve`: the request becomes a grant (with presence).
  */
@@ -38703,6 +39272,15 @@ export interface SpacesLike {
  * each. Needs Cua Spaces (the Cua Volume).
  */
     volumes(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<NamedVolume>>;
+/**
+ * Tells `listener` when the Space list changed: once at the start, then
+ * on every change. This computer's Spaces within a second; your other
+ * computers on the mesh within about a second of connecting or going
+ * away; the others within 10 seconds. Reopens by itself if the daemon
+ * restarts (and then calls `listener` again). Stop it with
+ * [`SpacesListWatch::stop`].
+ */
+    watchList(listener: SpacesListListener): SpacesListWatchLike;
 /**
  * The same numbers as events for `listener`: a snapshot first, then an
  * update with only the entries that changed by more than 1 point or
@@ -40032,6 +40610,46 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
+ * The Spaces known now: this machine's at once, and the account's other
+ * computers as far as they answered within a moment ([`SpaceList`]
+ * says how far the read got). A slow or unreachable relay never holds
+ * up or fails this machine's own Spaces, so an app shows them right
+ * away and reads again while the list is incomplete. [`Spaces::list`]
+ * waits for every computer instead.
+ */
+    async listKnown(asyncOpts_?: { signal: AbortSignal }): Promise<SpaceList> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_spaces_list_known(
+                    uniffiTypeSpacesObjectFactory.clonePointer(this)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeSpaceList.lift.bind(FfiConverterTypeSpaceList),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
  * The Spaces MCP `tools/list` result as JSON (the contract).
  */
     async listToolsJson(asyncOpts_?: { signal: AbortSignal }): Promise<string> /*throws*/ {
@@ -40603,6 +41221,45 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
+ * Gives a local VM Space another shape: `cpus` vCPUs, `memory_mb` MiB
+ * of memory, a disk grown to `disk_gb` GiB (each `None` keeps it). It
+ * shuts down and boots again from its own disk (a stopped one boots),
+ * so its files stay and its memory and processes do not. Returns once
+ * it is ready again.
+ */
+    async resize(space: string, cpus: number | undefined, memoryMb: bigint | undefined, diskGb: number | undefined, asyncOpts_?: { signal: AbortSignal }): Promise<SpaceResizeReport> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_spaces_resize(
+                    uniffiTypeSpacesObjectFactory.clonePointer(this),FfiConverterString.lower(space, nativeModule().rustbuffer_alloc),FfiConverterOptionalUInt32.lower(cpus, nativeModule().rustbuffer_alloc),FfiConverterOptionalUInt64.lower(memoryMb, nativeModule().rustbuffer_alloc),FfiConverterOptionalUInt32.lower(diskGb, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeSpaceResizeReport.lift.bind(FfiConverterTypeSpaceResizeReport),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
  * Resolves an id, legacy id, URL or display name.
  */
     async resolve(space: string, asyncOpts_?: { signal: AbortSignal }): Promise<SpaceInfo> /*throws*/ {
@@ -40959,10 +41616,12 @@ private constructor(pointer: UniffiHandle) {
 
 /**
  * Turns a Space off the way its provider can (`SpaceInfo.power`):
- * suspends it, keeping its memory (a local container or QEMU VM), or
- * stops it, keeping its disk (a local Lume VM; a Space one of your
- * machines provides, which that machine stops). A cloud Space, a Space
- * added by address and your own computers cannot be turned off.
+ * stops it, keeping its disk and freeing its memory (a local VM; a
+ * Space one of your machines provides, which that machine stops), or
+ * suspends it, keeping its memory (a local container that cannot
+ * stop). [`Spaces::suspend`] suspends a local container or QEMU VM on
+ * purpose. A Space added by address and your own computers cannot be
+ * turned off.
  */
     async stop(space: string, asyncOpts_?: { signal: AbortSignal }): Promise<SpacePowerReport> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -40971,6 +41630,43 @@ private constructor(pointer: UniffiHandle) {
             /*rustCaller:*/ uniffiCaller,
             /*rustFutureFunc:*/ () => {
                 return nativeModule().uniffi_cua_sdk_fn_method_spaces_stop(
+                    uniffiTypeSpacesObjectFactory.clonePointer(this),FfiConverterString.lower(space, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeSpacePowerReport.lift.bind(FfiConverterTypeSpacePowerReport),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
+ * Suspends a local Space (a container or a QEMU VM), keeping its
+ * memory: it resumes where it was, and its memory stays in use until
+ * then. [`Spaces::stop`] stops it instead and frees its memory.
+ */
+    async suspend(space: string, asyncOpts_?: { signal: AbortSignal }): Promise<SpacePowerReport> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_spaces_suspend(
                     uniffiTypeSpacesObjectFactory.clonePointer(this),FfiConverterString.lower(space, nativeModule().rustbuffer_alloc)
                 );
             },
@@ -41895,6 +42591,26 @@ private constructor(pointer: UniffiHandle) {
         }
         throw __error;
     }
+    }
+
+/**
+ * Tells `listener` when the Space list changed: once at the start, then
+ * on every change. This computer's Spaces within a second; your other
+ * computers on the mesh within about a second of connecting or going
+ * away; the others within 10 seconds. Reopens by itself if the daemon
+ * restarts (and then calls `listener` again). Stop it with
+ * [`SpacesListWatch::stop`].
+ */
+    watchList(listener: SpacesListListener): SpacesListWatchLike {
+    return FfiConverterTypeSpacesListWatch.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_sdk_fn_method_spaces_watch_list(
+                uniffiTypeSpacesObjectFactory.clonePointer(this),
+        FfiConverterTypeSpacesListListener.lower(listener, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
     }
 
 /**
@@ -43703,6 +44419,12 @@ const FfiConverterOptionalTypeEgressEnforcement = new FfiConverterOptional(FfiCo
 // FfiConverter for SpaceInfo | undefined
 const FfiConverterOptionalTypeSpaceInfo = new FfiConverterOptional(FfiConverterTypeSpaceInfo);
 
+// FfiConverter for Array<SpaceInfo>
+const FfiConverterSequenceTypeSpaceInfo = new FfiConverterArray(FfiConverterTypeSpaceInfo);
+
+// FfiConverter for Array<SpaceCreatingElsewhere>
+const FfiConverterSequenceTypeSpaceCreatingElsewhere = new FfiConverterArray(FfiConverterTypeSpaceCreatingElsewhere);
+
 // FfiConverter for Array<SpaceSentFile>
 const FfiConverterSequenceTypeSpaceSentFile = new FfiConverterArray(FfiConverterTypeSpaceSentFile);
 
@@ -43876,9 +44598,6 @@ const FfiConverterSequenceTypeGpuSupport = new FfiConverterArray(FfiConverterTyp
 
 // FfiConverter for Array<SpacesHost>
 const FfiConverterSequenceTypeSpacesHost = new FfiConverterArray(FfiConverterTypeSpacesHost);
-
-// FfiConverter for Array<SpaceInfo>
-const FfiConverterSequenceTypeSpaceInfo = new FfiConverterArray(FfiConverterTypeSpaceInfo);
 
 // FfiConverter for Array<NotificationInfo>
 const FfiConverterSequenceTypeNotificationInfo = new FfiConverterArray(FfiConverterTypeNotificationInfo);
@@ -45024,6 +45743,9 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_list() !== 27182) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_list");
     }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_list_known() !== 21083) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_list_known");
+    }
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_list_tools_json() !== 19259) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_list_tools_json");
     }
@@ -45072,6 +45794,9 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_remove_prewarm() !== 56425) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_remove_prewarm");
     }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_resize() !== 2886) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_resize");
+    }
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_resolve() !== 9986) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_resolve");
     }
@@ -45102,8 +45827,11 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_start() !== 32898) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_start");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_stop() !== 64586) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_stop() !== 59057) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_stop");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_suspend() !== 23817) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_suspend");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_volume_approve() !== 8640) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_volume_approve");
@@ -45183,8 +45911,17 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_volumes() !== 15143) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_volumes");
     }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_watch_list() !== 1499) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_watch_list");
+    }
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_watch_resources() !== 49660) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_watch_resources");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_spaceslistlistener_on_changed() !== 40063) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaceslistlistener_on_changed");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_spaceslistwatch_stop() !== 38223) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaceslistwatch_stop");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_spacesdclient_agents() !== 39176) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spacesdclient_agents");
@@ -45381,6 +46118,7 @@ function uniffiEnsureInitialized() {
     uniffiCallbackInterfaceFrameSink.register();
     uniffiCallbackInterfaceSpaceCreateListener.register();
     uniffiCallbackInterfaceTeleportApprover.register();
+    uniffiCallbackInterfaceSpacesListListener.register();
     uniffiCallbackInterfaceResourcesListener.register();
     }
 
@@ -45616,12 +46354,15 @@ export default Object.freeze({
     FfiConverterTypeSpaceCreateOptions,
     FfiConverterTypeSpaceCreateProgress,
     FfiConverterTypeSpaceCreateResult,
+    FfiConverterTypeSpaceCreatingElsewhere,
     FfiConverterTypeSpaceDisplay,
     FfiConverterTypeSpaceHotspotStatus,
     FfiConverterTypeSpaceInfo,
+    FfiConverterTypeSpaceList,
     FfiConverterTypeSpacePowerReport,
     FfiConverterTypeSpacePresence,
     FfiConverterTypeSpaceRelayRegistration,
+    FfiConverterTypeSpaceResizeReport,
     FfiConverterTypeSpaceResources,
     FfiConverterTypeSpaceSendFileOptions,
     FfiConverterTypeSpaceSendFileReport,
@@ -45644,6 +46385,8 @@ export default Object.freeze({
     FfiConverterTypeSpacesHost,
     FfiConverterTypeSpacesHostLimit,
     FfiConverterTypeSpacesHostLoad,
+    FfiConverterTypeSpacesListListener,
+    FfiConverterTypeSpacesListWatch,
     FfiConverterTypeSpacesToolMethod,
     FfiConverterTypeSpacesdCapabilities,
     FfiConverterTypeSpacesdClient,

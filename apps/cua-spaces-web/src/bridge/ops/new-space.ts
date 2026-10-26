@@ -5,7 +5,7 @@
  * The host operations New Space and "Connect a cloud" add. Each is an
  * existing Tauri command under a host-neutral name:
  *
- * - `spaces.createOptions`: `local_status`, `gpu_support`, `cloud_pricing`
+ * - `spaces.createOptions`: `local_status`, `gpu_support`
  *   and the stored experiments (the wizard's `WizardEnv` beyond Spaces,
  *   machines, settings and the session).
  * - `spaces.add`: `add_space` ("Connect by address").
@@ -34,7 +34,6 @@ import type {
   CloudTarget,
   CloudTestWire,
   GpuChoice,
-  CloudPricing,
   LocalStatus,
   NewSpaceOptions,
 } from "../contracts/new-space";
@@ -65,7 +64,7 @@ export const NEW_SPACE_OPERATIONS = [
 export const NEW_SPACE_COVERAGE = {
   "spaces.createOptions": {
     webkit: { methods: ["spaces.createOptions"] },
-    tauri: ["local_status", "gpu_support", "cloud_pricing"],
+    tauri: ["local_status", "gpu_support"],
   },
   "spaces.add": { webkit: { methods: ["spaces.add"] }, tauri: ["add_space"] },
   "clouds.status": { webkit: { methods: ["clouds.status"] }, tauri: ["cloud_tool"] },
@@ -92,12 +91,11 @@ export function newSpaceTauriOps(invoke: Invoke, readUi: (key: string) => string
   const tool = <T>(name: string, args: Record<string, unknown>) => invoke<T>("cloud_tool", { tool: name, args });
   return {
     "spaces.createOptions": async () => {
-      const [local, gpus, cloudPricing] = await Promise.all([
+      const [local, gpus] = await Promise.all([
         invoke<LocalStatus | null>("local_status").catch(() => null),
         invoke<GpuChoice[] | null>("gpu_support").catch(() => null),
-        invoke<CloudPricing | null>("cloud_pricing").catch(() => null),
       ]);
-      return { local: local ?? null, gpus: gpus ?? null, cloudPricing: cloudPricing ?? null, experiments: readExperiments(readUi(EXPERIMENTS_KEY)), maxCpus: null };
+      return { local: local ?? null, gpus: gpus ?? null, experiments: readExperiments(readUi(EXPERIMENTS_KEY)), maxCpus: null };
     },
     "spaces.add": ({ url, token, name }) => invoke<SpaceRow>("add_space", { url, token: token || null, name: name || null }),
     "clouds.status": async () => (await tool<CloudStatusWire | null>("cloud_status", {})) ?? { providers: [] },

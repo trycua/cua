@@ -474,7 +474,7 @@ def test_git_writes_github_output(repo, monkeypatch, tmp_path):
 
 # --- ci-gate counts a skipped run as passed ------------------------------------
 
-GATE_SCRIPT = GATE["jobs"]["ci-gate"]["steps"][0]["run"]
+GATE_SCRIPT = next(s["run"] for s in GATE["jobs"]["ci-gate"]["steps"] if s.get("name", "").startswith("Wait for every other workflow"))
 
 
 def run_gate(rows, jobs):

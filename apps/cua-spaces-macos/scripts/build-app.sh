@@ -12,7 +12,7 @@
 # (the app installs it onto PATH on first launch, like the Tauri app's
 # sidecar), Sparkle.framework (the updater, from the pinned SwiftPM
 # artifact, with its XPC services) in Contents/Frameworks and the
-# third-party notices (Settings, About, Acknowledgements), the host
+# third-party notices (THIRD_PARTY_NOTICES.md in Resources), the host
 # service (the pinned cua-spacesd from scripts/fetch-spacesd.sh, or
 # $CUA_SPACESD_BIN, in Contents/Helpers; the app's own executable runs it as
 # its login item, whose SMAppService plist is in
@@ -122,6 +122,11 @@ app="$out/$app_name.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$app/Contents/Frameworks"
 cp "$here/Support/Info.plist" "$app/Contents/Info.plist"
+# Crash reporting (CrashReporting.swift): the public DSN from the shared
+# config. An empty or missing dsn writes an empty key, which turns it off.
+crash_dsn="$(plutil -extract dsn raw -o - "$here/../../config/spaces-crash-reporting.json" 2>/dev/null || true)"
+/usr/libexec/PlistBuddy -c "Delete :CuaCrashDSN" "$app/Contents/Info.plist" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Add :CuaCrashDSN string $crash_dsn" "$app/Contents/Info.plist"
 if [ "$channel" = local ]; then
   # Another identity, no updater, staging, its own home, helper and URL
   # scheme. Nothing here may reach an installed Cua Spaces: see

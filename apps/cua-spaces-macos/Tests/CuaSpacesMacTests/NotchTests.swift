@@ -60,7 +60,7 @@ struct NotchTests {
     /// The debug start's highlight names one control.
     @Test func highlightParses() {
         #expect(NotchHighlight.parse("tile", firstTile: "local:aurora") == NotchHighlight(.tile("local:aurora")))
-        #expect(NotchHighlight.parse("tile=cloud:x:pressed", firstTile: nil) == NotchHighlight(.tile("cloud:x"), pressed: true))
+        #expect(NotchHighlight.parse("tile=direct:x:pressed", firstTile: nil) == NotchHighlight(.tile("direct:x"), pressed: true))
         #expect(NotchHighlight.parse("settings:pressed", firstTile: nil) == NotchHighlight(.button(.settings), pressed: true))
         #expect(NotchHighlight.parse("list", firstTile: nil) == NotchHighlight(.button(.list)))
         #expect(NotchHighlight.parse("search", firstTile: nil) == NotchHighlight(.search))
@@ -592,14 +592,5 @@ struct LaunchTests {
         #expect(!defaults.bool(forKey: "ApplePersistenceIgnoreState"))
         CuaSpacesMacApp.ignoreSavedWindowState(defaults)
         #expect(defaults.bool(forKey: "ApplePersistenceIgnoreState"))
-    }
-
-    /// With New UI on, or the first run due (it is the web UI's onboarding),
-    /// a launch opens the New UI window, not the native main window.
-    @Test func newUIOrAFirstRunOpensItsWindowAtLaunchInsteadOfTheMainWindow() {
-        #expect(CuaSpacesMacApp.opensWebUIAtLaunch(webUi: true, onboarded: true))
-        #expect(CuaSpacesMacApp.opensWebUIAtLaunch(webUi: true, onboarded: false))
-        #expect(!CuaSpacesMacApp.opensWebUIAtLaunch(webUi: false, onboarded: true))
-        #expect(CuaSpacesMacApp.opensWebUIAtLaunch(webUi: false, onboarded: false))
     }
 }

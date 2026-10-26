@@ -9,7 +9,7 @@ import { BridgeContext } from "./BridgeProvider";
 import type { CoreClient } from "./core";
 import type { CloudConnectAction, CloudConnectView, CloudTarget, RuntimeFix, RuntimeSwitch, WizardAction, WizardEnv, WizardView } from "./contracts/new-space";
 import type { Space, SpaceOs } from "./contracts/spaces";
-import { useMachines, useSession, useSettings, useSpaces } from "./hooks";
+import { useMachines, useSettings, useSpaces } from "./hooks";
 import { newPendingId } from "./store";
 import {
   CLOSED_NEW_SPACE,
@@ -39,7 +39,6 @@ function useNewSpaceEnv(): { core: CoreClient; env: WizardEnv; s: NewSpaceSessio
   if (!ctx) throw new Error("bridge hooks need a <BridgeProvider> above them");
   const s = useSyncExternalStore(subscribe, read, read);
   const { data: settings } = useSettings();
-  const { data: sessionData } = useSession();
   const { data: machines } = useMachines();
   const core = ctx.core;
   const env =
@@ -49,10 +48,9 @@ function useNewSpaceEnv(): { core: CoreClient; env: WizardEnv; s: NewSpaceSessio
           options: s.options,
           clouds: s.clouds,
           defaultLocation: settings?.values.defaultLocation,
-          cloudAvailable: Boolean(sessionData?.fleet.configured),
           machines,
         })
-      : ({ defaultLocation: "local", cloudAvailable: false, localAvailable: true, maxCpus: 8 } as WizardEnv));
+      : ({ defaultLocation: "local", localAvailable: true, maxCpus: 8 } as WizardEnv));
   return { core, env, s };
 }
 

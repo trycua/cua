@@ -28,18 +28,18 @@ import type {
   CancelOutcome,
   DaemonStatus,
   DefaultLocation,
-  FleetStatus,
+  AccountStatus,
   HostStatus,
   MachineRow,
   OnboardingState,
   SignInStart,
   SpacePowerReport,
   TelemetryView,
+  CrashReportingConfig,
 } from "./host";
 import type { KeyvaultOverview, KvGrant } from "./keyvault";
 import type {
   CloudCheckWire,
-  CloudPricing,
   CloudProviderWire,
   CloudTestWire,
   ConnectedCloud,
@@ -54,7 +54,7 @@ import type {
 import type { NotificationInput } from "./notifications";
 import type { AboutInput, DriveCheckInput, DriveStorageInput, LoginItemReport, StorageInput, UpdateState } from "./settings";
 import type { ShareEntry, ShareRemoval } from "./share";
-import type { CreateFix, SpaceProgress, SpaceRow } from "./spaces";
+import type { CreateFix, CreatingElsewhere, SpaceProgress, SpaceRow } from "./spaces";
 import type { CatalogEntry, ConsentItem, KvDomainCount, KvInventory, OpenWindow, PlanStep, RemoteWindow, RunReport, TeleportPlan } from "./teleport";
 import type { AgentSetupOutcome, DriveGrantInput, DriveMountInput, DriveRequestInput, Experiments, VolumeOverview } from "./volume";
 import type { AgentKeysReport } from "../ops/agent-keys";
@@ -154,7 +154,7 @@ const SpaceRowShape = ref(
     id: str,
     hostProgress: opt(SpaceProgressShape),
     name: str,
-    provider: oneOf("cloud", "local", "direct", "relay"),
+    provider: oneOf("local", "direct", "relay"),
     spacesdVersion: str,
     features: strings,
     addedAt: opt(str),
@@ -252,15 +252,11 @@ const MachineRowShape = ref(
 const SessionShape = ref(
   "SessionSnapshot",
   obj<SessionSnapshot>()({
-    fleet: obj<FleetStatus>()({
+    account: obj<AccountStatus>()({
       configured: bool,
       authMode: oneOf("user", "client-credentials", "static-token", "none"),
-      baseUrl: str,
-      tokenUrl: str,
       clientId: opt(str),
       identity: opt(str),
-      namespaces: opt(strings),
-      probeError: opt(str),
     }),
     onboarding: obj<OnboardingState>()({
       completed: bool,
@@ -487,6 +483,18 @@ const LinkNoticeShape = ref(
   }),
 );
 
+const CrashReportingConfigShape = ref(
+  "CrashReportingConfig",
+  obj<CrashReportingConfig>()({
+    allowed: bool,
+    dsn: str,
+    release: str,
+    environment: str,
+    shell: str,
+    crashTest: opt(oneOf("ui")),
+  }),
+);
+
 /* ---- New Space ------------------------------------------------------------- */
 
 const StorageVolumeShape = obj<StorageVolume>()({ availableBytes: num, totalBytes: num, name: str });
@@ -505,7 +513,6 @@ const GpuShape = ref(
   "GpuChoice",
   obj<GpuChoice>()({ runtime: str, id: str, label: str, experimental: bool, supported: bool, reason: optNull(str), learnMore: optNull(str) }),
 );
-const PricingShape = ref("CloudPricing", obj<CloudPricing>()({ vcpuHourUsd: num, memoryGibHourUsd: num }));
 const LocalStatusShape = ref(
   "LocalStatus",
   obj<LocalStatus>()({
@@ -527,15 +534,13 @@ const LocalStatusShape = ref(
 const WizardEnvShape = ref(
   "WizardEnv",
   obj<WizardEnv>()({
-    defaultLocation: oneOf("cloud", "local", "yours", "host"),
-    cloudAvailable: bool,
+    defaultLocation: oneOf("local", "yours", "host"),
     localAvailable: bool,
     localReason: optNull(str),
     localBackends: optNull(strings),
     maxCpus: num,
     hostArch: optNull(str),
     storage: optNull(LocalStorageShape),
-    cloudPricing: optNull(PricingShape),
     clouds: opt(
       list(
         obj<ConnectedCloud>()({
@@ -558,7 +563,6 @@ const createOptions = (strict: boolean) =>
   obj<NewSpaceOptions>()({
     local: strict ? LocalStatusShape : nullable(LocalStatusShape),
     gpus: nullable(list(GpuShape)),
-    cloudPricing: nullable(PricingShape),
     experiments: ExperimentsShape,
     maxCpus: nullable(num),
     // The SwiftUI host's wizard runs on its env: there it is required.
@@ -909,6 +913,7 @@ export const OP_SHAPES: Record<OpName, Schema> = {
       createdAt: nullable(num),
       phase: str,
       turn: num,
+      needsYou: optNull(obj<{ title: string; detail: string }>()({ title: str, detail: str })),
     }),
   ),
   "agents.events": obj<AgentEventsPage>()({
@@ -919,6 +924,8 @@ export const OP_SHAPES: Record<OpName, Schema> = {
     cursor: num,
     caught_up: bool,
   }),
+  "agents.start": object({ run_id: str, agent: str }),
+  "agents.message": object({ delivered: bool, run_id: str, status: oneOf("running", "idle", "failed", "crashed", "unknown"), phase: str }),
   "agents.pause": nul,
   "agents.resume": nul,
   "agents.setup": agentSetupRows,
@@ -1116,6 +1123,7 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "telemetry.track": nul,
   "telemetry.linkNotice": nullable(LinkNoticeShape),
   "telemetry.acknowledgeLinkNotice": nul,
+  "crashReporting.config": CrashReportingConfigShape,
   "spaces.usage": nullable(
     obj<SpaceUsage>()({ memoryUsed: num, memoryTotal: num, memoryLimited: bool, diskUsed: num, diskTotal: num, diskLimited: bool }),
   ),
@@ -1170,6 +1178,12 @@ const WkHostShape = ref(
   }),
 );
 
+/** `spaces.list`'s Spaces your other computers are creating (CUA-2349). */
+const CreatingElsewhereShape = ref(
+  "CreatingElsewhere",
+  obj<CreatingElsewhere>()({ machineId: str, machineName: str, name: str, os: str, phase: str, percent: num }),
+);
+
 const WkSpaceShape = ref(
   "WkSpace",
   obj<WkSpace>()({
@@ -1180,7 +1194,7 @@ const WkSpaceShape = ref(
     detail: str,
     lastUsedAt: num,
     startedAt: optNull(num),
-    provider: optNull(oneOf("cloud", "local", "direct", "relay")),
+    provider: optNull(oneOf("local", "direct", "relay")),
     sdk: optNull(object({ features: strings, spacesdVersion: str, reachable: bool, error: optNull(str) })),
     osName: optNull(str),
     osPrettyName: optNull(str),
@@ -1200,7 +1214,7 @@ const WkSpaceShape = ref(
 
 const WkSpacesShape = ref(
   "WkSpaces",
-  obj<WkSpaces>()({ loaded: bool, selectedId: nullable(str), spaces: list(object({ space: WkSpaceShape, deleting: bool })), rosterError: optNull(str), daemonNotice: optNull(str) }),
+  obj<WkSpaces>()({ loaded: bool, selectedId: nullable(str), spaces: list(object({ space: WkSpaceShape, deleting: bool })), rosterError: optNull(str), daemonNotice: optNull(str), incomplete: opt(bool), reaching: opt(num), stale: opt(bool), creatingElsewhere: opt(list(CreatingElsewhereShape)) }),
 );
 
 const WkSessionShape = ref(
@@ -1369,6 +1383,8 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "agents.list": OP_SHAPES["agents.list"],
   "agents.runs": OP_SHAPES["agents.runs"],
   "agents.events": OP_SHAPES["agents.events"],
+  "agents.start": OP_SHAPES["agents.start"],
+  "agents.message": OP_SHAPES["agents.message"],
   "agents.pause": any,
   "agents.resume": any,
   "agents.setup": agentSetupRows,
@@ -1442,6 +1458,7 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "telemetry.track": nul,
   "telemetry.linkNotice": nullable(LinkNoticeShape),
   "telemetry.acknowledgeLinkNotice": nul,
+  "crashReporting.config": CrashReportingConfigShape,
   "spaces.usage": OP_SHAPES["spaces.usage"],
   "spaces.windows": OP_SHAPES["spaces.windows"],
   "stream.pip": strings,

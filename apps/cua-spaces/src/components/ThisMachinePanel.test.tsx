@@ -20,7 +20,7 @@ import { notchActivity } from "../model/notch";
 import { rowToSpace } from "../model/spaces";
 import { createFallbackBridge } from "../native/bridge";
 import { createFakeHostBridge, unconfiguredStatus, type HostStatus } from "../native/host";
-import { fakeFleetBridge } from "../test/fakeFleet";
+import { fakeSpacesBridge } from "../test/fakeSpacesBridge";
 import { ThisMachinePanel } from "./ThisMachinePanel";
 
 const sharing: HostStatus = {
@@ -87,7 +87,6 @@ describe("host model", () => {
     );
     expect(space.provider).toBe("relay");
     expect(space.detail).toBe("My computers · via relay");
-    expect(space.fleetId).toBe("relay");
   });
 });
 
@@ -217,7 +216,7 @@ describe("roster", () => {
   it("always lists This machine in the live roster, next to relay machines", async () => {
     const user = userEvent.setup();
     const host = createFakeHostBridge({ status: sharing, onboarding: { completed: true } });
-    const fleet = fakeFleetBridge({
+    const spacesBridge = fakeSpacesBridge({
       isNative: true,
       listSpaces: async () => [
         {
@@ -231,7 +230,7 @@ describe("roster", () => {
         },
       ],
     });
-    render(<App bridge={createFallbackBridge("notched")} fleet={fleet} host={host} now={() => FIXTURE_NOW} />);
+    render(<App bridge={createFallbackBridge("notched")} spacesBridge={spacesBridge} host={host} now={() => FIXTURE_NOW} />);
     await user.click(await screen.findByRole("button", { name: /Spaces/ }));
     const listbox = await screen.findByRole("listbox");
     await waitFor(() => {

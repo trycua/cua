@@ -9,10 +9,6 @@ use cua_driver_core::browser::{
 
 use crate::atspi::AtspiNode;
 
-fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefusal {
-    BrowserRefusal::new(code, message)
-}
-
 fn normalized_text(node: &AtspiNode) -> String {
     [
         node.name.as_deref(),
@@ -125,7 +121,7 @@ fn exact_prompt_button(
     match matches.as_slice() {
         [] => Ok(None),
         [(index, ..)] => Ok(Some(*index)),
-        _ => Err(refusal(
+        _ => Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             format!("multiple exact {label} actions matched the browser consent prompt"),
         )
@@ -167,7 +163,7 @@ fn prove_window_owner(pid: u32, window_id: u64) -> Result<(), BrowserRefusal> {
         .into_iter()
         .any(|window| window.xid == window_id);
     if !owned {
-        return Err(refusal(
+        return Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserBindingStale,
             "the approved browser window changed ownership before consent",
         ));
@@ -229,7 +225,7 @@ fn walked_node(nodes: &[AtspiNode], index: usize) -> Result<AtspiNode, BrowserRe
         .find(|node| node.element_index == Some(index))
         .cloned()
         .ok_or_else(|| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 "the exact browser consent control left its walk",
             )
@@ -248,21 +244,21 @@ pub fn dismiss(pid: u32, window_id: u64) -> Result<bool, BrowserRefusal> {
             return Ok(dismissed);
         }
         let index = exact_cancel_button(&tree.nodes, &tree.bounds)?.ok_or_else(|| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 "the exact remote-debugging consent prompt exposed no semantic cancel action",
             )
         })?;
         let node = walked_node(&tree.nodes, index)?;
         crate::atspi::perform_action_walked(pid, window_id, &node).map_err(|error| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 format!("the exact browser consent cancel action failed: {error}"),
             )
         })?;
         dismissed = true;
         if Instant::now() >= deadline {
-            return Err(refusal(
+            return Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 "the remote-debugging consent prompt remained after its exact cancel action",
             ));
@@ -273,7 +269,7 @@ pub fn dismiss(pid: u32, window_id: u64) -> Result<bool, BrowserRefusal> {
 
 fn check_deadline(deadline: Instant) -> Result<(), BrowserRefusal> {
     if Instant::now() >= deadline {
-        return Err(refusal(
+        return Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             "Chromium remote-debugging consent did not settle within its bounded attempt",
         ));
@@ -292,7 +288,7 @@ async fn consent_action<T: Send + 'static>(
         tokio::task::spawn_blocking(move || {
             check_deadline(deadline)?;
             operation().map_err(|error| {
-                refusal(
+                BrowserRefusal::new(
                     BrowserRefusalCode::BrowserWrongTargetRefused,
                     format!("the exact browser consent action failed: {error}"),
                 )
@@ -300,7 +296,7 @@ async fn consent_action<T: Send + 'static>(
         })
     });
     let result = worker.await.map_err(|error| {
-        refusal(
+        BrowserRefusal::new(
             BrowserRefusalCode::BrowserRouteUnavailable,
             format!("could not dispatch the exact browser consent action: {error}"),
         )
@@ -314,7 +310,7 @@ pub async fn handle(
     request: BrowserConsentRequest,
 ) -> Result<BrowserConsentOutcome, BrowserRefusal> {
     let pid = u32::try_from(request.pid).map_err(|_| {
-        refusal(
+        BrowserRefusal::new(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             "the approved browser pid is outside the Linux process-id range",
         )
@@ -332,7 +328,7 @@ pub async fn handle(
             tokio::task::spawn_blocking(move || crate::atspi::walk_tree(pid, window_id, None))
                 .await
                 .map_err(|error| {
-                    refusal(
+                    BrowserRefusal::new(
                         BrowserRefusalCode::BrowserRouteUnavailable,
                         format!("could not inspect the browser consent UI: {error}"),
                     )
@@ -366,7 +362,7 @@ pub async fn handle(
                 if accessibility_action_at.is_some() {
                     return Ok(BrowserConsentOutcome::Accepted);
                 }
-                return Err(refusal(
+                return Err(BrowserRefusal::new(
                     BrowserRefusalCode::BrowserConsentRevoked,
                     "the person dismissed the browser consent prompt",
                 ));

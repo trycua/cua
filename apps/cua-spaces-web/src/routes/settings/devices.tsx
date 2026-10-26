@@ -13,6 +13,8 @@ import { Input } from "@/components/ui/input";
 import { Menu } from "@/components/ui/menu";
 import { deviceKind, devicesPageState, relativeText, rowDetail, thisDeviceText } from "@/lib/devices";
 import { thisComputerLabel } from "@/lib/host-labels";
+import { plainDevice, plainDeviceSentence } from "@/lib/settings-copy";
+import { ScreenPermissionsSection } from "@/components/settings/screen-permissions-section";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/settings/devices")({ component: DevicesPage });
@@ -21,7 +23,7 @@ export const Route = createFileRoute("/settings/devices")({ component: DevicesPa
 const SIGNED_OUT = "Sign in to Cua to see the devices that can reach your computers.";
 
 /**
- * Settings, Devices: this device's enrollment, new machines to confirm, the
+ * Settings, Trusted devices: this computer's trust, new machines to confirm, the
  * account's devices (Approve, Deny, Rename, Revoke) and Recent Access, then
  * the enroll and approval sheets. Everything shown is the app core's
  * `devices::devices_view`, as in the SwiftUI app's `DevicesSettingsView`.
@@ -50,8 +52,8 @@ function DevicesPage() {
   const labels = v.labels;
 
   return (
-    <div data-devices>
-      <Group title={labels.thisDevice}>
+    <div data-devices data-settings-tab="devices">
+      <Group title={plainDevice(labels.thisDevice)}>
         <div className="flex min-h-12 items-center justify-between gap-4 px-4 py-2.5">
           <div className="flex min-w-0 items-center gap-2.5">
             <LaptopIcon className="size-4 shrink-0 text-muted-foreground" strokeWidth={1.75} />
@@ -62,11 +64,11 @@ function DevicesPage() {
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <span data-this-device-status={v.thisDevice.kind} className={cn("text-[13px]", v.thisDevice.kind === "enrolled" ? "text-muted-foreground" : "text-warning")}>
-              {thisDeviceText(v.thisDevice)}
+              {plainDevice(thisDeviceText(v.thisDevice))}
             </span>
             {v.thisDevice.actionLabel ? (
               <Button size="sm" variant="outline" onClick={devices.startEnroll} data-this-device-enroll>
-                {v.thisDevice.actionLabel}
+                {plainDevice(v.thisDevice.actionLabel)}
               </Button>
             ) : null}
           </div>
@@ -75,13 +77,13 @@ function DevicesPage() {
           // What it means, under the row (its one Enroll… is the row's), as
           // the SwiftUI app's Devices settings have it.
           <p data-devices-banner={v.banner.tone} className="px-4 py-2.5 text-xs text-muted-foreground">
-            <span data-banner-text>{v.banner.text}</span>
+            <span data-banner-text>{plainDeviceSentence(v.banner.text)}</span>
           </p>
         ) : null}
       </Group>
 
       {v.unconfirmedMachines.length > 0 ? (
-        <Group title={labels.newMachines}>
+        <Group title={plainDevice(labels.newMachines)}>
           {v.unconfirmedMachines.map((m) => (
             <div key={m.id} data-unconfirmed-machine={m.id} className="flex min-h-11 items-center gap-2.5 px-4 py-2">
               <CircleHelpIcon className="size-4 shrink-0 text-warning" />
@@ -95,7 +97,7 @@ function DevicesPage() {
       ) : null}
 
       {v.rows.length > 0 ? (
-        <Group title={labels.devices}>
+        <Group title={plainDevice(labels.devices)}>
           {v.rows.map((r) => (
             <DeviceLine
               key={r.id}
@@ -112,8 +114,8 @@ function DevicesPage() {
         </Group>
       ) : null}
 
-      <Group title={labels.recent} data-recent>
-        {v.recent.length === 0 ? <div className="px-4 py-3 text-[13px] text-muted-foreground">{labels.recentEmpty}</div> : null}
+      <Group title={plainDevice(labels.recent)} data-recent>
+        {v.recent.length === 0 ? <div className="px-4 py-3 text-[13px] text-muted-foreground">{plainDevice(labels.recentEmpty)}</div> : null}
         {v.recent.map((a, i) => (
           <div key={`${a.ts}-${i}`} data-recent-row className="flex min-h-10 items-center justify-between gap-4 px-4 py-2">
             <span className="flex min-w-0 items-center gap-2 text-[13px]">
@@ -123,7 +125,7 @@ function DevicesPage() {
                 </span>
               ) : null}
               <span className="truncate" data-recent-text>
-                {a.text}
+                {plainDeviceSentence(a.text)}
               </span>
             </span>
             <span className="shrink-0 text-xs text-muted-foreground">{relativeText(a.ts, data.now)}</span>
@@ -135,11 +137,13 @@ function DevicesPage() {
       {data.input.readError && v.thisDevice.kind === "enrolled" ? (
         // The relay refused to list them (this device is not enrolled):
         // its words, under the page, as the SwiftUI app shows them.
-        <p data-devices-read-error className="-mt-4 mb-7 px-1 text-xs break-words text-destructive">
+        <p data-devices-read-error className="-mt-4 mb-8 px-1 text-xs break-words text-destructive">
           {data.input.readError}
         </p>
       ) : null}
       {data.actionError ? <p className="-mt-4 px-1 text-xs text-destructive">{data.actionError}</p> : null}
+
+      <ScreenPermissionsSection />
 
       <EnrollSheet />
       <ApproveSheet />
@@ -147,17 +151,17 @@ function DevicesPage() {
       <ConfirmDialog
         open={revoking?.revokeConfirm != null}
         onOpenChange={(o) => !o && setRevoking(null)}
-        title={revoking?.revokeConfirm?.title ?? ""}
-        description={revoking?.revokeConfirm?.message ?? ""}
-        confirmLabel={revoking?.revokeConfirm?.confirmLabel ?? labels.revoke}
+        title={plainDeviceSentence(revoking?.revokeConfirm?.title ?? "")}
+        description={plainDeviceSentence(revoking?.revokeConfirm?.message ?? "")}
+        confirmLabel={plainDevice(revoking?.revokeConfirm?.confirmLabel ?? labels.revoke)}
         destructive
         onConfirm={() => revoking && void devices.revoke(revoking.id)}
       />
       <ConfirmDialog
         open={confirming !== null}
         onOpenChange={(o) => !o && setConfirming(null)}
-        title={confirming?.confirm.title ?? ""}
-        description={confirming?.confirm.message ?? ""}
+        title={plainDeviceSentence(confirming?.confirm.title ?? "")}
+        description={plainDeviceSentence(confirming?.confirm.message ?? "")}
         confirmLabel={confirming?.confirm.confirmLabel ?? labels.confirmMachine}
         onConfirm={() => confirming && void devices.confirmMachine(confirming.id)}
       />
@@ -188,7 +192,7 @@ function Retry({ children, onRetry, ...rest }: { children: React.ReactNode; onRe
 
 function Group({ title, children, ...rest }: { title: string; children: React.ReactNode } & Record<`data-${string}`, unknown>) {
   return (
-    <section className="mb-7" {...rest}>
+    <section className="mb-8" {...rest}>
       <h2 className="mb-2 px-1 text-xs font-semibold text-muted-foreground">{title}</h2>
       <div className="divide-y overflow-hidden rounded-xl border bg-card shadow-xs">{children}</div>
     </section>
@@ -219,7 +223,7 @@ function DeviceLine({
   const Icon = ICONS[deviceKind(r.platform)];
   const menu = [
     ...(r.actions.includes("rename") ? [{ label: labels.rename, onSelect: onRename }] : []),
-    ...(r.actions.includes("revoke") ? [{ label: labels.revoke, onSelect: onRevoke, destructive: true }] : []),
+    ...(r.actions.includes("revoke") ? [{ label: plainDevice(labels.revoke), onSelect: onRevoke, destructive: true }] : []),
   ];
   return (
     <div data-device-row={r.id} className="flex min-h-14 items-center gap-3 px-4 py-2.5">
@@ -229,7 +233,7 @@ function DeviceLine({
           {r.title}
         </div>
         <div className="truncate text-xs text-muted-foreground" data-device-detail>
-          {rowDetail(r, labels, now)}
+          {plainDevice(rowDetail(r, labels, now))}
         </div>
       </div>
       {r.actions.includes("approve") ? (
@@ -267,9 +271,9 @@ function EnrollSheet() {
           <>
             <div className="px-5 pt-5 pb-4">
               <DialogTitle className="text-[15px] font-semibold" data-enroll-title>
-                {v.title}
+                {plainDeviceSentence(v.title)}
               </DialogTitle>
-              <p className="mt-1.5 text-[13px] text-muted-foreground">{v.lede}</p>
+              <p className="mt-1.5 text-[13px] text-muted-foreground">{plainDeviceSentence(v.lede)}</p>
               {v.options.length > 0 ? (
                 <div className="mt-4 flex flex-col gap-2">
                   {v.options.map((o) => (
@@ -282,8 +286,8 @@ function EnrollSheet() {
                     >
                       {o.method === "sign-in" ? <UserRoundIcon className="size-5 text-muted-foreground" /> : <HashIcon className="size-5 text-muted-foreground" />}
                       <span className="min-w-0">
-                        <span className="block text-[13px] font-medium">{o.title}</span>
-                        <span className="block text-xs text-muted-foreground">{o.detail}</span>
+                        <span className="block text-[13px] font-medium">{plainDeviceSentence(o.title)}</span>
+                        <span className="block text-xs text-muted-foreground">{plainDeviceSentence(o.detail)}</span>
                       </span>
                     </button>
                   ))}
@@ -340,10 +344,10 @@ function ApproveSheet() {
           >
             <div className="px-5 pt-5 pb-4">
               <DialogTitle className="text-[15px] font-semibold" data-approve-title>
-                {v.title}
+                {plainDeviceSentence(v.title)}
               </DialogTitle>
               <p className="mt-1.5 text-[13px] text-muted-foreground" data-approve-message>
-                {v.message}
+                {plainDeviceSentence(v.message)}
               </p>
               {v.needsCode ? (
                 <Input

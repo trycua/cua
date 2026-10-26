@@ -32,6 +32,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import desktop_runtime as desktop
+
 HERE = Path(__file__).resolve().parent
 # WORK holds everything the harness creates or downloads: the private Cua Driver install, the Codex MCP config,
 # the spend ledger, the HOLD file and the run folders. CDB_BENCH_WORK overrides it.
@@ -119,6 +121,7 @@ class CuaBuild:
         tuple[str, str], ...
     ] = ()  # Amendment 6: extra daemon + MCP env (the script flag)
     prompt_addendum: str | None = None  # Amendment 6: text appended to the system prompt
+    executable: Path | None = None
 
     @property
     def binary_pin(self) -> str:
@@ -128,7 +131,7 @@ class CuaBuild:
 
     @property
     def bin(self) -> Path:
-        return self.app / "Contents/MacOS/cua-driver"
+        return self.executable or self.app / "Contents/MacOS/cua-driver"
 
     @property
     def home(self) -> Path:
@@ -376,12 +379,7 @@ def load_pins() -> dict[str, Any]:
 
 def cua_env(home: Path) -> dict[str, str]:
     """Environment of the Cua Driver daemon and of its MCP client: own HOME, telemetry off."""
-    return {
-        "HOME": str(home),
-        "PATH": "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin",
-        "CUA_DRIVER_RS_TELEMETRY_ENABLED": "false",
-        "DO_NOT_TRACK": "1",  # the main build's shared telemetry crate also honours this (Amendment 3)
-    }
+    return desktop.desktop_env(home)
 
 
 def resolve_codex_cu_config(explicit: Path | None = None) -> Path | None:
@@ -580,15 +578,7 @@ def cua_health(
     socket: str = AGENT_SOCKET, home: Path | None = None, binary: Path | None = None
 ) -> dict[str, Any]:
     """Daemon-reported build (version, exe sha256, git sha) from the live daemon via health_report."""
-    try:
-        done = cua_cli(
-            "call", "health_report", "{}", socket=socket, home=home, timeout=30, binary=binary
-        )
-        data = json.loads(done.stdout[done.stdout.index("{") :])
-        checks = {c.get("name"): c.get("status") for c in data.get("checks", [])}
-        return {"ok": done.returncode == 0, "build": data.get("build", {}), "checks": checks}
-    except (OSError, ValueError, subprocess.TimeoutExpired) as error:
-        return {"ok": False, "error": f"{type(error).__name__}: {error}"}
+    return desktop.cua_health(binary or CUA_BIN, socket, home or CUA_STATE / "home")
 
 
 def stop_cua_daemon(socket: str, home: Path, binary: Path | None = None) -> None:
@@ -609,36 +599,14 @@ def start_cua_daemon(
     env_extra: dict[str, str] | None = None,
 ) -> subprocess.Popen[bytes]:
     """Private daemon of the release under test: own socket, own HOME, telemetry off."""
-    binary = binary or CUA_BIN
-    home = state_dir / "home"
-    home.mkdir(parents=True, exist_ok=True)
-    try:
-        os.unlink(socket)
-    except OSError:
-        pass
-    args = [str(binary), "serve", "--socket", socket, "--dangerously-bypass-approvals"]
-    if not overlay:
-        args.append("--no-overlay")
-    log = (state_dir / log_name).open("ab")
-    proc = subprocess.Popen(
-        args,
-        env={**cua_env(home), **(env_extra or {})},
-        stdin=subprocess.DEVNULL,
-        stdout=log,
-        stderr=log,
-        start_new_session=True,
+    return desktop.start_driver(
+        binary or CUA_BIN,
+        socket,
+        state_dir,
+        overlay=overlay,
+        log_name=log_name,
+        env_extra=env_extra,
     )
-    deadline = time.monotonic() + 30
-    while time.monotonic() < deadline:
-        if proc.poll() is not None:
-            raise RuntimeError(
-                f"Cua Driver daemon exited early (rc={proc.returncode}); see {state_dir / log_name}"
-            )
-        done = _run([str(binary), "status", "--socket", socket], env=cua_env(home), timeout=10)
-        if done.returncode == 0:
-            return proc
-        time.sleep(0.5)
-    raise RuntimeError("Cua Driver daemon did not become ready")
 
 
 # ---------------------------------------------------------------- pins (observed values)
@@ -682,8 +650,11 @@ def observed_pins(include_codex: bool = True, include_cua: bool = True) -> dict[
         else None
     )
     out["claude_code_version"] = claude
-    out["macos_version"] = _run(["sw_vers", "-productVersion"]).stdout.strip()
-    out["macos_build"] = _run(["sw_vers", "-buildVersion"]).stdout.strip()
+    if desktop.detect_platform() == "macos":
+        out["macos_version"] = _run(["sw_vers", "-productVersion"]).stdout.strip()
+        out["macos_build"] = _run(["sw_vers", "-buildVersion"]).stdout.strip()
+    else:
+        out["platform"] = "linux"
     if include_cua:
         out["cua_driver_version_string"] = cua_version_string()
         out["cua_driver_version"] = out["cua_driver_version_string"].replace("cua-driver ", "")

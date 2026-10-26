@@ -3402,3 +3402,154 @@ impl CutProxy {
         format!("http://{}", self.addr)
     }
 }
+
+// --------------------------------------------------------------- FaultProxy
+
+/// What a [`FaultProxy`] does to the traffic through it. Switched at run
+/// time with [`FaultProxy::set`]; live connections follow the new fault from
+/// their next chunk.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Fault {
+    /// Carries everything.
+    Pass,
+    /// Holds every chunk, both ways, this long (a slow, far link).
+    Latency(Duration),
+    /// At most this many bytes per second, both ways (a thin link).
+    Bandwidth(u64),
+    /// Each chunk, with probability `p`, is held for `stall` first (a lossy
+    /// link: TCP waits out a retransmission).
+    Lossy {
+        /// Probability, 0 to 1.
+        p: f64,
+        /// How long a lost chunk waits.
+        stall: Duration,
+    },
+    /// Accepts connections and never carries or answers anything (a
+    /// computer that went to sleep, a black-holed route).
+    Blackhole,
+    /// Accepts connections and closes them at once.
+    Reset,
+    /// Carries requests to the server but never one byte back (a half-open
+    /// connection).
+    HalfOpen,
+}
+
+/// A loopback TCP proxy that injects a [`Fault`] in front of `upstream`,
+/// for chaos tests: slow, thin, lossy, unresponsive or half-open links.
+pub struct FaultProxy {
+    /// Proxy address.
+    pub addr: SocketAddr,
+    fault: Arc<Mutex<Fault>>,
+    accepted: Arc<AtomicU64>,
+}
+
+impl FaultProxy {
+    /// Proxies to `upstream`, carrying everything until [`Self::set`].
+    pub async fn start(upstream: SocketAddr) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let fault = Arc::new(Mutex::new(Fault::Pass));
+        let accepted = Arc::new(AtomicU64::new(0));
+        let (f, n) = (fault.clone(), accepted.clone());
+        tokio::spawn(async move {
+            loop {
+                let Ok((client, _)) = listener.accept().await else {
+                    return;
+                };
+                n.fetch_add(1, Ordering::SeqCst);
+                let f = f.clone();
+                tokio::spawn(async move {
+                    let now = *f.lock().unwrap();
+                    match now {
+                        Fault::Reset => return,
+                        Fault::Blackhole => {
+                            // Held open, never read or answered, until the
+                            // client gives up.
+                            let mut client = client;
+                            let mut sink = [0u8; 1];
+                            use tokio::io::AsyncReadExt;
+                            loop {
+                                tokio::time::sleep(Duration::from_secs(3600)).await;
+                                if client.read(&mut sink).await.unwrap_or(0) == 0 {
+                                    return;
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                    let Ok(server) = TcpStream::connect(upstream).await else {
+                        return;
+                    };
+                    let _ = client.set_nodelay(true);
+                    let _ = server.set_nodelay(true);
+                    let (cr, cw) = client.into_split();
+                    let (sr, sw) = server.into_split();
+                    tokio::select! {
+                        _ = Self::pipe(cr, sw, f.clone(), false) => {}
+                        _ = Self::pipe(sr, cw, f.clone(), true) => {}
+                    }
+                });
+            }
+        });
+        Self {
+            addr,
+            fault,
+            accepted,
+        }
+    }
+
+    async fn pipe(
+        mut from: tokio::net::tcp::OwnedReadHalf,
+        mut to: tokio::net::tcp::OwnedWriteHalf,
+        fault: Arc<Mutex<Fault>>,
+        downstream: bool,
+    ) -> std::io::Result<()> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut buf = vec![0u8; 16 * 1024];
+        loop {
+            let n = from.read(&mut buf).await?;
+            if n == 0 {
+                return Ok(());
+            }
+            let now = *fault.lock().unwrap();
+            match now {
+                Fault::Pass => {}
+                Fault::Latency(d) => tokio::time::sleep(d).await,
+                Fault::Bandwidth(bps) => {
+                    let secs = n as f64 / bps.max(1) as f64;
+                    tokio::time::sleep(Duration::from_secs_f64(secs)).await;
+                }
+                Fault::Lossy { p, stall } => {
+                    if rand::random::<f64>() < p {
+                        tokio::time::sleep(stall).await;
+                    }
+                }
+                // Took effect after this connection opened: it goes quiet.
+                Fault::Blackhole | Fault::Reset => {
+                    if now == Fault::Reset {
+                        return Ok(());
+                    }
+                    std::future::pending::<()>().await;
+                }
+                Fault::HalfOpen if downstream => continue,
+                Fault::HalfOpen => {}
+            }
+            to.write_all(&buf[..n]).await?;
+        }
+    }
+
+    /// Switches the fault.
+    pub fn set(&self, fault: Fault) {
+        *self.fault.lock().unwrap() = fault;
+    }
+
+    /// Connections accepted so far (a retry storm shows here).
+    pub fn accepted(&self) -> u64 {
+        self.accepted.load(Ordering::SeqCst)
+    }
+
+    /// `http://127.0.0.1:<port>`.
+    pub fn url(&self) -> String {
+        format!("http://{}", self.addr)
+    }
+}

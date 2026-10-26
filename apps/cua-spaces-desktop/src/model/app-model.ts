@@ -15,7 +15,6 @@ import type {
   AppCreatesState,
   AppCreateSpaceArgs,
   AppGpuChoice,
-  AppCloudPricing,
   AppLocalStorage,
   AppMachinePageRow,
   AppMachinesPageInput,
@@ -37,7 +36,7 @@ import type {
   LocalStorage,
   SpaceCreateProgress,
 } from "../native/generated/index";
-import type { LocalRuntimes, SpacesBackend } from "./backend";
+import type { CreatingElsewhereRow, ListRead, LocalRuntimes, SpacesBackend } from "./backend";
 import { AgentsModel, type AgentSetupRunning, type ToolRunner } from "./agents";
 import { ChecklistModel } from "./checklist";
 import type { CloudModel } from "./cloud";
@@ -148,7 +147,7 @@ export class AppModel {
   bannerIsError = false;
   /** The signed-in account. */
   identity: string | null;
-  /** Cua Cloud can be used. */
+  /** A Cua account is signed in (or client credentials are set). */
   cloudConfigured = false;
   signIn: AppSignInPhase;
   /** The page a waiting sign-in finishes on. */
@@ -194,7 +193,7 @@ export class AppModel {
   readonly servicesInNow: () => boolean;
 
   private listWatchedSince = Date.now();
-  private rowsInFlight: Promise<import("../native/generated/index").AppSpaceRow[]> | null = null;
+  private rowsInFlight: Promise<ListRead> | null = null;
   private hostInFlight: Promise<void> | null = null;
   private createTicker: NodeJS.Timeout | null = null;
   private readonly listeners = new Set<(change: ModelChange) => void>();
@@ -534,8 +533,10 @@ export class AppModel {
     if (done.ok && this.hostInFlight === task) this.hostInFlight = null;
   }
 
-  private async readRows() {
-    const task = this.rowsInFlight ?? this.backend.rows();
+  private async readRows(): Promise<ListRead> {
+    const b = this.backend;
+    const task: Promise<ListRead> =
+      this.rowsInFlight ?? (b.listRead ? b.listRead() : b.rows().then((rows) => ({ rows, incomplete: false, reaching: 0, stale: false, notice: "" })));
     this.rowsInFlight = task;
     const result = await withTimeout(this.listTimeout, () => task);
     // Still running after the timeout: the next refresh waits on the same read.
@@ -546,21 +547,68 @@ export class AppModel {
 
   /** Re-reads the registry (and the host). Bounded: a daemon that stopped answering leaves the list as it was. */
   async refresh(): Promise<void> {
-    await this.refreshHost();
-    const cloud = await this.backend.cloudAvailable().catch(() => false);
-    if (cloud !== this.cloudConfigured) {
-      this.cloudConfigured = cloud;
-      this.changed("session");
-    }
+    // The host's reads run beside the list, never ahead of it: this machine's
+    // Spaces show as soon as the daemon lists them ("This machine" joins
+    // them once the host answered).
+    const hostRead = this.refreshHost().then(() => {
+      if (this.loaded) {
+        this.recompose();
+        this.changed("spaces");
+      }
+    });
+    const cloudRead = this.backend
+      .loggedIn()
+      .catch(() => false)
+      .then((cloud) => {
+        if (cloud !== this.cloudConfigured) {
+          this.cloudConfigured = cloud;
+          this.changed("session");
+        }
+      });
     try {
-      const rows = await this.readRows();
+      await this.readList();
+    } finally {
+      await Promise.all([hostRead, cloudRead]);
+      this.followIncompleteList();
+    }
+  }
+
+  /** Some of your computers have not answered the last read yet (`Spaces.list_known`). */
+  listIncomplete = false;
+  /** How many computers are still being reached (0 when unknown). */
+  listReaching = 0;
+  /** Your other computers' rows are the last known ones, not yet confirmed. */
+  listStale = false;
+  /** What your other computers are creating now (CUA-2349), less what the list already has a row for. */
+  creatingElsewhere: CreatingElsewhereRow[] = [];
+  private incompleteFollow: ReturnType<typeof setTimeout> | null = null;
+
+  /** While some of your computers have not answered, the list is read again
+   * soon (each read waits a moment for them in the daemon), not at the next poll. */
+  private followIncompleteList(): void {
+    if (!this.listIncomplete || this.incompleteFollow) return;
+    this.incompleteFollow = setTimeout(() => {
+      this.incompleteFollow = null;
+      void this.refresh();
+    }, 500);
+  }
+
+  private async readList(): Promise<void> {
+    try {
+      const list = await this.readRows();
       this.lastListOk = Date.now();
       this.lastListAnswer = this.lastListOk;
-      this.registrySpaces = this.native.appRowsToSpaces(rows, AppModel.nowMs());
+      this.registrySpaces = this.native.appRowsToSpaces(list.rows, AppModel.nowMs());
       this.creates = this.native.appCreatesSettle(this.creates, this.registrySpaces);
       this.recompose();
       this.loaded = true;
-      this.rosterError = null;
+      this.listIncomplete = list.incomplete;
+      this.listReaching = list.reaching;
+      this.listStale = list.stale;
+      // A create this app asked another computer for already has its own pending row.
+      this.creatingElsewhere = (list.creating ?? []).filter((c) => !this.spaces.some((s) => s.name === c.name && (s.host === c.machineId || this.native.appCreatesIsPending(s.id))));
+      // Your other computers could not be read: their rows are the last known ones.
+      this.rosterError = list.notice ? "Could not reach your other computers. Their Spaces may be out of date." : null;
       if (this.selectedSpaceId === null) {
         const first = this.sidebar.selectedId;
         if (first) this.selectedSpaceId = first;
@@ -590,13 +638,11 @@ export class AppModel {
   /** What New Space knows, freshly probed; every probe runs at once and each is bounded. */
   async newSpaceEnv(): Promise<AppWizardEnv> {
     const b = this.backend;
-    const [runtimes, storage, pricing, gpus, hosts, cloud, lume, linux, vms] = await Promise.all([
+    const [runtimes, storage, gpus, hosts, lume, linux, vms] = await Promise.all([
       b.localRuntimes(),
       b.localStorage(),
-      b.cloudPricing(),
       b.gpuChoices(),
       b.hosts(),
-      b.cloudAvailable(),
       b.lumeSource(),
       b.linuxSource(),
       b.runningMacosVms(),
@@ -608,7 +654,7 @@ export class AppModel {
     // Lume did not answer this time: keep what it said last.
     this.runningMacosVms = vms ?? this.runningMacosVms;
     await this.readRuntimeAdvice(runtimes);
-    return this.wizardEnv(cloud, runtimes, storage, pricing, gpus);
+    return this.wizardEnv(runtimes, storage, gpus);
   }
 
   /** Windows: what is missing for local Spaces and what the app can do about it. */
@@ -642,20 +688,13 @@ export class AppModel {
 
   /** What New Space knows without asking anything: the env while the live services are still starting. */
   knownNewSpaceEnv(): AppWizardEnv {
-    return this.wizardEnv(false, null, null, null, null);
+    return this.wizardEnv(null, null, null);
   }
 
-  private wizardEnv(
-    available: boolean,
-    runtimes: LocalRuntimes | null,
-    storage: LocalStorage | null,
-    pricing: AppCloudPricing | null,
-    gpus: AppGpuChoice[] | null,
-  ): AppWizardEnv {
+  private wizardEnv(runtimes: LocalRuntimes | null, storage: LocalStorage | null, gpus: AppGpuChoice[] | null): AppWizardEnv {
     const backends = runtimes?.ready;
     const env: AppWizardEnv = {
       defaultLocation: this.settings.defaultLocation,
-      cloudAvailable: available,
       localAvailable: backends ? backends.length > 0 : true,
       localReason:
         backends && backends.length === 0
@@ -668,7 +707,6 @@ export class AppModel {
       lumeSource: this.lumeSource ?? undefined,
       linuxSource: this.linuxSource ?? undefined,
       storage: storage ? wizardStorage(storage) : undefined,
-      cloudPricing: available ? (pricing ?? undefined) : undefined,
       clouds: this.cloud.clouds,
       hosts: this.hosts,
       experiments: this.settings.experiments,
@@ -720,7 +758,7 @@ export class AppModel {
     // on vmnet): ask now, while the person who pressed Create is here.
     if (args.on === "local") this.host.requestLocalNetwork();
     const machine = args.on.startsWith("host:") ? args.on.slice("host:".length) : undefined;
-    const provider = args.on === "cloud" ? this.native.AppSpaceProvider.Cloud : args.on === "local" ? this.native.AppSpaceProvider.Local : this.native.AppSpaceProvider.Relay;
+    const provider = args.on === "local" ? this.native.AppSpaceProvider.Local : this.native.AppSpaceProvider.Relay;
     this.sendCreate(
       new this.native.AppCreateAction.Start({
         id: pendingId,

@@ -22,7 +22,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Deleting…",
               "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -42,7 +41,6 @@
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
               "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -92,7 +90,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Deleting…",
               "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -112,7 +109,6 @@
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
               "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -162,7 +158,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Deleting…",
               "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -182,7 +177,6 @@
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
               "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -232,7 +226,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Deleting…",
               "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -252,7 +245,6 @@
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
               "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -302,7 +294,6 @@
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
               "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -349,7 +340,6 @@
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
               "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -394,7 +384,6 @@
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
               "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -441,7 +430,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Deleting…",
               "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -486,7 +474,6 @@
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
               "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]",

@@ -149,21 +149,4 @@ struct ElasticTests {
         #expect(!plain.elastic.visible)
     }
 
-    /// The Machines page with the pool, rendered offscreen for review (only
-    /// with `ELASTIC_PREVIEW_DIR` set; nothing is launched or shown).
-    @Test func rendersTheMachinesPageForReview() async throws {
-        guard let dir = ProcessInfo.processInfo.environment["ELASTIC_PREVIEW_DIR"], !dir.isEmpty else { return }
-        _ = NSApplication.shared
-        let backend = FixtureSpacesBackend()
-        backend.fixtureElastic = true
-        let app = ViewModelTests().makeModel(backend)
-        app.onboarding.finish()
-        await app.refresh()
-        await app.elastic.refresh(force: true)
-        let size = CGSize(width: 900, height: 560)
-        let rep = SnapshotTests().render(MachinesPageView(model: app), size: size)
-        let out = URL(fileURLWithPath: dir)
-        try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
-        try rep.representation(using: .png, properties: [:])!.write(to: out.appendingPathComponent("machines-elastic.png"))
-    }
 }

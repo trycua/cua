@@ -187,8 +187,14 @@ async function checkWizard(page: Page, state: WizardState, v: WizardView, menuCh
     if (v.streamNote) await expect(root.locator("[data-stream-note]")).toHaveText(v.streamNote);
     else await expect(root.locator("[data-stream-note]")).toHaveCount(0);
   } else {
-    const rows = await root.locator("[data-summary-row]").evaluateAll((els) => els.map((el) => [...el.children].map((c) => c.textContent ?? "")));
-    expect(rows).toEqual(v.summary.map((f) => [f.label, f.value]));
+    // The developer-only rows sit under "Advanced" (the page's SUMMARY_ADVANCED), after the plain ones.
+    const technical = new Set(["Image", "Kind", "Architecture", "Runtime"]);
+    const plain = v.summary.filter((f) => !technical.has(f.label));
+    const tech = v.summary.filter((f) => technical.has(f.label));
+    await expect(root.locator("[data-advanced-toggle]")).toHaveCount(tech.length ? 1 : 0);
+    const rowsOf = () =>
+      root.locator("[data-summary-row]").evaluateAll((els) => els.map((el) => [...el.children].map((c) => c.textContent ?? "")));
+    expect(await rowsOf()).toEqual((v.advanced ? [...plain, ...tech] : plain).map((f) => [f.label, f.value]));
   }
 }
 

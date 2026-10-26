@@ -7,6 +7,7 @@
 // locked off, drops every signal here.
 import type { Native } from "../native/load";
 import type { AppTelemetrySignal } from "../native/generated/index";
+import { crashReportingAnswer } from "../crash-reporting";
 import type { BridgeContext } from "./context";
 import { Failure, type Handlers } from "./host";
 
@@ -153,6 +154,11 @@ export function telemetryMethods({ model }: BridgeContext): Handlers {
     },
     // The one-time linking notice (CUA-1881): the SDK's words and whether
     // it is due. No telemetry (a test host) has none.
+    // The page's own crash reports (apps/cua-spaces-web/src/crash-reporting): allowed only while usage data is on and its notice shown.
+    "crashReporting.config": () => {
+      const status = model.telemetry?.status();
+      return crashReportingAnswer(status?.enabled === true && status.noticeShown !== false);
+    },
     "telemetry.linkNotice": () => model.telemetry?.linkNotice() ?? null,
     "telemetry.acknowledgeLinkNotice": () => {
       model.telemetry?.acknowledgeLinkNotice();

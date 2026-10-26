@@ -1096,7 +1096,7 @@ async fn the_host_turns_a_provided_space_off_and_on_and_it_rejoins_the_relay() {
     assert_eq!(
         off.message,
         format!(
-            "Stopped relay:space-ada00011 (its disk is kept) ({} on Mac mini (spare))",
+            "Stopped relay:space-ada00011 (its disk is kept; its memory is free) ({} on Mac mini (spare))",
             space.local_space
         )
     );
@@ -1190,7 +1190,10 @@ async fn a_local_space_suspends_and_resumes_and_others_refuse() {
         (off.space.as_str(), off.state.as_str(), off.power.as_str()),
         (id.as_str(), "suspended", "suspend")
     );
-    assert_eq!(off.message, format!("Suspended {id} (its memory is kept)."));
+    assert_eq!(
+        off.message,
+        format!("Suspended {id} (its memory is kept, and still in use).")
+    );
     assert!(f.rt.paused.lock().unwrap().contains(&name));
     assert_eq!(
         listed(&f.spaces),
@@ -1228,6 +1231,27 @@ async fn a_local_space_suspends_and_resumes_and_others_refuse() {
         f.spaces.power_of("direct:10.0.0.5:3211"),
         (String::new(), String::new())
     );
+
+    // Suspending on purpose keeps the memory, the same way.
+    let off = f.spaces.suspend(&id).await.unwrap();
+    assert_eq!(
+        (off.state.as_str(), off.power.as_str()),
+        ("suspended", "suspend")
+    );
+    assert!(f.rt.paused.lock().unwrap().contains(&name));
+    f.spaces.start(&id).await.unwrap();
+    // Only a Space on this computer suspends or resizes.
+    let e = f.spaces.suspend("direct:10.0.0.5:3211").await.unwrap_err();
+    assert_eq!(e.tag(), "wrong_provider", "{e}");
+    let e = f
+        .spaces
+        .resize("direct:10.0.0.5:3211", None, Some(4096), None)
+        .await
+        .unwrap_err();
+    assert_eq!(e.tag(), "wrong_provider", "{e}");
+    // A resize says what to change.
+    let e = f.spaces.resize(&id, None, None, None).await.unwrap_err();
+    assert!(e.to_string().contains("cpus, memory_mb or disk_gb"), "{e}");
 }
 
 /// Your other Mac must not vanish from "Run on" while its service is down

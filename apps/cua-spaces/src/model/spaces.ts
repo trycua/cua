@@ -4,7 +4,7 @@
 /**
  * The cua SDK's Spaces registry, mapped onto the portal's Space model.
  *
- * Every location (Cua Cloud, this Mac, Spaces added by address) arrives
+ * Every location (this Mac, your machines, Spaces added by address) arrives
  * through one `list_spaces` roster. The SDK owns lifecycle, the
  * runtime/image pairing rules and the spacesd handshake; this module only
  * turns its rows into tiles.
@@ -26,7 +26,7 @@ export const SPACES_CONFIG = {
 export interface SpaceRow {
   id: string;
   name: string;
-  /** The SDK's location word: `cloud`, `local`, `direct` or `relay`. */
+  /** The SDK's location word: `local`, `direct` or `relay`. */
   provider: SpaceProvider;
   spacesdVersion: string;
   features: string[];
@@ -71,7 +71,7 @@ export function hasFeature(space: Pick<Space, "sdk">, feature: string): boolean 
   return Boolean(space.sdk?.features.includes(feature));
 }
 
-/** The provider a Space id names (`cloud:<name>`, `space://<loc>/…`). */
+/** The provider a Space id names (`space://<loc>/…`). */
 export function providerOfId(id: string): SpaceProvider | undefined {
   return core<SpaceProvider | null>("spaces.providerOfId", { id }) ?? undefined;
 }
@@ -79,11 +79,6 @@ export function providerOfId(id: string): SpaceProvider | undefined {
 /** The app's location for a row's provider word. */
 export function normalizeProvider(word: string): SpaceProvider {
   return core("spaces.normalizeProvider", { word });
-}
-
-/** The cloud namespace of a legacy `space://cloud/<ns>/<name>` id. */
-export function cloudNamespaceOf(id: string): string | undefined {
-  return core<string | null>("spaces.cloudNamespaceOf", { id }) ?? undefined;
 }
 
 export function sceneForOs(os: SpaceOs): ThumbnailScene {

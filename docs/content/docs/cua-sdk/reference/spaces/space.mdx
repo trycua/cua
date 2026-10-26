@@ -35,12 +35,9 @@ Returned by [`Space.fork`](/cua-sdk/reference/sandbox/checkpoints#spacefork), [`
 | [`screenshot`](#spacescreenshot) | Captures the Space's display: PNG at full size on the primary display unless `options` say otherwise (for a small preview, `Space.thumbnail` reads the shared cache instead). |
 | [`send_file`](#spacesend_file) | Drops a host file or folder into the Space's `~/Downloads[/subdir]` (TeleportService.ReceiveFiles, per-file SHA-256). |
 | [`set_presence_settings`](#spaceset_presence_settings) | Sets this Space's presence settings. |
-| [`share`](#spaceshare) | Lets `who` (a verified email or an account id) watch (`viewer`, the default) or use (`editor`) this Space through the relay. |
-| [`shares`](#spaceshares) | Who this Space is shared with, and who of them is connected now. |
 | [`start_hotspot`](#spacestart_hotspot) | Starts the reverse-SOCKS hotspot: this host serves the Space's egress. |
 | [`stop_hotspot`](#spacestop_hotspot) | Stops this Space's hotspot. |
 | [`supports`](#spacesupports) | Whether the spacesd supports `feature`. |
-| [`unshare`](#spaceunshare) | Stops sharing this Space with `who` at once, or with everyone when `who` is `None`. |
 | [`upload`](#spaceupload) | Copies a host file or folder to `dest` in the Space (default: the home directory). |
 | [`write`](#spacewrite) | Writes bytes to a guest path (parents created, verified by SHA-256). |
 | [`agent_events`](/cua-sdk/reference/spaces/agents#spaceagent_events) | Normalized events after `cursor` (0: the start), as the `agent_events` JSON (`events`, `cursor`, `caught_up`, `status`). |
@@ -61,12 +58,15 @@ Returned by [`Space.fork`](/cua-sdk/reference/sandbox/checkpoints#spacefork), [`
 | [`join_presence`](/cua-sdk/reference/spaces/streams#spacejoin_presence) | Joins presence. |
 | [`open_stream`](/cua-sdk/reference/spaces/streams#spaceopen_stream) | Mints a media session (ticket + WebSocket URL) for another client to attach to. |
 | [`route`](/cua-sdk/reference/spaces/channel#spaceroute) | Which way this Space's calls go now (see `super.spacesd.SpacesdClient.route`): `local …`, `direct …`, `relay …`, `mesh direct <ip:port> rtt <ms> ms`, `mesh relayed` or `cloud`; empty when the Space runs no cua-spacesd. |
+| [`share`](/cua-sdk/reference/spaces/sharing#spaceshare) | Lets `who` (a verified email or an account id) watch (`viewer`, the default) or use (`editor`) this Space through the relay. |
+| [`shares`](/cua-sdk/reference/spaces/sharing#spaceshares) | Who this Space is shared with, and who of them is connected now. |
 | [`spacesd`](/cua-sdk/reference/spacesd#spacespacesd) | The cua-spacesd client over the connection this Space authenticated. |
 | [`stream_session`](/cua-sdk/reference/spaces/streams#spacestream_session) | Opens a media session and delivers keyframe-gated encoded frames and audio to the sinks (one delivery thread; decoding stays with the caller). |
 | [`teleport`](/cua-sdk/reference/spaces/space#spaceteleport) | Teleports `app`'s session into this Space. |
 | [`teleport_manifest`](/cua-sdk/reference/spaces/space#spaceteleport_manifest) | What teleporting `app` (`full` or `tabs`) would move from this host. |
 | [`thumbnail`](/cua-sdk/reference/spaces/space#spacethumbnail) | The Space's latest thumbnail (a small JPEG of its primary display) from the cache every client on this machine shares: returned at once when it is younger than `max_age_ms` (unset: any age), else captured fresh through cua-spacesd and kept for the next caller. |
 | [`transport`](/cua-sdk/reference/spaces/channel#spacetransport) | What carries this Space's calls, for a badge: `mesh` (end to end) or `relay_https` (the relay can read the session in transit; with `fallback_reason` when the mesh was wanted), or `local`, `direct`, `cloud`. |
+| [`unshare`](/cua-sdk/reference/spaces/sharing#spaceunshare) | Stops sharing this Space with `who` at once, or with everyone when `who` is `None`. |
 | [`usage`](/cua-sdk/reference/spaces/space#spaceusage) | Processor, memory and storage use now (cheap: poll it at a low rate while a detail is visible). |
 | [`websocket_headers`](/cua-sdk/reference/spaces/streams#spacewebsocket_headers) | Headers a media WebSocket to this Space needs besides its ticket. |
 | [`window_thumbnail`](/cua-sdk/reference/spaces/space#spacewindow_thumbnail) | A small JPEG preview of one of the Space's windows (`window_id` and `epoch` from `windows`), at most `max_dimension` px, reused for a few seconds (the SDK's preview cache); `None` when the guest captured nothing. |
@@ -627,103 +627,6 @@ pub async fn set_presence_settings(&self, cursor_probe: Option<bool>) -> Result<
 
 **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
 
-### `Space.share`
-
-Lets `who` (a verified email or an account id) watch (`viewer`,
-the default) or use (`editor`) this Space through the relay. A Space
-that is not a host is attached to the relay on its first share.
-
-<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
-<Tab value="Python">
-
-```python
-async def share(self, who: str, role: Optional[str]) -> SpaceShares
-```
-
-</Tab>
-<Tab value="TypeScript">
-
-```ts
-share(who: string, role: string | undefined, asyncOpts_?: { signal: AbortSignal }): Promise<SpaceShares>
-```
-
-</Tab>
-<Tab value="Swift">
-
-```swift
-func share(who: String, role: String?) async throws -> SpaceShares
-```
-
-</Tab>
-<Tab value="Kotlin">
-
-```kotlin
-@Throws(CuaException::class)
-suspend fun share(who: String, role: String?): SpaceShares
-```
-
-</Tab>
-<Tab value="Rust">
-
-```rust
-pub async fn share(&self, who: String, role: Option<String>) -> Result<SpaceShares, CuaError>
-```
-
-</Tab>
-</Tabs>
-
-| Parameter | Type | Default |
-| --- | --- | --- |
-| `who` | `String` | required |
-| `role` | `Option<String>` | required |
-
-**Returns** [`SpaceShares`](#spaceshares-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
-
-### `Space.shares`
-
-Who this Space is shared with, and who of them is connected now.
-
-<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
-<Tab value="Python">
-
-```python
-async def shares(self) -> SpaceShares
-```
-
-</Tab>
-<Tab value="TypeScript">
-
-```ts
-shares(asyncOpts_?: { signal: AbortSignal }): Promise<SpaceShares>
-```
-
-</Tab>
-<Tab value="Swift">
-
-```swift
-func shares() async throws -> SpaceShares
-```
-
-</Tab>
-<Tab value="Kotlin">
-
-```kotlin
-@Throws(CuaException::class)
-suspend fun shares(): SpaceShares
-```
-
-</Tab>
-<Tab value="Rust">
-
-```rust
-pub async fn shares(&self) -> Result<SpaceShares, CuaError>
-```
-
-</Tab>
-</Tabs>
-
-**Returns** [`SpaceShares`](#spaceshares-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
-
 ### `Space.start_hotspot`
 
 Starts the reverse-SOCKS hotspot: this host serves the Space's
@@ -868,56 +771,6 @@ pub fn supports(&self, feature: String) -> bool
 | `feature` | `String` | required |
 
 **Returns** `bool`
-
-### `Space.unshare`
-
-Stops sharing this Space with `who` at once, or with everyone when
-`who` is `None`.
-
-<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
-<Tab value="Python">
-
-```python
-async def unshare(self, who: Optional[str]) -> SpaceShares
-```
-
-</Tab>
-<Tab value="TypeScript">
-
-```ts
-unshare(who: string | undefined, asyncOpts_?: { signal: AbortSignal }): Promise<SpaceShares>
-```
-
-</Tab>
-<Tab value="Swift">
-
-```swift
-func unshare(who: String?) async throws -> SpaceShares
-```
-
-</Tab>
-<Tab value="Kotlin">
-
-```kotlin
-@Throws(CuaException::class)
-suspend fun unshare(who: String?): SpaceShares
-```
-
-</Tab>
-<Tab value="Rust">
-
-```rust
-pub async fn unshare(&self, who: Option<String>) -> Result<SpaceShares, CuaError>
-```
-
-</Tab>
-</Tabs>
-
-| Parameter | Type | Default |
-| --- | --- | --- |
-| `who` | `Option<String>` | required |
-
-**Returns** [`SpaceShares`](#spaceshares-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
 
 ### `Space.upload`
 
@@ -1201,44 +1054,19 @@ Returned by [`Space.request_site_login`](#spacerequest_site_login).
 | `target_id` / `targetId` | `Option<String>` |  | See `session`. |
 | `tab_id` / `tabId` | `Option<String>` |  | See `session`. |
 
-## `SpaceRelayRegistration` record
+## `SpaceCreatingElsewhere` record
 
-A Space published on the relay (`Spaces.relay_register`).
-
-Returned by [`Spaces.relay_register`](/cua-sdk/reference/spaces#spacesrelay_register).
+A Space another of your computers is creating (`SpaceList.creating`).
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `space` | `String` |  | The Space. |
-| `relay_space` / `relaySpace` | `String` |  | How the account's other devices reach it: `relay:<machine>`. |
-| `machine` | `String` |  | The relay machine id. |
-| `url` | `String` |  | The relay URL of the machine. |
-| `online` | `bool` |  | Connected to the relay now. |
-
-## `SpaceShareEntry` record
-
-One account a Space is shared with.
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `who` | `String` |  | The email or account id, as shared. |
-| `role` | `String` |  | `viewer` or `editor`. |
-| `connected` | `bool` |  | Connected through the relay right now. |
-
-## `SpaceShares` record
-
-Who a Space is shared with.
-
-Returned by [`Space.share`](#spaceshare), [`Space.shares`](#spaceshares), [`Space.unshare`](#spaceunshare).
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `space` | `String` |  | The Space. |
-| `machine` | `String` |  | The relay machine it is shared as (empty when not shared). |
-| `invitee_space` / `inviteeSpace` | `String` |  | What the people it is shared with open (`relay:<machine>`). |
-| `url` | `String` |  | The relay URL of the machine. |
-| `online` | `bool` |  | The machine is on the relay now. |
-| `shares` | [`Vec<SpaceShareEntry>`](#spaceshareentry-record) |  | The accounts and their roles. |
+| `machine_id` / `machineId` | `String` |  | The computer's relay machine id. |
+| `machine_name` / `machineName` | `String` |  | The computer's name. |
+| `name` | `String` |  | The Space's name. |
+| `os` | `String` |  | `macos`, `linux`, `windows`, or empty when unknown. |
+| `phase` | `String` |  | The create's phase (`preparing`, `pulling`, `booting`, ...). |
+| `percent` | `u32` |  | How far along the whole create is, 0 to 100. |
+| `updated_at_ms` / `updatedAtMs` | `u64` |  | When the computer published it, unix ms. |
 
 ## `EgressEnforcement` enum
 

@@ -149,7 +149,19 @@ impl FsBackend {
     }
 
     fn new_version() -> String {
-        format!("{:013}-{:08x}", now_ms(), rand::random::<u32>())
+        // Strictly increasing within the process: two writes in the same
+        // millisecond must still sort in write order, so the random suffix
+        // only keeps ids apart across processes.
+        static LAST_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let now = now_ms();
+        let ms = LAST_MS
+            .fetch_update(
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+                |last| Some(now.max(last + 1)),
+            )
+            .map_or(now, |last| now.max(last + 1));
+        format!("{:013}-{:08x}", ms, rand::random::<u32>())
     }
 
     fn check(cond: &Condition, current: Option<&ObjectMeta>, key: &str) -> Result<()> {

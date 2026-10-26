@@ -339,21 +339,6 @@ pub fn default_socket_path() -> String {
     socket_path_for_namespace(crate::bundle::state_namespace())
 }
 
-/// On Windows, returns the reserved named-pipe path of the uiAccess-elevated
-/// worker (`cua-driver-uia.exe`). Public CLI, MCP, and SDK clients never connect
-/// to this endpoint. It remains available only for a future daemon-internal
-/// forwarding path that authenticates the exact parent process. Until that path
-/// exists, elevated/AppContainer pixel input uses an interactively launched
-/// High-IL daemon. See #1602 / the `cua-driver-uia` crate for the worker side.
-#[cfg(target_os = "windows")]
-pub fn default_uia_pipe_path() -> String {
-    if crate::bundle::is_local_installation() {
-        r"\\.\pipe\cua-driver-local-uia".to_owned()
-    } else {
-        r"\\.\pipe\cua-driver-uia".to_owned()
-    }
-}
-
 /// Returns the platform default PID file path.
 pub fn default_pid_file_path() -> String {
     let namespace = crate::bundle::state_namespace();

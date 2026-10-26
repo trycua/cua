@@ -15,7 +15,7 @@
 import type {
   DaemonStatus,
   DefaultLocation,
-  FleetStatus,
+  AccountStatus,
   HostStatus,
   LoginItemStatus,
   MachineRow,
@@ -28,7 +28,7 @@ import type {
   CreateProgress,
   TelemetryView,
 } from "./contracts/host";
-import type { AgentEventsPage, AgentSetupRow, PersistentAgent, SpaceAgentRun } from "./contracts/agents";
+import type { AgentEventsPage, AgentMessageSent, AgentSetupRow, AgentStarted, AgentStartRequest, PersistentAgent, SpaceAgentRun } from "./contracts/agents";
 import type { KeyvaultOverview, KvGrant, KvItem } from "./contracts/keyvault";
 import type { SpaceOs, SpaceRow } from "./contracts/spaces";
 import { NEW_SPACE_OPERATIONS, type NewSpaceOperations } from "./ops/new-space";
@@ -70,7 +70,7 @@ export interface SettingsValues {
   hotkey: string;
   /** Usage telemetry (`$CUA_HOME/config.toml`, same as `cua telemetry`). */
   telemetry: boolean;
-  /** Where New Space starts: `local`, `cloud`, `host:<id>`, or a cloud word. */
+  /** Where New Space starts: `local`, `host:<id>`, or a cloud word. */
   defaultLocation: string;
   /** The app opens at login, as the system reports it (`login_item::LoginItemStatus`
    * is `enabled` or `requiresApproval`). Null: this host can't say. */
@@ -172,7 +172,7 @@ export const UI_STORAGE_KEYS = {
 /* ---- Session ------------------------------------------------------------- */
 
 export interface SessionSnapshot {
-  fleet: FleetStatus;
+  account: AccountStatus;
   onboarding: OnboardingState;
   daemon: DaemonStatus | null;
   /** A native host's sign-in waiting for the browser (it runs the flow
@@ -238,7 +238,9 @@ export interface HostOperations
   "spaces.open": { args: { spaceId: string; name?: string; os?: SpaceOs }; result: null };
 
   "machines.list": { args: Record<string, never>; result: MachineRow[] };
-  "host.status": { args: Record<string, never>; result: HostStatus };
+  /** `localNetwork`: the permissions page is asking, so a Mac that runs macOS Spaces also lists its
+   * Local Network access ("local-network", granted or not) and checks it from the daemon. */
+  "host.status": { args: { localNetwork?: boolean }; result: HostStatus };
 
   "settings.get": { args: Record<string, never>; result: SettingsSnapshot };
   "settings.set": { args: { key: SettingKey; value: SettingsValues[SettingKey] }; result: SettingsSnapshot };
@@ -271,6 +273,10 @@ export interface HostOperations
   "agents.runs": { args: { spaceId: string }; result: SpaceAgentRun[] };
   /** A run's events after `cursor` (`agent_events`; at most `max`, default 100). */
   "agents.events": { args: { spaceId: string; runId: string; cursor: number; max?: number }; result: AgentEventsPage };
+  /** Starts a coding agent in a Space (`agent_start`). */
+  "agents.start": { args: AgentStartRequest; result: AgentStarted };
+  /** Sends a reply to a run (`agent_message`; `force` interrupts the turn first). */
+  "agents.message": { args: { spaceId: string; runId: string; text: string; force?: boolean }; result: AgentMessageSent };
   /** Stops the run, saves the home, holds routines, suspends a local Space (`agent_pause`). */
   "agents.pause": { args: { name: string }; result: null };
   "agents.resume": { args: { name: string }; result: null };
@@ -314,6 +320,8 @@ export const OPERATIONS = [
   "agents.list",
   "agents.runs",
   "agents.events",
+  "agents.start",
+  "agents.message",
   "agents.pause",
   "agents.resume",
   "agents.setup",

@@ -11,6 +11,7 @@ import { render } from "@testing-library/react";
 import { afterEach, beforeEach } from "vitest";
 import type { DataAdapter } from "@/bridge/adapter";
 import type { MachinesView } from "@/bridge/contracts/host";
+import type { CreatingElsewhere, ListStatus } from "@/bridge/contracts/spaces";
 import type { HostEvent } from "@/bridge/protocol";
 import { createDemoAdapter, type DemoOptions } from "@/bridge/adapters/demo";
 import { BridgeProvider, useBridge, useMachines, useSpaces, type SpacesHook } from "@/bridge";
@@ -50,6 +51,10 @@ export interface TestHost {
   intercept?: (op: string, args: unknown) => unknown;
   /** The Machines page as the host's core drew it (`machinesView`). */
   machinesView?: () => MachinesView | null;
+  /** How far the host's list read got (`listStatus`); undefined: complete. */
+  listStatus?: () => ListStatus;
+  /** What the host's other computers are creating (`creatingElsewhere`). */
+  creatingElsewhere?: () => CreatingElsewhere[];
   /** The demo host's own options (signed out, a first run). */
   demo?: DemoOptions;
 }
@@ -73,6 +78,8 @@ export async function mountApp(path: string, host: TestHost = { failsCreates: tr
   const adapter: DataAdapter = {
     mode: demo.mode,
     ...(host.machinesView ? { machinesView: host.machinesView } : {}),
+    ...(host.listStatus ? { listStatus: host.listStatus } : {}),
+    ...(host.creatingElsewhere ? { creatingElsewhere: host.creatingElsewhere } : {}),
     subscribe: (l) => {
       listeners.add(l);
       const off = demo.subscribe(l);

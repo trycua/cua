@@ -275,11 +275,3 @@ describe("LiveSpacesBackend's runtime settings", () => {
     expect(await backend("win32").linuxSource()).toBeNull();
   });
 });
-
-describe("LiveSpacesBackend and Cua Cloud, which has ended", () => {
-  it("New Space asks no cloud API for pricing", async () => {
-    const backend = new LiveSpacesBackend({} as Native, {} as never, {}, fetch, "darwin");
-    expect(await backend.cloudPricing()).toBeNull();
-  });
-});
-

@@ -17,7 +17,7 @@ on:
   push:
     branches: [main]
     paths:
-      - "samples/openkoalabot-example-tauri/**"
+      - "examples/openkoalabot-example-tauri/**"
       - "libs/cua/**"
       - "libs/cua-spacesd/**"
       - ".github/workflows/ci-openkoalabot-example-tauri.yml"

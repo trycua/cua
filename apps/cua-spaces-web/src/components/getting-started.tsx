@@ -94,8 +94,7 @@ function useChecklistGo(): (step: ChecklistStep) => void {
     const { space, offered } = spaceFor(spaces, offers(id));
     if (space) return void open(space).catch(toastError(`Couldn't open ${what}`));
     if (!offered && id === "share") {
-      toast("Sharing is off", { description: "Turn it on in Settings, Experiments." });
-      return void navigate({ to: "/settings/experiments" });
+      return void toast("Sharing isn't available yet", { description: "It is not switched on for this account." });
     }
     toast("Start a Space first", { description: `${what} works on a running Space.` });
   };

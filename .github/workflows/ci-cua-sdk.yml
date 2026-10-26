@@ -226,6 +226,11 @@ jobs:
         run: |
           cargo test --locked -p cua-mesh --lib --test mesh -- --test-threads=4
           cargo test --locked -p cua-mesh --test scale -- --test-threads=1 --nocapture
+      - name: Test the Space list at scale and under chaos (budgets)
+        # 20 computers x 10 Spaces with computers off, slow, lossy, hung or
+        # half-open: each scenario asserts wall-clock budgets, so they run
+        # one at a time.
+        run: cargo test --locked -p cua-spaces --test scale -- --test-threads=1 --nocapture
       - name: Test (embedded, daemon over UDS and loopback, CLI, cluster, Cua Spaces extensions)
         run: >
           cargo test --locked --no-fail-fast -p cua-sdk -p cua-daemon -p cua-cli -p cua-spacesd-client

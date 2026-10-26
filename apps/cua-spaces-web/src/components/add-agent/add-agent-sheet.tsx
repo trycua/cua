@@ -13,7 +13,7 @@
  * New agent opens it with `spaces`, and the title becomes a Space picker.
  */
 
-import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, LinkIcon, Loader2Icon, PlayIcon } from "lucide-react";
+import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, LinkIcon, Loader2Icon, PlayIcon, UserPlusIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { threadOpAvailable, useBridge, type ThreadRole } from "@/bridge";
@@ -69,6 +69,7 @@ export function AddAgentSheet({
   role,
   taken = [],
   initialStage = "pick",
+  onShare,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -83,6 +84,8 @@ export function AddAgentSheet({
   taken?: readonly string[];
   /** Open straight on a row (the Agents tab's empty state). */
   initialStage?: Stage;
+  /** Share the Space with a person or your team instead (this sheet gives way to Share). */
+  onShare?: () => void;
 }) {
   const { data } = useBridge();
   const [stage, setStage] = useState<Stage>("pick");
@@ -148,6 +151,7 @@ export function AddAgentSheet({
                   disabled={!canConnect || !space}
                   onClick={() => setStage("connect")}
                 />
+                {onShare ? <Row data="share" icon={<UserPlusIcon className="size-3.5" />} title="Share with a person" detail="Or with your team" onClick={onShare} /> : null}
               </div>
               <div className="mt-4 flex items-center justify-between gap-4">
                 <span className="flex items-center gap-1" data-add-agent-marks="">

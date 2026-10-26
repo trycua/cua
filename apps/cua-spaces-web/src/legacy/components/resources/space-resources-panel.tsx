@@ -57,7 +57,7 @@ const SWATCH: Record<string, string> = {
   yours: "bg-muted-foreground/60",
   thisSpace: "bg-brand-strong",
   otherSpaces: "bg-brand/45",
-  base: "bg-foreground/30",
+  base: "bg-success/60",
   free: "border bg-foreground/10",
 };
 

@@ -91,7 +91,7 @@ no typed bridge between a trusted secret binding and an exact GUI target. A
 caller must currently choose among exposing plaintext to `type_text`, using a
 clipboard, composing shell commands, or taking over an interactive extension.
 
-The missing contract is not “read this secret.” It is:
+The missing contract is not "read this secret." It is:
 
 > Release the value represented by this already-authorized binding to this
 > exact, freshly verified target, without giving the value or provider locator

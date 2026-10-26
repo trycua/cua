@@ -1509,7 +1509,6 @@ impl QemuRuntime {
     /// Copy the TPM state of `from` (stopped) into `to_dir/tpm`. Files are
     /// copied, never linked; anything but plain files is an error.
     fn copy_tpm(&self, from: &QemuState, to_dir: &Path) -> Result<()> {
-        use std::os::unix::fs::PermissionsExt;
         if !from.tpm {
             return Ok(());
         }
@@ -1524,7 +1523,11 @@ impl QemuRuntime {
         }
         let dst = to_dir.join("tpm");
         std::fs::create_dir_all(&dst)?;
-        std::fs::set_permissions(&dst, std::fs::Permissions::from_mode(0o700))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&dst, std::fs::Permissions::from_mode(0o700))?;
+        }
         for entry in std::fs::read_dir(&src)? {
             let entry = entry?;
             let name = entry.file_name();
@@ -3414,6 +3417,7 @@ mod tests {
         assert_eq!(guest_memory_mb(w, Arch::X86_64, 2048), 2048);
     }
 
+    #[cfg(unix)]
     fn invalid(r: Result<impl std::fmt::Debug>) -> String {
         match r.unwrap_err() {
             VmmError::Invalid(m) => m,
@@ -3421,6 +3425,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     /// A runtime with a base, a stopped TPM VM `vm1`, and its TPM files.
     async fn tpm_runtime(tmp: &Path) -> Option<QemuRuntime> {
         if img::qemu_img().is_err() {
@@ -3447,9 +3452,10 @@ mod tests {
         Some(r)
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn tpm_state_follows_stopped_fork_and_checkpoint() {
-        use std::os::unix::fs::MetadataExt;
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
         let tmp = tempfile::tempdir().unwrap();
         let Some(r) = tpm_runtime(tmp.path()).await else {
             return;
@@ -3477,6 +3483,10 @@ mod tests {
             b"keys-1"
         );
         assert!(r.load("f1").unwrap().tpm);
+        for d in ["ck1", "f1"] {
+            let m = std::fs::metadata(root.join(d).join("tpm")).unwrap();
+            assert_eq!(m.permissions().mode() & 0o777, 0o700, "{d}");
+        }
         // A stopped fork of the VM itself carries the current state.
         r.fork("vm1", "f2").await.unwrap();
         assert_eq!(
@@ -3493,6 +3503,7 @@ mod tests {
         assert_eq!(err, format!("checkpoint 'ck2' {msg}"));
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn tpm_copy_fails_closed() {
         let tmp = tempfile::tempdir().unwrap();
@@ -3510,6 +3521,7 @@ mod tests {
         assert!(r.load("vm1").is_ok());
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn live_tpm_vm_refusals() {
         let tmp = tempfile::tempdir().unwrap();

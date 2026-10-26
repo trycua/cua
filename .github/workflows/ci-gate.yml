@@ -65,10 +65,11 @@ jobs:
           fi
           # IGNORE_RE (from the scope step) names workflow files that belong only to areas this PR
           # did not touch. Empty means wait for every run.
+          # contributor-attribution enforces the CLA, so the gate never waits on cla.yml.
           scope_jq='(env.IGNORE_RE // "") == "" or ((.path | sub("@.*"; "") | split("/") | last) | test(env.IGNORE_RE) | not)'
           runs() {
             api --paginate "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$sha&per_page=100" \
-              --jq ".workflow_runs[] | select(.workflow_id != $GITHUB_WORKFLOW_ID and (.event == \"pull_request\" or .event == \"pull_request_target\") and (.path | test(\"claude-auto-fix|ci-release-reminder|review-cua-perception-candidates\") | not) and ($scope_jq)) | [.workflow_id, .id, .name, .conclusion // \"\", .status] | @tsv"
+              --jq ".workflow_runs[] | select(.workflow_id != $GITHUB_WORKFLOW_ID and (.event == \"pull_request\" or .event == \"pull_request_target\") and (.path | test(\"claude-auto-fix|ci-release-reminder|review-cua-perception-candidates|/cla[.]yml($|@)\") | not) and ($scope_jq)) | [.workflow_id, .id, .name, .conclusion // \"\", .status] | @tsv"
           }
           GITHUB_WORKFLOW_ID=$(api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .workflow_id) || exit 1
           # Two identical listings cannot prove every run has appeared, so no verdict is allowed

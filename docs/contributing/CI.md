@@ -18,7 +18,7 @@ Rules, in order:
 1. A changed file that matches a **shared** glob, or matches no area at all, makes the gate wait for every run, as it did before scoping.
 2. Any other changed file belongs to the first area (top to bottom in the table) whose globs match it.
 3. A workflow listed under an area is required only when one of its areas changed.
-4. A workflow listed under no area (for example the CLA, eMudhra and release-metadata checks) is always required. A new workflow is therefore required until someone maps it.
+4. A workflow listed under no area (for example the eMudhra and release-metadata checks) is always required. A new workflow is therefore required until someone maps it. The gate never waits for **CI: CLA**, because the required `contributor-attribution` check enforces the CLA.
 
 Merge-queue runs (`merge_group`) read the file list of the same pull request through the same API call, so
 the queue and the pull request wait on the same set. If the scope step fails for any reason, the gate fails.

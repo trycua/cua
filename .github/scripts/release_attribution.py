@@ -82,6 +82,17 @@ PERCEPTION_COMPANION_PATHS = (
     "libs/cua-driver/rust/Cargo.toml",
     "libs/cua-driver/rust/Cargo.lock",
 )
+CLA_STRICT_PATHS = (
+    "apps/cua-spaces/",
+    "apps/cua-spaces-desktop/",
+    "apps/cua-spaces-macos/",
+    "apps/cua-spaces-web/",
+    "libs/cua-spacesd/",
+)
+CLA_WORKFLOW = Path(".github/workflows/cla.yml")
+CLA_SIGNATURES_PATH = "signatures/version1/cla.json"
+CLA_SIGNATURES_BRANCH = "cla-signatures"
+CLA_ALLOWLIST_RE = re.compile(r'^\s*allowlist:\s*"(?P<logins>[^"]*)"\s*$', re.MULTILINE)
 ALLOWED_TITLE_TYPES = RELEASING_TYPES | {
     "build",
     "chore",
@@ -103,6 +114,9 @@ ASSOCIATION_INTERNAL = {"OWNER", "MEMBER", "COLLABORATOR"}
 
 class ReleaseError(RuntimeError):
     """A release invariant failed."""
+
+
+CLA_LOOKUP_ERRORS = (ReleaseError, OSError, ValueError, KeyError, TypeError)
 
 
 @dataclass(frozen=True)
@@ -260,6 +274,17 @@ class GitHubClient:
                 f"#{number}; refusing partial attribution validation"
             )
         return commits
+
+    def pull_files(self, repository: str, number: int) -> list[str]:
+        paths: list[str] = []
+        for page in range(1, 31):
+            batch = list(
+                self.get(f"repos/{repository}/pulls/{number}/files?per_page=100&page={page}")
+            )
+            paths.extend(str(item.get("filename") or "") for item in batch)
+            if len(batch) < 100:
+                break
+        return paths
 
     def file_json(self, repository: str, path: str, ref: str) -> Mapping[str, Any]:
         encoded_path = quote(path.strip("/"), safe="/")
@@ -608,6 +633,148 @@ def unresolved_coauthor_identities(
     return sorted(unresolved.values(), key=lambda item: (item["email"], item["sha"]))
 
 
+def resolve_login(
+    config: Mapping[str, Any],
+    name: str,
+    email: str,
+    linked_login: str = "",
+    github: Any = None,
+) -> str | None:
+    return (
+        linked_login
+        or _normalized_map(config, "coauthorOverrides").get(f"{name.strip()} <{email}>".lower())
+        or login_from_email(email, _normalized_map(config, "identityOverrides"))
+        or lookup_email_login(github, email)
+        or None
+    )
+
+
+def unsigned_cla_contributors(
+    *,
+    repository: str,
+    pull: Mapping[str, Any],
+    commits: Sequence[Mapping[str, Any]],
+    config: Mapping[str, Any],
+    signed: set[str],
+    github: GitHubClient,
+) -> list[str]:
+    problems: list[str] = []
+    bots = _normalized_set(config, "bots")
+    ignored = _normalized_set(config, "ignoredCoauthorEmails")
+    unsigned: dict[str, set[int]] = defaultdict(set)
+
+    def add(number: int, name: str, email: str, linked_login: str = "") -> None:
+        email = email.strip().lower()
+        login = resolve_login(config, name, email, linked_login, github)
+        if email in ignored or (login and (is_bot(login, bots) or login.lower() in signed)):
+            return
+        person = f"@{login}" if login else f"{name.strip()} <{email}> (no GitHub login)"
+        unsigned[person].add(number)
+
+    def add_pull(
+        number: int, source: Mapping[str, Any], items: Iterable[Mapping[str, Any]]
+    ) -> set[int]:
+        add(number, "", "", str((source.get("user") or {}).get("login") or ""))
+        sources = set(source_pull_numbers(str(source.get("body") or ""), repository))
+        for item in items:
+            commit = item.get("commit") or {}
+            author = commit.get("author") or {}
+            linked_author = str((item.get("author") or {}).get("login") or "")
+            add(
+                number, str(author.get("name") or ""), str(author.get("email") or ""), linked_author
+            )
+            message = str(commit.get("message") or "")
+            for match in COAUTHOR_RE.finditer(message):
+                add(number, match.group("name"), match.group("email"))
+            sources.update(source_pull_numbers(message, repository))
+        return sources
+
+    pull_number = int(pull.get("number") or 0)
+    for number in sorted(add_pull(pull_number, pull, commits) - {pull_number}):
+        try:
+            source = github.pull(repository, number)
+            items = github.all_pull_commits(repository, {**source, "number": number})
+        except CLA_LOOKUP_ERRORS as error:
+            problems.append(f"could not read source pull request #{number}: {error}")
+            continue
+        add_pull(number, source, items)
+    return problems + [
+        f"{person} has not signed the CLA; sign it on "
+        + " or ".join(f"#{n}" for n in sorted(numbers))
+        for person, numbers in sorted(unsigned.items())
+    ]
+
+
+def validate_pr_cla(*, repository: str, number: int, config_path: Path, github: GitHubClient) -> None:
+    """Enforce the CLA on Spaces paths; warn about every problem elsewhere."""
+    try:
+        paths = github.pull_files(repository, number)
+    except (ReleaseError, OSError, ValueError) as error:
+        raise ReleaseError(
+            f"cannot read the changed files of pull request #{number}; "
+            f"treating it as touching Spaces paths: {error}"
+        ) from error
+    strict = any(path and path.startswith(CLA_STRICT_PATHS) for path in paths)
+    problems: list[str] = []
+    pull = commits = config = None
+    signed: set[str] | None = None
+    try:
+        pull = github.pull(repository, number)
+        expected = pull.get("changed_files")
+        if not isinstance(expected, int) or expected != len(paths) or not all(paths):
+            problems.append(f"changed files of pull request #{number} are incomplete")
+    except CLA_LOOKUP_ERRORS as error:
+        problems.append(f"could not read pull request #{number}: {error}")
+    names: set[str] | None = None
+    try:
+        entries = github.file_json(repository, CLA_SIGNATURES_PATH, CLA_SIGNATURES_BRANCH).get(
+            "signedContributors"
+        )
+        if isinstance(entries, list):
+            names = {
+                str(entry.get("name") or "").lower() for entry in entries if isinstance(entry, Mapping)
+            }
+        else:
+            problems.append(
+                "signatures/version1/cla.json on cla-signatures has no signedContributors list"
+            )
+    except CLA_LOOKUP_ERRORS as error:
+        problems.append(f"signatures/version1/cla.json on cla-signatures could not be read: {error}")
+    allowed: set[str] | None = None
+    try:
+        match = CLA_ALLOWLIST_RE.search(CLA_WORKFLOW.read_text())
+    except (OSError, ValueError):
+        match = None
+    if match:
+        allowed = {login.strip().lower() for login in match.group("logins").split(",")}
+    else:
+        problems.append(".github/workflows/cla.yml has no readable allowlist")
+    try:
+        config = json.loads(config_path.read_text())
+        if pull is not None:
+            commits = github.all_pull_commits(repository, {**pull, "number": number})
+    except CLA_LOOKUP_ERRORS as error:
+        problems.append(f"could not read the pull request commits or attribution config: {error}")
+    if names is not None and allowed is not None:
+        signed = names | allowed
+    if signed is not None and pull is not None and commits is not None and config is not None:
+        problems += unsigned_cla_contributors(
+            repository=repository,
+            pull=pull,
+            commits=commits,
+            config=config,
+            signed=signed,
+            github=github,
+        )
+    if problems and strict:
+        raise ReleaseError(
+            "CLA is not signed or could not be verified on a pull request touching Spaces paths:\n- "
+            + "\n- ".join(problems)
+        )
+    for problem in problems:
+        print(f"::warning::{problem}")
+
+
 def is_clean_main_sync(github, repository, sha, parents, main_sha) -> bool:
     if len(parents) != 2 or not main_sha:
         return False
@@ -651,7 +818,6 @@ def validate_pr_attribution(
     opt_out = _normalized_set(base_config, "optOutHandles")
     ignored = _normalized_set(base_config, "ignoredCoauthorEmails")
     base_overrides = _normalized_map(base_config, "identityOverrides")
-    coauthor_overrides = _normalized_map(base_config, "coauthorOverrides")
 
     override_errors = [
         f"{email}={login!r} (expected {base_overrides[email]!r})"
@@ -672,22 +838,13 @@ def validate_pr_attribution(
     preserved_authors: list[dict[str, Any]] = []
     early_errors: list[str] = []
 
-    def resolved_login(name: str, email: str, linked_login: str = "") -> str | None:
-        login = (
-            linked_login
-            or coauthor_overrides.get(f"{name.strip()} <{email}>".lower())
-            or login_from_email(email, base_overrides)
-            or lookup_email_login(github, email)
-        )
-        return login or None
-
     commit_shas = {str(item.get("sha") or "") for item in commits}
     credited_coauthors: set[str] = set()
     for item in commits:
         message = str((item.get("commit") or {}).get("message") or "")
         for match in COAUTHOR_RE.finditer(message):
             email = match.group("email").strip().lower()
-            login = resolved_login(match.group("name"), email)
+            login = resolve_login(base_config, match.group("name"), email, "", github)
             if login and email not in ignored:
                 credited_coauthors.add(login.lower())
 
@@ -718,7 +875,7 @@ def validate_pr_attribution(
         author_name = str(author.get("name") or "")
         author_email = str(author.get("email") or "").strip().lower()
         linked_author = str((item.get("author") or {}).get("login") or "").strip()
-        author_login = resolved_login(author_name, author_email, linked_author)
+        author_login = resolve_login(base_config, author_name, author_email, linked_author, github)
         parents = [str(parent.get("sha") or "") for parent in item.get("parents") or []]
         is_base_sync_merge = len(parents) > 1 and any(
             parent and parent not in commit_shas for parent in parents[1:]
@@ -774,7 +931,7 @@ def validate_pr_attribution(
         for match in COAUTHOR_RE.finditer(message):
             name = match.group("name").strip()
             email = match.group("email").strip().lower()
-            login = resolved_login(name, email)
+            login = resolve_login(base_config, name, email, "", github)
             if email in ignored:
                 continue
             if login and (
@@ -1726,17 +1883,21 @@ def report_unresolved_command(args: argparse.Namespace) -> None:
     report_unresolved_identities(client, args.repository, identities, config, args.source)
 
 
-def validate_pr_command(args: argparse.Namespace) -> None:
+def pull_request_from_event(args: argparse.Namespace) -> tuple[str, int, GitHubClient]:
     event = json.loads(args.event.read_text())
     event_pull = event.get("pull_request") or {}
     repository = str((event.get("repository") or {}).get("full_name") or "")
     number = int(event_pull.get("number") or event.get("number") or 0)
     if not repository or not number:
         raise ReleaseError("event does not identify a repository and pull request")
-
     client = GitHubClient(
         os.environ.get("GH_TOKEN", ""), os.environ.get("GITHUB_API_URL", "https://api.github.com")
     )
+    return repository, number, client
+
+
+def validate_pr_command(args: argparse.Namespace) -> None:
+    repository, number, client = pull_request_from_event(args)
     pull = client.pull(repository, number)
     head = pull.get("head") or {}
     head_repository = str((head.get("repo") or {}).get("full_name") or "")
@@ -1778,10 +1939,15 @@ def validate_pr_command(args: argparse.Namespace) -> None:
 def report_pr_attribution(args: argparse.Namespace) -> None:
     """Run the PR attribution validation as information only.
 
-    Attribution is best effort: every finding, and any error while checking,
+    The CLA check runs first and enforces the path policy: it fails on Spaces
+    paths (or an unreadable file list). Attribution is best effort: every finding, and any error while checking,
     becomes a warning annotation and step summary. The check always passes so
     the required ``contributor-attribution`` status never blocks a merge.
     """
+    repository, number, client = pull_request_from_event(args)
+    validate_pr_cla(
+        repository=repository, number=number, config_path=args.config, github=client
+    )
     try:
         validate_pr_command(args)
         return

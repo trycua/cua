@@ -318,6 +318,7 @@ pub enum RefusalCode {
     BrowserActionUnavailable,
     ModifiedPointerUnavailable,
     WindowMinimized,
+    ElementNotVisible,
     ForegroundUnavailable,
 }
 
@@ -345,6 +346,7 @@ impl RefusalCode {
             "browser_action_unavailable" => Some(Self::BrowserActionUnavailable),
             "modified_pointer_unavailable" => Some(Self::ModifiedPointerUnavailable),
             "window_minimized" => Some(Self::WindowMinimized),
+            "element_not_visible" => Some(Self::ElementNotVisible),
             "foreground_unavailable" => Some(Self::ForegroundUnavailable),
             _ => None,
         }

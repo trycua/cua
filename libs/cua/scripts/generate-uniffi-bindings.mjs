@@ -25,11 +25,30 @@
  * other (dev profile) cargo steps. Pass `--release` to read
  * `target/release` instead, e.g. with `--skip-build` after a release build.
  *
+ * The library is built without the `byoc` feature: it only forwards to the
+ * daemon's cloud providers (the AWS SDK alone is minutes of compile time)
+ * and adds nothing to the UniFFI interface.
+ *
+ * Avoiding the build altogether:
+ *
+ *  - `--library=PATH` (or `CUA_SDK_LIBRARY=PATH`) reads an already built
+ *    library: any platform's, e.g. CI's `sdk-linux` artifact, since the
+ *    interface metadata is the same in every object format;
+ *  - `--from-ci` downloads that artifact for the current commit (`gh`);
+ *  - otherwise the generated files are cached by a fingerprint of everything
+ *    the interface is made from (the cua-sdk crate, VERSION, the pinned UniFFI
+ *    and UBRN, these scripts). A later run with the same fingerprint, from
+ *    any worktree, writes the cached files without compiling anything.
+ *    The cache lives in `$CUA_BUILD_CACHE_DIR/uniffi` (default
+ *    `~/.cache/cua-build`); `--no-cache` ignores it, and CI never uses it.
+ *
  * Usage: node generate-uniffi-bindings.mjs [--check] [--skip-build]
  *        [--release] [--only=python,swift,kotlin,typescript]
+ *        [--library=PATH | --from-ci] [--no-cache]
  */
 
 import { spawnSync } from "node:child_process"
+import { createHash } from "node:crypto"
 import {
   existsSync,
   lstatSync,
@@ -42,8 +61,8 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs"
-import { tmpdir } from "node:os"
-import { dirname, isAbsolute, join, resolve } from "node:path"
+import { homedir, tmpdir } from "node:os"
+import { dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { postprocessPython } from "./uniffi-python-postprocess.mjs"
 
@@ -63,6 +82,9 @@ const languages = new Set(
     .map((language) => language.trim())
     .filter(Boolean),
 )
+const libraryArgument = process.argv.find((argument) => argument.startsWith("--library="))
+const fromCi = process.argv.includes("--from-ci")
+const useCache = !process.argv.includes("--no-cache") && !process.env.CI
 const INVENTORY = ".cua-uniffi-generated-files"
 const CRATE = "cua_sdk"
 
@@ -127,9 +149,56 @@ function assertOwnedPath(path) {
   return path
 }
 
+// Every input the generated files are a function of. The interface is the
+// metadata UniFFI's proc macros embed in cua-sdk (the only crate of this
+// library that uses UniFFI), so other crates cannot change it.
+function fingerprint() {
+  const hash = createHash("sha256")
+  const add = (path) => {
+    hash.update(relative(cuaRoot, path))
+    hash.update("\0")
+    hash.update(readFileSync(path, "utf8").replaceAll("\r\n", "\n"))
+    hash.update("\0")
+  }
+  const walk = (directory) => {
+    for (const name of readdirSync(directory).sort()) {
+      const path = join(directory, name)
+      if (lstatSync(path).isDirectory()) walk(path)
+      else add(path)
+    }
+  }
+  walk(join(cuaRoot, "crates/cua-sdk"))
+  walk(join(cuaRoot, "crates/cua-bindgen"))
+  for (const path of [
+    "VERSION",
+    "scripts/generate-uniffi-bindings.mjs",
+    "scripts/uniffi-python-postprocess.mjs",
+    "typescript/package-lock.json",
+  ]) {
+    add(join(cuaRoot, path))
+  }
+  // The pinned UniFFI crates (the rest of Cargo.lock does not matter).
+  const lock = readFileSync(join(cuaRoot, "Cargo.lock"), "utf8").replaceAll("\r\n", "\n")
+  for (const entry of lock.split("\n[[package]]\n")) {
+    if (/^name = "(uniffi[^"]*|ubrn[^"]*)"/m.test(entry)) hash.update(entry)
+  }
+  hash.update(`${[...languages].sort().join(",")}\0${process.env.CUA_SDK_RELEASE_VERSION ?? ""}`)
+  return hash.digest("hex").slice(0, 32)
+}
+
+function cacheDirectory(key) {
+  const base =
+    process.env.CUA_BUILD_CACHE_DIR ??
+    join(process.env.XDG_CACHE_HOME ?? join(homedir(), ".cache"), "cua-build")
+  return join(base, "uniffi", key)
+}
+
+// The generated files of every group, in generation order, for the cache.
+const generated = []
 const stale = []
 
 function applyGroup(root, files) {
+  generated.push({ root: relative(cuaRoot, root), files })
   const inventory = join(root, INVENTORY)
   const previous = existsSync(inventory)
     ? readFileSync(inventory, "utf8")
@@ -197,105 +266,171 @@ function bindgen(library, language, outDir) {
   )
 }
 
+// cua-sdk's default features without `byoc` (see the header comment).
+function buildFeatures() {
+  const manifest = readFileSync(join(cuaRoot, "crates/cua-sdk/Cargo.toml"), "utf8")
+  const match = manifest.match(/^default\s*=\s*\[([^\]]*)\]/m)
+  if (!match) throw new Error("no default features in crates/cua-sdk/Cargo.toml")
+  return [...match[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]).filter((f) => f !== "byoc")
+}
+
+// CI's `sdk-linux` artifact (a release libcua_sdk.so) for the current commit.
+function downloadCiLibrary(into) {
+  const sha = spawnSync("git", ["rev-parse", "HEAD"], { cwd: cuaRoot, encoding: "utf8" }).stdout.trim()
+  const listed = spawnSync(
+    "gh",
+    ["run", "list", "-R", "trycua/cua", "-w", "ci-cua-sdk.yml", "-c", sha, "--json", "databaseId", "-q", ".[].databaseId"],
+    { cwd: cuaRoot, encoding: "utf8" },
+  )
+  for (const id of (listed.stdout ?? "").split("\n").filter(Boolean)) {
+    const result = spawnSync("gh", ["run", "download", id, "-R", "trycua/cua", "-n", "sdk-linux", "-D", into], {
+      cwd: cuaRoot,
+      stdio: "ignore",
+    })
+    if (result.status !== 0) continue
+    run("tar", ["-xf", join(into, "sdk-linux.tar"), "-C", into], cuaRoot)
+    return join(into, "release", "libcua_sdk.so")
+  }
+  throw new Error(`no CI sdk-linux artifact for ${sha} (artifacts are kept one day; build locally instead)`)
+}
+
+const external = Boolean(libraryArgument || process.env.CUA_SDK_LIBRARY)
+// A library someone else built (or an old one) may not match the sources:
+// only a library built here or CI's artifact for this commit fills the cache.
+const key = useCache && (fromCi || (!skipBuild && !external)) ? fingerprint() : null
+const cached = key ? join(cacheDirectory(key), "files.json") : null
 const temporaryRoot = mkdtempSync(join(tmpdir(), "cua-uniffi-"))
 try {
-  if (!skipBuild) {
-    run("cargo", ["build", "--locked", ...(release ? ["--release"] : []), "-p", "cua-sdk"], cuaRoot)
-  }
-  const library = nativeLibraryPath()
-  if (!existsSync(library)) {
-    throw new Error(
-      `missing built SDK library ${library}` +
-        (release ? "" : " (pass --release to use a release build)"),
-    )
-  }
+  if (cached && existsSync(cached)) {
+    for (const group of JSON.parse(readFileSync(cached, "utf8"))) {
+      applyGroup(join(cuaRoot, group.root), group.files)
+    }
+    console.log(`UniFFI interface unchanged (cache ${key}); nothing compiled.`)
+  } else {
+    let library = libraryArgument
+      ? resolve(libraryArgument.slice("--library=".length))
+      : process.env.CUA_SDK_LIBRARY
+        ? resolve(process.env.CUA_SDK_LIBRARY)
+        : null
+    if (!library && fromCi) library = downloadCiLibrary(temporaryRoot)
+    if (!library && !skipBuild) {
+      run(
+        "cargo",
+        [
+          "build",
+          "--locked",
+          ...(release ? ["--release"] : []),
+          "-p",
+          "cua-sdk",
+          "--no-default-features",
+          "--features",
+          buildFeatures().join(","),
+        ],
+        cuaRoot,
+      )
+    }
+    library ??= nativeLibraryPath()
+    if (!existsSync(library)) {
+      throw new Error(
+        `missing built SDK library ${library}` +
+          (release ? "" : " (pass --release to use a release build)"),
+      )
+    }
 
-  if (languages.has("python")) {
-    const out = join(temporaryRoot, "python")
-    bindgen(library, "python", out)
-    applyGroup(pythonRoot, {
-      "src/cua/_native.py": postprocessPython(
-        normalizeWhitespace(readFileSync(join(out, "cua_sdk.py"), "utf8")),
-      ),
-    })
-  }
-
-  if (languages.has("swift")) {
-    const out = join(temporaryRoot, "swift")
-    bindgen(library, "swift", out)
-    applyGroup(swiftRoot, {
-      "Sources/CuaSDK/CuaSDK.swift": normalizeWhitespace(
-        readFileSync(join(out, "CuaSDK.swift"), "utf8"),
-      ),
-      "Sources/cua_sdkFFI/include/cua_sdkFFI.h": normalizeWhitespace(
-        readFileSync(join(out, "cua_sdkFFI.h"), "utf8"),
-      ),
-      // SwiftPM requires the map to be named `module.modulemap` and to point
-      // at the header by its path inside the system-library target. This is
-      // the one place generated output is edited.
-      "Sources/cua_sdkFFI/module.modulemap": normalizeWhitespace(
-        readFileSync(join(out, "cua_sdkFFI.modulemap"), "utf8").replace(
-          'header "cua_sdkFFI.h"',
-          'header "include/cua_sdkFFI.h"',
+    if (languages.has("python")) {
+      const out = join(temporaryRoot, "python")
+      bindgen(library, "python", out)
+      applyGroup(pythonRoot, {
+        "src/cua/_native.py": postprocessPython(
+          normalizeWhitespace(readFileSync(join(out, "cua_sdk.py"), "utf8")),
         ),
-      ),
-    })
-  }
-
-  if (languages.has("kotlin")) {
-    const out = join(temporaryRoot, "kotlin")
-    bindgen(library, "kotlin", out)
-    const relative = "ai/cua/sdk/cua_sdk.kt"
-    applyGroup(kotlinRoot, {
-      [`src/main/kotlin/${relative}`]: normalizeWhitespace(
-        readFileSync(join(out, relative), "utf8"),
-      ),
-    })
-  }
-
-  if (languages.has("typescript")) {
-    const out = join(temporaryRoot, "typescript")
-    const ubrn = join(
-      typescriptRoot,
-      "node_modules",
-      ".bin",
-      process.platform === "win32" ? "ubrn.cmd" : "ubrn",
-    )
-    if (!existsSync(ubrn)) {
-      throw new Error("missing pinned UBRN generator; run npm ci in libs/cua/typescript")
+      })
     }
-    run(
-      ubrn,
-      [
-        "generate",
-        "napi",
-        "bindings",
-        "--library",
-        library,
-        "--ts-dir",
-        out,
-        "--lib-package-base",
-        "@trycua/cua",
-        "--lib-node-triple",
-        "--no-format",
-      ],
-      // UBRN shells out to `cargo metadata` in its working directory.
-      cuaRoot,
-    )
-    const files = {}
-    const names = readdirSync(out).filter((name) => name.endsWith(".ts"))
-    for (const name of names) {
-      if (name === "index.ts") {
-        // UBRN's initializer.
-        files["src/native/index.ts"] = normalizeTypeScript(name, readFileSync(join(out, name), "utf8"))
-        continue
+
+    if (languages.has("swift")) {
+      const out = join(temporaryRoot, "swift")
+      bindgen(library, "swift", out)
+      applyGroup(swiftRoot, {
+        "Sources/CuaSDK/CuaSDK.swift": normalizeWhitespace(
+          readFileSync(join(out, "CuaSDK.swift"), "utf8"),
+        ),
+        "Sources/cua_sdkFFI/include/cua_sdkFFI.h": normalizeWhitespace(
+          readFileSync(join(out, "cua_sdkFFI.h"), "utf8"),
+        ),
+        // SwiftPM requires the map to be named `module.modulemap` and to point
+        // at the header by its path inside the system-library target. This is
+        // the one place generated output is edited.
+        "Sources/cua_sdkFFI/module.modulemap": normalizeWhitespace(
+          readFileSync(join(out, "cua_sdkFFI.modulemap"), "utf8").replace(
+            'header "cua_sdkFFI.h"',
+            'header "include/cua_sdkFFI.h"',
+          ),
+        ),
+      })
+    }
+
+    if (languages.has("kotlin")) {
+      const out = join(temporaryRoot, "kotlin")
+      bindgen(library, "kotlin", out)
+      const relative = "ai/cua/sdk/cua_sdk.kt"
+      applyGroup(kotlinRoot, {
+        [`src/main/kotlin/${relative}`]: normalizeWhitespace(
+          readFileSync(join(out, relative), "utf8"),
+        ),
+      })
+    }
+
+    if (languages.has("typescript")) {
+      const out = join(temporaryRoot, "typescript")
+      const ubrn = join(
+        typescriptRoot,
+        "node_modules",
+        ".bin",
+        process.platform === "win32" ? "ubrn.cmd" : "ubrn",
+      )
+      if (!existsSync(ubrn)) {
+        throw new Error("missing pinned UBRN generator; run npm ci in libs/cua/typescript")
       }
-      // Only the cua_sdk namespace (see the header comment).
-      if (!name.startsWith(`${CRATE}.`) && !name.startsWith(`${CRATE}-`)) continue
-      files[`src/native/${name}`] = normalizeTypeScript(name, readFileSync(join(out, name), "utf8"))
+      run(
+        ubrn,
+        [
+          "generate",
+          "napi",
+          "bindings",
+          "--library",
+          library,
+          "--ts-dir",
+          out,
+          "--lib-package-base",
+          "@trycua/cua",
+          "--lib-node-triple",
+          "--no-format",
+        ],
+        // UBRN shells out to `cargo metadata` in its working directory.
+        cuaRoot,
+      )
+      const files = {}
+      const names = readdirSync(out).filter((name) => name.endsWith(".ts"))
+      for (const name of names) {
+        if (name === "index.ts") {
+          // UBRN's initializer.
+          files["src/native/index.ts"] = normalizeTypeScript(name, readFileSync(join(out, name), "utf8"))
+          continue
+        }
+        // Only the cua_sdk namespace (see the header comment).
+        if (!name.startsWith(`${CRATE}.`) && !name.startsWith(`${CRATE}-`)) continue
+        files[`src/native/${name}`] = normalizeTypeScript(name, readFileSync(join(out, name), "utf8"))
+      }
+      if (!files[`src/native/${CRATE}.ts`]) throw new Error("UBRN produced no cua_sdk.ts")
+      applyGroup(typescriptRoot, files)
     }
-    if (!files[`src/native/${CRATE}.ts`]) throw new Error("UBRN produced no cua_sdk.ts")
-    applyGroup(typescriptRoot, files)
+
+    if (cached) {
+      mkdirSync(dirname(cached), { recursive: true })
+      const temporary = `${cached}.tmp.${process.pid}`
+      writeFileSync(temporary, JSON.stringify(generated))
+      renameSync(temporary, cached)
+    }
   }
 
   if (languages.has("typescript")) {

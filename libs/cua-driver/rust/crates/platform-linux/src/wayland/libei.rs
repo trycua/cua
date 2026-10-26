@@ -1605,7 +1605,10 @@ mod tests {
     #[test]
     fn drag_endpoint_outside_selected_device_fails_before_any_event() {
         let (result, events) = record(|| drag(100.0, 100.0, 11_000.0, 100.0, 4, 0, Button::Left));
-        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("outside every announced pointer region"));
         assert_eq!(events, vec![]);
     }
 
@@ -1618,7 +1621,12 @@ mod tests {
                 drag(8000.0, 100.0, 100.0, 100.0, 4, 0, Button::Left),
             )
         });
-        assert!(result.0.is_err() && result.1.is_err() && result.2.is_err());
+        for r in [result.0, result.1, result.2] {
+            assert!(r
+                .unwrap_err()
+                .to_string()
+                .contains("outside every announced pointer region"));
+        }
         assert_eq!(events, vec![]);
     }
 }

@@ -6,10 +6,11 @@ import CuaSpacesFFI
 import SwiftUI
 import WebKit
 
-/// New UI (preview): the shared React UI (`apps/cua-spaces-web`) in a window
-/// of its own, behind the `web_ui` experiment. The notch, the menu bar extra,
-/// Touch ID and video stay native; a Space's desktop opens in its native
-/// window.
+/// The app's main window: the shared React UI (`apps/cua-spaces-web`) in a
+/// `WKWebView`. It is the only main window; the Swift shell around it keeps
+/// what has to be native: the notch, the menu bar extra, permission prompts,
+/// Touch ID, the Keychain, the updater and video (a Space's desktop opens in
+/// its native window).
 ///
 /// - Release: the bundled build (`Contents/Resources/WebUI`) at
 ///   `cua-spaces://app/` through `WebUISchemeHandler`.
@@ -23,8 +24,8 @@ import WebKit
 public final class WebUIWindowController: NSWindowController, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate {
     /// The open window, if any (one per app).
     public private(set) static var shared: WebUIWindowController?
-    /// What the scenes let the bridge do (open a Space's window, the main
-    /// window, Settings); set by whichever SwiftUI view saw them last.
+    /// What the scenes let the bridge do (open a Space's window); set by
+    /// whichever SwiftUI view saw them last.
     public static var actions: WebUIActions? {
         didSet { shared?.bridge.actions = actions }
     }
@@ -44,8 +45,7 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
         return devServer
     }
 
-    /// Opens the window, or brings it forward; at `frame` when given (the
-    /// native main window's, which it replaces).
+    /// Opens the window, or brings it forward; at `frame` when given.
     public static func show(model: AppModel, frame: NSRect? = nil) {
         show(model: model, frame: frame, startRoute: nil)
     }
@@ -83,20 +83,7 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
     /// The apps and files last dropped on a notch tile, until the page takes them.
     static var notchDrop: [URL] = []
 
-    /// Closes the New UI window, if open (its experiment was turned off),
-    /// and shows the native main window in its place, at its frame.
-    public static func closeShared() {
-        guard let c = shared else { return }
-        let main = c.bridge.actions?.openMain ?? actions?.openMain
-        // After the bridge answered the page's switch.
-        DispatchQueue.main.async {
-            let frame = c.window?.isVisible == true ? c.window?.frame : nil
-            c.window?.close()
-            MainWindowSwitch.switchToNative(webFrame: frame, openMain: main)
-        }
-    }
-
-    /// New Space in the New UI window: opens it (or brings it forward) and
+    /// New Space in the web UI window: opens it (or brings it forward) and
     /// asks the page for its wizard ("Run on" set to `on` when given).
     @discardableResult
     public static func showNewSpace(model: AppModel, on: String?) -> Bool {
@@ -551,8 +538,6 @@ extension NSColor {
 extension WebUIActions {
     /// The scenes' window actions for the bridge.
     static func make(openWindow: OpenWindowAction) -> WebUIActions {
-        WebUIActions(
-            openSpace: { id in NSApp.activate(); openWindow(id: "space", value: id) },
-            openMain: { NSApp.activate(); openWindow(id: "main") })
+        WebUIActions(openSpace: { id in NSApp.activate(); openWindow(id: "space", value: id) })
     }
 }

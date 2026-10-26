@@ -43,7 +43,7 @@ struct BridgeContractTests {
                              settingsPath: dir.appendingPathComponent("settings.json").path,
                              telemetry: FixtureTelemetry())
         let bridge = WebUIBridge(model: model, allowedOrigins: [])
-        bridge.actions = WebUIActions(openSpace: { _ in }, openMain: {})
+        bridge.actions = WebUIActions(openSpace: { _ in })
         // The CLI's plan on temp folders, not this Mac's ~/.local/bin.
         let cliDir = dir.appendingPathComponent("cli").path
         bridge.makeCliInstaller = {
@@ -196,7 +196,7 @@ struct BridgeContractTests {
         await model.refresh()
         await model.keyvault.refresh()
         let bridge = WebUIBridge(model: model, allowedOrigins: [])
-        bridge.actions = WebUIActions(openSpace: { _ in }, openMain: {})
+        bridge.actions = WebUIActions(openSpace: { _ in })
         // The CLI's plan on temp folders, not this Mac's ~/.local/bin.
         let cliDir = dir.appendingPathComponent("cli").path
         bridge.makeCliInstaller = {

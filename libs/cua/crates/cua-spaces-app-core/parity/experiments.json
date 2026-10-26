@@ -10,9 +10,7 @@
     { "step": "another row changes nothing", "row": "notch", "option": "hide" },
     { "step": "cua volume off", "row": "experiment:cua_volume", "option": "off" },
     { "step": "your cloud on again", "row": "experiment:your_cloud", "option": "on" },
-    { "step": "sharing off", "row": "experiment:sharing", "option": "off" },
-    { "step": "new ui on (use classic ui off)", "row": "experiment:classic_ui", "option": "off" },
-    { "step": "use classic ui on", "row": "experiment:classic_ui", "option": "on" }
+    { "step": "sharing off", "row": "experiment:sharing", "option": "off" }
   ],
   "settings": {
     "identity": "maya@example.com",

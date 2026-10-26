@@ -15,7 +15,7 @@ const SELF_HOSTED = "self-hosted";
 const BETA_HELP = "New features sooner, with rough edges. Back on Stable, this version stays until a newer stable release.";
 
 /** Experiments that stay as Labs. "Your cloud" and "Sharing" have no switch any more: the plan decides on the server. */
-const LABS = new Set(["experiment:cua_volume", "experiment:classic_ui"]);
+const LABS = new Set(["experiment:cua_volume"]);
 
 /** The software choices in plain words (the core says Built-in and System). */
 const RUNTIME_LABEL: Record<string, string> = { "macos-runtime": "Mac computers", "linux-runtime": "Linux computers" };
@@ -121,15 +121,13 @@ function askFirstRow(on: boolean): CoreRow {
   };
 }
 
-/** Cua Volume, the new Home and, on the Mac-native app, the previous window. Off hides; nothing set up is undone. */
+/** Cua Volume and the new Home. Off hides; nothing set up is undone. */
 function Labs() {
   const { data, chooseExperiment } = useExperiments();
-  const { mode } = useBridge();
   const askFirst = useFlag("spaces_ask_first_home");
-  const rows = (data?.page?.sections.flatMap((s) => s.rows) ?? []).filter((r) => LABS.has(r.id) && !(mode === "electron" && r.id === "experiment:classic_ui"));
+  const rows = (data?.page?.sections.flatMap((s) => s.rows) ?? []).filter((r) => LABS.has(r.id));
   const note: Record<string, string> = {
     "experiment:cua_volume": "Memory and files your agents share across every Space.",
-    "experiment:classic_ui": "Mac-native app only.",
   };
   return (
     <SettingsGroup title="Labs">
@@ -141,7 +139,7 @@ function Labs() {
       {rows.map((r) => (
         <CoreSettingsRow
           key={r.id}
-          row={r.id === "experiment:classic_ui" ? { ...r, label: "Use the previous Spaces window" } : r}
+          row={r}
           description={note[r.id]}
           onChoose={(row, option) => void chooseExperiment(row.id, option).catch(toastError("Couldn't change the setting"))}
         />

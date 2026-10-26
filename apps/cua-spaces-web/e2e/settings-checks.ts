@@ -210,10 +210,9 @@ async function checkStorage(page: Page, checkpoints: ParityCheckpoint[]): Promis
 
 /* ---- Experiments ------------------------------------------------------------ */
 
-/** Advanced keeps Labs: Cua Volume and, on the Mac-native app, the previous window. Sharing and Your cloud have no switch. */
+/** Advanced keeps Labs: Cua Volume. Sharing, Your cloud and the New UI have no switch. */
 const LABS: Record<string, { label?: string; note: string }> = {
   "experiment:cua_volume": { note: "Memory and files your agents share across every Space." },
-  "experiment:classic_ui": { label: "Use the previous Spaces window", note: "Mac-native app only." },
 };
 
 async function checkExperiments(page: Page, checkpoints: ParityCheckpoint[]): Promise<number> {

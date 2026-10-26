@@ -417,11 +417,9 @@ struct ViewModelTests {
         let telemetry = FixtureTelemetry()
         let model = makeModel(telemetry: telemetry)
         let toggles = model.experimentsPage.sections.flatMap(\.rows).filter { $0.kind == .toggle }
-        #expect(toggles.map(\.id) == ["experiment:cua_volume", "experiment:your_cloud", "experiment:sharing",
-                                    "experiment:classic_ui"])
-        // Off, the New UI shows as "Use classic UI" on (tests run with no app version: no default).
-        // Sharing and Your cloud are on unless turned off.
-        let onByDefault: Set<String> = ["experiment:classic_ui", "experiment:sharing", "experiment:your_cloud"]
+        #expect(toggles.map(\.id) == ["experiment:cua_volume", "experiment:your_cloud", "experiment:sharing"])
+        // Sharing and Your cloud are on unless turned off; no New UI row.
+        let onByDefault: Set<String> = ["experiment:sharing", "experiment:your_cloud"]
         #expect(toggles.allSatisfy { r in
             r.options.first { $0.id == (onByDefault.contains(r.id) ? "on" : "off") }?.active == true
         })
@@ -935,7 +933,7 @@ struct ViewModelTests {
         let model = makeModel(backend)
         var opened: [String] = []
         let previous = WebUIWindowController.actions
-        WebUIWindowController.actions = WebUIActions(openSpace: { if $0 == "local:fresh" { opened.append($0) } }, openMain: {})
+        WebUIWindowController.actions = WebUIActions(openSpace: { if $0 == "local:fresh" { opened.append($0) } })
         defer { WebUIWindowController.actions = previous }
         await model.refresh()
         await model.openNewSpace()

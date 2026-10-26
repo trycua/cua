@@ -18,9 +18,13 @@ export function sdkRoot() {
     path.join(os.homedir(), ".cua", "tools", "acp-sdk", SDK_VERSION),
     path.join(os.tmpdir(), `cua-acp-sdk-${SDK_VERSION}`),
   ].filter(Boolean);
-  const has = (d) => fs.existsSync(path.join(d, "node_modules", "@agentclientprotocol", "sdk", "package.json"));
+  // The entry the runner imports, not just package.json: a cache an interrupted
+  // install or a temp-dir sweep left half-written is installed again.
+  const has = (d) => fs.existsSync(path.join(d, "node_modules", "@agentclientprotocol", "sdk", "dist", "acp.js"));
   for (const c of candidates) if (has(c)) return c;
   const target = candidates[candidates.length - 1];
+  // npm takes a half-written package for installed: start that cache over.
+  fs.rmSync(path.join(target, "node_modules"), { recursive: true, force: true });
   fs.mkdirSync(target, { recursive: true });
   const r = spawnSync("npm", ["install", "--no-audit", "--no-fund", "--prefix", target, `@agentclientprotocol/sdk@${SDK_VERSION}`], { stdio: "ignore" });
   return r.status === 0 && has(target) ? target : null;

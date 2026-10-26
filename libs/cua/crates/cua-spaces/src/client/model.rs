@@ -1408,7 +1408,7 @@ pub struct CreateSpaceOptions {
     /// Where: `local` (free), a connected cloud account (`aws`, `gcp`,
     /// `modal`) or `host:<name>`. Unset: the user default.
     pub on: Option<String>,
-    /// `auto` (default), `container` or `vm`.
+    /// `auto` (default), `container`, `vm` or `microvm`.
     pub kind: Option<String>,
     /// `auto` (default) or an engine the location offers for the kind.
     pub runtime: Option<String>,

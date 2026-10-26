@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * "Add a machine" by link or QR code: makes a one-time pairing code
+ * "Add a computer" by link or QR code: makes a one-time pairing code
  * (`devices.createPairingCode`), watches it (`devices.pairingCodes`) until
  * the other computer uses it, and revokes it on request
  * (`devices.revokePairingCode`). The relay holds the code's state; this
@@ -22,7 +22,7 @@ import type { PairingCode } from "./contracts/devices";
 import { plainPairingError } from "./friendly-errors";
 import { useBridge } from "./hooks";
 
-/** How often an open "Add a machine" asks whether its code was used (ms). */
+/** How often an open "Add a computer" asks whether its code was used (ms). */
 export const PAIRING_POLL_MS = 3000;
 
 export type PairingPhase = "idle" | "minting" | "ready" | "used" | "revoked" | "expired" | "error";
@@ -37,7 +37,7 @@ export interface PairingState {
    * With a `team`, after the code was used: `adding` (show "Finishing
    * setup…"), `added`, or `failed` with the reason. Null otherwise.
    */
-  team?: { phase: "adding" | "added" | "failed"; error: string | null; upgradeUrl?: string | null } | null;
+  team?: { phase: "adding" | "added" | "failed"; error: string | null; upgradeUrl?: string | null; kind?: PlanFailureKind } | null;
 }
 
 /** Where a team owner buys Teams, and where anyone buys Pro. */
@@ -53,6 +53,16 @@ const BUY_URL = /\s*https:\/\/app\.cua\.ai\/buy\/(?:teams|pro)\b\S*/;
  * (`HTTP 402 (feature_required: team_machines)`) is reworded here, without a
  * button because the role is not known.
  */
+/** Which cap a team step hit, for usage data (`cua_plan_limit_shown`'s `kind`). */
+export type PlanFailureKind = "machines" | "seats" | "other";
+
+/** The cap in a plan error's text: team computers, seats, or another. */
+export function planFailureKind(raw: string): PlanFailureKind {
+  if (/machine_limit|team_machines|computers?\b/i.test(raw)) return "machines";
+  if (/add_seats|\bseats?\b/i.test(raw)) return "seats";
+  return "other";
+}
+
 export function planFailure(raw: string): { text: string; upgradeUrl: string | null } {
   const link = BUY_URL.exec(raw);
   if (link) return { text: raw.replace(BUY_URL, "").trim(), upgradeUrl: link[0].trim() };
@@ -73,13 +83,13 @@ export function planFailure(raw: string): { text: string; upgradeUrl: string | n
   return { text: raw, upgradeUrl: null };
 }
 
-/** What "Add a machine" shows while a paired machine joins its team. */
+/** What "Add a computer" shows while a paired machine joins its team. */
 export const FINISHING_SETUP = "Finishing setup…";
 
 export interface PairingHook extends PairingState {
   /** Unix ms, ticking each second while a code is active (for the countdown). */
   now: number;
-  /** Makes a new code (after one expired or was revoked, or a failure). */
+  /** Makes a new code (after one was revoked, or a failure; an expired one is replaced by itself). */
   renew(): void;
   /** Revokes the active code. */
   revoke(): Promise<void>;
@@ -102,7 +112,7 @@ export function expiresInText(expiresAtSecs: number, nowMs: number): string {
 }
 
 /**
- * The pairing code of an open "Add a machine". `enabled`: signed in, and this
+ * The pairing code of an open "Add a computer". `enabled`: signed in, and this
  * device may make one (enrolled). A code that is still active stays across
  * closing and opening again; a used, revoked or expired one is replaced.
  */
@@ -132,12 +142,15 @@ export function usePairingCode({
   const mint = () => {
     if (!adapter) return;
     const mine = ++seq.current;
+    shown.current = false;
     setState({ phase: "minting", code: null, error: null });
     adapter.call("devices.createPairingCode", { team }).then(
       (code) => {
         if (mine !== seq.current) return;
         setNow(Date.now());
-        setState({ phase: code.state === "active" ? "ready" : code.state, code, error: null });
+        // A code already past its time (a clock that is off) is expired, not ready.
+        const lapsed = code.state === "active" && code.expiresAt * 1000 <= Date.now();
+        setState({ phase: lapsed ? "expired" : code.state === "active" ? "ready" : code.state, code, error: null });
       },
       (e: unknown) => {
         if (mine !== seq.current) return;
@@ -152,6 +165,26 @@ export function usePairingCode({
     if (state.phase !== "minting" && state.phase !== "ready") mint();
     // Only on opening (and on becoming able to): not on each change of phase.
   }, [open, enabled, adapter]);
+
+  // While the sheet is open an expired code is replaced at once, so the
+  // link, command, code and prompt it shows always work. A code the person
+  // revoked is not: they asked for it to stop.
+  // Only a code that was shown working: one that arrives already expired (a
+  // clock that is off) is not renewed again and again.
+  const shown = useRef(false);
+  if (state.phase === "ready") shown.current = true;
+  const expired = open && enabled && state.phase === "expired";
+  useEffect(() => {
+    if (expired && shown.current) mint();
+  }, [expired]);
+
+  // Another team: a code for that team (the old one just expires).
+  const firstTeam = useRef(team);
+  useEffect(() => {
+    if (firstTeam.current === team) return;
+    firstTeam.current = team;
+    if (open && enabled) mint();
+  }, [team]);
 
   // The countdown, and expiry without waiting for the relay.
   const expiresAt = state.phase === "ready" ? state.code?.expiresAt : undefined;
@@ -211,8 +244,9 @@ export function usePairingCode({
       await adapter.call("sharing.share", { spaceId: `relay:${machine}`, who: `team:${team}`, role: "editor" });
       setState((s) => ({ ...s, team: { phase: "added", error: null } }));
     } catch (e: unknown) {
-      const { text, upgradeUrl } = planFailure(e instanceof Error ? e.message : String(e));
-      setState((s) => ({ ...s, team: { phase: "failed", error: text, upgradeUrl } }));
+      const raw = e instanceof Error ? e.message : String(e);
+      const { text, upgradeUrl } = planFailure(raw);
+      setState((s) => ({ ...s, team: { phase: "failed", error: text, upgradeUrl, kind: planFailureKind(raw) } }));
     }
   };
 

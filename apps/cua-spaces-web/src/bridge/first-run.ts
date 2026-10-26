@@ -35,7 +35,7 @@ import { useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore 
 
 import { BridgeContext } from "./BridgeProvider";
 import type { CoreClient } from "./core";
-import type { AgentSetupRow } from "./contracts/agents";
+import type { AgentSetupRow, ConnectionReport } from "./contracts/agents";
 import type { HostStatus, SignInFailure } from "./contracts/host";
 import type {
   CliInstallPlan,
@@ -316,6 +316,8 @@ export interface FirstRunSaved {
   finishedLater: boolean;
   /** The to-do list was closed. */
   todosClosed: boolean;
+  /** Advanced setup on Pick your agent (CUA-2267). */
+  advanced?: boolean;
 }
 
 const KEY = "cua-spaces:first-run";
@@ -470,6 +472,8 @@ export interface FirstRunHook {
   agents: AgentSetupRow[];
   /** Pick your agent: adds Cua to this one agent's settings on this computer. */
   connect(agent: string): Promise<void>;
+  /** Takes Cua out of a gone agent's settings (`agents.disconnect`). */
+  disconnect(agent: string): Promise<void>;
   /** Starts an agent's own sign-in on this computer (`codex login`). */
   signIn(agent: string): Promise<void>;
   /** A screen's button: `start`, `continue`, `skip`, `not-now` (next screen), `recheck` (read the agents again), `install` (the CLI), `sign-in`, `set-up`, `open-settings`, `allow` (the app's guide to that System Settings pane), `copy`, `add`. */
@@ -577,6 +581,8 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
   const usage = useRelayUsage();
   const flags = useSyncExternalStore(subscribe, () => `${flag(UPSELL_DISMISSED_KEY)}:${flag(TEAMMATES_KEY)}`, () => "false:false");
   const [agents, setAgents] = useState<AgentSetupRow[] | null>(null);
+  // The one connection status (`agents.status`); none where the host can't tell.
+  const [status, setStatus] = useState<ConnectionReport | null>(null);
   const [host, setHost] = useState<HostStatus | null>(null);
   const [connecting, setConnecting] = useState<string | null>(null);
   const [connectError, setConnectError] = useState<string | null>(null);
@@ -612,6 +618,10 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
           .call("agents.setup", {})
           .then((rows) => live && setAgents(rows))
           .catch(() => live && setAgents((a) => a ?? []));
+        void adapter
+          .call("agents.status", { refresh: forceAgents })
+          .then((r) => live && setStatus(r))
+          .catch(() => {});
       }
       if (step === "devices" || step === "permissions" || step === "setup" || s.finishedLater) {
         // On the permissions page the host also checks Local Network access (which makes macOS ask).
@@ -633,7 +643,16 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
   }, [active, adapter, step, s.finishedLater, tick, pollMs]);
 
   const rows: FirstRunAgent[] | null = agents
-    ? agents.map((a) => ({ agent: a.agent, name: a.name, installed: a.installed, configured: a.configured, signIn: a.signIn ?? null, signedIn: Boolean(a.signedIn), mcpConfig: a.mcpConfig ?? null }))
+    ? agents.map((a) => ({
+        agent: a.agent,
+        name: a.name,
+        installed: a.installed,
+        configured: a.configured,
+        signIn: a.signIn ?? null,
+        signedIn: Boolean(a.signedIn),
+        mcpConfig: a.mcpConfig ?? null,
+        connection: status?.agents.find((c) => c.id === a.agent) ?? null,
+      }))
     : null;
 
   // The extra Space, as the Spaces list shows its create.
@@ -687,6 +706,7 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
     connecting: connecting !== null,
     connectingAgent: connecting,
     connectError,
+    advanced: s.advanced === true,
     // No process check yet (see the module comment).
     agentOpenBeforeSetup: null,
     agentUsedAt: null,
@@ -812,7 +832,7 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
     setSettingUp(true);
     setSetupError(null);
     try {
-      const ok = await store.thisMachine.quickSetUp(session.data?.identity ?? null);
+      const ok = await store.addThisComputer(session.data?.identity ?? null);
       if (!ok) setSetupError(store.thisMachine.get().setupError?.message ?? "Couldn't set it up.");
     } finally {
       setSettingUp(false);
@@ -834,8 +854,14 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
     setConnecting(agent);
     setConnectError(null);
     try {
-      const rows = await adapter.call("agents.configure", { agents: [agent] });
+      // Connect adds Cua's tools and copies the agent's sign-in to Keyvault (CUA-2267), the same
+      // connect as Settings, the CLI and MCP (`agents.connect`). A host without it still has
+      // `agents.configure` (tools only; compat, CUA-2341).
+      const viaConnect = await adapter.call("agents.connect", { agents: [agent], signIn: true }).then(() => true, () => false);
+      const rows = viaConnect ? await adapter.call("agents.setup", {}) : await adapter.call("agents.configure", { agents: [agent] });
       setAgents(rows);
+      // The row follows the connection status: read it again now, not at the next poll.
+      setStatus(await adapter.call("agents.status", { refresh: true }).catch(() => null));
       // Only an app Cua really got into counts as picked: one that failed is not "connected".
       if (rows.find((r) => r.agent === agent)?.configured) {
         const was = readFirstRun().picked ?? [];
@@ -843,6 +869,22 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
       } else {
         setConnectError(rows.find((r) => r.agent === agent)?.detail ?? "Cua is not in its settings.");
       }
+    } catch (e) {
+      setConnectError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setConnecting(null);
+    }
+  };
+
+  // A connected agent gone from this computer: take Cua out of its settings.
+  const disconnect = async (agent: string) => {
+    if (!adapter || connecting) return;
+    setConnecting(agent);
+    setConnectError(null);
+    try {
+      await adapter.call("agents.disconnect", { agents: [agent], signIn: false });
+      setAgents(await adapter.call("agents.setup", {}));
+      setStatus(await adapter.call("agents.status", { refresh: true }).catch(() => null));
     } catch (e) {
       setConnectError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -909,6 +951,7 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
     saved: s,
     agents: agents ?? [],
     connect,
+    disconnect,
     signIn,
     copyPrompt,
     openUrl: (url) => session.openExternal(url).catch(() => {}),
@@ -922,6 +965,10 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
         case "skip":
         case "not-now":
           forward("skipped");
+          break;
+        case "advanced":
+        case "simple":
+          writeFirstRun({ advanced: id === "advanced" });
           break;
         case "install":
           await cli.install();

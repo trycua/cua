@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * The demo host's Settings → Agents: the keys in memory, as the daemon
+ * The demo host's Settings → Connectors: the keys in memory, as the daemon
  * describes them (never a value). OpenAI starts saved, Anthropic not.
  */
 

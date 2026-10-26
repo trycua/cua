@@ -249,7 +249,7 @@ describe("<StreamSurface> native video", () => {
     await waitFor(() => expect(updates()).not.toHaveLength(0));
     const first = updates()[0];
     if (!first) throw new Error("no surface update");
-    expect(first).toMatchObject({ spaceId: "sp-1", tier: "full", interactive: true, radius: 11 });
+    expect(first).toMatchObject({ spaceId: "sp-1", tier: "full", interactive: true, radius: 8 });
 
     act(() => hostEvent("video.surface", { surfaceId: first.surfaceId, state: "live" }));
     expect(container.querySelector('[data-stream-state="live"]')).toBeTruthy();

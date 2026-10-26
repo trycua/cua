@@ -154,9 +154,10 @@ members. To let someone only watch, share a Space with them as a viewer instead.
 Pairing needs Cua Spaces 0.8.0 or later. An owner or admin does this.
 
 1. In the Cua Spaces app, open **Computers**, press **Add a computer** and choose
-   your team next to **Add it for**. The app shows a link, a QR code and a
-   one-time pairing code that looks like `K7QM-4XPB-2RHD`. For the personal
-   version of these steps, see [Add a computer](/spaces/guides/add-a-computer).
+   your team next to **For** at the bottom of the sheet. Then pick **Open a
+   link**, **Scan a QR code**, **Run a command** or **Enter a code**. Each one
+   carries a one-time pairing code that looks like `K7QM-4XPB-2RHD`. For the
+   personal version of these steps, see [Add a computer](/spaces/guides/add-a-computer).
 2. On the computer you are adding, open the link, or run the install command the
    app shows. With the `cua` CLI installed, the code alone is enough:
 
@@ -164,15 +165,13 @@ Pairing needs Cua Spaces 0.8.0 or later. An owner or admin does this.
 cua host setup --pair K7QM-4XPB-2RHD
 ```
 
-If the computer already has the Cua Spaces app, you don't need the command.
-Opening the link in a browser offers to open the app, and the app shows **Join
-with a code** with the code filled in. You can also open **Computers** in the app,
-choose **Join with a code**, and paste the code or the link. The app asks before
-it joins.
+If the computer already has the Cua Spaces app, you don't need the command:
+open **Add a computer** in the app there, choose **Have a code? Enter it**, and
+paste the code or the link. The app asks before it joins.
 
 The computer joins the team that made the code, with no sign-in on that computer.
-A code works once and expires after 30 minutes. Revoke an unused one from the
-same dialog.
+A code works once and expires after 30 minutes; while the sheet is open, it
+renews by itself. Revoke an unused one from the sheet's **⋯** menu.
 
 The computer then appears under **Computers** at
 [app.cua.ai/machines](https://app.cua.ai/machines), where an owner or admin can

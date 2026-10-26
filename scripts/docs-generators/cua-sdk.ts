@@ -488,15 +488,15 @@ export const PAGES: PageSpec[] = [
     description: 'The Spaces registry: create, add, resolve, delete and remove Spaces, their create options, and agent runs in a Space.',
     intro:
       '`cua.spaces()` returns the `Spaces` registry. Create a Space where `on` says (local or cloud), or add an existing machine by URL, then open a [`Space`](/cua-sdk/reference/spaces/space). See [resize](/cua-sdk/reference/spaces/resize) to change a local VM\'s shape.',
-    items: ['Spaces', 'SpaceInfo', 'SpaceList', 'SpacePowerReport', 'spaces_tool_methods', 'SpacesToolMethod'],
+    items: ['Spaces', 'SpaceInfo', 'spaces_tool_methods', 'SpacesToolMethod'],
   },
   {
     slug: 'spaces/resize',
-    title: 'Resize a Space',
-    description: 'Change a local VM\'s CPU, memory or disk while keeping its files.',
+    title: 'Power and resize',
+    description: 'Stop, suspend and start a Space, and change a local VM\'s CPU, memory or disk while keeping its files.',
     intro:
-      '`Spaces.resize` boots a stopped local VM from its own disk after changing its shape. The disk can grow; its files stay in place.',
-    items: ['SpaceResizeReport'],
+      '`Spaces.stop`, `suspend` and `start` answer a `SpacePowerReport`. `Spaces.resize` boots a stopped local VM from its own disk after changing its shape. The disk can grow; its files stay in place.',
+    items: ['SpacePowerReport', 'SpaceResizeReport'],
     members: [{ object: 'Spaces', title: 'Resize', methods: ['resize'] }],
   },
   {
@@ -539,12 +539,15 @@ export const PAGES: PageSpec[] = [
   },
   {
     slug: 'spaces/sharing',
-    title: 'Share a Space',
-    description: 'Give another person access to a Space, list who has it and take it back.',
+    title: 'Sharing, leaving and bulk delete',
+    description: 'Give another person access to a Space, see who owns a Space and who else has it, leave Spaces shared with you, and delete several at once.',
     intro:
-      '`Space.share` gives a person access to a Space, `Space.shares` lists who has it, and `Space.unshare` takes it back.',
-    items: ['SpaceShareEntry', 'SpaceShares'],
-    members: [{ object: 'Space', title: 'Sharing', methods: ['share', 'shares', 'unshare'] }],
+      '`Space.share` gives a person access to a Space, `Space.shares` lists who has it, and `Space.unshare` takes it back. A Space on the relay carries `SpaceInfo.sharing`: its owner, your role (`owner`, `editor`, `viewer`), the team you reach it through and, for your own, who else has it. `leave_many` takes you off Spaces shared with you; `delete_many` deletes several of yours, three at a time, turning running ones off first. Both answer one `BulkResult` per id, in order.',
+    members: [
+      { object: 'Space', title: 'Sharing', methods: ['share', 'shares', 'unshare'] },
+      { object: 'Spaces', title: 'Leave and bulk delete', methods: ['leave_many', 'delete_many'] },
+    ],
+    items: ['SpaceShareEntry', 'SpaceShares', 'SpaceSharing', 'SpaceTeamShare', 'BulkResult'],
   },
   {
     slug: 'spaces/relay-registration',
@@ -759,12 +762,12 @@ export const PAGES: PageSpec[] = [
   },
   {
     slug: 'spaces/list-watch',
-    title: 'List changes',
-    description: 'Hear when the Space list changed, so it is read again then instead of on a timer.',
+    title: 'The list and its changes',
+    description: 'The Space list `Spaces.list` reads, and hearing when it changed so it is read again then instead of on a timer.',
     intro:
       '`Spaces.watch_list` calls a `SpacesListListener` once at the start and again whenever the list changes: this computer\'s Spaces within a second, your other computers on the mesh within about a second of connecting or going away, the others within 10 seconds. Read the list again (`Spaces.list`) when it is called. It reopens by itself after a daemon restart; `SpacesListWatch.stop` ends it.',
     members: [{ object: 'Spaces', title: 'List changes', methods: ['watch_list'] }],
-    items: ['SpacesListListener', 'SpacesListWatch'],
+    items: ['SpaceList', 'SpacesListListener', 'SpacesListWatch'],
   },
   {
     slug: 'spaces/agents',
@@ -782,7 +785,7 @@ export const PAGES: PageSpec[] = [
     title: 'Persistent agents and your cloud',
     description: 'Named agents whose memory outlives their Space: homes in the Cua Volume, routines, notifications, pause and resume, access to your computers, and Spaces in your own AWS, Google Cloud or Modal account.',
     intro:
-      'A persistent agent keeps its harness memory in its home in the Cua Volume (`agents/<name>/`). The daemon restores the home before each run, saves it after each turn, fires routines with or without an app open, and posts notifications. See [Persistent agents](/spaces/guides/persistent-agents).',
+      'A persistent agent keeps its harness memory in its home in the Cua Volume (`agents/<name>/`). The daemon restores the home before each run, saves it after each turn, fires routines with or without an app open, and posts notifications. See [Memory and identity](/spaces/guides/agent-memory-and-identity).',
     members: [
       {
         object: 'Spaces',
@@ -801,7 +804,7 @@ export const PAGES: PageSpec[] = [
       { object: 'Spaces', title: 'Notifications', methods: ['notify_user', 'notifications', 'notifications_ack'] },
       { object: 'Spaces', title: 'Access to your computers', methods: ['computer_access_grant', 'computer_access_revoke', 'computer_access'] },
     ],
-    items: [
+    items: ['ThreadView', 'thread_view_of', 
       'PersistentAgentInfo',
       'PersistentAgentOptions',
       'AgentDelivery',
@@ -824,7 +827,7 @@ export const PAGES: PageSpec[] = [
       {
         object: 'Spaces',
         title: 'Your cloud',
-        methods: ['cloud_status', 'cloud_connect', 'cloud_test', 'cloud_disconnect', 'cloud_sweep', 'cloud_audit'],
+        methods: ['cloud_status', 'cloud_connect', 'cloud_test', 'cloud_disconnect', 'cloud_sweep', 'cloud_audit', 'cloud_approve', 'cloud_cost'],
       },
     ],
     items: [

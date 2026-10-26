@@ -40,7 +40,7 @@ export interface DemoSettingsContext {
   update?: Partial<UpdateState>;
 }
 
-/** How many times "Add a machine" reads the codes before the demo's other
+/** How many times "Add a computer" reads the codes before the demo's other
  * computer runs the command (about ten seconds at its three-second poll). */
 export const DEMO_PAIRING_POLLS = 3;
 

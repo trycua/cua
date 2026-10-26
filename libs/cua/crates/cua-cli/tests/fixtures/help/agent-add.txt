@@ -1,0 +1,78 @@
+Add an agent: a name, a harness and a Space.
+
+With PROMPT it starts at once. --daily, --every or --weekly schedule PROMPT instead; --once runs PROMPT as a one-off task; --durable keeps it running through crashes.
+
+Usage: cua agent add [OPTIONS] --harness <HARNESS> <NAME> [PROMPT]
+
+Arguments:
+  <NAME>
+          The agent's name: 1-63 of a-z, 0-9, `.`, `_`, `-`
+
+  [PROMPT]
+          What it starts on: a first message, a scheduled task (with --daily/--every/--weekly) or the task (--once, --durable)
+
+Options:
+      --harness <HARNESS>
+          Harness id (`cua agent harnesses`)
+
+      --embedded
+          Use an embedded runtime even when a daemon runs
+
+      --in <SPACE>
+          The Space it works in (with --durable: a durable Space by name; default `auto`, none)
+
+      --daemon <DAEMON>
+          Daemon address (socket path or loopback URL)
+          
+          [env: CUA_DAEMON=]
+
+      --model <MODEL>
+          
+
+      --base-url <BASE_URL>
+          
+
+      --daemon-token <DAEMON_TOKEN>
+          Daemon token (loopback URLs)
+          
+          [env: CUA_DAEMON_TOKEN]
+
+      --env-from-host <VAR>
+          Provider key variable to forward at each start. Repeatable
+
+      --state-dir <STATE_DIR>
+          Sandbox state directory (embedded; default ~/.cua/sandboxes)
+
+      --json
+          Print JSON
+
+      --once
+          A one-off task: run PROMPT and stop when it is answered (no name kept, no memory)
+
+      --durable
+          Keep it running through crashes: your machines' coordinator starts it again (a durable session, `cua agent run --durable`)
+
+      --on <MACHINE>
+          With --durable: the machine the driver runs on (`auto`, or a machine's name; default: this machine)
+
+      --every <MINUTES>
+          Schedule PROMPT every N minutes
+
+      --daily <HH:MM>
+          Schedule PROMPT every day at HH:MM
+
+      --weekly <DAY HH:MM>
+          Schedule PROMPT every week, `mon 09:00`
+
+      --title <TITLE>
+          The schedule's title (default: the agent's name)
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+Examples:
+  cua agent add ada --harness hermes --in local:dev --env-from-host OPENAI_API_KEY
+  cua agent add ada --harness claude-code --in local:dev "summarize the repo"
+  cua agent add ada --harness claude-code --in local:dev --daily 08:00 "plan the day"
+  cua agent add fix-1 --harness claude-code --in local:dev --once "fix the failing test"
+  cua agent add nightly --harness claude-code --durable --on auto "refactor the parser"

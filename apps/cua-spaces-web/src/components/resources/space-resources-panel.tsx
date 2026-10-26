@@ -60,7 +60,7 @@ export function SpaceResourcesPanel({
     <section data-space-resources="" aria-label="Resources" className="mt-6">
       <div className="grid gap-4 md:grid-cols-3">
         {cards.map((c) => (
-          <div key={c.label} data-resource-card={c.label} className="rounded-xl border bg-card p-4 shadow-xs">
+          <div key={c.label} data-resource-card={c.label} className="rounded-lg bg-muted/60 p-4">
             <h3 className="text-xs text-muted-foreground">{c.label}</h3>
             <p className="mt-1.5 text-xl leading-tight font-semibold tracking-[-0.01em] tabular-nums">{c.big}</p>
             {c.given ? <p className="mt-1 text-xs text-muted-foreground">{c.given}</p> : null}
@@ -87,7 +87,7 @@ function DiskFit({ host, computer, spaceId, siblings }: { host: ComputerResource
     ...siblings.map((s) => ({ key: s.id, label: s.name, bytes: s.bytes, className: s.id === spaceId ? "bg-brand-strong" : "bg-brand" })),
   ];
   return (
-    <div data-disk-fit="" className="mt-4 rounded-xl border bg-card p-4 shadow-xs">
+    <div data-disk-fit="" className="mt-4 rounded-lg bg-muted/60 p-4">
       <div className="flex items-baseline justify-between gap-3">
         <h3 className="text-[13px] font-semibold">How it fits on {computer}</h3>
         <span className="text-xs text-muted-foreground">{size(host.diskTotal)}</span>
@@ -100,16 +100,16 @@ function DiskFit({ host, computer, spaceId, siblings }: { host: ComputerResource
       <ul className="mt-3 flex flex-wrap gap-x-5 gap-y-1.5 text-xs">
         {segments.map((s) => (
           <li key={s.key} data-disk-part={s.key} className="flex items-center gap-1.5">
-            <span className={cn("size-2 rounded-xs", s.className)} aria-hidden />
+            <span /* design-ok: legend swatch, a 2 px square */ className={cn("size-2 rounded-xs", s.className)} aria-hidden />
             {s.label} · {size(s.bytes)}
           </li>
         ))}
         <li data-disk-part="free" className="flex items-center gap-1.5">
-          <span className="size-2 rounded-xs border bg-foreground/10" aria-hidden />
+          <span /* design-ok: legend swatch, a 2 px square */ className="size-2 rounded-xs border bg-foreground/10" aria-hidden />
           Free · {size(parts.free)}
         </li>
       </ul>
-      {warning ? <LowDiskWarning warning={warning} compact className="mt-4 rounded-lg border" /> : null}
+      {warning ? <LowDiskWarning warning={warning} compact className="mt-4 rounded-lg" /> : null}
     </div>
   );
 }

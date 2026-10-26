@@ -28,7 +28,7 @@ import Testing
     static var advertisedTools: Set<String> { Set(SpacesConnection.contractTools) }
 
     @Test func testTheContractIsCompleteTools() {
-        XCTAssertEqual(Self.advertisedTools.count, 96)
+        XCTAssertEqual(Self.advertisedTools.count, 98)
         // The Python server's `local_rcdp` is gone; `stream_endpoint` mints a
         // media ticket for any provider, and `send_file` is new.
         XCTAssertFalse(Self.advertisedTools.contains("local_rcdp"))
@@ -156,11 +156,32 @@ import Testing
         let (aws, checks) = try await connection.cloud.connect(
             CloudTarget("aws", region: "us-west-2"), makeDefault: true)      // cloud_connect
         XCTAssertTrue(aws.isDefault && checks.checks.count == 1)
+        XCTAssertEqual(aws.status, "connected")
+        let linked = try await connection.cloud.connect(
+            CloudTarget("aws", region: "us-west-2"),
+            options: CloudConnectOptions(auth: "oidc", budgetUsdMonth: 200, maxSize: "4x16"))
+        XCTAssertEqual(linked.provider.status, "checking")
+        XCTAssertEqual(linked.provider.budgetUsdMonth, 200)
+        XCTAssertEqual(linked.provider.maxSize, "4x16")
+        XCTAssertEqual(linked.next?.run, "cua cloud connect aws --oidc --check")
+        XCTAssertEqual(linked.verify, "cua cloud status aws")
+        let sealed = try await connection.cloud.connect(
+            CloudTarget("hetzner", region: "fsn1"),
+            options: CloudConnectOptions(auth: "sealed", budgetUsdMonth: 50))
+        XCTAssertEqual(sealed.provider.auth, "sealed")
+        XCTAssertEqual(sealed.provider.holders, ["laptop", "studio"])
         let swept = try await connection.cloud.sweep()                       // cloud_sweep
         XCTAssertEqual(swept.first?.action, "delete")
         let cloudLog = try await connection.cloud.audit(limit: 10)              // cloud_audit
         XCTAssertEqual(cloudLog.first?.action, "resource_deleted")
         XCTAssertEqual(cloudLog.first?.actor, "sweep")
+        let cost = try await connection.cloud.cost(by: "space")             // cloud_cost
+        XCTAssertEqual(cost.rows.first?.key, "research")
+        XCTAssertEqual(cost.rows.first?.machines, 2)
+        XCTAssertEqual(cost.totalUsd, 4.5)
+        let approved = try await connection.cloud.approve("aws")              // cloud_approve
+        XCTAssertEqual(approved.status, "connected")
+        XCTAssertEqual(approved.budgetUsdMonth, 500)
         let receipt = try await connection.cloud.disconnect("aws", delete: true) // cloud_disconnect
         XCTAssertTrue(receipt.disconnected)
         let pool = try await connection.cloud.hosts()                        // cloud_hosts

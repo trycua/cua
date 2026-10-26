@@ -21,6 +21,7 @@ import { NO_EXPERIMENTS, type Experiments } from "./contracts/volume";
 import type { KvGrant, KvListView, KvSelection, VaultAction } from "./contracts/keyvault";
 import type { KvAccessCommand } from "./ops/keyvault-manage";
 import { LIST_COMPLETE, type CreatingElsewhere, type ListStatus, type Space } from "./contracts/spaces";
+import type { BulkResult } from "./contracts/spaces-page";
 import { hostSetupGuide, type HostSetupGuide, type Machine } from "./derive";
 import {
   firstSpaceImages,
@@ -138,6 +139,13 @@ export interface SpacesHook extends Resource<Space[]> {
   stopSpace(id: string): Promise<void>;
   /** Deletes the Space, or with `removeOnly` only removes it from the list. */
   deleteSpace(id: string, removeOnly?: boolean): Promise<void>;
+  /** Deletes several Spaces at once; one result per id. */
+  deleteSpaces(ids: string[]): Promise<BulkResult[]>;
+  /** Leaves Spaces shared with you; one result per id. */
+  leaveSpaces(ids: string[]): Promise<BulkResult[]>;
+  /** Gives the Space a new name (its id stays the same); throws the host's
+   * plain words when it is refused. */
+  renameSpace(id: string, name: string): Promise<void>;
   /** Opens the Space's desktop in its own native window. */
   openSpace(id: string): Promise<void>;
   /** The Space a finished create became, by its row's pending id. */
@@ -181,6 +189,9 @@ export function useSpaces(): SpacesHook {
     startSpace: (id) => run((s) => s.setPower(id, true)),
     stopSpace: (id) => run((s) => s.setPower(id, false)),
     deleteSpace: (id, removeOnly) => run((s) => s.deleteSpace(id, removeOnly)),
+    deleteSpaces: async (ids) => (ctx.store ? ctx.store.deleteSpaces(ids) : ids.map((id) => ({ id, ok: false, error: "Not connected." }))),
+    leaveSpaces: async (ids) => (ctx.store ? ctx.store.leaveSpaces(ids) : ids.map((id) => ({ id, ok: false, error: "Not connected." }))),
+    renameSpace: (id, name) => run((s) => s.renameSpace(id, name)),
     openSpace: (id) => run((s) => s.openSpace(id)),
     createdId: (id) => ctx.store?.createdId(id),
     listNotice,

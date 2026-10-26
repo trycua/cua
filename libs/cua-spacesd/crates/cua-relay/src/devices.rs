@@ -266,7 +266,8 @@ pub struct AuditEvent {
     /// `device_renamed`, `device_revoked`, `device_session`, `machine_access`,
     /// `shared_access`, `unenrolled_access`, `share_added`,
     /// `share_removed`, `machine_registered`, `machine_removed`,
-    /// `sharing_stopped`, `sharing_started`.
+    /// `sharing_stopped`, `sharing_started`, `share_left` (someone left a
+    /// machine shared with them; owner log), `machine_left` (their own log).
     pub kind: String,
     /// Acting device, when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]

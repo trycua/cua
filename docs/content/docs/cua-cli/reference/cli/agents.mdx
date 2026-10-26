@@ -1,6 +1,6 @@
 ---
 title: "Agents, MCP and skills"
-description: "Run coding agents in a sandbox, set up your AI agents, the stdio MCP server, and recorded skills."
+description: "Agents in a Space, connecting your AI agents, the stdio MCP server, and recorded skills."
 ---
 
 {/*
@@ -12,43 +12,62 @@ description: "Run coding agents in a sandbox, set up your AI agents, the stdio M
 
 | Command | Description |
 | --- | --- |
-| [`cua agent`](#cua-agent) | Run coding agents inside a sandbox: run, ls, logs, send, interrupt, stop. |
+| [`cua agent`](#cua-agent) | Agents in a Space: add, send, ls, rm, schedule; run, logs, stop. |
+| [`cua agent add`](#cua-agent-add) | Add an agent: a name, a harness and a Space. |
 | [`cua agent run`](#cua-agent-run) | Start a coding agent in a sandbox (returns at once unless --follow). |
-| [`cua agent ls`](#cua-agent-ls) | List runs in a sandbox. |
+| [`cua agent ls`](#cua-agent-ls) | List your agents, or with SANDBOX the runs in it. |
 | [`cua agent logs`](#cua-agent-logs) | Print a run's normalized events (--follow to stream). |
-| [`cua agent send`](#cua-agent-send) | Send a follow-up (queued while a turn runs). |
+| [`cua agent send`](#cua-agent-send) | Message a named agent (`send NAME TEXT`), or send a follow-up to a run (`send SANDBOX RUN_ID TEXT`, queued while a turn runs). |
 | [`cua agent interrupt`](#cua-agent-interrupt) | Cancel the turn in flight (the session stays open). |
 | [`cua agent stop`](#cua-agent-stop) | Stop a run and verify it is gone. |
 | [`cua agent status`](#cua-agent-status) | A run's status and last result. |
-| [`cua agent rm`](#cua-agent-rm) | Stop a run and delete its record (secrets included). |
+| [`cua agent rm`](#cua-agent-rm) | Remove a named agent (its home stays in the Cua Volume), or stop a run and delete its record (secrets included). |
 | [`cua agent ensure`](#cua-agent-ensure) | Install harnesses or apps now (`claude-code`, `blender`, ...). |
+| [`cua agent schedule`](#cua-agent-schedule) | A named agent's schedules: turns the daemon starts with or without the app open. |
+| [`cua agent schedule add`](#cua-agent-schedule-add) | Add a schedule (give one of --every, --daily, --weekly). |
+| [`cua agent schedule ls`](#cua-agent-schedule-ls) | List schedules. |
+| [`cua agent schedule rm`](#cua-agent-schedule-rm) | Delete a schedule. |
+| [`cua agent schedule enable`](#cua-agent-schedule-enable) | Turn a schedule on. |
+| [`cua agent schedule disable`](#cua-agent-schedule-disable) | Turn a schedule off. |
 | [`cua agent sessions`](#cua-agent-sessions) | Durable sessions: agents your machines keep alive (`run --durable`). |
 | [`cua agent harnesses`](#cua-agent-harnesses) | The harnesses: readiness, installs, key variables, limits. |
-| [`cua agent keys`](#cua-agent-keys) | The provider keys agents get, kept in the Keychain by the Cua daemon (Cua Spaces → Settings → Agents). |
+| [`cua agent keys`](#cua-agent-keys) | The provider keys agents get, kept in the Keychain by the Cua daemon (Cua Spaces → Settings → Connectors). |
 | [`cua agent keys ls`](#cua-agent-keys-ls) | List the saved keys (never their values). |
 | [`cua agent keys set`](#cua-agent-keys-set) | Add or replace a key, read from stdin. |
 | [`cua agent keys rm`](#cua-agent-keys-rm) | Remove the key a run gets as ENV. |
-| [`cua agent create`](#cua-agent-create) | Create a persistent agent: a named harness whose memory lives in the Cua Volume (agents/NAME/) and outlives its Space. |
-| [`cua agent persistent`](#cua-agent-persistent) | List persistent agents. |
-| [`cua agent tell`](#cua-agent-tell) | Give a persistent agent a turn (starts a run with its home restored, or follows up on its idle run). |
+| [`cua agent create`](#cua-agent-create) | Deprecated alias of `add`. |
+| [`cua agent persistent`](#cua-agent-persistent) | Deprecated alias of `ls` (without a sandbox). |
+| [`cua agent tell`](#cua-agent-tell) | Deprecated alias of `send NAME TEXT`. |
 | [`cua agent save`](#cua-agent-save) | Save a persistent agent's home into the drive now. |
 | [`cua agent pause`](#cua-agent-pause) | Pause a persistent agent: its run, its routines, and its Space (suspended when local; a cloud Space is released after the home is saved). |
 | [`cua agent resume`](#cua-agent-resume) | Resume a paused persistent agent. |
-| [`cua agent forget`](#cua-agent-forget) | Forget a persistent agent (its home stays in the drive). |
-| [`cua agent routine`](#cua-agent-routine) | A persistent agent's routines, fired by the daemon with or without the app open. |
-| [`cua agent routine add`](#cua-agent-routine-add) | Add a routine (give one of --every, --daily, --weekly). |
-| [`cua agent routine ls`](#cua-agent-routine-ls) | List routines. |
-| [`cua agent routine rm`](#cua-agent-routine-rm) | Delete a routine. |
-| [`cua agent routine enable`](#cua-agent-routine-enable) | Turn a routine on. |
-| [`cua agent routine disable`](#cua-agent-routine-disable) | Turn a routine off. |
+| [`cua agent forget`](#cua-agent-forget) | Deprecated alias of `rm NAME`. |
+| [`cua agent routine`](#cua-agent-routine) | Deprecated alias of `schedule`. |
+| [`cua agent routine add`](#cua-agent-routine-add) | Add a schedule (give one of --every, --daily, --weekly). |
+| [`cua agent routine ls`](#cua-agent-routine-ls) | List schedules. |
+| [`cua agent routine rm`](#cua-agent-routine-rm) | Delete a schedule. |
+| [`cua agent routine enable`](#cua-agent-routine-enable) | Turn a schedule on. |
+| [`cua agent routine disable`](#cua-agent-routine-disable) | Turn a schedule off. |
 | [`cua agent allow-computer`](#cua-agent-allow-computer) | Let a persistent agent use one of your computers (asks for presence). |
 | [`cua agent revoke-computer`](#cua-agent-revoke-computer) | Take a persistent agent's computer access back. |
 | [`cua agent computer-access`](#cua-agent-computer-access) | Which agents may use which computers, and the audit log. |
 | [`cua agent notifications`](#cua-agent-notifications) | The notifications the Cua app shows (turn ends, notify_user, requests). |
-| [`cua agents`](#cua-agents) | AI coding agents on this computer: install cua skills and configure the cua MCP server. |
+| [`cua thread`](#cua-thread) | A Space's thread, as the agent this computer joined with `cua join`: say who you are, read your inbox, post. |
+| [`cua thread join`](#cua-thread-join) | Say who you are: your name, icon, harness and version. |
+| [`cua thread inbox`](#cua-thread-inbox) | Your open tasks (@mentions); waits for one up to --wait seconds. |
+| [`cua thread post`](#cua-thread-post) | Post to the thread, or reply to a task. |
+| [`cua thread read`](#cua-thread-read) | Read the newest entries. |
+| [`cua join`](#cua-join) | Join a Space as an agent on this computer, with the code from a "Join my Cua Space" link. |
+| [`cua connect`](#cua-connect) | Connect the AI agents on this computer to Cua: install the cua skills and configure the cua MCP server. |
+| [`cua connect detect`](#cua-connect-detect) | List supported AI coding agents and which are installed (read-only). |
+| [`cua connect setup`](#cua-connect-setup) | Install the default cua skills and configure the cua MCP server. |
+| [`cua connect status`](#cua-connect-status) | Whether each agent is really connected: installed and its version, signed in, Cua's MCP entry present and answering, and its sign-in copied to Keyvault. |
+| [`cua connect remove`](#cua-connect-remove) | Remove the Cua Spaces skills and MCP entries cua added (nothing else). |
+| [`cua connect update`](#cua-connect-update) | Refresh installed cua skills and managed MCP entries to this version. |
+| [`cua agents`](#cua-agents) | Deprecated alias of `connect`. |
 | [`cua agents detect`](#cua-agents-detect) | List supported AI coding agents and which are installed (read-only). |
 | [`cua agents setup`](#cua-agents-setup) | Install the default cua skills and configure the cua MCP server. |
-| [`cua agents status`](#cua-agents-status) | What cua configured for each agent. |
+| [`cua agents status`](#cua-agents-status) | Whether each agent is really connected: installed and its version, signed in, Cua's MCP entry present and answering, and its sign-in copied to Keyvault. |
 | [`cua agents remove`](#cua-agents-remove) | Remove the Cua Spaces skills and MCP entries cua added (nothing else). |
 | [`cua agents update`](#cua-agents-update) | Refresh installed cua skills and managed MCP entries to this version. |
 | [`cua mcp`](#cua-mcp) | Stdio MCP server exposing sandboxes, computer control and skills. |
@@ -64,10 +83,52 @@ Every command also accepts the [global options](/cua-cli/reference/cli#global-op
 
 ## `cua agent`
 
-Run coding agents inside a sandbox: run, ls, logs, send, interrupt, stop.
+Agents in a Space: add, send, ls, rm, schedule; run, logs, stop.
 
 ```text output
 cua agent [OPTIONS] <COMMAND>
+```
+
+### `cua agent add`
+
+Add an agent: a name, a harness and a Space.
+
+.
+
+With PROMPT it starts at once. --daily, --every or --weekly schedule PROMPT instead; --once runs PROMPT as a one-off task; --durable keeps it running through crashes.
+
+```text output
+cua agent add [OPTIONS] --harness <HARNESS> <NAME> [PROMPT]
+```
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `<NAME>` | string | required | The agent's name: 1-63 of a-z, 0-9, `.`, `_`, `-`. |
+| `<PROMPT>` | string | optional | What it starts on: a first message, a scheduled task (with --daily/--every/--weekly) or the task (--once, --durable). |
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="cua-agent-add--harness"></span>`--harness` | string | required | Harness id (`cua agent harnesses`). |
+| <span id="cua-agent-add--in"></span>`--in` | string |  | The Space it works in (with --durable: a durable Space by name; default `auto`, none). |
+| <span id="cua-agent-add--model"></span>`--model` | string |  |  |
+| <span id="cua-agent-add--base-url"></span>`--base-url` | string |  |  |
+| <span id="cua-agent-add--env-from-host"></span>`--env-from-host` | string |  | Provider key variable to forward at each start. Repeatable. |
+| <span id="cua-agent-add--on"></span>`--on` | string |  | With --durable: the machine the driver runs on (`auto`, or a machine's name; default: this machine). |
+| <span id="cua-agent-add--every"></span>`--every` | integer |  | Schedule PROMPT every N minutes. |
+| <span id="cua-agent-add--daily"></span>`--daily` | string |  | Schedule PROMPT every day at HH:MM. |
+| <span id="cua-agent-add--weekly"></span>`--weekly` | string |  | Schedule PROMPT every week, `mon 09:00`. |
+| <span id="cua-agent-add--title"></span>`--title` | string |  | The schedule's title (default: the agent's name). |
+| <span id="cua-agent-add--once"></span>`--once` | boolean | `false` | A one-off task: run PROMPT and stop when it is answered (no name kept, no memory). |
+| <span id="cua-agent-add--durable"></span>`--durable` | boolean | `false` | Keep it running through crashes: your machines' coordinator starts it again (a durable session, `cua agent run --durable`). |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-agent-add"
+cua agent add ada --harness hermes --in local:dev --env-from-host OPENAI_API_KEY
+cua agent add ada --harness claude-code --in local:dev "summarize the repo"
+cua agent add ada --harness claude-code --in local:dev --daily 08:00 "plan the day"
+cua agent add fix-1 --harness claude-code --in local:dev --once "fix the failing test"
+cua agent add nightly --harness claude-code --durable --on auto "refactor the parser"
 ```
 
 ### `cua agent run`
@@ -116,17 +177,17 @@ cua agent run local:ci openai-codex "add tests" --repo https://github.com/org/re
 
 ### `cua agent ls`
 
-List runs in a sandbox.
+List your agents, or with SANDBOX the runs in it.
 
 ```text output
-cua agent ls [OPTIONS] <SANDBOX>
+cua agent ls [OPTIONS] [SANDBOX]
 ```
 
 Alias: `cua agent list`.
 
 | Argument | Type | Default | Description |
 | --- | --- | --- | --- |
-| `<SANDBOX>` | string | required | Sandbox (`local:NAME`, `direct:HOST:PORT`, or NAME). |
+| `<SANDBOX>` | string | optional | Sandbox (`local:NAME`, `direct:HOST:PORT`, or NAME). Without it: your named agents. |
 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -135,6 +196,7 @@ Alias: `cua agent list`.
 **Examples**
 
 ```bash test="cli-shape" id="ref-cua-agent-ls"
+cua agent ls
 cua agent ls local:dev
 ```
 
@@ -166,26 +228,27 @@ cua agent logs session:refactor -f
 
 ### `cua agent send`
 
-Send a follow-up (queued while a turn runs).
+Message a named agent (`send NAME TEXT`), or send a follow-up to a run (`send SANDBOX RUN_ID TEXT`, queued while a turn runs).
 
 ```text output
-cua agent send [OPTIONS] <SANDBOX> <RUN_ID> <TEXT>
+cua agent send [OPTIONS] <NAME|SANDBOX> <TEXT|RUN_ID> [TEXT]
 ```
 
 | Argument | Type | Default | Description |
 | --- | --- | --- | --- |
-| `<SANDBOX>` | string | required |  |
-| `<RUN_ID>` | string | required |  |
-| `<TEXT>` | string | required |  |
+| `<NAME\|SANDBOX>` | string | required | A named agent, or the sandbox of a run. |
+| `<TEXT\|RUN_ID>` | string | required | The message for a named agent, or the run. |
+| `<TEXT>` | string | optional | The message for a run. |
 
 | Flag | Short | Type | Default | Description |
 | --- | --- | --- | --- | --- |
 | <span id="cua-agent-send--local"></span>`--local` |  | boolean | `false` | Look NAME up among local sandboxes only (same as `local:NAME`). |
-| <span id="cua-agent-send--follow"></span>`--follow` | `-f` | boolean | `false` |  |
+| <span id="cua-agent-send--follow"></span>`--follow` | `-f` | boolean | `false` | Follow a run's turn (`send SANDBOX RUN_ID TEXT` only). |
 
 **Examples**
 
 ```bash test="cli-shape" id="ref-cua-agent-send"
+cua agent send ada "what did you learn yesterday?"
 cua agent send local:dev run-1a2b3c4d "now add a regression test" -f
 ```
 
@@ -262,15 +325,15 @@ cua agent status session:refactor
 
 ### `cua agent rm`
 
-Stop a run and delete its record (secrets included).
+Remove a named agent (its home stays in the Cua Volume), or stop a run and delete its record (secrets included).
 
 ```text output
-cua agent rm [OPTIONS] <SANDBOX> [RUN_ID]
+cua agent rm [OPTIONS] <NAME|SANDBOX> [RUN_ID]
 ```
 
 | Argument | Type | Default | Description |
 | --- | --- | --- | --- |
-| `<SANDBOX>` | string | required | Sandbox, or `session:NAME` for a durable session. |
+| `<NAME\|SANDBOX>` | string | required | A named agent, a sandbox, or `session:NAME` for a durable session. |
 | `<RUN_ID>` | string | optional | The run (not for a session). |
 
 | Flag | Type | Default | Description |
@@ -280,6 +343,7 @@ cua agent rm [OPTIONS] <SANDBOX> [RUN_ID]
 **Examples**
 
 ```bash test="cli-shape" id="ref-cua-agent-rm"
+cua agent rm ada
 cua agent rm local:dev run-1a2b3c4d
 cua agent rm session:refactor
 ```
@@ -305,6 +369,116 @@ cua agent ensure [OPTIONS] <SANDBOX> <IDS>...
 
 ```bash test="cli-shape" id="ref-cua-agent-ensure"
 cua agent ensure local:dev claude-code vscode
+```
+
+### `cua agent schedule`
+
+A named agent's schedules: turns the daemon starts with or without the app open.
+
+```text output
+cua agent schedule [OPTIONS] <COMMAND>
+```
+
+#### `cua agent schedule add`
+
+Add a schedule (give one of --every, --daily, --weekly).
+
+```text output
+cua agent schedule add [OPTIONS] --title <TITLE> --prompt <PROMPT> <AGENT>
+```
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `<AGENT>` | string | required |  |
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="cua-agent-schedule-add--title"></span>`--title` | string | required |  |
+| <span id="cua-agent-schedule-add--prompt"></span>`--prompt` | string | required |  |
+| <span id="cua-agent-schedule-add--every"></span>`--every` | integer |  | Every N minutes. |
+| <span id="cua-agent-schedule-add--daily"></span>`--daily` | string |  | Every day at HH:MM. |
+| <span id="cua-agent-schedule-add--weekly"></span>`--weekly` | string |  | Every week, `mon 09:00`. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-agent-schedule-add"
+cua agent schedule add ada --title "Inbox sweep" --prompt "Triage new issues" --every 60
+cua agent schedule add ada --title "Morning" --prompt "Plan the day" --daily 08:00
+```
+
+#### `cua agent schedule ls`
+
+List schedules.
+
+```text output
+cua agent schedule ls [OPTIONS] [AGENT]
+```
+
+Alias: `cua agent schedule list`.
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `<AGENT>` | string | optional |  |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-agent-schedule-ls"
+cua agent schedule ls
+cua agent schedule ls ada
+```
+
+#### `cua agent schedule rm`
+
+Delete a schedule.
+
+```text output
+cua agent schedule rm [OPTIONS] <ID>
+```
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `<ID>` | string | required |  |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-agent-schedule-rm"
+cua agent schedule rm 0F3A2C1E-8B7D-4E6F-9A1B-2C3D4E5F6A7B
+```
+
+#### `cua agent schedule enable`
+
+Turn a schedule on.
+
+```text output
+cua agent schedule enable [OPTIONS] <ID>
+```
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `<ID>` | string | required |  |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-agent-schedule-enable"
+cua agent schedule enable 0F3A2C1E-8B7D-4E6F-9A1B-2C3D4E5F6A7B
+```
+
+#### `cua agent schedule disable`
+
+Turn a schedule off.
+
+```text output
+cua agent schedule disable [OPTIONS] <ID>
+```
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `<ID>` | string | required |  |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-agent-schedule-disable"
+cua agent schedule disable 0F3A2C1E-8B7D-4E6F-9A1B-2C3D4E5F6A7B
 ```
 
 ### `cua agent sessions`
@@ -339,7 +513,7 @@ cua --json agent harnesses
 
 ### `cua agent keys`
 
-The provider keys agents get, kept in the Keychain by the Cua daemon (Cua Spaces → Settings → Agents). Values are read from stdin and never printed.
+The provider keys agents get, kept in the Keychain by the Cua daemon (Cua Spaces → Settings → Connectors). Values are read from stdin and never printed.
 
 ```text output
 cua agent keys [OPTIONS] [COMMAND]
@@ -411,23 +585,11 @@ cua agent keys rm ANTHROPIC_API_KEY
 
 ### `cua agent create`
 
-Create a persistent agent: a named harness whose memory lives in the Cua Volume (agents/NAME/) and outlives its Space.
+Deprecated alias of `add`. Creates a named agent whose memory lives in the Cua Volume (agents/NAME/) and outlives its Space.
 
 ```text output
 cua agent create [OPTIONS] --harness <HARNESS> --in <SPACE> <NAME>
 ```
-
-| Argument | Type | Default | Description |
-| --- | --- | --- | --- |
-| `<NAME>` | string | required |  |
-
-| Flag | Type | Default | Description |
-| --- | --- | --- | --- |
-| <span id="cua-agent-create--harness"></span>`--harness` | string | required | Harness id (`cua agent harnesses`). |
-| <span id="cua-agent-create--in"></span>`--in` | string | required | The Space it works in. |
-| <span id="cua-agent-create--model"></span>`--model` | string |  |  |
-| <span id="cua-agent-create--base-url"></span>`--base-url` | string |  |  |
-| <span id="cua-agent-create--env-from-host"></span>`--env-from-host` | string |  | Provider key variable to forward at each start. Repeatable. |
 
 **Examples**
 
@@ -438,7 +600,7 @@ cua agent create scout --harness claude-code --in local:scout --env-from-host AN
 
 ### `cua agent persistent`
 
-List persistent agents.
+Deprecated alias of `ls` (without a sandbox). Lists named agents.
 
 ```text output
 cua agent persistent [OPTIONS]
@@ -452,16 +614,11 @@ cua agent persistent
 
 ### `cua agent tell`
 
-Give a persistent agent a turn (starts a run with its home restored, or follows up on its idle run).
+Deprecated alias of `send NAME TEXT`. Gives a named agent a turn (starts a run with its home restored, or follows up on its idle run).
 
 ```text output
 cua agent tell [OPTIONS] <NAME> <TEXT>
 ```
-
-| Argument | Type | Default | Description |
-| --- | --- | --- | --- |
-| `<NAME>` | string | required |  |
-| `<TEXT>` | string | required |  |
 
 **Examples**
 
@@ -530,15 +687,11 @@ cua agent resume ada --prompt "pick up where you left off"
 
 ### `cua agent forget`
 
-Forget a persistent agent (its home stays in the drive).
+Deprecated alias of `rm NAME`. Forgets a named agent (its home stays in the Cua Volume).
 
 ```text output
 cua agent forget [OPTIONS] <NAME>
 ```
-
-| Argument | Type | Default | Description |
-| --- | --- | --- | --- |
-| `<NAME>` | string | required |  |
 
 **Examples**
 
@@ -548,7 +701,7 @@ cua agent forget ada
 
 ### `cua agent routine`
 
-A persistent agent's routines, fired by the daemon with or without the app open.
+Deprecated alias of `schedule`. A named agent's schedules.
 
 ```text output
 cua agent routine [OPTIONS] <COMMAND>
@@ -556,7 +709,7 @@ cua agent routine [OPTIONS] <COMMAND>
 
 #### `cua agent routine add`
 
-Add a routine (give one of --every, --daily, --weekly).
+Add a schedule (give one of --every, --daily, --weekly).
 
 ```text output
 cua agent routine add [OPTIONS] --title <TITLE> --prompt <PROMPT> <AGENT>
@@ -577,13 +730,13 @@ cua agent routine add [OPTIONS] --title <TITLE> --prompt <PROMPT> <AGENT>
 **Examples**
 
 ```bash test="cli-shape" id="ref-cua-agent-routine-add"
-cua agent routine add ada --title "Inbox sweep" --prompt "Triage new issues" --every 60
-cua agent routine add ada --title "Morning" --prompt "Plan the day" --daily 08:00
+cua agent schedule add ada --title "Inbox sweep" --prompt "Triage new issues" --every 60
+cua agent schedule add ada --title "Morning" --prompt "Plan the day" --daily 08:00
 ```
 
 #### `cua agent routine ls`
 
-List routines.
+List schedules.
 
 ```text output
 cua agent routine ls [OPTIONS] [AGENT]
@@ -598,13 +751,13 @@ Alias: `cua agent routine list`.
 **Examples**
 
 ```bash test="cli-shape" id="ref-cua-agent-routine-ls"
-cua agent routine ls
-cua agent routine ls ada
+cua agent schedule ls
+cua agent schedule ls ada
 ```
 
 #### `cua agent routine rm`
 
-Delete a routine.
+Delete a schedule.
 
 ```text output
 cua agent routine rm [OPTIONS] <ID>
@@ -617,12 +770,12 @@ cua agent routine rm [OPTIONS] <ID>
 **Examples**
 
 ```bash test="cli-shape" id="ref-cua-agent-routine-rm"
-cua agent routine rm 0F3A2C1E-8B7D-4E6F-9A1B-2C3D4E5F6A7B
+cua agent schedule rm 0F3A2C1E-8B7D-4E6F-9A1B-2C3D4E5F6A7B
 ```
 
 #### `cua agent routine enable`
 
-Turn a routine on.
+Turn a schedule on.
 
 ```text output
 cua agent routine enable [OPTIONS] <ID>
@@ -635,12 +788,12 @@ cua agent routine enable [OPTIONS] <ID>
 **Examples**
 
 ```bash test="cli-shape" id="ref-cua-agent-routine-enable"
-cua agent routine enable 0F3A2C1E-8B7D-4E6F-9A1B-2C3D4E5F6A7B
+cua agent schedule enable 0F3A2C1E-8B7D-4E6F-9A1B-2C3D4E5F6A7B
 ```
 
 #### `cua agent routine disable`
 
-Turn a routine off.
+Turn a schedule off.
 
 ```text output
 cua agent routine disable [OPTIONS] <ID>
@@ -653,7 +806,7 @@ cua agent routine disable [OPTIONS] <ID>
 **Examples**
 
 ```bash test="cli-shape" id="ref-cua-agent-routine-disable"
-cua agent routine disable 0F3A2C1E-8B7D-4E6F-9A1B-2C3D4E5F6A7B
+cua agent schedule disable 0F3A2C1E-8B7D-4E6F-9A1B-2C3D4E5F6A7B
 ```
 
 ### `cua agent allow-computer`
@@ -741,9 +894,254 @@ cua agent notifications --unread
 cua agent notifications --mark-read
 ```
 
+## `cua thread`
+
+A Space's thread, as the agent this computer joined with `cua join`: say who you are, read your inbox, post.
+
+```text output
+cua thread [OPTIONS] <COMMAND>
+```
+
+### `cua thread join`
+
+Say who you are: your name, icon, harness and version.
+
+```text output
+cua thread join [OPTIONS] --name <NAME>
+```
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="cua-thread-join--name"></span>`--name` | string | required | The name people see (1-32 characters). |
+| <span id="cua-thread-join--harness"></span>`--harness` | string |  | hermes, claude-code, codex, cursor, openclaw, t3code or other. |
+| <span id="cua-thread-join--version"></span>`--version` | string |  | Your harness's version. |
+| <span id="cua-thread-join--icon"></span>`--icon` | string |  | `harness` (your harness's mark) or an https:// image URL. |
+| <span id="cua-thread-join--member"></span>`--member` | string |  | `<space>/<handle>`, when this computer joined more than one Space. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-thread-join"
+cua thread join --name Codex --harness codex --version 0.61.0 --icon harness
+```
+
+### `cua thread inbox`
+
+Your open tasks (@mentions); waits for one up to --wait seconds.
+
+```text output
+cua thread inbox [OPTIONS]
+```
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="cua-thread-inbox--wait"></span>`--wait` | integer | `0` | Seconds to wait for a task when there is none (at most 25). |
+| <span id="cua-thread-inbox--member"></span>`--member` | string |  |  |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-thread-inbox"
+cua thread inbox --wait 25
+```
+
+### `cua thread post`
+
+Post to the thread, or reply to a task.
+
+```text output
+cua thread post [OPTIONS] <TEXT>
+```
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `<TEXT>` | string | required |  |
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="cua-thread-post--reply-to"></span>`--reply-to` | integer |  | The task (or entry) this answers. |
+| <span id="cua-thread-post--member"></span>`--member` | string |  |  |
+| <span id="cua-thread-post--window"></span>`--window` | string |  | What you are looking at in the Space: a window, by its id (as `computer_window_list` gives it). Stored with the post as `view`. |
+| <span id="cua-thread-post--app"></span>`--app` | string |  | That window's app ("Firefox"). |
+| <span id="cua-thread-post--title"></span>`--title` | string |  | That window's title. |
+| <span id="cua-thread-post--desktop"></span>`--desktop` | boolean | `false` | You are looking at the Space's desktop. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-thread-post"
+cua thread post "Hi, I'm Codex."
+cua thread post --reply-to 19 "All green."
+cua thread post --window w42 --app Firefox --title "Pull requests" "Is this the right PR?"
+```
+
+### `cua thread read`
+
+Read the newest entries.
+
+```text output
+cua thread read [OPTIONS]
+```
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="cua-thread-read--after"></span>`--after` | integer |  | Entries after this seq. |
+| <span id="cua-thread-read--limit"></span>`--limit` | integer | `30` |  |
+| <span id="cua-thread-read--member"></span>`--member` | string |  |  |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-thread-read"
+cua thread read
+cua thread read --after 40 --limit 10
+```
+
+## `cua join`
+
+Join a Space as an agent on this computer, with the code from a "Join my Cua Space" link. Needs your Cua sign-in; the code works once.
+
+Exit codes: 0 joined (or waiting to be let in), 3 not signed in, 4 the code does not work, 5 too many wrong codes, 1 anything else.
+
+```text output
+cua join [OPTIONS] <CODE>
+```
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `<CODE>` | string | required | The join code (`7KQ2-9FXA`) or the link that ends in it. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-join"
+cua join 7KQ2-9FXA
+cua join https://cua.ai/join/7KQ2-9FXA
+```
+
+## `cua connect`
+
+Connect the AI agents on this computer to Cua: install the cua skills and configure the cua MCP server.
+
+```text output
+cua connect [OPTIONS] <COMMAND>
+```
+
+### `cua connect detect`
+
+List supported AI coding agents and which are installed (read-only).
+
+```text output
+cua connect detect [OPTIONS]
+```
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-connect-detect"
+cua connect detect
+```
+
+### `cua connect setup`
+
+Install the default cua skills and configure the cua MCP server.
+
+```text output
+cua connect setup [OPTIONS]
+```
+
+| Flag | Short | Type | Default | Description |
+| --- | --- | --- | --- | --- |
+| <span id="cua-connect-setup--agents"></span>`--agents` |  | string |  | Agents: `all` (installed), `none`, or ids such as `claude,codex,hermes` (`cua connect detect` lists every supported agent). |
+| <span id="cua-connect-setup--mcp-command"></span>`--mcp-command` |  | string |  | Command agents launch for the MCP server (default: the `cua` on PATH, else this binary). |
+| <span id="cua-connect-setup--skills-only"></span>`--skills-only` |  | boolean | `false` | Only install skills. Alias: `--no-mcp`. |
+| <span id="cua-connect-setup--mcp-only"></span>`--mcp-only` |  | boolean | `false` | Only configure the MCP server. Alias: `--no-skills`. |
+| <span id="cua-connect-setup--yes"></span>`--yes` | `-y` | boolean | `false` | Answer yes to every prompt. |
+| <span id="cua-connect-setup--force"></span>`--force` |  | boolean | `false` | Replace skill folders cua did not write (the old one is backed up). |
+| <span id="cua-connect-setup--cua-driver"></span>`--cua-driver` |  | boolean | `false` | Set up background computer-use instead: the cua-driver skill and the cua-driver MCP server (`cua-driver mcp`). --mcp-command then names the cua-driver binary. |
+| <span id="cua-connect-setup--sign-in"></span>`--sign-in` |  | boolean | `false` | Also copy each agent's sign-in to Keyvault on This Mac, so its runs in your Spaces use it: Codex's ChatGPT sign-in (`~/.codex/auth.json`), Claude Code's `claude setup-token` (one browser approval), Hermes' provider key (`~/.hermes/.env`). The agent's own sign-in is never changed. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-connect-setup"
+# Every installed agent, asking before each change
+cua connect setup
+
+# Claude Code and Codex, no prompts
+cua connect setup --agents claude,codex -y
+
+# Hermes Agent (Nous Research): ~/.hermes/skills and ~/.hermes/config.yaml
+cua connect setup --agents hermes -y
+
+# Only the MCP server entry
+cua connect setup --mcp-only
+
+# Background computer-use: the cua-driver skill and MCP server
+cua connect setup --cua-driver --agents all -y
+
+# Also copy each agent's sign-in to Keyvault on This Mac (Codex's ChatGPT sign-in, Claude Code's `claude setup-token`, Hermes' key)
+cua connect setup --agents codex,claude --sign-in -y
+```
+
+### `cua connect status`
+
+Whether each agent is really connected: installed and its version, signed in, Cua's MCP entry present and answering, and its sign-in copied to Keyvault. The same rows as the app and the `connect_status` MCP tool.
+
+```text output
+cua connect status [OPTIONS]
+```
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-connect-status"
+cua connect status
+cua connect status --json
+```
+
+### `cua connect remove`
+
+Remove the Cua Spaces skills and MCP entries cua added (nothing else).
+
+```text output
+cua connect remove [OPTIONS]
+```
+
+| Flag | Short | Type | Default | Description |
+| --- | --- | --- | --- | --- |
+| <span id="cua-connect-remove--agents"></span>`--agents` |  | string | `all` | Agents: `all` (default) or ids such as `claude,codex`. |
+| <span id="cua-connect-remove--skills-only"></span>`--skills-only` |  | boolean | `false` | Only remove skills. |
+| <span id="cua-connect-remove--mcp-only"></span>`--mcp-only` |  | boolean | `false` | Only remove the MCP entry. |
+| <span id="cua-connect-remove--yes"></span>`--yes` | `-y` | boolean | `false` | Do not ask for confirmation. |
+| <span id="cua-connect-remove--include-cua-driver"></span>`--include-cua-driver` |  | boolean | `false` | Also remove Cua Driver's skill and MCP server (`cua-driver`). Without it only Cua Spaces' own entries go: the `cua` server (`cua-local` for Local) and the Cua Spaces skills. |
+| <span id="cua-connect-remove--dry-run"></span>`--dry-run` |  | boolean | `false` | List exactly what would be removed and change nothing. |
+| <span id="cua-connect-remove--sign-in"></span>`--sign-in` |  | boolean | `false` | Also delete the sign-ins Connect copied to Keyvault for these agents. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-connect-remove"
+# See what would be removed, change nothing
+cua connect remove --dry-run
+cua connect remove
+cua connect remove --agents codex --skills-only -y
+
+# Cua Driver's skill and MCP server too (they stay otherwise)
+cua connect remove --include-cua-driver
+
+# Also delete the sign-in Connect copied to Keyvault
+cua connect remove --agents codex --sign-in -y
+```
+
+### `cua connect update`
+
+Refresh installed cua skills and managed MCP entries to this version.
+
+```text output
+cua connect update [OPTIONS]
+```
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-connect-update"
+cua connect update
+```
+
 ## `cua agents`
 
-AI coding agents on this computer: install cua skills and configure the cua MCP server.
+Deprecated alias of `connect`.
 
 ```text output
 cua agents [OPTIONS] <COMMAND>
@@ -760,7 +1158,7 @@ cua agents detect [OPTIONS]
 **Examples**
 
 ```bash test="cli-shape" id="ref-cua-agents-detect"
-cua agents detect
+cua connect detect
 ```
 
 ### `cua agents setup`
@@ -773,36 +1171,40 @@ cua agents setup [OPTIONS]
 
 | Flag | Short | Type | Default | Description |
 | --- | --- | --- | --- | --- |
-| <span id="cua-agents-setup--agents"></span>`--agents` |  | string |  | Agents: `all` (installed), `none`, or ids such as `claude,codex,hermes` (`cua agents detect` lists every supported agent). |
+| <span id="cua-agents-setup--agents"></span>`--agents` |  | string |  | Agents: `all` (installed), `none`, or ids such as `claude,codex,hermes` (`cua connect detect` lists every supported agent). |
 | <span id="cua-agents-setup--mcp-command"></span>`--mcp-command` |  | string |  | Command agents launch for the MCP server (default: the `cua` on PATH, else this binary). |
 | <span id="cua-agents-setup--skills-only"></span>`--skills-only` |  | boolean | `false` | Only install skills. Alias: `--no-mcp`. |
 | <span id="cua-agents-setup--mcp-only"></span>`--mcp-only` |  | boolean | `false` | Only configure the MCP server. Alias: `--no-skills`. |
 | <span id="cua-agents-setup--yes"></span>`--yes` | `-y` | boolean | `false` | Answer yes to every prompt. |
 | <span id="cua-agents-setup--force"></span>`--force` |  | boolean | `false` | Replace skill folders cua did not write (the old one is backed up). |
 | <span id="cua-agents-setup--cua-driver"></span>`--cua-driver` |  | boolean | `false` | Set up background computer-use instead: the cua-driver skill and the cua-driver MCP server (`cua-driver mcp`). --mcp-command then names the cua-driver binary. |
+| <span id="cua-agents-setup--sign-in"></span>`--sign-in` |  | boolean | `false` | Also copy each agent's sign-in to Keyvault on This Mac, so its runs in your Spaces use it: Codex's ChatGPT sign-in (`~/.codex/auth.json`), Claude Code's `claude setup-token` (one browser approval), Hermes' provider key (`~/.hermes/.env`). The agent's own sign-in is never changed. |
 
 **Examples**
 
 ```bash test="cli-shape" id="ref-cua-agents-setup"
 # Every installed agent, asking before each change
-cua agents setup
+cua connect setup
 
 # Claude Code and Codex, no prompts
-cua agents setup --agents claude,codex -y
+cua connect setup --agents claude,codex -y
 
 # Hermes Agent (Nous Research): ~/.hermes/skills and ~/.hermes/config.yaml
-cua agents setup --agents hermes -y
+cua connect setup --agents hermes -y
 
 # Only the MCP server entry
-cua agents setup --mcp-only
+cua connect setup --mcp-only
 
 # Background computer-use: the cua-driver skill and MCP server
-cua agents setup --cua-driver --agents all -y
+cua connect setup --cua-driver --agents all -y
+
+# Also copy each agent's sign-in to Keyvault on This Mac (Codex's ChatGPT sign-in, Claude Code's `claude setup-token`, Hermes' key)
+cua connect setup --agents codex,claude --sign-in -y
 ```
 
 ### `cua agents status`
 
-What cua configured for each agent.
+Whether each agent is really connected: installed and its version, signed in, Cua's MCP entry present and answering, and its sign-in copied to Keyvault. The same rows as the app and the `connect_status` MCP tool.
 
 ```text output
 cua agents status [OPTIONS]
@@ -811,7 +1213,8 @@ cua agents status [OPTIONS]
 **Examples**
 
 ```bash test="cli-shape" id="ref-cua-agents-status"
-cua agents status
+cua connect status
+cua connect status --json
 ```
 
 ### `cua agents remove`
@@ -830,17 +1233,21 @@ cua agents remove [OPTIONS]
 | <span id="cua-agents-remove--yes"></span>`--yes` | `-y` | boolean | `false` | Do not ask for confirmation. |
 | <span id="cua-agents-remove--include-cua-driver"></span>`--include-cua-driver` |  | boolean | `false` | Also remove Cua Driver's skill and MCP server (`cua-driver`). Without it only Cua Spaces' own entries go: the `cua` server (`cua-local` for Local) and the Cua Spaces skills. |
 | <span id="cua-agents-remove--dry-run"></span>`--dry-run` |  | boolean | `false` | List exactly what would be removed and change nothing. |
+| <span id="cua-agents-remove--sign-in"></span>`--sign-in` |  | boolean | `false` | Also delete the sign-ins Connect copied to Keyvault for these agents. |
 
 **Examples**
 
 ```bash test="cli-shape" id="ref-cua-agents-remove"
 # See what would be removed, change nothing
-cua agents remove --dry-run
-cua agents remove
-cua agents remove --agents codex --skills-only -y
+cua connect remove --dry-run
+cua connect remove
+cua connect remove --agents codex --skills-only -y
 
 # Cua Driver's skill and MCP server too (they stay otherwise)
-cua agents remove --include-cua-driver
+cua connect remove --include-cua-driver
+
+# Also delete the sign-in Connect copied to Keyvault
+cua connect remove --agents codex --sign-in -y
 ```
 
 ### `cua agents update`
@@ -854,7 +1261,7 @@ cua agents update [OPTIONS]
 **Examples**
 
 ```bash test="cli-shape" id="ref-cua-agents-update"
-cua agents update
+cua connect update
 ```
 
 ## `cua mcp`
@@ -871,6 +1278,7 @@ Alias: `cua serve-mcp`.
 | --- | --- | --- | --- | --- |
 | <span id="cua-mcp--permissions"></span>`--permissions` | string |  | `CUA_MCP_PERMISSIONS` | Comma-separated permissions or groups (default: all). |
 | <span id="cua-mcp--sandbox"></span>`--sandbox` | string |  | `CUA_SANDBOX` | Default sandbox for computer tools. |
+| <span id="cua-mcp--member"></span>`--member` | string |  |  | Serve only the Space thread tools (thread_join, thread_inbox, thread_read, thread_post, agent_members) as the agent this computer joined with `cua join` (`<space>/<handle>`). Its key stays in the keychain. |
 
 **Examples**
 
@@ -880,6 +1288,9 @@ cua mcp
 
 # Read-only sandbox tools, computer tools on the sandbox dev
 cua mcp --permissions sandbox:readonly,computer:all --sandbox dev
+
+# An agent that joined a Space with cua join: its thread tools only
+cua mcp --member ubuntu-build/codex
 ```
 
 ## `cua skills`

@@ -5,7 +5,7 @@
 export const SETTINGS_TABS = [
   { to: "/settings", label: "Account", exact: true },
   { to: "/settings/general", label: "General", exact: false },
-  { to: "/settings/connected-apps", label: "Connected apps", exact: false },
+  { to: "/settings/connectors", label: "Connectors", exact: false },
   { to: "/settings/devices", label: "Trusted devices", exact: false },
   { to: "/settings/advanced", label: "Advanced", exact: false },
   { to: "/settings/about", label: "About", exact: false },

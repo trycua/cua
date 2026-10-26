@@ -895,10 +895,46 @@ impl Coordinator {
         if !r.spec.space.is_empty() {
             // A Space its host lost since the last look is placed again first.
             self.durable_recheck(&r.spec.space).await;
+            // Its .cua/setup gates the drive (looked at before the lease, so
+            // waiting takes no fencing token).
+            if let Ok(d) = self.durable_get(&r.spec.space).await {
+                if d.setup == super::durable::setup::FAILED {
+                    let why = format!(
+                        "the .cua/setup of its durable Space {} failed: {}",
+                        r.spec.space, d.setup_note
+                    );
+                    return self.session_fail_permanent(r, why).await;
+                }
+                if d.setup == super::durable::setup::PENDING {
+                    return self
+                        .session_wait(r, "its durable Space is running .cua/setup")
+                        .await;
+                }
+            }
             match self
                 .durable_acquire(&r.spec.space, &format!("session:{}", r.name), LEASE_TTL)
                 .await
             {
+                Ok(c)
+                    if c.state == super::durable::state::RUNNING
+                        && c.setup == super::durable::setup::FAILED =>
+                {
+                    let _ = self.durable_release(&r.spec.space, c.lease_token).await;
+                    let why = format!(
+                        "the .cua/setup of its durable Space {} failed: {}",
+                        r.spec.space, c.setup_note
+                    );
+                    return self.session_fail_permanent(r, why).await;
+                }
+                Ok(c)
+                    if c.state == super::durable::state::RUNNING
+                        && c.setup == super::durable::setup::PENDING =>
+                {
+                    let _ = self.durable_release(&r.spec.space, c.lease_token).await;
+                    return self
+                        .session_wait(r, "its durable Space is running .cua/setup")
+                        .await;
+                }
                 Ok(c) if c.state == super::durable::state::RUNNING => lease = Some(c),
                 Ok(c) => {
                     // Nothing to drive yet: do not hold the lease meanwhile.

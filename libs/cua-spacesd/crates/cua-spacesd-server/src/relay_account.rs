@@ -320,6 +320,9 @@ impl ExternalAuthenticator for RelayAssertionAuth {
                 },
             };
             let policy = self.policy()?;
+            if claims.role == cua_relay::assertion::THREAD_ROLE {
+                return thread_grant(&claims, &policy, headers);
+            }
             let access = policy.authorize(&claims, self.link.owner().as_deref())?;
             let client = crate::auth::principal_from_headers(headers);
             let owner = policy
@@ -338,10 +341,61 @@ impl ExternalAuthenticator for RelayAssertionAuth {
                     role: if owner { "owner" } else { "shared" }.into(),
                     issued_at: claims.iat,
                     teams: claims.teams.clone(),
+                    space: None,
                 }),
             })
         })())
     }
+}
+
+/// A thread grant: the relay vouches that the Space `claims.space`, which
+/// this machine provides, is shared with the account (`claims.space_role`).
+/// It reaches only that Space's thread ([`crate::auth::THREAD_GRANT_GRPC_METHODS`];
+/// the daemon checks the Space again). Honoured only where this machine
+/// trusts the relay's sharing (`trust_relay_allowlist`) and still shares.
+fn thread_grant(
+    claims: &AssertionClaims,
+    policy: &HostPolicy,
+    headers: &http::HeaderMap,
+) -> Result<ExternalGrant, String> {
+    use crate::auth::THREAD_GRANT_REASON_PREFIX as P;
+    if !policy.sharing {
+        return Err(format!("{P}this computer stopped sharing"));
+    }
+    if !policy.trust_relay_allowlist {
+        return Err(format!(
+            "{P}this computer takes no Space thread shares from the relay (it trusts only its \
+             own allowlist)"
+        ));
+    }
+    let space = claims
+        .space
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| format!("{P}it names no Space"))?;
+    let role = match claims.space_role.as_deref() {
+        Some("viewer") => "viewer",
+        Some("shared") => "shared",
+        _ => return Err(format!("{P}it names no role")),
+    };
+    let client = crate::auth::principal_from_headers(headers);
+    Ok(ExternalGrant {
+        // A thread grant that may post ("shared") may present its own agent;
+        // a viewer is always a person (CUA-1750's rule for view-only callers).
+        principal: principal_for(claims, client.as_ref(), role == "shared"),
+        view_only: false,
+        host_only: true,
+        account: Some(crate::auth::RelayCaller {
+            account: claims.acct.clone(),
+            email: claims.email.clone(),
+            name: claims.name.clone(),
+            role: role.into(),
+            issued_at: claims.iat,
+            teams: claims.teams.clone(),
+            space: Some(space.to_owned()),
+        }),
+    })
 }
 
 #[cfg(test)]
@@ -365,6 +419,8 @@ mod tests {
             exp: now + 60,
             jti: "j".into(),
             teams: Vec::new(),
+            space: None,
+            space_role: None,
         }
     }
 

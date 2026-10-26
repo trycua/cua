@@ -20,7 +20,7 @@ OUT = ROOT / "crates/cua-spaces-ffi/src/app_core_types.rs"
 # (source file, module path, [types]) in FFI order.
 TYPES = [
     ("message.rs", "message", ["Msg"]),
-    ("model.rs", "model", ["SpaceOs", "SpaceStatus", "ThumbnailScene", "SpaceProvider", "SpaceSdkRef", "SpaceProgress", "CreateFixAction", "CreateFix", "PowerControl", "SpacePower", "Space", "SpaceRow", "Location", "SpaceKind", "Runtime"]),
+    ("model.rs", "model", ["SpaceOs", "SpaceStatus", "ThumbnailScene", "SpaceProvider", "SpaceSdkRef", "SpaceProgress", "CreateFixAction", "CreateFix", "PowerControl", "SpacePower", "SpaceAccessKind", "SpaceAccessRole", "SpacePerson", "SpaceAccess", "SpaceTeamFact", "SpaceSharingFacts", "Space", "SpaceRow", "Location", "SpaceKind", "Runtime"]),
     ("spaces/mod.rs", "spaces", ["AmbientDots", "ListViewInput", "ListView"]),
     ("spaces/roster.rs", "spaces::roster", ["NoticeKind", "Notice", "RosterState", "RosterAction"]),
     ("spaces/creating.rs", "spaces::creating", ["PendingCreate", "PendingDelete", "PendingPower", "FailureStreak", "CreatesState", "CreateAction"]),
@@ -62,6 +62,7 @@ TYPES = [
     ("agents.rs", "agents", ["AgentStatus", "SpaceAgentRun", "AgentSetupStatus", "AgentSettingsRow", "AgentSetupOutcomeInput", "AgentSetupSummary"]),
     ("devices.rs", "devices", ["DeviceInput", "MachineInput", "AuditInput", "DevicesInput", "BannerTone", "DeviceAction", "DeviceBanner", "DeviceConfirm", "UnconfirmedMachine", "DeviceRow", "ApprovalPrompt", "ActivityRow", "EnrollmentKind", "MachineAccessNotice", "ThisDevice", "DevicesLabels", "DevicesView", "EnrollMethod", "EnrollPhase", "EnrollState", "EnrollAction", "EnrollOption", "EnrollView", "ApproveSheetState", "ApproveSheetAction", "ApproveRequest", "ApproveSheetView"]),
     ("cloud_connect.rs", "cloud_connect", ["CloudProviderInput", "CloudConnectInput", "CloudCheckInput", "CloudConnectPhase", "CloudConnectState", "CloudConnectAction", "CloudTargetArgs", "CloudConnectRequest", "CloudProviderRow", "CloudField", "CloudCheckRow", "CloudConnectView"]),
+    ("cloud_page.rs", "cloud_page", ["CloudInput", "CloudMachineInput", "CloudsInput", "CloudRow", "CloudsGroup", "CloudAction", "CloudIssue", "CloudSpend", "CloudMachine", "CloudRunning", "CloudToken", "CloudSettingRow", "CloudApproval", "CloudDisconnect", "CloudPage", "CloudsView"]),
     ("share.rs", "share", ["ShareEntryInput", "ShareInput", "ShareRequest", "ShareSheetState", "ShareSheetAction", "RoleOption", "ShareRowView", "ShareActionView", "ShareSheetView", "ShareGate", "ShareRemovalInput", "ShareRemovalNote"]),
     ("persistent.rs", "persistent", ["PersistentAgentInput", "DriveEntryInput", "FileVersionInput", "OpenFileInput", "RoutineInput", "ComputerGrantInput", "AccessAuditInput", "AgentsInput", "AgentTab", "RoutineScheduleKind", "RoutineForm", "AgentsRequest", "AgentsState", "AgentsAction", "AgentRowView", "LineView", "TabView", "FileView", "AgentDetailView", "AgentsView"]),
     ("drive_page.rs", "drive_page", ["DriveRequestInput", "DriveGrantInput", "DriveDeviceInput", "DriveConflictInput", "DriveSyncInput", "DriveInput", "DriveRequest", "DriveState", "DriveAction", "ConflictView", "DriveView"]),
@@ -74,6 +75,11 @@ TYPES = [
     ("palette.rs", "palette", ["Keybinding", "PaletteEntry"]),
     ("teams.rs", "teams", ["TeamPersonInput", "TeamInput", "TeamsState", "TeamsInput"]),
     ("relay_usage.rs", "relay_usage", ["RelayUsageTeam", "RelayUsage", "RelayAllowanceNotice", "PlanLink", "PlanCard", "RelayUsageView"]),
+    ("space_menu.rs", "space_menu", ["SpaceMenuKind", "SpaceMenuRole", "SpaceMenuPower", "SpaceMenuInput", "SpaceMenuItemId", "SpaceMenuItem"]),
+    ("bulk_confirm.rs", "bulk_confirm", ["BulkPerson", "BulkItem", "BulkRow", "BulkGroup", "BulkConfirmView", "BulkResult", "BulkTone", "BulkDone"]),
+    ("tips.rs", "tips", ["TipsState", "TipPlace", "TipFacts", "TipActionKind", "TipAction", "TipLink", "Tip", "TipsEvent"]),
+    ("upsell.rs", "upsell", ["ProBannerInput", "ProBanner"]),
+    ("account.rs", "account", ["AccountMenuInput", "AccountMenuItemId", "AccountMenuItem"]),
     ("resources.rs", "resources", ["DiskLevel", "DiskWarning", "ComputerResources", "GuestUsage", "DiskOnHost", "SpaceResources", "ResourcesSnapshot", "ResourceTone", "ResourceRow", "WarningView", "ThisMacView", "SpaceResourcesView", "ComputerView", "ResourcesView"]),
 ]
 

@@ -2,12 +2,12 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { useNavigate } from "@tanstack/react-router";
-import { CheckIcon, CopyIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { useAgents, type AgentSetupRow, type Space } from "@/bridge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogDescription, DialogPopup, DialogTitle } from "@/components/ui/dialog";
+import { PromptBox } from "@/components/ui/prompt-box";
 import { toast } from "@/components/ui/toast";
 
 /** What to ask the agent: one request that works in a Space with nothing else set up. */
@@ -57,13 +57,13 @@ export function RunAgentDialog({ open, space, onOpenChange, onManual, onConnecte
       .catch((e: unknown) => toast("Couldn't connect your agent", { description: e instanceof Error ? e.message : String(e) }))
       .finally(() => setBusy(false));
   };
+  // The prompt box copies; this is what follows a copy (and "Copy and see Agents" copies too).
   const copy = () => {
     onConnected?.();
-    void navigator.clipboard?.writeText(prompt).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
   };
+  const copyPrompt = () => void navigator.clipboard?.writeText(prompt).then(copy, copy);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -77,25 +77,18 @@ export function RunAgentDialog({ open, space, onOpenChange, onManual, onConnecte
               <DialogDescription className="mt-1.5 text-[13px] leading-relaxed text-muted-foreground">
                 {first.name} is connected. Open it, paste this, and watch it work in {space.name}.
               </DialogDescription>
-              <div className="mt-4 flex items-start gap-2 rounded-lg border bg-muted/40 py-2 pr-1 pl-3">
-                <p className="min-w-0 flex-1 py-1 text-[13px] leading-relaxed" data-run-agent-prompt="">
-                  {prompt}
-                </p>
-                <Button size="icon-sm" variant="ghost" aria-label="Copy" onClick={copy}>
-                  {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
-                </Button>
-              </div>
+              <PromptBox className="mt-4" id="run-agent-prompt" aria-label="Prompt" data-run-agent-prompt="" value={prompt} copied={copied} onCopy={copy} />
               <p className="mt-3 text-xs text-muted-foreground">If {first.name} was already open, restart it first so it can see Cua.</p>
               <div className="mt-5 flex justify-end gap-2">
-                <Button variant="outline" onClick={() => onOpenChange(false)}>
+                <Button variant="secondary" onClick={() => onOpenChange(false)}>
                   Close
                 </Button>
                 <Button
                   data-run-agent-watch=""
                   onClick={() => {
-                    copy();
+                    copyPrompt();
                     onOpenChange(false);
-                    void navigate({ to: "/agents" });
+                    void navigate({ to: "/agents/all" });
                   }}
                 >
                   Copy and see Agents
@@ -115,7 +108,7 @@ export function RunAgentDialog({ open, space, onOpenChange, onManual, onConnecte
                 ))}
               </ul>
               <div className="mt-5 flex justify-end gap-2">
-                <Button variant="outline" onClick={() => onOpenChange(false)}>
+                <Button variant="secondary" onClick={() => onOpenChange(false)}>
                   Not now
                 </Button>
                 <Button data-run-agent-setup="" disabled={busy} onClick={setUp}>
@@ -129,7 +122,7 @@ export function RunAgentDialog({ open, space, onOpenChange, onManual, onConnecte
                 We couldn't find an agent such as Claude Code or Codex on this computer. Install one, then come back here. Or connect one by hand.
               </DialogDescription>
               <div className="mt-5 flex justify-end gap-2">
-                <Button variant="outline" onClick={() => onOpenChange(false)}>
+                <Button variant="secondary" onClick={() => onOpenChange(false)}>
                   Close
                 </Button>
                 {onManual ? (

@@ -36,7 +36,10 @@ import type {
   LocalStorage,
   SpaceCreateProgress,
 } from "../native/generated/index";
-import type { CreatingElsewhereRow, ListRead, LocalRuntimes, SpacesBackend } from "./backend";
+import type { BulkResult, CreatingElsewhereRow, ListRead, LocalRuntimes, SpacesBackend } from "./backend";
+
+/** How many Spaces a bulk delete or leave works on at the same time. */
+const BULK_CONCURRENCY = 3;
 import { AgentsModel, type AgentSetupRunning, type ToolRunner } from "./agents";
 import { ChecklistModel } from "./checklist";
 import type { CloudModel } from "./cloud";
@@ -45,7 +48,7 @@ import { TeamsModel } from "./teams";
 import { NotchActivity } from "./activity";
 import { createErrorVariant, daemonAnswered, isCancelled, sdkErrorKind, words } from "./errors";
 import type { HostModel } from "./host";
-import { KeyvaultModel } from "./keyvault";
+import { brokerWords, KeyvaultModel } from "./keyvault";
 import type { AccountRunning, SignInOptions, TelemetryRunning } from "./services";
 import type { StartupModel } from "./startup";
 import { SignInRuns, type SignInEnd } from "./sign-in";
@@ -874,6 +877,63 @@ export class AppModel {
         this.show(this.native.appDeleteFailedText(space.name, words(error)), true);
       }
     })();
+  }
+
+  /**
+   * Bulk delete or leave (after the page's confirmation): every row shows
+   * Deleting at once and goes as its own result comes back, at most three
+   * at a time; one failure never stops the rest. One result per id, in
+   * order; ids that are not listed answer not found.
+   */
+  async bulk(ids: string[], leave: boolean): Promise<BulkResult[]> {
+    const results = new Map<string, BulkResult>();
+    const todo: AppSpace[] = [];
+    for (const id of ids) {
+      const space = this.spaces.find((s) => s.id === id);
+      if (!space) results.set(id, { id, ok: false, error: `No Space ${id}.` });
+      else if (this.isDeleting(id)) results.set(id, { id, ok: false, error: `${space.name} is already going.` });
+      else todo.push(space);
+    }
+    if (todo.length > 0 && !leave) this.recordFeature("space_delete");
+    for (const space of todo) {
+      this.sendCreate(new this.native.AppCreateAction.DeleteStart({ id: space.id, now: AppModel.nowMs() }));
+      this.usage.delete(space.id);
+      this.thumbnails.remove(space.id);
+    }
+    const one = async (space: AppSpace) => {
+      let r: BulkResult;
+      try {
+        const [first] = leave ? await this.backend.leave([space.id]) : await this.backend.deleteMany([space.id]);
+        r = first ?? { id: space.id, ok: false, error: "No answer." };
+      } catch (error) {
+        r = { id: space.id, ok: false, error: words(error) };
+      }
+      results.set(space.id, { ...r, id: space.id });
+      this.sendCreate(new (r.ok ? this.native.AppCreateAction.DeleteDone : this.native.AppCreateAction.DeleteFail)({ id: space.id }));
+    };
+    const queue = [...todo];
+    await Promise.all(
+      Array.from({ length: Math.min(BULK_CONCURRENCY, queue.length) }, async () => {
+        for (let next = queue.shift(); next; next = queue.shift()) await one(next);
+      }),
+    );
+    if (todo.length > 0) await this.refresh();
+    return ids.map((id) => results.get(id) ?? { id, ok: false, error: "No answer." });
+  }
+
+  /**
+   * Gives a Space a new name (its id stays the same), then reads the list
+   * again so every view shows it. A refusal (a Space shared with you, a
+   * name taken or against the rule) throws in plain words; nothing changes.
+   */
+  async rename(space: AppSpace, name: string): Promise<void> {
+    try {
+      await this.backend.rename(space.id, name);
+    } catch (error) {
+      // The SDK's sentence without its kind ("permission denied: ...").
+      throw new Error(brokerWords(error));
+    }
+    await this.refresh();
   }
 
   /** The power button: turns the Space off (suspended or stopped, as its provider can) or back on. */

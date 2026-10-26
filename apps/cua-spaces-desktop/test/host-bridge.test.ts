@@ -206,6 +206,7 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
       ["host.openSettings", { url: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture" }],
       ["settings.get", {}],
       ["settings.choose", { row: "telemetry", option: "off" }],
+      ["settings.update", { tips: { off: false, done: ["try-agent"] } }],
     ];
     const problems: string[] = [];
     for (const [method, args] of cases) problems.push(...shapeProblems(method, await call(method, args)));
@@ -563,6 +564,27 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(s.page.sections.map((x) => x.id)).toContain("storage");
     await tick(5);
     expect(settingsEvents).toBeGreaterThan(0);
+  });
+
+  it("keeps the page's tips in the app settings (`settings.update`), and Show tips and Reset tips", async () => {
+    const before = (await call("settings.get")) as { tips: unknown };
+    expect(before.tips).toEqual({ off: false, done: [] });
+    const after = (await call("settings.update", { tips: { off: false, done: ["try-agent", "power"] } })) as typeof before;
+    expect(after.tips).toEqual({ off: false, done: ["try-agent", "power"] });
+    // Saved with the rest of the app's settings (a launch reads them back).
+    expect(native.appSettingsLoad(model.settingsPath).tips.done).toEqual(["try-agent", "power"]);
+    // Only what is sent changes.
+    expect(model.settings.tips.done).toEqual(["try-agent", "power"]);
+    expect(await code("settings.update", {})).toBe("bad_args");
+    expect(await code("settings.update", { tips: { off: "no", done: [] } })).toBe("bad_args");
+    // General's Show tips (the core lays it out) and Reset tips.
+    await call("settings.choose", { row: "tips", option: "off" });
+    expect(model.settings.tips).toEqual({ off: true, done: ["try-agent", "power"] });
+    const page = (await call("settings.get")) as { page: { sections: { rows: { id: string; options: { id: string; active: boolean }[] }[] }[] } };
+    const show = page.page.sections.flatMap((s) => s.rows).find((r) => r.id === "tips")!;
+    expect(show.options.find((o) => o.active)?.id).toBe("off");
+    await call("settings.choose", { row: "reset-tips", option: "press" });
+    expect(model.settings.tips).toEqual({ off: false, done: [] });
   });
 
   it("offers every experiment but the New UI switch (Use classic UI), which this app is", async () => {

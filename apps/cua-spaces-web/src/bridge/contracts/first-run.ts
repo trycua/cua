@@ -72,6 +72,8 @@ export interface FirstRunAgent {
   signedIn?: boolean;
   /** The settings file Cua adds itself to. */
   mcpConfig?: string | null;
+  /** Its row of the connection status (`agents.status`), when the host answers it. */
+  connection?: import("./agents").ConnectionRow | null;
 }
 
 export interface FirstRunPermission {
@@ -136,6 +138,8 @@ export interface FirstRunInput {
   /** The agent being connected. */
   connectingAgent?: string | null;
   connectError: string | null;
+  /** Advanced setup on Pick your agent (CUA-2267); Simple by default. */
+  advanced?: boolean;
   agentOpenBeforeSetup: boolean | null;
   agentUsedAt: string | null;
   signedIn: boolean;
@@ -213,6 +217,12 @@ export interface FirstRunConnectView {
   /** "Skip", until an agent is connected. */
   secondary: FirstRunButton | null;
   error: string | null;
+  /** The one line under the agents: what Connect does (Simple), or that ticked sign-ins are copied (Advanced). */
+  consent?: string;
+  /** The quiet link at the right of the buttons: "Advanced" (`advanced`) or "Simple" (`simple`). */
+  mode?: FirstRunButton | null;
+  /** Advanced: paths shown and sign-ins ticked per agent (CUA-2267). */
+  advanced?: boolean;
 }
 
 export interface FirstRunDevicesView {

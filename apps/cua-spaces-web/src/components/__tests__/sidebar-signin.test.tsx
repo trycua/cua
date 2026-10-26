@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
+import { createMemoryHistory, createRootRoute, createRouter, RouterProvider } from "@tanstack/react-router";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -144,7 +145,7 @@ describe("a sign-in that fails (it never fails silently)", () => {
     expect(toasts).toHaveLength(1);
   });
 
-  it("shows who is signed in", async () => {
+  it("shows who is signed in on one line, without \"Signed in as\"", async () => {
     const base = createDemoAdapter({ latencyMs: 0, signedIn: true, onboarded: true });
     render(
       <BridgeProvider adapter={base} core={await testCore()}>
@@ -156,7 +157,23 @@ describe("a sign-in that fails (it never fails silently)", () => {
       if (!el) throw new Error("not signed in yet");
       return el;
     });
-    expect(who.textContent).toMatch(/^Signed in as \S+/);
+    expect(who.textContent).toBe("ada@example.com");
+    expect(document.body.textContent).not.toContain("Signed in as");
+  });
+});
+
+describe("the account line while the first run is unfinished", () => {
+  it("keeps Finish setting up above it", async () => {
+    const base = createDemoAdapter({ latencyMs: 0, signedIn: true, onboarded: false });
+    const router = createRouter({ routeTree: createRootRoute({ component: AccountFooter }), history: createMemoryHistory({ initialEntries: ["/"] }) });
+    render(
+      <BridgeProvider adapter={base} core={await testCore()}>
+        <RouterProvider router={router} />
+      </BridgeProvider>,
+    );
+    const finish = await screen.findByText("Finish setting up");
+    expect(finish.getAttribute("href")).toBe("/onboarding");
+    expect(document.querySelector("[data-account-line]")?.textContent).toContain("ada@example.com");
   });
 });
 

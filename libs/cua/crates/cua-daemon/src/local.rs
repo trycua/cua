@@ -1660,6 +1660,14 @@ impl VmmLocal {
             .as_ref()
             .map(|i| i.layers.clone())
             .unwrap_or_default();
+        // What a macOS base pull writes, from the image catalog (the same
+        // sizes the app's New Space checks), so a Mac without room for it
+        // is refused before the download instead of during it.
+        if p.backend == BackendKind::Lume
+            && let ImageSource::Oci { reference } = &s.image
+        {
+            s.pull_bytes = catalog_pull_bytes(reference, cua_vmm::Arch::host().oci());
+        }
         // `auto` (or empty) is the backend's own option.
         s.gpu = spec.gpu.as_deref().map(|g| match (g.trim(), p.backend) {
             ("" | "auto" | "on", BackendKind::Lume) => cua_vmm::gpu::PARAVIRTUAL.to_string(),
@@ -2402,6 +2410,16 @@ impl VmmLocal {
 
 // ------------------------------------------------------------------ preflight
 
+/// What pulling `reference` writes on a host of `arch` (`arm64`, `amd64`):
+/// the image catalog's download plus unpacked size. `None` for an image the
+/// catalog does not list or has not measured.
+fn catalog_pull_bytes(reference: &str, arch: &str) -> Option<u64> {
+    let bare = reference.split('@').next().unwrap_or(reference);
+    let entry = cua_image::catalog::find(bare)?;
+    let p = entry.sizes.as_ref()?.platform(arch)?;
+    Some(p.download.saturating_add(p.unpacked))
+}
+
 /// Refuses a create the machine cannot run, in plain words (the first
 /// failed check of [`cua_vmm::preflight`]), before anything is pulled. The
 /// disk is left to the guards of the create itself, which know the image's
@@ -3052,6 +3070,23 @@ fn claim_delivers_token(backend: BackendKind) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_macos_pull_is_sized_from_the_catalog() {
+        let gib = 1u64 << 30;
+        let mac = super::catalog_pull_bytes("ghcr.io/trycua/macos:26", "arm64").unwrap();
+        // About 24 GB download plus about 35 GB unpacked, not a 30 GB guess.
+        assert!(mac > 50 * gib, "{mac}");
+        // A pinned reference is the same image.
+        assert_eq!(
+            super::catalog_pull_bytes("ghcr.io/trycua/macos:26@sha256:00", "arm64"),
+            Some(mac)
+        );
+        assert_eq!(
+            super::catalog_pull_bytes("example.com/not/listed:1", "arm64"),
+            None
+        );
+    }
+
     #[test]
     fn only_backends_whose_claim_delivers_the_token_skip_the_pool_secret() {
         assert!(claim_delivers_token(BackendKind::Firecracker));

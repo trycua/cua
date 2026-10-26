@@ -1700,6 +1700,7 @@ dependencies = [
 name = "cua-agent-setup"
 version = "0.9.0"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "cua-home",
  "hex",
@@ -2225,6 +2226,7 @@ dependencies = [
  "cua-chromium-storage",
  "cua-daemon",
  "cua-home",
+ "cua-host",
  "cua-keyvault",
  "cua-media-client",
  "cua-media-protocol",

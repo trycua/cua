@@ -395,7 +395,20 @@ pub struct Hosts {
     /// When each machine that did not answer was last asked about at its
     /// cloud (by cloud id and state).
     checked: Mutex<BTreeMap<String, Instant>>,
+    /// Pairing codes already revoked for hosts that ended unjoined.
+    revoked: Mutex<BTreeSet<String>>,
+    /// How long an add waits for the relay to have room for a pairing code.
+    code_wait: Duration,
+    /// How long after its create a host its cloud does not list yet is
+    /// still being created, not lost (cloud lists are eventually
+    /// consistent: EC2 answers NotFound for an instance it just started).
+    not_found_grace: Duration,
 }
+
+/// How long after its create a host its cloud does not list yet is still
+/// being created (EC2 lists an instance it just started a few seconds
+/// late).
+pub const NOT_FOUND_GRACE: Duration = Duration::from_secs(180);
 
 /// How often a host that does not answer is asked about at its cloud.
 const LOST_CHECK: Duration = Duration::from_secs(30);
@@ -423,7 +436,30 @@ impl Hosts {
             offers: Mutex::new(None),
             naming: tokio::sync::Mutex::new(()),
             checked: Mutex::new(BTreeMap::new()),
+            revoked: Mutex::new(BTreeSet::new()),
+            code_wait: Duration::from_secs(180),
+            not_found_grace: NOT_FOUND_GRACE,
         }
+    }
+
+    /// How long a host its cloud does not list yet counts as being created
+    /// (tests make it zero).
+    pub fn with_not_found_grace(mut self, grace: Duration) -> Self {
+        self.not_found_grace = grace;
+        self
+    }
+
+    /// How long an add waits for room under the relay's cap on unused
+    /// pairing codes (tests make it short).
+    pub fn with_code_wait(mut self, wait: Duration) -> Self {
+        self.code_wait = wait;
+        self
+    }
+
+    /// Revokes the pairing code of every host that ended before it joined
+    /// (listing marks them), freeing room under the relay's cap.
+    async fn reap_unused_codes(&self) {
+        let _ = self.list().await;
     }
 
     fn api(&self, provider: &str) -> Result<&Arc<dyn CloudApi>> {
@@ -472,7 +508,7 @@ impl Hosts {
             .apis
             .iter()
             .filter_map(|a| self.store.connection(a.name()).ok().flatten())
-            .map(|c| format!("{}/{}/{};", c.provider, c.region, c.zone))
+            .map(|c| format!("{}/{}/{}/{:?};", c.provider, c.region, c.zone, c.max_size))
             .collect();
         if let Some((at, sig, v)) = self.offers.lock().unwrap().as_ref()
             && at.elapsed() < OFFERS_TTL
@@ -501,6 +537,10 @@ impl Hosts {
             };
             for t in types {
                 if install.as_ref().is_some_and(|i| !i.installs(&t.arch)) {
+                    continue;
+                }
+                // Larger than the connection allows: never offered.
+                if conn.max_size.is_some_and(|m| !m.fits(t.vcpus, t.memory_mb)) {
                     continue;
                 }
                 let mut regions: Vec<String> = if t.regions.is_empty() {
@@ -619,6 +659,17 @@ impl Hosts {
                     }
                 }
             };
+            // A host that ended without joining leaves its code unused:
+            // revoke it (once), or the relay's cap fills up with dead codes.
+            if h.state == "gone"
+                && h.machine.is_empty()
+                && let Some(code) = r.extra.get("pair_code_id")
+                && let Some(relay) = &self.relay
+                && self.revoked.lock().unwrap().insert(code.clone())
+                && relay.revoke_pairing_code(code).await.is_err()
+            {
+                self.revoked.lock().unwrap().remove(code);
+            }
             out.push(h);
         }
         out.sort_by(|a, b| a.name.cmp(&b.name));
@@ -649,7 +700,21 @@ impl Hosts {
             conn.region = r.region.clone();
         }
         match api.describe(&conn, r).await {
-            Ok(None) => true,
+            // Not listed: lost, unless it was only just created (its
+            // cloud may not list it yet). A cloud that ended it says
+            // "terminated" for a while, which counts at once.
+            Ok(None) => {
+                let age = model::now().saturating_sub(r.created);
+                let lost = Duration::from_secs(age) >= self.not_found_grace;
+                if !lost {
+                    // Ask again on the next listing, not after LOST_CHECK.
+                    self.checked
+                        .lock()
+                        .unwrap()
+                        .remove(&format!("{}/{offline}", r.id));
+                }
+                lost
+            }
             Ok(Some((state, _))) => matches!(state.as_str(), "terminated" | "gone"),
             Err(e) => {
                 tracing::debug!(id = r.id, "host not described: {e}");
@@ -721,6 +786,18 @@ impl Hosts {
                 t.regions.join(", ")
             )));
         }
+        crate::alerts::check_all(&self.store, model::now());
+        crate::limits::check_new_machine(
+            &conn,
+            api.title(),
+            Some(t.vcpus),
+            Some(t.memory_mb),
+            t.usd_per_hour,
+            self.store
+                .spent_for_limits(&conn, model::now())
+                .await
+                .map_err(Self::io)?,
+        )?;
         let live = self
             .records()?
             .iter()
@@ -739,12 +816,6 @@ impl Hosts {
             )
         })?;
         let owner = self.store.owner_id().map_err(Self::io)?;
-        let naming = self.naming.lock().await;
-        let name = if req.name.is_empty() {
-            self.next_name(&req.provider)?
-        } else {
-            req.name.clone()
-        };
         let ttl = match req.ttl_secs {
             0 => DEFAULT_TTL_SECS,
             s => s.min(MAX_TTL_SECS),
@@ -765,7 +836,40 @@ impl Hosts {
             )));
         }
         let source = install.for_arch(&t.arch).clone();
-        let (code_id, code) = relay.mint_pairing_code(&name, CODE_TTL_SECS).await?;
+        // The code is minted last, once everything else checked out, and
+        // only when the relay has room: it caps the unused codes of an
+        // account, so a burst of launches waits (with backoff, reaping
+        // the codes of hosts that ended unjoined) instead of failing.
+        let mut waited = Duration::ZERO;
+        let mut step = Duration::from_millis(500);
+        let (naming, name, code_id, code) = loop {
+            let naming = self.naming.lock().await;
+            let name = if req.name.is_empty() {
+                self.next_name(&req.provider)?
+            } else {
+                req.name.clone()
+            };
+            match relay.mint_pairing_code(&name, CODE_TTL_SECS).await {
+                Ok((id, code)) => break (naming, name, id, code),
+                Err(e) if crate::relay::is_code_cap(&e) => {
+                    drop(naming);
+                    if waited >= self.code_wait {
+                        return Err(Error::Cloud(format!(
+                            "cua.ai relay: too many hosts are starting at once (the relay allows \
+                             a few unused pairing codes per account); waited {} s, try again in a \
+                             minute",
+                            waited.as_secs()
+                        )));
+                    }
+                    self.reap_unused_codes().await;
+                    let pause = step + Duration::from_millis(u64::from(rand::random::<u8>()) * 2);
+                    tokio::time::sleep(pause).await;
+                    waited += pause;
+                    step = (step * 2).min(Duration::from_secs(8));
+                }
+                Err(e) => return Err(e),
+            }
+        };
         let created = model::now();
         let expires = created + ttl;
         let mut tags = model::tags(&owner, &format!("host:{name}"), "", expires);

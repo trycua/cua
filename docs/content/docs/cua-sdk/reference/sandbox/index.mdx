@@ -710,7 +710,7 @@ Returned by [`Sandboxes.connect`](#sandboxesconnect), [`Sandboxes.connect_url`](
 | `image_info()` | [`Option<ImageInfo>`](/cua-sdk/reference/image#imageinfo-record) | The image this sandbox runs, as resolved and pinned at create time: the digest and variant that actually ran. `None` for direct (URL) connections, images not resolved from a registry, and the daemon topology. |
 | `info()` | [`SandboxInfo`](#sandboxinfo-record) | Info as of creation / connection. |
 | `is_ephemeral()` | `bool` | Whether the sandbox is torn down on delete and has no state file. |
-| `kind()` | `String` | What kind of machine: `container` or `vm` (empty when not known). |
+| `kind()` | `String` | What kind of machine: `container`, `vm` or `microvm` (empty when not known). |
 | `location()` | `String` | Where it runs: `local`, `cloud`, `direct` or `relay`. |
 | `name()` | `String` | Name. |
 | `runtime()` | `String` | The engine that runs it (`gvisor`, `runc`, `qemu`, `lume`, `kubevirt`; empty when not known). |
@@ -884,7 +884,7 @@ Returned by [`Sandbox.info`](#sandbox), [`Sandbox.refresh`](/cua-sdk/reference/s
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `name` | `String` |  | Name. |
-| `kind` | `String` |  | What kind of machine: `container` or `vm` (empty when not known: an existing machine). |
+| `kind` | `String` |  | What kind of machine: `container`, `vm` or `microvm` (empty when not known: an existing machine). |
 | `runtime` | `String` |  | The engine that runs it: `gvisor`, `runc`, `qemu`, `lume` or a provider's own (empty when not known). |
 | `runtime_type` / `runtimeType` | `String` |  | `runtime_type` as persisted (`direct`, `gvisor`, `qemu`, ...); prefer `location`, `kind` and `runtime`. |
 | `status` | [`SandboxStatus`](#sandboxstatus-enum) |  | Status. |

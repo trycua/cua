@@ -276,6 +276,23 @@ describe.skipIf(!built)("agents", () => {
     expect(await code(bridge, "agents.configure", { agents: "codex" })).toBe("bad_args");
   });
 
+  it("answers the connection status, connects and disconnects (CUA-2268)", async () => {
+    const { bridge } = makeBridge();
+    type Status = { agents: { id: string; state: string }[] };
+    const before = (await call(bridge, "agents.status", { refresh: true })) as Status;
+    expect(shapeProblems("agents.status", before)).toEqual([]);
+    const id = before.agents.find((a) => a.state === "not_connected")!.id;
+    const connected = await call(bridge, "agents.connect", { agents: [id] });
+    expect(shapeProblems("agents.connect", connected)).toEqual([]);
+    expect(setup.calls).toContain(`connect:${id}:false`);
+    const after = (await call(bridge, "agents.status", {})) as Status;
+    expect(after.agents.find((a) => a.id === id)?.state).not.toBe("not_connected");
+    const gone = await call(bridge, "agents.disconnect", { agents: [id] });
+    expect(shapeProblems("agents.disconnect", gone)).toEqual([]);
+    const last = (await call(bridge, "agents.status", {})) as Status;
+    expect(last.agents.find((a) => a.id === id)?.state).toBe("not_connected");
+  });
+
   it("starts an agent's own sign-in on this computer, and the rows say when it is done", async () => {
     const { bridge } = makeBridge();
     const rows = (await call(bridge, "agents.setup")) as { agent: string; signIn: string | null; signedIn: boolean }[];

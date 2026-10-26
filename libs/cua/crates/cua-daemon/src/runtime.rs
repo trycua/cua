@@ -341,6 +341,9 @@ struct Inner {
     /// The names of this runtime's extensions ([`crate::extension`]).
     #[cfg(feature = "spaces")]
     extension_names: Vec<String>,
+    /// The features the extensions add (`DaemonExtension::features`).
+    #[cfg(feature = "spaces")]
+    extension_features: Vec<String>,
     /// The daemon's host half (provided Spaces and this machine's job
     /// runner), once `cua daemon` serves.
     #[cfg(feature = "spaces")]
@@ -393,7 +396,7 @@ impl Runtime {
         }
         let sandboxes = builder.build();
         #[cfg(feature = "spaces")]
-        let (spaces, attached, extension_names) = {
+        let (spaces, attached, extension_names, extension_features) = {
             let mut b = cua_spaces::Spaces::builder().sandboxes(sandboxes.clone());
             if let Some(h) = &config.spaces_home {
                 b = b.home(h.clone());
@@ -419,7 +422,8 @@ impl Runtime {
                 .filter_map(|e| e.attach(&spaces, &cx))
                 .collect();
             let names = extensions.iter().map(|e| e.name().to_string()).collect();
-            (spaces, attached, names)
+            let features = extensions.iter().flat_map(|e| e.features()).collect();
+            (spaces, attached, names, features)
         };
         Ok(Self {
             inner: Arc::new(Inner {
@@ -429,6 +433,8 @@ impl Runtime {
                 attached,
                 #[cfg(feature = "spaces")]
                 extension_names,
+                #[cfg(feature = "spaces")]
+                extension_features,
                 #[cfg(feature = "spaces")]
                 host_spaces: std::sync::OnceLock::new(),
                 sandboxes,
@@ -504,6 +510,12 @@ impl Runtime {
     #[cfg(feature = "spaces")]
     pub fn extension_names(&self) -> &[String] {
         &self.inner.extension_names
+    }
+
+    /// The features the extensions add to `GetInfoResponse.features`.
+    #[cfg(feature = "spaces")]
+    pub fn extension_features(&self) -> &[String] {
+        &self.inner.extension_features
     }
 
     /// The attached extensions ([`crate::extension`]).

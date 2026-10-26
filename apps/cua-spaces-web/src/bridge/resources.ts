@@ -123,7 +123,20 @@ export function hostResources(snap: ResourcesSnapshot | null, machine: { id: str
   return machine.current ? snap.thisMac : (snap.computers.find((c) => c.id === machine.id) ?? null);
 }
 
-/** One of this Mac's Spaces' numbers. */
+/** One Space's numbers: one of this Mac's, or one of yours on another of
+ * your computers (then only `diskOnHost`, on that computer, and its power
+ * state are known). */
 export function spaceResources(snap: ResourcesSnapshot | null, spaceId: string): SpaceResources | null {
   return snap?.spaces.find((s) => s.id === spaceId) ?? null;
+}
+
+/**
+ * What a Space takes on its computer's disk, in bytes: what deleting it
+ * frees, on this Mac or on the other computer of yours that runs it. Null
+ * when that isn't known: a Space shared with you, one whose computer is
+ * offline or hasn't answered yet, a container, or one whose disk shares
+ * blocks with other copies so only an upper bound was measured.
+ */
+export function spaceDiskBytes(snap: ResourcesSnapshot | null, spaceId: string): number | null {
+  return spaceResources(snap, spaceId)?.diskOnHost?.bytes ?? null;
 }

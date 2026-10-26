@@ -217,6 +217,9 @@ pub struct AgentConfig {
     /// devices that hold them are enrolled (one that is online shares
     /// them within seconds) before it says which devices hold them.
     pub keys_grace: Duration,
+    /// Every coordinator this agent runs gets it as
+    /// [`Config::space_setup`]: durable Spaces run their `.cua/setup`.
+    pub space_setup: Option<crate::coordinator::durable::SetupHook>,
 }
 
 impl Default for AgentConfig {
@@ -226,6 +229,7 @@ impl Default for AgentConfig {
             discover_every: Duration::from_secs(10),
             coordinator: |d| Config::new(d),
             keys_grace: Duration::from_secs(20),
+            space_setup: None,
         }
     }
 }
@@ -281,7 +285,11 @@ impl PoolAgent {
         let own_links: Links = Arc::default();
         let elastic = host.elastic();
         let own = Coordinator::start(
-            (cfg.coordinator)(&dir.join("own")),
+            {
+                let mut c = (cfg.coordinator)(&dir.join("own"));
+                c.space_setup = cfg.space_setup.clone();
+                c
+            },
             Some(factory(&own_links, elastic.as_ref().map(|e| e.1.clone()))),
         )
         .await
@@ -773,7 +781,11 @@ impl PoolAgent {
             .and_then(Result::ok)
             .unwrap_or_default();
         let coord = match Coordinator::start_with(
-            (self.cfg.coordinator)(&dir),
+            {
+                let mut c = (self.cfg.coordinator)(&dir);
+                c.space_setup = self.cfg.space_setup.clone();
+                c
+            },
             Some(factory(&links, elastic.as_ref().map(|e| e.1.clone()))),
             Arc::new(log),
         )

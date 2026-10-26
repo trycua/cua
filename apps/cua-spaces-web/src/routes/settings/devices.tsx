@@ -6,6 +6,7 @@ import { CircleHelpIcon, EllipsisIcon, HashIcon, LaptopIcon, MonitorIcon, Smartp
 import { useState } from "react";
 
 import { useDevices, useSession, type DeviceRow, type DevicesLabels, type UnconfirmedMachine } from "@/bridge";
+import { SettingsGroup } from "@/components/settings-group";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogPopup, DialogTitle } from "@/components/ui/dialog";
@@ -54,7 +55,7 @@ function DevicesPage() {
   return (
     <div data-devices data-settings-tab="devices">
       <Group title={plainDevice(labels.thisDevice)}>
-        <div className="flex min-h-12 items-center justify-between gap-4 px-4 py-2.5">
+        <div className="flex min-h-11 items-center justify-between gap-4 px-4 py-2.5">
           <div className="flex min-w-0 items-center gap-2.5">
             <LaptopIcon className="size-4 shrink-0 text-muted-foreground" strokeWidth={1.75} />
             {/* Named as the system names it ("cua's Mac Studio"), as the SwiftUI app does. */}
@@ -114,10 +115,27 @@ function DevicesPage() {
         </Group>
       ) : null}
 
-      <Group title={plainDevice(labels.recent)} data-recent>
+      <Group
+        title={plainDevice(labels.recent)}
+        data-recent
+        footer={
+          // The relay refused to list them (this device is not enrolled): its words, under the list, as the SwiftUI app shows them.
+          // "Needs enrollment" is the not-enrolled refusal, which the page has already said.
+          (data.input.readError && v.thisDevice.kind === "enrolled") || data.actionError ? (
+            <div className="text-destructive">
+              {data.input.readError && v.thisDevice.kind === "enrolled" ? (
+                <p data-devices-read-error className="break-words">
+                  {data.input.readError}
+                </p>
+              ) : null}
+              {data.actionError ? <p>{data.actionError}</p> : null}
+            </div>
+          ) : null
+        }
+      >
         {v.recent.length === 0 ? <div className="px-4 py-3 text-[13px] text-muted-foreground">{plainDevice(labels.recentEmpty)}</div> : null}
         {v.recent.map((a, i) => (
-          <div key={`${a.ts}-${i}`} data-recent-row className="flex min-h-10 items-center justify-between gap-4 px-4 py-2">
+          <div key={`${a.ts}-${i}`} data-recent-row className="flex min-h-11 items-center justify-between gap-4 px-4 py-2">
             <span className="flex min-w-0 items-center gap-2 text-[13px]">
               {a.notable ? (
                 <span title="Another account or an unenrolled device">
@@ -132,17 +150,6 @@ function DevicesPage() {
           </div>
         ))}
       </Group>
-      {/* The relay's own words only when the page has not already said it:
-          "Needs enrollment" is the not-enrolled refusal. */}
-      {data.input.readError && v.thisDevice.kind === "enrolled" ? (
-        // The relay refused to list them (this device is not enrolled):
-        // its words, under the page, as the SwiftUI app shows them.
-        <p data-devices-read-error className="-mt-4 mb-8 px-1 text-xs break-words text-destructive">
-          {data.input.readError}
-        </p>
-      ) : null}
-      {data.actionError ? <p className="-mt-4 px-1 text-xs text-destructive">{data.actionError}</p> : null}
-
       <ScreenPermissionsSection />
 
       <EnrollSheet />
@@ -190,12 +197,11 @@ function Retry({ children, onRetry, ...rest }: { children: React.ReactNode; onRe
   );
 }
 
-function Group({ title, children, ...rest }: { title: string; children: React.ReactNode } & Record<`data-${string}`, unknown>) {
+function Group({ title, footer, children, ...rest }: { title: string; footer?: React.ReactNode; children: React.ReactNode } & Record<`data-${string}`, unknown>) {
   return (
-    <section className="mb-8" {...rest}>
-      <h2 className="mb-2 px-1 text-xs font-semibold text-muted-foreground">{title}</h2>
-      <div className="divide-y overflow-hidden rounded-xl border bg-card shadow-xs">{children}</div>
-    </section>
+    <SettingsGroup title={title} footer={footer} {...rest}>
+      {children}
+    </SettingsGroup>
   );
 }
 

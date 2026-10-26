@@ -12,6 +12,7 @@ import {
   useTeamChoices,
 } from "@/bridge";
 import { Button } from "@/components/ui/button";
+import { GroupedRow, GroupedSection } from "@/components/ui/grouped";
 import { Dialog, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -70,7 +71,7 @@ export default function ShareSheet() {
             </p>
           ) : null}
           {!v.disabledReason && gate && !cards ? (
-            <Button size="sm" variant="outline" className="mt-2" onClick={() => void openExternal(gate.action.url).catch(() => {})} data-share-action>
+            <Button size="sm" variant="secondary" className="mt-2" onClick={() => void openExternal(gate.action.url).catch(() => {})} data-share-action>
               {gate.action.label}
             </Button>
           ) : null}
@@ -100,7 +101,7 @@ export default function ShareSheet() {
           {offered.length > 0 && !closed ? (
             <div className="mt-3 flex flex-wrap items-center gap-2" data-share-teams>
               {offered.map((t) => (
-                <Button key={t.id} size="sm" variant="outline" disabled={v.busy} onClick={() => void shareWithTeam(t.id)} data-share-team={t.id}>
+                <Button key={t.id} size="sm" variant="secondary" disabled={v.busy} onClick={() => void shareWithTeam(t.id)} data-share-team={t.id}>
                   Share with {teamName(t)}
                 </Button>
               ))}
@@ -112,14 +113,14 @@ export default function ShareSheet() {
             </p>
           ) : null}
 
-          <ul className="mt-4 divide-y overflow-hidden rounded-lg border bg-card">
+          <GroupedSection className="mt-4">
             {v.rows.length === 0 ? (
-              <li className="px-4 py-3 text-[13px] text-muted-foreground" data-share-empty>
+              <div className="px-4 py-3 text-[13px] text-muted-foreground" data-share-empty>
                 {v.emptyText}
-              </li>
+              </div>
             ) : (
               v.rows.map((row) => (
-                <li key={row.who} className="flex items-center gap-2.5 px-4 py-2" data-share-row={row.who} data-role={row.role} data-connected={row.connected || undefined}>
+                <GroupedRow key={row.who} className="gap-2.5 py-2" data-share-row={row.who} data-role={row.role} data-connected={row.connected || undefined}>
                   <span
                     className={cn("size-1.5 shrink-0 rounded-full", row.connected ? "bg-emerald-500" : "bg-muted-foreground/40")}
                     title={row.connected ? "Connected now" : undefined}
@@ -139,10 +140,10 @@ export default function ShareSheet() {
                   <Button size="sm" variant="ghost" disabled={v.busy} onClick={() => void send({ type: "remove", who: row.who })} data-share-remove>
                     {v.removeLabel}
                   </Button>
-                </li>
+                </GroupedRow>
               ))
             )}
-          </ul>
+          </GroupedSection>
           <UpsellPrompt surface="share" active={v.rows.some((r) => !r.who.startsWith("team:"))} className="mt-3" />
           {v.error ? (
             <p className="mt-2 text-[13px] text-destructive" data-share-error>
@@ -150,7 +151,7 @@ export default function ShareSheet() {
             </p>
           ) : null}
         </div>
-        <div className="flex items-center justify-end gap-2 border-t bg-muted/60 px-5 py-3">
+        <div /* design-ok: full-width dialog footer */ className="flex items-center justify-end gap-2 border-t bg-muted/60 px-5 py-3">
           <Button onClick={() => sharing.close()}>{v.doneLabel}</Button>
         </div>
       </DialogPopup>

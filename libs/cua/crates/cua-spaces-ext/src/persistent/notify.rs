@@ -31,7 +31,8 @@ pub struct Notification {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<String>,
     /// `turn_ended`, `message` (the agent called `notify_user`), `error`,
-    /// `approval` (something waits for the user).
+    /// `approval` (something waits for the user), `budget` (a cloud passed
+    /// 50, 80 or 100% of its monthly budget).
     pub kind: String,
     pub title: String,
     pub body: String,
@@ -41,6 +42,9 @@ pub struct Notification {
     pub space: Option<String>,
     #[serde(default)]
     pub read: bool,
+    /// The Space thread entry it is about (an agent member's reply).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_seq: Option<u64>,
 }
 
 /// Longest reason in a failure's title.
@@ -125,6 +129,21 @@ impl Feed {
         run_id: Option<&str>,
         space: Option<&str>,
     ) -> Result<Notification> {
+        self.post_anchored(agent, kind, title, body, run_id, space, None)
+    }
+
+    /// [`Feed::post`], anchored to a thread entry (`entry_seq`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn post_anchored(
+        &self,
+        agent: Option<&str>,
+        kind: &str,
+        title: &str,
+        body: &str,
+        run_id: Option<&str>,
+        space: Option<&str>,
+        entry_seq: Option<u64>,
+    ) -> Result<Notification> {
         let title = clip(title, MAX_TITLE);
         if title.is_empty() {
             return Err(Error::invalid("a notification needs a title"));
@@ -139,6 +158,7 @@ impl Feed {
             run_id: run_id.map(str::to_string),
             space: space.map(str::to_string),
             read: false,
+            entry_seq,
         };
         let out = n.clone();
         self.with(move |all| {

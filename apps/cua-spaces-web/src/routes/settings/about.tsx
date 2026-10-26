@@ -55,7 +55,10 @@ function AboutPage() {
 
   return (
     <div data-about="">
-      <SettingsGroup title="Cua Spaces">
+      <SettingsGroup
+        title="Cua Spaces"
+        footer={<span data-about-copyright>{view.copyright}</span>}
+      >
         <SettingsRow
           label={<span data-about-title>{view.title}</span>}
           description={
@@ -75,7 +78,7 @@ function AboutPage() {
             type="button"
             data-about-link={link.id}
             onClick={() => open(link)}
-            className="flex min-h-12 w-full items-center justify-between gap-6 px-4 py-2.5 text-left text-[13px] outline-none hover:bg-accent/50 focus-visible:bg-accent/50"
+            className="flex min-h-11 w-full items-center justify-between gap-6 px-4 py-2.5 text-left text-[13px] outline-none hover:bg-accent/50 focus-visible:bg-accent/50"
           >
             <span data-about-link-label="">{link.label}</span>
             <span className="flex items-center text-xs text-muted-foreground">
@@ -84,10 +87,6 @@ function AboutPage() {
           </button>
         ))}
       </SettingsGroup>
-      <p className="-mt-4 mb-8 px-1 text-xs text-muted-foreground" data-about-copyright>
-        {view.copyright}
-      </p>
-
       <SettingsGroup title="Updates">
         {updates ? (
           <div data-about-updates="" className="divide-y" {...(unavailable ? { "data-about-unavailable": "" } : {})}>

@@ -1,0 +1,36 @@
+Deprecated alias of `send NAME TEXT`. Gives a named agent a turn (starts a run with its home restored, or follows up on its idle run)
+
+Usage: cua agent tell [OPTIONS] <NAME> <TEXT>
+
+Arguments:
+  <NAME>
+          
+
+  <TEXT>
+          
+
+Options:
+      --embedded
+          Use an embedded runtime even when a daemon runs
+
+      --daemon <DAEMON>
+          Daemon address (socket path or loopback URL)
+          
+          [env: CUA_DAEMON=]
+
+      --daemon-token <DAEMON_TOKEN>
+          Daemon token (loopback URLs)
+          
+          [env: CUA_DAEMON_TOKEN]
+
+      --state-dir <STATE_DIR>
+          Sandbox state directory (embedded; default ~/.cua/sandboxes)
+
+      --json
+          Print JSON
+
+  -h, --help
+          Print help
+
+Examples:
+  cua agent tell ada "what did you learn yesterday?"

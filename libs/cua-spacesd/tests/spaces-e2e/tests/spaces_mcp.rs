@@ -101,7 +101,13 @@ async fn stdio_speaks_mcp_and_publishes_the_contract() {
     // tools/list is the manifest, schema for schema, in order.
     let list = c.request("tools/list", json!({})).await;
     let tools = list["result"]["tools"].as_array().unwrap();
-    let manifest = cua_spaces::contract::tools();
+    let all = cua_spaces::contract::tools();
+    // A person-only tool (cloud_approve) is in the contract, never on MCP.
+    let manifest: Vec<_> = all
+        .iter()
+        .filter(|t| !cua_spaces::contract::person_only(t.name))
+        .cloned()
+        .collect();
     assert_eq!(tools.len(), manifest.len());
     for (got, want) in tools.iter().zip(&manifest) {
         assert_eq!(got["name"], want.name);
@@ -120,14 +126,15 @@ async fn stdio_speaks_mcp_and_publishes_the_contract() {
     )
     .unwrap();
     // The checked-in manifest is the contract, name for name.
-    assert_eq!(checked_in["tool_count"], manifest.len());
+    assert_eq!(checked_in["tool_count"], all.len());
     let checked_in_names: Vec<&str> = checked_in["tools"]
         .as_array()
         .unwrap()
         .iter()
         .map(|t| t["name"].as_str().unwrap())
         .collect();
-    assert_eq!(checked_in_names, contract_tool_names());
+    let all_names: Vec<&str> = all.iter().map(|t| t.name).collect();
+    assert_eq!(checked_in_names, all_names);
 
     // Protocol errors.
     let unknown = c

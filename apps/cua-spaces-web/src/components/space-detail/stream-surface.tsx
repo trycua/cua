@@ -16,7 +16,7 @@ import { cn, isMacPlatform } from "@/lib/utils";
  * Where a Space's live desktop goes.
  *
  * Layout contract:
- * - One block with the app's card border and radius. The page sizes it
+ * - One block with the app's one radius and a fill (no outline). The page sizes it
  *   (`className`); it never resizes itself, so nothing around it moves when
  *   video starts or stops.
  * - The video fits inside at the guest display's aspect ratio
@@ -57,6 +57,10 @@ export interface StreamSurfaceProps {
   /** Shown instead of the stream (progress, stopped). */
   children?: ReactNode;
   className?: string;
+  /** One of the Space's windows instead of its desktop (the Stream rail's pick). */
+  windowId?: string | null;
+  /** That window's app ("Firefox"), named where the window opens on its own. */
+  windowName?: string | null;
   /** Pointer and keys go to the Space (default). False only shows it (Watch). */
   interactive?: boolean;
 }
@@ -80,11 +84,11 @@ function useTimedOut(waiting: boolean, ms: number, key: string): boolean {
   return waiting && over === key;
 }
 
-/** The root's radius (`rounded-xl`) and border, for the native layer's clip. */
-const SURFACE_RADIUS = 12;
-const SURFACE_BORDER = 1;
+/** The root's radius (`rounded-lg`, the app's one radius) and border (none: a fill), for the native layer's clip. */
+const SURFACE_RADIUS = 8;
+const SURFACE_BORDER = 0;
 
-export function StreamSurface({ spaceId, os, aspectRatio = 16 / 10, canStream, previewText, access, onAccessAction, children, className, interactive = true }: StreamSurfaceProps) {
+export function StreamSurface({ spaceId, os, aspectRatio = 16 / 10, canStream, previewText, access, onAccessAction, children, className, windowId, windowName, interactive = true }: StreamSurfaceProps) {
   const ref = useRef<HTMLDivElement | null>(null);
   const settings = useSettings();
   const autoConnect = settings.data?.values.autoConnect ?? true;
@@ -109,6 +113,7 @@ export function StreamSurface({ spaceId, os, aspectRatio = 16 / 10, canStream, p
     radius: SURFACE_RADIUS,
     inset: SURFACE_BORDER,
     os,
+    ...(windowId ? { windowId } : {}),
   });
   // Still no picture after CONNECT_TIMEOUT_MS: failed, with the reason and
   // Try again (a picture that arrives later still shows).
@@ -151,7 +156,7 @@ export function StreamSurface({ spaceId, os, aspectRatio = 16 / 10, canStream, p
         data-stream-surface={spaceId}
         data-stream-state={state}
         data-aspect={aspectRatio.toFixed(4)}
-        className={cn("relative w-full overflow-hidden rounded-xl border shadow-xs", dark ? "bg-black" : "bg-muted/40", className)}
+        className={cn("relative w-full overflow-hidden rounded-lg", dark ? "bg-black" : "bg-muted/40", className)}
       >
         {covered ? (
           cover.kind === "stream" ? null : (
@@ -172,7 +177,7 @@ export function StreamSurface({ spaceId, os, aspectRatio = 16 / 10, canStream, p
                 <OsIcon os={os} className="mb-4 size-8 text-muted-foreground/30" />
                 {canStream ? (
                   <>
-                    <p className="text-[13px] text-muted-foreground">The desktop opens in its own window.</p>
+                    <p className="text-[13px] text-muted-foreground">{windowId && windowName ? `${windowName} opens in its own window.` : "The desktop opens in its own window."}</p>
                     <Button className="mt-4" onClick={() => void open()}>
                       <AppWindowIcon /> Open window
                     </Button>

@@ -56,8 +56,8 @@ export function SpaceResourcesPanel({
 const SWATCH: Record<string, string> = {
   yours: "bg-muted-foreground/60",
   thisSpace: "bg-brand-strong",
-  otherSpaces: "bg-brand",
-  base: "bg-brand/50",
+  otherSpaces: "bg-brand/45",
+  base: "bg-foreground/30",
   free: "border bg-foreground/10",
 };
 
@@ -80,8 +80,11 @@ function DiskFit({ fit, host, computer }: { fit: DiskFitView; host: ComputerReso
         {fit.parts.map((p) => (
           <li key={p.key} data-disk-part={p.kind === "base" ? "base" : p.key} className="flex items-center gap-1.5 tabular-nums">
             <span className={cn("size-2 rounded-xs", SWATCH[p.kind])} aria-hidden />
-            {p.label} · {p.value}
-            {p.detail ? <span className="text-muted-foreground">, {p.detail}</span> : null}
+            {/* One inline run, so the flex gap only parts the swatch from the words. */}
+            <span>
+              {p.label} · {p.value}
+              {p.detail ? <span className="text-muted-foreground">, {p.detail}</span> : null}
+            </span>
           </li>
         ))}
       </ul>

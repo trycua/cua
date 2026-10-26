@@ -67,4 +67,30 @@ struct IncompleteListTests {
         #expect(m.listView.empty == false)
         #expect(m.listView.reachingLine == "Reaching 1 computer…")
     }
+
+    @Test func aSpaceAnotherComputerIsCreatingReachesThePage() async throws {
+        let backend = FixtureSpacesBackend(rows: [])
+        backend.fixtureCreating = [
+            SpaceCreatingElsewhere(machineId: "m1", machineName: "Mac mini", name: "build", os: "macos",
+                                   phase: "creating", percent: 40, updatedAtMs: 1),
+        ]
+        let m = model(backend)
+        let bridge = WebUIBridge(model: m, allowedOrigins: [])
+        await m.refresh()
+        let answer = try #require(try await bridge.handle("spaces.list", [:]) as? [String: Any])
+        let rows = try #require(answer["creatingElsewhere"] as? [[String: Any]])
+        #expect(rows.count == 1)
+        #expect(rows[0]["machineId"] as? String == "m1")
+        #expect(rows[0]["machineName"] as? String == "Mac mini")
+        #expect(rows[0]["name"] as? String == "build")
+        #expect(rows[0]["os"] as? String == "macos")
+        #expect(rows[0]["phase"] as? String == "creating")
+        #expect(rows[0]["percent"] as? Int == 40)
+
+        // Nothing being created: an empty list, never a missing key.
+        backend.fixtureCreating = []
+        await m.refresh(fresh: true)
+        let none = try #require(try await bridge.handle("spaces.list", [:]) as? [String: Any])
+        #expect((none["creatingElsewhere"] as? [Any])?.isEmpty == true)
+    }
 }

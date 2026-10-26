@@ -11,3 +11,17 @@ updates:
     ignore:
       - dependency-name: rust
         update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
+  # Actions are pinned to commit SHAs. Dependabot keeps the SHAs (and their
+  # trailing "# vN" comments) current in one grouped PR per month.
+  - package-ecosystem: github-actions
+    directories:
+      - "/"
+      - "/.github/actions/*"
+    schedule:
+      interval: monthly
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "ci"

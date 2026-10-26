@@ -32,7 +32,7 @@ jobs:
       models: ${{ steps.list.outputs.models }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Read model matrix
         id: list
@@ -60,7 +60,7 @@ jobs:
         model: ${{ fromJSON(needs.resolve-models.outputs.models) }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up uv and Python
         uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
@@ -68,7 +68,7 @@ jobs:
           python-version: "3.12"
 
       - name: Cache system packages
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: /var/cache/apt
           key: ${{ runner.os }}-apt-${{ hashFiles('**/Dockerfile') }}
@@ -82,7 +82,7 @@ jobs:
           sudo apt-get install -y libgl1-mesa-dri libglib2.0-0
 
       - name: Cache Python dependencies (uv)
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/uv
@@ -105,7 +105,7 @@ jobs:
           uv pip install pytest
 
       - name: Cache HuggingFace models
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.cache/huggingface
           key: ${{ runner.os }}-hf-models-v1
@@ -203,7 +203,7 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: test-results-${{ matrix.model }}
           path: |
@@ -214,7 +214,7 @@ jobs:
 
       - name: Upload test summary data
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           # Unique, slash-free artifact name per matrix entry
           name: test-summary-${{ env.SAFE_MODEL_NAME }}
@@ -249,7 +249,7 @@ jobs:
 
       - name: Download all test summary artifacts
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: test-summary-*
           merge-multiple: true

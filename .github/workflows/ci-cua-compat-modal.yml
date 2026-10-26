@@ -49,7 +49,7 @@ jobs:
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
       - name: Install pinned Rust toolchain
-        uses: dtolnay/rust-toolchain@1.97.1
+        uses: dtolnay/rust-toolchain@59a558e8c538bf4a23bbffa19e5a278b703f2920 # 1.97.1
       - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua
@@ -60,7 +60,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: "1.25"
       - name: The descriptors are the pinned wheel's, and the coverage matrix covers its surface
@@ -104,7 +104,7 @@ jobs:
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
       - name: Install pinned Rust toolchain
-        uses: dtolnay/rust-toolchain@1.97.1
+        uses: dtolnay/rust-toolchain@59a558e8c538bf4a23bbffa19e5a278b703f2920 # 1.97.1
       - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua
@@ -130,7 +130,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: "1.25"
       - name: Latest JavaScript and Go SDKs over mock Spaces
@@ -158,7 +158,7 @@ jobs:
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
       - name: Install pinned Rust toolchain
-        uses: dtolnay/rust-toolchain@1.97.1
+        uses: dtolnay/rust-toolchain@59a558e8c538bf4a23bbffa19e5a278b703f2920 # 1.97.1
       - uses: ./.github/actions/rust-cache
         with:
           workspaces: |

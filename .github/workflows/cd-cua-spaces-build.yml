@@ -106,7 +106,7 @@ jobs:
       marker_key: ${{ steps.tree.outputs.key }}
       artifact: spaces-build-${{ github.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 2
       - name: Hash the release inputs
@@ -128,7 +128,7 @@ jobs:
       - name: Look for a live build of this tree
         id: marker
         if: github.event_name != 'workflow_dispatch' || !inputs.force
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: marker
           key: ${{ steps.tree.outputs.key }}
@@ -183,7 +183,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Check the baked cua-spacesd release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -203,11 +203,11 @@ jobs:
           - { arch: arm64, triple: aarch64-apple-darwin }
           - { arch: x86_64, triple: x86_64-apple-darwin }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: ./.github/actions/spaces-rust-slice
         with:
           triple: ${{ matrix.triple }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: macos-rust-${{ matrix.arch }}
           path: |
@@ -225,15 +225,15 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@59a558e8c538bf4a23bbffa19e5a278b703f2920 # 1.97.1
         with:
           targets: wasm32-unknown-unknown
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
       - name: Restore wasm-bindgen
         id: wasm-bindgen
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cargo/bin/wasm-bindgen
@@ -246,7 +246,7 @@ jobs:
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           package_json_file: apps/cua-spaces-desktop/package.json
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
       - name: Build the web UI
@@ -254,7 +254,7 @@ jobs:
         run: |
           pnpm install --ignore-workspace --frozen-lockfile
           pnpm build
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: spaces-web-dist
           path: apps/cua-spaces-web/dist/
@@ -279,7 +279,7 @@ jobs:
     outputs:
       signed: ${{ steps.signing.outputs.apple }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Signing configuration
         id: signing
@@ -316,7 +316,7 @@ jobs:
           fi
 
       - name: Download the Rust slices
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: macos-rust-*
           path: ${{ runner.temp }}/macos-rust
@@ -357,7 +357,7 @@ jobs:
           test "$(security find-identity -v -p codesigning "$kc" | grep -c 'Developer ID Application')" -ge 1
 
       - name: Download the web UI
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: spaces-web-dist
           path: apps/cua-spaces-web/dist
@@ -474,7 +474,7 @@ jobs:
           fi
           shasum -a 256 installer-assets/*
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: part-darwin-universal
           path: installer-assets/
@@ -511,12 +511,12 @@ jobs:
         working-directory: apps/cua-spaces-desktop
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: ./.github/actions/spaces-native
         with:
           label: ${{ matrix.label }}
           target: ${{ matrix.target }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: electron-native-${{ matrix.label }}
           path: apps/cua-spaces-desktop/native/${{ matrix.label }}/
@@ -549,7 +549,7 @@ jobs:
       # Pack this architecture only (packaging/archs.cjs).
       CUA_SPACES_ARCHS: ${{ matrix.arch }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Signing configuration
         id: signing
         env:
@@ -567,16 +567,16 @@ jobs:
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           package_json_file: apps/cua-spaces-desktop/package.json
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
       - name: Download the web UI
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: spaces-web-dist
           path: apps/cua-spaces-web/dist
       - name: Native library
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: electron-native-win32-${{ matrix.arch }}
           path: apps/cua-spaces-desktop/native/win32-${{ matrix.arch }}
@@ -660,13 +660,13 @@ jobs:
             }
           }
           Get-FileHash electron-assets/* | Format-Table -AutoSize
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: part-windows-${{ matrix.arch }}
           path: apps/cua-spaces-desktop/electron-assets/
           if-no-files-found: error
           retention-days: 2
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: part-winfeed-${{ matrix.arch }}
           path: apps/cua-spaces-desktop/electron-feed/
@@ -692,20 +692,20 @@ jobs:
     env:
       CUA_SPACES_ARCHS: ${{ matrix.arch }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           package_json_file: apps/cua-spaces-desktop/package.json
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
       - name: Download the web UI
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: spaces-web-dist
           path: apps/cua-spaces-web/dist
       - name: Native library
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: electron-native-linux-${{ matrix.arch }}
           path: apps/cua-spaces-desktop/native/linux-${{ matrix.arch }}
@@ -736,7 +736,7 @@ jobs:
       - name: Check the deb ships the static cua-spacesd next to cua
         working-directory: .
         run: .github/scripts/check_static_spacesd_packaged.sh apps/cua-spaces-desktop/electron-assets
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: part-linux-${{ matrix.arch }}
           path: apps/cua-spaces-desktop/electron-assets/
@@ -755,11 +755,11 @@ jobs:
     env:
       VERSION: ${{ needs.plan.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: part-*
           path: parts
@@ -801,7 +801,7 @@ jobs:
             ( cd set && shasum -a 256 -- * )
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ needs.plan.outputs.artifact }}
           path: set/
@@ -825,8 +825,8 @@ jobs:
       SWIFT_SIGNED: ${{ needs.build-macos.outputs.signed }}
       WINDOWS_SIGNED: ${{ needs.electron-windows-pkg.outputs.signed }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: ${{ needs.plan.outputs.artifact }}
           path: release
@@ -886,11 +886,11 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: ${{ needs.plan.outputs.artifact }}
           path: release
-      - uses: actions/attest-build-provenance@v3
+      - uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
         with:
           subject-path: release/*
 
@@ -906,7 +906,7 @@ jobs:
       contents: read
       actions: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Cost summary
         if: needs.plan.outputs.skip != 'true'
         env:
@@ -922,7 +922,7 @@ jobs:
           echo "$GITHUB_SHA $GITHUB_RUN_ID" > marker/build
       - name: Save the marker
         if: needs.plan.outputs.skip != 'true' && needs.attest.result == 'success'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: marker
           key: ${{ needs.plan.outputs.marker_key }}

@@ -41,7 +41,7 @@ runs:
       with:
         install-deps: "false"
         free-more: "true"
-    - uses: dtolnay/rust-toolchain@1.97.1
+    - uses: dtolnay/rust-toolchain@59a558e8c538bf4a23bbffa19e5a278b703f2920 # 1.97.1
     - uses: ./.github/actions/rust-cache
       with:
         workspaces: |

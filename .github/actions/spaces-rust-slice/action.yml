@@ -68,7 +68,7 @@ runs:
     - name: Restore the compiled slice
       id: cache
       if: inputs.build == 'true'
-      uses: actions/cache@v4
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
         path: |
           libs/cua/target/${{ inputs.triple }}/release/libcua_spaces_ffi.dylib
@@ -77,7 +77,7 @@ runs:
     - name: Restore the compiled slice (restore only)
       id: restore
       if: inputs.build != 'true'
-      uses: actions/cache/restore@v4
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
         path: |
           libs/cua/target/${{ inputs.triple }}/release/libcua_spaces_ffi.dylib
@@ -90,7 +90,7 @@ runs:
         KEY: ${{ steps.key.outputs.key }}
       run: echo "::notice::SwiftUI Rust slice cache hit = ${HIT} (${KEY})"
     - if: inputs.build == 'true' && steps.cache.outputs.cache-hit != 'true'
-      uses: dtolnay/rust-toolchain@1.97.1
+      uses: dtolnay/rust-toolchain@59a558e8c538bf4a23bbffa19e5a278b703f2920 # 1.97.1
       with:
         targets: ${{ inputs.triple }}
     - if: inputs.build == 'true' && steps.cache.outputs.cache-hit != 'true'

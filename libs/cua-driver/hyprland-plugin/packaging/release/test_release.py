@@ -174,7 +174,7 @@ class ReleaseTest(unittest.TestCase):
         workflow = (HERE.parents[4] / ".github/workflows/cd-rust-cua-driver.yml").read_text()
         job = workflow.split("  build-hyprland-plugin-source:\n", 1)[1]
         script = textwrap.dedent(job.split("        run: |\n", 1)[1].split(
-            "      - uses: actions/upload-artifact@v4", 1
+            "      - uses: actions/upload-artifact@", 1
         )[0])
         binaries = self.root / "bin"
         binaries.mkdir(exist_ok=True)

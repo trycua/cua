@@ -35,7 +35,7 @@ jobs:
     name: shellcheck + shfmt + manifest unit tests
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: shellcheck
         run: |
           docker run --rm -v "$PWD:/w:ro" koalaman/shellcheck:stable -s sh \
@@ -60,7 +60,7 @@ jobs:
       matrix:
         image: ["debian:12", "ubuntu:24.04", "alpine:3"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: install.sh test suite (fake release on a local HTTP server)
         run: |
           docker run --rm -v "$PWD/scripts/install:/w:ro" "${{ matrix.image }}" sh -c '
@@ -101,7 +101,7 @@ jobs:
     name: installer smoke (macOS, temp prefix + dmg mount + pkg)
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: install.sh test suite (includes the .dmg mount into --prefix)
         run: sh scripts/install/tests/run.sh
       - name: uninstall.sh tests under macOS's /bin/sh (a throwaway HOME, no real Keychain or services)
@@ -114,7 +114,7 @@ jobs:
     name: installer smoke (Windows, install.ps1)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Pester
         shell: pwsh
         run: |

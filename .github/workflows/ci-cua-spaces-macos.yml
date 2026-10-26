@@ -95,7 +95,7 @@ jobs:
       run:
         working-directory: libs/cua
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Install Rust (toolchain from rust-toolchain.toml)
         run: rustup show active-toolchain || rustup toolchain install
       - uses: ./.github/actions/rust-cache
@@ -135,7 +135,7 @@ jobs:
       # The slice cache key names the repository (same value as the producer).
       CUA_RELEASE_REPOSITORY: ${{ github.repository }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       # Restore only: main compiled this exact Rust input tree when it merged
       # (ci-cua-spaces-rust-slice.yml) unless the pull request changes it.
       - name: Restore main's compiled library for these Rust inputs
@@ -167,7 +167,7 @@ jobs:
         working-directory: libs/cua
         run: cargo build --locked --release -p cua-spaces-ffi
       - name: Upload the library for the Swift jobs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: cua-spaces-ffi-dylib
           path: libs/cua/target/release/libcua_spaces_ffi.dylib
@@ -179,9 +179,9 @@ jobs:
     needs: ffi
     runs-on: macos-26-xlarge
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Download the Cua Spaces app library
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: cua-spaces-ffi-dylib
           path: libs/cua/target/release
@@ -215,7 +215,7 @@ jobs:
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           package_json_file: apps/cua-spaces-desktop/package.json
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
       - name: Bridge contract (the Swift host's answers through the webkit adapter)
@@ -230,7 +230,7 @@ jobs:
           suite: spaces-swift
       - name: Upload snapshot differences
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: cua-spaces-macos-snapshot-diffs
           path: apps/cua-spaces-macos/Tests/CuaSpacesMacTests/Snapshots/*.actual.png
@@ -247,7 +247,7 @@ jobs:
     env:
       CARGO_BUILD_JOBS: 4
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Install Rust (toolchain from rust-toolchain.toml)
         working-directory: libs/cua
         run: rustup show active-toolchain || rustup toolchain install
@@ -259,7 +259,7 @@ jobs:
           workspaces: libs/cua
           save-if: "false"
       - name: Download the Cua Spaces app library
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: cua-spaces-ffi-dylib
           path: libs/cua/target/release
@@ -270,7 +270,7 @@ jobs:
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           package_json_file: apps/cua-spaces-desktop/package.json
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
       # The Electron shell's TypeScript binding of the same library
@@ -287,9 +287,9 @@ jobs:
     needs: ffi
     runs-on: macos-26-xlarge
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Download the Cua Spaces app library
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: cua-spaces-ffi-dylib
           path: libs/cua/target/release

@@ -513,7 +513,7 @@ def test_floating_inputs_are_fingerprinted(filename):
     assert flags == FLOATING[filename]
     assert flags <= set(reuse.FLOATS)
     # Anything the workflow installs from a moving spec has to be in the list.
-    if "dtolnay/rust-toolchain@stable" in text:
+    if re.search(r"dtolnay/rust-toolchain@[0-9a-f]{40} # stable", text):
         assert "rust-stable" in flags
     if 'node-version: "22"' in text:
         assert "node-22" in flags

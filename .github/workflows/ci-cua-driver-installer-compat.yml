@@ -127,7 +127,7 @@ jobs:
       CUA_DRIVER_RS_TELEMETRY_ENABLED: "false"
       CUA_TELEMETRY_ENABLED: "false"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install Linux runtime libraries
         if: runner.os == 'Linux'

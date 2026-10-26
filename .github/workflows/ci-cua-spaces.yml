@@ -136,12 +136,12 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
       CARGO_BUILD_JOBS: 4
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: ./.github/actions/linux-rust-prep
         with:
           install-deps: "false"
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: pnpm
@@ -192,7 +192,7 @@ jobs:
     name: vitest + typecheck
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       # The models call the shared app core (libs/cua/crates/cua-spaces-app-core)
       # as wasm, built by scripts/build-core-wasm.mjs before test and build.
       - name: Install Rust and the wasm32 target
@@ -208,7 +208,7 @@ jobs:
           shared-key: apps-cua-spaces-core-wasm
       - uses: ./.github/actions/wasm-bindgen
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: pnpm
@@ -257,14 +257,14 @@ jobs:
       # memory ("runner received a shutdown signal").
       CARGO_BUILD_JOBS: ${{ matrix.os == 'ubuntu-22.04' && 2 || matrix.os == 'cua-windows-8core' && 8 || 4 }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       # Linking the debug test binaries and the bundle exhausted the Linux
       # runner's disk (the linker died with SIGBUS). No-op off Linux.
       - uses: ./.github/actions/linux-rust-prep
         with:
           install-deps: "false"
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: pnpm
@@ -339,7 +339,7 @@ jobs:
             Windows) test -f src-tauri/target/release/cua.exe ;;
           esac
       - name: Upload bundles
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: cua-spaces-${{ matrix.name }}
           if-no-files-found: error

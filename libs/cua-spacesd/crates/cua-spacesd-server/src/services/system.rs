@@ -533,7 +533,7 @@ fn disk_usage(path: &std::path::Path) -> (u64, u64) {
             .iter()
             .filter(|d| path.starts_with(d.mount_point()))
             .max_by_key(|d| d.mount_point().as_os_str().len())
-            .map(|d| (d.total_space(), d.total_space() - d.available_space()))
+            .map(|d| sized(d.total_space(), d.available_space()))
             .unwrap_or((0, 0))
     }
 }

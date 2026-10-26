@@ -208,8 +208,11 @@ contract may later add native accessibility targets after separate review. For
 `fill_and_submit_login`, a login target is the secure password element, an
 optional username element, and a submit control, all in the same form,
 document, and origin. The password element keeps the rule of a live
-`input[type=password]`. The username element receives only the username field
-and is never a destination for a password.
+`input[type=password]`. The username element is validated by its own role: a
+live, visible, unmasked DOM text-like input (`type` of `text` or `email`) in
+the same form, document, and origin. It receives only the username field and
+is never a destination for a password. The password-only checks in section 6
+apply to the password element alone.
 
 **Partner app**
 : In this RFC, the single 1Password integration that cua ships and runs.
@@ -493,7 +496,7 @@ pub struct FillAndSubmitLoginInput {
 
 pub struct BrowserLoginTarget {
     pub password: BrowserSecretTarget,
-    pub username: Option<BrowserSecretTarget>,
+    pub username: Option<BrowserUsernameTarget>, // role-specific; never accepts a password
     pub submit: BrowserSubmitTarget, // semantic-v2 ref to a submit control of the same form
 }
 
@@ -696,12 +699,13 @@ For a browser target, the proof includes:
 - tab, frame, and document identity;
 - exact semantic-v2 element ref;
 - current origin matching the binding constraint;
-- a live DOM `HTMLInputElement` whose current `type` is exactly `password`; and
+- for a password destination, a live DOM `HTMLInputElement` whose current `type` is exactly `password`;
+- for a login username destination, a live DOM `HTMLInputElement` whose current `type` is `text` or `email`, in the same form as the password element, which can never receive a password field; and
 - no redirect, popup, frame, or navigation transition that invalidates scope.
 
 Initial support excludes terminal controls, shells, clipboard targets, browser
 address bars, legacy refs, CSS-masked custom controls, ARIA-only password
-claims, content-editable controls, unmasked fields, and pixel-only coordinates.
+claims, content-editable controls, unmasked password destinations, and pixel-only coordinates.
 A platform or browser without a trustworthy route returns a stable structured
 refusal; it does not downgrade to generic keyboard or clipboard input.
 
@@ -1414,6 +1418,7 @@ The RFC is completed only when the following evidence passes.
 
 ### Fill-and-submit behavior
 
+- A normal username and password form is filled correctly, and delivery of the password field to the username control is refused before provider release.
 - No agent observation or tool call can interleave between fill and submit.
 - A swapped submit control, replaced form, navigation or cancellation after
   release does not submit, consumes the use, and returns a fixed outcome.

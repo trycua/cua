@@ -34,9 +34,12 @@ import { cn, isMacPlatform } from "@/lib/utils";
  * registers the `cuaVideo` handler (the SwiftUI shell, unless its
  * `WebUINativeVideo` default is NO) and the Space can stream, the host draws
  * the Space's desktop over the block and sends it pointer, scroll and keys.
- * A line under the block says where keys go and how to take them back
- * (Control+Option pressed and released alone, or a click outside). Anywhere else it is the placeholder, and the
- * desktop opens in its own native window.
+ * Nothing sits under the block (the header's picture-in-picture button is
+ * the way out to a window of its own): while the desktop has the keyboard,
+ * a small bar over its bottom edge says how to take keys back (Control+Option
+ * pressed and released alone, a click outside, or Stop controlling), and
+ * the host cuts the video out under that bar (`data-video-hole`). Anywhere
+ * else it is the placeholder, and the desktop opens in its own native window.
  */
 export interface StreamSurfaceProps {
   spaceId: string;
@@ -77,7 +80,12 @@ export const CONNECT_TIMEOUT_REASON = "No picture arrived from the desktop withi
 function useTimedOut(waiting: boolean, ms: number, key: string): boolean {
   const [over, setOver] = useState<string | null>(null);
   useEffect(() => {
-    if (!waiting) return;
+    // A wait that ended (a picture came, or the slot went away) is forgotten:
+    // the next wait under the same key starts from zero, never already over.
+    if (!waiting) {
+      setOver(null);
+      return;
+    }
     const t = setTimeout(() => setOver(key), ms);
     return () => clearTimeout(t);
   }, [waiting, ms, key]);
@@ -150,82 +158,72 @@ export function StreamSurface({ spaceId, os, aspectRatio = 16 / 10, canStream, p
   const reason = timedOut ? CONNECT_TIMEOUT_REASON : slot?.phase === "failed" ? (slot.reason ?? null) : null;
   const dark = covered && (Boolean(thumbnail) || cover.kind !== "status");
   return (
-    <>
-      <div
-        ref={ref}
-        data-stream-surface={spaceId}
-        data-stream-state={state}
-        data-aspect={aspectRatio.toFixed(4)}
-        className={cn("relative w-full overflow-hidden rounded-lg", dark ? "bg-black" : "bg-muted/40", className)}
-      >
-        {covered ? (
-          cover.kind === "stream" ? null : (
-            <DesktopCoverView
-              os={os}
-              cover={cover}
-              thumbnail={access ? null : thumbnail}
-              reason={cover.kind === "status" ? reason : null}
-              onButton={press}
-              onAction={onAccessAction}
-              onOpen={slot?.phase === "failed" ? () => void open() : undefined}
-            />
-          )
-        ) : (
-          <div className="absolute inset-0 flex flex-col items-center justify-center px-6 text-center">
-            {children ?? (
-              <>
-                <OsIcon os={os} className="mb-4 size-8 text-muted-foreground/30" />
-                {canStream ? (
-                  <>
-                    <p className="text-[13px] text-muted-foreground">{windowId && windowName ? `${windowName} opens in its own window.` : "The desktop opens in its own window."}</p>
-                    <Button className="mt-4" onClick={() => void open()}>
-                      <AppWindowIcon /> Open window
-                    </Button>
-                  </>
-                ) : (
-                  <p data-preview-text className="text-[13px] text-muted-foreground">
-                    {previewText}
-                  </p>
-                )}
-              </>
-            )}
-          </div>
-        )}
-      </div>
-      {slot ? (
-        <div data-video-focus={slot.focused ? "space" : "page"} className="mt-2 flex h-7 items-center justify-between gap-3 px-1 text-xs text-muted-foreground">
+    <div
+      ref={ref}
+      data-stream-surface={spaceId}
+      data-stream-state={state}
+      data-aspect={aspectRatio.toFixed(4)}
+      className={cn("relative w-full overflow-hidden rounded-lg", dark ? "bg-black" : "bg-muted/40", className)}
+    >
+      {covered ? (
+        cover.kind === "stream" ? null : (
+          <DesktopCoverView
+            os={os}
+            cover={cover}
+            thumbnail={access ? null : thumbnail}
+            reason={cover.kind === "status" ? reason : null}
+            onButton={press}
+            onAction={onAccessAction}
+            onOpen={slot?.phase === "failed" ? () => void open() : undefined}
+          />
+        )
+      ) : (
+        <div className="absolute inset-0 flex flex-col items-center justify-center px-6 text-center">
+          {children ?? (
+            <>
+              <OsIcon os={os} className="mb-4 size-8 text-muted-foreground/30" />
+              {canStream ? (
+                <>
+                  <p className="text-[13px] text-muted-foreground">{windowId && windowName ? `${windowName} opens in its own window.` : "The desktop opens in its own window."}</p>
+                  <Button className="mt-4" onClick={() => void open()}>
+                    <AppWindowIcon /> Open window
+                  </Button>
+                </>
+              ) : (
+                <p data-preview-text className="text-[13px] text-muted-foreground">
+                  {previewText}
+                </p>
+              )}
+            </>
+          )}
+        </div>
+      )}
+      {slot?.phase === "live" && slot.focused ? (
+        // While the desktop has the keyboard: how to give it back, over the
+        // video's bottom edge. The host cuts the video out under it
+        // (`data-video-hole`), so no strip under the stream is needed.
+        <div
+          data-video-focus="space"
+          data-video-hole=""
+          className="glass absolute bottom-2 left-1/2 flex max-w-[calc(100%-1rem)] -translate-x-1/2 items-center gap-2 rounded-lg py-1 pr-1 pl-3 text-xs text-muted-foreground shadow-float"
+        >
           <p className="min-w-0 truncate">
-            {slot.phase !== "live" ? null : slot.focused ? (
+            {isMacPlatform() ? (
               <>
-                {isMacPlatform() ? (
-                  <>
-                    Keys go to this Space. Press and release <Kbd>⌃⌥</Kbd> to stop.
-                  </>
-                ) : (
-                  <>
-                    Keys go to this Space. Press <Kbd>Ctrl+Shift+F12</Kbd> to stop.
-                  </>
-                )}
+                Keys go to this Space. Press and release <Kbd>⌃⌥</Kbd> to stop.
               </>
             ) : (
-              "Click the desktop to control it."
+              <>
+                Keys go to this Space. Press <Kbd>Ctrl+Shift+F12</Kbd> to stop.
+              </>
             )}
           </p>
-          <div className="flex shrink-0 items-center gap-1">
-            {slot.phase === "live" && slot.focused ? (
-              <Button variant="ghost" size="sm" onClick={() => slot.setFocus(false)}>
-                Stop controlling
-              </Button>
-            ) : null}
-            {slot.phase !== "failed" ? (
-              <Button variant="ghost" size="sm" onClick={() => void open()}>
-                <AppWindowIcon /> Open in window
-              </Button>
-            ) : null}
-          </div>
+          <Button variant="ghost" size="sm" onClick={() => slot.setFocus(false)}>
+            Stop controlling
+          </Button>
         </div>
       ) : null}
-    </>
+    </div>
   );
 }
 

@@ -474,6 +474,117 @@ struct WebUIVideoSurfacesTests {
         s.removeAll()
     }
 
+    // MARK: - Picture in picture
+
+    /// Regression: closing the desktop's picture in picture showed "Could
+    /// not connect to the desktop", then "Connecting…", before the inline
+    /// desktop came back: the panel opened a second stream, the inline one
+    /// closed, and closing the panel closed that one and dialled again. The
+    /// panel now holds the viewer's own session; the slot that comes back
+    /// binds to it, live at once, with no second open and no failure.
+    @Test func pictureInPictureHandsTheSameLiveSessionBackWithNoReopen() async throws {
+        let host = Host()
+        let units = AccessUnit.split(Self.tinyH264)
+        let s = surfaces(host) { _, _ in SyntheticStreamProvider(units: units, size: CGSize(width: 64, height: 48), fps: 30) }
+        s.handle(message([entry("v1", space: "a")]))
+        await settle { host.phases("v1").contains("live") }
+        let first = try #require(s.surfaces["v1"])
+        let inline = try #require(s.sessionFor(first))
+
+        // Popped out: the panel holds the same session, and the page's slot goes.
+        let held = try await s.holdViewer(spaceId: "a")
+        #expect(held === inline)
+        s.handle(message([], remove: ["v1"]))
+        #expect(host.opened.count == 1)
+        #expect(held.status == .streaming)
+        // A hidden window pauses slots, never the panel's stream.
+        s.setPaused(true)
+        try? await Task.sleep(for: .milliseconds(100))
+        #expect(held.status == .streaming)
+        s.setPaused(false)
+
+        // Closed: the slot that comes back is live at once, on the same session.
+        s.releaseViewer(spaceId: "a", after: .milliseconds(200))
+        s.handle(message([entry("v2", space: "a")]))
+        // Its first word is live, on the next main-queue turn (the session's current frame).
+        await settle(tries: 5) { !host.phases("v2").isEmpty }
+        #expect(host.phases("v2") == ["live"])
+        let back = try #require(s.surfaces["v2"])
+        #expect(s.sessionFor(back) === inline)
+        try? await Task.sleep(for: .milliseconds(400))
+        #expect(host.opened.count == 1)
+        #expect(!host.events.contains { $0.0 == "video.surface" && $0.1["state"] as? String == "failed" })
+        #expect(s.stats().first?["users"] as? Int == 1)
+        s.removeAll()
+        #expect(s.stats().isEmpty)
+    }
+
+    @Test func aReleasedHoldWithNoSlotStopsTheStreamAfterTheGrace() async throws {
+        let host = Host()
+        let units = AccessUnit.split(Self.tinyH264)
+        let s = surfaces(host) { _, _ in SyntheticStreamProvider(units: units, size: CGSize(width: 64, height: 48), fps: 30) }
+        // No inline slot (auto-connect off): the panel opens the viewer stream itself.
+        let held = try await s.holdViewer(spaceId: "a")
+        #expect(host.opened.map(\.1) == [.full])
+        #expect(s.stats().count == 1)
+        s.releaseViewer(spaceId: "a", after: .zero)
+        await settle { s.stats().isEmpty }
+        #expect(s.stats().isEmpty)
+        await settle { held.status == .idle }
+        #expect(held.status == .idle)
+    }
+
+    @Test func aHoldOnAStreamThatCannotOpenThrowsAndKeepsNothing() async {
+        let host = Host()
+        let s = surfaces(host) { _, _ in throw StreamError.noStream("no stream for this Space") }
+        await #expect(throws: (any Error).self) { try await s.holdViewer(spaceId: "a") }
+        #expect(s.stats().isEmpty)
+    }
+
+    // MARK: - Holes
+
+    @Test func readsHolesAndMapsThemIntoTheClipContainer() throws {
+        var u = update(rect: CGRect(x: 100, y: 100, width: 400, height: 300), clip: CGRect(x: 100, y: 120, width: 400, height: 280))
+        u.holes = [CGRect(x: 420, y: 90, width: 160, height: 60), CGRect(x: 700, y: 0, width: 10, height: 10)]
+        let l = VideoSurfaceLayout.make(u, zoom: 2, viewHeight: 1000, flipped: true)
+        #expect(!l.hidden)
+        // In the container (from 100,120, doubled), cut to it; the hole off the slot is dropped.
+        #expect(l.holes == [CGRect(x: 640, y: 0, width: 160, height: 60)])
+        #expect(l.inHole(CGPoint(x: 700, y: 10)))
+        #expect(!l.inHole(CGPoint(x: 10, y: 10)))
+        let mask = try #require(l.maskPath)
+        #expect(!mask.contains(CGPoint(x: 700, y: 10)))
+        #expect(mask.contains(CGPoint(x: 10, y: 10)))
+        #expect(VideoSurfaceLayout.make(update(rect: u.rect, clip: u.clip), zoom: 1, viewHeight: 1000, flipped: true).maskPath == nil)
+
+        let parsed = VideoSurfaceUpdate(json: ["surfaceId": "s", "spaceId": "a", "rect": ["x": 0, "y": 0, "width": 10, "height": 10],
+                                               "holes": [["x": 1, "y": 2, "width": 3, "height": 4], "bad"]])
+        #expect(parsed?.holes == [CGRect(x: 1, y: 2, width: 3, height: 4)])
+    }
+
+    /// Regression: the header's "⋯" menu turned the desktop black. A menu
+    /// over the viewer is a hole now: the video stays shown and live, and
+    /// clicks in the hole reach the page's menu.
+    @Test func aMenuOverTheViewerCutsAHoleAndTheVideoStaysLive() async throws {
+        let host = Host()
+        let units = AccessUnit.split(Self.tinyH264)
+        let s = surfaces(host) { _, _ in SyntheticStreamProvider(units: units, size: CGSize(width: 64, height: 48), fps: 30) }
+        s.handle(message([entry("v", space: "a")]))
+        await settle { host.phases("v").contains("live") }
+        var withMenu = entry("v", space: "a")
+        withMenu["holes"] = [["x": 300, "y": 30, "width": 160, "height": 40]]
+        s.handle(message([withMenu]))
+        let view = try #require(s.surfaces["v"]?.view)
+        #expect(!view.isHidden)
+        #expect(view.layer?.mask != nil)
+        #expect(view.layout.inHole(CGPoint(x: 330, y: 10)))
+        #expect(host.phases("v").last == "live")
+        // Closed: no mask.
+        s.handle(message([entry("v", space: "a")]))
+        #expect(view.layer?.mask == nil)
+        s.removeAll()
+    }
+
     @Test func theHarnessAddsRunningFixtureSpaces() {
         #expect(FixtureSpacesBackend.rows(environment: [:]).count == FixtureSpacesBackend.sample.count)
         let rows = FixtureSpacesBackend.rows(environment: ["CUA_SPACES_FIXTURE_SPACES": "3"])

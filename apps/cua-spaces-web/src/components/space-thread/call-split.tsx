@@ -11,6 +11,8 @@ export const DEFAULT_SPLIT = 0.52;
 const MIN_STAGE = 160;
 const MIN_BELOW = 200;
 const KEY = "cua-spaces:call-split";
+/** The divider's grab area (px, its `h-5`): taller than the bar, so it is easy to hit. */
+export const DIVIDER_HIT_PX = 20;
 
 function savedSplit(): number {
   try {
@@ -102,9 +104,16 @@ export function CallSplit({ stage, below, className }: { stage: ReactNode; below
         onPointerCancel={onPointerUp}
         onDoubleClick={() => set(DEFAULT_SPLIT)}
         onKeyDown={onKeyDown}
-        className="group flex h-3 shrink-0 cursor-row-resize touch-none items-center justify-center outline-none"
+        className="group flex h-5 shrink-0 cursor-row-resize touch-none items-center justify-center outline-none"
       >
-        <span className={cn("h-1 w-10 rounded-full bg-border transition-colors group-hover:bg-muted-foreground/40 group-focus-visible:bg-ring", dragging && "bg-ring")} />
+        {/* The bar stays small and quiet; the whole row (DIVIDER_HIT_PX) takes the drag. */}
+        <span
+          data-call-divider-bar=""
+          className={cn(
+            "h-1 w-10 rounded-full bg-border transition-[width,background-color] duration-150 group-hover:w-14 group-hover:bg-muted-foreground/40 group-focus-visible:bg-ring",
+            dragging && "w-14 bg-ring group-hover:bg-ring",
+          )}
+        />
       </div>
       <div className="flex min-h-0 flex-1 flex-col">{below}</div>
     </div>

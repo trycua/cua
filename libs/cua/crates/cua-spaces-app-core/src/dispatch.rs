@@ -323,6 +323,7 @@ pub const METHODS: &[&str] = &[
     "telemetry.upsell",
     "nudge.secondAgent",
     "nudge.riskyAction",
+    "nudge.signIn",
 ];
 
 struct Args(Value);
@@ -586,6 +587,7 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
                 .unwrap_or_default(),
         )),
         "nudge.riskyAction" => out(nudges::risky_action(&a.get("request")?, a.get("nowMs")?)),
+        "nudge.signIn" => out(nudges::sign_in(&a.get("input")?)),
         "telemetry.upsell" => out(telemetry::upsell(
             &a.get::<String>("surface")?,
             &a.get::<String>("action")?,

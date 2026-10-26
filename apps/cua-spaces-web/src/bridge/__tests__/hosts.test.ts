@@ -860,7 +860,7 @@ describe("webkit adapter", () => {
       page: {
         title: "Settings",
         sections: [
-          { id: "general", rows: [toggle("auto-connect", false)] },
+          { id: "general", rows: [toggle("auto-connect", false), toggle("placement-overflow", true)] },
           { id: "runtimes", rows: [choice("macos-runtime", "builtin"), choice("linux-runtime", "system")] },
           {
             id: "keyvault",
@@ -880,6 +880,7 @@ describe("webkit adapter", () => {
       lumeSource: "builtin",
       linuxSource: "system",
       autoConnect: false,
+      overflow: true,
       keyvaultAutoWipe: true,
       keyvaultUnlockPrompt: false,
       keyvaultSiteIcons: true,
@@ -896,6 +897,7 @@ describe("webkit adapter", () => {
       lumeSource: null,
       linuxSource: null,
       autoConnect: null,
+      overflow: null,
       keyvaultAutoWipe: null,
       keyvaultUnlockPrompt: null,
       keyvaultSiteIcons: null,

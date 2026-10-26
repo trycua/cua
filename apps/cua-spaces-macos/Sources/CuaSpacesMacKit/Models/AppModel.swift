@@ -1978,15 +1978,28 @@ public final class AppModel {
 
     /// Reads what Settings shows (telemetry, the coding agents).
     public func loadSettings() async {
-        lumeSource = await backend.lumeSource()
-        linuxSource = await backend.linuxSource()
-        placementOverflow = await backend.placementOverflow()
+        await loadRuntimeSettings()
         telemetryInput = telemetry?.status()
         readLoginItem()
         await storage.load()
         await reloadTeams()
         await reloadAgents()
         await keyvault.refresh()
+    }
+
+    /// Reads the settings Settings, Advanced shows from the config file
+    /// (`runtime.lume`, `runtime.linux`, `placement.overflow`). The page's
+    /// `settings.get` asks for them each time: without this read the
+    /// runtime choices were missing from the page (only New Space's probe
+    /// read them). Each one changes only when its value does, so the
+    /// `settings.changed` it causes never loops.
+    public func loadRuntimeSettings() async {
+        let lume = await backend.lumeSource()
+        let linux = await backend.linuxSource()
+        let overflow = await backend.placementOverflow()
+        if lume != lumeSource { lumeSource = lume }
+        if linux != linuxSource { linuxSource = linux }
+        if overflow != placementOverflow { placementOverflow = overflow }
     }
 
     /// Opens a website page (the account app's Teams page and billing).

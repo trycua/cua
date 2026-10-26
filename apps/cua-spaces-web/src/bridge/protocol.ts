@@ -149,6 +149,8 @@ export interface HostSettings {
   linuxSource?: string | null;
   /** "Connect to the desktop automatically". */
   autoConnect?: boolean | null;
+  /** New Spaces overflow into your linked cloud when this machine is full (`placement.overflow`). */
+  overflow?: boolean | null;
   /** The Keyvault wipes access from Spaces automatically. */
   keyvaultAutoWipe?: boolean | null;
   /** The Keyvault explains unattended access before allowing it (off after "Never ask again"). */

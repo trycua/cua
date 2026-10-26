@@ -690,6 +690,7 @@ export function settingsPage(
     keyvaultSiteIcons: settings.hostSettings?.keyvaultSiteIcons ?? true,
     keyvaultProtection: settings.hostSettings?.keyvaultProtection ?? [],
     autoConnect: settings.hostSettings?.autoConnect ?? null,
+    overflow: settings.hostSettings?.overflow ?? null,
     lumeSource: settings.hostSettings?.lumeSource ?? null,
     linuxSource: settings.hostSettings?.linuxSource ?? null,
     agents: agents?.agents ?? null,

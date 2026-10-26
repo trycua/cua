@@ -236,6 +236,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // The host service still running from before an update: onto this build (CUA-2457).
+        HelperService.restartIfStale()
         start(Self.model)
         // The menu bar's low-disk warning: read now, then every 5 minutes.
         LowDiskMonitor.shared.start()

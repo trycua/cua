@@ -60,4 +60,66 @@ struct HelperServiceTests {
         #expect(!daemon.path.contains("/Contents/MacOS/"))
         #expect(HelperService.daemonInContents == "Helpers/cua-spacesd")
     }
+
+    /// CUA-2457: the running service follows its files. An update in place
+    /// (new files at the same paths) restarts it onto the new build; files
+    /// gone twice in a row stop it; a swap's moment without the file does not.
+    @Test func theServiceRestartsOntoAnUpdatedApp() {
+        typealias ID = HelperService.FileIdentity
+        let old: [ID?] = [ID(device: 1, inode: 10), ID(device: 1, inode: 11)]
+        let new: [ID?] = [ID(device: 1, inode: 20), ID(device: 1, inode: 21)]
+        var misses = 0
+        #expect(HelperService.watch(started: old, now: old, specPresent: true, misses: &misses) == .keep)
+        #expect(HelperService.watch(started: old, now: new, specPresent: true, misses: &misses) == .restart)
+        // Only the cua-spacesd replaced is an update too.
+        #expect(HelperService.watch(started: old, now: [old[0], new[1]], specPresent: true, misses: &misses) == .restart)
+        // The swap: gone once, then the new build.
+        misses = 0
+        #expect(HelperService.watch(started: old, now: [nil, old[1]], specPresent: true, misses: &misses) == .keep)
+        #expect(HelperService.watch(started: old, now: new, specPresent: true, misses: &misses) == .restart)
+        #expect(misses == 0)
+        // Gone twice (a downgrade without the service, the host removed): stop.
+        misses = 0
+        #expect(HelperService.watch(started: old, now: [old[0], nil], specPresent: true, misses: &misses) == .keep)
+        #expect(HelperService.watch(started: old, now: [old[0], nil], specPresent: true, misses: &misses) == .stop)
+        misses = 0
+        #expect(HelperService.watch(started: old, now: old, specPresent: false, misses: &misses) == .keep)
+        #expect(HelperService.watch(started: old, now: old, specPresent: false, misses: &misses) == .stop)
+        #expect(HelperService.restartExitCode != 0)
+    }
+
+    @Test func aFileReplacedAtTheSamePathHasANewIdentity() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cua-helper-id-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("cua-spacesd")
+        try Data("old".utf8).write(to: file)
+        let before = HelperService.identity(file.path)
+        #expect(before != nil)
+        #expect(HelperService.identity(file.path) == before)
+        // As an update swaps the bundle: the new file renamed over the old.
+        let staged = dir.appendingPathComponent("cua-spacesd.new")
+        try Data("new".utf8).write(to: staged)
+        #expect(rename(staged.path, file.path) == 0)
+        #expect(HelperService.identity(file.path) != before)
+        try FileManager.default.removeItem(at: file)
+        #expect(HelperService.identity(file.path) == nil)
+    }
+
+    /// CUA-2457: at launch, a host service that started before this build's
+    /// cua-spacesd was put in place is from the old build, and is restarted.
+    @Test func aServiceFromBeforeTheUpdateIsStale() {
+        let installed = Date(timeIntervalSince1970: 1_800_000_000)
+        #expect(HelperService.isStale(serviceStarted: installed.addingTimeInterval(-3600), daemonInstalled: installed))
+        #expect(!HelperService.isStale(serviceStarted: installed.addingTimeInterval(5), daemonInstalled: installed))
+        #expect(HelperService.parsePid("gui/501/com.trycua.spaces.helper = {\n\tstate = running\n\tpid = 72613\n}") == 72613)
+        #expect(HelperService.parsePid("\tstate = not running\n") == nil)
+        // This process started after its own executable was written.
+        let me = Bundle.main.executablePath ?? CommandLine.arguments[0]
+        let born = HelperService.birthTime(me)
+        let started = HelperService.processStart(getpid())
+        #expect(born != nil && started != nil)
+        if let born, let started { #expect(!HelperService.isStale(serviceStarted: started, daemonInstalled: born)) }
+        #expect(HelperService.processStart(-1) == nil)
+    }
 }

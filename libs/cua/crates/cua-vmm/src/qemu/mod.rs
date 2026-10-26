@@ -21,7 +21,7 @@ pub mod img;
 pub mod qmp;
 pub mod snapshot;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -369,9 +369,8 @@ pub async fn virgl_host(qemu: &std::path::Path) -> crate::gpu::VirglHost {
 pub struct QemuRuntime {
     cfg: QemuConfig,
     lock: Mutex<()>,
-    /// TPM VMs whose swtpm is being launched (until its clean-up is done) or
-    /// whose TPM state is being copied: the two never overlap.
-    tpm_busy: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
+    /// One lock per VM name (see [`Self::own`]).
+    vm_locks: std::sync::Mutex<HashMap<String, Arc<Mutex<()>>>>,
     /// Serializes recording golden snapshots.
     golden_lock: Mutex<()>,
     /// VMs admitted whose launch has not finished (within
@@ -400,11 +399,23 @@ const LAYERS: &str = "_layers";
 const RUN_LINKS: &str = "_run";
 
 impl QemuRuntime {
+    /// Serializes whatever starts, stops, saves or copies VM `name`. Taken
+    /// before `self.lock`, never while holding it, and never while holding
+    /// another VM lock.
+    async fn own(&self, name: &str) -> Owner {
+        let lock = {
+            let mut locks = self.vm_locks.lock().unwrap_or_else(|e| e.into_inner());
+            locks.retain(|_, l| Arc::strong_count(l) > 1);
+            locks.entry(name.to_string()).or_default().clone()
+        };
+        Arc::new(lock.lock_owned().await)
+    }
+
     pub fn new(cfg: QemuConfig) -> Self {
         Self {
             cfg,
             lock: Mutex::new(()),
-            tpm_busy: Default::default(),
+            vm_locks: Default::default(),
             golden_lock: Mutex::new(()),
             pending: Default::default(),
             gc_asked: Default::default(),
@@ -863,10 +874,8 @@ impl QemuRuntime {
         )
         .await?;
         let res = self.launch_admitted(st, spec, boot, persist).await;
-        // Refused by a start that owns the TPM: nothing here was acquired.
-        if res.as_ref().is_err_and(|e| !tpm_claim_refused(e)) {
+        if res.is_err() {
             self.release(&st.name);
-            let _ = self.stop_tpm(st).await;
         }
         res
     }
@@ -1074,9 +1083,7 @@ impl QemuRuntime {
         persist: bool,
         force_tcg: bool,
     ) -> Result<()> {
-        // Held until this launch's swtpm is running (and so visible to the
-        // copy checks) or its clean-up is done, however the start ends.
-        let busy = self.tpm_claim(st, true).await?;
+        let owner = boot.owner.clone();
         let bin = self.binary(st.arch).await?;
         let dir = self.run_dir(st);
         let tpm_dir = dir.join("tpm");
@@ -1086,6 +1093,12 @@ impl QemuRuntime {
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
+                if owner.is_none() {
+                    return Err(VmmError::invalid(format!(
+                        "the TPM of '{}' is only launched by a start that owns the VM",
+                        st.name
+                    )));
+                }
                 let bin = host::which("swtpm").ok_or_else(|| {
                     VmmError::missing(
                         "swtpm",
@@ -1254,7 +1267,7 @@ impl QemuRuntime {
         // recorded would leave a running QEMU nothing knows about: the
         // guard ends whatever its pid file names unless the start finished.
         let mut launch_guard = LaunchGuard::new();
-        launch_guard.busy = busy.clone();
+        launch_guard.owner = owner.clone();
         // Each launch has its own swtpm record, so cleanup can never reach
         // another launch's TPM through a shared pidfile.
         let record = tpm_env
@@ -1341,9 +1354,9 @@ impl QemuRuntime {
                 }
                 Err(failed)
             };
-            let busy2 = busy.clone();
+            let owner2 = owner.clone();
             let undo = move |pid: u32| async move {
-                let _busy = busy2;
+                let _owner = owner2;
                 end_launched(pid).await;
                 if let Some(record) = &record3 {
                     let _ = end_record(record, &tpm_dir3).await;
@@ -1665,39 +1678,12 @@ impl QemuRuntime {
     async fn stop_tpm(&self, st: &QemuState) -> Result<()> {
         let tpm_dir = self.run_dir(st).join("tpm");
         let mut first = None;
-        for record in tpm_records(&self.run_dir(st)) {
+        for record in tpm_records(&self.run_dir(st))? {
             if let Err(e) = end_record(&record, &tpm_dir).await {
                 first.get_or_insert(e);
             }
         }
         first.map_or(Ok(()), Err)
-    }
-
-    /// Marks the TPM of `st` busy (a launch or a copy); `wait` retries while
-    /// a previous launch's clean-up still holds it.
-    async fn tpm_claim(&self, st: &QemuState, wait: bool) -> Result<Option<Arc<TpmBusy>>> {
-        if !st.tpm {
-            return Ok(None);
-        }
-        for _ in 0..100 {
-            {
-                let mut set = self.tpm_busy.lock().unwrap_or_else(|e| e.into_inner());
-                if set.insert(st.name.clone()) {
-                    return Ok(Some(Arc::new(TpmBusy {
-                        set: self.tpm_busy.clone(),
-                        name: st.name.clone(),
-                    })));
-                }
-            }
-            if !wait {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-        Err(VmmError::invalid(format!(
-            "the TPM of '{}' {TPM_CLAIM_REFUSED}",
-            st.name
-        )))
     }
 
     /// Refuse while any swtpm of this VM is alive (or cannot be told apart
@@ -1708,7 +1694,7 @@ impl QemuRuntime {
         }
         let run = self.run_dir(st);
         let tpm_dir = run.join("tpm");
-        for record in tpm_records(&run) {
+        for record in tpm_records(&run)? {
             if let Some(pid) = record_pid(&record)
                 && swtpm_state(pid, &record, &tpm_dir) != Tpm::Gone
             {
@@ -1785,6 +1771,7 @@ impl QemuRuntime {
     /// The guest's disk, ports and token are kept; its memory and running
     /// processes are not. A VM forked from a memory snapshot boots cold.
     async fn boot_from_disk(&self, name: &str, shape: &Resize) -> Result<Instance> {
+        let owner = self.own(name).await;
         let mut st = self.load(name)?;
         {
             let _g = self.lock.lock().await;
@@ -1833,6 +1820,8 @@ impl QemuRuntime {
         spec.probes = shape.probes.clone();
         spec.labels.insert(KEEP_SEED_LABEL.into(), "1".into());
         spec.labels.insert(KEEP_PORTS_LABEL.into(), "1".into());
+        // `start` takes the VM lock again and reloads the state.
+        drop(owner);
         self.start(&spec).await
     }
 
@@ -2020,7 +2009,12 @@ pub(crate) struct Boot {
     /// Keep the host ports (forwards, QMP, VNC) of the last run: the same
     /// VM moved into a new process.
     pub keep_ports: bool,
+    /// The VM's lock; kept by the launch's own cleanup; a TPM launch needs it.
+    pub owner: Option<Owner>,
 }
+
+/// A held per-VM lock (see [`QemuRuntime::own`]).
+pub(crate) type Owner = Arc<tokio::sync::OwnedMutexGuard<()>>;
 
 /// The script pasta runs in a VM's namespace ([`netns_script`]).
 #[cfg_attr(not(unix), allow(dead_code))]
@@ -2415,6 +2409,7 @@ impl Runtime for QemuRuntime {
             Arch::host(),
             host::HostOs::current(),
         )?;
+        let owner = self.own(&spec.name).await;
         let (mut st, fresh_backing) = {
             let _g = self.lock.lock().await;
             match self.load(&spec.name) {
@@ -2559,20 +2554,18 @@ impl Runtime for QemuRuntime {
                     free_page_reporting: None,
                     headless: None,
                     keep_ports: spec.labels.contains_key(KEEP_PORTS_LABEL),
+                    owner: Some(owner.clone()),
                 };
                 if let Err(e) = self.launch(&mut st, spec, boot, true).await {
-                    // Another start owns the VM: its state and processes
-                    // are not ours to stop or overwrite.
-                    if !tpm_claim_refused(&e) {
-                        let _ = self.force_stop(&mut st, Duration::ZERO).await;
-                        let _ = self.save(&st);
-                    }
+                    let _ = self.force_stop(&mut st, Duration::ZERO).await;
+                    let _ = self.save(&st);
                     return Err(e);
                 }
                 st.last_start = Some("cold".into());
                 self.save(&st)?;
             }
         }
+        drop(owner);
         let inst = self.instance(&st);
         if !spec.probes.is_empty() {
             crate::progress::report(crate::progress::Progress::phase(
@@ -2588,6 +2581,7 @@ impl Runtime for QemuRuntime {
     }
 
     async fn stop(&self, name: &str) -> Result<()> {
+        let _owner = self.own(name).await;
         let mut st = self.load(name)?;
         let graceful = self.cfg.graceful_stop;
         self.force_stop(&mut st, graceful).await?;
@@ -2596,6 +2590,7 @@ impl Runtime for QemuRuntime {
     }
 
     async fn suspend(&self, name: &str) -> Result<()> {
+        let _owner = self.own(name).await;
         let mut q = self.qmp(name).await?;
         q.stop().await?;
         let mut st = self.load(name)?;
@@ -2607,8 +2602,10 @@ impl Runtime for QemuRuntime {
     /// ended; its disk is kept) boots again from its own disk, in the shape
     /// it had, as [`Self::resize`] boots it.
     async fn resume(&self, name: &str) -> Result<Instance> {
+        let owner = self.own(name).await;
         let st = self.load(name)?;
         if st.kind == EntryKind::Instance && !Self::is_running(&st) {
+            drop(owner);
             return self.boot_from_disk(name, &Resize::default()).await;
         }
         let mut q = self.qmp(name).await?;
@@ -2729,15 +2726,16 @@ impl Runtime for QemuRuntime {
 
     async fn fork(&self, source: &str, new_name: &str) -> Result<()> {
         validate_name(new_name)?;
-        let _g = self.lock.lock().await;
-        if self.state_path(new_name).exists() {
-            return Err(VmmError::AlreadyExists(new_name.to_string()));
-        }
         // `vm@snapshot` forks from an internal snapshot (disk state only).
         let (src_name, snapshot) = match source.split_once('@') {
             Some((a, b)) => (a, Some(b)),
             None => (source, None),
         };
+        let _owner = self.own(src_name).await;
+        let _g = self.lock.lock().await;
+        if self.state_path(new_name).exists() {
+            return Err(VmmError::AlreadyExists(new_name.to_string()));
+        }
         let mut src = self.load(src_name)?;
         if src.tpm && snapshot.is_some() {
             return refuse_tpm(&src, "a disk snapshot (fork a stopped checkpoint instead)");
@@ -2793,7 +2791,6 @@ impl Runtime for QemuRuntime {
                 "'{src_name}' is running; stop it (or checkpoint it) before forking"
             )));
         }
-        let _busy = self.tpm_claim(&src, false).await?;
         self.tpm_stopped(&src)?;
         let backing = match (snapshot, src.kind) {
             (Some(snap), _) => {
@@ -2884,6 +2881,7 @@ impl Runtime for QemuRuntime {
 
     async fn checkpoint(&self, name: &str, checkpoint: &str) -> Result<CheckpointInfo> {
         validate_name(checkpoint)?;
+        let _owner = self.own(name).await;
         let _g = self.lock.lock().await;
         let mut st = self.load(name)?;
         if Self::is_running(&st) {
@@ -2974,7 +2972,6 @@ impl Runtime for QemuRuntime {
         if self.state_path(checkpoint).exists() {
             return Err(VmmError::AlreadyExists(checkpoint.to_string()));
         }
-        let _busy = self.tpm_claim(&st, false).await?;
         self.tpm_stopped(&st)?;
         let layer = self.freeze(&mut st).await?;
         self.save(&st)?;
@@ -3024,6 +3021,7 @@ impl Runtime for QemuRuntime {
         policy: &crate::egress::EgressPolicy,
     ) -> Result<crate::egress::Enforcement> {
         let rules = crate::egress::check(BackendKind::Qemu, policy)?;
+        let _owner = self.own(name).await;
         let _g = self.lock.lock().await;
         let mut st = self.load(name)?;
         if st.kind != EntryKind::Instance {
@@ -3134,6 +3132,7 @@ impl Runtime for QemuRuntime {
     }
 
     async fn delete(&self, name: &str) -> Result<()> {
+        let owner = self.own(name).await;
         let st = self.load(name)?;
         // A fork made but not started yet restores this checkpoint's memory.
         if st.kind == EntryKind::Checkpoint {
@@ -3158,6 +3157,7 @@ impl Runtime for QemuRuntime {
             self.force_stop(&mut st, Duration::ZERO).await?;
             std::fs::remove_dir_all(self.dir(name))?;
             drop(_g);
+            drop(owner);
             return self.collect_layers().await;
         }
         // Stopping a VM waits on its own process, so it runs outside the
@@ -3172,6 +3172,7 @@ impl Runtime for QemuRuntime {
             }
             std::fs::remove_dir_all(self.dir(name))?;
         }
+        drop(owner);
         self.collect_layers().await
     }
 
@@ -3631,6 +3632,41 @@ mod tests {
         assert!(r.load("ck1").is_err() && r.load("vm2").is_err());
         fake.kill().unwrap();
         fake.wait().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_copy_waits_for_its_vm_without_holding_the_runtime_lock() {
+        let tmp = tempfile::tempdir().unwrap();
+        let Some(r) = tpm_runtime(tmp.path()).await else {
+            return;
+        };
+        let r = Arc::new(r);
+        let root = tmp.path().join("qemu");
+        let owner = r.own("vm1").await;
+        let fork = {
+            let r = r.clone();
+            tokio::spawn(async move { r.fork("vm1", "f1").await })
+        };
+        super::tpm_tests::wait_queued(&r, "vm1").await;
+        assert!(r.lock.try_lock().is_ok(), "fork queued without self.lock");
+        // Hold the VM again behind the fork, for the checkpoint to queue.
+        drop(owner);
+        fork.await.unwrap().unwrap();
+        let owner = r.own("vm1").await;
+        let ck = {
+            let r = r.clone();
+            tokio::spawn(async move { r.checkpoint("vm1", "ck1").await })
+        };
+        super::tpm_tests::wait_queued(&r, "vm1").await;
+        assert!(
+            r.lock.try_lock().is_ok(),
+            "checkpoint queued without self.lock"
+        );
+        drop(owner);
+        ck.await.unwrap().unwrap();
+        assert!(root.join("f1/tpm/tpm2-00.permall").exists());
+        assert!(root.join("ck1/tpm/tpm2-00.permall").exists());
     }
 
     #[cfg(unix)]
@@ -4607,28 +4643,6 @@ mod tests {
     }
 }
 
-const TPM_CLAIM_REFUSED: &str = "is being started or copied; try again";
-
-/// Whether `e` is [`QemuRuntime::tpm_claim`]'s refusal.
-fn tpm_claim_refused(e: &VmmError) -> bool {
-    matches!(e, VmmError::Invalid(m) if m.ends_with(TPM_CLAIM_REFUSED))
-}
-
-/// Holds a VM's name in [`QemuRuntime::tpm_busy`] until dropped.
-struct TpmBusy {
-    set: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
-    name: String,
-}
-
-impl Drop for TpmBusy {
-    fn drop(&mut self) {
-        self.set
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(&self.name);
-    }
-}
-
 /// What a recorded pid is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Tpm {
@@ -4706,20 +4720,23 @@ fn record_pid(record: &Path) -> Option<u32> {
         .and_then(|t| t.trim().parse::<u32>().ok())
 }
 
-/// The swtpm records (`swtpm.<id>.pid`) in a VM's run directory.
-fn tpm_records(dir: &Path) -> Vec<PathBuf> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new();
+/// The swtpm records in a VM's run directory. Only a missing directory is
+/// empty: anything that cannot be listed is an error, never "no TPM".
+fn tpm_records(dir: &Path) -> Result<Vec<PathBuf>> {
+    let entries = match std::fs::read_dir(dir) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        r => r?,
     };
-    entries
-        .filter_map(|e| e.ok())
-        .filter(|e| {
-            let n = e.file_name();
-            let n = n.to_string_lossy();
-            n.starts_with("swtpm.") && n.ends_with(".pid")
-        })
-        .map(|e| e.path())
-        .collect()
+    let mut out = Vec::new();
+    for e in entries {
+        let e = e?;
+        let n = e.file_name();
+        let n = n.to_string_lossy();
+        if n.starts_with("swtpm.") && n.ends_with(".pid") {
+            out.push(e.path());
+        }
+    }
+    Ok(out)
 }
 
 /// End the swtpm a record names: TERM, then KILL. The record is removed only
@@ -4755,7 +4772,7 @@ async fn end_record(record: &Path, tpm_dir: &Path) -> Result<()> {
 }
 
 /// Ends the QEMU (and the TPM record) a start launched when the start does
-/// not finish (its future dropped by a cancel, or an early error). The
+/// not finish, keeping the VM locked until that has run (its future dropped by a cancel, or an early error). The
 /// launch shell itself is covered by `complete_or_undo`; this covers the
 /// time from the reported pid until the start succeeds. It ends only the
 /// pid and record it was handed.
@@ -4765,8 +4782,8 @@ struct LaunchGuard {
     pid: Option<u32>,
     /// The swtpm record and TPM directory of this launch.
     tpm: Option<(PathBuf, PathBuf)>,
-    /// Keeps the VM's TPM busy until the clean-up has run.
-    busy: Option<Arc<TpmBusy>>,
+    /// The VM's lock, kept until the clean-up has run.
+    owner: Option<Owner>,
 }
 
 /// TERM, then KILL, a QEMU nobody will use.
@@ -4787,7 +4804,7 @@ impl LaunchGuard {
             armed: true,
             pid: None,
             tpm: None,
-            busy: None,
+            owner: None,
         }
     }
 
@@ -4801,9 +4818,9 @@ impl Drop for LaunchGuard {
         if !self.armed || (self.pid.is_none() && self.tpm.is_none()) {
             return;
         }
-        let (pid, tpm, busy) = (self.pid, self.tpm.take(), self.busy.take());
+        let (pid, tpm, owner) = (self.pid, self.tpm.take(), self.owner.take());
         crate::cleanup::spawn(async move {
-            let _busy = busy;
+            let _owner = owner;
             if let Some(p) = pid {
                 end_launched(p).await;
             }

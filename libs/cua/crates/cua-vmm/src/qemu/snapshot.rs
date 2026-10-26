@@ -555,6 +555,7 @@ impl QemuRuntime {
                 // do the VMs restoring it.
                 free_page_reporting: Some(false),
                 headless: Some(super::no_desktop(&tspec)),
+                owner: None,
             };
             self.launch(&mut tpl, &tspec, boot, false).await?;
             let ep = self.endpoints_of(&tpl);
@@ -765,6 +766,7 @@ impl QemuRuntime {
             keep_ports: false,
             free_page_reporting: Some(snap.free_page_reporting),
             headless: Some(snap.headless),
+            owner: None,
         };
         self.launch(st, spec, boot, true).await?;
         let t_launch = started.elapsed();
@@ -997,6 +999,7 @@ impl QemuRuntime {
             // The same VM: the device set it runs with.
             free_page_reporting: Some(st.free_page_reporting),
             headless: Some(st.headless),
+            owner: None,
         };
         let moved: Result<()> = async {
             self.launch(st, &spec, boot, true).await?;
@@ -1111,6 +1114,7 @@ impl QemuRuntime {
                 free_page_reporting: Some(snap.free_page_reporting),
                 headless: Some(snap.headless),
                 keep_ports: false,
+                owner: None,
             };
             self.launch(&mut helper, &spec, boot, false).await?;
             let mut q = self.qmp_at(&helper).await?;

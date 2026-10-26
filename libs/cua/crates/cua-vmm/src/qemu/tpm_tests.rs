@@ -112,13 +112,30 @@ async fn launch_once_wiring_child() {
     }))
     .unwrap();
     let spec = StartSpec::new("vm", ImageSource::Existing);
+    // A TPM launch without the VM lock is refused before anything is made.
+    let error = runtime
+        .launch_once(&mut st, &spec, Boot::default(), true, true)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "invalid request: the TPM of 'vm' is only launched by a start that owns the VM"
+    );
+    assert!(!dir.join("tpm").exists());
+    assert!(tpm_records(&dir).unwrap().is_empty());
+    let owned = || async {
+        Boot {
+            owner: Some(runtime.own("vm").await),
+            ..Default::default()
+        }
+    };
     if std::env::var("CUA_WIRING_MODE").unwrap() == "missing" {
         // A machine with a system-wide swtpm cannot exercise missing discovery.
         if host::which("swtpm").is_some() {
             return;
         }
         let error = runtime
-            .launch_once(&mut st, &spec, Boot::default(), true, true)
+            .launch_once(&mut st, &spec, owned().await, true, true)
             .await
             .unwrap_err();
         assert!(matches!(
@@ -129,7 +146,7 @@ async fn launch_once_wiring_child() {
         assert!(!dir.join("tpm").exists());
     } else {
         let error = runtime
-            .launch_once(&mut st, &spec, Boot::default(), true, true)
+            .launch_once(&mut st, &spec, owned().await, true, true)
             .await
             .unwrap_err();
         assert!(error.to_string().contains("swtpm.log"), "{error}");
@@ -404,13 +421,21 @@ async fn cancelled_launch_child() {
     std::fs::create_dir_all(&dir).unwrap();
     let mut st = tpm_state("vm", &dir);
     let spec = StartSpec::new("vm", ImageSource::Existing);
-    let launch = runtime.launch_once(&mut st, &spec, Boot::default(), true, true);
+    let boot = Boot {
+        owner: Some(runtime.own("vm").await),
+        ..Default::default()
+    };
+    let launch = runtime.launch_once(&mut st, &spec, boot, true, true);
     assert!(
         tokio::time::timeout(Duration::from_millis(100), launch)
             .await
             .is_err()
     );
-    assert!(crate::cleanup::settle(Duration::from_secs(10)).await);
+    // The VM is released only once the cancelled launch's own cleanup is done.
+    let _owner = tokio::time::timeout(Duration::from_secs(10), runtime.own("vm"))
+        .await
+        .expect("the VM is released");
+    drop(_owner);
     let tpm = dir.join("tpm");
     let old = std::fs::read_to_string(root.join("fake.pid"))
         .unwrap()
@@ -424,7 +449,11 @@ async fn cancelled_launch_child() {
         .parse()
         .unwrap();
     assert!(!host::pid_alive(qemu), "the cancelled QEMU is gone");
-    assert!(tpm_records(&dir).is_empty(), "its record is removed");
+    assert!(
+        tpm_records(&dir).unwrap().is_empty(),
+        "its record is removed"
+    );
+
     // A replacement on the same directory is not touched by late cleanup.
     let _ = std::fs::remove_file(tpm.join("swtpm.sock"));
     let link = fake_swtpm_link(&root);
@@ -481,39 +510,6 @@ fn cancelled_launch_cleans_up_before_settle_returns() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-}
-
-/// A start refused because another start owns the TPM acquired nothing, so
-/// it must not stop that start's swtpm.
-#[tokio::test]
-async fn refused_start_leaves_the_owning_starts_tpm() {
-    if Arch::host() != Arch::Aarch64 || host::HostOs::current() == host::HostOs::Windows {
-        return;
-    }
-    let tmp = tempfile::tempdir().unwrap();
-    let runtime = QemuRuntime::new(QemuConfig {
-        root: tmp.path().into(),
-        ..Default::default()
-    });
-    let dir = runtime.dir("vm");
-    std::fs::create_dir_all(&dir).unwrap();
-    let mut st = tpm_state("vm", &dir);
-    let link = fake_swtpm_link(tmp.path());
-    let record = dir.join("swtpm.a.pid");
-    let mut fake = spawn_fake(&link, &record, &dir.join("tpm"));
-    // Start A: holds the claim with its swtpm running.
-    let _a = runtime.tpm_claim(&st, false).await.unwrap();
-    let spec = StartSpec::new("vm", ImageSource::Existing);
-    let e = runtime
-        .launch(&mut st, &spec, Boot::default(), true)
-        .await
-        .unwrap_err();
-    assert!(tpm_claim_refused(&e), "{e}");
-    assert!(crate::cleanup::settle(Duration::from_secs(10)).await);
-    assert!(fake.try_wait().unwrap().is_none());
-    assert!(record.exists());
-    fake.kill().unwrap();
-    fake.wait().unwrap();
 }
 
 #[tokio::test]
@@ -629,7 +625,7 @@ fn identity_survives_a_spaced_executable_and_the_legacy_pidfile() {
 }
 
 #[tokio::test]
-async fn a_tpm_vm_cannot_be_claimed_and_a_busy_tpm_refuses_a_copy() {
+async fn a_tpm_vm_cannot_be_claimed() {
     let tmp = tempfile::tempdir().unwrap();
     let runtime = QemuRuntime::new(QemuConfig {
         root: tmp.path().join("root"),
@@ -648,15 +644,275 @@ async fn a_tpm_vm_cannot_be_claimed_and_a_busy_tpm_refuses_a_copy() {
         .to_string();
     assert!(e.contains("cannot be claimed"), "{e}");
     assert!(dir.join("tpm").exists() && !runtime.dir("vm2").exists());
-    // A launch in flight holds the TPM: a copy is refused.
-    let busy = runtime.tpm_claim(&st, false).await.unwrap();
-    let e = runtime
-        .tpm_claim(&st, false)
+}
+
+/// Waits until a second caller is queued on VM `name`'s lock: the registry,
+/// the holder's guard and the waiter's clone each hold the lock.
+pub(super) async fn wait_queued(runtime: &QemuRuntime, name: &str) {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            let n = runtime
+                .vm_locks
+                .lock()
+                .unwrap()
+                .get(name)
+                .map_or(0, Arc::strong_count);
+            if n >= 3 {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the caller queued");
+}
+
+/// B acquires the VM after A's start succeeded: it reads A's state, returns
+/// that instance and touches neither A's TPM nor its record.
+#[tokio::test]
+async fn a_queued_start_returns_the_vm_its_predecessor_started() {
+    let tmp = tempfile::tempdir().unwrap();
+    let link = fake_swtpm_link(tmp.path());
+    let runtime = Arc::new(QemuRuntime::new(QemuConfig {
+        root: tmp.path().join("root"),
+        vnc: false,
+        allow_install: false,
+        preflight_tools: false,
+        ..Default::default()
+    }));
+    let dir = runtime.dir("vm");
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut st = tpm_state("vm", &dir);
+    runtime.save(&st).unwrap();
+    let a = runtime.own("vm").await;
+    let b = {
+        let runtime = runtime.clone();
+        tokio::spawn(async move {
+            runtime
+                .start(&StartSpec::new("vm", ImageSource::Existing))
+                .await
+        })
+    };
+    wait_queued(&runtime, "vm").await;
+    let mut sleeper = std::process::Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .unwrap();
+    st.pid = Some(sleeper.id());
+    runtime.save(&st).unwrap();
+    let record = dir.join("swtpm.a.pid");
+    let mut fake = spawn_fake(&link, &record, &dir.join("tpm"));
+    drop(a);
+    let inst = b.await.unwrap().unwrap();
+    assert_eq!(inst.status, Status::Running);
+    assert!(crate::cleanup::settle(Duration::from_secs(10)).await);
+    assert!(fake.try_wait().unwrap().is_none(), "A's TPM is alive");
+    assert!(record.exists());
+    assert_eq!(runtime.load("vm").unwrap().pid, Some(sleeper.id()));
+    assert!(!dir.join("cmdline").exists(), "nothing was launched");
+    fake.kill().unwrap();
+    fake.wait().unwrap();
+    sleeper.kill().unwrap();
+    sleeper.wait().unwrap();
+}
+
+/// A dropped launch keeps the VM locked until its own cleanup has ended its
+/// swtpm (here one that needs KILL).
+#[tokio::test]
+async fn a_dropped_launch_keeps_the_vm_until_its_cleanup_ends() {
+    use futures::FutureExt;
+    use std::os::unix::process::ExitStatusExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let link = fake_swtpm_link(tmp.path());
+    let runtime = QemuRuntime::new(QemuConfig {
+        root: tmp.path().join("root"),
+        ..Default::default()
+    });
+    let dir = runtime.dir("vm");
+    let tpm = dir.join("tpm");
+    std::fs::create_dir_all(&tpm).unwrap();
+    let record = dir.join("swtpm.a.pid");
+    let mut fake = spawn_fake_ignoring_term(&link, &record, &tpm);
+    let owner = runtime.own("vm").await;
+    let mut guard = LaunchGuard::new();
+    guard.tpm = Some((record.clone(), tpm));
+    guard.owner = Some(owner.clone());
+    drop(guard);
+    drop(owner);
+    assert!(runtime.own("vm").now_or_never().is_none(), "still held");
+    let _again = tokio::time::timeout(Duration::from_secs(30), runtime.own("vm"))
         .await
-        .err()
-        .unwrap()
-        .to_string();
-    assert!(e.contains("being started or copied"), "{e}");
-    drop(busy);
-    assert!(runtime.tpm_claim(&st, false).await.is_ok());
+        .expect("released after the cleanup");
+    assert_eq!(fake.wait().unwrap().signal(), Some(9));
+    assert!(!record.exists());
+}
+
+/// The failure handler of `start` runs under the VM lock: when a waiting
+/// caller gets the VM, the leftover only the VM-wide stop reaches is gone.
+#[test]
+fn failed_start_holds_the_vm_through_its_cleanup() {
+    if Arch::host() != Arch::Aarch64 || host::HostOs::current() == host::HostOs::Windows {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = tmp.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    let link = fake_swtpm_link(tmp.path());
+    let exe = |name: &str, body: String| {
+        let path = bin.join(name);
+        std::fs::write(&path, body).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
+    };
+    exe(
+        "swtpm",
+        format!(
+            "#!/bin/sh\nfor a; do case \"$a\" in file=*) f=\"${{a#file=}}\";; dir=*) d=\"${{a#dir=}}\";; esac; done\n\"{link}\" --exact qemu::tpm_tests::fake_swtpm --nocapture -- --pid \"file=$f\" --tpmstate \"dir=$d\" </dev/null >/dev/null 2>&1 &\nwhile [ ! -S \"$d/swtpm.sock\" ] || [ ! -s \"$f\" ]; do sleep 0.01; done\ncp \"$f\" {pid}\n",
+            link = link.display(),
+            pid = tmp.path().join("fake.pid").display()
+        ),
+    );
+    exe(
+        "qemu-system-aarch64",
+        format!(
+            "#!/bin/sh\nrm -f \"$PWD/tpm/swtpm.sock\"\n(trap \"\" TERM; exec \"{link}\" socket --exact qemu::tpm_tests::fake_swtpm --nocapture -- --pid \"file=$PWD/swtpm.extra.pid\" --tpmstate \"dir=$PWD/tpm\" </dev/null >/dev/null 2>&1) &\nwhile [ ! -s \"$PWD/swtpm.extra.pid\" ]; do sleep 0.01; done\ncp \"$PWD/swtpm.extra.pid\" {pid}\nexit 1\n",
+            link = link.display(),
+            pid = tmp.path().join("extra.pid").display()
+        ),
+    );
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "qemu::tpm_tests::failed_start_child",
+            "--nocapture",
+        ])
+        .env(
+            "PATH",
+            format!("{}:{}", bin.display(), std::env::var("PATH").unwrap()),
+        )
+        .env("CUA_FAILED_START_ROOT", tmp.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[tokio::test]
+async fn failed_start_child() {
+    let Ok(root) = std::env::var("CUA_FAILED_START_ROOT") else {
+        return;
+    };
+    let root = PathBuf::from(root);
+    let runtime = Arc::new(QemuRuntime::new(QemuConfig {
+        root: root.join("state"),
+        accel: Some("tcg".into()),
+        vnc: false,
+        allow_install: false,
+        preflight_tools: false,
+        density: crate::density::DensityConfig {
+            enabled: false,
+            ..Default::default()
+        },
+        ..Default::default()
+    }));
+    let dir = runtime.dir("vm");
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut st = tpm_state("vm", &dir);
+    st.arch = Arch::host();
+    runtime.save(&st).unwrap();
+    let mut spec = StartSpec::new("vm", ImageSource::Existing);
+    spec.os = GuestOs::Windows;
+    spec.arch = Some(Arch::host());
+    let a = {
+        let runtime = runtime.clone();
+        tokio::spawn(async move { runtime.start(&spec).await })
+    };
+    for _ in 0..3000 {
+        if dir.join("cmdline").exists() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(dir.join("cmdline").exists());
+    let extra = dir.join("swtpm.extra.pid");
+    let b = {
+        let (runtime, extra) = (runtime.clone(), extra.clone());
+        tokio::spawn(async move {
+            let _owner = runtime.own("vm").await;
+            extra.exists()
+        })
+    };
+    let e = a.await.unwrap().unwrap_err();
+    assert!(
+        matches!(&e, VmmError::Command { code: None, cmd, .. } if cmd.contains("cmdline")),
+        "{e}"
+    );
+    assert!(!b.await.unwrap(), "the leftover was gone when B acquired");
+    assert_eq!(runtime.load("vm").unwrap().pid, None);
+    assert!(tpm_records(&dir).unwrap().is_empty());
+    for f in ["fake.pid", "extra.pid"] {
+        let pid: u32 = std::fs::read_to_string(root.join(f))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        assert!(!host::pid_alive(pid), "{f}");
+    }
+}
+
+/// A run directory that cannot be listed is an error everywhere, never "no
+/// TPM": nothing is stopped, copied or removed.
+#[tokio::test]
+async fn an_unreadable_run_dir_stops_and_copies_nothing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let link = fake_swtpm_link(tmp.path());
+    let runtime = QemuRuntime::new(QemuConfig {
+        root: tmp.path().join("root"),
+        ..Default::default()
+    });
+    let dir = runtime.dir("vm");
+    let tpm = dir.join("tpm");
+    std::fs::create_dir_all(&tpm).unwrap();
+    let record = dir.join("swtpm.a.pid");
+    let mut fake = spawn_fake(&link, &record, &tpm);
+    assert_eq!(
+        tpm_records(&tmp.path().join("missing")).unwrap(),
+        Vec::<PathBuf>::new()
+    );
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o300)).unwrap();
+    if std::fs::read_dir(&dir).is_ok() {
+        // Root reads anything.
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        fake.kill().unwrap();
+        fake.wait().unwrap();
+        return;
+    }
+    let mut st = tpm_state("vm", &dir);
+    let dst = tmp.path().join("dst");
+    let denied = |e: VmmError| {
+        assert!(
+            matches!(&e, VmmError::Io(io) if io.kind() == std::io::ErrorKind::PermissionDenied),
+            "{e:?}"
+        )
+    };
+    denied(tpm_records(&dir).unwrap_err());
+    denied(runtime.stop_tpm(&st).await.unwrap_err());
+    st.pid = None;
+    denied(
+        runtime
+            .force_stop(&mut st, Duration::ZERO)
+            .await
+            .unwrap_err(),
+    );
+    denied(runtime.tpm_stopped(&st).unwrap_err());
+    denied(runtime.copy_tpm(&st, &dst).unwrap_err());
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(!dst.join("tpm").exists());
+    assert!(fake.try_wait().unwrap().is_none());
+    assert!(record.exists());
+    fake.kill().unwrap();
+    fake.wait().unwrap();
 }

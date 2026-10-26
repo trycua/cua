@@ -3,7 +3,7 @@ name: "E2E: Rust Linux interactive"
 on:
   pull_request:
     paths:
-      - .cursor/skills/verify-cua-driver/**
+      - .agents/skills/verify-cua-driver/**
       - libs/cua-driver/**
       - .github/workflows/e2e-rust-linux.yml
   # Stable Cua Driver tag runs call this matrix as a release gate. Keep the
@@ -126,7 +126,7 @@ jobs:
             libwebkit2gtk-4.1-dev libssl-dev libxdo-dev \
             libayatana-appindicator3-dev librsvg2-dev ffmpeg jq x11-utils
       - name: Verify real Electron background clicks
-        run: .cursor/skills/verify-cua-driver/scripts/verify-linux.sh x11
+        run: .agents/skills/verify-cua-driver/scripts/verify-linux.sh x11
       - name: Upload verification evidence after cleanup
         if: always()
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4

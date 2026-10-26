@@ -601,7 +601,7 @@ export interface TelemetryView {
  * `crashReporting.config`: whether the page may report its own errors, and
  * the settings to do it with. The host decides: `allowed` is true only while
  * usage data is on and its first-run notice was shown, and the DSN, release
- * and channel are the app's (config/spaces-crash-reporting.json). A host
+ * and channel are the app's (apps/cua-spaces-desktop/config/spaces-crash-reporting.json). A host
  * with no answer (`unsupported`, `unimplemented`, an error) means off.
  */
 export interface CrashReportingConfig {

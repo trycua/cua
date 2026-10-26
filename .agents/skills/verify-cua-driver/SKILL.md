@@ -20,13 +20,13 @@ sudo apt-get install -y --no-install-recommends \
   libwebkit2gtk-4.1-dev libssl-dev libxdo-dev \
   libayatana-appindicator3-dev librsvg2-dev ffmpeg jq x11-utils
 
-CUA_E2E_RETRY_ONCE=0 .cursor/skills/verify-cua-driver/scripts/verify-linux.sh x11
+CUA_E2E_RETRY_ONCE=0 .agents/skills/verify-cua-driver/scripts/verify-linux.sh x11
 ```
 
 The helper prints an absolute `Evidence:` directory under `artifacts/cua-driver/verify/run-XXXXXXXX`. Each invocation creates a new directory; never reuse an older canonical artifact directory. The canonical runner builds the release driver once and stages only Electron using `tests/fixtures/build/linux.sh --only electron`. Reuse that build with:
 
 ```bash
-timeout 1260 .cursor/skills/verify-cua-driver/scripts/verify-linux.sh x11 --no-build
+timeout 1260 .agents/skills/verify-cua-driver/scripts/verify-linux.sh x11 --no-build
 ```
 
 The X11 recipe follows CI: `xvfb-run -a --server-args='-screen 0 1920x1080x24' dbus-run-session`, openbox, then picom with the xrender backend. `at-spi2-core` is D-Bus activated, not bootstrapped by another accessibility launcher. Bounded probes wait for the WM and `org.a11y.Bus.GetAddress`. Testkit creates private daemon sockets and empty isolated HOME/XDG state, then owns the daemon, MCP proxy, fixture, and sentinel processes. Do not attach to your installed daemon.
@@ -36,7 +36,7 @@ The runner first executes `canonical_e2e_environment_is_ready`, then only `share
 Nested Wayland uses the existing CI wrapper, with its default runner and the same focused lane:
 
 ```bash
-timeout 1260 .cursor/skills/verify-cua-driver/scripts/verify-linux.sh wayland --no-build
+timeout 1260 .agents/skills/verify-cua-driver/scripts/verify-linux.sh wayland --no-build
 ```
 
 Install the compositor dependencies from `.github/workflows/e2e-rust-linux-wayland.yml` before this lane. `scripts/ci/linux/run-rust-e2e-wayland.sh` provisions its runtime, Sway and AT-SPI; do not duplicate its bootstrap. Compositor and AT-SPI logs honor the unique artifact directory. Wayland is unverified here; X11 results do not certify its capture or input routes.
@@ -90,9 +90,9 @@ After session teardown, the helper invokes `scripts/check-evidence.sh` on the pr
 The shipped executable is:
 
 ```bash
-.cursor/skills/verify-cua-driver/scripts/verify-linux.sh x11
-.cursor/skills/verify-cua-driver/scripts/verify-linux.sh x11 --no-build
-.cursor/skills/verify-cua-driver/scripts/verify-linux.sh wayland --no-build
+.agents/skills/verify-cua-driver/scripts/verify-linux.sh x11
+.agents/skills/verify-cua-driver/scripts/verify-linux.sh x11 --no-build
+.agents/skills/verify-cua-driver/scripts/verify-linux.sh wayland --no-build
 ```
 
 It reuses `scripts/ci/linux/run-rust-e2e.sh` through `CUA_E2E_INTERNAL_LANE=verify` and `CUA_E2E_ARTIFACT_DIR`; the runner is responsible for strict fixtures, preflight, recordings and report validation. Each desktop run is bounded to 1200 seconds internally. No bench code or second harness is involved.

@@ -8,7 +8,7 @@ import Sentry
 /// Crash reporting for the app (CUA-2343), through sentry-cocoa.
 ///
 /// Off unless the bundle carries a DSN (Info.plist `CuaCrashDSN`, written by
-/// `scripts/build-app.sh` from `config/spaces-crash-reporting.json`; empty =
+/// `scripts/build-app.sh` from `apps/cua-spaces-desktop/config/spaces-crash-reporting.json`; empty =
 /// off) and the person allows it: the "Share usage data" switch is on and the
 /// first-run notice was shown, the same rule usage events follow. It is
 /// checked at start and again for every event. Turning the switch off while

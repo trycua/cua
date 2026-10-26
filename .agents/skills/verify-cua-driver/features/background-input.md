@@ -17,9 +17,9 @@ Set `delivery_mode` explicitly to `background` or `foreground` on the desktop in
 
 Preconditions: [Launch and Doctor](../SKILL.md) succeed, and the sentinel completely occludes the target before capture and dispatch.
 
-- **Background:** run `timeout 1260 .cursor/skills/verify-cua-driver/scripts/verify-linux.sh x11 --no-build`. Require both AX click cells delivered with `last_action=left_click`, a live sentinel heartbeat, no input/blur events, stable native focus and pointer, unchanged background z-order, and supported oracles.
-- **Foreground:** run `CUA_E2E_CELL_FILTER=linux-electron-left-click-ax-foreground timeout 1260 .cursor/skills/verify-cua-driver/scripts/verify-linux.sh x11 --no-build`. Require the target click marker. Foreground input is allowed to activate the target; do not apply a background guarantee to this row.
-- **Unavailable route:** run `CUA_E2E_CELL_FILTER=linux-electron-type-text-ax-background timeout 1260 .cursor/skills/verify-cua-driver/scripts/verify-linux.sh x11 --no-build`. Require the typed refusal, unchanged fixture journal and stable desktop, not delivery.
+- **Background:** run `timeout 1260 .agents/skills/verify-cua-driver/scripts/verify-linux.sh x11 --no-build`. Require both AX click cells delivered with `last_action=left_click`, a live sentinel heartbeat, no input/blur events, stable native focus and pointer, unchanged background z-order, and supported oracles.
+- **Foreground:** run `CUA_E2E_CELL_FILTER=linux-electron-left-click-ax-foreground timeout 1260 .agents/skills/verify-cua-driver/scripts/verify-linux.sh x11 --no-build`. Require the target click marker. Foreground input is allowed to activate the target; do not apply a background guarantee to this row.
+- **Unavailable route:** run `CUA_E2E_CELL_FILTER=linux-electron-type-text-ax-background timeout 1260 .agents/skills/verify-cua-driver/scripts/verify-linux.sh x11 --no-build`. Require the typed refusal, unchanged fixture journal and stable desktop, not delivery.
 - **Proof:** retain sentinel JSONL and native observation alongside the call, images and fixture state. Missing/unsupported observation is failure, not evidence of no change. CLI delivery parity is not covered by the MCP transcript.
 
 ## Gotchas

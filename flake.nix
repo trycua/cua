@@ -52,13 +52,13 @@
             );
           };
 
-          cuaDriverPackage = import ./nix/cua-driver/package.nix {
+          cuaDriverPackage = import ./libs/cua-driver/nix/package.nix {
             inherit pkgs;
             src = rustSrc;
             sourceSubdir = "cua-driver/rust";
           };
 
-          cuaCompositorPackage = pkgs.callPackage ./nix/cua-driver/compositor { };
+          cuaCompositorPackage = pkgs.callPackage ./libs/cua-driver/nix/compositor { };
 
           # nixpkgs builds the AT-SPI launcher for NixOS's system profile.
           # The E2E shell also runs on non-NixOS hosts such as GitHub's Ubuntu
@@ -155,16 +155,16 @@
           checks = {
             cua-compositor-build = cuaCompositorPackage;
             cua-driver-build = cuaDriverPackage;
-            cua-driver-linux-rust-unit = import ./nix/cua-driver/tests/rust-unit.nix {
+            cua-driver-linux-rust-unit = import ./libs/cua-driver/nix/tests/rust-unit.nix {
               inherit pkgs;
               src = rustTestSrc;
               sourceSubdir = "cua-driver/rust";
             };
-            cua-driver-policy-yaml = import ./nix/cua-driver/tests/policy-yaml.nix {
+            cua-driver-policy-yaml = import ./libs/cua-driver/nix/tests/policy-yaml.nix {
               inherit pkgs;
               cuaDriver = cuaDriverPackage;
             };
-            cua-driver-policy-rego = import ./nix/cua-driver/tests/policy-rego.nix {
+            cua-driver-policy-rego = import ./libs/cua-driver/nix/tests/policy-rego.nix {
               inherit pkgs;
               cuaDriver = cuaDriverPackage;
             };
@@ -177,6 +177,6 @@
     // {
       # NixOS module — consumers must set services.cua-driver.package
       # (or use the per-system package from self.packages)
-      nixosModules.cua-driver = ./nix/cua-driver/module.nix;
+      nixosModules.cua-driver = ./libs/cua-driver/nix/module.nix;
     };
 }

@@ -96,7 +96,7 @@ class TestCiNixLinuxPaths(unittest.TestCase):
             "libs/cua-driver/rust/crates/cursor-overlay/src/render_state.rs",
             "libs/cua-driver/rust/crates/cursor-overlay/assets/cua.default.cua-theme",
             "libs/cua-driver/rust/crates/cua-driver/src/main.rs",
-            "nix/cua-driver/package.nix",
+            "libs/cua-driver/nix/package.nix",
             "flake.lock",
             ".github/workflows/ci-nix-linux.yml",
         )

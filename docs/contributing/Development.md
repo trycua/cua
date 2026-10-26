@@ -195,7 +195,7 @@ workflow. Its `service` input is the current target list. Each image's
 `.bumpversion.cfg` owns its version and tag format, and tag-triggered CD
 workflows publish.
 
-The root `Makefile` prints the Release Please versions (`make show-versions`).
+`cat .release-please-manifest.json` prints the Release Please versions.
 It does not publish releases.
 
 ## Generated and Local Files

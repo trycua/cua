@@ -37,7 +37,7 @@ class VerifySkillTests(unittest.TestCase):
     def test_workflow_proof_is_isolated_and_retained(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
         for path in (
-            ".cursor/skills/verify-cua-driver/**",
+            ".agents/skills/verify-cua-driver/**",
             "libs/cua-driver/**",
             ".github/workflows/e2e-rust-linux.yml",
         ):
@@ -50,7 +50,7 @@ class VerifySkillTests(unittest.TestCase):
             'CUA_E2E_RETRY_ONCE: "0"',
             "key: e2e-shared",
             "CUA_E2E_SOURCE_SHA: ${{ needs.source.outputs.sha }}",
-            "run: .cursor/skills/verify-cua-driver/scripts/verify-linux.sh x11",
+            "run: .agents/skills/verify-cua-driver/scripts/verify-linux.sh x11",
             "name: verify-cua-driver-evidence",
             "path: artifacts/cua-driver/verify/run-*",
             "if-no-files-found: error",
@@ -67,7 +67,7 @@ class VerifySkillTests(unittest.TestCase):
         self.assertIn("always() && inputs.lane != '' && inputs.lane != 'verify'", summary)
 
     def test_evidence_boundary(self) -> None:
-        checker = ROOT / ".cursor/skills/verify-cua-driver/scripts/check-evidence.sh"
+        checker = ROOT / ".agents/skills/verify-cua-driver/scripts/check-evidence.sh"
         self.assertTrue(checker.is_file(), "standalone evidence checker is required")
         cell = "linux-electron-left-click-ax-background"
         sleeper = subprocess.Popen(["sleep", "60"])

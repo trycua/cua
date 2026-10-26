@@ -124,7 +124,7 @@ mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$app/Contents/Framewor
 cp "$here/Support/Info.plist" "$app/Contents/Info.plist"
 # Crash reporting (CrashReporting.swift): the public DSN from the shared
 # config. An empty or missing dsn writes an empty key, which turns it off.
-crash_dsn="$(plutil -extract dsn raw -o - "$here/../../config/spaces-crash-reporting.json" 2>/dev/null || true)"
+crash_dsn="$(plutil -extract dsn raw -o - "$here/../cua-spaces-desktop/config/spaces-crash-reporting.json" 2>/dev/null || true)"
 /usr/libexec/PlistBuddy -c "Delete :CuaCrashDSN" "$app/Contents/Info.plist" 2>/dev/null || true
 /usr/libexec/PlistBuddy -c "Add :CuaCrashDSN string $crash_dsn" "$app/Contents/Info.plist"
 if [ "$channel" = local ]; then

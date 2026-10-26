@@ -54,7 +54,23 @@ export function demoAgentSetup(fresh = false, only: string[] | null = null): Age
     row("hermes", "Hermes", true, false, "~/.hermes/config.yaml", "~/.hermes/skills"),
     row("openclaw", "OpenClaw", true, false, "~/.openclaw/openclaw.json", "~/.agents/skills"),
     row("cursor", "Cursor", true, true, "~/.cursor/mcp.json", "~/.cursor/skills"),
+    row("vscode", "VS Code (Copilot agent mode)", true, false, "~/Library/Application Support/Code/User/mcp.json", "~/.agents/skills"),
     row("gemini-cli", "Gemini CLI", false, false, "~/.gemini/settings.json", "~/.gemini/skills"),
+    // The rest of the supported apps, not installed: "Show all" lists them with their marks.
+    ...(
+      [
+        ["cline", "Cline"],
+        ["kiro", "Kiro"],
+        ["opencode", "OpenCode"],
+        ["pi", "Pi"],
+        ["windsurf", "Windsurf (Devin Desktop)"],
+        ["copilot-cli", "GitHub Copilot CLI"],
+        ["amp", "Amp"],
+        ["goose", "Goose"],
+        ["zed", "Zed"],
+        ["antigravity", "Google Antigravity"],
+      ] as const
+    ).map(([agent, name]) => row(agent, name, false, false, null, null)),
   ];
   return rows.map((r) => {
     const installed = only ? only.includes(r.agent) : r.installed;

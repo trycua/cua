@@ -7,6 +7,7 @@ import { useEffect, useState, type ReactNode } from "react";
 
 import { useBridge, useFirstRun, type FirstRunArt, type FirstRunExtraView, type FirstRunHook, type FirstRunRow, type FirstRunView } from "@/bridge";
 import { readSavedOnboarding } from "@/bridge/onboarding";
+import { APP_MARKS, AppMarkImage } from "@/components/agents/harness-mark";
 import { CuaLogo } from "@/components/cua-logo";
 import { OsIcon } from "@/components/os-icon";
 import { Button } from "@/components/ui/button";
@@ -225,22 +226,14 @@ function Welcome({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
 
 /* ---- 2 · Pick your agent ------------------------------------------------------------ */
 
-const MARKS: Record<string, string> = {
-  "claude-code": "/onboarding/marks/mark-claude.svg",
-  codex: "/onboarding/marks/mark-openai.svg",
-  hermes: "/onboarding/marks/mark-hermes.svg",
-  openclaw: "/onboarding/marks/mark-openclaw.svg",
-};
-
 function AgentMark({ agent, name, className }: { agent: string; name?: string; className?: string }) {
-  const src = MARKS[agent];
-  if (!src)
+  if (!(agent in APP_MARKS))
     return (
       <span aria-hidden className={cn("flex size-4 shrink-0 items-center justify-center rounded-[4px] bg-foreground/10 text-[9px] font-semibold text-muted-foreground", className)}>
         {(name ?? agent).trim().charAt(0).toUpperCase()}
       </span>
     );
-  return <img src={src} alt="" aria-hidden className={cn("size-4 shrink-0 object-contain", agent !== "claude-code" && agent !== "openclaw" && "dark:invert", className)} draggable={false} />;
+  return <AppMarkImage agent={agent} className={cn("size-4", className)} />;
 }
 
 /** The prompt "done" hands over: a real job where a fresh computer matters. */

@@ -39,6 +39,41 @@ function fakeNative(o: { noticeShown?: boolean; enabled?: boolean; failAck?: boo
 
 const sig = (tag: string) => ({ tag }) as never;
 
+describe("LiveTelemetry: the one-time linking notice", () => {
+  it("reads the SDK's words and whether it is due, and acknowledges through the SDK", () => {
+    const acknowledged: number[] = [];
+    let due = true;
+    const native = {
+      telemetryLinkNotice: () => ({
+        title: "We've updated how usage data works",
+        body: "Cua collects usage data.",
+        okLabel: "Got it",
+        turnOffLabel: "Turn off usage data",
+        detailsLabel: "What is collected",
+        docsUrl: "https://cua.ai/docs/cua-sdk/concepts/telemetry",
+      }),
+      telemetryLinkNoticeDue: () => due,
+      telemetryAcknowledgeLinkNotice: () => {
+        acknowledged.push(1);
+        due = false;
+      },
+    } as unknown as Native;
+    const t = new LiveTelemetry(native);
+    expect(t.linkNotice()).toEqual({
+      due: true,
+      title: "We've updated how usage data works",
+      body: "Cua collects usage data.",
+      okLabel: "Got it",
+      turnOffLabel: "Turn off usage data",
+      detailsLabel: "What is collected",
+      docsUrl: "https://cua.ai/docs/cua-sdk/concepts/telemetry",
+    });
+    t.acknowledgeLinkNotice();
+    expect(acknowledged).toEqual([1]);
+    expect(t.linkNotice().due).toBe(false);
+  });
+});
+
 describe("LiveTelemetry before and after the first-run notice", () => {
   it("holds the first session's signals until the notice was seen, then sends them in order", () => {
     const f = fakeNative();
@@ -101,6 +136,8 @@ describe("leaving Welcome", () => {
     expect(leftWelcome({ type: "onboarding-page", page: "welcome", action: "shown", choice: "none" })).toBe(false);
     expect(leftWelcome({ type: "step", step: "onboarding_shown", ok: true })).toBe(false);
     expect(leftWelcome({ type: "feature", feature: "space_open" })).toBe(false);
+    expect(leftWelcome({ type: "onboarding-page", page: "welcome", action: "step_viewed", choice: "none" })).toBe(false);
+    expect(leftWelcome({ type: "onboarding-page", page: "welcome", action: "step_completed", choice: "none" })).toBe(true);
     expect(leftWelcome({ type: "onboarding-page", page: "welcome", action: "completed", choice: "none" })).toBe(true);
     expect(leftWelcome({ type: "onboarding-page", page: "signin", action: "shown", choice: "none" })).toBe(true);
     expect(leftWelcome({ type: "step", step: "onboarding_skipped", ok: true })).toBe(true);

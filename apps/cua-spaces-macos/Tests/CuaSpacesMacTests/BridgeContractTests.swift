@@ -43,7 +43,12 @@ struct BridgeContractTests {
                              settingsPath: dir.appendingPathComponent("settings.json").path,
                              telemetry: FixtureTelemetry())
         let bridge = WebUIBridge(model: model, allowedOrigins: [])
-        bridge.actions = WebUIActions(openSpace: { _ in }, openMain: {})
+        bridge.actions = WebUIActions(openSpace: { _ in })
+        // The CLI's plan on temp folders, not this Mac's ~/.local/bin.
+        let cliDir = dir.appendingPathComponent("cli").path
+        bridge.makeCliInstaller = {
+            AppCliInstaller.withPaths(bundled: nil, binDir: cliDir, pathEnv: "", profile: cliDir + "/.zshrc")
+        }
         // "Send file…" picks this instead of showing the native panel.
         bridge.pickFiles = { [URL(fileURLWithPath: "/tmp/cua-contract-notes.txt")] }
         return bridge
@@ -129,6 +134,11 @@ struct BridgeContractTests {
         }
         func cancelCreate(createId: String) async throws { try await inner.cancelCreate(createId: createId) }
         func gpuChoices() async -> [AppGpuChoice]? { await inner.gpuChoices() }
+        func links() async throws -> [ShareLink] { try await inner.links() }
+        func createLink(target: String, access: String?, ttlSeconds: UInt32?, name: String?) async throws -> ShareLink {
+            try await inner.createLink(target: target, access: access, ttlSeconds: ttlSeconds, name: name)
+        }
+        func stopLink(id: String) async throws -> [String] { try await inner.stopLink(id: id) }
         func hosts() async -> [AppSpaceHost] { await inner.hosts() }
         func reportedHostname(id: String) -> String? { inner.reportedHostname(id: id) }
         func add(url: String, token: String?, name: String?) async throws { try await inner.add(url: url, token: token, name: name) }
@@ -142,9 +152,7 @@ struct BridgeContractTests {
         func linuxSource() async -> String? { await inner.linuxSource() }
         func setLinuxSource(_ value: String) async throws { try await inner.setLinuxSource(value) }
         func localStorage() async -> LocalStorage? { await inner.localStorage() }
-        func cloudAvailable() async -> Bool { await inner.cloudAvailable() }
         func runningMacosVms() async -> Int? { await inner.runningMacosVms() }
-        func cloudPricing() async -> AppCloudPricing? { await inner.cloudPricing() }
         func teleportContext(id: String) async throws -> (CuaSpacesFFI.Teleport, CuaSDK.Space)? {
             try await inner.teleportContext(id: id)
         }
@@ -182,13 +190,18 @@ struct BridgeContractTests {
                              settingsPath: dir.appendingPathComponent("settings.json").path,
                              host: FixtureHost(), account: FixtureAccount(identity: "ada@example.com"),
                              telemetry: FixtureTelemetry(), agentSetup: FixtureAgentSetup(),
-                             billing: FixtureBilling(), devices: FixtureDevices(), presence: FixturePresence(),
+                             devices: FixtureDevices(), presence: FixturePresence(),
                              loginItem: FixtureLoginItem(.enabled), startup: startup)
         model.updates = UpdatesModel(updater: FixtureUpdater(lastCheck: fixtureNow), channel: .stable)
         await model.refresh()
         await model.keyvault.refresh()
         let bridge = WebUIBridge(model: model, allowedOrigins: [])
-        bridge.actions = WebUIActions(openSpace: { _ in }, openMain: {})
+        bridge.actions = WebUIActions(openSpace: { _ in })
+        // The CLI's plan on temp folders, not this Mac's ~/.local/bin.
+        let cliDir = dir.appendingPathComponent("cli").path
+        bridge.makeCliInstaller = {
+            AppCliInstaller.withPaths(bundled: nil, binDir: cliDir, pathEnv: "", profile: cliDir + "/.zshrc")
+        }
         // "Send file…" picks this instead of showing the native panel.
         bridge.pickFiles = { [URL(fileURLWithPath: "/tmp/cua-contract-notes.txt")] }
         let space = try #require(model.spaces.first?.id)
@@ -200,7 +213,11 @@ struct BridgeContractTests {
     func cases(space: String) -> [(String, [String: Any])] {
         [
             // The relay allowance before the sign-out below (signed out, it is null).
-            ("app.info", [:]), ("session.get", [:]), ("relay.usage", [:]), ("session.signOut", [:]),
+            // No request is waiting on the fixtures: an answer to none is left alone.
+            ("nudges.pending", [:]), ("nudges.answer", ["id": "risky-1-1", "choice": "here"]),
+            ("app.info", [:]), ("session.get", [:]), ("relay.usage", [:]), ("resources.get", ["visible": true]), ("session.signOut", [:]),
+            ("links.list", [:]), ("links.create", ["target": "space:dev:3000"]), ("links.stop", ["id": "all"]),
+            ("cli.plan", [:]),
             ("checklist.get", [:]), ("checklist.send", ["action": ["type": "done", "step": "teleport"]]),
             ("spaces.list", [:]),
             ("spaces.createOptions", [:]), ("spaces.cancelCreate", ["pendingId": "pending:none"]),
@@ -208,7 +225,7 @@ struct BridgeContractTests {
             ("spaces.open", ["id": space]),
             ("machines.list", [:]), ("host.status", [:]),
             ("agents.list", [:]), ("agents.runs", ["spaceId": "local:aurora"]), ("agents.setup", [:]),
-            ("agents.configure", ["agents": ["claude-code"]]),
+            ("agents.configure", ["agents": ["claude-code"]]), ("agents.signIn", ["agent": "codex"]),
             ("agents.detail", ["name": "ada"]), ("agents.readFile", ["path": "agents/ada/hermes/MEMORY.md"]),
             ("agents.restoreFile", ["path": "agents/ada/hermes/MEMORY.md", "version": "v1"]),
             ("agents.addRoutine", ["agent": "ada", "title": "Inbox", "prompt": "Sort my inbox", "everyMinutes": NSNull(),
@@ -222,6 +239,7 @@ struct BridgeContractTests {
             ("clouds.connect", ["target": ["provider": "aws", "region": "us-west-2"], "makeDefault": false]),
             ("sharing.list", ["spaceId": space]), ("sharing.share", ["spaceId": space, "who": "bob@example.com", "role": "viewer"]),
             ("sharing.unshare", ["spaceId": space, "who": "bob@example.com"]),
+            ("sharing.removals", [:]), ("sharing.ackRemovals", [:]),
             ("volume.overview", [:]), ("volume.storage", [:]), ("volume.mount", [:]), ("volume.unmount", [:]),
             ("volume.storageSet", ["update": ["backend": "fs", "dry_run": true]]),
             ("about.get", [:]), ("about.set", ["channel": "beta"]), ("about.checkNow", [:]),
@@ -234,6 +252,7 @@ struct BridgeContractTests {
             ("storage.get", [:]), ("storage.run", ["request": ["kind": "clear-cache"]]),
             ("notifications.list", [:]), ("notifications.markRead", ["ids": ["n1"]]), ("notifications.markAllRead", [:]),
             ("telemetry.track", ["signals": [["type": "step", "step": "app_launched", "ok": true]]]),
+            ("telemetry.linkNotice", [:]), ("telemetry.acknowledgeLinkNotice", [:]), ("crashReporting.config", [:]),
             ("spaces.usage", ["spaceId": space]), ("spaces.windows", ["spaceId": space]),
             ("spaces.thumbnail", ["spaceId": space]),
             ("spaces.droppedFiles", ["names": ["notes.txt"]]), ("spaces.chooseFiles", [:]),
@@ -257,6 +276,8 @@ struct BridgeContractTests {
     /// must be in `cases`).
     static let skipped: [String: String] = [
         "session.signIn": "starts a device sign-in that waits for the browser",
+        "onboarding.get": "FirstRunTests covers it (answers depend on the state file)",
+        "onboarding.complete": "FirstRunTests covers it (writes the state file, hands the window over)",
         "spaces.create": "runs a create to the end; CreateOptionsTests and ViewModelTests cover it",
         "spaces.delete": "removes the fixture Space the later cases use",
         "spaces.add": "needs a running cua-spacesd at the address",
@@ -264,6 +285,8 @@ struct BridgeContractTests {
         "host.openSettings": "opens System Settings",
         "host.joinWithCode": "runs the bundled cua; JoinWithCodeTests covers the arguments and bad args",
         "agents.events": "needs the daemon's agent_events; WebUIHostTests checks it is unsupported without it",
+        "agents.start": "starts a coding agent through the daemon; WebUIHostTests checks it is unsupported without it",
+        "agents.message": "as agents.start (the daemon's agent_message)",
         "agents.pause": "changes the fake's state for agents.list", "agents.resume": "as agents.pause",
         "agents.setupDriver": "writes the coding agents' configs on the fixture setup",
         // Teleport needs the SDK's handle and a reachable Space; its answers
@@ -278,11 +301,15 @@ struct BridgeContractTests {
         "volume.reveal": "opens Finder", "loginItem.openSettings": "opens System Settings",
         "devices.approve": "asks for presence", "devices.rename": "changes the fixture account",
         "devices.revoke": "changes the fixture account", "devices.confirmMachine": "changes the fixture account",
+        "machines.rename": "changes the fixture account; MachinesViewTests covers it",
+        "machines.remove": "changes the fixture account; MachinesViewTests covers it",
+        "machines.checkHealth": "asks each machine's daemon; MachinesViewTests covers it",
         "stream.pip": "opens a picture-in-picture window",
         "keyvault.delete": "asks in an alert; TeleportBridgeTests answers it",
         "keyvault.unlock": "asks for Touch ID", "keyvault.unlockVault": "asks for Touch ID or a passphrase in a sheet",
         "keyvault.setup": "asks for Touch ID or a passphrase in a sheet; keyvaultSetupRefusesASetUpVault covers the fixture",
         "startup.act": "brings the app to the front; startupStatesHaveTheirShape covers the states",
+        "cli.install": "writes the CLI into a bin folder and a shell profile; CliBridgeTests covers it on temp folders",
     ]
 
     static func shapes() throws -> [String: Any] {
@@ -401,7 +428,7 @@ struct BridgeContractTests {
         let ready = try Self.json(WebUIBridge.createOptions(env: await model.newSpaceEnv(), macosVmsRunning: 1, pending: false))
         #expect(JSONShape.validate(schema, ready, defs: defs) == [])
         // Such an answer fails.
-        let broken: [String: Any] = ["local": NSNull(), "gpus": NSNull(), "cloudPricing": NSNull(), "experiments": [:], "maxCpus": 8]
+        let broken: [String: Any] = ["local": NSNull(), "gpus": NSNull(), "experiments": [:], "maxCpus": 8]
         #expect(JSONShape.validate(schema, broken, defs: defs).sorted() == ["$.env: missing", "$.local: expected object, got null"])
     }
 

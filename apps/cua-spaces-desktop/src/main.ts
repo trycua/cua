@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import * as path from "node:path";
 import { app, BrowserWindow, dialog, nativeTheme, Notification, screen, shell } from "electron";
+import { initCrashReporting } from "./crash-reporting-main";
 import { createBridge } from "./bridge";
 import { hasBrowser } from "./browser";
 import { appBuild } from "./bundle-version";
@@ -26,7 +27,7 @@ import { connectNotch, type NotchCore } from "./notch";
 import { dropOnSpace, feedNotch, followDragReadiness, notchTeleport, notchThumbnail, openSpaceFromNotch, teleportFromNotch, type NotchFeedUi } from "./notch-feed";
 import { createPipWindows } from "./pip";
 import { electronKeyvaultPrompts } from "./prompts";
-import { APP_ORIGIN, handleAppProtocol, registerSchemePrivileges } from "./protocol";
+import { APP_ORIGIN, handleAppProtocol, registerSchemePrivileges, resolveWebRoot } from "./protocol";
 import { readSettings, writeSettings } from "./settings";
 import { DEEP_LINK_SCHEME, deepLinkInArgv, routeForDeepLink } from "./deep-link";
 import { makeSystem } from "./system";
@@ -60,6 +61,9 @@ if (process.platform === "linux") {
   app.setDesktopName(`${LINUX_ID}.desktop`);
 }
 if (process.env.CUA_SPACES_USER_DATA) app.setPath("userData", process.env.CUA_SPACES_USER_DATA);
+// Crash reporting as early as the app's name and data folder are settled (Sentry keeps its queue
+// and the Crashpad reports there) and before the native library loads, which reads CUA_CRASH_*.
+initCrashReporting();
 // The page decodes Spaces' video with WebCodecs: on the GPU where it can (gpu.ts).
 applyVideoDecodeSwitches(app.commandLine, process.platform, process.env);
 // macOS: Chromium's cookie key stays out of the keychain, so its prompt can't freeze the app (chromium-keychain.ts).
@@ -174,7 +178,7 @@ async function startNativeHost(showRoute: (route: string) => void, globalShortcu
     build,
     platform: process.platform,
     env: process.env,
-    system: makeSystem({ native, showRoute, globalShortcut }),
+    system: makeSystem({ native, showRoute, webRoot: resolveWebRoot(), globalShortcut }),
     ui: {
       openSpace: (spaceId, name, os) => void viewers.open(spaceId, name, os),
       setBackground: (win, color, appearance) => {
@@ -351,10 +355,14 @@ if (!app.requestSingleInstanceLock()) {
     // ⌘⇧Space from any app: the main window, in front (never under the e2e switch).
     const shortcut = E2E_DEMO
       ? null
-      : installGlobalShortcut(process.platform, () => {
-          app.focus({ steal: true });
-          showMain();
-        });
+      : installGlobalShortcut(
+          process.platform,
+          () => {
+            app.focus({ steal: true });
+            showMain();
+          },
+          { read: () => readSettings().globalShortcut, write: (accelerator) => writeSettings({ globalShortcut: accelerator }) },
+        );
     let host: Awaited<ReturnType<typeof startNativeHost>> | null = null;
     if (!E2E_DEMO) {
       try {

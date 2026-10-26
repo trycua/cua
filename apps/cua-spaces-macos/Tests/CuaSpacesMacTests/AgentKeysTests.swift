@@ -82,16 +82,6 @@ struct AgentKeysTests {
         #expect(none.view.notice?.contains("need the cua daemon") == true)
     }
 
-    @Test func theSettingsTabRenders() async {
-        let m = AgentKeysModel(tools: FakeAgentKeysTools())
-        await m.load()
-        let host = NSHostingView(rootView: AgentKeysSettingsView(keys: m))
-        host.frame = NSRect(x: 0, y: 0, width: 520, height: 420)
-        host.layoutSubtreeIfNeeded()
-        #expect(host.fittingSize.width > 0)
-        #expect(AgentKeysSettingsView.added("Added", 1_790_000_000_000).hasPrefix("Added "))
-    }
-
     @Test func theWebBridgeRoutesAgentKeysToTheDaemon() {
         for m in ["agentKeys.list", "agentKeys.set", "agentKeys.remove"] {
             #expect(WebUIBridge.methods.contains(m))

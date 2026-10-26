@@ -25,9 +25,13 @@ import { keyvaultMethods } from "./keyvault";
 import { hostStatus, machinesMethods } from "./machines";
 import { ELECTRON_METHODS, METHODS } from "./methods";
 import { notificationsMethods } from "./notifications";
+import { nudgesMethods } from "./nudges";
 import { onboardingMethods } from "./onboarding";
 import { presenceMethods } from "./presence";
+import { linksMethods } from "./links";
+import { cliMethods } from "./cli";
 import { relayUsageMethods } from "./relay-usage";
+import { resourcesMethods } from "./resources";
 import { sessionMethods, sessionState } from "./session";
 import { settingsMethods } from "./settings";
 import { sharingMethods } from "./sharing";
@@ -69,7 +73,11 @@ export const AREAS = [
   streamMethods,
   onboardingMethods,
   relayUsageMethods,
+  nudgesMethods,
+  resourcesMethods,
   checklistMethods,
+  linksMethods,
+  cliMethods,
   presenceMethods,
 ];
 

@@ -270,14 +270,19 @@ impl McpServer {
 
     /// `tools/list` result: the contract tools, then the extensions'.
     pub fn tools_list(&self) -> Value {
+        // A Space's runtime may be a local runtime provider installed on
+        // this machine: tools that take one name them.
+        let providers = cua_sandbox_core::external::Registry::global().providers();
         let mut tools: Vec<Value> = cua_spaces_contract::tools()
             .into_iter()
             .filter(|t| self.exposes(t.name))
             .map(|t| {
+                let mut schema = t.input_schema.clone();
+                cua_sandbox_core::external::annotate_runtime_schema(&mut schema, &providers);
                 json!({
                     "name": t.name,
                     "description": t.mcp_description(),
-                    "inputSchema": t.input_schema,
+                    "inputSchema": schema,
                     "annotations": {
                         "readOnlyHint": t.annotations.read_only,
                         "destructiveHint": t.annotations.destructive,
@@ -435,7 +440,7 @@ pub const SPACE_SCOPED_TOOLS: &[&str] = &[
 ];
 
 /// Server instructions sent in `initialize`.
-pub const INSTRUCTIONS: &str = "Cua Spaces: isolated sandboxes. Any image is a Space; the computer-use and file tools need one that runs cua-spacesd (the Spaces images), and every Space reaches the MCP servers it declares with list_tools/call_tool(service=...). Start with list_spaces; create one with create_space(on=\"local\" (free) or \"cloud\" (metered); reuse=true returns a reachable one), or add an existing machine with add_space(url, token). delete_space deletes a Space you created. Then work inside it with space_bash, space_write, upload/send_file/download, and its computer-use tools via list_tools/call_tool. agent_start runs a coding agent inside a Space. Tools marked FOR THE HUMAN draw on the user's own desktop; call them only when asked.";
+pub const INSTRUCTIONS: &str = "Cua Spaces: isolated sandboxes. Any image is a Space; the computer-use and file tools need one that runs cua-spacesd (the Spaces images), and every Space reaches the MCP servers it declares with list_tools/call_tool(service=...). Start with list_spaces; create one with create_space(on=\"local\" (free) or \"aws\", \"gcp\" or \"modal\" (your own cloud account); reuse=true returns a reachable one), or add an existing computer with add_space(url, token). delete_space deletes a Space you created. Then work inside it with space_bash, space_write, upload/send_file/download, and its computer-use tools via list_tools/call_tool. agent_start runs a coding agent inside a Space. Tools marked FOR THE HUMAN draw on the user's own desktop; call them only when asked.";
 
 pub(crate) fn error(id: Value, code: i64, message: &str) -> Value {
     json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}})

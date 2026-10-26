@@ -1,0 +1,11 @@
+# cargo nextest profile for CI. One retry; a test that passes only on the
+# retry is listed as <flakyFailure> in the JUnit file, which
+# .github/scripts/flaky/flaky.py turns into a CI summary, an annotation and a
+# GitHub issue. Use: cargo nextest run --config-file <this file> --profile ci
+[profile.ci]
+retries = 1
+fail-fast = false
+failure-output = "immediate-final"
+
+[profile.ci.junit]
+path = "junit.xml"

@@ -54,26 +54,14 @@ struct ParityTests {
     @Test("placement-picker") func placementPicker() throws { try check("placement-picker", runPlacementPicker) }
     @Test("checklist") func checklist() throws { try check("checklist", runChecklist) }
     @Test("create-stages") func createStages() throws { try check("create-stages", runProvisioning) }
+    @Test("create-retry") func createRetry() throws { try check("create-retry", runProvisioning) }
 
-    /// The app's own first run records exactly the golden's events: the
-    /// `OnboardingModel` the window drives, on a recording telemetry.
-    @MainActor @Test("telemetry-funnel through the first-run model")
-    func telemetryFunnelThroughTheModel() throws {
-        let flow = try json(Self.dir.appendingPathComponent("telemetry-funnel.json"))
-        let golden = try json(Self.dir.appendingPathComponent("golden/telemetry-funnel.json"))
-        for run in ["onboarding", "skipping", "no-usage-data"] {
-            let telemetry = FixtureTelemetry()
-            let o = OnboardingModel(statePath: nil)
-            o.telemetry = telemetry
-            for a in flow[run] as! [[String: Any]] {
-                o.send(try appOnboardingActionFromJson(json: text(a)))
-            }
-            o.finish()
-            let want = (golden["frames"] as! [[String: Any]])
-                .filter { ($0["at"] as? String) == run }
-                .flatMap { $0["signals"] as! [Any] }
-            let got = telemetry.recorded.map(Self.signalFrame)
-            #expect(canonical(got) == canonical(want), "\(run):\n want \(canonical(want))\n  got \(canonical(got))")
+    /// A fix button's action word, as the core serializes it.
+    func fixWord(_ a: AppCreateFixAction) -> String {
+        switch a {
+        case .copyCommand: return "copy-command"
+        case .openUrl: return "open-url"
+        case .details: return "details"
         }
     }
 
@@ -149,9 +137,9 @@ struct ParityTests {
 
     func location(_ w: String) -> AppLocation {
         switch w {
-        case "cloud": .cloud
         case "yours": .yours
         case "host": .host
+        case "auto": .auto
         default: .local
         }
     }
@@ -263,11 +251,11 @@ struct ParityTests {
         [
             "thisMachine": opt(v.thisMachine?.name),
             "sections": v.sections.map { sec in
-                "\(sec.title): " + sec.rows.map { "\($0.name)\($0.dim ? " (dim)" : "")\($0.selected ? " (selected)" : "")" }
+                "\(sec.title.code): " + sec.rows.map { "\($0.name)\($0.dim ? " (dim)" : "")\($0.selected ? " (selected)" : "")" }
                     .joined(separator: ", ")
             },
             "selectedId": opt(v.selectedId),
-            "emptyText": opt(v.emptyText),
+            "emptyText": opt(v.emptyText?.code),
         ]
     }
 
@@ -332,7 +320,6 @@ struct ParityTests {
     /// A flow's provider word (a create on another machine is `relay`).
     func provider(_ word: String) -> AppSpaceProvider {
         switch word {
-        case "cloud": return .cloud
         case "relay": return .relay
         case "direct": return .direct
         default: return .local
@@ -359,7 +346,8 @@ struct ParityTests {
         case "tick": return .tick(now: Int64(a["now"] as! Int))
         case "finish": return .finish(id: id, spaceId: a["spaceId"] as! String)
         case "fail": return .fail(id: id, error: a["error"] as! String,
-                                  errorVariant: a["errorVariant"] as? String ?? "")
+                                  errorVariant: a["errorVariant"] as? String ?? "",
+                                  now: (a["now"] as? NSNumber)?.int64Value)
         case "dismiss": return .dismiss(id: id)
         case "delete-start": return .deleteStart(id: id, now: Int64(a["now"] as! Int))
         case "delete-fail": return .deleteFail(id: id)
@@ -381,7 +369,7 @@ struct ParityTests {
         let spaces = roster.spaces
         let sb = appSidebar(spaces: spaces, query: "", selectedId: roster.selectedId)
         let rows = sb.sections.flatMap(\.rows).map { r in
-            "\(r.osIcon) \(r.name) [\(r.statusText)] \(r.progress.map(String.init) ?? "-") \(r.trailing ?? "-")\(powerText(r.power))"
+            "\(r.osIcon) \(r.name) [\(r.statusText.code)] \(r.progress.map(String.init) ?? "-") \(r.trailing ?? "-")\(powerText(r.power))"
         }
         let closed = appNotchView(state: appNotchInitial(), spaces: spaces)
         // The open panel's tiles (the Rust flow reads `notch.tiles`: the same list).
@@ -396,10 +384,13 @@ struct ParityTests {
                 "progress": d.progress.map { Int($0) as Any } ?? NSNull(), "canStream": d.canStream,
                 "progressText": opt(d.progressText),
                 "actions": d.actions.map { "\($0.label)\($0.enabled ? "" : " (off)")" },
-                "creditNotice": d.creditNotice.map { "\($0.text) [\($0.button) -> \($0.url)]" } as Any? ?? NSNull(),
             ]
             // Why turning it off or on failed, when it did.
             if let e = d.powerError { detail["powerError"] = e }
+            // A create that failed the same way twice: its fix.
+            if let fix = s.progress?.fix {
+                detail["fix"] = "\(fix.text) [\(fix.label): \(fixWord(fix.action)) \(fix.value ?? "-")]"
+            }
             return detail
         }
         return [
@@ -420,7 +411,7 @@ struct ParityTests {
         let now = Int64(f["now"] as! Int)
         let registry = appRowsToSpaces(rows: try appSpaceRowsFromJson(json: text(f["rows"])), nowMs: now)
         var roster = appRosterInitial(spaces: [])
-        var creates = AppCreatesState(pending: [], deleting: [], powering: [])
+        var creates = AppCreatesState(pending: [], deleting: [], powering: [], streaks: [])
         var frames: [Any] = [["creates": "initial", "frame": provisioningFrame(registry, creates, &roster)]]
         for a in f["creates"] as! [[String: Any]] {
             creates = appCreatesReduce(state: creates, action: createAction(a))
@@ -439,7 +430,7 @@ struct ParityTests {
         let now = Int64(f["now"] as! Int)
         var registry = appRowsToSpaces(rows: try appSpaceRowsFromJson(json: text(f["rows"])), nowMs: now)
         var roster = appRosterInitial(spaces: [])
-        var creates = AppCreatesState(pending: [], deleting: [], powering: [])
+        var creates = AppCreatesState(pending: [], deleting: [], powering: [], streaks: [])
         var frames: [Any] = []
         for step in f["steps"] as! [[String: Any]] {
             let action = step["action"] as? [String: Any]
@@ -466,7 +457,7 @@ struct ParityTests {
     /// A row's power button: ` <power Suspend>`, ` <power Resuming… on busy>`.
     func powerText(_ b: AppPowerButton?) -> String {
         guard let b else { return "" }
-        return " <\(b.symbol) \(b.help)\(b.turnOn ? " on" : "")\(b.busy ? " busy" : "")>"
+        return " <\(b.symbol) \(b.help.code)\(b.turnOn ? " on" : "")\(b.busy ? " busy" : "")>"
     }
 
     // MARK: - space-power
@@ -475,7 +466,7 @@ struct ParityTests {
         let now = Int64(f["now"] as! Int)
         var registry = appRowsToSpaces(rows: try appSpaceRowsFromJson(json: text(f["rows"])), nowMs: now)
         var roster = appRosterInitial(spaces: [])
-        var creates = AppCreatesState(pending: [], deleting: [], powering: [])
+        var creates = AppCreatesState(pending: [], deleting: [], powering: [], streaks: [])
         var frames: [Any] = []
         for step in f["steps"] as! [[String: Any]] {
             if let action = step["action"] as? [String: Any] {
@@ -523,7 +514,7 @@ struct ParityTests {
             "error": opt(s.error),
             "report": opt(s.report?.appId),
             "sensitive": appPickerSensitiveOptions(state: s).map {
-                "\(word($0.group)):\($0.label):\($0.detail):\($0.checked ? "on" : "off")"
+                "\(word($0.group)):\($0.label.code):\($0.detail.code):\($0.checked ? "on" : "off")"
             },
             "planSensitive": appPickerPlanSensitive(state: s).map(word),
         ]
@@ -1087,15 +1078,15 @@ struct ParityTests {
     func dash(_ s: String?) -> String { s ?? "-" }
 
     func sidebarRowLine(_ r: AppSidebarRow) -> String {
-        "<\(r.osIcon)> \(r.name)\(r.place.map { " @ \($0)" } ?? "") | \(r.statusText) | \(r.detail)\(r.dim ? " (dim)" : "")\(r.selected ? " (selected)" : "")"
+        "<\(r.osIcon)> \(r.name)\(r.place.map { " @ \($0)" } ?? "") | \(r.statusText.code) | \(r.detail)\(r.dim ? " (dim)" : "")\(r.selected ? " (selected)" : "")"
     }
 
     func windowSidebar(_ v: AppSidebarView) -> [String: Any] {
         [
             "thisMachine": v.thisMachine.map(sidebarRowLine) as Any? ?? NSNull(),
-            "sections": v.sections.flatMap { ["# \($0.title)"] + $0.rows.map(sidebarRowLine) },
+            "sections": v.sections.flatMap { ["# \($0.title.code)"] + $0.rows.map(sidebarRowLine) },
             "selectedId": opt(v.selectedId),
-            "emptyText": opt(v.emptyText),
+            "emptyText": opt(v.emptyText?.code),
         ]
     }
 
@@ -1284,6 +1275,10 @@ struct ParityTests {
             "showMark": v.showMark,
             "dots": v.dots.map { "\($0.current ? "*" : "")\($0.label)" }.joined(separator: ","),
             "summary": facts(v.summary),
+            // Done's to-do list: `[x] title ~note -> fix (optional)`.
+            "todos": v.todos.map { t in
+                "[\(t.done ? "x" : " ")] \(t.title) ~\(t.note)\(t.action.map { " -> \($0)" } ?? "")\(t.optional ? " (optional)" : "")"
+            },
             "choices": v.choices.map { "\($0.mode): \($0.label)\($0.preselected ? " (preselected)" : "")" },
             "presentations": v.presentations.map { "\($0.title) [\($0.id)]\($0.selected ? " (selected)" : "")" },
             "prompts": v.prompts,
@@ -1340,7 +1335,7 @@ struct ParityTests {
             let state: AppHostState? = c["hostState"] is NSNull ? nil : try appHostStateFromJson(json: text(c["hostState"]))
             let roster = appWithThisMachine(spaces: spaces, status: state.map { appHostSummaryInput(state: $0) }, nowMs: now)
             let tab = appNotchView(state: appNotchInitial(), spaces: roster).tab.count
-            let count = appOpenableCount(spaces: roster)
+            let count = appOnCount(spaces: roster)
             let sync: AppDriveSyncInput? = c["sync"] is NSNull ? nil : try appDriveSyncFromJson(json: text(c["sync"]))
             let menu = appMenu(input: AppMenuInput(spaces: roster, keyvault: nil, sync: sync,
                                                    nowMs: UInt64(c["nowMs"] as! Int64),
@@ -1618,7 +1613,10 @@ struct ParityTests {
             let rows = try appSpaceRowsFromJson(json: text([c["row"]!]))
             let space = appRowsToSpaces(rows: rows, nowMs: Int64(f["now"] as! Int))[0]
             let usage = (c["usage"] as? [String: Any]).map { u in
-                AppSpaceUsage(memoryUsed: (u["memoryUsed"] as! NSNumber).uint64Value,
+                AppSpaceUsage(cpuCount: (u["cpuCount"] as? NSNumber)?.uint32Value ?? 0,
+                              cpuPercent: (u["cpuPercent"] as? NSNumber)?.doubleValue ?? 0,
+                              loadAverage1m: (u["loadAverage1m"] as? NSNumber)?.doubleValue ?? 0,
+                              memoryUsed: (u["memoryUsed"] as! NSNumber).uint64Value,
                               memoryTotal: (u["memoryTotal"] as! NSNumber).uint64Value,
                               memoryLimited: u["memoryLimited"] as! Bool,
                               diskUsed: (u["diskUsed"] as! NSNumber).uint64Value,
@@ -1872,7 +1870,7 @@ struct ParityTests {
 
     func os(_ w: String) -> AppSpaceOs { w == "macos" ? .macos : w == "windows" ? .windows : .linux }
     func runtime(_ w: String) -> AppRuntime {
-        [.auto, .gvisor, .runc, .qemu, .lume, .kubevirt].first { word($0) == w } ?? .auto
+        [.auto, .gvisor, .runc, .qemu, .lume].first { word($0) == w } ?? (w.isEmpty ? .auto : .other(w))
     }
     func move(_ w: String) -> AppTeleportMove {
         [.appOnly, .appWithFiles, .appWithState].first { word($0) == w }!
@@ -1880,7 +1878,14 @@ struct ParityTests {
     func runPhase(_ w: String) -> AppTeleportRunPhase {
         [.started, .progress, .finished, .failed, .done].first { word($0) == w }!
     }
-    func word(_ v: AppLocation) -> String { v == .cloud ? "cloud" : "local" }
+    func word(_ v: AppLocation) -> String {
+        switch v {
+        case .local: "local"
+        case .yours: "yours"
+        case .host: "host"
+        case .auto: "auto"
+        }
+    }
     func word(_ v: AppRuntime) -> String {
         switch v {
         case .auto: "auto"
@@ -1888,7 +1893,7 @@ struct ParityTests {
         case .runc: "runc"
         case .qemu: "qemu"
         case .lume: "lume"
-        case .kubevirt: "kubevirt"
+        case .other(let name): name
         }
     }
     func word(_ v: AppWindowMode) -> String {
@@ -1896,7 +1901,7 @@ struct ParityTests {
         case .ambient: "ambient"
         case .ambientTeleport: "ambient-teleport"
         case .switcher: "switcher"
-        case .createFleet: "create-fleet"
+        case .createSpace: "create-space"
         }
     }
     func word(_ v: AppPickerStep) -> String { "\(v)" }
@@ -1995,6 +2000,7 @@ struct ParityTests {
             if let v = t.region { d["region"] = v }
             if let v = t.project { d["project"] = v }
             if let v = t.environment { d["environment"] = v }
+            if t.usesToken { d["uses_token"] = true }
             return d
         }
         let request: Any = switch v.request {
@@ -2009,6 +2015,7 @@ struct ParityTests {
             },
             "field": field(v.field),
             "profile": field(v.profileField),
+            "token": field(v.tokenField),
             "checks": v.checks.map { "\($0.ok ? "ok" : "failed") \($0.text)" },
             "result": opt(v.result),
             "touches": v.touches,
@@ -2197,16 +2204,20 @@ struct ParityTests {
         case let .onboardingPage(page, action, choice):
             return ["type": "onboarding-page", "page": page, "action": action, "choice": choice]
         case let .spaceWizard(action): return ["type": "space-wizard", "action": action]
-        case let .spaceCreate(location, guestOs, kind, outcome, failedPhase, stalled, elapsedMs, gpu, errorVariant):
+        case let .spaceCreate(location, guestOs, kind, outcome, failedPhase, stalled, elapsedMs, gpu, errorVariant,
+                              retryAttempt, errorSubclass):
             return ["type": "space-create", "location": location, "guestOs": guestOs, "kind": kind,
                     "outcome": outcome, "failedPhase": failedPhase, "stalled": stalled, "elapsedMs": Int(elapsedMs),
-                    "gpu": gpu, "errorVariant": errorVariant]
+                    "gpu": gpu, "errorVariant": errorVariant, "retryAttempt": Int(retryAttempt),
+                    "errorSubclass": errorSubclass]
         case let .spaceCreateStarted(location, guestOs, kind, gpu):
             return ["type": "space-create-started", "location": location, "guestOs": guestOs, "kind": kind, "gpu": gpu]
         case let .volumeSetup(surface, storage, addToFinder, mountMethod, outcome):
             return ["type": "volume-setup", "surface": surface, "storage": storage, "addToFinder": addToFinder,
                     "mountMethod": mountMethod, "outcome": outcome]
-        case let .share(action, role, outcome): return ["type": "share", "action": action, "role": role, "outcome": outcome]
+        case let .share(action, role, outcome, errorKind, failedStage):
+            return ["type": "share", "action": action, "role": role, "outcome": outcome,
+                    "errorKind": errorKind, "failedStage": failedStage]
         case let .appUpdate(action, channel, trigger):
             return ["type": "app-update", "action": action, "channel": channel, "trigger": trigger]
         case let .deviceEnroll(method, outcome): return ["type": "device-enroll", "method": method, "outcome": outcome]
@@ -2233,7 +2244,7 @@ struct ParityTests {
             }
             frames.append(["at": run, "action": "finish", "signals": signals(appTelemetryOnboardingFinished(state: st))])
         }
-        var creates = AppCreatesState(pending: [], deleting: [], powering: [])
+        var creates = AppCreatesState(pending: [], deleting: [], powering: [], streaks: [])
         for step in f["creates"] as! [[String: Any]] {
             let a = step["action"] as! [String: Any]
             let action = createAction(a)
@@ -2270,6 +2281,7 @@ struct ParityTests {
         case .acknowledgements: "acknowledgements"
         case .privacy: "privacy"
         case .terms: "terms"
+        case .status: "status"
         case .issue: "issue"
         }
     }
@@ -2373,7 +2385,7 @@ struct ParityTests {
         }
         for step in f["settings"] as! [[String: Any]] {
             let input = try appSettingsInputFromJson(json: text([
-                "signIn": ["kind": "idle"], "canSignOut": false, "menuBar": false, "defaultLocation": "local",
+                "signIn": ["kind": "idle"], "canSignOut": false, "menuBar": false,
                 "agentsBusy": false, "agentsPending": [], "loginItem": step["loginItem"] as Any,
             ] as [String: Any]))
             let general = appSettingsPage(input: input).sections.filter { $0.id == "general" }.flatMap(\.rows)

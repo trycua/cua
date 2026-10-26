@@ -20,7 +20,7 @@ import { notchActivity } from "../model/notch";
 import { rowToSpace } from "../model/spaces";
 import { createFallbackBridge } from "../native/bridge";
 import { createFakeHostBridge, unconfiguredStatus, type HostStatus } from "../native/host";
-import { fakeFleetBridge } from "../test/fakeFleet";
+import { fakeSpacesBridge } from "../test/fakeSpacesBridge";
 import { ThisMachinePanel } from "./ThisMachinePanel";
 
 const sharing: HostStatus = {
@@ -49,7 +49,7 @@ describe("host model", () => {
 
   it("builds the This machine entry, first in the roster, and the setup form", () => {
     const space = thisMachineSpace(null, 5, "linux");
-    expect(space).toMatchObject({ id: "this-mac", name: "This machine", status: "suspended", detail: "Set up for access" });
+    expect(space).toMatchObject({ id: "this-mac", name: "This computer", status: "suspended", detail: "Set up for access" });
     expect(withThisMachine([], sharing, 5, "macos").map((s) => s.detail)).toEqual(["Sharing · 1 connected"]);
     expect(clientLabel({ id: "u", email: "e@x" })).toBe("e@x");
     let form = hostFormInitial();
@@ -67,7 +67,7 @@ describe("host model", () => {
     const roster = withThisMachine([], sharing, 5, "macos");
     expect(notchActivity(roster, true)).toMatchObject({
       kind: "remote-access",
-      label: "Someone is connected to this machine",
+      label: "Someone is connected to this computer",
     });
     expect(notchActivity(withThisMachine([], { ...sharing, clients: [] }, 5, "macos"), false)).toBeNull();
   });
@@ -86,8 +86,7 @@ describe("host model", () => {
       FIXTURE_NOW,
     );
     expect(space.provider).toBe("relay");
-    expect(space.detail).toBe("My machines · via relay");
-    expect(space.fleetId).toBe("relay");
+    expect(space.detail).toBe("My computers · via relay");
   });
 });
 
@@ -217,7 +216,7 @@ describe("roster", () => {
   it("always lists This machine in the live roster, next to relay machines", async () => {
     const user = userEvent.setup();
     const host = createFakeHostBridge({ status: sharing, onboarding: { completed: true } });
-    const fleet = fakeFleetBridge({
+    const spacesBridge = fakeSpacesBridge({
       isNative: true,
       listSpaces: async () => [
         {
@@ -231,7 +230,7 @@ describe("roster", () => {
         },
       ],
     });
-    render(<App bridge={createFallbackBridge("notched")} fleet={fleet} host={host} now={() => FIXTURE_NOW} />);
+    render(<App bridge={createFallbackBridge("notched")} spacesBridge={spacesBridge} host={host} now={() => FIXTURE_NOW} />);
     await user.click(await screen.findByRole("button", { name: /Spaces/ }));
     const listbox = await screen.findByRole("listbox");
     await waitFor(() => {
@@ -239,10 +238,10 @@ describe("roster", () => {
         .getAllByRole("option")
         .filter((el) => !el.classList.contains("tile-new"))
         .map((el) => el.getAttribute("aria-label")?.split(",")[0]);
-      expect([...names].sort()).toEqual(["This machine", "office-pc"]);
+      expect([...names].sort()).toEqual(["This computer", "office-pc"]);
     });
     // This machine's page opens in the main window, not inside the notch.
-    await user.click(within(listbox).getByRole("option", { name: /This machine/ }));
+    await user.click(within(listbox).getByRole("option", { name: /This computer/ }));
     expect(screen.queryByRole("button", { name: "Stop sharing" })).toBeNull();
   });
 });

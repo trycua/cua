@@ -1,10 +1,14 @@
 ---
-title: Run and share a service
-description: Run a server in a sandbox, call it, connect to an MCP server in it, forward a port, and share it with a public URL.
+title: Run services, sidecars and secrets
+description: Run a server in a sandbox, call it, connect to an MCP server in it, forward a port, share it with a public URL, add sidecar containers, and pass secrets.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+Run a program in a sandbox, call it or share it, put helper containers next to
+it, and give it credentials without baking them into an image. This page covers
+services, [sidecars](#sidecars) and [secrets](#secrets).
 
 A service is a named guest port. The image (or `command=`) runs the listener;
 `services=` names it and `wait_for=` holds `create` until it answers. The
@@ -14,7 +18,7 @@ listener must bind a guest-reachable address (`0.0.0.0`, not only
 | Option | Meaning |
 | --- | --- |
 | `command=["python", "app.py"]` | argv that replaces the image's entrypoint |
-| `env={"LOG_LEVEL": "debug"}` | plain environment variables ([not secrets](/cua-sdk/guides/secrets)) |
+| `env={"LOG_LEVEL": "debug"}` | plain environment variables ([not secrets](#secrets)) |
 | `services={"api": 8000}` | named guest ports |
 | `wait_for=http("api", "/health")` or `tcp("api")` | readiness; a list waits for all. Fails at once if the command exits |
 
@@ -168,4 +172,172 @@ cua sb url web web --public --ttl 10m
   A public URL is a bearer credential. Use the shortest practical `ttl`, revoke
   it when sharing ends, and keep it out of logs and source control. It does
   not extend the sandbox's lifetime.
+</Callout>
+
+## Sidecars
+
+A sidecar is an extra container next to the sandbox, like a Docker Compose
+service. It is addressed by name on every runtime:
+
+- the sandbox reaches a sidecar at its `name` (`db:6379`);
+- a sidecar reaches the sandbox at `main`;
+- `services=` names a sidecar port so you can call it from your machine.
+
+```python test="container" id="sidecar-local" prelude="local-cleanup"
+from cua_sandbox import Container, Image, Sandbox, tcp
+
+sb = await Sandbox.create(
+    Image.from_registry("python:3.12-slim"),
+    command=["sleep", "infinity"],
+    sidecars=[Container("redis:7-alpine", ports=[6379], name="db")],
+    services={"db": 6379},
+    wait_for=tcp("db"),
+    runtime="runc",
+)
+```
+
+Local sidecars share the sandbox container's network namespace, so
+`localhost` works too. They need `runtime="runc"`: separate gVisor containers
+cannot share a network namespace, and the SDK refuses rather than switching
+runtimes silently. Local VM sandboxes refuse sidecars.
+
+### Reach the sandbox from a sidecar
+
+This relay fetches the sandbox's page from `http://main:8000` and serves it on
+its own port.
+
+```python test="container" id="sidecar-by-name" prelude="local-cleanup"
+from cua_sandbox import Container, Image, Sandbox, http
+
+relay = Container(
+    "busybox:1.36",
+    name="relay",
+    ports=[8081],
+    command=["sh", "-c", "mkdir -p /www; "
+             "until wget -qO /www/index.html http://main:8000/; do sleep 1; done; "
+             "exec httpd -f -p 8081 -h /www"],
+)
+sb = await Sandbox.create(
+    Image.from_registry("python:3.12-slim"),
+    command=["python", "-m", "http.server", "8000"],
+    sidecars=[relay],
+    services={"relay": 8081},
+    wait_for=http("relay", "/"),
+    runtime="runc",
+)
+print((await sb.service("relay").request("GET", "/")).status_code)  # 200
+```
+
+### Sidecar options
+
+`Container(image, command=None, env=None, ports=None, name=None)`:
+
+- `name` is a DNS label and the hostname. It defaults from the image (`redis`
+  for `redis:7-alpine`) and cannot be `main`.
+- `command` replaces the sidecar image's entrypoint; `env` holds plain values.
+- A bare image string works too: `sidecars=["redis:7-alpine"]`.
+- At most 8 sidecars. With sidecars, the service names `main`, `sidecars` and
+  `sc` are reserved.
+- A private sidecar image on the sandbox image's registry uses the same
+  [registry secret](/cua-sdk/guides/images#private-registries).
+
+```bash test="cli-shape" id="cua-sb-create-sidecar"
+cua sb create python:3.12-slim --name app --runtime runc \
+  --sidecar redis:7-alpine,port=6379,name=db --service db=6379 --wait tcp:db \
+  -- sleep infinity
+```
+
+`--sidecar` takes `IMAGE[,port=PORT][,env=K=V][,name=NAME]` and repeats.
+
+```ts test="docs" id="sidecar-typescript"
+import { sidecar, SandboxCreateOptions } from '@trycua/cua';
+
+SandboxCreateOptions.create({
+  image: 'python:3.12-slim',
+  command: ['sleep', 'infinity'],
+  sidecars: [sidecar('redis:7-alpine', { ports: [6379], name: 'db' })],
+  services: new Map([['db', 6379]]),
+  runtime: 'runc',
+});
+```
+
+## Secrets
+
+Read secrets on the host and hand them to one process in the sandbox at
+runtime. Never put them in an image spec. The examples take a connected Linux
+sandbox `sb` with an application at `/app/main.py`; they work locally and in
+[your own cloud](/cua-sdk/guides/your-cloud).
+
+| Value | Where it goes |
+| --- | --- |
+| API keys, tokens, passwords | The process environment at runtime (below) |
+| Key files | A temporary file that is removed when the process exits (below) |
+| Registry credentials | A [`RegistrySecret`](/cua-sdk/guides/images#private-registries), never logged or saved |
+| Non-sensitive settings | `Image.env()`, `env=` on `Sandbox.create`, `Container(env=...)` |
+
+### Environment variables
+
+Set `DATABASE_URL` and `GITHUB_TOKEN` on the host from your secret manager,
+then call `await run_with_secrets(sb)`:
+
+```python test="docs" id="run-with-secrets" session="secrets"
+import os
+import shlex
+from cua_sandbox import Sandbox
+
+
+async def run_with_secrets(sb: Sandbox):
+    db_url = os.environ['DATABASE_URL']
+    gh_token = os.environ['GITHUB_TOKEN']
+    command = (
+        f'DATABASE_URL={shlex.quote(db_url)} '
+        f'GITHUB_TOKEN={shlex.quote(gh_token)} '
+        'python3 /app/main.py'
+    )
+    result = await sb.shell.run(command)
+    if not result.success:
+        raise RuntimeError('Application failed; inspect sanitized diagnostics')
+```
+
+Keep the assignments and the application in one `shell.run()` call: an
+`export` does not persist into the next call. `shlex.quote()` keeps spaces,
+quotes and newlines literal.
+
+### A temporary key file
+
+For an application that reads a key file, point `TASK_SSH_KEY_FILE` at the
+host file (mode `600`), then call `await run_with_key_file(sb)`:
+
+```python test="docs" id="run-with-key-file" session="key-file"
+import os
+from pathlib import Path
+import shlex
+from cua_sandbox import Sandbox
+
+
+async def run_with_key_file(sb: Sandbox):
+    key_content = Path(os.environ['TASK_SSH_KEY_FILE']).read_bytes().decode('utf-8')
+    script = f"""
+set -eu
+umask 077
+secret_dir=$(mktemp -d /tmp/cua-task-secret.XXXXXXXXXX)
+trap 'rm -f "$secret_dir/task-key"; rmdir "$secret_dir"' EXIT
+trap 'exit 1' HUP INT TERM
+printf '%s' {shlex.quote(key_content)} > "$secret_dir/task-key"
+chmod 600 "$secret_dir/task-key"
+TASK_SSH_KEY_FILE="$secret_dir/task-key" python3 /app/main.py
+"""
+    result = await sb.shell.run(script)
+    if not result.success:
+        raise RuntimeError('Credential task failed; inspect sanitized diagnostics')
+```
+
+The file lives in a private directory and is removed when the application
+exits, including on failure. A killed shell or a lost connection can skip the
+cleanup: destroy the sandbox then.
+
+<Callout type="warn">
+  These commands contain the secret values. Quoting does not redact logs,
+  traces or process listings: do not print the command, do not enable
+  `set -x`, use short-lived credentials, and revoke them when the task ends.
 </Callout>

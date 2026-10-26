@@ -16,14 +16,14 @@ pub struct ToolCoverage {
     pub tool: String,
     /// The typed Rust path that reaches it.
     pub sdk_symbol: String,
-    /// `fleet`, `local`, `direct` — from the contract.
+    /// `local`, `direct`, ... — from the contract.
     pub providers: Vec<String>,
     /// `free`, `metered` or `cloud`, from the contract.
     pub metering: String,
 }
 
 /// tool name → the typed Rust path that reaches it.
-const SYMBOLS: [(&str, &str); 86] = [
+const SYMBOLS: [(&str, &str); 97] = [
     ("add_space", "Connection::add_space"),
     ("remove_space", "Connection::remove_space"),
     ("list_spaces", "Connection::spaces"),
@@ -31,6 +31,7 @@ const SYMBOLS: [(&str, &str); 86] = [
     ("delete_space", "Space::delete"),
     ("stop_space", "Space::stop"),
     ("start_space", "Space::start"),
+    ("resize_space", "Space::resize"),
     ("space_bash", "Space::bash"),
     ("space_write", "Space::write_text"),
     ("upload", "Space::upload"),
@@ -131,6 +132,16 @@ const SYMBOLS: [(&str, &str); 86] = [
     ("cloud_test", "Connection::cloud_test"),
     ("cloud_disconnect", "Connection::cloud_disconnect"),
     ("cloud_sweep", "Connection::cloud_sweep"),
+    ("cloud_plan", "Connection::cloud_plan"),
+    ("cloud_hosts", "Connection::cloud_hosts"),
+    ("cloud_add_host", "Connection::cloud_add_host"),
+    ("cloud_remove_host", "Connection::cloud_remove_host"),
+    ("cloud_budget", "Connection::cloud_budget"),
+    ("cloud_reconcile", "Connection::cloud_reconcile"),
+    ("prewarm", "Connection::prewarm"),
+    ("prewarm_list", "Connection::prewarm_list"),
+    ("prewarm_remove", "Connection::prewarm_remove"),
+    ("cloud_audit", "Connection::cloud_audit"),
 ];
 
 /// The coverage table, in contract order, with the provider and metering

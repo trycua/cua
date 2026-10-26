@@ -124,14 +124,13 @@ pub fn this_machine_status(status: Option<&HostSummaryInput>) -> SpaceStatus {
 pub fn this_machine_space(status: Option<&HostSummaryInput>, now: i64, os: SpaceOs) -> Space {
     Space {
         id: THIS_MACHINE_ID.into(),
-        name: "This machine".into(),
+        name: "This computer".into(),
         os,
         status: this_machine_status(status),
         detail: host_summary(status),
         last_used_at: now,
         started_at: None,
         scene: scene_for_os(os),
-        fleet_id: None,
         size: None,
         region: None,
         provider: None,
@@ -225,11 +224,14 @@ pub struct HostSetupRequest {
 
 impl HostSetupRequest {
     /// `(share_desktop, provide_spaces)` the request asks for: the
-    /// profile's, then each explicit setting.
+    /// profile's, then each explicit setting. The default profile is one
+    /// choice, "let my other devices use this computer": its screen and
+    /// Spaces (Spaces need the relay, so a direct connection shares only
+    /// the screen).
     pub fn settings(&self) -> (bool, bool) {
         let (mut desktop, mut provide) = match self.profile.as_deref() {
             Some("spare") => (false, true),
-            _ => (true, false),
+            _ => (true, self.mode.trim() != "direct"),
         };
         if let Some(d) = self.share_desktop {
             desktop = d;
@@ -318,13 +320,22 @@ pub const DEFAULT_RELAY_URL: &str = "https://relay.cua.ai";
 
 /// The relay host setup joins unless the form names another:
 /// `CUA_RELAY_URL`, else the relay of `CUA_ENV` ([`DEFAULT_RELAY_URL`] in
-/// production).
+/// production). For native callers: the form does not prefill it, because
+/// this core also runs in the page (wasm), which has no environment.
 pub fn default_relay_url() -> String {
     cua_home::env::relay_url()
 }
 
-/// The direct mode's default listen address.
-pub const DEFAULT_LISTEN: &str = "0.0.0.0:3211";
+/// The direct mode's default listen address: every interface, on the
+/// channel's spacesd port (3211, or 3221 for Cua Spaces Local, so its host
+/// runs beside a Stable one).
+pub fn default_listen() -> String {
+    listen_on(cua_home::channel::CuaChannel::current())
+}
+
+fn listen_on(channel: cua_home::channel::CuaChannel) -> String {
+    format!("0.0.0.0:{}", channel.ports().tcp)
+}
 
 /// Adds the "This machine" entry to a roster, first (it is always present
 /// in the live app; `status` is `None` until the host answers).
@@ -526,8 +537,9 @@ pub enum HostAccountStep {
     Resume,
 }
 
-/// Relay sharing follows the sign-in: nobody signed in (or another
-/// account) pauses it, the owner signing in again resumes it. `account` is
+/// Relay sharing follows the sign-in: nobody signed in pauses it, the owner
+/// signing in again resumes it, and another account signing in moves this
+/// computer over to it (the host registers again). `account` is
 /// `None` only when the app knows nobody is signed in (not when it could
 /// not tell, offline). Direct mode does not use the account.
 pub fn account_step(state: &HostState, account: Option<&HostAccount>) -> HostAccountStep {
@@ -536,7 +548,11 @@ pub fn account_step(state: &HostState, account: Option<&HostAccount>) -> HostAcc
     }
     let owner = account.map(|a| owned_by(state, a).unwrap_or(true));
     match (state.paused_signed_out, owner) {
-        (false, None | Some(false)) => HostAccountStep::Pause,
+        (false, None) => HostAccountStep::Pause,
+        // Another account signed in: `Resume` makes the host register again
+        // for it (name and Provide Spaces stay), paused or not, so there
+        // is no manual remove and set up.
+        (_, Some(false)) => HostAccountStep::Resume,
         (true, Some(true)) => HostAccountStep::Resume,
         _ => HostAccountStep::Keep,
     }
@@ -720,7 +736,7 @@ pub fn remove_confirm() -> HostConfirm {
     HostConfirm {
         title: "Remove host setup?".into(),
         message: "Everyone connected is disconnected, the host service is \
-                  uninstalled and this machine leaves your machines on the \
+                  uninstalled and this computer leaves your computers on the \
                   relay. Setting it up again is needed to share it."
             .into(),
         confirm_label: "Remove".into(),
@@ -809,6 +825,16 @@ pub fn access_what(what: &str) -> String {
 /// Who, in words: the token holder is named by the credential (a name it
 /// sends is only its claim).
 pub fn access_who(via: &str, who: &str) -> String {
+    // An agent's call names its session after the caller
+    // (`crate::nudges::agent_session`): say which agent, not its id.
+    if let (caller, Some((agent, _))) = crate::nudges::agent_session(who) {
+        let caller = access_who(via, caller);
+        return if via == "token" {
+            caller
+        } else {
+            format!("{agent} for {caller}")
+        };
+    }
     if via == "token" {
         if let Some(claimed) = who
             .strip_prefix("token (claims ")
@@ -1030,7 +1056,7 @@ it up so you, your teammates and your AI agents can use it from other devices. \
 Cua connects them for you, with no network setup.";
 
 /// The "Use it to" option that shares this computer's screen.
-pub const DESKTOP_CHOICE: &str = "Use this computer from my other devices";
+pub const DESKTOP_CHOICE: &str = "Let my other devices use this computer";
 /// The "Use it to" option for a spare computer that only runs Spaces.
 pub const SPARE_CHOICE: &str = "Run Spaces here and keep its screen private";
 /// The button that sets this computer up (shares its screen).
@@ -1077,7 +1103,7 @@ pub const OPEN_SETTINGS_LABEL: &str = "Open Settings";
 pub fn panel(state: Option<&HostState>) -> HostPanelView {
     use crate::spaces::sidebar::Fact;
     let mut v = HostPanelView {
-        title: "This machine".into(),
+        title: "This computer".into(),
         summary: "Checking\u{2026}".into(),
         notice: None,
         notice_action: None,
@@ -1134,7 +1160,7 @@ pub fn panel(state: Option<&HostState>) -> HostPanelView {
             s.direct_url
                 .as_deref()
                 .filter(|u| !u.is_empty())
-                .unwrap_or("this machine\u{2019}s address")
+                .unwrap_or("this computer\u{2019}s address")
         )
     } else {
         match s.relay_url.as_deref().filter(|u| !u.is_empty()) {
@@ -1156,7 +1182,7 @@ pub fn panel(state: Option<&HostState>) -> HostPanelView {
                 .name
                 .clone()
                 .filter(|n| !n.is_empty())
-                .unwrap_or_else(|| "This machine".into()),
+                .unwrap_or_else(|| "This computer".into()),
             copy: None,
             help: None,
             warning: None,
@@ -1283,10 +1309,19 @@ pub fn panel(state: Option<&HostState>) -> HostPanelView {
     };
     if relay && s.paused_signed_out {
         match s.account.as_ref().map(|a| owned_by(s, a)) {
-            // Signed in to another account: this registration is not
-            // theirs to share. Removing it, then setting up again, is.
+            // Signed in to another account: the app moves this computer
+            // over by itself (see [`account_step`]); this is the button
+            // when that failed.
             Some(Some(false)) => {
                 v.notice = Some(OTHER_ACCOUNT_NOTICE.into());
+                v.notice_action = Some(HostAction {
+                    id: HostActionId::ResumeSharing,
+                    label: "Share With This Account".into(),
+                    destructive: false,
+                    confirm: None,
+                    enabled: true,
+                    help: None,
+                });
                 v.actions = vec![remove];
             }
             // The owner is signed in again (the app resumes on its own;
@@ -1348,13 +1383,13 @@ pub fn panel(state: Option<&HostState>) -> HostPanelView {
 
 /// Resume sharing's tooltip while both settings are off.
 pub const NOTHING_TO_SHARE_HELP: &str =
-    "Turn on Share this desktop or Provide Spaces to share this machine.";
+    "Turn on Share this desktop or Provide Spaces to share this computer.";
 
 /// The page's line while another account is signed in and this machine's
 /// relay sharing (registered to the account that signed out) is paused.
-pub const OTHER_ACCOUNT_NOTICE: &str = "This Mac is shared with another Cua \
-account, so sharing stays paused. Remove the host setup, then set it up again \
-to share it with yours.";
+pub const OTHER_ACCOUNT_NOTICE: &str = "This Mac was set up with another Cua \
+account, so sharing is paused. Share it with the account you are signed in to \
+now; its name and settings stay.";
 
 /// "Up to 4 Spaces · 2 macOS VMs". The macOS part is for a Mac: a shell on
 /// another system drops it (the web UI's `limitsFor`).
@@ -1485,8 +1520,12 @@ impl Default for HostFormState {
             allow: String::new(),
             advanced: false,
             direct: false,
-            listen: DEFAULT_LISTEN.into(),
-            relay_url: default_relay_url(),
+            listen: default_listen(),
+            // Empty: the form leaves the relay to the host, which resolves it
+            // from its own `CUA_RELAY_URL` / `CUA_ENV`. This core also runs
+            // in the page (wasm), which has no environment and would name
+            // the production relay under `CUA_ENV=staging` (CUA-1610).
+            relay_url: String::new(),
             busy: false,
             error: None,
             spare: false,
@@ -1602,6 +1641,13 @@ pub struct HostFormView {
     pub request: Option<HostSetupRequest>,
 }
 
+/// The form's profile for a self-hosted relay or a direct connection
+/// (`set-profile`), opened only from Settings → Advanced. Setup, first run
+/// and the This machine page offer Cua's relay alone, so its fields
+/// (Direct connection, Relay) show only while Advanced is open, and the
+/// apps draw no Advanced toggle of their own.
+pub const SELF_HOSTED_PROFILE: &str = "self-hosted";
+
 /// The first form.
 pub fn form_initial() -> HostFormState {
     HostFormState::default()
@@ -1627,7 +1673,9 @@ fn form_request(s: &HostFormState) -> Result<HostSetupRequest, String> {
         provide_spaces: None,
     })
     .and_then(|r| {
-        if r.mode == "relay" && r.relay_url.is_none() {
+        // Only self-hosting (Advanced) must name its relay; otherwise an
+        // empty relay means "the host decides".
+        if r.mode == "relay" && s.advanced && r.relay_url.is_none() {
             Err("relay URL needed".into())
         } else {
             Ok(r)
@@ -1645,6 +1693,12 @@ pub fn form_reduce(s: &HostFormState, a: &HostFormAction) -> HostFormState {
         HostFormAction::SetDirect { on } => n.direct = *on,
         HostFormAction::SetListen { listen } => n.listen = listen.clone(),
         HostFormAction::SetRelayUrl { url } => n.relay_url = url.clone(),
+        HostFormAction::SetProfile { profile } if profile == SELF_HOSTED_PROFILE => {
+            // Settings → Advanced: the team's own relay (or Direct). The
+            // relay field starts empty, for their address.
+            n.advanced = true;
+            n.relay_url = String::new();
+        }
         HostFormAction::SetProfile { profile } => n.spare = profile == "spare",
         HostFormAction::Submit => {
             if !s.busy && form_request(s).is_ok() {
@@ -1739,7 +1793,7 @@ pub fn form_view(s: &HostFormState, identity: Option<&str>) -> HostFormView {
             fields.push(text(
                 "listen",
                 "Listen on",
-                DEFAULT_LISTEN,
+                &default_listen(),
                 &s.listen,
                 bad,
                 true,
@@ -1749,7 +1803,7 @@ pub fn form_view(s: &HostFormState, identity: Option<&str>) -> HostFormView {
             fields.push(text(
                 "relay",
                 "Relay server",
-                &default_relay_url(),
+                "https://relay.example.com",
                 &s.relay_url,
                 bad,
                 true,
@@ -1762,9 +1816,19 @@ pub fn form_view(s: &HostFormState, identity: Option<&str>) -> HostFormView {
         let what = if s.spare {
             "This computer runs Spaces, separate computers inside it, that you and your team open from other devices. Its own screen stays private."
         } else {
-            "You and the people you share with can see and use this computer\u{2019}s screen from other devices. Cua connects them for you, with no network setup."
+            "You and the people you share with can see and use this computer\u{2019}s screen, and create Spaces on it, from other devices. Cua connects them for you, with no network setup."
         };
         match identity.filter(|i| !i.is_empty()) {
+            _ if s.advanced => {
+                // Self-hosting: Cua's relay is not involved, so only the
+                // spare-computer sentence carries over.
+                let spare = if s.spare {
+                    format!(" {what}")
+                } else {
+                    String::new()
+                };
+                format!("For self-hosting teams: joins your own relay at the address below.{spare}")
+            }
             Some(id) => format!("{what} Signed in as {id}."),
             None => what.to_string(),
         }
@@ -1795,6 +1859,18 @@ pub fn form_view(s: &HostFormState, identity: Option<&str>) -> HostFormView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The "Listen on" default is the channel's spacesd port: Cua Spaces
+    /// Local's host does not take Stable's 3211.
+    #[test]
+    fn the_default_listen_address_follows_the_channel() {
+        use cua_home::channel::CuaChannel;
+        assert_eq!(listen_on(CuaChannel::Stable), "0.0.0.0:3211");
+        assert_eq!(listen_on(CuaChannel::Local), "0.0.0.0:3221");
+        for channel in CuaChannel::ALL {
+            assert!(looks_like_listen(&listen_on(channel)));
+        }
+    }
 
     #[test]
     fn listen_needs_a_port() {
@@ -2238,6 +2314,68 @@ mod tests {
     }
 
     #[test]
+    fn the_form_leaves_the_relay_to_the_host_unless_named() {
+        // CUA-1610: the page's core has no `CUA_ENV`; a prefilled prod relay
+        // was sent with the staging token. Empty means "the host decides".
+        let s = form_initial();
+        assert_eq!(s.relay_url, "");
+        let r = form_view(&s, None).request.expect("valid");
+        assert_eq!(r.mode, "relay");
+        assert_eq!(r.relay_url, None);
+        // Self-hosting (Advanced) must name its relay; naming one sends it.
+        let own = form_reduce(
+            &s,
+            &HostFormAction::SetProfile {
+                profile: SELF_HOSTED_PROFILE.into(),
+            },
+        );
+        assert!(form_view(&own, None).request.is_none());
+        let named = form_reduce(
+            &own,
+            &HostFormAction::SetRelayUrl {
+                url: " https://relay.example/ ".into(),
+            },
+        );
+        let r = form_view(&named, None).request.expect("valid");
+        assert_eq!(r.relay_url.as_deref(), Some("https://relay.example"));
+    }
+
+    #[test]
+    fn self_hosting_opens_only_from_its_profile() {
+        // Setup and first run: Cua's relay, nothing about self-hosting.
+        let s = form_initial();
+        let v = form_view(&s, Some("ada@example.com"));
+        assert!(v.fields.iter().all(|f| !f.advanced), "{:?}", v.fields);
+        assert!(
+            v.lede.starts_with("You and the people you share with"),
+            "{}",
+            v.lede
+        );
+        // Settings → Advanced: the team's own relay, typed in.
+        let s = form_reduce(
+            &s,
+            &HostFormAction::SetProfile {
+                profile: SELF_HOSTED_PROFILE.into(),
+            },
+        );
+        let v = form_view(&s, Some("ada@example.com"));
+        assert!(v.advanced_open);
+        assert!(v.lede.starts_with("For self-hosting teams"), "{}", v.lede);
+        let relay = v.fields.iter().find(|f| f.id == "relay").unwrap();
+        assert_eq!(relay.value, "");
+        assert!(!v.can_submit, "needs the relay's address");
+        let s = form_reduce(
+            &s,
+            &HostFormAction::SetRelayUrl {
+                url: "https://relay.example.com".into(),
+            },
+        );
+        let r = form_view(&s, None).request.unwrap();
+        assert_eq!(r.relay_url.as_deref(), Some("https://relay.example.com"));
+        assert_eq!(r.profile.as_deref(), Some("desktop"));
+    }
+
+    #[test]
     fn the_form_submits_only_a_valid_request() {
         let mut s = form_initial();
         let v = form_view(&s, None);
@@ -2368,16 +2506,26 @@ mod tests {
             HostActionId::ResumeSharing
         );
 
-        // Another account: never re-share the old one's registration.
+        // Another account signs in: the host registers again for it, with
+        // no manual step, whether sharing was paused or not.
         let s = owned(true, Some(bob.clone()));
-        assert_eq!(account_step(&s, s.account.as_ref()), HostAccountStep::Keep);
+        assert_eq!(
+            account_step(&s, s.account.as_ref()),
+            HostAccountStep::Resume
+        );
+        // The button, if that failed.
         let v = panel(Some(&s));
         assert_eq!(v.notice.as_deref(), Some(OTHER_ACCOUNT_NOTICE));
-        assert!(v.notice_action.is_none());
+        assert_eq!(
+            v.notice_action.as_ref().unwrap().id,
+            HostActionId::ResumeSharing
+        );
         assert_eq!(v.actions[0].id, HostActionId::Remove);
-        // ...and one signed in while it shares pauses it.
         let s = owned(false, Some(bob));
-        assert_eq!(account_step(&s, s.account.as_ref()), HostAccountStep::Pause);
+        assert_eq!(
+            account_step(&s, s.account.as_ref()),
+            HostAccountStep::Resume
+        );
 
         // Direct mode and a machine that is not set up never follow it.
         let direct = HostState {
@@ -2567,6 +2715,28 @@ mod tests {
     }
 
     #[test]
+    fn the_default_choice_turns_on_everything_remote_access_needs() {
+        let relay = validate_setup(HostSetupRequest {
+            mode: "relay".into(),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(relay.settings(), (true, true));
+        let direct = validate_setup(HostSetupRequest {
+            mode: "direct".into(),
+            direct: Some("0.0.0.0:3211".into()),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(direct.settings(), (true, false));
+        // The form's one choice asks for both.
+        assert_eq!(
+            form_view(&form_initial(), None).request.unwrap().settings(),
+            (true, true)
+        );
+    }
+
+    #[test]
     fn setup_settings_are_validated() {
         let spare = validate_setup(HostSetupRequest {
             mode: "relay".into(),
@@ -2584,6 +2754,7 @@ mod tests {
             HostSetupRequest {
                 mode: "relay".into(),
                 share_desktop: Some(false),
+                provide_spaces: Some(false),
                 ..Default::default()
             },
             HostSetupRequest {

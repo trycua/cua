@@ -1,0 +1,6 @@
+# The bulk lane: a second virtio-blk disk (serial "cuabulk") that the machine
+# hosting a Linux VM shares with it, through which file transfers between the
+# two skip the guest network. cua-spacesd runs as the image user and opens the
+# disk for direct I/O, so it needs the device node. The serial must equal
+# cua_proto::bulk::SERIAL (a test in cua-daemon holds them together).
+SUBSYSTEM=="block", KERNEL=="vd*", ATTRS{serial}=="cuabulk", OWNER="cua", GROUP="cua", MODE="0600"

@@ -1,13 +1,12 @@
 [package]
 name = "cua-byoc"
-description = "Your own cloud account as a sandbox location (`--on aws|gcp|modal`): the AWS EC2, Google Compute Engine and Modal providers of the sandbox layer, `cua cloud` connect/test/sweep, ownership tags and records, and the relay join every cloud sandbox dials out with."
+description = "Your own cloud account as a sandbox location (`--on aws|gcp|hetzner|modal`): the AWS EC2, Google Compute Engine, Hetzner Cloud and Modal providers of the sandbox layer, `cua cloud` connect/test/sweep, ownership tags and records, and the relay join every cloud sandbox dials out with."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-publish = false
 
 [features]
 default = []
@@ -16,10 +15,12 @@ default = []
 aws = ["dep:aws-config", "dep:aws-sdk-ec2", "dep:aws-sdk-sts", "dep:aws-types"]
 # Google Compute Engine over its REST API with the gcloud CLI's sign-in.
 gcp = ["dep:reqwest"]
+# Hetzner Cloud over its REST API with a project API token.
+hetzner = ["dep:reqwest"]
 # Modal Sandboxes through the cua-modal-helper (Modal's official Go SDK).
 modal = ["dep:cua-contrib"]
 # Every provider.
-all = ["aws", "gcp", "modal"]
+all = ["aws", "gcp", "hetzner", "modal"]
 # Test doubles (a scripted cloud) for this crate's and the daemon's tests.
 testing = []
 
@@ -52,7 +53,9 @@ url.workspace = true
 # The NoCloud seed writer of the opt-in QEMU boot test (tests/boot_qemu.rs).
 cua-vmm.workspace = true
 ring = "0.17"
-cua-spaces = { path = "../cua-spaces" }
+cua-spaces.workspace = true
+cua-proto.workspace = true
+cua-cluster.workspace = true
 cua-byoc = { path = ".", features = ["testing", "all"] }
 cua-host = { workspace = true, features = ["testing"] }
 cua-spacesd-client = { workspace = true, features = ["testing"] }

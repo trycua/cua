@@ -5,7 +5,7 @@ description: 'Sign in with cua auth login, see who is signed in, and sign out.'
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-One sign-in covers the CLI, the SDK, `cua daemon` and the Cua Spaces app: they
+One sign-in covers the CLI, the SDK, `cua daemon` and the Cua Spaces app, which
 share one credential store. Local sandboxes need no sign-in.
 
 ## Sign in
@@ -19,10 +19,10 @@ cua auth logout             # revoke and remove the session
 ```
 
 After an interactive login, `cua auth login` offers to set up your AI coding
-agents (skills plus the cua MCP server); `--agents claude,codex`, `--yes`,
-`--skills-only`, `--mcp-only` and `--no-onboarding` control it, and `never`
-is remembered in `~/.cua/config`. Tokens refresh automatically and are never
-printed.
+agents (the cua skills plus the cua MCP server). These flags control the offer:
+`--agents claude,codex`, `--yes`, `--skills-only`, `--mcp-only` and
+`--no-onboarding`. Answering `never` is remembered in `~/.cua/config`. Tokens
+refresh automatically and are never printed.
 
 | Platform | Session stored in |
 |----------|-------------------|
@@ -32,8 +32,8 @@ printed.
 | Linux | `~/.cua/credentials.json`, mode 600 |
 
 `CUA_CREDENTIAL_STORE=file` or `keychain` picks the store. A build from source
-is a new app to the Keychain every time it is rebuilt, so it uses the file and
-never asks for Keychain access.
+looks like a new app to the Keychain every time you rebuild it, so it uses the
+file and never asks for Keychain access.
 
 Older versions kept the session, the device key and the other secrets under the
 service `run.cua.ai` (`staging.run.cua.ai` for staging). The first `cua` that
@@ -45,26 +45,26 @@ not trust), `cua` leaves the old item as it is. Run `cua auth keychain --prompt`
 in a terminal once and choose Always Allow, or sign in again.
 `cua auth logout` removes both the new and the old items.
 
-On macOS, `cua` never waits on a Keychain dialog it cannot show. Run from a
-terminal it lets macOS ask for access. Run without one (by an agent, a script
-or a service) it fails within seconds with a message instead of hanging, also
-when a dialog is already open on the Mac's screen and macOS holds the read
-behind it. Answer the dialog, or run `cua auth keychain --prompt` in a
-terminal once and choose Always Allow. `CUA_KEYCHAIN_NONINTERACTIVE=1` turns
-prompts off, `0` allows them without a terminal, and
-`CUA_KEYCHAIN_TIMEOUT_SECS` (default 5) sets how long a call may take.
+On macOS, `cua` never waits on a Keychain dialog it cannot show. In a terminal,
+it lets macOS ask for access. Without a terminal (an agent, a script or a
+service), it fails within seconds with a message instead of hanging. That
+includes the case where a dialog is already open on the Mac's screen and macOS
+holds the read behind it. Answer the dialog, or run `cua auth keychain --prompt`
+in a terminal once and choose Always Allow. `CUA_KEYCHAIN_NONINTERACTIVE=1` turns
+prompts off, `0` allows them without a terminal, and `CUA_KEYCHAIN_TIMEOUT_SECS`
+(default 5) sets how many seconds a call may take.
 
 <Callout type="warn">
-  The stored refresh token mints access tokens until revoked. On shared hosts,
-  run `cua auth logout` when done, or sign in again when you need it.
+  The stored refresh token keeps minting access tokens until you revoke it. On a
+  shared machine, run `cua auth logout` when you are done.
 </Callout>
 
-## Targeting staging
+## Use the staging environment
 
 `CUA_ENV=staging` points the CLI, the SDK, `cua daemon` and the Cua Spaces app
-at the Cua staging deployment, which is for testing Cua itself. Unset, or
-`prod`, is production. Any other value makes `cua` exit with code `2` rather
-than fall back to production.
+at Cua's staging deployment, which exists for testing Cua itself. Unset or
+`prod` means production. Any other value makes `cua` exit with code `2` instead
+of falling back to production.
 
 ```bash test="cli-shape" id="cua-env-staging"
 export CUA_ENV=staging
@@ -83,23 +83,24 @@ cua auth status             # starts with "Environment: staging (...)"
 | Keychain / Credential Manager service | none | `ai.cua.session` (`ai.cua.session.staging` for staging) |
 
 Each environment has its own session, host enrollment, Spaces registry and
-daemon, so signing in to staging never replaces or sends your production
-session, and the other way round.
+daemon. Signing in to staging never replaces or sends your production session,
+and the other way round. Usage telemetry follows the environment too: staging
+events go to the staging PostHog project, never to production's.
+`CUA_POSTHOG_KEY` overrides the project key, and `CUA_TELEMETRY_ENDPOINT`
+overrides the ingest URL.
 
-Usage telemetry follows the environment too: staging events go to the staging
-PostHog project, never to production's. `CUA_POSTHOG_KEY` overrides the
-project key; `CUA_TELEMETRY_ENDPOINT` overrides the ingest URL.
+Released builds of `cua` and the Cua Spaces app, beta versions included, use
+production when `CUA_ENV` is unset. Set `CUA_ENV=staging` to use staging.
 
-Beta channel builds talk to staging by default. A `cua` compiled with
-`CUA_DEFAULT_ENV=staging` treats an unset `CUA_ENV` as `staging`, and the macOS
-app built with `scripts/build-release.sh --channel beta` carries `CuaEnv=staging`
-in its `Info.plist` and compiles its bundled `cua` the same way. `CUA_ENV=prod`
-still selects production in a beta build.
+To open the macOS app against staging, quit the production app first, then
+launch it with the variable set:
 
-For the macOS app, launch it with the variable set:
-`open -n --env CUA_ENV=staging -a "Cua Spaces"`. Quit the production app
-first. The host service (`cua host setup`) has one name on each machine, so pair
-a staging host on a separate machine or VM.
+```bash skip="host-install"
+open -n --env CUA_ENV=staging -a "Cua Spaces"
+```
 
-Other variables (`CUA_OIDC_ISSUER`, `CUA_AUTH_FLOW`,
-`CUA_NO_BROWSER`, ...) are listed in the [CLI reference](/cua-cli/reference/cli).
+The host service (`cua host setup`) has one name on each machine, so pair a
+staging host on a separate machine or VM.
+
+Other variables (`CUA_AUTH_FLOW`, `CUA_NO_BROWSER` and more) are listed in the
+[CLI reference](/cua-cli/reference/cli).

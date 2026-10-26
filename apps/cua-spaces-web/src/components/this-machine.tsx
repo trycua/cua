@@ -2,21 +2,18 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon, CopyIcon, LoaderCircleIcon, TriangleAlertIcon } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import {
   useSession,
   useThisMachine,
   type HostAccessRow,
-  type HostAction,
   type HostFailure,
   type HostFormView,
   type HostPanelView,
   type HostSetupFormView,
 } from "@/bridge";
-import { limitsFor } from "@/bridge/friendly-errors";
-import { hostOs } from "@/bridge/host-os";
-import { ConfirmDialog } from "@/components/ui/alert-dialog";
+import { throttleSeconds } from "@/bridge/friendly-errors";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogPopup, DialogTitle } from "@/components/ui/dialog";
@@ -30,152 +27,81 @@ import { cn, relativeTime } from "@/lib/utils";
 type HostLog = "access" | "activity";
 
 /**
- * This machine: how it is shared, who is connected, the permissions left
- * to grant and its buttons; or the host setup form. Everything shown is the
- * core's `host.panel` / `host.formView`, laid out as the SwiftUI app's
- * `ThisMachineView`. `progress` is what a running setup or Sign In waits
- * for (the host's `HostModel.progress`).
+ * This machine's parts of the Machines page that are not the core's
+ * machine view: the setup form while it is open (no `part`), what needs
+ * the owner now (`alerts`: a running setup's progress, permissions to
+ * grant, a failed action, a log that does not verify) and the access and
+ * Spaces logs (`logs`, under Details). The switches, Spaces, Details and
+ * Remove are `machines_view::view`'s, drawn by the page.
  */
-export function ThisMachine({ panel, progress }: { panel: HostPanelView; progress?: string }) {
+export function ThisMachineExtras({ panel, progress, part }: { panel: HostPanelView | null; progress?: string; part?: "alerts" | "logs" }) {
   const { data: session } = useSession();
   const host = useThisMachine(session?.identity ?? null);
-  const [confirming, setConfirming] = useState<HostAction | null>(null);
   const [fullLog, setFullLog] = useState<HostLog | null>(null);
   const now = Date.now();
 
-  if (host.formView) {
-    return <HostSetupForm view={host.formView} host={host} failure={host.setupError} progress={progress} onRetry={() => void host.retrySetUp()} />;
+  if (!part) {
+    return host.formView ? (
+      <HostSetupForm view={host.formView} host={host} failure={host.setupError} progress={progress} onRetry={() => void host.retrySetUp()} />
+    ) : null;
   }
-
-  const choices = panel.setupChoices ?? [];
-  const press = (a: HostAction) => (a.confirm ? setConfirming(a) : void host.run(a.id));
+  if (!panel) return null;
   const openSettings = (url: string) =>
     host.openSettings(url).catch((e: unknown) => toast("Couldn't open System Settings", { description: e instanceof Error ? e.message : String(e), type: "error" }));
-  const notice = panel.notice && !panel.intro ? panel.notice : null;
-  const noticeAction = notice ? panel.noticeAction : null;
 
+  if (part === "alerts") {
+    const any = progress || panel.permissionsTitle || host.error || panel.accessWarning || panel.activityWarning;
+    if (!any) return null;
+    return (
+      <div className="mt-6" data-host-alerts>
+        {progress ? (
+          <div className="mb-6 rounded-xl border bg-card px-4 py-3">
+            <Progress text={progress} />
+          </div>
+        ) : null}
+        {panel.permissionsTitle ? (
+          <Group title={panel.permissionsTitle}>
+            {panel.permissions.map((p) => (
+              <Row key={p.id} label={p.title} hint={p.help} data-host-permission={p.id}>
+                {p.settingsUrl ? (
+                  <Button size="sm" variant="outline" onClick={() => void openSettings(p.settingsUrl!)}>
+                    {panel.openSettingsLabel}
+                  </Button>
+                ) : null}
+              </Row>
+            ))}
+          </Group>
+        ) : null}
+        {host.error ? (
+          // A switch that failed: what happened in plain words, Retry, and
+          // the raw error under Details.
+          <div className="mb-6 rounded-xl border bg-card px-4 py-3 shadow-xs">
+            <FailureView failure={host.error} retrying={host.busy} onRetry={() => void host.retry()} />
+          </div>
+        ) : null}
+        {panel.accessWarning ? <Warning>{panel.accessWarning}</Warning> : null}
+        {panel.activityWarning ? <Warning>{panel.activityWarning}</Warning> : null}
+      </div>
+    );
+  }
+
+  const access = panel.recentTitle && panel.recent?.length;
+  const activity = panel.activityTitle && panel.activity?.length;
+  if (!access && !activity) return null;
   return (
-    <div data-host-panel={panel.configured ? "configured" : "not-configured"}>
-      <Group title={panel.title}>
-        <div className="px-4 py-3">
-          {notice ? (
-            // Relay sharing paused (signed out, or another account): one
-            // line in place of the summary, and its button.
-            <div className="flex items-center justify-between gap-3">
-              <p data-host-notice className="text-[13px]">
-                {notice}
-              </p>
-              {noticeAction ? (
-                <ActionButton action={noticeAction} primary disabled={host.busy} onPress={() => void host.run(noticeAction.id)} data-host-notice-action={noticeAction.id} />
-              ) : null}
-            </div>
-          ) : (
-            <p data-host-summary className="text-[13px]">
-              {panel.summary}
-            </p>
-          )}
-          {panel.intro ? <p className="mt-1 text-xs text-muted-foreground">{panel.intro}</p> : null}
-          {progress ? <Progress text={progress} /> : null}
-        </div>
-        {choices.map((c) => (
-          <Row key={c.id} label={c.label} data-host-choice={c.id}>
-            <Button size="sm" variant="outline" disabled={host.busy} onClick={() => host.openForm(c.id)}>
-              {c.buttonLabel}
-            </Button>
-          </Row>
-        ))}
-      </Group>
-
-      {panel.facts.length ? (
-        <Group>
-          {panel.facts.map((f) => (
-            <Row key={f.label} label={f.label} data-host-fact={f.label}>
-              <span className="truncate select-text">{f.value}</span>
-            </Row>
-          ))}
-        </Group>
-      ) : null}
-
-      {panel.toggles?.length ? (
-        <Group>
-          {panel.toggles.map((t) => (
-            <Row key={t.id} label={t.label} hint={t.help} data-host-toggle={t.id}>
-              <Switch checked={t.on} disabled={host.busy || !t.enabled} aria-label={t.label} onCheckedChange={() => void host.run(t.action)} />
-            </Row>
-          ))}
-          {panel.limits ? <p className="px-4 py-2.5 text-xs text-muted-foreground">{limitsFor(panel.limits, hostOs() === "macos")}</p> : null}
-        </Group>
-      ) : null}
-
-      {panel.providedTitle ? (
-        <Group title={panel.providedTitle}>
-          {panel.providedEmpty ? <p className="px-4 py-2.5 text-[13px] text-muted-foreground">{panel.providedEmpty}</p> : null}
-          <TimedRows rows={panel.provided ?? []} now={now} />
-        </Group>
-      ) : null}
-
-      {panel.accessWarning ? <Warning>{panel.accessWarning}</Warning> : null}
-      {panel.clientsTitle ? (
-        <Group title={panel.clientsTitle}>
-          {panel.clientsEmpty ? (
-            <p data-host-clients-empty className="px-4 py-2.5 text-[13px] text-muted-foreground">
-              {panel.clientsEmpty}
-            </p>
-          ) : null}
-          {panel.clients.map((c) => (
-            <p key={c} data-host-client className="truncate px-4 py-2.5 text-[13px]">
-              {c}
-            </p>
-          ))}
-        </Group>
-      ) : null}
-
-      {panel.recentTitle && panel.recent?.length ? (
+    <div className="mt-6" data-host-panel={panel.configured ? "configured" : "not-configured"}>
+      {access ? (
         // The newest few (repeats collapsed); the rest in a sheet, so the
         // page never grows with the log.
-        <Group title={panel.recentTitle} more={panel.recentMore ? <ShowAll label={panel.recentMore} data-host-more="access" onClick={() => setFullLog("access")} /> : null}>
-          <TimedRows rows={panel.recent} now={now} />
+        <Group title={panel.recentTitle!} more={panel.recentMore ? <ShowAll label={panel.recentMore} data-host-more="access" onClick={() => setFullLog("access")} /> : null}>
+          <TimedRows rows={panel.recent!} now={now} />
         </Group>
       ) : null}
-      {panel.activityWarning ? <Warning>{panel.activityWarning}</Warning> : null}
-      {panel.activityTitle && panel.activity?.length ? (
-        <Group title={panel.activityTitle} more={panel.activityMore ? <ShowAll label={panel.activityMore} data-host-more="activity" onClick={() => setFullLog("activity")} /> : null}>
-          <TimedRows rows={panel.activity} now={now} keep="head" />
+      {activity ? (
+        <Group title={panel.activityTitle!} more={panel.activityMore ? <ShowAll label={panel.activityMore} data-host-more="activity" onClick={() => setFullLog("activity")} /> : null}>
+          <TimedRows rows={panel.activity!} now={now} keep="head" />
         </Group>
       ) : null}
-
-      {panel.permissionsTitle ? (
-        <Group title={panel.permissionsTitle}>
-          {panel.permissions.map((p) => (
-            <Row key={p.id} label={p.title} hint={p.help} data-host-permission={p.id}>
-              {p.settingsUrl ? (
-                <Button size="sm" variant="outline" onClick={() => void openSettings(p.settingsUrl!)}>
-                  {panel.openSettingsLabel}
-                </Button>
-              ) : null}
-            </Row>
-          ))}
-        </Group>
-      ) : null}
-
-      {host.error ? (
-        // A button that failed: what happened in plain words, Retry, and
-        // the raw error under Details.
-        <div className="mb-6 rounded-xl border bg-card px-4 py-3 shadow-xs">
-          <FailureView failure={host.error} retrying={host.busy} onRetry={() => void host.retry()} />
-        </div>
-      ) : null}
-
-      {choices.length === 0 && panel.actions.length ? (
-        // Pinned under the page: Stop sharing and Remove stay in view
-        // however long the logs get.
-        <div data-host-actions className="sticky bottom-0 z-10 -mx-1 mb-2 flex gap-2 border-t bg-background/90 px-1 py-3 backdrop-blur">
-          {panel.actions.map((a, i) => (
-            <ActionButton key={a.id} action={a} primary={i === 0} disabled={host.busy} onPress={() => press(a)} data-host-action={a.id} />
-          ))}
-        </div>
-      ) : null}
-
       <HostLogDialog
         open={fullLog !== null}
         onOpenChange={(o) => !o && setFullLog(null)}
@@ -185,17 +111,6 @@ export function ThisMachine({ panel, progress }: { panel: HostPanelView; progres
         keep={fullLog === "activity" ? "head" : "tail"}
         now={now}
       />
-
-      <ConfirmDialog
-        open={confirming !== null}
-        onOpenChange={(o) => !o && setConfirming(null)}
-        title={confirming?.confirm?.title ?? ""}
-        description={confirming?.confirm?.message ?? ""}
-        confirmLabel={confirming?.confirm?.confirmLabel ?? ""}
-        cancelLabel={confirming?.confirm?.cancelLabel}
-        destructive
-        onConfirm={() => confirming && void host.run(confirming.id)}
-      />
     </div>
   );
 }
@@ -203,30 +118,6 @@ export function ThisMachine({ panel, progress }: { panel: HostPanelView; progres
 /* ---- The setup form ------------------------------------------------------------- */
 
 type FormHost = Pick<ReturnType<typeof useThisMachine>, "send" | "submit" | "closeForm">;
-
-/** A host action button: the core's label, disabled when it says so, with its help as the tooltip. */
-function ActionButton({
-  action: a,
-  primary,
-  disabled,
-  onPress,
-  ...data
-}: { action: HostAction; primary: boolean; disabled: boolean; onPress: () => void } & Record<`data-${string}`, string>) {
-  return (
-    <span title={a.help ?? undefined} className="inline-flex">
-      <Button
-        {...data}
-        size="sm"
-        variant={primary ? (a.destructive ? "destructive" : "default") : "outline"}
-        className={cn(!primary && a.destructive && "text-destructive")}
-        disabled={disabled || a.enabled === false}
-        onClick={onPress}
-      >
-        {a.label}
-      </Button>
-    </span>
-  );
-}
 
 const TEXT_ACTION: Record<string, (text: string) => Parameters<FormHost["send"]>[0]> = {
   allow: (allow) => ({ type: "set-allow", allow }),
@@ -256,6 +147,9 @@ export function HostSetupForm({
   return (
     <form
       data-host-form
+      // Advanced (Direct connection, your own relay) is open only when
+      // Settings → Advanced opened the form; there is no toggle here.
+      data-host-advanced={view.advancedOpen ? "open" : "closed"}
       onSubmit={(e) => {
         e.preventDefault();
         if (view.canSubmit) void host.submit();
@@ -268,15 +162,6 @@ export function HostSetupForm({
         {basic.map((f) => (
           <Field key={f.id} field={f} host={host} />
         ))}
-        <button
-          type="button"
-          data-host-advanced={view.advancedOpen ? "open" : "closed"}
-          onClick={() => host.send({ type: "toggle-advanced" })}
-          className="flex w-full cursor-default items-center gap-1 px-4 py-2.5 text-left text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:text-foreground"
-        >
-          {view.advancedOpen ? <ChevronDownIcon className="size-3.5" /> : <ChevronRightIcon className="size-3.5" />}
-          {view.advancedLabel}
-        </button>
         {advanced.map((f) => (
           <Field key={f.id} field={f} host={host} />
         ))}
@@ -442,6 +327,30 @@ export function FailureView({ failure, retrying, onRetry }: { failure: HostFailu
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const details = failure.details && failure.details !== failure.message ? failure.details : null;
+  // One automatic retry per setup: a second throttle waits for the user.
+  const autoRetried = useRef(false);
+  const wait = autoRetried.current ? null : throttleSeconds(failure.details ?? failure.message);
+  const [left, setLeft] = useState<number | null>(wait);
+  // A throttled setup counts down live, then tries again once.
+  useEffect(() => {
+    if (wait === null) return setLeft(null);
+    let n = wait;
+    setLeft(n);
+    const timer = setInterval(() => {
+      n -= 1;
+      if (n > 0) return setLeft(n);
+      clearInterval(timer);
+      setLeft(null);
+      if (!retrying) {
+        autoRetried.current = true;
+        onRetry();
+      }
+    }, 1000);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [failure]);
+  const manual = autoRetried.current ? throttleSeconds(failure.details ?? failure.message) : null;
+  const message = manual ? `Wait ${manual} ${manual === 1 ? "second" : "seconds"}, then try again.` : left === null ? failure.message : `Trying again in ${left} ${left === 1 ? "second" : "seconds"}.`;
   return (
     <div data-host-failure className="text-[13px]">
       <div className="flex items-center gap-2">
@@ -455,7 +364,7 @@ export function FailureView({ failure, retrying, onRetry }: { failure: HostFailu
       </div>
       {failure.title ? (
         <p data-host-failure-message className="mt-1 text-xs text-muted-foreground">
-          {failure.message}
+          {message}
         </p>
       ) : null}
       {details ? (

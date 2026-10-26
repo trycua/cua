@@ -23,8 +23,7 @@ exactly three things:
 ### Where episodes run
 
 cua-bench 0.3 runs every task in a real sandbox: the bundled envs declare
-`provider: "native"` and run in the local Linux container by default (`--on
-cloud` / `CUA_BENCH_ON=cloud` for Fleet). The pages open with
+`provider: "native"` and run in the local Linux container by default. The pages open with
 `session.launch_window`, which needs bench-ui in the image. cua-bench's
 Playwright `simulated` provider was removed in 0.3 (a task that still asks
 for it runs on the Linux container with a deprecation warning), so

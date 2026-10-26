@@ -67,6 +67,17 @@
       "metering": "free"
     },
     {
+      "tool": "resize_space",
+      "sdk_symbol": "Space::resize",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
       "tool": "start_space",
       "sdk_symbol": "Space::start",
       "providers": [
@@ -945,6 +956,116 @@
         "relay"
       ],
       "metering": "free"
+    },
+    {
+      "tool": "cloud_plan",
+      "sdk_symbol": "Connection::cloud_plan",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "cloud_hosts",
+      "sdk_symbol": "Connection::cloud_hosts",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "cloud_add_host",
+      "sdk_symbol": "Connection::cloud_add_host",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "cloud_remove_host",
+      "sdk_symbol": "Connection::cloud_remove_host",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "cloud_budget",
+      "sdk_symbol": "Connection::cloud_budget",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "cloud_reconcile",
+      "sdk_symbol": "Connection::cloud_reconcile",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "prewarm",
+      "sdk_symbol": "Connection::prewarm",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "prewarm_list",
+      "sdk_symbol": "Connection::prewarm_list",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "prewarm_remove",
+      "sdk_symbol": "Connection::prewarm_remove",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "cloud_audit",
+      "sdk_symbol": "Connection::cloud_audit",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
     }
   ],
   "honesty": {
@@ -958,10 +1079,6 @@
     "provider_server_backstop": [
       {
         "provider": "local",
-        "server_backstop": false
-      },
-      {
-        "provider": "fleet",
         "server_backstop": false
       },
       {
@@ -1003,8 +1120,8 @@
       "is_ready": true
     },
     {
-      "id": "fleet:cua-spaces-demo:claim-77",
-      "provider": "fleet",
+      "id": "direct:10.1.2.3:3211",
+      "provider": "direct",
       "operating_system": "linux",
       "state": "ready",
       "raw_phase": "Bound",
@@ -1043,7 +1160,7 @@
   },
   "attach_to_absent_space": {
     "tag": "SpaceUnavailable",
-    "message": "Space fleet:not-here unavailable: not among the 3 Spaces this account can see"
+    "message": "Space local:not-here unavailable: not among the 3 Spaces this account can see"
   },
   "windows": [
     {
@@ -1335,7 +1452,7 @@
     },
     "wrong_space": {
       "tag": "TeleportRefused",
-      "message": "teleport refused: this approval was granted for fleet:elsewhere, not local:cua-space-fixture01"
+      "message": "teleport refused: this approval was granted for local:elsewhere, not local:cua-space-fixture01"
     }
   },
   "teleport_server_default": {

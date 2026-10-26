@@ -14,12 +14,9 @@ import WebKit
 public struct WebUIActions {
     /// A Space's desktop in its own native window (video stays native).
     public var openSpace: (String) -> Void
-    /// The native main window (a passphrase is chosen there).
-    public var openMain: () -> Void
 
-    public init(openSpace: @escaping (String) -> Void, openMain: @escaping () -> Void) {
+    public init(openSpace: @escaping (String) -> Void) {
         self.openSpace = openSpace
-        self.openMain = openMain
     }
 }
 
@@ -44,8 +41,8 @@ public struct WebUIActions {
 /// shows. `spaces.createProgress` carries a create's progress (the page's
 /// pending id), and `spaces.newRequested` (`{on}`) asks the page to open
 /// its New Space wizard (the app's New Space menu items, the notch).
-/// `settings.openRequested` asks the page to open its Settings (the app
-/// menu's Settings command, ⌘,, while the New UI window is in front).
+/// `settings.openRequested` asks the page to open its Settings (⌘, and every
+/// other Settings item, while the window is open; there is no native one).
 /// `window.dropTarget` (`{spaceId}`, null for none) names the Space tile a
 /// real window is being dragged over (`window.setDropTargets` said where the
 /// tiles are; the notch's drag monitor follows the drag).
@@ -66,12 +63,17 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
     static let methods = [
         "app.info",
         "session.get", "session.signIn", "session.signOut",
+        // The first run: the shared web onboarding asks whether it is due and
+        // finishes it here, as the Electron shell's handlers do.
+        "onboarding.get", "onboarding.complete",
         "spaces.list", "spaces.open",
         "spaces.createOptions", "spaces.create",
         "spaces.setPower", "spaces.delete", "spaces.cancelCreate",
         "machines.list", "host.status",
         "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
-        "agents.setup", "agents.configure",
+        "agents.setup", "agents.configure", "agents.signIn",
+        // Start a run in a Space and reply to it (the daemon's agent_start, agent_message).
+        "agents.start", "agents.message",
         // A persistent agent's Memory, Routines and Access (`PersistentModel`).
         "agents.detail", "agents.readFile", "agents.restoreFile", "agents.addRoutine", "agents.setRoutine",
         "agents.removeRoutine", "agents.allowComputer", "agents.revokeComputer",
@@ -82,7 +84,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "spaces.add", "clouds.status", "clouds.test", "clouds.connect",
         "teleport.catalog", "teleport.entryForPath", "teleport.windows", "teleport.remoteWindows",
         "teleport.icon", "teleport.thumbnail", "teleport.plan", "teleport.run", "teleport.sites",
-        "teleport.remembered", "teleport.streamWindow", "sharing.list", "sharing.share", "sharing.unshare",
+        "teleport.remembered", "teleport.streamWindow", "sharing.list", "sharing.share", "sharing.unshare", "sharing.removals", "sharing.ackRemovals",
         "volume.overview", "volume.storage", "volume.storageSet", "volume.mount", "volume.unmount",
         "volume.approve", "volume.deny", "volume.revoke", "volume.resolve", "volume.reveal",
         "agents.setupDriver",
@@ -91,7 +93,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "devices.revoke", "devices.confirmMachine", "devices.createPairingCode", "devices.pairingCodes",
         "devices.revokePairingCode", "teams.list", "storage.get", "storage.run",
         "notifications.list", "notifications.markAllRead", "notifications.markRead",
-        "telemetry.track", "spaces.usage", "spaces.windows", "stream.pip",
+        "telemetry.track", "telemetry.linkNotice", "telemetry.acknowledgeLinkNotice", "crashReporting.config", "spaces.usage", "spaces.windows", "stream.pip",
         // A Space's thumbnail (WebUIBridge+Thumbnails.swift).
         "spaces.thumbnail",
         // A Space's drop well: Send file… and dropped files (WebUIBridge+Files.swift).
@@ -109,12 +111,30 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "startup.get", "startup.act",
         // The relay allowance this month (WebUIBridge+Pages.swift).
         "relay.usage",
+        // The risky-action question's request files (WebUIBridge+Nudges.swift).
+        "nudges.pending", "nudges.answer",
+        // Processor, memory and disk (WebUIBridge+Pages.swift).
+        "resources.get",
+        // The Machines page's rename, Remove from account and each machine's
+        // health checks (WebUIBridge+Pages.swift).
+        "machines.rename", "machines.remove", "machines.checkHealth",
         // The getting-started checklist: the app's one copy (`ChecklistModel`).
         "checklist.get", "checklist.send",
+        // Links to things you run (WebUIBridge+Pages.swift).
+        "links.list", "links.create", "links.stop",
+        // The bundled CLI on PATH (WebUIBridge+Cli.swift).
+        "cli.plan", "cli.install",
     ]
 
     let model: AppModel
     var actions: WebUIActions?
+    /// The app core's CLI installer for this app (tests give their own paths).
+    var makeCliInstaller: () -> AppCliInstaller = {
+        AppCliInstaller.forExecutable(executable: Bundle.main.executablePath ?? "")
+    }
+    /// The CLI's install plan as last read (`settings.get`'s `cli`).
+    var cliPlan: AppCliInstallPlan?
+    var cliPlanRequested = false
     weak var host: WebUIWindowController?
     /// What each `followChanges` event last saw.
     private var signatures: [String: String] = [:]
@@ -147,6 +167,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
     var offeredPaths: Set<String> = []
     /// "Send file…"'s picker (a test sets its own).
     var pickFiles: @MainActor () -> [URL]? = WebUIBridge.openPanel
+    /// The "<Space> is ready" notification of a create the onboarding
+    /// started (a test sets its own).
+    var notifySpaceReady: @MainActor (SpaceReadyNote) -> Void = { SpaceReadyNotifier.shared.post($0) }
     /// The pasteboard of the last drag onto the window (a test sets its own).
     var dragPasteboard: @MainActor () -> NSPasteboard = { NSPasteboard(name: .drag) }
     /// Origins allowed to call (the bundled UI, and the dev server in a
@@ -238,13 +261,20 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
 
         case "session.get": return session()
         case "session.signIn":
-            // The browser flow can take minutes: answer now, and
-            // `session.changed` follows when it ends.
-            Task { @MainActor in await model.beginSignIn() }
+            // The browser flow can take minutes: answer now (already
+            // "starting", so an earlier failure never reads as this one's),
+            // and `session.changed` follows each step until it ends.
+            // `code`: the page's "Get a code instead" (the browser never got back to the app).
+            if let current = model.startSignIn(code: (args["code"] as? Bool) == true) {
+                Task { @MainActor in await model.runSignIn(current) }
+            }
             return session()
         case "session.signOut":
             await model.signOut()
             return session()
+
+        case "onboarding.get": return onboarding()
+        case "onboarding.complete": return try completeOnboarding(args)
 
         case "spaces.list": return spaces()
         case "spaces.open":
@@ -276,10 +306,17 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             return machines()
         case "host.status":
             if model.host.state == nil, model.servicesIn { await model.host.refresh() }
-            return hostStatus()
+            // The permissions page also asks for Local Network: the daemon
+            // checks it in the background (its connect makes macOS ask), and
+            // the page reads the answer on its next poll.
+            let localNetwork = (args["localNetwork"] as? Bool) == true
+            if localNetwork, model.servicesIn {
+                Task { @MainActor [model] in await model.checkLocalNetworkFromDaemon() }
+            }
+            return hostStatus(localNetwork: localNetwork)
 
         case "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
-             "agents.setup", "agents.configure":
+             "agents.setup", "agents.configure", "agents.signIn", "agents.start", "agents.message":
             return try await agents(method, args)
 
         case "checklist.get": return ["state": model.checklist.stored]
@@ -290,7 +327,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
              "agents.removeRoutine", "agents.allowComputer", "agents.revokeComputer":
             return try await agentDetail(method, args)
 
-        case "settings.get": return settings()
+        case "settings.get":
+            model.refreshTelemetry()
+            return settings()
         case "settings.choose":
             let row = try string(args, "row"), option = try string(args, "option")
             if row == "update-channel" {
@@ -380,6 +419,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             if let result = try await routeThumbnail(method, args) { return result }
             if let result = try await routeFiles(method, args) { return result }
             if let result = try await routePage(method, args) { return result }
+            if let result = try routeNudges(method, args) { return result }
+            if let result = try await routeCli(method, args) { return result }
             throw Failure.unimplemented(method)
         }
     }
@@ -406,7 +447,25 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             // The page a waiting sign-in finishes on, to show and copy.
             "signInUrl": model.signInURL?.absoluteString ?? NSNull(),
             "chrome": BridgeValue.encode(model.chrome),
+            "onboarding": onboarding(),
         ]
+    }
+
+    /// The first run's state (`onboarding.get`): due until it finishes.
+    func onboarding() -> [String: Any] {
+        ["completed": model.onboarding.completed, "mode": model.onboarding.mode == .host ? "host" : "client"]
+    }
+
+    /// `onboarding.complete {mode, launchAtLogin?}`: "Start using Cua Spaces".
+    /// Saved to `onboarding.json`, Done's "Launch at login" applied, the usage
+    /// notice counted as shown. The page goes on to Spaces in the same window.
+    func completeOnboarding(_ args: [String: Any]) throws -> [String: Any] {
+        guard let word = args["mode"] as? String, word == "client" || word == "host" else {
+            throw Failure.badArgs("mode: client | host")
+        }
+        model.onboarding.finish(mode: word == "host" ? .host : .client, launchAtLogin: args["launchAtLogin"] as? Bool)
+        model.telemetrySink?.acknowledgeNotice()
+        return onboarding()
     }
 
     func spaces() -> [String: Any] {
@@ -426,13 +485,25 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             "rosterError": model.rosterError ?? NSNull(),
             // Another app keeps its own daemon and this app uses it (null otherwise).
             "daemonNotice": model.daemonNotice ?? NSNull(),
+            // Some of your computers have not answered yet (`Spaces.list_known`):
+            // the page shows what is known and "Reaching N computers…", never
+            // "Create your first Space".
+            "incomplete": model.listIncomplete,
+            "reaching": Int(model.listReaching),
+            // Your other computers' rows are the last known ones, not yet confirmed.
+            "stale": model.listStale,
         ]
     }
 
     func machines() -> [String: Any] {
         let sidebar = model.sidebar
         return [
-            "thisMachine": BridgeValue.encode(sidebar.thisMachine),
+            // The web page reads the status as text.
+            "thisMachine": sidebar.thisMachine.map { row -> Any in
+                var out = BridgeValue.encode(row) as? [String: Any] ?? [:]
+                out["statusText"] = CoreMessages.text(row.statusText)
+                return out
+            } ?? NSNull(),
             "sections": BridgeValue.encode(sidebar.sections),
             "devices": model.devices.snapshot == nil ? NSNull() : BridgeValue.encode(model.devices.view),
             "accessNotice": BridgeValue.encode(model.devices.accessNotice),
@@ -449,6 +520,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             // The page's rows as the core lists them (`machines::page_rows`,
             // what the native Machines page shows).
             "rows": BridgeValue.encode(model.machinePageRows),
+            // The page as the core draws it (`machines_view::view`, what the
+            // native Machines page shows).
+            "view": BridgeValue.encode(model.machinesView),
         ]
     }
 
@@ -466,6 +540,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             // The account app (CUA_ENV, CUA_ACCOUNT_APP_URL): the page's core
             // has no environment, so Upgrade's billing fallback names this one.
             "accountUrl": appAccountAppUrl(),
+            // The CLI this app installs and whether it is here (WebUIBridge+Cli.swift).
+            "cli": cliSetting(),
         ]
     }
 
@@ -481,7 +557,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         host?.emit("spaces.newRequested", payload: ["on": on.map { $0 as Any } ?? NSNull()])
     }
 
-    // MARK: - Settings (the app menu's command while this window is in front)
+    // MARK: - Settings (⌘, and the other Settings items while this window is open)
 
     /// Asks the page to go to its Settings; queued until the page listens.
     func requestSettings() {
@@ -506,9 +582,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
 
     /// `spaces.createOptions`: the env the native New Space sheet opens
     /// with (`AppModel.newSpaceEnv`: this Mac's runtimes, storage and GPUs,
-    /// your machines that provide Spaces, your clouds, pricing), which the
+    /// your machines that provide Spaces, your clouds), which the
     /// page's wizard runs on as it is, in the shape of the web bridge's
-    /// `NewSpaceOptions` (`local`, `gpus` and `cloudPricing` from the same
+    /// `NewSpaceOptions` (`local` and `gpus` from the same
     /// env, for readers that don't take `env`), and the macOS VMs running
     /// on this Mac (`macosVmsRunning`: Apple's limit of two counts every
     /// one, Spaces or not).
@@ -536,7 +612,6 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
                 "storage": BridgeValue.encode(env.storage),
             ] as [String: Any],
             "gpus": BridgeValue.encode(env.gpus),
-            "cloudPricing": BridgeValue.encode(env.cloudPricing),
             "experiments": BridgeValue.encode(env.experiments),
             "maxCpus": NSNumber(value: env.maxCpus),
             "env": BridgeValue.encode(env),
@@ -546,12 +621,16 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         return out
     }
 
-    /// `spaces.create {config, pendingId, os?}`: the core's create
-    /// arguments (`wizard.createArgs`), run as the native sheet's Create
-    /// runs them (`AppModel.runCreate`: the pending row in the list and the
-    /// notch, the SDK's progress, Cancel through `spaces.cancelCreate`).
-    /// Progress goes to the page as `spaces.createProgress`; the answer is
-    /// the new Space, or `cancelled`.
+    /// `spaces.create {config, pendingId, os?, notifyWhenReady?}`: the core's
+    /// create arguments (`wizard.createArgs`), run as the native sheet's
+    /// Create runs them (`AppModel.runCreate`: the pending row in the list
+    /// and the notch, the SDK's progress, Cancel through
+    /// `spaces.cancelCreate`). Progress goes to the page as
+    /// `spaces.createProgress`; the answer is the new Space, or `cancelled`.
+    /// The create belongs to the app, not to the window: it runs on when the
+    /// window is closed, and `notifyWhenReady` (a create the onboarding
+    /// started) posts "<Space> is ready" as a system notification when it
+    /// succeeds, window or not.
     func create(_ args: [String: Any]) async throws -> Any {
         let pendingId = try string(args, "pendingId")
         guard appCreatesIsPending(id: pendingId) else { throw Failure.badArgs("pendingId: pending:<id>") }
@@ -561,13 +640,24 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         let os = (args["os"] as? String).flatMap(AppSpaceOs.init(word:)) ?? .unknown
         let id: String
         do {
-            id = try await model.runCreate(createArgs, os: os, pendingId: pendingId) { [weak self] p in
+            id = try await model.runCreate(createArgs, os: os, pendingId: pendingId, progress: { [weak self] p in
                 self?.host?.emit("spaces.createProgress", payload: Self.progress(p, pendingId: pendingId))
-            }
+            }, retrying: { [weak self] error, variant in
+                // The model runs it once more: the page shows "Retrying…".
+                self?.host?.emit("spaces.createProgress", payload: [
+                    "pendingId": pendingId, "phase": "preparing", "detail": "",
+                    "retry": ["error": error, "errorVariant": variant],
+                ] as [String: Any])
+            })
         } catch where isCancelled(error) {
             throw Failure(code: "cancelled", message: "cancelled")
         }
-        if let space = model.spaces.first(where: { $0.id == id }) { return BridgeValue.encode(space) }
+        let made = model.spaces.first(where: { $0.id == id })
+        if args["notifyWhenReady"] as? Bool == true {
+            let known = made.map(\.os).flatMap { $0 == .unknown ? nil : $0 } ?? os
+            notifySpaceReady(SpaceReadyNote(spaceId: id, name: made?.name ?? createArgs.name ?? id, os: known))
+        }
+        if let space = made { return BridgeValue.encode(space) }
         return ["id": id, "name": createArgs.name ?? id, "os": BridgeValue.encode(os), "status": "running",
                 "detail": "", "lastUsedAt": Double(AppModel.nowMs())] as [String: Any]
     }
@@ -595,8 +685,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         case "runc": runtime = .runc
         case "qemu": runtime = .qemu
         case "lume": runtime = .lume
-        case "kubevirt": runtime = .kubevirt
-        default: throw Failure.badArgs("config.runtime: auto | gvisor | runc | qemu | lume | kubevirt")
+        default: throw Failure.badArgs("config.runtime: auto | gvisor | runc | qemu | lume")
         }
         func count(_ key: String) -> UInt32? { (c[key] as? NSNumber).map { $0.uint32Value } }
         let text = { (key: String) in (c[key] as? String).flatMap { $0.isEmpty ? nil : $0 } }
@@ -633,6 +722,18 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             let max = (args["max"] as? NSNumber)?.uint32Value
             return try await persistent.runEvents(space: try string(args, "spaceId"), runId: try string(args, "runId"),
                                                   cursor: cursor, max: max)
+        case "agents.start":
+            let spaceId = try string(args, "spaceId"), agent = try string(args, "agent"), prompt = try string(args, "prompt")
+            guard persistent.canCallTools else { throw Failure.unsupported("Starting a run needs the cua daemon") }
+            let text = { (key: String) in (args[key] as? String).flatMap { $0.isEmpty ? nil : $0 } }
+            return try await persistent.startRun(space: spaceId, agent: agent, prompt: prompt, repo: text("repo"),
+                                                 branch: text("branch"), model: text("model"),
+                                                 envFromHost: (args["envFromHost"] as? [String]) ?? [])
+        case "agents.message":
+            let spaceId = try string(args, "spaceId"), runId = try string(args, "runId"), text = try string(args, "text")
+            guard persistent.canCallTools else { throw Failure.unsupported("Replying to a run needs the cua daemon") }
+            return try await persistent.sendMessage(space: spaceId, runId: runId, text: text,
+                                                    force: (args["force"] as? Bool) ?? false)
         case "agents.pause", "agents.resume":
             let name = try string(args, "name")
             guard !persistent.agentsState.busy else { throw Failure(code: "failed", message: "Another change is still running") }
@@ -650,6 +751,12 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             } else {
                 await model.agentAction(try strings(args, "agents"), remove: false)
             }
+            return BridgeValue.encode(model.agentRows ?? [])
+        case "agents.signIn":
+            guard model.agentSetup != nil else { throw Failure.unsupported("Agent setup is not available in this build") }
+            do { try await model.agentSignIn(try string(args, "agent")) }
+            catch let f as Failure { throw f }
+            catch { throw Failure(code: "failed", message: LiveSpacesBackend.words(error)) }
             return BridgeValue.encode(model.agentRows ?? [])
         default:
             throw Failure.unimplemented(method)
@@ -751,10 +858,26 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
     /// `HostStatus`, with the signed-in `account` it was checked against),
     /// plus its relay machine id and what a running setup or Sign In waits
     /// for (`progress`); null until it answered.
-    func hostStatus() -> Any {
+    func hostStatus(localNetwork: Bool = false) -> Any {
         guard let state = model.host.state, var out = BridgeValue.encode(state) as? [String: Any] else { return NSNull() }
+        // A Mac that runs macOS Spaces needs Local Network access for the
+        // daemon: listed (granted or not) for the permissions page, which
+        // asks the daemon to check it. Not for Spaces-less Macs or Intel.
+        if localNetwork, state.provideSpaces, AppModel.hostArch == "arm64" {
+            var list = out["permissions"] as? [[String: Any]] ?? []
+            list.append([
+                "id": "local-network", "title": "Local Network",
+                "settingsUrl": "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork",
+                "instructions": NSNull(), "granted": model.daemonLocalNetworkAllowed == true,
+            ])
+            out["permissions"] = list
+        }
         out["machineId"] = model.host.machineId ?? NSNull()
         out["progress"] = model.host.progress ?? NSNull()
+        // The name System Settings lists this app under ("Cua Spaces Local"),
+        // for the permissions screen's words.
+        out["appName"] = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
+            ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? NSNull()
         // Before setup the host has no name yet: the web UI's setup form
         // starts with what the system calls this Mac, as the native one does.
         if !state.configured, (out["name"] as? String)?.isEmpty ?? true, let name = model.host.computerName() {
@@ -916,7 +1039,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
 
     // MARK: - The checklist
 
-    /// A page's checklist action: a step done, shown, closed, opened again,
+    /// A page's checklist action: a step done or skipped, shown, closed, opened again,
     /// or progress the page kept itself before (merged once). What the app
     /// shows ticks steps off here, not in the page (`AppModel.followChecklist`).
     func checklistAction(_ raw: Any?) throws -> AppChecklistAction {
@@ -929,16 +1052,22 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
                   let step = ChecklistModel.words.first(where: { $0.1 == word })?.0
             else { throw Failure.badArgs("step: one of the checklist's steps") }
             return .done(step: step)
+        case "skip":
+            guard let word = a["step"] as? String,
+                  let step = ChecklistModel.words.first(where: { $0.1 == word })?.0
+            else { throw Failure.badArgs("step: one of the checklist's steps") }
+            return .skip(step: step)
         case "shown": return .shown
         case "dismiss": return .dismiss
         case "reopen": return .reopen
         case "merge":
-            guard let s = a["state"] as? [String: Any] else { throw Failure.badArgs("state: {done, dismissed, shown}") }
+            guard let s = a["state"] as? [String: Any] else { throw Failure.badArgs("state: {done, dismissed, shown, skipped}") }
             return .merge(state: ChecklistModel.state(done: s["done"] as? [String] ?? [],
                                                       dismissed: s["dismissed"] as? Bool ?? false,
-                                                      shown: s["shown"] as? Bool ?? false))
+                                                      shown: s["shown"] as? Bool ?? false,
+                                                      skipped: s["skipped"] as? [String] ?? []))
         default:
-            throw Failure.badArgs("action: done, shown, dismiss, reopen or merge")
+            throw Failure.badArgs("action: done, skip, shown, dismiss, reopen or merge")
         }
     }
 
@@ -948,17 +1077,20 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
     func startEvents() {
         followStartup()
         follow("spaces.changed") { [weak self, model] in
-            _ = (model.spaces, model.selectedSpaceId, model.loaded, model.rosterError, model.daemonNotice)
+            _ = (model.spaces, model.selectedSpaceId, model.loaded, model.rosterError, model.daemonNotice,
+                 model.listIncomplete, model.listReaching, model.listStale)
             self?.pruneStreams()
         }
         follow("keyvault.changed") { [model] in _ = (model.keyvault.overview, model.keyvault.busy, model.keyvault.dismissed) }
-        follow("session.changed") { [model] in _ = (model.identity, model.signIn, model.cloudConfigured) }
+        follow("session.changed") { [model] in
+            _ = (model.identity, model.signIn, model.cloudConfigured, model.onboarding.completed)
+        }
         follow("settings.changed") { [model] in _ = model.settings }
         // These views are rewritten on every read, so the event goes out
         // only when what the page shows differs.
         followChanges("machines.changed") { [weak self] in
             guard let self else { return "" }
-            return Self.signature([self.hostStatus(), BridgeValue.encode(self.model.devices.view)])
+            return Self.signature([self.hostStatus(), BridgeValue.encode(self.model.devices.view), self.model.updates.updateState.json])
         }
         followChanges("update.changed") { [model] in Self.signature(model.updates.updateState.json) }
         followChanges("checklist.changed") { [model] in Self.signature(model.checklist.stored) }

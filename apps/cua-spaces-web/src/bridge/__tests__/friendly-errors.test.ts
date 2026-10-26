@@ -3,7 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { limitsFor, plainJoinError, plainPairingError, stripInternalPrefixes } from "../friendly-errors";
+import { throttleSeconds, limitsFor, plainJoinError, plainThrottleError, plainPairingError, stripInternalPrefixes } from "../friendly-errors";
 
 let warn: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
@@ -21,7 +21,7 @@ describe("plain host errors", () => {
   it("joins: a bad code is one plain line, and the raw text goes to the log", () => {
     const raw = "cua: unauthenticated: host setup failed at register: relay: pairing code is not valid";
     const text = plainJoinError(new Error(raw));
-    expect(text).toBe("That code didn't work. It may be used, expired or mistyped. Make a new one in Add a machine.");
+    expect(text).toBe("That code didn't work. It may be used, expired or mistyped. Make a new one in Add a computer.");
     expect(warn).toHaveBeenCalledWith(expect.any(String), raw);
   });
 
@@ -30,9 +30,28 @@ describe("plain host errors", () => {
     expect(plainJoinError(new Error("cua host setup timed out"))).toMatch(/took too long/);
   });
 
+  it("joining and pairing say how long to wait when the server is throttling, never the raw 429", () => {
+    const own = "http: Too many attempts right now. Wait 4 seconds, then try again.";
+    expect(plainJoinError(new Error(own))).toBe("Too many attempts right now. Wait 4 seconds, then try again.");
+    expect(plainPairingError(new Error(own))).toBe("Too many attempts right now. Wait 4 seconds, then try again.");
+    const old = new Error("http: relay: HTTP 429: Too Many Requests");
+    expect(plainJoinError(old)).toBe("Too many attempts right now. Wait a few seconds, then try again.");
+    expect(plainPairingError(old)).not.toMatch(/429|relay/i);
+  });
+
+  it("reads the wait to count down from", () => {
+    expect(throttleSeconds("http: Too many attempts right now. Wait 12 seconds, then try again.")).toBe(12);
+    expect(throttleSeconds("http: relay: HTTP 429: Too Many Requests")).toBeNull();
+  });
+
+  it("a 429 the relay explains is not a throttle and keeps its reason", () => {
+    expect(plainThrottleError("relay: HTTP 429: computer limit for this token reached")).toBeNull();
+    expect(plainPairingError(new Error("relay: HTTP 429: at most 5 unused pairing codes"))).toContain("at most 5 unused pairing codes");
+  });
+
   it("pairing: an unregistered computer is told to set up first", () => {
     const text = plainPairingError(new Error("not found: relay: no such device"));
-    expect(text).toBe("This computer isn't set up for access yet. Set it up first, then add machines.");
+    expect(text).toBe("This computer isn't set up for access yet. Set it up first, then add computers.");
   });
 
   it("pairing: other failures keep a plain reason", () => {

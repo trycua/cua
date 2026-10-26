@@ -7,21 +7,21 @@ import CuaSpacesFFI
 import Foundation
 import Testing
 
-/// With New UI on, the notch and the menu bar item open the New UI window at
-/// the page Electron opens for the same action; with it off, the native
-/// window or Settings as before.
+/// The notch, the menu bar item, the menus and notifications open the web UI
+/// window (the only main window) at the page Electron opens for the same
+/// action.
 @MainActor
 @Suite("Main UI routes", .serialized)
 struct MainUIRouteTests {
     init() { _ = NSApplication.shared }
 
-    func model(webUi: Bool) -> AppModel {
+    func model() -> AppModel {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cua-route-\(UUID().uuidString)")
         let m = AppModel(backend: FixtureSpacesBackend(), keyvault: KeyvaultModel(client: nil),
                          onboarding: OnboardingModel(statePath: dir.appendingPathComponent("onboarding.json").path),
                          settingsPath: dir.appendingPathComponent("settings.json").path,
                          telemetry: FixtureTelemetry())
-        m.settings.experiments = AppExperiments(cuaVolume: true, yourCloud: false, sharing: false, webUi: webUi)
+        m.settings.experiments = AppExperiments(cuaVolume: true, yourCloud: false, sharing: false, webUi: true)
         return m
     }
 
@@ -39,22 +39,44 @@ struct MainUIRouteTests {
         #expect(MainUIRoute.home.dropped.isEmpty)
     }
 
-    @Test func newUIOnOpensTheWebWindowElseTheNativeOne() {
-        for webUi in [true, false] {
-            var web: [MainUIRoute] = []
-            var native = 0
-            let router = MainUIRouter(model: model(webUi: webUi), web: { web.append($0) })
-            router.open(.space("s1")) { native += 1 }
-            router.open(.settings) { native += 1 }
-            #expect(web == (webUi ? [.space("s1"), .settings] : []))
-            #expect(native == (webUi ? 0 : 2))
-        }
+    /// Every route opens the web UI window, whatever an older build saved
+    /// for the New UI (there is no native window to fall back to).
+    @Test func everyRouteOpensTheWebWindow() {
+        let m = model()
+        m.settings.experiments.webUi = false
+        var web: [MainUIRoute] = []
+        let router = MainUIRouter(model: m, web: { web.append($0) })
+        router.open(.space("s1"))
+        router.open(.settings)
+        #expect(web == [.space("s1"), .settings])
+    }
+
+    /// Open, the Dock icon, ⌘⇧Space: the first run while it is due, else Spaces.
+    @Test func theMainWindowIsTheFirstRunUntilItIsDone() {
+        let m = model()
+        var web: [MainUIRoute] = []
+        let router = MainUIRouter(model: m, web: { web.append($0) })
+        router.openMain()
+        m.onboarding.finish()
+        router.openMain()
+        #expect(web == [.firstRunDue, .home])
+        #expect(MainUIRouter.launchRoute(onboarded: false) == .firstRunDue)
+        #expect(MainUIRouter.launchRoute(onboarded: true) == nil)
+    }
+
+    /// A click on a notification opens its page.
+    @Test func aNotificationOpensItsPage() {
+        let ready = SpaceReadyNote.identifierPrefix + "local:aurora"
+        #expect(MainUIRouter.route(forNotification: ready) == .space("local:aurora"))
+        #expect(MainUIRouter.route(forNotification: "device-abc").webPath == "/settings/devices")
+        #expect(MainUIRouter.route(forNotification: "agent-42") == .agents)
+        #expect(MainUIRouter.route(forNotification: "other") == .home)
     }
 
     /// The page gets `route.openRequested {path}`: queued until it listens
     /// (the latest wins), at once after.
     @Test func thePageIsToldWhereToGo() async {
-        let c = WebUIWindowController(model: model(webUi: true))
+        let c = WebUIWindowController(model: model())
         defer { c.window?.close() }
         let bridge = c.bridge
         var seen: [String] = []
@@ -75,7 +97,7 @@ struct MainUIRouteTests {
     /// A drop on a notch tile reaches the page's well by name, once, and is
     /// then sendable.
     @Test func aNotchDropIsHandedToThePageOnce() async throws {
-        let m = model(webUi: true)
+        let m = model()
         await m.refresh()
         let id = try #require(m.spaces.first?.id)
         let c = WebUIWindowController(model: m)
@@ -108,7 +130,7 @@ struct MainUIRouteTests {
         #expect(calls == ["main", "native settings", "list", "settings"])
     }
 
-    // MARK: - One main window: New UI replaces the native one
+    // MARK: - The web UI window
 
     /// A new window loads the page at its route (query included) rather
     /// than asking a page that may not listen yet.
@@ -121,7 +143,7 @@ struct MainUIRouteTests {
         let dev = URL(string: "http://localhost:5174/")!
         #expect(WebUIWindowController.url("/spaces/a%20b?dropped=%5B%5D", in: dev).absoluteString
                 == "http://localhost:5174/spaces/a%20b?dropped=%5B%5D")
-        let c = WebUIWindowController(model: model(webUi: true), route: MainUIRoute.settings.webPath)
+        let c = WebUIWindowController(model: model(), route: MainUIRoute.settings.webPath)
         defer { c.window?.close() }
         #expect(c.startURL.absoluteString.hasSuffix("/settings"))
     }
@@ -133,114 +155,6 @@ struct MainUIRouteTests {
         #expect(MainUIRouter.route(forNav: "nav.keyvault")?.webPath == "/keyvault")
         #expect(MainUIRouter.route(forNav: "nav.settings") == .settings)
         #expect(MainUIRouter.route(forNav: "nav.nope") == nil)
-    }
-
-    /// Only the main UI gives way: the launch and the first run stay in
-    /// the native window.
-    @Test func onlyTheMainUIGivesWayToNewUI() {
-        #expect(MainWindowSwitch.replacesNative(webUi: true, ready: true, onboarded: true))
-        #expect(!MainWindowSwitch.replacesNative(webUi: false, ready: true, onboarded: true))
-        #expect(!MainWindowSwitch.replacesNative(webUi: true, ready: false, onboarded: true))
-        #expect(!MainWindowSwitch.replacesNative(webUi: true, ready: true, onboarded: false))
-    }
-
-    /// A frame inside the screen (a CI runner's is small), so the window
-    /// server keeps it as given; `dx` tells two apart.
-    func onScreen(dx: CGFloat = 0) -> NSRect {
-        let v = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1024, height: 700)
-        return NSRect(x: v.minX + 20 + dx, y: v.minY + 20, width: min(760, v.width - 80), height: min(480, v.height - 60))
-    }
-
-    func nativeWindow(_ frame: NSRect) -> NSWindow {
-        let w = NSWindow(contentRect: frame, styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: true)
-        w.isReleasedWhenClosed = false
-        w.setFrame(frame, display: false)
-        return w
-    }
-
-    func settle() async {
-        await withCheckedContinuation { k in DispatchQueue.main.async { k.resume() } }
-        await withCheckedContinuation { k in DispatchQueue.main.async { k.resume() } }
-    }
-
-    /// Whatever opens the native window while New UI is on (the Dock, the
-    /// Window menu, a path not routed) gets New UI in its frame; it closes.
-    @Test func theNativeWindowOpeningWithNewUIOnIsReplacedInPlace() async {
-        let m = model(webUi: true)
-        m.onboarding.finish()
-        let w = nativeWindow(onScreen())
-        w.orderFront(nil)
-        let frame = w.frame
-        var opened: [NSRect?] = []
-        MainWindowSwitch.nativeAppeared(w, model: m, web: { opened.append($0) })
-        // Reported twice (its reader, its onAppear): replaced once.
-        MainWindowSwitch.nativeAppeared(nil, model: m, web: { opened.append($0) })
-        #expect(opened == [frame])
-        await settle()
-        #expect(!w.isVisible)
-        #expect(w.alphaValue == 1)
-    }
-
-    @Test func theNativeWindowStaysWithNewUIOff() async {
-        let m = model(webUi: false)
-        m.onboarding.finish()
-        let w = nativeWindow(onScreen())
-        w.orderFront(nil)
-        defer { w.close() }
-        var opened = 0
-        MainWindowSwitch.nativeAppeared(w, model: m, web: { _ in opened += 1 })
-        await settle()
-        #expect(opened == 0 && w.isVisible)
-    }
-
-    /// Turning New UI on with the native window up: New UI in its frame.
-    @Test func turningNewUIOnSwapsTheWindowInPlace() async {
-        let m = model(webUi: true)
-        m.onboarding.finish()
-        let w = nativeWindow(onScreen())
-        w.orderFront(nil)
-        let frame = w.frame
-        MainWindowSwitch.nativeWindow = w
-        var opened: [NSRect?] = []
-        MainWindowSwitch.switchToWebUI(model: m, web: { opened.append($0) })
-        #expect(opened == [frame])
-        await settle()
-        #expect(!w.isVisible)
-        // With no native window up (only Settings), New UI opens as at launch.
-        MainWindowSwitch.switchToWebUI(model: m, web: { opened.append($0) })
-        #expect(opened == [frame, nil])
-    }
-
-    /// Turning it off: the native window opens where New UI was.
-    @Test func turningNewUIOffOpensTheNativeWindowInItsFrame() async {
-        let m = model(webUi: false)
-        m.onboarding.finish()
-        let webFrame = onScreen(dx: 30)
-        var opened = 0
-        MainWindowSwitch.switchToNative(webFrame: webFrame, openMain: { opened += 1 })
-        #expect(opened == 1)
-        let w = nativeWindow(onScreen())
-        w.orderFront(nil)
-        defer { w.close() }
-        #expect(w.frame != webFrame)
-        MainWindowSwitch.nativeAppeared(w, model: m)
-        await settle()
-        #expect(w.frame == webFrame)
-        #expect(MainWindowSwitch.pendingNativeFrame == nil)
-    }
-
-    /// The setting's switch: on puts New UI in the native window's place,
-    /// off the reverse.
-    @Test func theSwitchSwapsTheWindows() {
-        let m = model(webUi: false)
-        var calls: [String] = []
-        m.openWebUI = { calls.append("open") }
-        m.closeWebUI = { calls.append("close") }
-        m.chooseExperiment(row: "experiment:web_ui", option: "on")
-        #expect(m.settings.experiments.webUi)
-        m.chooseExperiment(row: "experiment:web_ui", option: "on")
-        m.chooseExperiment(row: "experiment:web_ui", option: "off")
-        #expect(calls == ["open", "close"])
     }
 
     /// An app at `version` over the settings file `json` in a fresh
@@ -255,84 +169,32 @@ struct MainUIRouteTests {
                         settingsPath: path, telemetry: FixtureTelemetry(), appVersion: version)
     }
 
-    /// The New UI by default: an upgraded install's saved `webUi: false`
-    /// was never a choice, so Beta from the 0.8.1 betas opens the New UI; a
-    /// saved `true` is kept; Stable keeps classic until 0.8.1 (0.8.0 shipped
-    /// without the default).
-    @Test func theNewUIIsTheDefaultOnBetaAndAnOlderSavedOffIsNotAChoice() {
-        let old = #"{"updateChannel":"beta","experiments":{"cuaVolume":true,"webUi":false}}"#
-        #expect(launched(old, version: "0.8.1-beta.1").settings.experiments.webUi)
-        #expect(!launched(old, version: "0.8.0").settings.experiments.webUi)
-        #expect(launched(old, version: "0.8.1-beta.1").settings.newUi == nil)
-        let stable = #"{"updateChannel":"stable","experiments":{"webUi":false}}"#
-        #expect(!launched(stable, version: "0.8.1-beta.1").settings.experiments.webUi)
-        #expect(!launched(stable, version: "0.7.2").settings.experiments.webUi)
-        #expect(!launched(stable, version: "0.8.0").settings.experiments.webUi)
-        #expect(launched(stable, version: "0.8.1").settings.experiments.webUi)
-        let chosen = #"{"updateChannel":"stable","experiments":{"webUi":true}}"#
-        #expect(launched(chosen, version: "0.7.2").settings.newUi == true)
-        #expect(launched(chosen, version: "0.7.2").settings.experiments.webUi)
-        // A fresh install (no file): Stable until the first launch records Beta.
-        #expect(!launched(nil, version: "0.8.1-beta.1").settings.experiments.webUi)
-    }
-
-    /// "Use classic UI" swaps the windows in place, is saved as a choice,
-    /// and later launches (and later versions) keep it.
-    @Test func useClassicUIIsAChoiceLaterLaunchesKeep() {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cua-newui-\(UUID().uuidString)")
-        let m = launched(#"{"updateChannel":"beta"}"#, version: "0.8.1-beta.1", dir: dir)
-        #expect(m.settings.experiments.webUi)
-        var calls: [String] = []
-        m.openWebUI = { calls.append("open") }
-        m.closeWebUI = { calls.append("close") }
-        let classic = m.experimentsPage.sections.flatMap(\.rows).first { $0.id == "experiment:classic_ui" }
-        #expect(classic?.label == "Use classic UI")
-        #expect(classic?.options.first { $0.active }?.id == "off")
-        m.chooseExperiment(row: "experiment:classic_ui", option: "on")
-        #expect(calls == ["close"])
-        #expect(!m.settings.experiments.webUi)
-        #expect(appSettingsLoad(path: m.settingsPath).newUi == false, "saved as a choice")
-        for version in ["0.8.1-beta.1", "0.8.1-beta.2", "0.8.1"] {
-            #expect(!launched(nil, version: version, dir: dir).settings.experiments.webUi, "\(version)")
+    /// The migration: whatever an older build saved ("Use classic UI" on, a
+    /// never-chosen `webUi: false`, nothing), every launch reports the web
+    /// UI, and Settings has no "Use classic UI" row to turn it off.
+    @Test func everyInstallIsOnTheWebUIAndThereIsNoClassicSwitch() {
+        for json in [#"{"updateChannel":"stable","newUi":false,"experiments":{"webUi":false}}"#,
+                     #"{"updateChannel":"beta","experiments":{"cuaVolume":true,"webUi":false}}"#,
+                     nil] {
+            for version in ["0.8.0", "0.16.1"] {
+                let m = launched(json, version: version)
+                #expect(m.settings.experiments.webUi, "\(json ?? "none") \(version)")
+                #expect(!m.experimentsPage.sections.flatMap(\.rows).contains { $0.id.contains("classic_ui") })
+                m.chooseExperiment(row: "experiment:classic_ui", option: "on")
+                m.setUpdateChannel(.stable)
+                #expect(m.settings.experiments.webUi)
+            }
         }
-        // And back: the New UI, chosen.
-        let again = launched(nil, version: "0.8.1-beta.2", dir: dir)
-        again.openWebUI = { calls.append("open") }
-        again.chooseExperiment(row: "experiment:classic_ui", option: "off")
-        #expect(calls == ["close", "open"])
-        #expect(appSettingsLoad(path: again.settingsPath).newUi == true)
     }
 
-    /// Settings → About's channel moves the default (and the window) when
-    /// the user never chose; a choice stays put.
-    @Test func switchingChannelMovesTheDefaultNotAChoice() {
-        let m = launched(#"{"updateChannel":"beta"}"#, version: "0.8.1-beta.1")
-        var calls: [String] = []
-        m.openWebUI = { calls.append("open") }
-        m.closeWebUI = { calls.append("close") }
-        m.setUpdateChannel(.stable)
-        #expect(!m.settings.experiments.webUi)
-        #expect(appSettingsLoad(path: m.settingsPath).updateChannel == .stable)
-        m.setUpdateChannel(.beta)
-        #expect(m.settings.experiments.webUi)
-        #expect(calls == ["close", "open"])
-        m.chooseExperiment(row: "experiment:classic_ui", option: "on")
-        calls = []
-        m.setUpdateChannel(.stable)
-        m.setUpdateChannel(.beta)
-        #expect(!m.settings.experiments.webUi)
-        #expect(calls.isEmpty)
-    }
-
-    /// A prerelease's first launch starts on the Beta channel (and so
-    /// with the New UI); a release's on Stable; a later launch keeps the channel.
+    /// A prerelease's first launch starts on the Beta channel; a release's
+    /// on Stable; a later launch keeps the channel.
     @Test func aBetasFirstLaunchIsOnBeta() {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cua-newui-\(UUID().uuidString)")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let path = dir.appendingPathComponent("settings.json").path
         UpdateRefresh.record(settingsPath: path, version: "0.8.1-beta.1", build: "1", onboarded: false)
         #expect(appSettingsLoad(path: path).updateChannel == .beta)
-        #expect(launched(nil, version: "0.8.1-beta.1", dir: dir).settings.experiments.webUi)
         // A later launch keeps the channel the user set.
         var s = appSettingsLoad(path: path)
         s.updateChannel = .stable

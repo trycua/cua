@@ -9,6 +9,9 @@
 //! - `spaces-credentials.json`: `{ "<space id>": { "url", "token" } }`,
 //!   created with mode 0600 (and re-chmodded on every write). The spacesd
 //!   token lives only here.
+//! - `space-meta.json`: what a Space was created with that no handshake
+//!   reports ([`SpaceMeta`]: its labels, when it was created and its egress policy), kept for relay-listed Spaces too
+//!   and dropped with the Space ([`Registry::remove`]).
 //! - `direct-hosts.json`: the machines added with `cua spaces add <addr>
 //!   --host` ([`DirectHost`]), which provide Spaces over their direct
 //!   listener without the relay. No secrets: each host's token is its
@@ -33,6 +36,79 @@ pub const CREDENTIALS_FILE: &str = "spaces-credentials.json";
 pub const LOCK_FILE: &str = "spaces.lock";
 /// File name of the direct-host list.
 pub const DIRECT_HOSTS_FILE: &str = "direct-hosts.json";
+/// File name of the per-Space metadata (labels, creation time, egress policy).
+pub const META_FILE: &str = "space-meta.json";
+
+/// Most labels on one Space.
+pub const MAX_LABELS: usize = 64;
+/// Longest label key, in bytes.
+pub const MAX_LABEL_KEY: usize = 63;
+/// Longest label value, in bytes.
+pub const MAX_LABEL_VALUE: usize = 256;
+
+/// What cua keeps about a Space that no handshake reports.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpaceMeta {
+    /// Labels set at create ([`validate_labels`]).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub labels: BTreeMap<String, String>,
+    /// When the Space was created (Unix seconds; 0 when unknown).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub created_at_unix: u64,
+    /// The egress policy last set on the Space ([`crate::egress`]).
+    #[serde(default, skip_serializing_if = "crate::egress::EgressPolicy::is_empty")]
+    pub egress: crate::egress::EgressPolicy,
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
+}
+
+/// Checks a Space's labels: at most [`MAX_LABELS`], each key and value
+/// non-empty, keys up to [`MAX_LABEL_KEY`] bytes and values up to
+/// [`MAX_LABEL_VALUE`] bytes (UTF-8).
+pub fn validate_labels<'a>(
+    labels: impl IntoIterator<Item = (&'a String, &'a String)>,
+) -> Result<()> {
+    let mut count = 0;
+    for (k, v) in labels {
+        count += 1;
+        if k.is_empty() || v.is_empty() {
+            return Err(Error::invalid(format!(
+                "label {k:?}={v:?}: keys and values are not empty"
+            )));
+        }
+        if k.len() > MAX_LABEL_KEY {
+            return Err(Error::invalid(format!(
+                "label key {k:?} is {} bytes: at most {MAX_LABEL_KEY}",
+                k.len()
+            )));
+        }
+        if v.len() > MAX_LABEL_VALUE {
+            return Err(Error::invalid(format!(
+                "label {k:?} has a value of {} bytes: at most {MAX_LABEL_VALUE}",
+                v.len()
+            )));
+        }
+    }
+    if count > MAX_LABELS {
+        return Err(Error::invalid(format!(
+            "{count} labels: at most {MAX_LABELS} per Space"
+        )));
+    }
+    Ok(())
+}
+
+/// Parses `key=value` (split at the first `=`) as the CLI and MCP write a
+/// label.
+pub fn parse_label(text: &str) -> Result<(String, String)> {
+    match text.split_once('=') {
+        Some((k, v)) if !k.is_empty() && !v.is_empty() => Ok((k.into(), v.into())),
+        _ => Err(Error::invalid(format!(
+            "label {text:?}: write it as key=value (neither empty)"
+        ))),
+    }
+}
 
 /// A machine that provides Spaces over its direct listener (Tailscale or
 /// LAN), without the relay: added with `cua spaces add <addr> --host`.
@@ -73,9 +149,6 @@ pub struct Credential {
     /// name → endpoint URL.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub service_urls: BTreeMap<String, String>,
-    /// A cloud Space's claim namespace (a lookup hint; never shown).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub namespace: Option<String>,
 }
 
 impl std::fmt::Debug for Credential {
@@ -84,7 +157,6 @@ impl std::fmt::Debug for Credential {
             .field("url", &self.url)
             .field("token", &self.token.as_ref().map(|_| "<redacted>"))
             .field("service_urls", &self.service_urls)
-            .field("namespace", &self.namespace)
             .finish()
     }
 }
@@ -138,6 +210,72 @@ impl Registry {
         Ok(self
             .read_credentials()?
             .remove(&crate::id::canonical_id(id)))
+    }
+
+    /// Path of `space-meta.json`.
+    pub fn meta_path(&self) -> PathBuf {
+        self.dir.join(META_FILE)
+    }
+
+    /// What is kept about every Space ([`SpaceMeta`]), by canonical id.
+    pub fn all_meta(&self) -> BTreeMap<String, SpaceMeta> {
+        let _g = self.lock.lock().expect("registry lock");
+        self.read_meta()
+    }
+
+    /// What is kept about one Space (any accepted spelling of its id).
+    pub fn meta(&self, id: &str) -> Option<SpaceMeta> {
+        self.all_meta().remove(&crate::id::canonical_id(id))
+    }
+
+    /// Changes what is kept about a Space (atomic; an empty record is
+    /// dropped). Works for relay-listed Spaces, which have no registry
+    /// entry.
+    pub fn update_meta(&self, id: &str, change: impl FnOnce(&mut SpaceMeta)) -> Result<()> {
+        let id = crate::id::canonical_id(id);
+        let _g = self.lock.lock().expect("registry lock");
+        let _file = self.exclusive()?;
+        let mut all = self.read_meta();
+        let mut m = all.remove(&id).unwrap_or_default();
+        change(&mut m);
+        if m != SpaceMeta::default() {
+            all.insert(id, m);
+        }
+        self.write_meta(&all)
+    }
+
+    /// Gives Space `to` the labels and egress policy of Space `from` (a
+    /// fork starts as its source was; its creation time and lifetime are
+    /// its own). Returns whether `from` had any.
+    pub fn inherit_meta(&self, from: &str, to: &str) -> Result<bool> {
+        let (from, to) = (crate::id::canonical_id(from), crate::id::canonical_id(to));
+        let _g = self.lock.lock().expect("registry lock");
+        let _file = self.exclusive()?;
+        let mut all = self.read_meta();
+        let Some(source) = all.get(&from).cloned() else {
+            return Ok(false);
+        };
+        let kept = all.entry(to).or_default();
+        kept.labels = source.labels;
+        kept.egress = source.egress;
+        self.write_meta(&all)?;
+        Ok(true)
+    }
+
+    fn read_meta(&self) -> BTreeMap<String, SpaceMeta> {
+        std::fs::read(self.meta_path())
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default()
+    }
+
+    fn write_meta(&self, all: &BTreeMap<String, SpaceMeta>) -> Result<()> {
+        if all.is_empty() && !self.meta_path().exists() {
+            return Ok(());
+        }
+        let mut bytes = serde_json::to_vec_pretty(all)?;
+        bytes.push(b'\n');
+        self.atomic_write(&self.meta_path(), &bytes, 0o644)
     }
 
     /// Path of the cross-process lock file.
@@ -211,6 +349,41 @@ impl Registry {
         Ok(changed)
     }
 
+    /// Forgets direct host `space` with every Space it created here (their
+    /// rows and credentials, and rows that name it as their host): the
+    /// host was removed or is gone, so nothing reaches them through it any
+    /// more. Returns the Spaces forgotten.
+    pub(crate) fn forget_direct_host(&self, space: &str) -> Result<Vec<String>> {
+        let space = crate::id::canonical_id(space);
+        let mut ids = std::collections::BTreeSet::new();
+        if self.direct_hosts_path().exists() {
+            self.update_direct_hosts(|hosts| {
+                hosts.retain(|h| {
+                    if h.space == space {
+                        ids.extend(h.spaces.keys().cloned());
+                        false
+                    } else {
+                        true
+                    }
+                });
+            })?;
+        }
+        ids.extend(
+            self.list()?
+                .into_iter()
+                .filter(|s| s.host == space)
+                .map(|s| s.id),
+        );
+        ids.remove(&space);
+        let mut gone = Vec::new();
+        for id in ids {
+            if self.remove(&id)? {
+                gone.push(id);
+            }
+        }
+        Ok(gone)
+    }
+
     fn read_direct_hosts(&self) -> Result<Vec<DirectHost>> {
         match std::fs::read(self.direct_hosts_path()) {
             Ok(bytes) if bytes.iter().all(u8::is_ascii_whitespace) => Ok(vec![]),
@@ -260,6 +433,46 @@ impl Registry {
         self.write_spaces(&spaces)
     }
 
+    /// Path of `space-volumes.json`: the named volumes of Spaces that have
+    /// no record in `spaces.json` (a machine of your relay provides them;
+    /// this machine serves the volumes over the Space's own connection).
+    pub fn volume_overlay_path(&self) -> PathBuf {
+        self.dir.join("space-volumes.json")
+    }
+
+    /// The overlay: Space id to its mounts.
+    pub fn volume_overlay(
+        &self,
+    ) -> Result<BTreeMap<String, Vec<crate::named_volumes::VolumeMount>>> {
+        match std::fs::read(self.volume_overlay_path()) {
+            Ok(bytes) if bytes.iter().all(u8::is_ascii_whitespace) => Ok(BTreeMap::new()),
+            Ok(bytes) => Ok(serde_json::from_slice(&bytes)?),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(BTreeMap::new()),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Replaces the overlay mounts of `id` (empty removes the entry).
+    pub fn set_overlay_volumes(
+        &self,
+        id: &str,
+        mounts: Vec<crate::named_volumes::VolumeMount>,
+    ) -> Result<()> {
+        let _g = self.lock.lock().expect("registry lock");
+        let _file = self.exclusive()?;
+        let mut overlay = self.volume_overlay()?;
+        if mounts.is_empty() {
+            if overlay.remove(id).is_none() {
+                return Ok(());
+            }
+        } else {
+            overlay.insert(id.to_owned(), mounts);
+        }
+        let mut bytes = serde_json::to_vec_pretty(&overlay)?;
+        bytes.push(b'\n');
+        self.atomic_write(&self.volume_overlay_path(), &bytes, 0o644)
+    }
+
     /// Removes a Space and its credential. Returns whether it was present.
     pub fn remove(&self, id: &str) -> Result<bool> {
         let id = crate::id::canonical_id(id);
@@ -274,6 +487,12 @@ impl Registry {
         if had_cred {
             self.write_credentials(&creds)?;
         }
+        // Its labels go with it (a Space later made under the same name
+        // starts clean).
+        let mut meta = self.read_meta();
+        if meta.remove(id).is_some() {
+            self.write_meta(&meta)?;
+        }
         if spaces.len() != before {
             self.write_spaces(&spaces)?;
             return Ok(true);
@@ -282,8 +501,8 @@ impl Registry {
     }
 
     /// Reads `spaces.json`. Ids an older client stored
-    /// (`space://fleet/<ns>/<claim>`, ...) come back in the new form
-    /// (`cloud:<claim>`), and the version key it wrote before the
+    /// (`space://direct/<host:port>`, ...) come back in the new form
+    /// (`direct:<host:port>`), and the version key it wrote before the
     /// cua-spacesd rename (`envDriverVersion`) as `spacesdVersion`; the file
     /// is rewritten on the next change.
     fn read_spaces(&self) -> Result<Vec<dpb::Space>> {
@@ -320,8 +539,7 @@ impl Registry {
         Ok(out)
     }
 
-    /// Reads the credential store, keyed by canonical id. A legacy cloud id
-    /// leaves its namespace in the credential as a lookup hint.
+    /// Reads the credential store, keyed by canonical id.
     fn read_credentials(&self) -> Result<BTreeMap<String, Credential>> {
         let stored: BTreeMap<String, Credential> = match std::fs::read(self.credentials_path()) {
             Ok(bytes) if bytes.iter().all(u8::is_ascii_whitespace) => BTreeMap::new(),
@@ -330,14 +548,7 @@ impl Registry {
             Err(e) => return Err(e.into()),
         };
         let mut out = BTreeMap::new();
-        for (id, mut cred) in stored {
-            if let Ok(crate::SpaceId::Cloud {
-                namespace: Some(ns),
-                ..
-            }) = crate::SpaceId::parse(&id)
-            {
-                cred.namespace.get_or_insert(ns);
-            }
+        for (id, cred) in stored {
             out.entry(crate::id::canonical_id(&id)).or_insert(cred);
         }
         Ok(out)
@@ -402,6 +613,101 @@ impl Registry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn meta_survives_upserts_and_leaves_with_the_space() {
+        let dir = tempfile::tempdir().unwrap();
+        let reg = Registry::new(dir.path().join("cua"));
+        reg.upsert(space("direct:h:1"), Credential::default())
+            .unwrap();
+        reg.update_meta("direct:h:1", |m| {
+            m.labels.insert("team".into(), "research".into());
+        })
+        .unwrap();
+        // An upsert (a reconnect refreshing the record) keeps it.
+        reg.upsert(space("direct:h:1"), Credential::default())
+            .unwrap();
+        // A fresh handle (another process) reads it back.
+        let again = Registry::new(dir.path().join("cua"));
+        assert_eq!(again.meta("direct:h:1").unwrap().labels["team"], "research");
+        // A Space with no registry entry (a relay machine) can have meta.
+        again
+            .update_meta("relay:abc", |m| {
+                m.labels.insert("a".into(), "b".into());
+            })
+            .unwrap();
+        assert_eq!(again.all_meta().len(), 2);
+        // Removing the Space drops its meta, entry or not.
+        assert!(again.remove("direct:h:1").unwrap());
+        assert!(again.meta("direct:h:1").is_none());
+        again.remove("relay:abc").unwrap();
+        assert!(again.all_meta().is_empty());
+        // An emptied record is dropped, not kept as `{}`.
+        again
+            .update_meta("direct:h:2", |m| {
+                m.labels.insert("k".into(), "v".into());
+            })
+            .unwrap();
+        again
+            .update_meta("direct:h:2", |m| m.labels.clear())
+            .unwrap();
+        assert!(again.meta("direct:h:2").is_none());
+    }
+
+    #[test]
+    fn a_fork_inherits_labels_and_egress_but_not_its_clock() {
+        let dir = tempfile::tempdir().unwrap();
+        let reg = Registry::new(dir.path().join("cua"));
+        reg.update_meta("local:src", |m| {
+            m.labels.insert("team".into(), "research".into());
+            m.created_at_unix = 100;
+            m.egress.deny.push("all".into());
+        })
+        .unwrap();
+        reg.update_meta("local:fork", |m| m.created_at_unix = 200)
+            .unwrap();
+        assert!(reg.inherit_meta("local:src", "local:fork").unwrap());
+        let fork = reg.meta("local:fork").unwrap();
+        assert_eq!(fork.labels["team"], "research");
+        assert_eq!(fork.egress.deny, ["all"]);
+        assert_eq!(fork.created_at_unix, 200, "its own creation time");
+        // The source is untouched, and a source with nothing gives nothing.
+        assert_eq!(reg.meta("local:src").unwrap().created_at_unix, 100);
+        assert!(!reg.inherit_meta("local:none", "local:other").unwrap());
+        assert!(reg.meta("local:other").is_none());
+    }
+
+    #[test]
+    fn label_limits() {
+        let ok = |pairs: &[(&str, &str)]| {
+            let m: BTreeMap<String, String> = pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+            validate_labels(&m)
+        };
+        assert!(ok(&[]).is_ok());
+        assert!(ok(&[("team", "research"), ("naïve", "ünï")]).is_ok());
+        assert!(ok(&[(&"k".repeat(63), &"v".repeat(256))]).is_ok());
+        assert!(ok(&[(&"k".repeat(64), "v")]).is_err());
+        assert!(ok(&[("k", &"v".repeat(257))]).is_err());
+        // Bytes, not characters: 32 two-byte characters are 64 bytes.
+        assert!(ok(&[(&"é".repeat(32), "v")]).is_err());
+        assert!(ok(&[(&"é".repeat(31), "v")]).is_ok());
+        assert!(ok(&[("", "v")]).is_err());
+        assert!(ok(&[("k", "")]).is_err());
+        let many: BTreeMap<String, String> =
+            (0..64).map(|i| (format!("k{i}"), "v".into())).collect();
+        assert!(validate_labels(&many).is_ok());
+        let mut over = many;
+        over.insert("one-more".into(), "v".into());
+        assert!(validate_labels(&over).is_err());
+        assert_eq!(parse_label("a=b").unwrap(), ("a".into(), "b".into()));
+        assert_eq!(parse_label("a=b=c").unwrap().1, "b=c");
+        assert!(
+            parse_label("a").is_err() && parse_label("a=").is_err() && parse_label("=b").is_err()
+        );
+    }
 
     #[test]
     fn concurrent_writers_in_separate_registries_lose_nothing() {
@@ -542,8 +848,7 @@ mod tests {
     }
 
     /// Registries written before the unified refs keep working: legacy ids
-    /// read back in the new form, a cloud id's namespace stays as a hint,
-    /// and lookups accept either spelling.
+    /// read back in the new form, and lookups accept either spelling.
     #[test]
     fn legacy_ids_migrate_on_read() {
         let dir = tempfile::tempdir().unwrap();
@@ -551,7 +856,7 @@ mod tests {
         std::fs::write(
             reg.spaces_path(),
             serde_json::to_vec(&[
-                space("space://fleet/ns-1/claim-1"),
+                space("space://relay/0123abcd4567ef89"),
                 space("space://direct/h:1"),
             ])
             .unwrap(),
@@ -559,20 +864,19 @@ mod tests {
         .unwrap();
         std::fs::write(
             reg.credentials_path(),
-            br#"{"space://fleet/ns-1/claim-1": {"token": "t"}}"#,
+            br#"{"space://relay/0123abcd4567ef89": {"token": "t"}}"#,
         )
         .unwrap();
         let ids: Vec<String> = reg.list().unwrap().into_iter().map(|s| s.id).collect();
-        assert_eq!(ids, ["cloud:claim-1", "direct:h:1"]);
-        let cred = reg.credential("cloud:claim-1").unwrap().unwrap();
+        assert_eq!(ids, ["relay:0123abcd4567ef89", "direct:h:1"]);
+        let cred = reg.credential("relay:0123abcd4567ef89").unwrap().unwrap();
         assert_eq!(cred.token.as_deref(), Some("t"));
-        assert_eq!(cred.namespace.as_deref(), Some("ns-1"));
-        assert!(reg.get("space://fleet/ns-1/claim-1").unwrap().is_some());
+        assert!(reg.get("space://relay/0123abcd4567ef89").unwrap().is_some());
         // The next write stores the new form.
         assert!(reg.remove("space://direct/h:1").unwrap());
         let bytes = std::fs::read_to_string(reg.spaces_path()).unwrap();
         assert!(
-            bytes.contains("\"cloud:claim-1\"") && !bytes.contains("space://"),
+            bytes.contains("\"relay:0123abcd4567ef89\"") && !bytes.contains("space://"),
             "{bytes}"
         );
     }
@@ -623,6 +927,58 @@ mod tests {
         );
         assert!(reg.forget_direct("direct:100.64.0.9:3211").unwrap());
         assert!(reg.direct_hosts().unwrap().is_empty());
+    }
+
+    /// A removed or lost direct host takes the Spaces it created with it:
+    /// their rows, credentials and its list entry; other rows stay.
+    #[test]
+    fn forgetting_a_direct_host_forgets_its_spaces() {
+        let dir = tempfile::tempdir().unwrap();
+        let reg = Registry::new(dir.path().join("cua"));
+        let row = |id: &str, host: &str| dpb::Space {
+            id: id.into(),
+            host: host.into(),
+            ..Default::default()
+        };
+        let cred = Credential {
+            token: Some("t".into()),
+            ..Default::default()
+        };
+        reg.upsert(row("direct:10.0.0.5:3211", ""), cred.clone())
+            .unwrap();
+        reg.upsert_direct_host("chaoshost", "direct:10.0.0.5:3211")
+            .unwrap();
+        for (port, name) in [(41001, "a"), (41002, "b")] {
+            let id = format!("direct:10.0.0.5:{port}");
+            reg.upsert(row(&id, "direct:10.0.0.5:3211"), cred.clone())
+                .unwrap();
+            reg.update_direct_hosts(|h| {
+                h[0].spaces.insert(id.clone(), format!("local:{name}"));
+            })
+            .unwrap();
+        }
+        // A row whose host entry was lost already still goes (by its host).
+        reg.upsert(
+            row("direct:10.0.0.5:41003", "direct:10.0.0.5:3211"),
+            cred.clone(),
+        )
+        .unwrap();
+        reg.upsert(row("local:mine", ""), Credential::default())
+            .unwrap();
+        let mut gone = reg.forget_direct_host("direct:10.0.0.5:3211").unwrap();
+        gone.sort();
+        assert_eq!(
+            gone,
+            [
+                "direct:10.0.0.5:41001",
+                "direct:10.0.0.5:41002",
+                "direct:10.0.0.5:41003"
+            ]
+        );
+        assert!(reg.direct_hosts().unwrap().is_empty());
+        let left: Vec<String> = reg.list().unwrap().into_iter().map(|s| s.id).collect();
+        assert_eq!(left, ["direct:10.0.0.5:3211", "local:mine"]);
+        assert!(reg.credential("direct:10.0.0.5:41001").unwrap().is_none());
     }
 
     /// The host-safety guard: a test that forgets a temp `CUA_HOME` gets an

@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * Screen checks for the `agent-keys` flow (Settings → Agents): each section,
+ * Screen checks for the `agent-keys` flow (Settings, Connected apps, Account keys): each section,
  * sheet and Remove question the replay reached goes on the real screen
  * through `window.__cuaParity.showAgentKeys`, and the screen must show the
  * core's words. Then a key is added and removed for real on the demo host,
@@ -13,6 +13,7 @@ import { expect, type Locator, type Page } from "@playwright/test";
 
 import type { ParityCheckpoint } from "../src/bridge/parity";
 import type { AgentKeysCheckpoint } from "../src/bridge/parity-agent-keys";
+import { KEYS_ADD_OTHER_BUTTON, KEYS_OTHER_HELP, KEYS_TITLE, plainKeysIntro } from "../src/lib/settings-copy";
 
 type Of<K extends AgentKeysCheckpoint["kind"]> = Extract<AgentKeysCheckpoint, { kind: K }>;
 
@@ -38,7 +39,7 @@ export async function checkAgentKeys(page: Page, checkpoints: ParityCheckpoint[]
 
   for (const { input, view } of unique(checkpoints, "agent-keys")) {
     await page.evaluate((i) => window.__cuaParity!.showAgentKeys(i), input);
-    const step = `Settings → Agents with ${input.keys.map((k) => k.env).join(", ") || "no keys"}${view.notice ? " (notice)" : ""}`;
+    const step = `Settings, Connected apps with ${input.keys.map((k) => k.env).join(", ") || "no keys"}${view.notice ? " (notice)" : ""}`;
     const rows = page.locator("[data-agent-key-row]");
     await expect.poll(() => attrs(rows, "data-agent-key-row"), { message: step }).toEqual(view.rows.map((r) => r.env));
     expect(await texts(page.locator("[data-agent-key-title]")), step).toEqual(view.rows.map((r) => r.title));
@@ -50,10 +51,11 @@ export async function checkAgentKeys(page: Page, checkpoints: ParityCheckpoint[]
     const added = await texts(page.locator("[data-agent-key-added]"));
     expect(added.length, step).toBe(view.rows.filter((r) => r.addedMs !== null).length);
     for (const a of added) expect(a.startsWith(`${view.addedLabel} `), step).toBe(true);
-    await expect(page.locator("[data-agent-keys-intro]"), step).toHaveText(view.intro);
-    await expect(page.locator("[data-agent-keys-title]"), step).toHaveText(view.title);
-    await expect(page.locator("[data-agent-key-add-other]"), step).toHaveText(view.addOtherLabel);
-    await expect(page.locator("[data-agent-key-other-help]"), step).toHaveText(view.otherHelp);
+    await expect(page.locator("[data-agent-keys-intro]"), step).toHaveText(plainKeysIntro(view.intro));
+    // The page says Account keys where the core says Agents; the rest of the words are the core's.
+    await expect(page.locator("[data-agent-keys-title]"), step).toHaveText(KEYS_TITLE);
+    await expect(page.locator("[data-agent-key-add-other]"), step).toHaveText(KEYS_ADD_OTHER_BUTTON);
+    await expect(page.locator("[data-agent-key-other-help]"), step).toHaveText(KEYS_OTHER_HELP);
     if (view.notice) await expect(page.locator("[data-agent-keys-notice]"), step).toContainText(view.notice);
     else await expect(page.locator("[data-agent-keys-notice]"), step).toHaveCount(0);
     for (const b of await page.locator("[data-agent-key-action], [data-agent-key-add-other]").all()) {
@@ -107,7 +109,7 @@ export async function checkAgentKeys(page: Page, checkpoints: ParityCheckpoint[]
   }
 
   // For real on the demo host: add an Anthropic key, then remove it.
-  await page.goto("/settings/agents?bridge=demo");
+  await page.goto("/settings/connected-apps?bridge=demo");
   const anthropic = page.locator('[data-agent-key-row="ANTHROPIC_API_KEY"]');
   await expect(anthropic.locator("[data-agent-key-status]")).toHaveText("Not set");
   await anthropic.locator("[data-agent-key-action]").click();

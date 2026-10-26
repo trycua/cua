@@ -13,7 +13,7 @@ use clap::{Args, Subcommand};
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum TeleportCmd {
-    /// List the apps this machine can teleport (JSON).
+    /// List the apps this computer can teleport (JSON).
     #[command(after_help = "Examples:
   cua teleport providers")]
     Providers,

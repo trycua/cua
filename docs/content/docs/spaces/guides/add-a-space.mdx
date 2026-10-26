@@ -1,6 +1,6 @@
 ---
 title: Create a Space
-description: 'Create a Space on a computer you own from the app, the CLI or code: any image, progress, cancel, GPUs, adding an existing machine by address, then list, delete or remove it.'
+description: 'Create a Space on a computer you own from the app, the CLI or code: any image, progress, cancel, GPUs, adding an existing computer by address, then list, delete or remove it.'
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -9,7 +9,7 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 A Space is one desktop on one of your computers. Ids are the sandbox refs
 `cua sb ls` prints (`local:<name>`, `aws:<name>`, `direct:<host:port>`,
 `relay:<machine-id>`); a bare name works when it matches one Space. To connect a
-whole computer first, see [Add a machine](/spaces/guides/add-a-machine).
+whole computer first, see [Add a computer](/spaces/guides/add-a-computer).
 
 ## Create a Space in the app
 
@@ -19,11 +19,11 @@ whole computer first, see [Add a machine](/spaces/guides/add-a-machine).
 3. Press **Create Space**. The Space appears in your list with a progress bar and
    is ready when the bar finishes.
 
-If the create fails, see [Troubleshoot a failed create](/spaces/guides/troubleshoot-create).
+If the create fails, see [Troubleshoot](/spaces/guides/troubleshoot).
 
-## Add an existing machine by address
+## Add an existing computer by address
 
-Choose **Connect by address** in New Space, or register a machine from code.
+Choose **Connect by address** in New Space, or register a computer from code.
 This example starts the canonical Linux image with a token:
 
 ```bash skip="no-runner"
@@ -123,7 +123,10 @@ result = await space.call_tool("add", '{"a": 2, "b": 3}', "mcp", None)
 | Lifecycle, declared services, tunnels, public URLs, `list_tools` / `call_tool` with `service` | `bash`, files, streaming, presence, teleport, agent runs, the `driver` tool registry |
 
 Spacesd features on an image without it fail with `CapabilityMissing`. The
-canonical images and machines set up with `cua host setup` run cua-spacesd.
+canonical images and computers set up with `cua host setup` run cua-spacesd, and
+so does any OCI image you create on this computer as a container or microVM
+(`alpine:3.20`, `node:20`): a static cua-spacesd is put into it and runs
+beside the image's own command.
 
 <Callout type="info">
   In the cloud, `command` and `env` work on container and VM images alike.
@@ -182,7 +185,7 @@ Sandboxes: `await sandboxes.cancel_create(name)` returns what was removed, or
 
 | Removed | Kept |
 |---|---|
-| The VM or container and its disks, the cloud claim, the relay machine, the registry entry, the create's journal | Anything that existed before the create |
+| The VM or container and its disks, the cloud claim, the relay computer, the registry entry, the create's journal | Anything that existed before the create |
 | Partial downloads | Finished image layers in the engine's cache (Docker's; Lume's when its cache is on), so the next create resumes |
 
 A Lume without `POST /lume/pull/cancel` cannot stop a pull: the create still
@@ -222,7 +225,7 @@ if cua set it. Metal apps in the guest may still need the per-workload shim:
 cua spaces ls
 ```
 
-Lists registered Spaces and, when you are signed in, your machines on the
+Lists registered Spaces and, when you are signed in, your computers on the
 relay (`relay:<machine-id>`, no `add` needed). Register or forget one from a
 shell:
 
@@ -234,15 +237,14 @@ cua spaces rm studio
 A [Tailscale](https://tailscale.com) address works here too (its IP or
 MagicDNS name as the host:port): `cua spaces add` reaches it like any other
 address and the Space registers as `direct:<addr>`. That only attaches one
-already-running Space; hosting Spaces for `on="host:<name>"` still goes
-through the cua.ai relay, set up with
-[`cua host setup`](/spaces/guides/host-spaces-on-your-spare-mac).
+already-running Space. To host Spaces for `on="host:<name>"`, set the computer up
+with [`cua host setup`](/spaces/guides/add-a-computer#use-a-spare-mac-to-host-spaces).
 
- `spaces.delete(id)` deletes a
-Space's sandbox and forgets it (a Space added by address is only forgotten);
-`spaces.remove(id)` forgets a Space without touching it.
+`spaces.delete(id)` deletes a Space's sandbox and forgets it (a Space added by
+address is only forgotten). `spaces.remove(id)` forgets a Space without touching
+it.
 
 In TypeScript the methods are `create`, `delete_`, `add` and `remove`, with
 options from `@trycua/cua/spaces`. Agents use the MCP tools `create_space`,
 `delete_space`, `add_space` and `remove_space`
-([Use from an agent](/spaces/guides/use-from-an-agent)).
+([What your agent can do](/spaces/guides/connect-your-agent#what-your-agent-can-do)).

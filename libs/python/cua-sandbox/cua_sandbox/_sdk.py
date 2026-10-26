@@ -39,15 +39,14 @@ class Unsupported(NotImplementedError):
 
 class InvalidArgument(ValueError):
     """Contradictory or invalid options (the native SDK's
-    ``CuaError.InvalidArgument``), for example ``local=True`` together with
-    ``cloud=CloudOptions(...)``."""
+    ``CuaError.InvalidArgument``), for example ``on="local"`` together with
+    ``local=False``."""
 
 
 class InvalidPlacement(InvalidArgument):
     """A location, kind and runtime that do not go together (the native
     SDK's ``CuaError.InvalidPlacement``), for example ``kind="container"``
-    with ``runtime="qemu"``, or ``runtime="kubevirt"`` locally. The message
-    lists the valid values."""
+    with ``runtime="qemu"``. The message lists the valid values."""
 
 
 def sdk() -> Any:
@@ -110,10 +109,7 @@ def runtime(*, state_dir: Optional[os.PathLike | str] = None) -> Any:
         existing = _RUNTIMES.get(key)
         if existing is not None:
             return existing
-        created = sdk().embedded(
-            state_dir=None if state_dir is None else str(state_dir),
-            fleet_from_env=False,
-        )
+        created = sdk().embedded(state_dir=None if state_dir is None else str(state_dir))
         _RUNTIMES[key] = created
         return created
 
@@ -123,6 +119,21 @@ def local_runtime() -> Any:
     from cua_sandbox import sandbox_state
 
     return runtime(state_dir=sandbox_state.state_dir())
+
+
+def daemon_runtime() -> Any:
+    """The running ``cua daemon`` (it keeps the pools of
+    :mod:`cua_sandbox.sandbox_pool`). It shares the state directory
+    of :func:`local_runtime`, so a Space it creates connects like any other
+    local one. Raises a clear error when no daemon runs."""
+    n = native()
+    try:
+        return n.Cua.connect(None, None)
+    except Exception as error:  # noqa: BLE001 - say what to do instead
+        raise n.CuaError.Unsupported(
+            "pools are kept by `cua daemon`: start it (`cua daemon start`) "
+            f"and try again ({error})"
+        ) from error
 
 
 def _private_state_dir() -> Path:

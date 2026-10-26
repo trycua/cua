@@ -15,7 +15,12 @@ import { KEYVAULT_MANAGE_ARGS } from "../ops/keyvault-manage";
 import { KEYVAULT_SETUP_ARGS } from "../ops/keyvault-setup";
 import { STREAM_ARGS } from "../ops/stream";
 import { RELAY_USAGE_ARGS } from "../ops/relay-usage";
+import { NUDGES_ARGS } from "../ops/nudges";
+import { RESOURCES_ARGS } from "../ops/resources";
+import { MACHINES_ARGS } from "../ops/machines";
 import { CHECKLIST_ARGS } from "../ops/checklist";
+import { LINKS_ARGS } from "../ops/links";
+import { CLI_ARGS } from "../ops/cli";
 import { PRESENCE_ARGS } from "../ops/presence";
 import { RUNTIME_FIX_ARGS } from "../ops/runtime-fix";
 import type { HostWindow } from "../detect";
@@ -51,10 +56,13 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "agents.list": {},
   "agents.runs": { spaceId: "s1" },
   "agents.events": { spaceId: "s1", runId: "r1", cursor: 0 },
+  "agents.start": { spaceId: "s1", agent: "claude-code", prompt: "Run the tests" },
+  "agents.message": { spaceId: "s1", runId: "r1", text: "Use Python 3.13" },
   "agents.pause": { name: "ada" },
   "agents.resume": { name: "ada" },
   "agents.setup": {},
   "agents.configure": { agents: null },
+  "agents.signIn": { agent: "codex" },
   ...AGENT_DETAIL_ARGS,
   ...NEW_SPACE_ARGS,
   ...AGENT_KEYS_ARGS,
@@ -74,6 +82,8 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "sharing.list": { spaceId: "s1" },
   "sharing.share": { spaceId: "s1", who: "bob@example.com", role: "viewer" },
   "sharing.unshare": { spaceId: "s1", who: "bob@example.com" },
+  "sharing.removals": {},
+  "sharing.ackRemovals": {},
   "volume.overview": {},
   "volume.storage": {},
   "volume.storageSet": { update: { backend: "fs", s3: null, access_key_id: null, secret_access_key: null, dry_run: true } },
@@ -112,6 +122,9 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "notifications.markAllRead": {},
   "notifications.markRead": { ids: ["n1"] },
   "telemetry.track": { signals: [{ type: "step", step: "app_launched", ok: true }] },
+  "telemetry.linkNotice": {},
+  "telemetry.acknowledgeLinkNotice": {},
+  "crashReporting.config": {},
   "spaces.usage": { spaceId: "s1" },
   "spaces.windows": { spaceId: "s1" },
   "stream.pip": { spaceId: "s1", command: { type: "open", row: "desktop" } },
@@ -127,7 +140,12 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "startup.act": { action: "allowAccess" },
   ...STREAM_ARGS,
   ...RELAY_USAGE_ARGS,
+  ...NUDGES_ARGS,
+  ...RESOURCES_ARGS,
+  ...MACHINES_ARGS,
   ...CHECKLIST_ARGS,
+  ...LINKS_ARGS,
+  ...CLI_ARGS,
   ...PRESENCE_ARGS,
   ...RUNTIME_FIX_ARGS,
 };

@@ -14,13 +14,11 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import contextmanager
-from typing import Any, Callable, Iterator, Optional
+from typing import Any, Iterator, Optional
 
-from cua_sandbox._sdk import ENV_SERVICE
 from cua_sandbox.image import Image
-from cua_sandbox.pool import Pool as _AsyncPool
-from cua_sandbox.pool import Template as _AsyncTemplate
 from cua_sandbox.sandbox import Sandbox as _AsyncSandbox
+from cua_sandbox.sandbox_pool import SandboxPool as _AsyncSandboxPool
 
 
 def _get_or_create_loop() -> asyncio.AbstractEventLoop:
@@ -73,81 +71,12 @@ class _SyncProxy:
         return f"Sync({self._async_obj!r})"
 
 
-class Template:
-    """Blocking facade for :class:`cua_sandbox.Template`."""
-
-    def __init__(self, async_template: _AsyncTemplate) -> None:
-        self._async_template = async_template
-
-    @property
-    def name(self) -> str:
-        return self._async_template.name
-
-    @classmethod
-    def reconcile(cls, request: Any) -> "Template":
-        """Always raises :class:`~cua_sandbox._ended.CloudEnded`: Cua Cloud has
-        ended."""
-        return cls(_run(_AsyncTemplate.reconcile(request)))
-
-
-class Pool:
-    """Blocking facade for :class:`cua_sandbox.Pool`. Cua Cloud has ended, so
-    every call raises :class:`~cua_sandbox._ended.CloudEnded`."""
-
-    def __init__(self, async_pool: _AsyncPool) -> None:
-        self._async_pool = async_pool
-
-    @property
-    def name(self) -> str:
-        return self._async_pool.name
-
-    @classmethod
-    def reconcile(cls, request: Any) -> "Pool":
-        return cls(_run(_AsyncPool.reconcile(request)))
-
-    @classmethod
-    def get(cls, name: str) -> "Pool":
-        return cls(_run(_AsyncPool.get(name)))
-
-    @classmethod
-    def apply(cls, *args: Any, **kwargs: Any) -> "Pool":
-        return cls(_run(_AsyncPool.apply(*args, **kwargs)))
-
-    @staticmethod
-    def export(name: str, *, terraform: bool = False) -> Any:
-        return _run(_AsyncPool.export(name, terraform=terraform))
-
-    def delete(self) -> None:
-        _run(self._async_pool.delete())
-
-    @contextmanager
-    def claim(
-        self,
-        *,
-        spec: Any = None,
-        name: str | None = None,
-        service: str = ENV_SERVICE,
-        time_to_start: float | None = None,
-        ttl_seconds_after_created: int | None = None,
-        claim_token: str | None = None,
-    ) -> Iterator[_SyncProxy]:
-        """Always raises :class:`~cua_sandbox._ended.CloudEnded`."""
-        context = self._async_pool.claim(
-            spec=spec,
-            name=name,
-            service=service,
-            time_to_start=time_to_start,
-            ttl_seconds_after_created=ttl_seconds_after_created,
-            claim_token=claim_token,
-        )
-        sandbox = _run(context.__aenter__())
-        try:
-            yield _SyncProxy(sandbox)
-        except BaseException as error:
-            _run(context.__aexit__(type(error), error, error.__traceback__))
-            raise
-        else:
-            _run(context.__aexit__(None, None, None))
+def _unwrap_pool(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """``pool=`` given a blocking :class:`SandboxPool`: its async pool."""
+    pool = kwargs.get("pool")
+    if isinstance(pool, SandboxPool):
+        kwargs = {**kwargs, "pool": pool._pool}
+    return kwargs
 
 
 class Sandbox:
@@ -159,7 +88,7 @@ class Sandbox:
 
     @staticmethod
     def create(image: Optional[Image] = None, **kwargs: Any) -> _SyncProxy:
-        return _SyncProxy(_run(_AsyncSandbox.create(image, **kwargs)))
+        return _SyncProxy(_run(_AsyncSandbox.create(image, **_unwrap_pool(kwargs))))
 
     @staticmethod
     def connect(name: Optional[str] = None, **kwargs: Any) -> _SyncProxy:
@@ -171,7 +100,7 @@ class Sandbox:
     @staticmethod
     @contextmanager
     def ephemeral(image: Optional[Image] = None, **kwargs: Any) -> Iterator[_SyncProxy]:
-        context = _AsyncSandbox.ephemeral(image, **kwargs)
+        context = _AsyncSandbox.ephemeral(image, **_unwrap_pool(kwargs))
         sandbox = _run(context.__aenter__())
         try:
             yield _SyncProxy(sandbox)
@@ -194,6 +123,64 @@ class Sandbox:
         _run(_AsyncSandbox.delete(name, **kwargs))
 
 
+class SandboxPool:
+    """Blocking facade for :class:`cua_sandbox.SandboxPool`: the same
+    fields, with blocking ``create``, ``ephemeral``, ``refresh`` and
+    ``delete``."""
+
+    def __init__(self, pool: _AsyncSandboxPool) -> None:
+        self._pool = pool
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._pool, name)
+
+    def __repr__(self) -> str:
+        return repr(self._pool)
+
+    def create(self, name: Optional[str] = None, **kwargs: Any) -> _SyncProxy:
+        return Sandbox.create(pool=self._pool, name=name, **kwargs)
+
+    @contextmanager
+    def ephemeral(self, **kwargs: Any) -> Iterator[_SyncProxy]:
+        with Sandbox.ephemeral(pool=self._pool, **kwargs) as sb:
+            yield sb
+
+    def refresh(self) -> "SandboxPool":
+        return SandboxPool(_run(self._pool.refresh()))
+
+    def delete(self) -> bool:
+        return bool(_run(self._pool.delete()))
+
+
+def create_pool(image: Any, **kwargs: Any) -> SandboxPool:
+    """Blocking :func:`cua_sandbox.create_pool`."""
+    from cua_sandbox import sandbox_pool
+
+    return SandboxPool(_run(sandbox_pool.create_pool(image, **kwargs)))
+
+
+def get_pool(name: str) -> Optional[SandboxPool]:
+    """Blocking :func:`cua_sandbox.get_pool`."""
+    from cua_sandbox import sandbox_pool
+
+    p = _run(sandbox_pool.get_pool(name))
+    return SandboxPool(p) if p is not None else None
+
+
+def list_pools() -> list[SandboxPool]:
+    """Blocking :func:`cua_sandbox.list_pools`."""
+    from cua_sandbox import sandbox_pool
+
+    return [SandboxPool(p) for p in _run(sandbox_pool.list_pools())]
+
+
+def delete_pool(name: str) -> bool:
+    """Blocking :func:`cua_sandbox.delete_pool`."""
+    from cua_sandbox import sandbox_pool
+
+    return bool(_run(sandbox_pool.delete_pool(name)))
+
+
 @contextmanager
 def sandbox(
     *,
@@ -209,10 +196,6 @@ def sandbox(
     runtime: Optional[Any] = None,
     name: Optional[str] = None,
     ephemeral: Optional[bool] = None,
-    warm: Optional[bool] = None,
-    max_pool_size: Optional[int] = None,
-    claim_ttl: Any = None,
-    progress: Optional[Callable[[Any], Any]] = None,
 ) -> Iterator[_SyncProxy]:
     """Synchronous context manager yielding a sync-wrapped Sandbox.
 
@@ -222,25 +205,11 @@ def sandbox(
     ``runtime``.
     """
     from cua_sandbox import _placement
-    from cua_sandbox.sandbox import _cloud_only_args, _place_new
+    from cua_sandbox.sandbox import _place_new
 
     engine = None
     if image is not None and not (url or http_url or ws_url):
-        place, image = _place_new(
-            image,
-            on=on,
-            local=local,
-            kind=kind,
-            runtime=runtime,
-            cloud=None,
-            cloud_only=_cloud_only_args(
-                warm=warm,
-                max_pool_size=max_pool_size,
-                claim_ttl=claim_ttl,
-                api_key=api_key,
-                progress=progress,
-            ),
-        )
+        place, image = _place_new(image, on=on, local=local, kind=kind, runtime=runtime)
         local, engine, runtime = place.local, place.runtime, place.legacy_runtime
     elif on is not None:
         local = _placement.resolve(on=on, local=local).local

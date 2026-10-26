@@ -60,8 +60,9 @@ env:
 
 jobs:
   rust-source:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: Nix / ${{ matrix.name }}
-    runs-on: ubuntu-latest
+    runs-on: cua-linux-16core
     timeout-minutes: 60
     strategy:
       fail-fast: false

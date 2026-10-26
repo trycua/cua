@@ -1,9 +1,14 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
+import { act, renderHook } from "@testing-library/react";
+import { createElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { CHECKLIST_STEPS, checklistDone, checklistView, readChecklist, resetChecklistCache } from "../checklist";
+import { createDemoAdapter } from "../adapters/demo";
+import { BridgeProvider } from "../BridgeProvider";
+
+import { CHECKLIST_STEPS, checklistDone, checklistView, readChecklist, resetChecklistCache, useChecklist } from "../checklist";
 import type { DataAdapter } from "../adapter";
 import type { HostEvent } from "../protocol";
 import type { BridgeStore } from "../store";
@@ -37,10 +42,10 @@ describe("the getting-started checklist", () => {
 
   it("reads only known steps and flags from storage", () => {
     localStorage.setItem(KEY, JSON.stringify({ done: { share: true, "me@example.com": true }, dismissed: "yes", shown: true }));
-    expect(readChecklist()).toEqual({ done: { share: true }, dismissed: false, shown: true });
+    expect(readChecklist()).toEqual({ done: { share: true }, dismissed: false, shown: true, skipped: {} });
     resetChecklistCache();
     localStorage.setItem(KEY, "{not json");
-    expect(readChecklist()).toEqual({ done: {}, dismissed: false, shown: false });
+    expect(readChecklist()).toEqual({ done: {}, dismissed: false, shown: false, skipped: {} });
   });
 
   it.skipIf(!wasmBuilt)("records each step once, then completed with the last", async () => {
@@ -62,16 +67,32 @@ describe("the getting-started checklist", () => {
 
   it.skipIf(!wasmBuilt)("draws the core's rows and progress", async () => {
     const core = await testCore();
-    const view = checklistView(core, { done: { teleport: true }, dismissed: false, shown: true })!;
+    const view = checklistView(core, { done: { teleport: true }, dismissed: false, shown: true, skipped: {} })!;
     expect(view).toMatchObject({ visible: true, complete: false, title: "Get started", progress: "1 of 5" });
     expect(view.rows.map((r) => [r.step, r.action, r.done])).toEqual([
-      ["add_machine", "Add machine", false],
+      ["add_machine", "Add computer", false],
       ["create_space", "Create", false],
       ["teleport", "Teleport", true],
       ["share", "Share", false],
       ["run_agent", "Open Agents", false],
     ]);
-    expect(checklistView(core, { done: {}, dismissed: true, shown: true })?.visible).toBe(false);
+    expect(checklistView(core, { done: {}, dismissed: true, shown: true, skipped: {} })?.visible).toBe(false);
+  });
+
+  it.skipIf(!wasmBuilt)("a skipped step counts as done and is kept, without an event of its own", async () => {
+    const core = await testCore();
+    const adapter = createDemoAdapter({ latencyMs: 0 });
+    const { result } = renderHook(() => useChecklist(), { wrapper: ({ children }: { children: ReactNode }) => createElement(BridgeProvider, { adapter, core }, children) });
+    act(() => result.current.skip("teleport"));
+    expect(readChecklist().skipped).toEqual({ teleport: true });
+    expect(JSON.parse(localStorage.getItem(KEY)!).skipped).toEqual({ teleport: true });
+    resetChecklistCache();
+    expect(readChecklist().skipped).toEqual({ teleport: true });
+    const view = checklistView(core, readChecklist())!;
+    expect(view.progress).toBe("1 of 5");
+    expect(view.rows.find((r) => r.step === "teleport")).toMatchObject({ done: false, skipped: true });
+    expect(view.hideLabel).toBe("Hide");
+    adapter.dispose?.();
   });
 
   it("without the core: not drawn, and nothing changes", async () => {
@@ -132,7 +153,7 @@ describe("the host's copy (the Mac app and Electron)", () => {
     await settle();
     await settle();
     expect(host.sent).toHaveLength(2);
-    expect(host.sent).toContainEqual({ type: "merge", state: { done: ["add_machine", "teleport"], dismissed: false, shown: true } });
+    expect(host.sent).toContainEqual({ type: "merge", state: { done: ["add_machine", "teleport"], dismissed: false, shown: true, skipped: [] } });
     expect(host.sent).toContainEqual({ type: "done", step: "share" });
     expect(localStorage.getItem(KEY)).toBeNull();
     expect(sent).toEqual([]);

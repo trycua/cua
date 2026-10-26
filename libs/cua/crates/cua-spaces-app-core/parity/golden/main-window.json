@@ -11,23 +11,22 @@
         "openSettings": "Open Settings",
         "permissions": [],
         "summary": "Checking…",
-        "title": "This machine"
+        "title": "This computer"
       },
       "sidebar": {
         "emptyText": null,
         "sections": [
-          "# Cua Cloud",
-          "<os-linux> builder | Suspended | Unreachable · timed out (dim)",
-          "# This Mac",
-          "<os-linux> aurora | Running | This Mac",
-          "# Connected",
-          "<os-windows> 10.0.0.5:3211 | Running | 10.0.0.5:3211 (selected)",
-          "# My machines",
-          "<os-linux> research-box @ AWS · us-west-2 | Running | AWS · us-west-2",
-          "<os-linux> their-box @ Google Cloud · us-central1 | Suspended | Unreachable · offline (dim)"
+          "# spaces.sidebar.section.this_mac",
+          "<os-linux> aurora | spaces.status.running | This Mac",
+          "# spaces.sidebar.section.connected",
+          "<os-windows> 10.0.0.5:3211 | spaces.status.running | 10.0.0.5:3211 (selected)",
+          "<os-linux> builder | spaces.status.suspended | Unreachable · timed out (dim)",
+          "# spaces.sidebar.section.my_computers",
+          "<os-linux> research-box @ AWS · us-west-2 | spaces.status.running | AWS · us-west-2",
+          "<os-linux> their-box @ Google Cloud · us-central1 | spaces.status.suspended | Unreachable · offline (dim)"
         ],
         "selectedId": "direct:10.0.0.5:3211",
-        "thisMachine": "<os-macos> This machine | This Mac | Set up for access"
+        "thisMachine": "<os-macos> This computer | spaces.status.this_mac | Set up for access"
       }
     },
     {
@@ -42,23 +41,22 @@
         "openSettings": "Open Settings",
         "permissions": [],
         "summary": "Your other devices can’t reach this computer yet.",
-        "title": "This machine"
+        "title": "This computer"
       },
       "sidebar": {
         "emptyText": null,
         "sections": [
-          "# Cua Cloud",
-          "<os-linux> builder | Suspended | Unreachable · timed out (dim)",
-          "# This Mac",
-          "<os-linux> aurora | Running | This Mac",
-          "# Connected",
-          "<os-windows> 10.0.0.5:3211 | Running | 10.0.0.5:3211 (selected)",
-          "# My machines",
-          "<os-linux> research-box @ AWS · us-west-2 | Running | AWS · us-west-2",
-          "<os-linux> their-box @ Google Cloud · us-central1 | Suspended | Unreachable · offline (dim)"
+          "# spaces.sidebar.section.this_mac",
+          "<os-linux> aurora | spaces.status.running | This Mac",
+          "# spaces.sidebar.section.connected",
+          "<os-windows> 10.0.0.5:3211 | spaces.status.running | 10.0.0.5:3211 (selected)",
+          "<os-linux> builder | spaces.status.suspended | Unreachable · timed out (dim)",
+          "# spaces.sidebar.section.my_computers",
+          "<os-linux> research-box @ AWS · us-west-2 | spaces.status.running | AWS · us-west-2",
+          "<os-linux> their-box @ Google Cloud · us-central1 | spaces.status.suspended | Unreachable · offline (dim)"
         ],
         "selectedId": "direct:10.0.0.5:3211",
-        "thisMachine": "<os-macos> This machine | This Mac | Set up for access"
+        "thisMachine": "<os-macos> This computer | spaces.status.this_mac | Set up for access"
       }
     },
     {
@@ -81,23 +79,22 @@
           "screen-recording: Screen Recording ?Turn on Cua Spaces <x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture>"
         ],
         "summary": "Sharing · 2 connected",
-        "title": "This machine"
+        "title": "This computer"
       },
       "sidebar": {
         "emptyText": null,
         "sections": [
-          "# Cua Cloud",
-          "<os-linux> builder | Suspended | Unreachable · timed out (dim)",
-          "# This Mac",
-          "<os-linux> aurora | Running | This Mac",
-          "# Connected",
-          "<os-windows> 10.0.0.5:3211 | Running | 10.0.0.5:3211 (selected)",
-          "# My machines",
-          "<os-linux> research-box @ AWS · us-west-2 | Running | AWS · us-west-2",
-          "<os-linux> their-box @ Google Cloud · us-central1 | Suspended | Unreachable · offline (dim)"
+          "# spaces.sidebar.section.this_mac",
+          "<os-linux> aurora | spaces.status.running | This Mac",
+          "# spaces.sidebar.section.connected",
+          "<os-windows> 10.0.0.5:3211 | spaces.status.running | 10.0.0.5:3211 (selected)",
+          "<os-linux> builder | spaces.status.suspended | Unreachable · timed out (dim)",
+          "# spaces.sidebar.section.my_computers",
+          "<os-linux> research-box @ AWS · us-west-2 | spaces.status.running | AWS · us-west-2",
+          "<os-linux> their-box @ Google Cloud · us-central1 | spaces.status.suspended | Unreachable · offline (dim)"
         ],
         "selectedId": "direct:10.0.0.5:3211",
-        "thisMachine": "<os-macos> This machine | This Mac | Sharing · 2 connected"
+        "thisMachine": "<os-macos> This computer | spaces.status.this_mac | Sharing · 2 connected"
       }
     },
     {
@@ -110,30 +107,29 @@
         "clients": "Connected now: Nobody",
         "configured": true,
         "facts": [
-          "Name: This machine",
+          "Name: This computer",
           "Access: Direct at http://10.0.0.9:3211",
           "Service: launchd · stopped"
         ],
         "openSettings": "Open Settings",
         "permissions": [],
         "summary": "Host service stopped",
-        "title": "This machine"
+        "title": "This computer"
       },
       "sidebar": {
         "emptyText": null,
         "sections": [
-          "# Cua Cloud",
-          "<os-linux> builder | Suspended | Unreachable · timed out (dim)",
-          "# This Mac",
-          "<os-linux> aurora | Running | This Mac",
-          "# Connected",
-          "<os-windows> 10.0.0.5:3211 | Running | 10.0.0.5:3211 (selected)",
-          "# My machines",
-          "<os-linux> research-box @ AWS · us-west-2 | Running | AWS · us-west-2",
-          "<os-linux> their-box @ Google Cloud · us-central1 | Suspended | Unreachable · offline (dim)"
+          "# spaces.sidebar.section.this_mac",
+          "<os-linux> aurora | spaces.status.running | This Mac",
+          "# spaces.sidebar.section.connected",
+          "<os-windows> 10.0.0.5:3211 | spaces.status.running | 10.0.0.5:3211 (selected)",
+          "<os-linux> builder | spaces.status.suspended | Unreachable · timed out (dim)",
+          "# spaces.sidebar.section.my_computers",
+          "<os-linux> research-box @ AWS · us-west-2 | spaces.status.running | AWS · us-west-2",
+          "<os-linux> their-box @ Google Cloud · us-central1 | spaces.status.suspended | Unreachable · offline (dim)"
         ],
         "selectedId": "direct:10.0.0.5:3211",
-        "thisMachine": "<os-macos> This machine | This Mac | Host service stopped"
+        "thisMachine": "<os-macos> This computer | spaces.status.this_mac | Host service stopped"
       }
     },
     {
@@ -141,8 +137,8 @@
       "sidebar": {
         "emptyText": null,
         "sections": [
-          "# This Mac",
-          "<os-linux> aurora | Running | This Mac"
+          "# spaces.sidebar.section.this_mac",
+          "<os-linux> aurora | spaces.status.running | This Mac"
         ],
         "selectedId": "this-mac",
         "thisMachine": null
@@ -180,16 +176,16 @@
       "frame": {
         "actions": [],
         "canStream": false,
-        "confirm": "Delete This machine? | Everything inside it, including its files, is deleted and can't be recovered. | Delete Space / Keep",
+        "confirm": "Delete This computer? | Everything inside it, including its files, is deleted and can't be recovered. | Delete Space / Keep",
         "facts": [
           "Status: This Mac",
           "Identifier: this-mac [copy this-mac doc.on.doc Copy / checkmark Copied 1500ms]",
           "System: macOS"
         ],
         "isHost": true,
-        "previewText": "Not reachable",
+        "previewText": "This is this Mac’s own screen, so it isn’t shown here. Your other devices see and control it while you let them use it.",
         "sections": [],
-        "title": "This machine"
+        "title": "This computer"
       }
     },
     {
@@ -272,20 +268,20 @@
       }
     },
     {
-      "detail": "cloud:builder",
+      "detail": "direct:builder",
       "frame": {
         "actions": [
           "teleport: Teleport an app [arrow.down.circle] ?Teleport an app into this Space (disabled)",
           "pip: Picture in picture [pip.enter] ?Picture in picture (disabled)",
           "share: Share [person.badge.plus] ?Share this Space (disabled)",
-          "delete: Delete Space [trash] ?Delete this Space (destructive)",
+          "delete: Remove [trash] ?Remove from the list (destructive)",
           "open: Open [-] ?Open the desktop in its own window (disabled) (primary)"
         ],
         "canStream": false,
-        "confirm": "Delete builder? | Everything inside it, including its files, is deleted and can't be recovered. | Delete Space / Keep",
+        "confirm": "Remove builder? | It is only removed from the list. | Remove / Keep",
         "facts": [
           "Status: Unreachable ?timed out",
-          "Identifier: cloud:builder [copy cloud:builder doc.on.doc Copy / checkmark Copied 1500ms]",
+          "Identifier: direct:builder [copy direct:builder doc.on.doc Copy / checkmark Copied 1500ms]",
           "System: Linux"
         ],
         "isHost": false,
@@ -324,8 +320,8 @@
           "profile: Use it to [-] = desktop",
           "allow: Share with (optional) [Teammates’ emails] = "
         ],
-        "lede": "You and the people you share with can see and use this computer’s screen from other devices. Cua connects them for you, with no network setup. Signed in as ada@example.com.",
-        "request": "mode=relay relay=https://relay.cua.ai direct=- name=- allow=-",
+        "lede": "You and the people you share with can see and use this computer’s screen, and create Spaces on it, from other devices. Cua connects them for you, with no network setup. Signed in as ada@example.com.",
+        "request": "mode=relay relay=- direct=- name=- allow=-",
         "title": "Set up this computer"
       },
       "hostForm": "initial"
@@ -342,8 +338,8 @@
           "profile: Use it to [-] = desktop",
           "allow: Share with (optional) [Teammates’ emails] = "
         ],
-        "lede": "You and the people you share with can see and use this computer’s screen from other devices. Cua connects them for you, with no network setup. Signed in as ada@example.com.",
-        "request": "mode=relay relay=https://relay.cua.ai direct=- name=Studio allow=-",
+        "lede": "You and the people you share with can see and use this computer’s screen, and create Spaces on it, from other devices. Cua connects them for you, with no network setup. Signed in as ada@example.com.",
+        "request": "mode=relay relay=- direct=- name=Studio allow=-",
         "title": "Set up this computer"
       },
       "hostForm": "set-name"
@@ -360,8 +356,8 @@
           "profile: Use it to [-] = desktop",
           "allow: Share with (optional) [Teammates’ emails] = grace@example.com, bob@example.com"
         ],
-        "lede": "You and the people you share with can see and use this computer’s screen from other devices. Cua connects them for you, with no network setup. Signed in as ada@example.com.",
-        "request": "mode=relay relay=https://relay.cua.ai direct=- name=Studio allow=grace@example.com,bob@example.com",
+        "lede": "You and the people you share with can see and use this computer’s screen, and create Spaces on it, from other devices. Cua connects them for you, with no network setup. Signed in as ada@example.com.",
+        "request": "mode=relay relay=- direct=- name=Studio allow=grace@example.com,bob@example.com",
         "title": "Set up this computer"
       },
       "hostForm": "set-allow"
@@ -371,17 +367,17 @@
         "advanced": "Advanced (open)",
         "busy": false,
         "buttons": "Back / Turn on remote access",
-        "canSubmit": true,
+        "canSubmit": false,
         "error": null,
         "fields": [
           "name: Name [How it shows on your other devices] =  Studio ",
           "profile: Use it to [-] = desktop",
           "allow: Share with (optional) [Teammates’ emails] = grace@example.com, bob@example.com",
           "direct: Direct connection = off (advanced)",
-          "relay: Relay server [https://relay.cua.ai] = https://relay.cua.ai (advanced)"
+          "relay: Relay server [https://relay.example.com] =  (advanced)"
         ],
-        "lede": "You and the people you share with can see and use this computer’s screen from other devices. Cua connects them for you, with no network setup. Signed in as ada@example.com.",
-        "request": "mode=relay relay=https://relay.cua.ai direct=- name=Studio allow=grace@example.com,bob@example.com",
+        "lede": "For self-hosting teams: joins your own relay at the address below.",
+        "request": null,
         "title": "Set up this computer"
       },
       "hostForm": "toggle-advanced"
@@ -398,9 +394,9 @@
           "profile: Use it to [-] = desktop",
           "allow: Share with (optional) [Teammates’ emails] = grace@example.com, bob@example.com",
           "direct: Direct connection = off (advanced)",
-          "relay: Relay server [https://relay.cua.ai] = ftp://relay !invalid (advanced)"
+          "relay: Relay server [https://relay.example.com] = ftp://relay !invalid (advanced)"
         ],
-        "lede": "You and the people you share with can see and use this computer’s screen from other devices. Cua connects them for you, with no network setup. Signed in as ada@example.com.",
+        "lede": "For self-hosting teams: joins your own relay at the address below.",
         "request": null,
         "title": "Set up this computer"
       },
@@ -418,9 +414,9 @@
           "profile: Use it to [-] = desktop",
           "allow: Share with (optional) [Teammates’ emails] = grace@example.com, bob@example.com",
           "direct: Direct connection = off (advanced)",
-          "relay: Relay server [https://relay.cua.ai] = https://relay.example/ (advanced)"
+          "relay: Relay server [https://relay.example.com] = https://relay.example/ (advanced)"
         ],
-        "lede": "You and the people you share with can see and use this computer’s screen from other devices. Cua connects them for you, with no network setup. Signed in as ada@example.com.",
+        "lede": "For self-hosting teams: joins your own relay at the address below.",
         "request": "mode=relay relay=https://relay.example direct=- name=Studio allow=grace@example.com,bob@example.com",
         "title": "Set up this computer"
       },
@@ -528,9 +524,9 @@
           "profile: Use it to [-] = desktop",
           "allow: Share with (optional) [Teammates’ emails] = grace@example.com, bob@example.com",
           "direct: Direct connection = off (advanced)",
-          "relay: Relay server [https://relay.cua.ai] = https://relay.example/ (advanced)"
+          "relay: Relay server [https://relay.example.com] = https://relay.example/ (advanced)"
         ],
-        "lede": "You and the people you share with can see and use this computer’s screen from other devices. Cua connects them for you, with no network setup. Signed in as ada@example.com.",
+        "lede": "For self-hosting teams: joins your own relay at the address below.",
         "request": "mode=relay relay=https://relay.example direct=- name=Studio allow=grace@example.com,bob@example.com",
         "title": "Set up this computer"
       },
@@ -548,7 +544,7 @@
           "profile: Use it to [-] = desktop",
           "allow: Share with (optional) [Teammates’ emails] = grace@example.com, bob@example.com"
         ],
-        "lede": "You and the people you share with can see and use this computer’s screen from other devices. Cua connects them for you, with no network setup. Signed in as ada@example.com.",
+        "lede": "You and the people you share with can see and use this computer’s screen, and create Spaces on it, from other devices. Cua connects them for you, with no network setup. Signed in as ada@example.com.",
         "request": "mode=relay relay=https://relay.example direct=- name=Studio allow=grace@example.com,bob@example.com",
         "title": "Set up this computer"
       },
@@ -566,7 +562,7 @@
           "profile: Use it to [-] = desktop",
           "allow: Share with (optional) [Teammates’ emails] = grace@example.com, bob@example.com"
         ],
-        "lede": "You and the people you share with can see and use this computer’s screen from other devices. Cua connects them for you, with no network setup. Signed in as ada@example.com.",
+        "lede": "You and the people you share with can see and use this computer’s screen, and create Spaces on it, from other devices. Cua connects them for you, with no network setup. Signed in as ada@example.com.",
         "request": "mode=relay relay=https://relay.example direct=- name=Studio allow=grace@example.com,bob@example.com",
         "title": "Set up this computer"
       },
@@ -581,7 +577,7 @@
         "account: Not signed in",
         "signIn: Sign in",
         "settings: Settings ⌘,",
-        "empty: No Spaces yet / Choose a system for your first Space. / Linux (About 1 minute · 3.2–7.1 GB of disk) / macOS (About 22 GB download)",
+        "empty: No Spaces yet / Choose a system for your first Space. / Linux (About 3 minutes · 3.3–7.3 GB of disk) / macOS (About 23 GB download)",
         "volume: Volume"
       ]
     },
@@ -594,7 +590,7 @@
         "account: API key",
         "signIn: -",
         "settings: Settings ⌘,",
-        "empty: No Spaces yet / Choose a system for your first Space. / Linux (About 1 minute · 3.2–7.1 GB of disk) / macOS (About 22 GB download)",
+        "empty: No Spaces yet / Choose a system for your first Space. / Linux (About 3 minutes · 3.3–7.3 GB of disk) / macOS (About 23 GB download)",
         "volume: Volume"
       ]
     },
@@ -607,7 +603,7 @@
         "account: ada@example.com",
         "signIn: -",
         "settings: Settings ⌘,",
-        "empty: No Spaces yet / Choose a system for your first Space. / Linux (About 1 minute · 3.2–7.1 GB of disk) / macOS (About 22 GB download)",
+        "empty: No Spaces yet / Choose a system for your first Space. / Linux (About 3 minutes · 3.3–7.3 GB of disk) / macOS (About 23 GB download)",
         "volume: Volume"
       ]
     },
@@ -693,8 +689,8 @@
         "- notch choice: Spaces tab in the notch {Show|*Hide}",
         "- welcome text: Welcome [Show again]",
         "# Privacy (privacy)",
-        "- telemetry choice: Share anonymous usage data {On|*Off} (disabled) ?Set by DO_NOT_TRACK",
-        "- telemetry-note note: Features used, sandbox types, durations and error categories. Never paths, names, prompts, screen content or Keyvault items. <What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry>",
+        "- telemetry choice: Share usage data to help improve Cua {On|*Off} (disabled) ?Set by DO_NOT_TRACK",
+        "- telemetry-note note: Which features you use and when something goes wrong. Linked to your account through a random ID while you're signed in. Never your files, what you type or your screen. <What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry>",
         "# AI agents (agents) [Configure all detected agents] (disabled)"
       ],
       "settings": 1
@@ -712,8 +708,8 @@
         "- notch choice: Spaces tab in the notch {*Show|Hide}",
         "- welcome text: Welcome [Show again]",
         "# Privacy (privacy)",
-        "- telemetry choice: Share anonymous usage data {*On|Off}",
-        "- telemetry-note note: Features used, sandbox types, durations and error categories. Never paths, names, prompts, screen content or Keyvault items. <What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry>",
+        "- telemetry choice: Share usage data to help improve Cua {*On|Off}",
+        "- telemetry-note note: Which features you use and when something goes wrong. Linked to your account through a random ID while you're signed in. Never your files, what you type or your screen. <What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry>",
         "# AI agents (agents) [Configure all detected agents]",
         "- agent:codex text: Codex = skills and MCP configured [Remove]",
         "- agent:cursor text: Cursor = working…",
@@ -736,8 +732,8 @@
         "- notch choice: Spaces tab in the notch {*Show|Hide}",
         "- welcome text: Welcome [Show again]",
         "# Privacy (privacy)",
-        "- telemetry choice: Share anonymous usage data {*On|Off}",
-        "- telemetry-note note: Features used, sandbox types, durations and error categories. Never paths, names, prompts, screen content or Keyvault items. <What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry>",
+        "- telemetry choice: Share usage data to help improve Cua {*On|Off}",
+        "- telemetry-note note: Which features you use and when something goes wrong. Linked to your account through a random ID while you're signed in. Never your files, what you type or your screen. <What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry>",
         "# AI agents (agents) [Configuring…] (disabled)",
         "- agent:codex text: Codex = skills and MCP configured [Remove] (disabled)",
         "- agent:cursor text: Cursor = skills 1/3, MCP not configured [Configure] (disabled)",
@@ -752,11 +748,11 @@
         "canBack": false,
         "canSkip": false,
         "choices": [],
-        "dots": "*Welcome,Sign in,AI agents,Menu bar,This machine,Done",
+        "dots": "*Welcome,Sign in,AI agents,Menu bar,This computer,Done",
         "drive": null,
         "driveStorage": null,
-        "lede": "Computers for you and your agents.",
-        "notice": "Cua collects anonymous usage data (features used, sandbox types, durations, error categories), never file paths, names, prompts or screen content. Change it here or in Settings, Privacy.",
+        "lede": "Computers for you and your AI agents. Setup takes about a minute.",
+        "notice": "Cua collects usage data, like which features you use and when something goes wrong. When you're signed in, it's linked to your account through a random ID. Never your files, what you type or your screen. Change this here or in Settings, Privacy.",
         "noticeLink": "What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry",
         "presentations": [],
         "primary": "Get started",
@@ -765,7 +761,8 @@
         "step": "welcome",
         "summary": [],
         "title": "Welcome to Cua Spaces",
-        "usage": "Share anonymous usage data [x]"
+        "todos": [],
+        "usage": "Share usage data to help improve Cua [x]"
       },
       "onboarding": "initial"
     },
@@ -774,11 +771,11 @@
         "canBack": false,
         "canSkip": false,
         "choices": [],
-        "dots": "*Welcome,Sign in,AI agents,Menu bar,This machine,Done",
+        "dots": "*Welcome,Sign in,AI agents,Menu bar,This computer,Done",
         "drive": null,
         "driveStorage": null,
-        "lede": "Computers for you and your agents.",
-        "notice": "Cua collects anonymous usage data (features used, sandbox types, durations, error categories), never file paths, names, prompts or screen content. Change it here or in Settings, Privacy.",
+        "lede": "Computers for you and your AI agents. Setup takes about a minute.",
+        "notice": "Cua collects usage data, like which features you use and when something goes wrong. When you're signed in, it's linked to your account through a random ID. Never your files, what you type or your screen. Change this here or in Settings, Privacy.",
         "noticeLink": "What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry",
         "presentations": [],
         "primary": "Get started",
@@ -787,7 +784,8 @@
         "step": "welcome",
         "summary": [],
         "title": "Welcome to Cua Spaces",
-        "usage": "Share anonymous usage data [x]"
+        "todos": [],
+        "usage": "Share usage data to help improve Cua [x]"
       },
       "onboarding": "cli-installed"
     },
@@ -796,7 +794,7 @@
         "canBack": true,
         "canSkip": true,
         "choices": [],
-        "dots": "Welcome,*Sign in,AI agents,Menu bar,This machine,Done",
+        "dots": "Welcome,*Sign in,AI agents,Menu bar,This computer,Done",
         "drive": null,
         "driveStorage": null,
         "lede": "Sign in to reach your computers and Spaces from any of your devices. You can skip this and sign in later.",
@@ -809,6 +807,7 @@
         "step": "signin",
         "summary": [],
         "title": "Sign in",
+        "todos": [],
         "usage": null
       },
       "onboarding": "start"
@@ -818,7 +817,7 @@
         "canBack": true,
         "canSkip": false,
         "choices": [],
-        "dots": "Welcome,*Sign in,AI agents,Menu bar,This machine,Done",
+        "dots": "Welcome,*Sign in,AI agents,Menu bar,This computer,Done",
         "drive": null,
         "driveStorage": null,
         "lede": "Sign in to reach your computers and Spaces from any of your devices. You can skip this and sign in later.",
@@ -831,6 +830,7 @@
         "step": "signin",
         "summary": [],
         "title": "Sign in",
+        "todos": [],
         "usage": null
       },
       "onboarding": "signed-in"
@@ -840,7 +840,7 @@
         "canBack": true,
         "canSkip": true,
         "choices": [],
-        "dots": "Welcome,Sign in,*AI agents,Menu bar,This machine,Done",
+        "dots": "Welcome,Sign in,*AI agents,Menu bar,This computer,Done",
         "drive": null,
         "driveStorage": null,
         "lede": "Give your coding agents the cua skills and MCP server.",
@@ -853,6 +853,7 @@
         "step": "agents",
         "summary": [],
         "title": "AI agents",
+        "todos": [],
         "usage": null
       },
       "onboarding": "signin-done"
@@ -862,7 +863,7 @@
         "canBack": true,
         "canSkip": false,
         "choices": [],
-        "dots": "Welcome,Sign in,AI agents,*Menu bar,This machine,Done",
+        "dots": "Welcome,Sign in,AI agents,*Menu bar,This computer,Done",
         "drive": null,
         "driveStorage": null,
         "lede": "You can change this in Settings.",
@@ -878,6 +879,7 @@
         "step": "presentation",
         "summary": [],
         "title": "Where should Cua Spaces show up?",
+        "todos": [],
         "usage": null
       },
       "onboarding": "agents-done"
@@ -887,7 +889,7 @@
         "canBack": true,
         "canSkip": true,
         "choices": [],
-        "dots": "Welcome,Sign in,*AI agents,Menu bar,This machine,Done",
+        "dots": "Welcome,Sign in,*AI agents,Menu bar,This computer,Done",
         "drive": null,
         "driveStorage": null,
         "lede": "Give your coding agents the cua skills and MCP server.",
@@ -900,6 +902,7 @@
         "step": "agents",
         "summary": [],
         "title": "AI agents",
+        "todos": [],
         "usage": null
       },
       "onboarding": "back"
@@ -909,7 +912,7 @@
         "canBack": true,
         "canSkip": false,
         "choices": [],
-        "dots": "Welcome,Sign in,AI agents,*Menu bar,This machine,Done",
+        "dots": "Welcome,Sign in,AI agents,*Menu bar,This computer,Done",
         "drive": null,
         "driveStorage": null,
         "lede": "You can change this in Settings.",
@@ -925,6 +928,7 @@
         "step": "presentation",
         "summary": [],
         "title": "Where should Cua Spaces show up?",
+        "todos": [],
         "usage": null
       },
       "onboarding": "agents-done"
@@ -934,7 +938,7 @@
         "canBack": true,
         "canSkip": false,
         "choices": [],
-        "dots": "Welcome,Sign in,AI agents,*Menu bar,This machine,Done",
+        "dots": "Welcome,Sign in,AI agents,*Menu bar,This computer,Done",
         "drive": null,
         "driveStorage": null,
         "lede": "You can change this in Settings.",
@@ -950,6 +954,7 @@
         "step": "presentation",
         "summary": [],
         "title": "Where should Cua Spaces show up?",
+        "todos": [],
         "usage": null
       },
       "onboarding": "presentation-picked"
@@ -959,7 +964,7 @@
         "canBack": true,
         "canSkip": false,
         "choices": [],
-        "dots": "Welcome,Sign in,AI agents,*Menu bar,This machine,Done",
+        "dots": "Welcome,Sign in,AI agents,*Menu bar,This computer,Done",
         "drive": null,
         "driveStorage": null,
         "lede": "You can change this in Settings.",
@@ -975,6 +980,7 @@
         "step": "presentation",
         "summary": [],
         "title": "Where should Cua Spaces show up?",
+        "todos": [],
         "usage": null
       },
       "onboarding": "presentation-picked"
@@ -984,7 +990,7 @@
         "canBack": true,
         "canSkip": false,
         "choices": [],
-        "dots": "Welcome,Sign in,AI agents,*Menu bar,This machine,Done",
+        "dots": "Welcome,Sign in,AI agents,*Menu bar,This computer,Done",
         "drive": null,
         "driveStorage": null,
         "lede": "You can change this in Settings.",
@@ -1000,6 +1006,7 @@
         "step": "presentation",
         "summary": [],
         "title": "Where should Cua Spaces show up?",
+        "todos": [],
         "usage": null
       },
       "onboarding": "presentation-picked"
@@ -1012,7 +1019,7 @@
           "client: Just use this Mac to open my other computers",
           "host: Let my other devices reach this Mac (preselected)"
         ],
-        "dots": "Welcome,Sign in,AI agents,Menu bar,*This machine,Done",
+        "dots": "Welcome,Sign in,AI agents,Menu bar,*This computer,Done",
         "drive": null,
         "driveStorage": null,
         "lede": "Use it only to open your other computers, or let your other devices reach it too. You can change this later.",
@@ -1025,6 +1032,7 @@
         "step": "mode",
         "summary": [],
         "title": "How do you want to use this Mac?",
+        "todos": [],
         "usage": null
       },
       "onboarding": "presentation-done"
@@ -1034,7 +1042,7 @@
         "canBack": true,
         "canSkip": false,
         "choices": [],
-        "dots": "Welcome,Sign in,AI agents,*Menu bar,This machine,Done",
+        "dots": "Welcome,Sign in,AI agents,*Menu bar,This computer,Done",
         "drive": null,
         "driveStorage": null,
         "lede": "You can change this in Settings.",
@@ -1050,6 +1058,7 @@
         "step": "presentation",
         "summary": [],
         "title": "Where should Cua Spaces show up?",
+        "todos": [],
         "usage": null
       },
       "onboarding": "back"
@@ -1062,7 +1071,7 @@
           "client: Just use this Mac to open my other computers",
           "host: Let my other devices reach this Mac (preselected)"
         ],
-        "dots": "Welcome,Sign in,AI agents,Menu bar,*This machine,Done",
+        "dots": "Welcome,Sign in,AI agents,Menu bar,*This computer,Done",
         "drive": null,
         "driveStorage": null,
         "lede": "Use it only to open your other computers, or let your other devices reach it too. You can change this later.",
@@ -1075,6 +1084,7 @@
         "step": "mode",
         "summary": [],
         "title": "How do you want to use this Mac?",
+        "todos": [],
         "usage": null
       },
       "onboarding": "presentation-done"
@@ -1087,7 +1097,7 @@
           "client: Just use this Mac to open my other computers",
           "host: Let my other devices reach this Mac (preselected)"
         ],
-        "dots": "Welcome,Sign in,AI agents,Menu bar,*This machine,Done",
+        "dots": "Welcome,Sign in,AI agents,Menu bar,*This computer,Done",
         "drive": null,
         "driveStorage": null,
         "lede": "Use it only to open your other computers, or let your other devices reach it too. You can change this later.",
@@ -1100,6 +1110,7 @@
         "step": "mode",
         "summary": [],
         "title": "How do you want to use this Mac?",
+        "todos": [],
         "usage": null
       },
       "onboarding": "drive-continue"
@@ -1109,7 +1120,7 @@
         "canBack": true,
         "canSkip": false,
         "choices": [],
-        "dots": "Welcome,Sign in,AI agents,Menu bar,This machine,*Done",
+        "dots": "Welcome,Sign in,AI agents,Menu bar,This computer,*Done",
         "drive": null,
         "driveStorage": null,
         "launchAtLogin": "[x] Launch at login ~Keeps your Spaces and agents available after a restart.",
@@ -1126,13 +1137,16 @@
         "showMark": false,
         "step": "done",
         "summary": [
-          "cua command: /Users/me/.local/bin/cua",
-          "Account: ada@example.com",
-          "AI agents: Codex",
           "Shows in: Menu bar only",
-          "This machine: Reachable from your other devices"
+          "This computer: Your other devices can reach it"
         ],
         "title": "You're all set",
+        "todos": [
+          "[x] Cua CLI ~Command-line tools for you and your agents.",
+          "[x] Account ~Signed in as ada@example.com.",
+          "[x] AI agents ~Codex, Pi can use Cua.",
+          "[ ] Cua Volume ~Shared folder: files your agents can share across your computers. -> Turn on (optional)"
+        ],
         "usage": null
       },
       "onboarding": "mode-chosen"

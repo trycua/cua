@@ -13,8 +13,8 @@
 //!   hotspot, agents) are SDK calls. No ssh, no rcdp CLI, no Python.
 //! - The signed-in user ([`SessionHandle`], the device-authorization grant)
 //!   drives the relay account and this device's enrollment. There is no
-//!   other credential source: Cua Cloud has ended, so the app builds no
-//!   Fleet client and calls no Cua Cloud API.
+//!   other credential source: Cua Cloud has ended, so the app calls no Cua
+//!   Cloud API.
 //! - `cua daemon` is connected (or started) so CLI and MCP clients share
 //!   Spaces with the app. Every Space's media tickets are safe in a URL, so
 //!   the webview attaches to them directly.
@@ -243,8 +243,7 @@ pub enum AuthMode {
     None,
 }
 
-/// `fleet_status`: the signed-in account. The command keeps its name for
-/// the web UI bridge that still calls it; it reads the local session and
+/// `account_status`: the signed-in account. It reads the local session and
 /// makes no network call.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -530,6 +529,14 @@ pub fn space_host(h: cua_spaces::host_spaces::HostOffer) -> cua_spaces_app_core:
                 reason: l.reason,
             })
             .collect(),
+        load: h.node.map(|n| cua_spaces_app_core::wizard::HostLoad {
+            millicpus_total: n.millicpus_total,
+            millicpus_free: n.millicpus_free,
+            memory_total_mb: n.memory_total_mb,
+            memory_free_mb: n.memory_free_mb,
+            spaces: n.running.values().sum(),
+            problem: n.problem,
+        }),
     }
 }
 
@@ -919,7 +926,7 @@ impl AppCore {
 
     // --------------------------------------------------------- account
 
-    /// `fleet_status`: who is signed in. Reads the local session; no
+    /// `account_status`: who is signed in. Reads the local session; no
     /// network call.
     pub async fn account_status(&self) -> AccountStatus {
         let signed_in = self.signed_in.load(Ordering::Relaxed);
@@ -949,11 +956,21 @@ impl AppCore {
         let identity = self.session.install(c).await?;
         self.signed_in.store(true, Ordering::Relaxed);
         self.identity_changed().await;
+        self.sync_usage_link().await;
         Ok(identity)
+    }
+
+    /// Links usage data to the signed-in account when the Spaces API offers
+    /// an account id (CUA-1881); none unlinks. Best effort: offline or
+    /// signed out, nothing changes. Called at launch and after a sign-in.
+    pub async fn sync_usage_link(&self) {
+        crate::telemetry::sync_account(&self.session).await;
     }
 
     /// Signs out.
     pub async fn sign_out(&self) {
+        // Usage data goes back to a new anonymous install id.
+        let _ = cua_telemetry::global().forget_account();
         self.session.clear().await;
         self.signed_in.store(false, Ordering::Relaxed);
         self.identity_changed().await;
@@ -1060,23 +1077,6 @@ impl AppCore {
                 ..Default::default()
             },
         }
-    }
-
-    // ----------------------------------------------------------- cloud
-
-    /// `cloud_pricing`: always `None` (no estimate). The rates came from the
-    /// Cua Cloud API, which has ended, and the app does not offer new cloud
-    /// Spaces.
-    pub async fn cloud_pricing(&self) -> Option<cua_spaces_app_core::wizard::CloudPricing> {
-        None
-    }
-
-    /// `billing_status`: always `None`. The Cua Cloud billing API has ended,
-    /// so the app no longer calls it and Settings hides the Billing row.
-    pub async fn billing_status(
-        &self,
-    ) -> CmdResult<Option<cua_spaces_app_core::billing::BillingStatus>> {
-        Ok(None)
     }
 
     // ----------------------------------------------------------- local
@@ -1207,7 +1207,7 @@ impl AppCore {
         let parsed = On::parse(on).map_err(msg)?;
         if parsed.is_existing_machine() {
             return Err(format!(
-                "{parsed} names one machine; the default location is local or cloud"
+                "{parsed} names one computer; the default location is local or a cloud of yours"
             ));
         }
         let mut settings = self.settings()?;
@@ -1445,11 +1445,15 @@ impl AppCore {
             .collect())
     }
 
-    /// Memory and storage use now (the app core's `SpaceUsage` shape).
+    /// Processor, memory and storage use now (the app core's `SpaceUsage`
+    /// shape).
     pub async fn space_usage(&self, space: &str) -> CmdResult<serde_json::Value> {
         let s = self.space(space).await?;
         let u = s.usage().await.map_err(msg)?;
         Ok(serde_json::json!({
+            "cpuCount": u.cpu_count,
+            "cpuPercent": u.cpu_percent,
+            "loadAverage1m": u.load_average_1m,
             "memoryUsed": u.memory_used,
             "memoryTotal": u.memory_total,
             "memoryLimited": u.memory_limited,

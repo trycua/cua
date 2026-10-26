@@ -5,12 +5,14 @@
 
 use crate::{
     shell::{self, exit_code},
-    util::{self, internal, line},
+    util::{self, hint_line, internal, line},
 };
 use clap::{Args, Subcommand};
 use cua_sandbox_core::placement::{Kind, On, Runtime};
 use cua_sdk::{Cua, CuaError, ReadinessProbe, SandboxCreateOptions, SandboxInfo};
 use std::{io::Write, path::PathBuf, sync::Arc};
+
+mod bake;
 
 /// `--on`: where it runs (`local`, `direct:<addr>`, or a
 /// registered provider).
@@ -23,7 +25,7 @@ pub fn parse_kind(s: &str) -> Result<Kind, String> {
     Kind::parse(s).map_err(|e| e.message)
 }
 
-/// `--runtime`: `auto` or an engine (`gvisor`, `runc`, `qemu`, `lume`,
+/// `--runtime`: `auto` or an engine (`gvisor`, `runc`, `qemu`, `lume`, `firecracker`,
 /// `kubevirt`).
 pub fn parse_runtime(s: &str) -> Result<Runtime, String> {
     Runtime::parse(s).map_err(|e| e.message)
@@ -61,13 +63,11 @@ impl Narrow {
     }
 }
 
-/// The options of the ended Cua Cloud (`--pool`, `--apply`, `--warm`, ...),
+/// The options of the ended Cua Cloud (`--apply`, `--warm`, ...),
 /// still accepted (hidden) so a script that passes one fails with the ended
 /// message instead of a parse error.
 #[derive(Args, Clone, Debug, Default)]
 pub struct EndedCloudArgs {
-    #[arg(long, hide = true)]
-    pool: Option<String>,
     #[arg(long, hide = true)]
     apply: bool,
     #[arg(long, hide = true)]
@@ -83,8 +83,7 @@ pub struct EndedCloudArgs {
 impl EndedCloudArgs {
     /// The ended message when any of the options was given.
     fn check(&self) -> Result<(), CuaError> {
-        let given = self.pool.is_some()
-            || self.apply
+        let given = self.apply
             || self.warm
             || self.no_warm
             || self.max_pool_size.is_some()
@@ -102,24 +101,28 @@ pub struct CreateArgs {
     /// Image: a registry reference (`ghcr.io/org/image:tag`), an alias
     /// (`linux`, `ubuntu`, `windows`, `macos[:tahoe|sequoia]`, `omarchy`).
     image: Option<String>,
-    /// Where it runs: local, direct:<addr> (an existing machine
+    /// Where it runs: local, direct:<addr> (an existing computer
     /// running cua-spacesd), or a registered provider. Default: `cua config
     /// get default.on` (`CUA_DEFAULT_ON`), else local.
     #[arg(long, value_parser = parse_on, value_name = "WHERE")]
     on: Option<On>,
-    /// What kind of machine: auto (from the image: a container when it has
+    /// What kind of computer: auto (from the image: a container when it has
     /// a container rootfs; macOS, Windows and disk-only images are VMs),
-    /// container or vm.
+    /// container, vm, or microvm (the container image booted with its own
+    /// kernel: Firecracker on Linux with KVM, Apple's Containerization on a
+    /// Mac with macOS 26).
     #[arg(long, value_parser = parse_kind)]
     kind: Option<Kind>,
     /// Which engine: auto (the safest available) or one the location offers
-    /// for the kind. Local: gvisor or runc (containers), qemu or lume (VMs).
+    /// for the kind. Local: gvisor or runc (containers), qemu or lume (VMs),
+    /// firecracker, vz or containerization (microVMs).
     /// A local sandbox with
     /// --sidecar needs `--runtime runc` where gVisor would run (separate
     /// gVisor containers cannot share a network namespace).
     #[arg(long, value_parser = parse_runtime)]
     runtime: Option<Runtime>,
-    /// Image tier for an alias: `slim`, `full` (default) or macOS `xcode`.
+    /// Image tier for an alias: `slim`, `full` (default), Linux `docker`
+    /// (a VM with dockerd up at boot) or macOS `xcode`.
     #[arg(long, value_name = "TIER")]
     tier: Option<String>,
     /// Sandbox name (generated when omitted).
@@ -189,6 +192,15 @@ pub struct CreateArgs {
     /// this environment) or aws-ecr[:REGION] (the AWS CLI's login token).
     #[arg(long, value_parser = parse_registry_secret)]
     registry_secret: Option<cua_sdk::RegistrySecret>,
+    /// Create from this pool (`cua sb pool create`): the sandbox gets the
+    /// pool's image and size and takes one of its ready ones in about 0.1 s.
+    #[arg(long)]
+    pool: Option<String>,
+    /// How long the platform keeps the sandbox once nothing keeps it alive
+    /// (`1h`, `900`): a provider sandbox's lifetime (`--on e2b`). Default:
+    /// the platform's.
+    #[arg(long, value_parser = parse_secs)]
+    ttl: Option<u32>,
     /// spacesd token (direct: sandboxes).
     #[arg(long, env = "CUA_ENV_TOKEN", hide_env_values = true)]
     token: Option<String>,
@@ -210,12 +222,33 @@ pub struct CreateArgs {
     /// create deletes it.
     #[arg(long)]
     keep_on_failure: bool,
+    /// No desktop: only cua-spacesd runs (exec, files, processes, MCP), with
+    /// no display, window manager or audio. Starts several times faster and
+    /// fits many more per machine; for shell, CI and RL workloads.
+    #[arg(long, conflicts_with_all = ["browser", "view"])]
+    headless: bool,
+    /// Run the image as it is. By default a container or microVM of an image
+    /// without cua-spacesd (`alpine`, `node`) gets a static one put in, so
+    /// exec, files and ports work; with this flag it keeps none.
+    #[arg(long)]
+    no_spacesd: bool,
     /// A GPU: the runtime's own (`--gpu`), or an option `cua spaces gpus`
     /// lists (`paravirtual`: GPU acceleration for a macOS VM on Lume,
     /// experimental; `virgl`: QEMU on Linux; `nvidia`: a runc container on
     /// Linux; a provider's GPU type).
     #[arg(long, num_args = 0..=1, default_missing_value = "auto", value_name = "OPTION")]
     gpu: Option<String>,
+    /// A size profile, defaults for what you leave unset: `rollout` (1
+    /// vCPU, 1 GiB, no desktop; a local VM gets no display hardware, so
+    /// many more fit on one machine) for RL rollouts and agent episodes
+    /// that mostly wait, or `default` (2 vCPUs, 4 GiB).
+    #[arg(long, value_name = "PROFILE")]
+    profile: Option<String>,
+    /// A fork source (a "bake" sandbox): a local QEMU VM's guest RAM is a
+    /// shared file, so `cua sb checkpoint` takes milliseconds and forks of
+    /// its checkpoints share its pages. Other kinds ignore it.
+    #[arg(long)]
+    forkable: bool,
     #[command(flatten)]
     ended: EndedCloudArgs,
 }
@@ -225,6 +258,13 @@ pub struct LaunchArgs {
     /// Image: `linux`/`ubuntu`, `macos[:tahoe|sequoia]`, or a registry
     /// reference such as `ghcr.io/org/image:tag`.
     image: Option<String>,
+    /// Create from this pool (see `sb create --pool`; requires --name).
+    #[arg(long)]
+    pool: Option<String>,
+    /// How long the platform keeps the sandbox once nothing keeps it alive
+    /// (see `sb create --ttl`).
+    #[arg(long, value_parser = parse_secs)]
+    ttl: Option<u32>,
     /// Deprecated: use `--on local`.
     #[arg(long, hide = true)]
     local: bool,
@@ -237,7 +277,7 @@ pub struct LaunchArgs {
     /// Deprecated: use `--kind vm`.
     #[arg(long, hide = true, conflicts_with = "kind")]
     vm: bool,
-    /// What kind of machine: auto, container or vm.
+    /// What kind of computer: auto, container or vm.
     #[arg(long, value_parser = parse_kind)]
     kind: Option<Kind>,
     /// Which engine (see `sb create --runtime`).
@@ -270,7 +310,8 @@ impl LaunchArgs {
     /// The equivalent `sb create` arguments (launch uses the user default, like create).
     fn into_create(self) -> Result<CreateArgs, CuaError> {
         self.ended.check()?;
-        if self.image.is_none() {
+        // A local pool decides the image (`sb launch --pool NAME`).
+        if self.image.is_none() && self.pool.is_none() {
             return Err(CuaError::InvalidArgument("specify IMAGE".into()));
         }
         let on = if self.local {
@@ -298,6 +339,8 @@ impl LaunchArgs {
             memory: self.memory,
             disk: self.disk,
             ports: self.ports,
+            pool: self.pool,
+            ttl: self.ttl,
             keep_on_failure: self.keep_on_failure,
             ..Default::default()
         })
@@ -309,7 +352,7 @@ pub enum SandboxCmd {
     /// Create a sandbox: `cua sb create IMAGE [--on local|direct:<addr>]
     /// [--kind auto|container|vm] [--runtime auto|gvisor|runc|qemu|lume]`.
     #[command(after_help = "Examples:
-  # A Linux desktop on this machine (a gVisor container)
+  # A Linux desktop on this computer (a gVisor container)
   cua sb create linux --name dev
   # A web server container, ready when its HTTP service answers
   cua sb create python:3.12-slim --service web=8000 --wait http:web/ -- python -m http.server 8000
@@ -359,13 +402,21 @@ pub enum SandboxCmd {
         visible_alias = "get",
         after_help = "Examples:
   cua sb info dev
-  cua sb info local:dev --json"
+  cua sb info local:dev --json
+  # The gRPC URL and token of its cua-spacesd, for your own client
+  cua sb info dev --connection --json"
     )]
     Info {
         /// Sandbox name or ref (`local:NAME`).
         name: String,
         #[command(flatten)]
         at: Narrow,
+        /// Also print how to call the sandbox's cua-spacesd from your own
+        /// code: its gRPC URL and bearer token (`authorization: Bearer
+        /// <token>`). The token is a secret: anyone with it controls the
+        /// sandbox.
+        #[arg(long)]
+        connection: bool,
     },
     /// Suspend (pause/snapshot).
     #[command(after_help = "Examples:
@@ -394,6 +445,181 @@ pub enum SandboxCmd {
         #[command(flatten)]
         at: Narrow,
     },
+    /// Save a local sandbox's state as a named checkpoint: its memory and
+    /// disk on every kind (a gVisor container, a QEMU or Lume VM, a microVM;
+    /// it keeps running), the filesystem where an engine cannot save memory.
+    /// `cua sb fork` starts new sandboxes from it; forks of a QEMU
+    /// checkpoint share its RAM copy-on-write (and a `--forkable` VM's
+    /// checkpoints take milliseconds).
+    #[command(after_help = "Examples:
+  cua sb checkpoint dev before-upgrade
+  cua sb fork before-upgrade dev-2
+  # A world to fork many times: kept until unpinned
+  cua sb create linux --kind vm --forkable --name bake
+  cua sb checkpoint bake world --pin
+  cua sb fork world agent-1
+  # A Space another machine of yours provides is checkpointed there
+  cua spaces create linux --kind vm --on host:kvm-a --name src
+  cua sb checkpoint src world
+  cua spaces create checkpoint:world --name agent-2")]
+    Checkpoint {
+        /// Sandbox name or ref (`local:NAME`), or a Space another machine of
+        /// yours provides (its name or id): that machine takes the
+        /// checkpoint and keeps it.
+        name: String,
+        /// The checkpoint's name.
+        checkpoint: String,
+        /// Pin it: `cua sb checkpoints rm` and `prune` leave it until
+        /// `cua sb checkpoints unpin`.
+        #[arg(long)]
+        pin: bool,
+        #[command(flatten)]
+        at: Narrow,
+        /// Machine-readable output.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Start a new sandbox from a local sandbox (running or stopped) or a
+    /// checkpoint. A fork restores the saved memory where there is one (in
+    /// about a second or less) and is a new machine: its own token, keys,
+    /// machine id and random state.
+    #[command(after_help = "Examples:
+  cua sb fork dev dev-copy
+  cua sb fork before-upgrade dev-2")]
+    Fork {
+        /// A sandbox name or ref, or a checkpoint name (a sandbox wins).
+        source: String,
+        /// The new sandbox's name.
+        name: String,
+        /// Machine-readable output.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Fork a checkpoint many times at once, on this machine or across your
+    /// machines, printing each fork as soon as it is ready (or failed). A
+    /// group's forks (`--group-size`) go to one machine, so they share the
+    /// checkpoint's memory there; groups spread over the least-loaded
+    /// machines, the checkpoint is copied (and verified) to a machine that
+    /// lacks it, and forks of a machine that fails are placed again.
+    #[command(
+        name = "fork-many",
+        after_help = "Examples:
+  cua sb fork-many world --count 8
+  # 64 rollouts, 8 per machine group, across your machines
+  cua sb fork-many world --count 64 --group-size 8 --on auto
+  # Several checkpoints at once
+  cua sb fork-many --group world-a=8 --group world-b=8 --on auto
+  # Fetch from S3 when the machine that holds the checkpoint is away
+  cua sb fork-many world --count 16 --on auto --fallback-s3 my-bucket/cua-snapshots"
+    )]
+    ForkMany {
+        /// The checkpoint (or local sandbox) to fork.
+        source: Option<String>,
+        /// How many forks of SOURCE.
+        #[arg(long, default_value_t = 1)]
+        count: u32,
+        /// Forks per group (0: all in one group).
+        #[arg(long, default_value_t = 0)]
+        group_size: u32,
+        /// A group `CHECKPOINT=COUNT` (repeatable), instead of SOURCE.
+        #[arg(long = "group", value_name = "CHECKPOINT=COUNT")]
+        groups: Vec<String>,
+        /// Where: `local` (default), `auto` (your machines that provide
+        /// Spaces, this one included), or `host:<machine>`.
+        #[arg(long)]
+        on: Option<String>,
+        /// Forks started at once per machine (0: 4).
+        #[arg(long, default_value_t = 0)]
+        parallel: u32,
+        /// Names are `<prefix>-<n>`.
+        #[arg(long, default_value = "")]
+        prefix: String,
+        /// A folder every machine mounts (your Cua Volume) to fetch
+        /// checkpoints from when their machine is away.
+        #[arg(long)]
+        fallback_dir: Option<String>,
+        /// An S3 `bucket[/prefix]` to fetch checkpoints from when their
+        /// machine is away (each machine's AWS credentials).
+        #[arg(long)]
+        fallback_s3: Option<String>,
+        /// The fallback bucket's region.
+        #[arg(long)]
+        fallback_region: Option<String>,
+        /// Report forks of a failed machine instead of placing them again.
+        #[arg(long)]
+        no_retry: bool,
+        /// vCPUs each fork is counted as when placing (default: 1;
+        /// forks of one world are mostly idle).
+        #[arg(long, default_value_t = 0)]
+        cpus: u32,
+        /// Memory (MiB) each fork is counted as when placing (default: the
+        /// checkpoint's).
+        #[arg(long, default_value_t = 0)]
+        memory_mb: u64,
+        /// One JSON object per event.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Upload a checkpoint to a fallback (a folder every machine mounts,
+    /// or S3), so your other machines copy it from there when this one is
+    /// away. Files already there are not uploaded again.
+    #[command(after_help = "Examples:
+  cua sb publish world --dir \"~/Cua Volume/snapshots\"
+  cua sb publish world --s3 my-bucket/cua-snapshots --region us-west-2")]
+    Publish {
+        /// The checkpoint.
+        name: String,
+        /// A folder every machine mounts.
+        #[arg(long)]
+        dir: Option<String>,
+        /// An S3 `bucket[/prefix]`.
+        #[arg(long)]
+        s3: Option<String>,
+        /// The bucket's region.
+        #[arg(long)]
+        region: Option<String>,
+    },
+    /// Bake a Docker Compose project into a checkpoint: a local VM of the
+    /// docker tier (dockerd up at boot), the project uploaded, `docker
+    /// compose up --wait`, health checks, then a live memory checkpoint.
+    /// Forks of it (`cua sb fork`) start with the containers already
+    /// running. The bake Space is deleted afterwards (`--keep` keeps it).
+    #[command(after_help = "Examples:
+  # Bake ./world (compose.yaml: agent, MCP and grader services)
+  cua sb bake ./world --checkpoint world-v1
+  # Check a fork comes up live, with an extra health probe
+  cua sb bake ./world --checkpoint world-v1 --health 'curl -fsS http://127.0.0.1:8000/' --verify-fork
+  # Then start rollouts from it
+  cua sb fork world-v1 rollout-1")]
+    Bake(Box<bake::BakeArgs>),
+    /// Pools: sandboxes of one kind kept ready on this machine, so that
+    /// `cua sb create --pool NAME` takes one in about 0.1 s. Without pools,
+    /// the daemon keeps sandboxes ready only where repeated creates pay for
+    /// it (`cua daemon status` says why).
+    #[command(
+        subcommand,
+        after_help = "Examples:
+  # Always 2 Linux desktops ready, up to 8 while creates come fast
+  cua sb pool create linux --name agents --min 2 --max 8
+  cua sb create --pool agents --name a1
+  cua sb pool ls
+  cua sb pool rm agents"
+    )]
+    Pool(PoolCmd),
+    /// List checkpoints; delete, pin or unpin one; or prune every unpinned
+    /// one (`checkpoints rm|pin|unpin NAME`, `checkpoints prune`).
+    #[command(after_help = "Examples:
+  cua sb checkpoints
+  cua sb checkpoints rm before-upgrade
+  cua sb checkpoints pin world
+  cua sb checkpoints prune")]
+    Checkpoints {
+        #[command(subcommand)]
+        action: Option<CheckpointsAction>,
+        /// Machine-readable output.
+        #[arg(long)]
+        json: bool,
+    },
     /// Removed: Cua Cloud has ended.
     #[command(name = "keep-alive", hide = true, disable_help_flag = true)]
     KeepAlive(util::EndedArgs),
@@ -416,12 +642,18 @@ pub enum SandboxCmd {
         at: Narrow,
     },
     /// Run a command (joined into one shell line, as `sh -c`). Exits with
-    /// the command's own status. A local Lume sandbox without cua-spacesd
-    /// runs it via SSH (`lume ssh`).
+    /// the command's own status, or 124 when it ran out of time. A local
+    /// Lume sandbox without cua-spacesd runs it via SSH (`lume ssh`).
     #[command(after_help = "Examples:
   cua sb exec dev uname -a
-  cua sb exec dev 'ls /tmp | wc -l'")]
+  cua sb exec dev 'ls /tmp | wc -l'
+  # A long job: no time limit
+  cua sb exec dev --timeout 0 ./crawl.sh
+  # A long-lived stdio stream, like `docker exec -i`: argv, not a shell line
+  cua sb exec -i dev -- bash -c 'wc -c'")]
     Exec {
+        #[command(flatten)]
+        flags: shell::ExecFlags,
         #[command(flatten)]
         at: Narrow,
         /// Sandbox name or ref (`local:NAME`).
@@ -430,6 +662,24 @@ pub enum SandboxCmd {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true, required = true)]
         command: Vec<String>,
     },
+    /// Run a command in new Spaces, `--count` times (each in its own Space,
+    /// deleted afterwards): on this machine, or with `--on auto` on the
+    /// least-loaded of your machines. A run of your machines keeps going
+    /// when this one sleeps.
+    #[command(after_help = "Examples:
+  cua sb run -- uname -a
+  # 200 headless browser sessions on all your machines
+  cua sb run --on auto --count 200 -- sh -c 'chromium --headless --no-sandbox --dump-dom https://example.com | wc -c'
+  # On one machine, and come back later
+  cua sb run --on mac-mini --count 50 --detach -- ./job.sh")]
+    Run(Box<crate::runs::RunArgs>),
+    /// Runs so far, one run's jobs, or one job with its output.
+    #[command(after_help = "Examples:
+  cua sb runs
+  cua sb runs p-1a2b3c4d --state failed
+  cua sb runs p-1a2b3c4d --job 42
+  cua sb runs p-1a2b3c4d --cancel")]
+    Runs(crate::runs::RunsArgs),
     /// Interactive shell (PTY), or run a command in a PTY.
     #[command(after_help = "Examples:
   cua sb shell dev
@@ -524,7 +774,7 @@ pub enum SandboxCmd {
         #[arg(long)]
         no_wait: bool,
     },
-    /// Print a URL for a named service: usable from this machine (default),
+    /// Print a URL for a named service: usable from this computer (default),
     /// or `--public` for a shareable URL that expires (`--ttl`, default 1h;
     /// a token URL served by the cua daemon).
     #[command(after_help = "Examples:
@@ -626,6 +876,127 @@ pub struct ViewArgs {
     pub no_open: bool,
     #[command(flatten)]
     pub at: Narrow,
+}
+
+/// `cua sb pool <command>`.
+#[derive(Subcommand, Debug)]
+pub enum PoolCmd {
+    /// Create a pool, or update the pool of that name.
+    #[command(after_help = "Examples:
+  cua sb pool create linux --name agents --min 2 --max 8
+  cua sb pool create linux --name big --cpu 4 --memory 8GB --idle 30m")]
+    Create {
+        /// The image its sandboxes run.
+        image: String,
+        /// The pool's name (lower-case letters, digits, '-'; default: a new
+        /// one). The name of an existing pool updates it.
+        #[arg(long)]
+        name: Option<String>,
+        /// Sandboxes kept ready at all times (one starts again as soon as
+        /// one is created from the pool).
+        #[arg(long, default_value_t = 1)]
+        min: u32,
+        /// Most kept ready, not counting those created from the pool
+        /// (default: --min); above --min only while creates come faster
+        /// than sandboxes start.
+        #[arg(long)]
+        max: Option<u32>,
+        /// After this long without a create from the pool it keeps none
+        /// ready, until the next create (`30m`, `2h`; default: never).
+        #[arg(long, value_parser = parse_secs)]
+        idle: Option<u32>,
+        /// Where its sandboxes run (only `local` has pools today).
+        #[arg(long, value_parser = parse_on, value_name = "WHERE")]
+        on: Option<On>,
+        /// What kind of machine (auto, container, vm, microvm).
+        #[arg(long, value_parser = parse_kind)]
+        kind: Option<Kind>,
+        /// Which engine (auto, gvisor, runc, ...).
+        #[arg(long, value_parser = parse_runtime)]
+        runtime: Option<Runtime>,
+        /// vCPUs of each sandbox.
+        #[arg(long, visible_alias = "cpus")]
+        cpu: Option<u32>,
+        /// Memory of each sandbox (`4GB`, `4096MB`).
+        #[arg(long)]
+        memory: Option<String>,
+        /// Guest environment (repeat).
+        #[arg(long = "env", value_parser = parse_kv)]
+        env: Vec<(String, String)>,
+        /// Machine-readable output.
+        #[arg(long)]
+        json: bool,
+    },
+    /// List the pools, with what each holds now.
+    #[command(
+        visible_alias = "list",
+        after_help = "Examples:
+  cua sb pool ls
+  cua sb pool ls --json"
+    )]
+    Ls {
+        /// Machine-readable output.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Delete a pool (its ready sandboxes go; those created from it stay).
+    #[command(
+        visible_alias = "delete",
+        after_help = "Examples:
+  cua sb pool rm agents"
+    )]
+    Rm {
+        /// The pool's name.
+        name: String,
+    },
+}
+
+/// What a checkpoint line adds: `, pinned`, `, shared memory`.
+fn checkpoint_notes(c: &cua_sdk::CheckpointSummary) -> String {
+    let mut notes = String::new();
+    if c.pinned {
+        notes.push_str(", pinned");
+    }
+    if c.shared_memory {
+        notes.push_str(", shared memory");
+    }
+    if !c.host.is_empty() {
+        notes.push_str(&format!(", on {}", c.host));
+    }
+    notes
+}
+
+/// `cua sb checkpoints <action>`.
+#[derive(Subcommand, Debug)]
+pub enum CheckpointsAction {
+    /// Delete a checkpoint, here and on every machine of yours that holds a
+    /// copy (forks made from it keep running).
+    #[command(after_help = "Examples:
+  cua sb checkpoints rm before-upgrade")]
+    Rm {
+        /// The checkpoint's name.
+        name: String,
+    },
+    /// Pin a checkpoint: a fork source to keep (`rm` and `prune` leave it
+    /// until it is unpinned).
+    #[command(after_help = "Examples:
+  cua sb checkpoints pin world")]
+    Pin {
+        /// The checkpoint's name.
+        name: String,
+    },
+    /// Unpin a checkpoint (`rm` and `prune` delete it again).
+    #[command(after_help = "Examples:
+  cua sb checkpoints unpin world")]
+    Unpin {
+        /// The checkpoint's name.
+        name: String,
+    },
+    /// Delete every checkpoint that is not pinned (forks made from them
+    /// keep running).
+    #[command(after_help = "Examples:
+  cua sb checkpoints prune")]
+    Prune,
 }
 
 /// `cua sb mcp NAME SERVICE <action>`.
@@ -1261,6 +1632,31 @@ fn status_of(i: &SandboxInfo) -> String {
         .unwrap_or_else(|| format!("{:?}", i.status).to_lowercase())
 }
 
+/// The fallback `--dir` / `--s3 bucket[/prefix]` name, if any.
+fn fallback_options(
+    dir: Option<String>,
+    s3: Option<String>,
+    region: Option<String>,
+) -> Option<cua_sdk::SnapshotFallbackOptions> {
+    if dir.is_none() && s3.is_none() {
+        return None;
+    }
+    let (bucket, prefix) = match s3.as_deref() {
+        Some(b) => match b.split_once('/') {
+            Some((b, p)) => (b.to_string(), p.to_string()),
+            None => (b.to_string(), String::new()),
+        },
+        None => (String::new(), String::new()),
+    };
+    Some(cua_sdk::SnapshotFallbackOptions {
+        s3_bucket: bucket,
+        s3_prefix: prefix,
+        s3_region: region.unwrap_or_default(),
+        s3_endpoint: String::new(),
+        dir: dir.unwrap_or_default(),
+    })
+}
+
 fn print(out: &mut dyn Write, v: serde_json::Value, json: bool, text: impl FnOnce() -> String) {
     if json {
         line(out, v.to_string());
@@ -1273,7 +1669,7 @@ fn print(out: &mut dyn Write, v: serde_json::Value, json: bool, text: impl FnOnc
 /// flags, else the user defaults (`cua config`, `CUA_DEFAULT_*`), each with
 /// its source.
 pub fn resolve_placement(a: &CreateArgs) -> Result<cua_sandbox_core::settings::Resolved, CuaError> {
-    // The options of the ended Cua Cloud (`--pool`, ...) fail first.
+    // The options of the ended Cua Cloud (`--apply`, ...) fail first.
     a.ended.check()?;
     let r = settings()?
         .resolve(a.on.clone(), a.kind, a.runtime.clone())
@@ -1298,9 +1694,6 @@ pub fn on_backend(e: CuaError, backend: &str) -> CuaError {
         E::Unsupported(m) => E::Unsupported(f(m)),
         E::SpacesdNotAvailable(m) => E::SpacesdNotAvailable(f(m)),
         E::Timeout(m) => E::Timeout(f(m)),
-        E::Fleet(m) => E::Fleet(f(m)),
-        E::FleetAdmissionDenied(m) => E::FleetAdmissionDenied(f(m)),
-        E::CloudCreditExhausted(m) => E::CloudCreditExhausted(f(m)),
         E::Runtime(m) => E::Runtime(f(m)),
         E::Env(m) => E::Env(f(m)),
         E::Http(m) => E::Http(f(m)),
@@ -1312,11 +1705,10 @@ pub fn on_backend(e: CuaError, backend: &str) -> CuaError {
         E::CapabilityMissing(m) => E::CapabilityMissing(f(m)),
         E::HostCapabilityMissing(m) => E::HostCapabilityMissing(f(m)),
         E::TeleportRefused(m) => E::TeleportRefused(f(m)),
-        E::PoolSpecMismatch(m) => E::PoolSpecMismatch(f(m)),
-        E::ClaimSecretsNotDelivered(m) => E::ClaimSecretsNotDelivered(f(m)),
         E::Internal(m) => E::Internal(f(m)),
         E::AmbiguousSandbox(m) => E::AmbiguousSandbox(f(m)),
         E::InsufficientDisk(m) => E::InsufficientDisk(f(m)),
+        E::HostCapacity(m) => E::HostCapacity(f(m)),
         E::ImageNotPublished(m) => E::ImageNotPublished(f(m)),
         E::Cloud(m) => E::Cloud(f(m)),
         E::Cancelled(m) => E::Cancelled(f(m)),
@@ -1335,12 +1727,15 @@ fn kept_message(i: &SandboxInfo) -> String {
 /// `--wait desktop`, `--browser`): deletes the sandbox unless `keep`, and returns `e`.
 async fn failed_after_create(sb: &Arc<cua_sdk::Sandbox>, keep: bool, e: CuaError) -> CuaError {
     if keep {
-        eprintln!("{}", kept_message(&sb.info()));
+        eprintln!("{}", util::hint(&kept_message(&sb.info())));
     } else if let Err(d) = sb.delete().await {
         eprintln!(
-            "warning: could not delete sandbox {} after the failure: {d} (delete it with `cua sb rm {} --force`)",
-            sb.id(),
-            sb.id()
+            "{}",
+            util::hint(&format!(
+                "warning: could not delete sandbox {} after the failure: {d} (delete it with `cua sb rm {} --force`)",
+                sb.id(),
+                sb.id()
+            ))
         );
     }
     e
@@ -1370,7 +1765,7 @@ async fn create(
     if let On::Direct(_) = &on {
         if a.image.is_some() || a.image_flag.is_some() {
             return Err(CuaError::InvalidArgument(format!(
-                "--on {label} connects to an existing machine: IMAGE does not apply"
+                "--on {label} connects to an existing computer: IMAGE does not apply"
             )));
         }
         o.token = a.token.clone();
@@ -1380,10 +1775,23 @@ async fn create(
             .clone()
             .or(a.image_flag.clone())
             .or_else(|| a.browser.then(|| "linux".to_string()));
-        if image.is_none() {
+        if image.is_none() && a.pool.is_none() {
             return Err(CuaError::InvalidArgument(format!(
                 "IMAGE is required for --on {label}"
             )));
+        }
+        // --pool names a local pool (`cua sb pool create`), whose image and
+        // size the Space gets.
+        if a.pool.is_some() && on != On::Local {
+            return Err(CuaError::InvalidArgument(
+                "--pool names a pool on this computer (`cua sb pool`): use it with --on local"
+                    .into(),
+            ));
+        }
+        if a.pool.is_some() && image.is_some() {
+            return Err(CuaError::InvalidArgument(
+                "pass IMAGE or --pool, not both (a local pool decides the image)".into(),
+            ));
         }
         if let Some(image) = image {
             let (resolved, os) = resolve_image(&image, a.tier.as_deref())?;
@@ -1394,6 +1802,7 @@ async fn create(
             o.name = Some(generated_name());
         }
     }
+    o.pool = a.pool.clone();
     o.cpus = a.cpu;
     o.memory_mb = a.memory.as_deref().map(parse_memory).transpose()?;
     o.network = a.network.clone();
@@ -1433,8 +1842,13 @@ async fn create(
     o.env = a.env.iter().cloned().collect();
     o.sidecars = a.sidecars.clone();
     o.registry_secret = a.registry_secret.clone();
+    o.ttl_seconds = a.ttl;
     o.keep_on_failure = a.keep_on_failure;
+    o.headless = a.headless;
+    o.spacesd = a.no_spacesd.then_some(false);
     o.gpu = a.gpu.clone();
+    o.profile = a.profile.clone();
+    o.forkable = a.forkable.then_some(true);
     let token = o.token.clone();
     let requested_name = o.name.clone();
     // Each step of the create on a terminal (never in --json output).
@@ -1487,24 +1901,9 @@ async fn create(
         && let Some(n) = &requested_name
         && let Ok(info) = cua.sandboxes().get(n.clone()).await
     {
-        eprintln!("{}", kept_message(&info));
+        eprintln!("{}", util::hint(&kept_message(&info)));
     }
-    let sb = created
-        .map_err(|e| match e {
-            // A default placement that is not configured: say how to go back
-            // (once: some SDK paths have said it already).
-            CuaError::ProviderNotConfigured(mut m) => {
-                if let Some(hint) =
-                    cua_sandbox_core::settings::cloud_default_hint(&placement.on_source)
-                    && !m.contains(&hint)
-                {
-                    m = format!("{m}; {hint}");
-                }
-                CuaError::ProviderNotConfigured(m)
-            }
-            other => other,
-        })
-        .map_err(|e| on_backend(e, &label))?;
+    let sb = created.map_err(|e| on_backend(e, &label))?;
     let i = sb.info();
     if i.location == "direct" {
         save_env_token(&i.name, token.as_deref())?;
@@ -1625,7 +2024,7 @@ async fn create(
             );
             if let Some(b) = &browser {
                 let br = &b["browser"];
-                line(
+                hint_line(
                     out,
                     format!(
                         "\nBrowser ready ({}): session {}, target_id {}, tab_id {}\n\
@@ -1681,7 +2080,7 @@ pub async fn run(
             let _ = all; // deprecated no-op: everything is the default
             return ls(cua, local, !no_size, json_global, out).await;
         }
-        // Extended a Fleet claim's lease: Cua Cloud has ended.
+        // Extended a Cua Cloud sandbox's lease: Cua Cloud has ended.
         SandboxCmd::KeepAlive(_) => return Err(util::cloud_ended()),
         SandboxCmd::Cp { src, dst, at } => return cp(cua, &src, &dst, at, json_global, out).await,
         SandboxCmd::Url {
@@ -1734,13 +2133,40 @@ pub async fn run(
             let name = at.apply(&name)?;
             return port_forward(cua, &name, &spec, no_wait, json_global, out).await;
         }
-        SandboxCmd::Info { name, at } => {
+        SandboxCmd::Info {
+            name,
+            at,
+            connection,
+        } => {
             let name = at.apply(&name)?;
             let json = json_global;
             match sbx.get(name.clone()).await {
                 Ok(i) => {
+                    // The sandbox's own spacesd: URL and bearer token.
+                    let spacesd = if connection {
+                        // Through `cua daemon` the client gets the daemon's
+                        // proxy route (a path under the daemon's URL) and the
+                        // daemon's token, which only cua clients can use. A
+                        // gRPC client of your own needs spacesd itself: open
+                        // the sandbox from this process instead.
+                        let env = if cua.mode() == cua_sdk::CuaMode::Daemon
+                            && relay_space_id(&name).is_none()
+                        {
+                            let direct = Cua::embedded(cua_sdk::CuaConfig::default())?;
+                            env_of(&direct, &name).await?
+                        } else {
+                            env_of(cua, &name).await?
+                        };
+                        Some((env.endpoint(), env.inner().token().map(str::to_owned)))
+                    } else {
+                        None
+                    };
                     if json {
-                        line(out, info_json(&i).to_string());
+                        let mut v = info_json(&i);
+                        if let Some((url, token)) = &spacesd {
+                            v["spacesd"] = serde_json::json!({ "url": url, "token": token });
+                        }
+                        line(out, v.to_string());
                     } else {
                         line(out, format!("Name:     {}", i.name));
                         line(out, format!("Id:       {}", i.id));
@@ -1754,6 +2180,13 @@ pub async fn run(
                         s.sort();
                         for (k, p) in s {
                             line(out, format!("Service:  {k} ({p})"));
+                        }
+                        if let Some((url, token)) = &spacesd {
+                            line(out, format!("Spacesd:  {url}"));
+                            line(
+                                out,
+                                format!("Token:    {}", token.as_deref().unwrap_or("(none)")),
+                            );
                         }
                     }
                 }
@@ -1775,6 +2208,362 @@ pub async fn run(
             lifecycle(cua, &name, "restart").await?;
             line(out, format!("Sandbox '{name}' is restarting."));
         }
+        SandboxCmd::Checkpoint {
+            name,
+            checkpoint,
+            pin,
+            at,
+            json,
+        } => {
+            let name = at.apply(&name)?;
+            let started = std::time::Instant::now();
+            let c = sbx.checkpoint(name.clone(), checkpoint, pin).await?;
+            let secs = started.elapsed().as_secs_f64();
+            print(
+                out,
+                serde_json::json!({
+                    "name": c.name,
+                    "source": c.source,
+                    "runtime": c.runtime_type,
+                    "created_at": c.created_at,
+                    "pinned": c.pinned,
+                    "shared_memory": c.shared_memory,
+                    "host": c.host,
+                    "seconds": secs,
+                }),
+                json || json_global,
+                || {
+                    format!(
+                        "Checkpoint '{}' of '{name}' saved ({secs:.2}s){}.",
+                        c.name,
+                        checkpoint_notes(&c)
+                    )
+                },
+            );
+        }
+        SandboxCmd::Bake(a) => return bake::bake(cua, *a, json_global, out).await,
+        SandboxCmd::Fork { source, name, json } => {
+            let started = std::time::Instant::now();
+            let sb = sbx.fork(source.clone(), name).await?;
+            let secs = started.elapsed().as_secs_f64();
+            let info = sb.info();
+            print(
+                out,
+                serde_json::json!({
+                    "name": info.name,
+                    "id": info.id,
+                    "source": source,
+                    "runtime": info.runtime_type,
+                    "seconds": secs,
+                }),
+                json || json_global,
+                || {
+                    format!(
+                        "Sandbox '{}' forked from '{source}' ({secs:.2}s).",
+                        info.name
+                    )
+                },
+            );
+        }
+        SandboxCmd::ForkMany {
+            source,
+            count,
+            group_size,
+            groups,
+            on,
+            parallel,
+            prefix,
+            fallback_dir,
+            fallback_s3,
+            fallback_region,
+            no_retry,
+            cpus,
+            memory_mb,
+            json,
+        } => {
+            let fallback = fallback_options(fallback_dir, fallback_s3, fallback_region);
+            let opts = cua_sdk::ForkManyOptions {
+                on,
+                group_size,
+                max_parallel_per_host: parallel,
+                name_prefix: prefix,
+                no_retry,
+                fallback,
+                cpus,
+                memory_mb,
+                ..Default::default()
+            };
+            let batch = if groups.is_empty() {
+                let source = source.ok_or_else(|| {
+                    CuaError::InvalidArgument("name a checkpoint, or pass --group".into())
+                })?;
+                sbx.fork_many(source, count, Some(opts)).await?
+            } else {
+                let mut gs = Vec::new();
+                for g in groups {
+                    let (src, n) = g.rsplit_once('=').ok_or_else(|| {
+                        CuaError::InvalidArgument(format!("--group {g}: use CHECKPOINT=COUNT"))
+                    })?;
+                    let n: u32 = n.parse().map_err(|_| {
+                        CuaError::InvalidArgument(format!("--group {g}: COUNT is not a number"))
+                    })?;
+                    gs.push(cua_sdk::ForkGroup {
+                        source: src.to_string(),
+                        count: n,
+                        name_prefix: String::new(),
+                    });
+                }
+                sbx.fork_groups(gs, Some(opts)).await?
+            };
+            let json = json || json_global;
+            let mut failed = 0;
+            while let Some(ev) = batch.next().await? {
+                use cua_sdk::ForkBatchEvent as E;
+                let (v, text) = match ev {
+                    E::Placement { placement: p } => (
+                        serde_json::json!({"event": "placement", "group": p.group, "source": p.source,
+                            "host": p.host, "count": p.count, "attempt": p.attempt,
+                            "needs_sync": p.needs_sync, "reason": p.reason}),
+                        format!(
+                            "group {} ({}): {} fork(s) -> {} ({}){}",
+                            p.group,
+                            p.source,
+                            p.count,
+                            p.host,
+                            p.reason,
+                            if p.attempt > 1 {
+                                format!(", placement {}", p.attempt)
+                            } else {
+                                String::new()
+                            }
+                        ),
+                    ),
+                    E::Sync { progress: p } => {
+                        if !p.done && !json {
+                            continue;
+                        }
+                        (
+                            serde_json::json!({"event": "sync", "name": p.name, "digest": p.digest,
+                                "from": p.from, "bytes_done": p.bytes_done, "bytes_total": p.bytes_total,
+                                "bytes_reused": p.bytes_reused, "done": p.done, "verified": p.verified}),
+                            format!(
+                                "copied {} ({}): {} MiB from {}, {} MiB already there, sha256 verified: {}",
+                                p.name,
+                                &p.digest[..p.digest.len().min(12)],
+                                p.bytes_done >> 20,
+                                if p.from.is_empty() {
+                                    "-"
+                                } else {
+                                    p.from.as_str()
+                                },
+                                p.bytes_reused >> 20,
+                                p.verified
+                            ),
+                        )
+                    }
+                    E::Item { item: i } => {
+                        if !i.error.is_empty() {
+                            failed += 1;
+                        }
+                        (
+                            serde_json::json!({"event": "item", "index": i.index, "group": i.group,
+                                "source": i.source, "name": i.name, "host": i.host, "space": i.space,
+                                "error": i.error, "error_code": i.error_code, "attempt": i.attempt,
+                                "elapsed_ms": i.elapsed_ms, "fork_ms": i.fork_ms}),
+                            if i.error.is_empty() {
+                                format!(
+                                    "[{:>7} ms] {} ready on {} ({}, fork {} ms{})",
+                                    i.elapsed_ms,
+                                    i.name,
+                                    i.host,
+                                    i.space,
+                                    i.fork_ms,
+                                    if i.attempt > 1 {
+                                        format!(", placement {}", i.attempt)
+                                    } else {
+                                        String::new()
+                                    }
+                                )
+                            } else {
+                                format!(
+                                    "[{:>7} ms] {} FAILED on {} ({}): {}",
+                                    i.elapsed_ms,
+                                    i.name,
+                                    if i.host.is_empty() {
+                                        "-"
+                                    } else {
+                                        i.host.as_str()
+                                    },
+                                    i.error_code,
+                                    i.error
+                                )
+                            },
+                        )
+                    }
+                    E::Done { summary: s } => (
+                        serde_json::json!({"event": "done", "ok": s.ok, "failed": s.failed,
+                            "elapsed_ms": s.elapsed_ms, "per_host": s.per_host,
+                            "peak_parallel": s.peak_parallel}),
+                        format!(
+                            "{} ready, {} failed in {:.1}s; per machine {:?}; most at once {:?}",
+                            s.ok,
+                            s.failed,
+                            s.elapsed_ms as f64 / 1000.0,
+                            s.per_host
+                                .iter()
+                                .collect::<std::collections::BTreeMap<_, _>>(),
+                            s.peak_parallel
+                                .iter()
+                                .collect::<std::collections::BTreeMap<_, _>>()
+                        ),
+                    ),
+                };
+                print(out, v, json, || text);
+            }
+            if failed > 0 {
+                return Err(CuaError::Internal(format!("{failed} fork(s) failed")));
+            }
+        }
+        SandboxCmd::Publish {
+            name,
+            dir,
+            s3,
+            region,
+        } => {
+            let fb = fallback_options(dir, s3, region)
+                .ok_or_else(|| CuaError::InvalidArgument("pass --dir or --s3".into()))?;
+            let bytes = sbx.publish_checkpoint(name.clone(), fb).await?;
+            print(
+                out,
+                serde_json::json!({"name": name, "bytes_uploaded": bytes}),
+                json_global,
+                || format!("Published '{name}' ({} MiB uploaded).", bytes >> 20),
+            );
+        }
+        SandboxCmd::Pool(cmd) => match cmd {
+            PoolCmd::Create {
+                image,
+                name,
+                min,
+                max,
+                idle,
+                on,
+                kind,
+                runtime,
+                cpu,
+                memory,
+                env,
+                json,
+            } => {
+                let (resolved, os) = resolve_image(&image, None)?;
+                let options = cua_sdk::PoolCreateOptions {
+                    name,
+                    on: on.map(|o| o.to_string()),
+                    kind: kind.map(|k| k.to_string()),
+                    runtime: runtime.map(|r| r.to_string()),
+                    os,
+                    cpus: cpu,
+                    memory_mb: memory.as_deref().map(parse_memory).transpose()?,
+                    env: env.into_iter().collect(),
+                    min,
+                    max,
+                    idle_ms: idle.map(|s| u64::from(s) * 1000),
+                    ..Default::default()
+                };
+                let p = sbx.create_pool(resolved, options).await?;
+                if json || json_global {
+                    line(
+                        out,
+                        serde_json::to_string(&pool_json(&p)).unwrap_or_default(),
+                    );
+                } else {
+                    line(out, format!("Pool '{}': {}", p.name, pool_line(&p)));
+                }
+            }
+            PoolCmd::Rm { name } => {
+                if sbx.delete_pool(name.clone()).await? {
+                    line(out, format!("Pool '{name}' deleted."));
+                } else {
+                    return Err(CuaError::NotFound(format!("no pool named '{name}'")));
+                }
+            }
+            PoolCmd::Ls { json } => {
+                let list = sbx.list_pools().await?;
+                if json || json_global {
+                    let v: Vec<_> = list.iter().map(pool_json).collect();
+                    line(out, serde_json::to_string(&v).unwrap_or_default());
+                } else if list.is_empty() {
+                    line(out, "No pools.");
+                } else {
+                    for p in list {
+                        line(out, format!("{}  {}", p.name, pool_line(&p)));
+                    }
+                }
+            }
+        },
+        SandboxCmd::Checkpoints { action, json } => match action {
+            Some(CheckpointsAction::Rm { name }) => {
+                sbx.delete_checkpoint(name.clone()).await?;
+                line(out, format!("Checkpoint '{name}' deleted."));
+            }
+            Some(a @ (CheckpointsAction::Pin { .. } | CheckpointsAction::Unpin { .. })) => {
+                let (name, pinned) = match a {
+                    CheckpointsAction::Pin { name } => (name, true),
+                    CheckpointsAction::Unpin { name } => (name, false),
+                    _ => unreachable!("matched above"),
+                };
+                let c = sbx.pin_checkpoint(name.clone(), pinned).await?;
+                print(
+                    out,
+                    serde_json::to_value(&c).unwrap_or_default(),
+                    json || json_global,
+                    || {
+                        format!(
+                            "Checkpoint '{name}' {}.",
+                            if c.pinned { "pinned" } else { "unpinned" }
+                        )
+                    },
+                );
+            }
+            Some(CheckpointsAction::Prune) => {
+                let deleted = sbx.prune_checkpoints().await?;
+                print(
+                    out,
+                    serde_json::json!({ "deleted": deleted }),
+                    json || json_global,
+                    || match deleted.len() {
+                        0 => "No unpinned checkpoints to delete.".to_string(),
+                        n => format!(
+                            "Deleted {n} checkpoint{}: {}.",
+                            if n == 1 { "" } else { "s" },
+                            deleted.join(", ")
+                        ),
+                    },
+                );
+            }
+            None => {
+                let list = sbx.checkpoints().await?;
+                if json || json_global {
+                    line(out, serde_json::to_string(&list).unwrap_or_default());
+                } else if list.is_empty() {
+                    line(out, "No checkpoints.");
+                } else {
+                    for c in list {
+                        line(
+                            out,
+                            format!(
+                                "{}  from {}  ({}, {}){}",
+                                c.name,
+                                c.source,
+                                c.runtime_type,
+                                c.created_at,
+                                checkpoint_notes(&c)
+                            ),
+                        );
+                    }
+                }
+            }
+        },
         SandboxCmd::Rm { name, force, at } => {
             let name = at.apply(&name)?;
             use std::io::IsTerminal as _;
@@ -1841,10 +2630,22 @@ pub async fn run(
             }
             return Ok(0);
         }
-        SandboxCmd::Exec { name, command, at } => {
+        SandboxCmd::Run(a) => return crate::runs::run(*a, json_global, out).await,
+        SandboxCmd::Runs(a) => return crate::runs::runs(a, json_global, out).await,
+        SandboxCmd::Exec {
+            flags,
+            name,
+            command,
+            at,
+        } => {
             let name = at.apply(&name)?;
             let env = match env_of(cua, &name).await {
                 Err(CuaError::SpacesdNotAvailable(m)) => match agentless(cua, &name).await? {
+                    Some(_) if flags.any() => {
+                        return Err(CuaError::Unsupported(format!(
+                            "-i, --user, --cwd and --timeout need cua-spacesd in {name}"
+                        )));
+                    }
                     Some(sb) => {
                         return exec_agentless(&sb, &name, &command.join(" "), json_global, out)
                             .await;
@@ -1853,8 +2654,31 @@ pub async fn run(
                 },
                 other => other?,
             };
-            let o = env.sh(command.join(" "), Some(120_000)).await?;
-            let code = exit_code(&o);
+            if flags.stdin {
+                return shell::stream(
+                    &env,
+                    &command,
+                    flags.opts(None),
+                    tokio::io::stdin(),
+                    shell::os_signals(),
+                    out,
+                    &mut std::io::stderr(),
+                )
+                .await;
+            }
+            let o = env
+                .run(shell::with_opts(
+                    shell::command_of(&sh_argv(&image_defaults(&name, command.join(" ")))),
+                    flags.opts(Some(120_000)),
+                ))
+                .await?;
+            let mut code = exit_code(&o);
+            if o.exit.timed_out {
+                // Said, not silent: the output so far is printed below.
+                let secs = flags.timeout.unwrap_or(120);
+                eprintln!("cua: the command ran out of time after {secs}s (--timeout 0: no limit)");
+                code = 124;
+            }
             if json_global {
                 line(
                     out,
@@ -1878,11 +2702,14 @@ pub async fn run(
             rows,
             at,
         } => {
-            let env = env_of(cua, &at.apply(&name)?).await?;
+            let name = at.apply(&name)?;
+            let env = env_of(cua, &name).await?;
             if !command.is_empty() && !util::interactive() {
-                return shell::exec(&env, &sh_argv(&command.join(" ")), out).await;
+                let line = image_defaults(&name, command.join(" "));
+                return shell::exec(&env, &sh_argv(&line), out).await;
             }
-            let cmd = (!command.is_empty()).then(|| sh_argv(&command.join(" ")));
+            let cmd =
+                (!command.is_empty()).then(|| sh_argv(&image_defaults(&name, command.join(" "))));
             return shell::interactive(&env, cmd, cols, rows).await;
         }
         SandboxCmd::Screenshot { name, at, output } => {
@@ -1922,7 +2749,12 @@ pub async fn run(
         }
         SandboxCmd::View(v) => return view(cua, v, json_global, out).await,
         SandboxCmd::Vnc(v) => {
-            eprintln!("warning: `cua sb vnc` is deprecated; use `cua sb view` (the HTML5 viewer).");
+            eprintln!(
+                "{}",
+                util::hint(
+                    "warning: `cua sb vnc` is deprecated; use `cua sb view` (the HTML5 viewer)."
+                )
+            );
             return view(cua, v, json_global, out).await;
         }
         SandboxCmd::StreamProbe { args, at } => {
@@ -1976,9 +2808,63 @@ pub(crate) fn relay_space_id(name: &str) -> Option<String> {
     matches!(r, cua_sandbox_core::refs::SandboxRef::Relay { .. }).then(|| r.to_string())
 }
 
+/// How long a command waits for a relay Space that was just started.
+const RELAY_START_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Retries `attach` while the Space's cua-spacesd is not connected yet, for
+/// at most `budget`; then reports that it is still starting (not a
+/// provider error). Other errors return at once.
+async fn wait_while_starting<T, F, Fut>(
+    name: &str,
+    budget: std::time::Duration,
+    step: std::time::Duration,
+    mut attach: F,
+) -> Result<T, CuaError>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, CuaError>>,
+{
+    let started = std::time::Instant::now();
+    loop {
+        match attach().await {
+            Err(CuaError::SpacesdNotAvailable(_)) if started.elapsed() < budget => {
+                tokio::time::sleep(step).await;
+            }
+            // The last answer stays in the message: a tunnel that is down
+            // (502 Bad Gateway) looks like a Space that is still starting.
+            Err(CuaError::SpacesdNotAvailable(why)) => {
+                return Err(CuaError::SpacesdNotAvailable(format!(
+                    "{name} is still starting; try again in a few seconds ({why})"
+                )));
+            }
+            other => return other,
+        }
+    }
+}
+
 /// A spacesd client for a named sandbox or a relay Space. Direct sandboxes
 /// use the remembered token (or `CUA_ENV_TOKEN`). A relay Space opens
 /// through the Spaces API; the sandboxes API does not attach those machines.
+/// `line` with the environment, working directory and user of the image a
+/// Space was built from (`cua build`), when `name` is such a Space.
+fn image_defaults(name: &str, line: String) -> String {
+    let id = if name.contains(':') {
+        name.to_string()
+    } else {
+        format!("local:{name}")
+    };
+    let config = cua_spaces::registry::Registry::new(util::cua_home())
+        .get(&id)
+        .ok()
+        .flatten()
+        .filter(|r| !r.image_config.is_empty())
+        .and_then(|r| serde_json::from_str::<cua_spaces::build::ImageConfig>(&r.image_config).ok());
+    match config {
+        Some(c) => c.wrap_shell(&line),
+        None => line,
+    }
+}
+
 pub async fn env_of(cua: &Cua, name: &str) -> Result<Arc<cua_sdk::SpacesdClient>, CuaError> {
     if let Some(id) = relay_space_id(name) {
         // The SDK attaches the signed-in relay account only when its `host`
@@ -1989,7 +2875,18 @@ pub async fn env_of(cua: &Cua, name: &str) -> Result<Arc<cua_sdk::SpacesdClient>
         let spaces = cua.spaces();
         // NotFound before dial, and the snapshot has the name space() dials with.
         spaces.resolve(id.clone()).await?;
-        return spaces.space(id).await?.spacesd();
+        // Right after `cua spaces start` the machine is listed but its
+        // spacesd is not connected yet: wait for it (bounded), then say so.
+        return wait_while_starting(
+            &id,
+            RELAY_START_WAIT,
+            std::time::Duration::from_millis(500),
+            || async { spaces.space(id.clone()).await?.spacesd() },
+        )
+        .await;
+    }
+    if let Some(space) = space_for(cua, name).await? {
+        return space.spacesd();
     }
     let sbx = cua.sandboxes();
     let info = sbx.get(name.to_string()).await?;
@@ -1999,6 +2896,56 @@ pub async fn env_of(cua: &Cua, name: &str) -> Result<Arc<cua_sdk::SpacesdClient>
         return cua.spacesd(url.clone(), direct_token(&info)).await;
     }
     sbx.connect(info.id.clone()).await?.spacesd(None).await
+}
+
+/// `direct:<machine>.via.cua:<port>`: a Space a pool host provides. Only
+/// the Spaces API can reach it; a DNS lookup of that host never works.
+fn routed_direct(name: &str) -> bool {
+    matches!(
+        cua_sandbox_core::refs::SandboxRef::parse(name),
+        Ok(cua_sandbox_core::refs::SandboxRef::Direct { authority })
+            if cua_spaces::id::routed_host(&authority).is_some()
+    )
+}
+
+/// The Space `name` through the Spaces API, when it is one the local
+/// sandboxes do not own: a relay id, a routed `direct:` id, or a Space name
+/// (a Space on a pool host) the daemon has no sandbox of. `None` means use
+/// the sandboxes API (its error stands when nothing matches).
+async fn space_for(cua: &Cua, name: &str) -> Result<Option<Arc<cua_sdk::Space>>, CuaError> {
+    let id = if let Some(id) = relay_space_id(name) {
+        Some(id)
+    } else if routed_direct(name) {
+        Some(name.to_string())
+    } else {
+        match cua.sandboxes().get(name.to_string()).await {
+            Err(CuaError::NotFound(_)) => None,
+            _ => return Ok(None),
+        }
+    };
+    // The SDK attaches the signed-in relay account only when its `host`
+    // feature is on. This binary reaches those Spaces the way `cua mcp` does.
+    crate::host::attach_relay_account(cua, || {
+        crate::host::daemon_relay_account(&crate::util::cua_home())
+    });
+    let spaces = cua.spaces();
+    let id = match id {
+        Some(id) => {
+            // NotFound before dial, and the snapshot has the name space() dials with.
+            spaces.resolve(id.clone()).await?;
+            id
+        }
+        None => {
+            // A name: read the directory again, then resolve it. A miss
+            // leaves the sandboxes error as it was.
+            let _ = spaces.list().await;
+            match spaces.resolve(name.to_string()).await {
+                Ok(i) => i.id,
+                Err(_) => return Ok(None),
+            }
+        }
+    };
+    Ok(Some(spaces.space(id).await?))
 }
 
 /// The remembered spacesd token of a direct sandbox (saved under its name
@@ -2259,7 +3206,7 @@ async fn cp(
                     .unwrap_or_else(|| std::ffi::OsStr::new("download")),
             );
         }
-        env.download_file(guest.to_string(), local.display().to_string())
+        env.download_file(guest.to_string(), local.display().to_string(), None)
             .await?
     } else {
         if !std::path::Path::new(src).is_file() {
@@ -2369,11 +3316,20 @@ async fn port_forward(
     let bad = || CuaError::InvalidArgument(format!("bad port spec {spec:?} (PORT or PORT:LOCAL)"));
     let port: u16 = port.parse().map_err(|_| bad())?;
     let local: Option<u16> = local.map(|l| l.parse().map_err(|_| bad())).transpose()?;
-    let sb = sandbox_with_token(cua, name).await?;
+    let space = space_for(cua, name).await?;
+    let sb = match &space {
+        Some(_) => None,
+        None => Some(sandbox_with_token(cua, name).await?),
+    };
     // Every provider gets a loopback forward: local runtimes through the
     // published port (an unpublished one over the spacesd's /tunnel) and
-    // url: sandboxes over the spacesd's /tunnel WebSocket.
-    let fwd = sb.forward(port).await?;
+    // url: sandboxes over the spacesd's /tunnel WebSocket; a Space on a pool
+    // host through the Spaces API.
+    let fwd = match (&space, &sb) {
+        (Some(space), _) => space.forward(port, None).await?,
+        (None, Some(sb)) => sb.forward(port).await?,
+        (None, None) => unreachable!("one of the two is set"),
+    };
     let target = fwd.local_addr();
     let listen = match (local, &target) {
         (Some(l), Some(t)) => {
@@ -2473,6 +3429,11 @@ pub async fn view(
 /// `guest_display`). `None` for every other sandbox, which keeps the
 /// cua-spacesd error.
 async fn agentless(cua: &Arc<Cua>, name: &str) -> Result<Option<Arc<cua_sdk::Sandbox>>, CuaError> {
+    // A relay Space is a Spaces-API machine: the sandboxes API cannot open it
+    // (that said "not supported by the Direct provider").
+    if relay_space_id(name).is_some() {
+        return Ok(None);
+    }
     let sb = cua.sandboxes().connect(name.to_string()).await?;
     let info = sb.info();
     Ok((info.location == "local" && info.runtime == "lume").then_some(sb))
@@ -2713,6 +3674,59 @@ pub(crate) fn confirm_delete(
     }
 }
 
+/// One pool as `cua sb pool ls` prints it.
+fn pool_line(p: &cua_sdk::SandboxPool) -> String {
+    let kind = [p.kind.as_str(), p.runtime.as_str()]
+        .iter()
+        .filter(|w| !w.is_empty() && **w != "auto")
+        .copied()
+        .collect::<Vec<_>>()
+        .join("/");
+    let idle = p
+        .idle_ms
+        .map(|ms| {
+            format!(
+                ", idle {}",
+                humantime::format_duration(std::time::Duration::from_secs(ms / 1000))
+            )
+        })
+        .unwrap_or_default();
+    format!(
+        "{}{}  {} CPU, {} MB  {} ready{} (min {}, max {}{idle}){}",
+        p.image,
+        if kind.is_empty() {
+            String::new()
+        } else {
+            format!(" ({kind})")
+        },
+        p.cpus,
+        p.memory_mb,
+        p.ready,
+        if p.starting > 0 {
+            format!(", {} starting", p.starting)
+        } else {
+            String::new()
+        },
+        p.min,
+        p.max,
+        if p.status.is_empty() {
+            String::new()
+        } else {
+            format!(": {}", p.status)
+        }
+    )
+}
+
+/// One pool for `--json`.
+pub(crate) fn pool_json(p: &cua_sdk::SandboxPool) -> serde_json::Value {
+    serde_json::json!({
+        "name": p.name, "image": p.image, "location": p.location, "kind": p.kind,
+        "runtime": p.runtime, "cpus": p.cpus, "memory_mb": p.memory_mb,
+        "min": p.min, "max": p.max, "idle_ms": p.idle_ms,
+        "ready": p.ready, "starting": p.starting, "status": p.status,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2735,6 +3749,13 @@ mod tests {
             status_cell(&serde_json::json!({"status": "stopped"})),
             "stopped"
         );
+    }
+
+    #[test]
+    fn routed_ids_are_recognised() {
+        assert!(routed_direct("direct:m-4f2a9c.via.cua:40123"));
+        assert!(!routed_direct("direct:10.0.0.5:3211"));
+        assert!(!routed_direct("jw-w1"));
     }
 
     use cua_sandbox_core::{
@@ -2983,6 +4004,12 @@ mod tests {
     #[test]
     fn placement_resolves_flags_then_defaults() {
         let _env = crate::util::test_env::isolated();
+        // A pool name is a local pool unless --on says otherwise.
+        let a = CreateArgs {
+            pool: Some("p".into()),
+            ..Default::default()
+        };
+        assert_eq!(resolve_placement(&a).unwrap().on, On::Local);
         let a = CreateArgs {
             on: Some(On::Local),
             ..Default::default()
@@ -3010,14 +4037,13 @@ mod tests {
         };
         // Every option of the ended cloud still parses (hidden) and fails
         // with the one message, whatever else is given.
+        // (`--pool` names a pool on this computer: not one of them.)
         for args in [
-            &["--pool", "p"][..],
-            &["--pool", "p", "--apply"],
+            &["--pool", "p", "--apply"][..],
             &["--warm"],
             &["--no-warm"],
             &["--max-pool-size", "3"],
             &["--claim-ttl", "15m"],
-            &["--on", "local", "--pool", "p"],
         ] {
             let t = T::try_parse_from(["t", "linux"].iter().chain(args)).unwrap();
             ended(resolve_placement(&t.a).unwrap_err());
@@ -3031,7 +4057,7 @@ mod tests {
             #[command(flatten)]
             a: LaunchArgs,
         }
-        let l = L::try_parse_from(["t", "linux", "--pool", "p"]).unwrap();
+        let l = L::try_parse_from(["t", "linux", "--warm"]).unwrap();
         ended(l.a.into_create().unwrap_err());
         let l = L::try_parse_from(["t", "--pool", "p", "--warm"]).unwrap();
         ended(l.a.into_create().unwrap_err());
@@ -3058,10 +4084,14 @@ mod tests {
         let p = |args: &[&str]| T::try_parse_from(["t", "linux"].iter().chain(args));
         assert!(!p(&[]).unwrap().a.keep_on_failure);
         assert!(p(&["--keep-on-failure"]).unwrap().a.keep_on_failure);
+        assert!(!p(&[]).unwrap().a.headless);
+        assert!(p(&["--headless"]).unwrap().a.headless);
+        assert!(p(&["--headless", "--view"]).is_err(), "no desktop to view");
         let launch = LaunchArgs {
             image: Some("linux".into()),
             local: false,
             on: None,
+            pool: None,
             name: Some("cua-e2e-x".into()),
             vm: false,
             kind: None,
@@ -3071,10 +4101,13 @@ mod tests {
             disk: None,
             region: None,
             ports: vec![],
+            ttl: Some(600),
             keep_on_failure: true,
             ended: EndedCloudArgs::default(),
         };
-        assert!(launch.into_create().unwrap().keep_on_failure);
+        let create = launch.into_create().unwrap();
+        assert!(create.keep_on_failure);
+        assert_eq!(create.ttl, Some(600), "launch passes --ttl on");
 
         let info = SandboxInfo {
             name: "cua-e2e-kept".into(),
@@ -3255,6 +4288,82 @@ mod tests {
             "cua", "sb", "create", "linux", "--tier", "slim",
         ]);
         assert!(a.is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_starting_relay_space_is_waited_for_then_reported() {
+        use std::sync::atomic::{AtomicU32, Ordering::SeqCst};
+        let n = AtomicU32::new(0);
+        let got = wait_while_starting(
+            "relay:a",
+            std::time::Duration::from_secs(5),
+            std::time::Duration::from_millis(1),
+            || async {
+                if n.fetch_add(1, SeqCst) < 3 {
+                    Err(CuaError::SpacesdNotAvailable("not connected".into()))
+                } else {
+                    Ok(7)
+                }
+            },
+        )
+        .await;
+        assert_eq!(got.unwrap(), 7);
+        let err = wait_while_starting::<(), _, _>(
+            "relay:a",
+            std::time::Duration::from_millis(20),
+            std::time::Duration::from_millis(1),
+            || async { Err(CuaError::SpacesdNotAvailable("x".into())) },
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("relay:a is still starting; try again in a few seconds"),
+            "{err}"
+        );
+        assert!(!err.to_string().contains("Direct provider"));
+        // Other errors do not wait.
+        let e = wait_while_starting::<(), _, _>(
+            "relay:a",
+            std::time::Duration::from_secs(30),
+            std::time::Duration::from_secs(30),
+            || async { Err(CuaError::NotFound("gone".into())) },
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(e, CuaError::NotFound(_)));
+    }
+
+    #[test]
+    fn exec_takes_a_time_limit_before_the_command() {
+        let exec = |args: &[&str]| {
+            let cli = <crate::Cli as clap::Parser>::try_parse_from(
+                ["cua", "sb", "exec"].iter().chain(args),
+            )
+            .unwrap();
+            match cli.command {
+                crate::Command::Sandbox(cmd) => match *cmd {
+                    SandboxCmd::Exec { flags, command, .. } => {
+                        (flags.timeout.unwrap_or(120), command)
+                    }
+                    other => panic!("{other:?}"),
+                },
+                other => panic!("{other:?}"),
+            }
+        };
+        assert_eq!(
+            exec(&["dev", "uname", "-a"]),
+            (120, vec!["uname".into(), "-a".into()])
+        );
+        assert_eq!(
+            exec(&["--timeout", "0", "dev", "sleep", "300"]),
+            (0, vec!["sleep".into(), "300".into()])
+        );
+        // After the name everything is the command, `--timeout` included.
+        assert_eq!(
+            exec(&["dev", "./run", "--timeout", "5"]).1,
+            vec!["./run".to_string(), "--timeout".into(), "5".into()]
+        );
     }
 
     #[test]

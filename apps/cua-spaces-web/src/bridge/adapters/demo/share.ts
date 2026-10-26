@@ -13,12 +13,14 @@ export function demoShares(): Map<string, ShareEntry[]> {
   return new Map([["local:design-review", [{ who: "grace@cua.ai", role: "editor", connected: true }]]]);
 }
 
-export function demoShareHandlers({ wait, stepMs }: { wait(ms: number): Promise<void>; stepMs: number }): ShareHandlers {
+export function demoShareHandlers({ wait, stepMs, teamFull }: { wait(ms: number): Promise<void>; stepMs: number; teamFull?: boolean }): ShareHandlers {
   const shares = demoShares();
   const list = (spaceId: string) => (shares.get(spaceId) ?? []).map((s) => ({ ...s }));
   return {
     "sharing.list": async ({ spaceId }) => list(spaceId),
     "sharing.share": async ({ spaceId, who, role }) => {
+      // `?demo=team-full`: the owner's refusal when a team has a computer per seat.
+      if (teamFull && who.startsWith("team:")) throw new Error("Your team has as many computers as it has seats. https://app.cua.ai/buy/teams");
       // The daemon asks for presence before the relay hears of it.
       await wait(stepMs);
       const rest = (shares.get(spaceId) ?? []).filter((s) => s.who !== who);
@@ -26,6 +28,8 @@ export function demoShareHandlers({ wait, stepMs }: { wait(ms: number): Promise<
       shares.set(spaceId, [...rest, { who, role, connected: was?.connected ?? false }]);
       return list(spaceId);
     },
+    "sharing.removals": async () => [],
+    "sharing.ackRemovals": async () => null,
     "sharing.unshare": async ({ spaceId, who }) => {
       shares.set(
         spaceId,

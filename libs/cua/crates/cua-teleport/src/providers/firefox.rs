@@ -220,7 +220,7 @@ impl ExportProvider for FirefoxProvider {
         out: &mut dyn Write,
     ) -> Result<()> {
         let profile = self.source_profile_dir(app.platform).ok_or_else(|| {
-            TeleportError::Provider("no Firefox profile found on this machine".to_string())
+            TeleportError::Provider("no Firefox profile found on this computer".to_string())
         })?;
         let mut writer = BundleWriter::with_limit(
             out,

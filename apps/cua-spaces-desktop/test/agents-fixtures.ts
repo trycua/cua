@@ -69,6 +69,10 @@ export class FakeAgentsTools {
       case "routine_set_enabled":
       case "routine_remove":
         return {};
+      case "agent_start":
+        return { run_id: "run-2", agent: args.agent, space: args.space, process_tag: "cua-agent-run-2", cwd: "/home/cua/run-2", notes: [], hint: "" };
+      case "agent_message":
+        return { delivered: true, run_id: args.run_id, status: "running", phase: "working", reason: "" };
       case "agent_events":
         return { run_id: args.run_id, status: "idle", phase: "idle", events: [], cursor: args.cursor, caught_up: true };
       default:
@@ -115,9 +119,9 @@ export class FixtureAgentSetup implements AgentSetupRunning {
 
   constructor(statuses?: AppAgentSetupStatus[]) {
     this.current = statuses ?? [
-      { id: "claude-code", name: "Claude Code", installed: true, skillsDir: "~/.claude/skills", mcpConfig: "~/.claude.json", cuaConfigured: false, skillsInstalled: [], skillsOutdated: [], error: undefined },
-      { id: "codex", name: "Codex", installed: true, skillsDir: "~/.agents/skills", mcpConfig: "~/.codex/config.toml", cuaConfigured: true, skillsInstalled: ["cua-spaces", "cua-sandbox"], skillsOutdated: [], error: undefined },
-      { id: "cursor", name: "Cursor", installed: false, skillsDir: undefined, mcpConfig: undefined, cuaConfigured: false, skillsInstalled: [], skillsOutdated: [], error: undefined },
+      { id: "claude-code", name: "Claude Code", installed: true, skillsDir: "~/.claude/skills", mcpConfig: "~/.claude.json", cuaConfigured: false, skillsInstalled: [], skillsOutdated: [], error: undefined, signIn: undefined, signedIn: false },
+      { id: "codex", name: "Codex", installed: true, skillsDir: "~/.agents/skills", mcpConfig: "~/.codex/config.toml", cuaConfigured: true, skillsInstalled: ["cua-spaces", "cua-sandbox"], skillsOutdated: [], error: undefined, signIn: "ChatGPT", signedIn: false },
+      { id: "cursor", name: "Cursor", installed: false, skillsDir: undefined, mcpConfig: undefined, cuaConfigured: false, skillsInstalled: [], skillsOutdated: [], error: undefined, signIn: undefined, signedIn: false },
     ];
   }
 
@@ -155,6 +159,14 @@ export class FixtureAgentSetup implements AgentSetupRunning {
     return out;
   }
 
+  /** The sign-in finishes at once (no browser in a fixture). */
+  async signIn(agent: string) {
+    this.calls.push(`sign-in:${agent}`);
+    const a = this.current.find((s) => s.id === agent);
+    if (!a?.signIn) throw new Error(`${a?.name ?? agent} has no sign-in cua can start`);
+    a.signedIn = true;
+  }
+
   async remove(agents: string[]) {
     this.calls.push(`remove:${agents.join(",")}`);
     for (const a of this.current.filter((s) => agents.includes(s.id))) {
@@ -167,7 +179,7 @@ export class FixtureAgentSetup implements AgentSetupRunning {
 
 /** The methods test/agents.test.ts checks (their answers need a daemon's tools, which the shared bridge test has none of). */
 export const AGENT_METHODS = [
-  "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume", "agents.setup", "agents.configure", "agents.setupDriver",
+  "agents.list", "agents.runs", "agents.events", "agents.start", "agents.message", "agents.pause", "agents.resume", "agents.setup", "agents.configure", "agents.signIn", "agents.setupDriver",
   "agents.detail", "agents.readFile", "agents.restoreFile", "agents.addRoutine", "agents.setRoutine", "agents.removeRoutine",
   "agents.allowComputer", "agents.revokeComputer",
   "agentKeys.list", "agentKeys.set", "agentKeys.remove",

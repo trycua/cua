@@ -119,6 +119,91 @@ pub fn telemetry_use_app_notice() {
     t().set_notice_mode(cua_telemetry::NoticeMode::External);
 }
 
+// ---- Linking usage data to the signed-in account (CUA-1881) ------------------
+
+/// The one-time notice for machines that saw the older "anonymous" wording,
+/// shown before anything is linked to the account. Both buttons close it;
+/// the second also turns usage data off.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct TelemetryLinkNotice {
+    pub title: String,
+    pub body: String,
+    /// Keeps usage data on ("Got it").
+    pub ok_label: String,
+    /// Turns usage data off ("Turn off usage data").
+    pub turn_off_label: String,
+    /// The link to what is collected.
+    pub details_label: String,
+    pub docs_url: String,
+}
+
+/// The one-time linking notice's words.
+#[uniffi::export]
+pub fn telemetry_link_notice() -> TelemetryLinkNotice {
+    use cua_telemetry::link;
+    TelemetryLinkNotice {
+        title: link::NOTICE_TITLE.into(),
+        body: link::NOTICE_BODY.into(),
+        ok_label: link::NOTICE_OK.into(),
+        turn_off_label: link::NOTICE_TURN_OFF.into(),
+        details_label: link::NOTICE_DETAILS.into(),
+        docs_url: cua_telemetry::notice::DOCS_URL.into(),
+    }
+}
+
+/// Whether the app should show the one-time linking notice now: usage data
+/// is on, the account offered linking, and this machine has not shown it.
+#[uniffi::export]
+pub fn telemetry_link_notice_due() -> bool {
+    t().link_notice_due()
+}
+
+/// The person closed the linking notice (either button). Linking starts
+/// with the app's next launch, never in the process that showed it.
+#[uniffi::export]
+pub fn telemetry_acknowledge_link_notice() {
+    t().acknowledge_link_notice();
+}
+
+/// Where linking stands: `off`, `not_offered`, `notice_due` or `linked`.
+#[uniffi::export]
+pub fn telemetry_link_state() -> String {
+    t().link_state().as_str().into()
+}
+
+/// Asks the Spaces API for the signed-in account's opaque id and hands it
+/// to telemetry (none unlinks). Call at launch and after a sign-in; the
+/// SDK's own sign-in already does. Returns the link state. Best effort:
+/// offline or signed out, nothing changes.
+#[cfg(feature = "host")]
+#[uniffi::export]
+pub async fn telemetry_sync_account() -> String {
+    let _ = crate::native::run(async {
+        sync_account(&cua_auth::Session::from_env()).await;
+        Ok(())
+    })
+    .await;
+    telemetry_link_state()
+}
+
+/// [`telemetry_sync_account`] for `session`.
+#[cfg(feature = "host")]
+pub(crate) async fn sync_account(session: &cua_auth::Session) {
+    if !t().is_enabled() {
+        return;
+    }
+    let budget = Duration::from_secs(10);
+    let Ok(Ok(token)) = tokio::time::timeout(budget, session.access_token(false)).await else {
+        return;
+    };
+    let Ok(api) = cua_host::spaces_api::SpacesApiClient::current() else {
+        return;
+    };
+    if let Ok(Ok(me)) = tokio::time::timeout(budget, api.me(&token)).await {
+        t().offer_account(me.analytics_id.as_deref());
+    }
+}
+
 /// Records use of a Spaces app feature (fixed names: `space_create_local`,
 /// `teleport_drop`, ... see the docs). Returns whether it was queued;
 /// unknown names are dropped.
@@ -419,16 +504,18 @@ pub(crate) fn teleport_outcome(e: &CuaError) -> events::TeleportOutcome {
 }
 
 /// Whether an error message is the Keyvault's `RequiresCuaApp` (its
-/// install and open links are fixed constants).
+/// install link is fixed, and its open link is the app's own: `cua://` for
+/// the released app, `cua-local://` for Cua Spaces Local).
 pub(crate) fn requires_cua_app(message: &str) -> bool {
     message.contains(cua_keyvault_links::INSTALL_URL)
-        || message.contains(cua_keyvault_links::OPEN_URL)
+        || cua_home::channel::CuaChannel::ALL
+            .iter()
+            .any(|c| message.contains(&c.keyvault_url()))
 }
 
-/// The fixed links `RequiresCuaApp` carries (cua-keyvault `embedded`).
+/// The fixed link `RequiresCuaApp` carries (cua-keyvault `embedded`).
 mod cua_keyvault_links {
     pub const INSTALL_URL: &str = "https://cua.ai/download";
-    pub const OPEN_URL: &str = "cua://keyvault";
 }
 
 #[cfg(test)]
@@ -508,6 +595,18 @@ mod tests {
             teleport_outcome(&CuaError::TeleportRefused("no".into())),
             events::TeleportOutcome::ConsentDenied
         );
+    }
+
+    #[test]
+    fn requires_cua_app_knows_each_channels_open_link() {
+        // "Installed, not running" carries the app's open link: the released
+        // app's `cua://`, or Cua Spaces Local's `cua-local://`.
+        for link in ["cua://keyvault", "cua-local://keyvault"] {
+            let m = format!("Teleport needs the Cua app running: open Cua ({link}) and try again.");
+            assert!(requires_cua_app(&m), "{link}");
+        }
+        assert!(!requires_cua_app("no display"));
+        assert!(!requires_cua_app("open cua-other://keyvault"));
     }
 
     fn summary() -> StreamSummary {

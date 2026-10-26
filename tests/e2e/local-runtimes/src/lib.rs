@@ -6,11 +6,14 @@
 //! |---|---|
 //! | `CUA_E2E_DOCKER=1` | container backend against the local engine (gVisor if present) |
 //! | `CUA_E2E_QEMU=1` | QEMU backend: arm64 cloud image under hvf/kvm, SSH exec, checkpoint |
-//! | `CUA_E2E_QEMU_X86=1` | QEMU backend: Fleet x86_64 containerDisk under TCG (slow) |
+//! | `CUA_E2E_QEMU_X86=1` | QEMU backend: x86_64 containerDisk under TCG (slow) |
 //! | `CUA_E2E_LUME=1` | Lume backend against `lume serve` |
 //! | `CUA_E2E_IMAGE=1` | cua-image registry pulls + local builder |
-//! | `CUA_E2E_FLEET_CATALOG=1` | every Fleet catalog image through the SDK local provider (`tests/fleet_catalog.rs`) |
 //! | `CUA_E2E_BUILTIN_LINUX=1` | a Linux Space on the built-in Linux runtime (macOS; `tests/builtin_linux.rs`) |
+//! | `CUA_E2E_FIRECRACKER=1` | a microVM Space on Firecracker (Linux/KVM): checkpoint, fork, warm start (`tests/microvm.rs`) |
+//! | `CUA_E2E_VZ=1` | a microVM Space under cua-vz (macOS 14+): checkpoint, restore, 8 independent forks, timings and memory (`tests/microvm_vz.rs`) |
+//! | `CUA_E2E_OCI_ANY=1` | any OCI image (`alpine:3.20`, `python:3.12-slim`) is a full Space on containers (and microVMs): injected cua-spacesd, exec, files, ports (`tests/oci_any.rs`) |
+//! | `CUA_E2E_APPLE_CONTAINER=1` | a microVM Space on Apple's Containerization (macOS 26): spacesd token, exec, stop/start, delete (`tests/containerization.rs`) |
 
 use std::time::Instant;
 

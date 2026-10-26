@@ -233,13 +233,30 @@ describe.skipIf(!built)("agents", () => {
     expect(await code(bridge, "agents.events", { runId: "r" })).toBe("bad_args");
   });
 
+  it("starts a run in a Space and sends it a reply", async () => {
+    const { bridge } = makeBridge();
+    const run = (await call(bridge, "agents.start", { spaceId: "local:dev", agent: "claude-code", prompt: "Run the tests", repo: "https://github.com/trycua/cua" })) as Record<string, unknown>;
+    expect(run).toMatchObject({ run_id: "run-2", agent: "claude-code" });
+    expect(daemon.calls.at(-1)).toBe("agent_start");
+    expect(daemon.args.at(-1)).toEqual({ space: "local:dev", agent: "claude-code", prompt: "Run the tests", repo: "https://github.com/trycua/cua" });
+    expect(shapeProblems("agents.start", run)).toEqual([]);
+    const sent = await call(bridge, "agents.message", { spaceId: "local:dev", runId: "run-2", text: "Use Python 3.13", force: true });
+    expect(daemon.args.at(-1)).toEqual({ space: "local:dev", run_id: "run-2", text: "Use Python 3.13", force: true });
+    expect(shapeProblems("agents.message", sent)).toEqual([]);
+    expect(await code(bridge, "agents.start", { spaceId: "local:dev" })).toBe("bad_args");
+    expect(await code(bridge, "agents.message", { spaceId: "local:dev", runId: "run-2" })).toBe("bad_args");
+  });
+
   it("is unsupported without the daemon or the coding-agent setup", async () => {
     const { bridge } = makeBridge({ tools: null, setup: null });
     expect(await code(bridge, "agents.list")).toBe("unsupported");
     expect(await code(bridge, "agents.events", { spaceId: "s", runId: "r", cursor: 0 })).toBe("unsupported");
+    expect(await code(bridge, "agents.start", { spaceId: "s", agent: "claude-code", prompt: "hi" })).toBe("unsupported");
+    expect(await code(bridge, "agents.message", { spaceId: "s", runId: "r", text: "hi" })).toBe("unsupported");
     expect(await code(bridge, "agents.setup")).toBe("unsupported");
     expect(await code(bridge, "agents.configure", {})).toBe("unsupported");
     expect(await code(bridge, "agents.setupDriver", { agents: ["codex"] })).toBe("unsupported");
+    expect(await code(bridge, "agents.signIn", { agent: "codex" })).toBe("unsupported");
     expect(await code(bridge, "agents.runs", {})).toBe("bad_args");
     expect(await code(bridge, "agents.pause", {})).toBe("bad_args");
   });
@@ -257,6 +274,18 @@ describe.skipIf(!built)("agents", () => {
     expect(configured.find((r) => r.agent === "claude-code")?.configured).toBe(true);
     expect(shapeProblems("agents.configure", configured)).toEqual([]);
     expect(await code(bridge, "agents.configure", { agents: "codex" })).toBe("bad_args");
+  });
+
+  it("starts an agent's own sign-in on this computer, and the rows say when it is done", async () => {
+    const { bridge } = makeBridge();
+    const rows = (await call(bridge, "agents.setup")) as { agent: string; signIn: string | null; signedIn: boolean }[];
+    expect(rows.find((r) => r.agent === "codex")).toMatchObject({ signIn: "ChatGPT", signedIn: false });
+    expect(rows.find((r) => r.agent === "claude-code")).toMatchObject({ signIn: null, signedIn: false });
+    const after = (await call(bridge, "agents.signIn", { agent: "codex" })) as typeof rows;
+    expect(setup.calls).toEqual(["sign-in:codex"]);
+    expect(after.find((r) => r.agent === "codex")?.signedIn).toBe(true);
+    expect(shapeProblems("agents.signIn", after)).toEqual([]);
+    expect(await code(bridge, "agents.signIn", {})).toBe("bad_args");
   });
 
   it("configures every detected agent when none are named", async () => {
@@ -347,7 +376,7 @@ describe.skipIf(!built)("agents", () => {
     await live.remove(["codex"]);
     expect(seen).toEqual([
       ["skills", ["codex"], [], false],
-      ["mcp", ["codex"], { name: "cua", command: "/Applications/Cua Spaces.app/Contents/MacOS/cua", args: ["mcp"], env: new Map() }],
+      ["mcp", ["codex"], { name: "", command: "/Applications/Cua Spaces.app/Contents/MacOS/cua", args: ["mcp"], env: new Map() }],
       ["driver", ["codex"], undefined, true, true],
       ["remove", ["codex"], true, true],
     ]);
@@ -399,7 +428,7 @@ describe.skipIf(!built)("agents", () => {
     expect(model.agents.keys.view.notice).toContain("keeps credentials in a file");
     const none = makeBridge({ tools: null }).model.agents.keys;
     expect(none.view.notice).toContain("need the cua daemon");
-    expect(agentKeysInput({ keys: [{ provider: "x", env: "", last4: "1234", added_ms: 1 }], available: false }, null)).toMatchObject({ keys: [], unavailable: "this machine can't keep keys" });
+    expect(agentKeysInput({ keys: [{ provider: "x", env: "", last4: "1234", added_ms: 1 }], available: false }, null)).toMatchObject({ keys: [], unavailable: "this computer can't keep keys" });
   });
 
   it("routes agentKeys.* to the daemon, with answers that never carry a key", async () => {

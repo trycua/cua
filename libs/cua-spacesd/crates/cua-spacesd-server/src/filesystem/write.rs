@@ -15,6 +15,7 @@ use crate::error::{io_status, status, StatusBuilder};
 use crate::util::{hex_digest, random_id};
 
 use super::paths::entry_info;
+use super::xattr::{self, Attributes};
 
 /// Parameters of one write.
 #[derive(Debug, Clone)]
@@ -27,6 +28,25 @@ pub struct WriteTarget {
     pub permissions: u32,
     /// Create missing parent directories.
     pub create_parents: bool,
+    /// Extended attributes to store with the file, and the namespace the
+    /// published entry reports them under.
+    pub attributes: Attributes,
+}
+
+impl WriteTarget {
+    /// A target with no metadata.
+    pub fn new(dest: PathBuf, mode: WriteMode, permissions: u32, create_parents: bool) -> Self {
+        Self {
+            dest,
+            mode,
+            permissions,
+            create_parents,
+            attributes: Attributes {
+                namespace: xattr::DEFAULT_NAMESPACE.to_owned(),
+                values: Default::default(),
+            },
+        }
+    }
 }
 
 /// An in-progress write. Data goes to a temporary sibling (except in append
@@ -110,6 +130,22 @@ impl AtomicWriter {
             .open(&path)
             .await
             .map_err(|e| io_status(&e, &path))?;
+        if !target.attributes.values.is_empty() {
+            #[cfg(unix)]
+            let stored = {
+                use std::os::fd::AsRawFd as _;
+                xattr::set_on_fd(file.as_raw_fd(), &target.attributes)
+            };
+            #[cfg(not(unix))]
+            let stored = xattr::set_on_fd(0, &target.attributes);
+            if let Err(error) = stored {
+                drop(file);
+                if let Some(tmp) = &tmp {
+                    let _ = tokio::fs::remove_file(tmp).await;
+                }
+                return Err(error);
+            }
+        }
         Ok(Self {
             target,
             tmp,
@@ -205,7 +241,9 @@ impl AtomicWriter {
         let meta = tokio::fs::metadata(&dest)
             .await
             .map_err(|e| io_status(&e, &dest))?;
-        Ok((entry_info(&dest, &meta), digest))
+        let mut entry = entry_info(&dest, &meta);
+        entry.metadata = xattr::read(&dest, &self.target.attributes.namespace, true);
+        Ok((entry, digest))
     }
 
     /// Discards the temporary file.
@@ -222,12 +260,7 @@ mod tests {
     use super::*;
 
     fn target(dest: PathBuf, mode: WriteMode) -> WriteTarget {
-        WriteTarget {
-            dest,
-            mode,
-            permissions: 0,
-            create_parents: true,
-        }
+        WriteTarget::new(dest, mode, 0, true)
     }
 
     #[tokio::test]
@@ -291,5 +324,32 @@ mod tests {
         w.write(b"b").await.unwrap();
         w.finish(0, "").await.unwrap();
         assert_eq!(std::fs::read(&dest).unwrap(), b"ab");
+    }
+
+    #[tokio::test]
+    async fn metadata_is_published_with_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("m.bin");
+        let mut t = target(dest.clone(), WriteMode::Overwrite);
+        t.attributes = Attributes::from_request(
+            "user.e2b.",
+            &[("k".to_owned(), "v".to_owned())].into_iter().collect(),
+        )
+        .unwrap();
+        let mut w = match AtomicWriter::create(t).await {
+            Ok(w) => w,
+            // A file system without user.* attributes (some tmpfs).
+            Err(e) if e.code() == Code::FailedPrecondition => return,
+            Err(e) => panic!("{e}"),
+        };
+        w.write(b"x").await.unwrap();
+        let (entry, _) = w.finish(0, "").await.unwrap();
+        assert_eq!(entry.metadata.get("k").map(String::as_str), Some("v"));
+        assert_eq!(
+            xattr::read(&dest, "user.e2b.", true)
+                .get("k")
+                .map(String::as_str),
+            Some("v")
+        );
     }
 }

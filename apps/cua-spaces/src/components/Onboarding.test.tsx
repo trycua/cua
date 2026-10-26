@@ -24,7 +24,7 @@ describe("Onboarding", () => {
     render(<Onboarding host={host} onDone={onDone} />);
     expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
     expect(screen.getByRole("radio", { name: "Just use this Mac to open my other computers" })).toHaveAttribute("aria-checked", "true");
-    expect(screen.getByTestId("mode-later")).toHaveTextContent("This machine");
+    expect(screen.getByTestId("mode-later")).toHaveTextContent("This computer");
     // Choosing a card only selects it.
     fireEvent.click(screen.getByRole("radio", { name: "Let my other devices reach this Mac" }));
     expect(onDone).not.toHaveBeenCalled();
@@ -39,7 +39,7 @@ describe("Onboarding", () => {
     render(<Onboarding host={host} onDone={onDone} identity="ada@example.com" />);
     fireEvent.click(screen.getByText("Let my other devices reach this Mac"));
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-    expect(screen.getByText("You and the people you share with can see and use this computer’s screen from other devices. Cua connects them for you, with no network setup. Signed in as ada@example.com.")).toBeInTheDocument();
+    expect(screen.getByText("You and the people you share with can see and use this computer’s screen, and create Spaces on it, from other devices. Cua connects them for you, with no network setup. Signed in as ada@example.com.")).toBeInTheDocument();
     // Direct ip:port is hidden until Advanced is opened.
     expect(screen.queryByText(/Direct connection/)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Turn on remote access" }));

@@ -3,7 +3,6 @@
   "root": true,
   "pages": [
     "index",
-    "start-here",
     "spaces",
     "cua-driver",
     "lume",

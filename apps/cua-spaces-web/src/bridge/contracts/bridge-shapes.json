@@ -329,6 +329,15 @@
             "string",
             "null"
           ]
+        },
+        "signIn": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "signedIn": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -340,7 +349,9 @@
         "skillsInstalled",
         "skillsTotal",
         "mcpConfig",
-        "skillsDir"
+        "skillsDir",
+        "signIn",
+        "signedIn"
       ]
     },
     "CatalogEntry": {
@@ -461,19 +472,80 @@
         "json"
       ]
     },
-    "CloudPricing": {
+    "CliInstallPlan": {
       "type": "object",
       "properties": {
-        "vcpuHourUsd": {
-          "type": "number"
+        "source": {
+          "type": [
+            "string",
+            "null"
+          ]
         },
-        "memoryGibHourUsd": {
-          "type": "number"
+        "target": {
+          "type": "string"
+        },
+        "binDir": {
+          "type": "string"
+        },
+        "method": {
+          "enum": [
+            "symlink",
+            "copy",
+            null
+          ]
+        },
+        "installed": {
+          "type": "boolean"
+        },
+        "upToDate": {
+          "type": "boolean"
+        },
+        "installedVersion": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "bundledVersion": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "shadowedBy": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "onPath": {
+          "type": "boolean"
+        },
+        "pathProfile": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pathLine": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "found": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
-        "vcpuHourUsd",
-        "memoryGibHourUsd"
+        "target",
+        "binDir",
+        "installed",
+        "upToDate",
+        "onPath"
       ]
     },
     "CloudProviderWire": {
@@ -560,6 +632,178 @@
         "title",
         "tier",
         "connected"
+      ]
+    },
+    "ComputerResources": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "online": {
+          "type": "boolean"
+        },
+        "sampledAtMs": {
+          "type": "number"
+        },
+        "cpuCount": {
+          "type": "number"
+        },
+        "cpuPercent": {
+          "type": "number"
+        },
+        "loadAverage1m": {
+          "type": "number"
+        },
+        "memoryTotal": {
+          "type": "number"
+        },
+        "memoryUsed": {
+          "type": "number"
+        },
+        "diskTotal": {
+          "type": "number"
+        },
+        "diskFree": {
+          "type": "number"
+        },
+        "spacesCount": {
+          "type": "number"
+        },
+        "spacesRunning": {
+          "type": "number"
+        },
+        "spacesCpuAllocated": {
+          "type": "number"
+        },
+        "spacesMemoryAllocated": {
+          "type": "number"
+        },
+        "spacesMemoryUsed": {
+          "type": "number"
+        },
+        "spacesDiskBytes": {
+          "type": "number"
+        },
+        "spacesDiskExact": {
+          "type": "boolean"
+        },
+        "warning": {
+          "$ref": "#/$defs/DiskWarning"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "online",
+        "sampledAtMs",
+        "cpuCount",
+        "cpuPercent",
+        "loadAverage1m",
+        "memoryTotal",
+        "memoryUsed",
+        "diskTotal",
+        "diskFree",
+        "spacesCount",
+        "spacesRunning",
+        "spacesCpuAllocated",
+        "spacesMemoryAllocated",
+        "spacesMemoryUsed",
+        "spacesDiskBytes",
+        "spacesDiskExact",
+        "warning"
+      ]
+    },
+    "CrashReportingConfig": {
+      "type": "object",
+      "properties": {
+        "allowed": {
+          "type": "boolean"
+        },
+        "dsn": {
+          "type": "string"
+        },
+        "release": {
+          "type": "string"
+        },
+        "environment": {
+          "type": "string"
+        },
+        "shell": {
+          "type": "string"
+        },
+        "crashTest": {
+          "enum": [
+            "ui"
+          ]
+        }
+      },
+      "required": [
+        "allowed",
+        "dsn",
+        "release",
+        "environment",
+        "shell"
+      ]
+    },
+    "CreateFix": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "action": {
+          "enum": [
+            "copy-command",
+            "open-url",
+            "details"
+          ]
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text",
+        "label",
+        "action"
+      ]
+    },
+    "CreatingElsewhere": {
+      "type": "object",
+      "properties": {
+        "machineId": {
+          "type": "string"
+        },
+        "machineName": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "os": {
+          "type": "string"
+        },
+        "phase": {
+          "type": "string"
+        },
+        "percent": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "machineId",
+        "machineName",
+        "name",
+        "os",
+        "phase",
+        "percent"
       ]
     },
     "DevicesInput": {
@@ -681,6 +925,33 @@
           ]
         }
       }
+    },
+    "DiskWarning": {
+      "type": "object",
+      "properties": {
+        "level": {
+          "enum": [
+            "ok",
+            "low",
+            "critical"
+          ]
+        },
+        "free": {
+          "type": "number"
+        },
+        "total": {
+          "type": "number"
+        },
+        "threshold": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "level",
+        "free",
+        "total",
+        "threshold"
+      ]
     },
     "DriveCheckInput": {
       "type": "object",
@@ -1082,6 +1353,12 @@
           }
         },
         "progress": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "appName": {
           "type": [
             "string",
             "null"
@@ -1668,6 +1945,513 @@
         "limits"
       ]
     },
+    "MachinesView": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "groups": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "collapsed": {
+                "type": "boolean"
+              },
+              "ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "removeAll": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "properties": {
+                  "label": {
+                    "type": "string"
+                  },
+                  "confirm": {
+                    "type": "object",
+                    "properties": {
+                      "title": {
+                        "type": "string"
+                      },
+                      "message": {
+                        "type": "string"
+                      },
+                      "confirmLabel": {
+                        "type": "string"
+                      },
+                      "cancelLabel": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "title",
+                      "message",
+                      "confirmLabel",
+                      "cancelLabel"
+                    ]
+                  },
+                  "removes": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/MachinesViewRemove"
+                    }
+                  }
+                },
+                "required": [
+                  "label",
+                  "confirm",
+                  "removes"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "title",
+              "collapsed",
+              "ids"
+            ]
+          }
+        },
+        "machines": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "badge": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "line": {
+                "type": "string"
+              },
+              "online": {
+                "type": "boolean"
+              },
+              "health": {
+                "type": "string"
+              },
+              "healthTarget": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "issuesTitle": {
+                "type": "string"
+              },
+              "issues": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "level": {
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    },
+                    "action": {
+                      "type": [
+                        "object",
+                        "null"
+                      ],
+                      "properties": {
+                        "label": {
+                          "type": "string"
+                        },
+                        "url": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "hostAction": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "appUpdate": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "label"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "level",
+                    "text"
+                  ]
+                }
+              },
+              "os": {
+                "type": "string"
+              },
+              "current": {
+                "type": "boolean"
+              },
+              "team": {
+                "type": "boolean"
+              },
+              "status": {
+                "type": "string"
+              },
+              "sharedBy": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "rename": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "properties": {
+                  "target": {
+                    "type": "string"
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "confirmLabel": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "target",
+                  "id",
+                  "title",
+                  "confirmLabel"
+                ]
+              },
+              "notice": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "noticeAction": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "label": {
+                    "type": "string"
+                  },
+                  "destructive": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "id",
+                  "label",
+                  "destructive"
+                ]
+              },
+              "toggles": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "help": {
+                      "type": "string"
+                    },
+                    "on": {
+                      "type": "boolean"
+                    },
+                    "editable": {
+                      "type": "boolean"
+                    },
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "actions": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "setup": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "label",
+                    "help",
+                    "on",
+                    "editable",
+                    "enabled",
+                    "actions"
+                  ]
+                }
+              },
+              "togglesNote": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "spacesTitle": {
+                "type": "string"
+              },
+              "spaces": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "os": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "running": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                    "os",
+                    "status",
+                    "running"
+                  ]
+                }
+              },
+              "desktop": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "os": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string"
+                  },
+                  "running": {
+                    "type": "boolean"
+                  },
+                  "label": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "name",
+                  "os",
+                  "status",
+                  "running",
+                  "label"
+                ]
+              },
+              "spacesEmpty": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "newSpace": {
+                "type": "object",
+                "properties": {
+                  "label": {
+                    "type": "string"
+                  },
+                  "on": {
+                    "type": "string"
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "help": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "label",
+                  "on",
+                  "enabled"
+                ]
+              },
+              "detailsTitle": {
+                "type": "string"
+              },
+              "details": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "label": {
+                      "type": "string"
+                    },
+                    "value": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "label",
+                    "value"
+                  ]
+                }
+              },
+              "remove": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/MachinesViewRemove"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "line",
+              "online",
+              "os",
+              "current",
+              "team",
+              "status",
+              "toggles",
+              "spacesTitle",
+              "spaces",
+              "newSpace",
+              "detailsTitle",
+              "details"
+            ]
+          }
+        }
+      },
+      "required": [
+        "summary",
+        "groups",
+        "machines"
+      ]
+    },
+    "MachinesViewRemove": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "help": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "host": {
+          "type": "boolean"
+        },
+        "machine": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "device": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "confirm": {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "confirmLabel": {
+              "type": "string"
+            },
+            "cancelLabel": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "title",
+            "message",
+            "confirmLabel",
+            "cancelLabel"
+          ]
+        }
+      },
+      "required": [
+        "label",
+        "enabled",
+        "host",
+        "confirm"
+      ]
+    },
     "NewSpaceOptions": {
       "type": "object",
       "properties": {
@@ -1689,16 +2473,6 @@
           "items": {
             "$ref": "#/$defs/GpuChoice"
           }
-        },
-        "cloudPricing": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/CloudPricing"
-            },
-            {
-              "type": "null"
-            }
-          ]
         },
         "experiments": {
           "$ref": "#/$defs/Experiments"
@@ -1732,7 +2506,6 @@
       "required": [
         "local",
         "gpus",
-        "cloudPricing",
         "experiments",
         "maxCpus"
       ]
@@ -2018,7 +2791,7 @@
     "SessionSnapshot": {
       "type": "object",
       "properties": {
-        "fleet": {
+        "account": {
           "type": "object",
           "properties": {
             "configured": {
@@ -2032,33 +2805,16 @@
                 "none"
               ]
             },
-            "baseUrl": {
-              "type": "string"
-            },
-            "tokenUrl": {
-              "type": "string"
-            },
             "clientId": {
               "type": "string"
             },
             "identity": {
               "type": "string"
-            },
-            "namespaces": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            },
-            "probeError": {
-              "type": "string"
             }
           },
           "required": [
             "configured",
-            "authMode",
-            "baseUrl",
-            "tokenUrl"
+            "authMode"
           ]
         },
         "onboarding": {
@@ -2129,16 +2885,44 @@
                 "string",
                 "null"
               ]
+            },
+            "opened": {
+              "type": "boolean"
             }
           },
           "required": [
             "userCode",
             "url"
           ]
+        },
+        "hostSignInFailure": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "detail": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "reason",
+            "message",
+            "detail"
+          ]
         }
       },
       "required": [
-        "fleet",
+        "account",
         "onboarding",
         "daemon"
       ]
@@ -2343,6 +3127,24 @@
             "string",
             "null"
           ]
+        },
+        "cli": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "installed": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "name",
+            "installed"
+          ]
         }
       },
       "required": [
@@ -2369,6 +3171,21 @@
         "role"
       ]
     },
+    "ShareRemoval": {
+      "type": "object",
+      "properties": {
+        "who": {
+          "type": "string"
+        },
+        "machineName": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "who",
+        "machineName"
+      ]
+    },
     "SpaceProgress": {
       "type": "object",
       "properties": {
@@ -2392,12 +3209,123 @@
         },
         "cancelling": {
           "type": "boolean"
+        },
+        "retrying": {
+          "type": "boolean"
+        },
+        "fix": {
+          "$ref": "#/$defs/CreateFix"
         }
       },
       "required": [
         "phase",
         "permille",
         "label"
+      ]
+    },
+    "SpaceResources": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "powerState": {
+          "enum": [
+            "running",
+            "stopped",
+            "suspended",
+            ""
+          ]
+        },
+        "cpuAllocated": {
+          "type": "number"
+        },
+        "memoryAllocated": {
+          "type": "number"
+        },
+        "diskAllocated": {
+          "type": "number"
+        },
+        "usage": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "cpuCount": {
+              "type": "number"
+            },
+            "cpuPercent": {
+              "type": "number"
+            },
+            "loadAverage1m": {
+              "type": "number"
+            },
+            "memoryUsed": {
+              "type": "number"
+            },
+            "memoryTotal": {
+              "type": "number"
+            },
+            "memoryLimited": {
+              "type": "boolean"
+            },
+            "diskUsed": {
+              "type": "number"
+            },
+            "diskTotal": {
+              "type": "number"
+            },
+            "diskLimited": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "cpuCount",
+            "cpuPercent",
+            "loadAverage1m",
+            "memoryUsed",
+            "memoryTotal",
+            "memoryLimited",
+            "diskUsed",
+            "diskTotal",
+            "diskLimited"
+          ]
+        },
+        "diskOnHost": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "bytes": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "allocated": {
+              "type": "number"
+            },
+            "sharesSpace": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "bytes",
+            "allocated",
+            "sharesSpace"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "powerState",
+        "cpuAllocated",
+        "memoryAllocated",
+        "diskAllocated",
+        "usage",
+        "diskOnHost"
       ]
     },
     "SpaceRow": {
@@ -2414,7 +3342,6 @@
         },
         "provider": {
           "enum": [
-            "cloud",
             "local",
             "direct",
             "relay"
@@ -2651,6 +3578,41 @@
         "currentTeamId"
       ]
     },
+    "TelemetryLinkNotice": {
+      "type": "object",
+      "properties": {
+        "due": {
+          "type": "boolean"
+        },
+        "title": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        },
+        "okLabel": {
+          "type": "string"
+        },
+        "turnOffLabel": {
+          "type": "string"
+        },
+        "detailsLabel": {
+          "type": "string"
+        },
+        "docsUrl": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "due",
+        "title",
+        "body",
+        "okLabel",
+        "turnOffLabel",
+        "detailsLabel",
+        "docsUrl"
+      ]
+    },
     "UpdateState": {
       "type": "object",
       "properties": {
@@ -2824,14 +3786,10 @@
       "properties": {
         "defaultLocation": {
           "enum": [
-            "cloud",
             "local",
             "yours",
             "host"
           ]
-        },
-        "cloudAvailable": {
-          "type": "boolean"
         },
         "localAvailable": {
           "type": "boolean"
@@ -2864,16 +3822,6 @@
           "anyOf": [
             {
               "$ref": "#/$defs/LocalStorage"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "cloudPricing": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/CloudPricing"
             },
             {
               "type": "null"
@@ -3011,7 +3959,6 @@
       },
       "required": [
         "defaultLocation",
-        "cloudAvailable",
         "localAvailable",
         "maxCpus"
       ]
@@ -3150,16 +4097,6 @@
             "$ref": "#/$defs/GpuChoice"
           }
         },
-        "cloudPricing": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/CloudPricing"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
         "experiments": {
           "$ref": "#/$defs/Experiments"
         },
@@ -3185,7 +4122,6 @@
       "required": [
         "local",
         "gpus",
-        "cloudPricing",
         "experiments",
         "maxCpus",
         "env"
@@ -3436,6 +4372,12 @@
             "string",
             "null"
           ]
+        },
+        "appName": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -3640,11 +4582,39 @@
           "items": {
             "$ref": "#/$defs/MachinePageRow"
           }
+        },
+        "view": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MachinesView"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
         "devices",
         "signedIn"
+      ]
+    },
+    "WkOnboarding": {
+      "type": "object",
+      "properties": {
+        "completed": {
+          "type": "boolean"
+        },
+        "mode": {
+          "enum": [
+            "client",
+            "host"
+          ]
+        }
+      },
+      "required": [
+        "completed",
+        "mode"
       ]
     },
     "WkSession": {
@@ -3682,8 +4652,20 @@
                     "null"
                   ]
                 },
+                "opened": {
+                  "type": "boolean"
+                },
+                "reason": {
+                  "type": "string"
+                },
                 "message": {
                   "type": "string"
+                },
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 }
               },
               "required": [
@@ -3827,6 +4809,24 @@
             "string",
             "null"
           ]
+        },
+        "cli": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "installed": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "name",
+            "installed"
+          ]
         }
       },
       "required": [
@@ -3874,7 +4874,6 @@
         },
         "provider": {
           "enum": [
-            "cloud",
             "local",
             "direct",
             "relay",
@@ -4076,6 +5075,21 @@
             "string",
             "null"
           ]
+        },
+        "incomplete": {
+          "type": "boolean"
+        },
+        "reaching": {
+          "type": "number"
+        },
+        "stale": {
+          "type": "boolean"
+        },
+        "creatingElsewhere": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CreatingElsewhere"
+          }
         }
       },
       "required": [
@@ -4234,6 +5248,35 @@
         ]
       }
     },
+    "agents.message": {
+      "type": "object",
+      "properties": {
+        "delivered": {
+          "type": "boolean"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "running",
+            "idle",
+            "failed",
+            "crashed",
+            "unknown"
+          ]
+        },
+        "phase": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "delivered",
+        "run_id",
+        "status",
+        "phase"
+      ]
+    },
     "agents.pause": {
       "type": "null"
     },
@@ -4289,6 +5332,24 @@
           },
           "turn": {
             "type": "number"
+          },
+          "needsYou": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "title": {
+                "type": "string"
+              },
+              "detail": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "title",
+              "detail"
+            ]
           }
         },
         "required": [
@@ -4345,6 +5406,27 @@
         ]
       }
     },
+    "agents.signIn": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentSetupRow"
+      }
+    },
+    "agents.start": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "type": "string"
+        },
+        "agent": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "agent"
+      ]
+    },
     "checklist.get": {
       "type": "object",
       "properties": {
@@ -4362,12 +5444,19 @@
             },
             "shown": {
               "type": "boolean"
+            },
+            "skipped": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           "required": [
             "done",
             "dismissed",
-            "shown"
+            "shown",
+            "skipped"
           ]
         }
       },
@@ -4392,17 +5481,37 @@
             },
             "shown": {
               "type": "boolean"
+            },
+            "skipped": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           "required": [
             "done",
             "dismissed",
-            "shown"
+            "shown",
+            "skipped"
           ]
         }
       },
       "required": [
         "state"
+      ]
+    },
+    "cli.install": {
+      "$ref": "#/$defs/CliInstallPlan"
+    },
+    "cli.plan": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CliInstallPlan"
+        },
+        {
+          "type": "null"
+        }
       ]
     },
     "clouds.connect": {
@@ -4464,6 +5573,9 @@
         "ok",
         "checks"
       ]
+    },
+    "crashReporting.config": {
+      "$ref": "#/$defs/CrashReportingConfig"
     },
     "devices.approve": {
       "type": "null"
@@ -4589,6 +5701,143 @@
     "keyvault.unlock": {
       "type": "null"
     },
+    "links.create": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "access": {
+          "enum": [
+            "private",
+            "team",
+            "public"
+          ]
+        },
+        "kind": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "createdAtUnix": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "expiresAtUnix": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "url",
+        "name",
+        "access",
+        "kind",
+        "target",
+        "owner",
+        "createdAtUnix",
+        "expiresAtUnix"
+      ]
+    },
+    "links.list": {
+      "type": "object",
+      "properties": {
+        "links": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "access": {
+                "enum": [
+                  "private",
+                  "team",
+                  "public"
+                ]
+              },
+              "kind": {
+                "type": "string"
+              },
+              "target": {
+                "type": "string"
+              },
+              "owner": {
+                "type": "string"
+              },
+              "createdAtUnix": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "expiresAtUnix": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "url",
+              "name",
+              "access",
+              "kind",
+              "target",
+              "owner",
+              "createdAtUnix",
+              "expiresAtUnix"
+            ]
+          }
+        }
+      },
+      "required": [
+        "links"
+      ]
+    },
+    "links.stop": {
+      "type": "object",
+      "properties": {
+        "stopped": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "stopped"
+      ]
+    },
     "loginItem.get": {
       "$ref": "#/$defs/LoginItemReport"
     },
@@ -4598,11 +5847,20 @@
     "loginItem.set": {
       "$ref": "#/$defs/LoginItemReport"
     },
+    "machines.checkHealth": {
+      "type": "null"
+    },
     "machines.list": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/MachineRow"
       }
+    },
+    "machines.remove": {
+      "type": "null"
+    },
+    "machines.rename": {
+      "type": "null"
     },
     "notifications.list": {
       "type": "array",
@@ -4615,6 +5873,39 @@
     },
     "notifications.markRead": {
       "type": "null"
+    },
+    "nudges.answer": {
+      "type": "null"
+    },
+    "nudges.pending": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "agent": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string"
+          },
+          "atMs": {
+            "type": "number"
+          },
+          "expiresMs": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "agent",
+          "action",
+          "atMs",
+          "expiresMs"
+        ]
+      }
     },
     "presence.join": {
       "type": "object",
@@ -4748,6 +6039,46 @@
         "upgradeUrl"
       ]
     },
+    "resources.get": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "sequence": {
+          "type": "number"
+        },
+        "sampledAtMs": {
+          "type": "number"
+        },
+        "thisMac": {
+          "$ref": "#/$defs/ComputerResources"
+        },
+        "spaces": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SpaceResources"
+          }
+        },
+        "computers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ComputerResources"
+          }
+        },
+        "warning": {
+          "$ref": "#/$defs/DiskWarning"
+        }
+      },
+      "required": [
+        "sequence",
+        "sampledAtMs",
+        "thisMac",
+        "spaces",
+        "computers",
+        "warning"
+      ]
+    },
     "session.completeOnboarding": {
       "type": "null"
     },
@@ -4789,10 +6120,19 @@
     "settings.set": {
       "$ref": "#/$defs/SettingsSnapshot"
     },
+    "sharing.ackRemovals": {
+      "type": "null"
+    },
     "sharing.list": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/ShareEntry"
+      }
+    },
+    "sharing.removals": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ShareRemoval"
       }
     },
     "sharing.share": {
@@ -5047,6 +6387,19 @@
     },
     "teams.list": {
       "$ref": "#/$defs/TeamsList"
+    },
+    "telemetry.acknowledgeLinkNotice": {
+      "type": "null"
+    },
+    "telemetry.linkNotice": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TelemetryLinkNotice"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "telemetry.track": {
       "type": "null"
@@ -5716,6 +7069,35 @@
         ]
       }
     },
+    "agents.message": {
+      "type": "object",
+      "properties": {
+        "delivered": {
+          "type": "boolean"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "running",
+            "idle",
+            "failed",
+            "crashed",
+            "unknown"
+          ]
+        },
+        "phase": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "delivered",
+        "run_id",
+        "status",
+        "phase"
+      ]
+    },
     "agents.pause": {},
     "agents.readFile": {
       "$ref": "#/$defs/AgentOpenFile"
@@ -5767,6 +7149,24 @@
           },
           "turn": {
             "type": "number"
+          },
+          "needsYou": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "title": {
+                "type": "string"
+              },
+              "detail": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "title",
+              "detail"
+            ]
           }
         },
         "required": [
@@ -5823,6 +7223,27 @@
         ]
       }
     },
+    "agents.signIn": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentSetupRow"
+      }
+    },
+    "agents.start": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "type": "string"
+        },
+        "agent": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "agent"
+      ]
+    },
     "app.info": {
       "type": "object",
       "properties": {
@@ -5870,12 +7291,19 @@
             },
             "shown": {
               "type": "boolean"
+            },
+            "skipped": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           "required": [
             "done",
             "dismissed",
-            "shown"
+            "shown",
+            "skipped"
           ]
         }
       },
@@ -5900,17 +7328,37 @@
             },
             "shown": {
               "type": "boolean"
+            },
+            "skipped": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           "required": [
             "done",
             "dismissed",
-            "shown"
+            "shown",
+            "skipped"
           ]
         }
       },
       "required": [
         "state"
+      ]
+    },
+    "cli.install": {
+      "$ref": "#/$defs/CliInstallPlan"
+    },
+    "cli.plan": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CliInstallPlan"
+        },
+        {
+          "type": "null"
+        }
       ]
     },
     "clouds.connect": {
@@ -5975,6 +7423,9 @@
         "ok",
         "checks"
       ]
+    },
+    "crashReporting.config": {
+      "$ref": "#/$defs/CrashReportingConfig"
     },
     "devices.approve": {
       "type": "null"
@@ -6127,6 +7578,143 @@
       "$ref": "#/$defs/WkKeyvault"
     },
     "keyvault.unlockVault": {},
+    "links.create": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "access": {
+          "enum": [
+            "private",
+            "team",
+            "public"
+          ]
+        },
+        "kind": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "createdAtUnix": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "expiresAtUnix": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "url",
+        "name",
+        "access",
+        "kind",
+        "target",
+        "owner",
+        "createdAtUnix",
+        "expiresAtUnix"
+      ]
+    },
+    "links.list": {
+      "type": "object",
+      "properties": {
+        "links": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "access": {
+                "enum": [
+                  "private",
+                  "team",
+                  "public"
+                ]
+              },
+              "kind": {
+                "type": "string"
+              },
+              "target": {
+                "type": "string"
+              },
+              "owner": {
+                "type": "string"
+              },
+              "createdAtUnix": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "expiresAtUnix": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "url",
+              "name",
+              "access",
+              "kind",
+              "target",
+              "owner",
+              "createdAtUnix",
+              "expiresAtUnix"
+            ]
+          }
+        }
+      },
+      "required": [
+        "links"
+      ]
+    },
+    "links.stop": {
+      "type": "object",
+      "properties": {
+        "stopped": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "stopped"
+      ]
+    },
     "loginItem.get": {
       "$ref": "#/$defs/LoginItemReport"
     },
@@ -6136,8 +7724,17 @@
     "loginItem.set": {
       "$ref": "#/$defs/LoginItemReport"
     },
+    "machines.checkHealth": {
+      "type": "null"
+    },
     "machines.list": {
       "$ref": "#/$defs/WkMachines"
+    },
+    "machines.remove": {
+      "type": "null"
+    },
+    "machines.rename": {
+      "type": "null"
     },
     "notifications.list": {
       "type": "array",
@@ -6150,6 +7747,45 @@
     },
     "notifications.markRead": {
       "type": "null"
+    },
+    "nudges.answer": {
+      "type": "null"
+    },
+    "nudges.pending": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "agent": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string"
+          },
+          "atMs": {
+            "type": "number"
+          },
+          "expiresMs": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "agent",
+          "action",
+          "atMs",
+          "expiresMs"
+        ]
+      }
+    },
+    "onboarding.complete": {
+      "$ref": "#/$defs/WkOnboarding"
+    },
+    "onboarding.get": {
+      "$ref": "#/$defs/WkOnboarding"
     },
     "relay.usage": {
       "type": [
@@ -6236,6 +7872,46 @@
         "upgradeUrl"
       ]
     },
+    "resources.get": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "sequence": {
+          "type": "number"
+        },
+        "sampledAtMs": {
+          "type": "number"
+        },
+        "thisMac": {
+          "$ref": "#/$defs/ComputerResources"
+        },
+        "spaces": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SpaceResources"
+          }
+        },
+        "computers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ComputerResources"
+          }
+        },
+        "warning": {
+          "$ref": "#/$defs/DiskWarning"
+        }
+      },
+      "required": [
+        "sequence",
+        "sampledAtMs",
+        "thisMac",
+        "spaces",
+        "computers",
+        "warning"
+      ]
+    },
     "session.get": {
       "$ref": "#/$defs/WkSession"
     },
@@ -6251,10 +7927,19 @@
     "settings.get": {
       "$ref": "#/$defs/WkSettings"
     },
+    "sharing.ackRemovals": {
+      "type": "null"
+    },
     "sharing.list": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/ShareEntry"
+      }
+    },
+    "sharing.removals": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ShareRemoval"
       }
     },
     "sharing.share": {
@@ -6465,6 +8150,19 @@
     },
     "teams.list": {
       "$ref": "#/$defs/TeamsList"
+    },
+    "telemetry.acknowledgeLinkNotice": {
+      "type": "null"
+    },
+    "telemetry.linkNotice": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TelemetryLinkNotice"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "telemetry.track": {
       "type": "null"

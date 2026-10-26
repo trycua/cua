@@ -36,17 +36,21 @@ Every event carries: `telemetry_schema_version`, `event_version`, `product`
 | `cua_daemon_health` | `uptime_bucket`, `sandboxes` | Hourly aggregate health. |
 | `cua_spacesd_health` | `uptime_bucket`, `imports_failed` | In-sandbox health, hourly. |
 | `cua_spacesd_session_deliveries` | `delivery_grant` (`present` or `absent`), `count` | Session deliveries with and without a Keyvault grant. |
-| `cua_app_active` | `experiments_on` (the Cua Spaces experiments turned on in Settings, Experiments: `cua_volume`, `your_cloud`, `sharing` joined with `+`, or `none`) | Daily and weekly active installs and retention: at most one per install per UTC day. Also installs per experiment. |
+| `cua_app_active` | `experiments_on` (the Cua Spaces experiments turned on in Settings, Experiments: `cua_volume`, `your_cloud`, `sharing` joined with `+`, or `none`), `ui_locale` (the Cua Spaces interface language: `en`, `zh-Hans`, `ko`, `pt-BR`, `ja`, `es`, or `other`; never a region or free text) | Daily and weekly active installs and retention: at most one per install per UTC day. Also installs per experiment, and which languages to ship. |
 | `cua_onboarding_page` | `page` (`welcome`, `command_line`, `signin`, `agents`, `presentation`, `volume`, `this_machine`, `done`), `action` (`shown`, `completed`, `skipped`, `back`), `choice` (a fixed word such as `installed`, `signed_in`, `menu_bar_only`, `s3`, `host`, or `none`) | Which first-run page people leave on, and what they pick. |
+| `cua_onboarding_step_viewed` | `step` (`welcome`, `connect_agent`, `terminal`, `sign_in`, `permissions`, `create_space`), `step_index` (its position, 1 to 6), `onboarding_version` (2) | How many installs see each first-run screen. The OS and app version are the `os_family` and `product_version` every event carries. |
+| `cua_onboarding_step_completed` | `step`, `step_index`, `onboarding_version` | How many installs finish each first-run screen. |
+| `cua_onboarding_step_failed` | `step`, `step_index`, `onboarding_version`, `reason` (`timeout`, `cancelled`, `permission_denied`, `unauthenticated`, `transport`, `http`, `internal`, `install_failed`, `connect_failed`, `setup_failed`, `create_failed`, `other`) | Which first-run screens fail, and why. |
+| `cua_onboarding_skipped` | `step`, `step_index`, `onboarding_version`, `how` (`step`: that screen's own Skip or Not now; `later`: Skip for now, which leaves the whole first run) | Which screens people skip, and where they leave the first run. |
 | `cua_space_wizard` | `action` (`opened`, `cancelled`, `submitted`) | How often a New Space is started and abandoned. |
 | `cua_space_create_started` | `location`, `guest_os`, `kind`, `gpu` (GPU acceleration turned on) | Which Spaces are started, and how often with GPU acceleration. |
-| `cua_space_create` | `location`, `guest_os`, `kind`, `outcome` (`ok`, `error`, or `cancelled` when Cancel was pressed while it was being created), `error_kind` ([kinds](/cua-sdk/concepts/telemetry-error-kinds)), `failed_phase` (the phase it failed or was cancelled in, or `none`), `stalled`, `time_bucket` (to ready, the failure, or cancel finishing), `gpu` | Space create success, failure and cancel rates, time to ready, and which phase fails. |
+| `cua_space_create` | `location`, `guest_os`, `kind`, `outcome` (`ok`, `error`, or `cancelled` when Cancel was pressed while it was being created), `error_kind` ([kinds](/cua-sdk/concepts/telemetry-error-kinds)), `failed_phase` (the phase it failed or was cancelled in, or `none`), `stalled`, `time_bucket` (to ready, the failure, or cancel finishing), `gpu`, `retry_attempt` (`1` when the app ran the create a second time by itself after a passing failure, else `0`), `error_subclass` ([finer causes](/cua-sdk/concepts/telemetry-error-kinds#finer-causes), or `none`) | Space create success, failure and cancel rates, time to ready, which phase fails, and how often one automatic retry saves a create. Sent once per create, for its final outcome, so a retried create still counts once. |
 | `cua_volume_setup` | `surface` (`onboarding` or `settings`), `storage` (`this_mac`, `s3`, `later`), `add_to_finder`, `mount_method` (`fskit`, `nfs`, `fuse`, `none`, `unknown`), `outcome` | Cua Volume adoption. |
 | `cua_persistent_agent` | `action` (`create`, `pause`, `resume`, `routine_add`, ...), `harness`, `outcome`, `error_kind` | Persistent agents and routines adoption. |
 | `cua_host_setup` | `mode` (`relay` or `direct`), `profile` (`desktop`, `spare`, `both`), `outcome`, `error_kind`, `signed_in`, `token_state` (`provided`, `expired`, `missing`, `not_needed`; never the token), `failed_stage` (`none`, `preflight`, `token`, `register`, `download`, `service`), `http_status` (the status a server answered a failure with, `0` when none) | Machines set up for access, and where a failed setup stopped. |
 | `cua_host_space_provided` | `kind`, `guest_os`, `outcome`, `error_kind` | Spaces a host machine created for your other devices. |
 | `cua_keyvault_action` | `action` (`setup`, `unlock`, `lock`, `import`, `site_login`), `method` (`os_key_store` (Touch ID on a Mac), `passphrase`, `recovery_key`, `none`), `outcome` | Keyvault adoption and how it is unlocked. Nothing about what is stored. |
-| `cua_share` | `action` (`share`, `unshare`, `change_role`), `role` (`viewer`, `editor`, `none`), `outcome` | Sharing, and how often it is view-only. Never who. |
+| `cua_share` | `action` (`share`, `unshare`, `change_role`), `role` (`viewer`, `editor`, `none`), `outcome` (`cancelled` when the confirmation prompt was dismissed), `error_kind` (`presence_denied`, `presence_cancelled`, `presence_unavailable`, `not_signed_in`, `device_not_enrolled`, `driver_unsupported`, `relay_refused`, `relay_unreachable`, `invalid_who`, `other`, or `none`), `failed_stage` (`request`, `presence`, `account`, `device`, `driver`, `relay`, `other`, or `none`) | Sharing, how often it is view-only, and why it fails. Never who, never the error's words. |
 | `cua_presence_session` | `outcome`, `participants` (bucketed), `duration_bucket` | Multiplayer sessions, their size and length. |
 | `cua_app_update` | `action` (`checked`, `found`, `not_found`, `downloaded`, `installed`, `failed`), `channel` (`stable` or `beta`), `trigger` (`user` or `background`) | Whether people update. |
 | `cua_device_enroll` | `method` (`sign_in`, `approval`, `rekey`), `outcome` | How devices join your account's relay. |
@@ -54,3 +58,36 @@ Every event carries: `telemetry_schema_version`, `event_version`, `product`
 
 Teleport caller kinds and how session deliveries are counted:
 [How events are counted](/cua-sdk/concepts/telemetry-counting).
+
+## Crash and error reports
+
+The Cua Spaces app (the macOS app, and the Windows and Linux app) reports
+crashes and unexpected errors to Sentry, so a bad release is caught before it
+reaches everyone: the staged rollout stops advancing when the share of
+crash-free launches of a new version falls behind the previous one. The
+switch is the same as for usage data: "Share usage data to help improve Cua"
+(Settings, Privacy), `cua telemetry off`, `CUA_TELEMETRY=0` or `DO_NOT_TRACK=1`.
+Off means nothing is sent, and a report that was waiting to be sent is dropped.
+Nothing is sent before the first-run notice has been shown. A switch turned
+on while the app runs takes effect at the next launch.
+
+| Property | What it is | Why |
+|---|---|---|
+| `release` | `cua-spaces-desktop@` and the app version | Which version crashed. |
+| `environment` | `stable`, `beta` or `local` | Which channel. |
+| `shell`, `component` | `swift` or `electron`; `shell`, `ui`, `core` or `daemon` | Which part of the app failed. |
+| Operating system, CPU type | For example macOS 26, `arm64` | Crashes that depend on the platform. |
+| Call stack | Function names and Cua source file names of the failing code, memory addresses, the list of loaded libraries | Finding the bug. Symbols are matched on our side from files uploaded when the release is built. |
+| Crash dump | On a native crash of the Windows, Linux or Electron app: a snapshot of the crashed process. Sentry removes the stack memory on its servers (a project scrubbing rule), keeping addresses and library names | Finding crashes in native code. |
+| Session | One per app launch: started, ended normally, or crashed. No identifier of you or your machine | The crash-free share per version. |
+
+Before anything leaves the app, it is cleaned:
+
+- Error messages are removed (they can carry Space names, file names or emails). The error type and call stack stay.
+- Folders under your home folder are shown as `~`, email addresses as `[email]`, and the computer's name is dropped.
+- No screenshots, no session replay, no screen or accessibility content, no clicks, typed text or console output, no performance traces.
+- No IP address is stored: IP collection is off and no user is attached to a report.
+
+The Spaces app, its web interface and its Rust core and daemon share one
+Sentry project (`cua-spaces-desktop`). Tests feed paths, emails and host names
+through the cleaning step and check that none survive.

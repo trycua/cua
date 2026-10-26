@@ -6,7 +6,8 @@
 //!
 //! Targets are SDK sandboxes (local or direct) and relay Spaces
 //! (`relay:<machine-id>`). `host` is a direct sandbox pointing at a
-//! cua-spacesd on this machine (default `http://127.0.0.1:3211`), gated
+//! cua-spacesd on this machine (default `http://127.0.0.1:3211`, or 3221 for
+//! `cua-local`), gated
 //! behind `cua do-host-consent`.
 
 use crate::{
@@ -30,8 +31,15 @@ const LEGACY_PROVIDERS: &[&str] = &[
     "direct",
     "sandbox",
 ];
-/// Default host spacesd (`CUA_HOST_ENV_URL`).
-pub const DEFAULT_HOST_ENV_URL: &str = "http://127.0.0.1:3211";
+/// Default host spacesd (`CUA_HOST_ENV_URL`): this machine, on the
+/// channel's port (3211, or 3221 for `cua-local`).
+pub fn default_host_env_url() -> String {
+    host_env_url_on(cua_home::channel::CuaChannel::current())
+}
+
+fn host_env_url_on(channel: cua_home::channel::CuaChannel) -> String {
+    format!("http://127.0.0.1:{}", channel.ports().tcp)
+}
 
 #[derive(Args, Debug)]
 pub struct DoArgs {
@@ -49,7 +57,7 @@ pub enum DoAction {
     #[command(after_help = "Examples:
   cua do switch dev
   cua do switch relay:0123abcd4567ef89
-  # This machine (after `cua do-host-consent`)
+  # This computer (after `cua do-host-consent`)
   cua do switch host")]
     Switch {
         /// Sandbox name or ref, `relay:<id>`, `host`, `url`, or a legacy provider word.
@@ -583,7 +591,7 @@ pub async fn run(cua: &Arc<Cua>, args: DoArgs, out: &mut dyn Write) -> Result<i3
 }
 
 fn fail(msg: &str) -> Result<i32, CuaError> {
-    eprintln!("❌ {msg}");
+    eprintln!("❌ {}", crate::util::hint(msg));
     Ok(1)
 }
 
@@ -610,13 +618,16 @@ impl Run<'_> {
             "host" => {
                 if !consent_path().exists() {
                     eprintln!(
-                        "❌ Warning: you are about to allow an AI to control your host PC directly.\n   This grants full keyboard, mouse, and screen access to your local desktop.\n   To continue, please run: cua do-host-consent"
+                        "{}",
+                        crate::util::hint(
+                            "❌ Warning: you are about to allow an AI to control your host PC directly.\n   This grants full keyboard, mouse, and screen access to your local desktop.\n   To continue, please run: cua do-host-consent"
+                        ),
                     );
                     return Ok(1);
                 }
                 let url = name
                     .or_else(|| std::env::var("CUA_HOST_ENV_URL").ok())
-                    .unwrap_or_else(|| DEFAULT_HOST_ENV_URL.into());
+                    .unwrap_or_else(default_host_env_url);
                 let token = token.or_else(|| std::env::var("CUA_HOST_ENV_TOKEN").ok());
                 self.register_direct("host", &url, token).await?;
                 ("host".to_string(), "host".to_string())
@@ -1273,4 +1284,29 @@ async fn snapshot_summary(
         }
     }
     Ok(s)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cua_home::channel::CuaChannel;
+
+    /// `cua do switch host` reaches this machine's spacesd on the channel's
+    /// port: `cua-local`'s is not Stable's 3211.
+    #[test]
+    fn the_host_target_is_this_machines_spacesd_on_the_channels_port() {
+        assert_eq!(host_env_url_on(CuaChannel::Stable), "http://127.0.0.1:3211");
+        assert_eq!(host_env_url_on(CuaChannel::Local), "http://127.0.0.1:3221");
+    }
+
+    /// Stable's ports are the ones cua-spacesd binds with no flag, so a
+    /// Stable host service passes none (`Host::service_spec`) and `cua`
+    /// reaches it without being told.
+    #[test]
+    fn the_stable_ports_are_spacesds_own_defaults() {
+        let p = CuaChannel::Stable.ports();
+        assert_eq!(p.tcp, cua_proto::SPACESD_DEFAULT_PORT);
+        assert_eq!(p.quic, cua_proto::SPACESD_DEFAULT_QUIC_PORT);
+        assert_eq!(p.mesh_udp, 3212, "cua_mesh::MEDIA_UDP_PORT");
+    }
 }

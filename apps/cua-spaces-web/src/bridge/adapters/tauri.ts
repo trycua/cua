@@ -22,7 +22,7 @@ import type {
   CreateProgress,
   DaemonStatus,
   DefaultLocation,
-  FleetStatus,
+  AccountStatus,
   HostStatus,
   LoginItemStatus,
   MachineRow,
@@ -57,7 +57,12 @@ import { tauriHostSetupOps } from "../ops/host-setup";
 import { TAURI_SPACE_DETAIL_UNSUPPORTED, tauriSpaceDetailOps } from "../ops/space-detail";
 import { STREAM_OPERATIONS } from "../ops/stream";
 import { RELAY_USAGE_OPERATIONS } from "../ops/relay-usage";
+import { NUDGES_OPERATIONS } from "../ops/nudges";
+import { RESOURCES_OPERATIONS } from "../ops/resources";
+import { MACHINES_OPERATIONS } from "../ops/machines";
 import { CHECKLIST_OPERATIONS } from "../ops/checklist";
+import { LINKS_OPERATIONS } from "../ops/links";
+import { CLI_OPERATIONS } from "../ops/cli";
 import { PRESENCE_OPERATIONS } from "../ops/presence";
 import { RUNTIME_FIX_OPERATIONS } from "../ops/runtime-fix";
 import { tauriTelemetryOps } from "../ops/telemetry";
@@ -84,7 +89,10 @@ export const TAURI_EVENTS = {
 export const TAURI_UNSUPPORTED: readonly OpName[] = [
   "settings.choose",
   "agents.events",
+  "agents.start",
+  "agents.message",
   "agents.setupDriver",
+  "agents.signIn",
   "host.joinWithCode",
   ...TELEPORT_TAURI_UNSUPPORTED,
   ...KEYVAULT_MANAGE_TAURI_UNSUPPORTED,
@@ -92,7 +100,13 @@ export const TAURI_UNSUPPORTED: readonly OpName[] = [
   ...TAURI_SPACE_DETAIL_UNSUPPORTED,
   ...STREAM_OPERATIONS,
   ...RELAY_USAGE_OPERATIONS,
+  ...NUDGES_OPERATIONS,
+  ...RESOURCES_OPERATIONS,
+  ...MACHINES_OPERATIONS,
   ...CHECKLIST_OPERATIONS,
+  ...LINKS_OPERATIONS,
+  ...CLI_OPERATIONS,
+  "crashReporting.config",
   ...PRESENCE_OPERATIONS,
   ...RUNTIME_FIX_OPERATIONS,
 ];
@@ -183,7 +197,7 @@ export function createTauriAdapter(win: HostWindow = globalThis.window as HostWi
       const selfId = status?.machineId ?? "local";
       const self: MachineRow = {
         id: selfId,
-        name: status?.name ?? "This machine",
+        name: status?.name ?? "This computer",
         via: "local",
         online: true,
         os: env?.platform ?? "macos",
@@ -242,12 +256,12 @@ export function createTauriAdapter(win: HostWindow = globalThis.window as HostWi
     "keyvault.revokeGrant": ({ id }) => invoke("keyvault_revoke_grant", { id }),
 
     "session.get": async () => {
-      const [fleet, onboarding, daemon] = await Promise.all([
-        invoke<FleetStatus>("fleet_status", { probe: false }),
+      const [account, onboarding, daemon] = await Promise.all([
+        invoke<AccountStatus>("account_status", { probe: false }),
         invoke<OnboardingState>("onboarding_state").catch((): OnboardingState => ({ completed: true })),
         invoke<DaemonStatus>("daemon_status").catch(() => null),
       ]);
-      return { fleet, onboarding, daemon };
+      return { account, onboarding, daemon };
     },
     "session.signIn": () => invoke("begin_sign_in"),
     "session.signOut": async () => {

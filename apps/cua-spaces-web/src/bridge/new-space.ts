@@ -100,15 +100,13 @@ const CONTAINER_BACKENDS = ["container", "managed", "docker", "runsc"];
 export interface EnvInput {
   options: NewSpaceOptions | null;
   clouds: CloudStatusWire | null;
-  /** Settings' `defaultLocation`: `local`, `cloud`, `host:<id>` or a cloud word. */
+  /** Settings' `defaultLocation`: `local`, `host:<id>` or a cloud word. */
   defaultLocation: string | undefined;
-  cloudAvailable: boolean;
   machines: readonly (Pick<Machine, "id" | "name" | "via" | "online" | "os" | "limits" | "current"> & Pick<Partial<Machine>, "device" | "notSharing">)[] | undefined;
 }
 
 function location(core: CoreClient, on: string | undefined): WizardLocation {
   if (!on || on === "local") return "local";
-  if (on === "cloud") return "local"; // Cua Cloud has ended
   if (on.startsWith("host:")) return "host";
   return isCloudWord(core, on) ? "yours" : "local";
 }
@@ -123,14 +121,12 @@ export function wizardEnv(core: CoreClient, input: EnvInput): WizardEnv {
   const cores = globalThis.navigator?.hardwareConcurrency || 8;
   return {
     defaultLocation: location(core, input.defaultLocation),
-    cloudAvailable: input.cloudAvailable,
     localAvailable: local ? canContainer || canMacos : true,
     localReason: local?.error ?? null,
     localBackends: local ? [...local.backends] : null,
     maxCpus: input.options?.maxCpus ?? Math.max(2, Math.min(16, cores)),
     hostArch: local?.hostArch ?? null,
     storage: local?.storage ?? null,
-    cloudPricing: input.options?.cloudPricing ?? null,
     clouds: input.clouds ? connectedClouds(core, input.clouds) : [],
     // Only machines `on="host:<id>"` resolves: never a device of its own.
     // One that is online but not shared says so, as the SDK's hosts do.
@@ -251,7 +247,7 @@ export interface EmptyTile {
   os: "linux" | "macos";
   /** "Linux", "macOS". */
   name: string;
-  /** "About 1 minute · 3.2–7.1 GB of disk", "About 22 GB download". */
+  /** "About 3 minutes · 3.3–7.3 GB of disk", "About 22 GB download". */
   detail: string;
 }
 
@@ -286,7 +282,10 @@ export function emptyHome(core: CoreClient, hostArch: string | null | undefined,
   if (core.status !== "ready") return null;
   const c = core.tryCall<EmptyChrome>("window.chrome", {});
   if (!c?.emptyLinuxDetail) return null;
-  const tiles: EmptyTile[] = [{ os: "linux", name: c.emptyAction, detail: c.emptyLinuxDetail }];
+  // The chrome's Linux line is for the machine the core runs on; the wasm core
+  // cannot tell, so with the host's architecture known the core words it for that.
+  const linuxDetail = hostArch ? (core.tryCall<string>("window.emptyLinuxDetail", { hostArch }) ?? c.emptyLinuxDetail) : c.emptyLinuxDetail;
+  const tiles: EmptyTile[] = [{ os: "linux", name: c.emptyAction, detail: linuxDetail }];
   const appleSilicon = !hostArch || ["arm64", "aarch64"].includes(hostArch.toLowerCase());
   if (os === "macos" && appleSilicon) tiles.push({ os: "macos", name: c.emptyMacosAction, detail: c.emptyMacosDetail });
   return { title: c.emptyTitle, detail: c.emptyDetail, tiles };

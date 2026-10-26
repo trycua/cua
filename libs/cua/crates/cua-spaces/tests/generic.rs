@@ -372,3 +372,451 @@ async fn an_spacesd_space_also_reaches_its_declared_services() {
     assert!(space.services().contains(&"tools".to_string()));
     spaces.delete(&info.id).await.unwrap();
 }
+
+fn labelled(name: &str, labels: &[(&str, &str)]) -> SpaceCreate {
+    SpaceCreate {
+        on: Some(On::Local),
+        image: Some(PLAIN.into()),
+        name: Some(name.into()),
+        services: [("mcp".to_string(), 8765u16)].into(),
+        timeout: Some(Duration::from_secs(30)),
+        labels: labels
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
+        ..Default::default()
+    }
+}
+
+#[tokio::test]
+async fn labels_are_kept_with_the_space_and_leave_with_it() {
+    let server = McpTestServer::start("").await.unwrap();
+    let rt = Arc::new(PortRuntime::default());
+    let closed = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    rt.ports
+        .lock()
+        .unwrap()
+        .extend([(8765, server.port()), (3211, closed)]);
+    let reg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    let spaces = local_spaces(&rt, reg.path(), state.path());
+    let want: BTreeMap<String, String> = [("team", "research"), ("run", "7")]
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+
+    let info = spaces
+        .create(labelled("lab-a", &[("team", "research"), ("run", "7")]))
+        .await
+        .unwrap()
+        .ready()
+        .unwrap();
+    assert_eq!(info.labels, want, "the create returns them");
+    let plain = spaces
+        .create(labelled("lab-b", &[]))
+        .await
+        .unwrap()
+        .ready()
+        .unwrap();
+    assert!(plain.labels.is_empty());
+
+    // Listed, and read back by a new handle on the same home.
+    let again = local_spaces(&rt, reg.path(), state.path());
+    let listed = again.list().unwrap();
+    let a = listed.iter().find(|i| i.id == "local:lab-a").unwrap();
+    assert_eq!(a.labels, want);
+    assert!(
+        listed
+            .iter()
+            .find(|i| i.id == "local:lab-b")
+            .unwrap()
+            .labels
+            .is_empty()
+    );
+    // They are in the JSON the CLI and MCP print.
+    let json = serde_json::to_value(a).unwrap();
+    assert_eq!(json["labels"]["team"], "research");
+    assert!(
+        serde_json::to_value(&listed[1].labels)
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .is_empty()
+    );
+
+    // `list_spaces` filters on them.
+    let mcp = McpServer::new(spaces.clone());
+    let rows = |out: cua_spaces::mcp::ToolOutcome| {
+        assert!(!out.is_error, "{:?}", out.content);
+        serde_json::from_str::<serde_json::Value>(out.content[0]["text"].as_str().unwrap()).unwrap()
+    };
+    let all = rows(mcp.call("list_spaces", json!({})).await);
+    assert_eq!(all.as_array().unwrap().len(), 2);
+    let hit = rows(
+        mcp.call("list_spaces", json!({"labels": {"team": "research"}}))
+            .await,
+    );
+    assert_eq!(hit.as_array().unwrap().len(), 1);
+    assert_eq!(hit[0]["id"], "local:lab-a");
+    assert_eq!(hit[0]["labels"]["run"], "7");
+    let none = rows(
+        mcp.call("list_spaces", json!({"labels": {"team": "other"}}))
+            .await,
+    );
+    assert!(none.as_array().unwrap().is_empty());
+
+    // Deleting forgets them: the same name made again starts clean.
+    again.delete("local:lab-a").await.unwrap();
+    let fresh = again
+        .create(labelled("lab-a", &[]))
+        .await
+        .unwrap()
+        .ready()
+        .unwrap();
+    assert!(fresh.labels.is_empty(), "{:?}", fresh.labels);
+    assert!(
+        again
+            .registry()
+            .meta("local:lab-a")
+            .is_none_or(|m| m.labels.is_empty())
+    );
+}
+
+#[tokio::test]
+async fn labels_are_checked_before_anything_is_created() {
+    let rt = Arc::new(PortRuntime::default());
+    let reg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    let spaces = local_spaces(&rt, reg.path(), state.path());
+    let refused = |c: SpaceCreate| {
+        let spaces = spaces.clone();
+        async move {
+            let Err(e) = spaces.create(c).await else {
+                panic!("the create must be refused");
+            };
+            assert_eq!(e.tag(), "invalid_argument", "{e}");
+            e.to_string()
+        }
+    };
+    assert!(
+        refused(labelled("x", &[("", "v")]))
+            .await
+            .contains("not empty")
+    );
+    assert!(
+        refused(labelled("x", &[("k", "")]))
+            .await
+            .contains("not empty")
+    );
+    assert!(
+        refused(labelled("x", &[(&"k".repeat(64), "v")]))
+            .await
+            .contains("at most 63")
+    );
+    assert!(
+        refused(labelled("x", &[("k", &"v".repeat(257))]))
+            .await
+            .contains("at most 256")
+    );
+    // 63 and 256 bytes pass the check (multi-byte counts bytes).
+    cua_spaces::registry::validate_labels([(&"k".repeat(63), &"v".repeat(256))].into_iter())
+        .unwrap();
+    let e =
+        cua_spaces::registry::validate_labels([(&"é".repeat(32), &"v".to_string())].into_iter())
+            .unwrap_err();
+    assert!(e.to_string().contains("64 bytes"), "{e}");
+    let many: Vec<(String, String)> = (0..65).map(|i| (format!("k{i}"), "v".into())).collect();
+    let mut c = labelled("x", &[]);
+    c.labels = many.iter().cloned().collect();
+    assert!(refused(c).await.contains("at most 64"));
+    let mut c = labelled("x", &[("a", "b")]);
+    c.reuse = true;
+    assert!(refused(c).await.contains("reuse"));
+    let mut c = labelled("x", &[("a", "b")]);
+    c.durable = true;
+    assert!(refused(c).await.contains("durable"));
+    assert!(rt.started.lock().unwrap().is_empty(), "nothing was started");
+    assert!(spaces.list().unwrap().is_empty());
+    // The CLI/MCP word for a label.
+    assert_eq!(
+        cua_spaces::registry::parse_label("a=b=c").unwrap(),
+        ("a".to_string(), "b=c".to_string())
+    );
+    assert!(cua_spaces::registry::parse_label("a").is_err());
+    assert!(cua_spaces::registry::parse_label("a=").is_err());
+    assert!(cua_spaces::registry::parse_label("=b").is_err());
+}
+
+fn now_unix() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+}
+
+#[tokio::test]
+async fn creation_time_and_lifetime_are_listed() {
+    let server = McpTestServer::start("").await.unwrap();
+    let rt = Arc::new(PortRuntime::default());
+    let closed = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    rt.ports
+        .lock()
+        .unwrap()
+        .extend([(8765, server.port()), (3211, closed)]);
+    let reg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    let spaces = local_spaces(&rt, reg.path(), state.path());
+
+    let before = now_unix();
+    let info = spaces
+        .create(labelled("clock", &[]))
+        .await
+        .unwrap()
+        .ready()
+        .unwrap();
+    let after = now_unix();
+    // Created now (the create finished between `before` and `after`), no
+    // lifetime yet.
+    assert!(
+        (before..=after).contains(&info.created_at_unix),
+        "{} not in {before}..={after}",
+        info.created_at_unix
+    );
+    assert_eq!((info.expires_at_unix, info.on_expire.as_str()), (0, ""));
+    let json = serde_json::to_value(&info).unwrap();
+    assert!(json.get("expires_at_unix").is_none(), "zero is left out");
+    assert_eq!(json["created_at_unix"], info.created_at_unix);
+
+    // A lifetime is readable back, in the list and in a fresh handle.
+    let at = spaces
+        .set_lifetime(&info.id, Duration::from_secs(90), None)
+        .unwrap();
+    let at = at.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+    // One store, one view: the sandbox reports the very same expiry (what
+    // `Sandbox.expires_at_unix` reads), and no second copy is in the file.
+    let sandbox_name = info.id.strip_prefix("local:").unwrap();
+    let (sandbox_at, how) = Sandboxes::builder()
+        .state_dir(state.path())
+        .build()
+        .local_expiry(sandbox_name)
+        .expect("Spaces::set_lifetime is the sandbox's lifetime");
+    assert_eq!(
+        sandbox_at
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+        at
+    );
+    assert_eq!(how, cua_sandbox_core::LocalExpiry::Delete);
+    assert!(
+        !std::fs::read_to_string(reg.path().join("space-lifetimes.json"))
+            .unwrap_or_default()
+            .contains(&info.id),
+        "a local Space's lifetime is not kept twice"
+    );
+    // And the other way: a lifetime set on the sandbox shows in the Space.
+    Sandboxes::builder()
+        .state_dir(state.path())
+        .build()
+        .set_local_expiry(sandbox_name, Duration::from_secs(7200), None)
+        .unwrap();
+    let via_sandbox = spaces.lifetime(&info.id).unwrap();
+    assert!(
+        via_sandbox.expires_at_unix >= now_unix() + 7190,
+        "{via_sandbox:?}"
+    );
+    let at = spaces
+        .set_lifetime(&info.id, Duration::from_secs(90), None)
+        .unwrap()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let listed = spaces.list().unwrap();
+    let row = listed.iter().find(|i| i.id == info.id).unwrap();
+    assert_eq!(
+        (
+            row.expires_at_unix,
+            row.on_expire.as_str(),
+            row.created_at_unix
+        ),
+        (at, "delete", info.created_at_unix)
+    );
+    spaces
+        .set_lifetime(
+            &info.id,
+            Duration::from_secs(600),
+            Some(cua_sandbox_core::LocalExpiry::Suspend),
+        )
+        .unwrap();
+    let again = local_spaces(&rt, reg.path(), state.path());
+    let row = again
+        .list()
+        .unwrap()
+        .into_iter()
+        .find(|i| i.id == info.id)
+        .unwrap();
+    assert_eq!(row.on_expire, "suspend");
+    assert!(row.expires_at_unix >= now_unix() + 590, "{row:?}");
+    // Clearing it lists none.
+    again.clear_lifetime(&info.id).unwrap();
+    let row = again
+        .list()
+        .unwrap()
+        .into_iter()
+        .find(|i| i.id == info.id)
+        .unwrap();
+    assert_eq!((row.expires_at_unix, row.on_expire.as_str()), (0, ""));
+
+    // A Space added by address was "created" when it was added.
+    let added = again
+        .add(&format!("{}/mcp", server.url), None, Some("adopted".into()))
+        .await
+        .unwrap();
+    assert!(
+        (before..=now_unix()).contains(&added.created_at_unix) && added.created_at_unix > 0,
+        "{added:?}"
+    );
+    let row = again
+        .list()
+        .unwrap()
+        .into_iter()
+        .find(|i| i.id == added.id)
+        .unwrap();
+    assert_eq!(row.created_at_unix, added.created_at_unix);
+
+    // The name made again gets a new creation time and no old lifetime.
+    again
+        .set_lifetime(&info.id, Duration::from_secs(600), None)
+        .unwrap();
+    again.delete(&info.id).await.unwrap();
+    let fresh = again
+        .create(labelled("clock", &[]))
+        .await
+        .unwrap()
+        .ready()
+        .unwrap();
+    assert!(fresh.created_at_unix >= info.created_at_unix);
+}
+
+#[tokio::test]
+async fn egress_is_refused_before_anything_is_created_or_run() {
+    let rt = Arc::new(PortRuntime::default());
+    let reg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    let spaces = local_spaces(&rt, reg.path(), state.path());
+    let policy = |allow: &[&str], deny: &[&str]| cua_spaces::egress::EgressPolicy {
+        allow: allow.iter().map(|s| s.to_string()).collect(),
+        deny: deny.iter().map(|s| s.to_string()).collect(),
+    };
+    let create = |egress: cua_spaces::egress::EgressPolicy, f: &dyn Fn(&mut SpaceCreate)| {
+        let mut c = labelled("eg", &[]);
+        c.egress = egress;
+        f(&mut c);
+        c
+    };
+    let tag = |c: SpaceCreate| {
+        let spaces = spaces.clone();
+        async move {
+            let Err(e) = spaces.create(c).await else {
+                panic!("the create must be refused");
+            };
+            (e.tag(), e.to_string())
+        }
+    };
+    // A hostname, a bad CIDR, durable, reuse: InvalidArgument.
+    let (kind, msg) = tag(create(policy(&[], &["example.com"]), &|_| {})).await;
+    assert_eq!(kind, "invalid_argument");
+    assert!(msg.contains("by IP/CIDR"), "{msg}");
+    assert_eq!(
+        tag(create(policy(&[], &["10.0.0.0/40"]), &|_| {})).await.0,
+        "invalid_argument"
+    );
+    let (kind, msg) = tag(create(policy(&[], &["all"]), &|c| c.reuse = true)).await;
+    assert_eq!((kind, msg.contains("egress")), ("invalid_argument", true));
+    assert_eq!(
+        tag(create(policy(&[], &["all"]), &|c| c.durable = true))
+            .await
+            .0,
+        "invalid_argument"
+    );
+    // On Cua Cloud: it has ended, so the create is refused before anything
+    // is made (the egress policy never reaches a cloud).
+    let (_, msg) = tag(create(policy(&[], &["all"]), &|c| {
+        c.on = Some(cua_sandbox_core::placement::On::Cloud)
+    }))
+    .await;
+    assert!(msg.contains(cua_sandbox_core::CLOUD_ENDED), "{msg}");
+    // A create that returns before the Space is ready would hand it back
+    // without its rules: refused wherever it runs.
+    let (kind, msg) = tag(create(policy(&[], &["all"]), &|c| c.wait = Some(false))).await;
+    assert_eq!(
+        (kind, msg.contains("wait = false")),
+        ("invalid_argument", true),
+        "{msg}"
+    );
+    // No outbound network cannot be kept by a durable or reused Space.
+    for f in [
+        (&|c: &mut SpaceCreate| c.reuse = true) as &dyn Fn(&mut SpaceCreate),
+        &|c: &mut SpaceCreate| c.durable = true,
+    ] {
+        let (kind, msg) = tag(create(policy(&[], &[]), &|c| {
+            c.network = cua_sandbox_core::NetworkMode::None;
+            f(c)
+        }))
+        .await;
+        assert_eq!(
+            (kind, msg.contains("network=none")),
+            ("invalid_argument", true),
+            "{msg}"
+        );
+    }
+    assert!(rt.started.lock().unwrap().is_empty(), "nothing was started");
+    // A local runtime that does not enforce it (this fake keeps none):
+    // the sandbox it started is deleted, never handed out unfiltered.
+    let (kind, msg) = tag(create(policy(&[], &["all"]), &|_| {})).await;
+    assert_eq!(kind, "wrong_provider", "{msg}");
+    assert!(msg.contains("without enforcing it"), "{msg}");
+    assert_eq!(rt.started.lock().unwrap().len(), 1);
+    assert!(
+        !rt.running.lock().unwrap().contains_key("eg"),
+        "deleted: {:?}",
+        rt.running.lock().unwrap()
+    );
+
+    // A Space added by address is not run by cua: refused (a bad entry
+    // never gets that far), nothing recorded.
+    let server = McpTestServer::start("").await.unwrap();
+    let added = spaces
+        .add(&format!("{}/mcp", server.url), None, Some("plain".into()))
+        .await
+        .unwrap();
+    let e = spaces
+        .set_egress(&added.id, &policy(&[], &["example.com"]))
+        .await
+        .unwrap_err();
+    assert_eq!(e.tag(), "invalid_argument");
+    let e = spaces
+        .set_egress(&added.id, &policy(&[], &["10.0.0.0/8"]))
+        .await
+        .unwrap_err();
+    assert_eq!(e.tag(), "wrong_provider", "{e}");
+    assert!(e.to_string().contains("not run by cua"), "{e}");
+    assert!(spaces.egress(&added.id).is_empty(), "nothing was recorded");
+    assert_eq!(spaces.egress_enforced(&added.id), None);
+    assert_eq!(
+        spaces
+            .set_egress("local:nope", &policy(&[], &["10.0.0.0/8"]))
+            .await
+            .unwrap_err()
+            .tag(),
+        "not_found"
+    );
+}

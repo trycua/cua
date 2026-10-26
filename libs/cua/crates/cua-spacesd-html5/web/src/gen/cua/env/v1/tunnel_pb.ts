@@ -476,8 +476,8 @@ export const HotspotStateSchema: GenEnum<HotspotState> = /*@__PURE__*/
 
 /**
  * Network tunnels between a client and the guest, carried over WebSocket
- * upgrades on the spacesd port so they work through the Fleet gateway,
- * the relay and gRPC-Web-only networks.
+ * upgrades on the spacesd port so they work through gateways, the relay
+ * and gRPC-Web-only networks.
  *
  * - `Forward`: client-to-guest TCP. Each WebSocket connection to
  *   `ws_path` becomes one TCP connection to the guest port; binary frames

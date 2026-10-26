@@ -1,6 +1,6 @@
 [project]
 name = "cua-sandbox"
-version = "0.9.0"
+version = "0.9.1"
 description = "CUA Sandbox — ephemeral and persistent sandboxed computer environments"
 readme = "README.md"
 license = "MIT"
@@ -33,8 +33,6 @@ dependencies = [
     # Telemetry only (imported optionally): 0.1.x is allowed so cua-sandbox
     # co-installs with cua-computer 0.5 / cua-agent 0.7 based harnesses.
     "cua-core>=0.1.18,<0.4.0",
-    "pydantic>=2.11,<3.0",
-    "jsonschema>=4.23,<5.0",
     "httpx>=0.27.0",
     "oras>=0.2.40",
     "vncdotool>=1.2.0",
@@ -46,7 +44,7 @@ dependencies = [
 
 [project.optional-dependencies]
 driver = [
-    "cua-driver==0.28.2",
+    "cua-driver==0.37.0",
 ]
 auth = [
     "webbrowser-open>=0.0.1",
@@ -102,8 +100,6 @@ testpaths = [
 [dependency-groups]
 dev = [
     "cua-agent>=0.8.0",
-    "datamodel-code-generator==0.74.0",
-    "PyYAML>=6.0,<7.0",
     "pytest>=9.0.2",
     "pytest-asyncio>=1.3.0",
     "pytest-timeout>=2.3.1",

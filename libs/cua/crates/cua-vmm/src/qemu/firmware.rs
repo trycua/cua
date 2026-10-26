@@ -26,6 +26,11 @@ fn candidates(arch: Arch) -> &'static [(&'static str, &'static str)] {
     match arch {
         Arch::Aarch64 => &[
             (
+                "qemu/usr/share/AAVMF/AAVMF_CODE.fd",
+                "qemu/usr/share/AAVMF/AAVMF_VARS.fd",
+            ),
+            ("qemu/usr/share/qemu-efi-aarch64/QEMU_EFI.fd", ""),
+            (
                 "share/qemu/edk2-aarch64-code.fd",
                 "share/qemu/edk2-arm-vars.fd",
             ),
@@ -44,6 +49,10 @@ fn candidates(arch: Arch) -> &'static [(&'static str, &'static str)] {
             ("/usr/share/qemu-efi-aarch64/QEMU_EFI.fd", ""),
         ],
         Arch::X86_64 => &[
+            (
+                "qemu/usr/share/OVMF/OVMF_CODE_4M.fd",
+                "qemu/usr/share/OVMF/OVMF_VARS_4M.fd",
+            ),
             (
                 "share/qemu/edk2-x86_64-code.fd",
                 "share/qemu/edk2-i386-vars.fd",
@@ -145,6 +154,34 @@ pub fn find_uefi(arch: Arch, qemu_bin: &Path) -> Option<Uefi> {
 mod tests {
     use super::*;
     use std::collections::HashSet;
+
+    #[test]
+    fn local_wrapper_firmware() {
+        let code = "/local/qemu/usr/share/qemu-efi-aarch64/QEMU_EFI.fd";
+        let found = find_uefi_with(
+            Arch::Aarch64,
+            Path::new("/local/bin/qemu-system-aarch64"),
+            fs(&[code]),
+        )
+        .unwrap();
+        assert_eq!(found.code, Path::new(code));
+        assert!(found.vars_template.is_none());
+        for (arch, code, vars) in [
+            (Arch::X86_64, "OVMF/OVMF_CODE_4M.fd", "OVMF/OVMF_VARS_4M.fd"),
+            (Arch::Aarch64, "AAVMF/AAVMF_CODE.fd", "AAVMF/AAVMF_VARS.fd"),
+        ] {
+            let code = format!("/local/qemu/usr/share/{code}");
+            let vars = format!("/local/qemu/usr/share/{vars}");
+            let found = find_uefi_with(
+                arch,
+                Path::new("/local/bin/qemu-system-test"),
+                fs(&[&code, &vars]),
+            )
+            .unwrap();
+            assert_eq!(found.code, Path::new(&code));
+            assert_eq!(found.vars_template.as_deref(), Some(Path::new(&vars)));
+        }
+    }
 
     fn fs(paths: &[&str]) -> impl Fn(&Path) -> bool {
         let set: HashSet<PathBuf> = paths.iter().map(PathBuf::from).collect();

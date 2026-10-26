@@ -117,4 +117,3 @@ def test_no_display_service_is_published():
     for env_spec, on in ((spec, "local"), (spec, "cloud"), (windows, "local")):
         kwargs = sandboxes.ephemeral_kwargs(env_spec, Target(on=on))
         assert "services" not in kwargs
-

@@ -9,7 +9,7 @@
 //!   in-process fakes (MockServer spacesd with presence), in the embedded
 //!   and daemon topologies;
 //! - static: every `pub async fn` in an exported impl either goes through
-//!   the runtime (`run(`, `env_call!`, `fleet_call!`) or only delegates to
+//!   the runtime (`run(`, `env_call!`) or only delegates to
 //!   methods that do, so new methods cannot skip it silently.
 //!
 //! Nothing touches host apps; every wait is bounded.
@@ -89,6 +89,10 @@ fn cmd(program: &str, args: &[&str]) -> SpacesdCommand {
         tag: None,
         stdin: false,
         pty: None,
+        request_id: None,
+        epoch: None,
+        scrollback_bytes: None,
+        kill_on_disconnect: false,
     }
 }
 
@@ -100,7 +104,6 @@ fn direct(url: &str, name: &str) -> SandboxCreateOptions {
         image: String::new(),
         name: Some(name.into()),
         token: Some(TOKEN.into()),
-        pool: None,
         os: None,
         cpus: None,
         memory_mb: None,
@@ -109,12 +112,9 @@ fn direct(url: &str, name: &str) -> SandboxCreateOptions {
         wait_for: vec![],
         ready_timeout_ms: None,
         env: HashMap::new(),
-        fleet_replicas: None,
-        fleet_ttl_seconds: None,
-        warm: None,
-        max_pool_size: None,
+        pool: None,
+        ttl_seconds: None,
         command: None,
-        cloud: None,
         sidecars: vec![],
         registry_secret: None,
         build: None,
@@ -122,6 +122,10 @@ fn direct(url: &str, name: &str) -> SandboxCreateOptions {
         overlays: vec![],
         keep_on_failure: false,
         gpu: None,
+        headless: false,
+        spacesd: None,
+        profile: None,
+        forkable: None,
     }
 }
 
@@ -206,11 +210,14 @@ async fn exercise(cua: Arc<Cua>, env_url: String) {
     env.upload("/tmp/ffi.txt".into(), b"hi".to_vec(), None)
         .await
         .unwrap();
-    assert_eq!(env.download("/tmp/ffi.txt".into()).await.unwrap(), b"hi");
-    let _ = env.stat("/tmp/ffi.txt".into()).await;
-    let _ = env.list_dir("/tmp".into(), 1).await;
-    let _ = env.make_dir("/tmp/ffi-dir".into()).await;
-    let _ = env.remove("/tmp/ffi.txt".into(), false).await;
+    assert_eq!(
+        env.download("/tmp/ffi.txt".into(), None).await.unwrap(),
+        b"hi"
+    );
+    let _ = env.stat("/tmp/ffi.txt".into(), None, None, false).await;
+    let _ = env.list_dir("/tmp".into(), 1, None, None).await;
+    let _ = env.make_dir("/tmp/ffi-dir".into(), None).await;
+    let _ = env.remove("/tmp/ffi.txt".into(), false, None).await;
     env.screenshot(None).await.unwrap();
     env.click(10.0, 10.0).await.unwrap();
     env.double_click(10.0, 10.0).await.unwrap();
@@ -225,13 +232,9 @@ async fn exercise(cua: Arc<Cua>, env_url: String) {
     let _ = env.get_clipboard().await.unwrap();
     env.cursor_position().await.unwrap();
     let _ = env.displays().await;
-    env.call_json("/cua.env.v1.SystemService/Health".into(), "{}".into())
+    env.call_json("/cua.env.v1.SystemService/Health".into(), "{}".into(), None)
         .await
         .unwrap();
-
-    // ---- Fleet: Cua Cloud has ended, so the client never connects.
-    let e = cua.fleet().err().expect("Cua.fleet() fails");
-    assert!(e.to_string().contains("Cua Cloud has ended"), "{e}");
 
     // ---- sandboxes (direct)
     let sbx = cua.sandboxes();
@@ -322,7 +325,6 @@ fn exported_methods_run_without_a_tokio_runtime_embedded() {
         let dir = tempfile::tempdir().unwrap();
         let other = Cua::embedded(CuaConfig {
             state_dir: Some(dir.path().join("s").display().to_string()),
-            fleet_from_env: false,
             spaces_home: Some(dir.path().join("cua").display().to_string()),
             ..Default::default()
         })
@@ -429,7 +431,7 @@ fn body_uses_runtime(
     fns: &BTreeMap<String, Vec<String>>,
     seen: &mut HashSet<String>,
 ) -> bool {
-    if body.contains("run(") || body.contains("env_call!") || body.contains("fleet_call!") {
+    if body.contains("run(") || body.contains("env_call!") {
         return true;
     }
     // A delegator: it awaits a method (any same-named helper) that does.

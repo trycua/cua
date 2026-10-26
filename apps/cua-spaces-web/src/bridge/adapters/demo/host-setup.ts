@@ -36,7 +36,8 @@ export function demoHostSetupHandlers({ state, now, wait, emit, stepMs }: DemoCo
         directUrl: direct ? `http://${request.direct ?? "0.0.0.0:3211"}` : null,
         name: request.name?.trim() || "This Mac",
         shareDesktop: request.shareDesktop ?? !spare,
-        provideSpaces: !direct && (request.provideSpaces ?? spare),
+        // The default choice turns on the screen and Spaces; a direct connection only the screen.
+        provideSpaces: !direct && (request.provideSpaces ?? true),
         permissions: state.host.permissions,
         clients: [],
         recentAccess: [],
@@ -51,7 +52,7 @@ export function demoHostSetupHandlers({ state, now, wait, emit, stepMs }: DemoCo
     "host.action": async ({ action }) => {
       await wait(stepMs);
       const h = state.host;
-      if (!h.configured) throw new HostError("This machine is not set up for access", "not_configured");
+      if (!h.configured) throw new HostError("This computer is not set up for access", "not_configured");
       switch (action) {
         case "stop-sharing":
           return set({ ...h, sharing: false, clients: [] });
@@ -70,6 +71,11 @@ export function demoHostSetupHandlers({ state, now, wait, emit, stepMs }: DemoCo
     // A browser can't open System Settings; the pane only has to be one.
     "host.openSettings": ({ url }) => {
       if (!isSettingsPane(url)) throw new HostError("Only System Settings panes open here", "bad_args");
+      // The demo plays the user turning it on in System Settings.
+      setTimeout(() => {
+        state.host = { ...state.host, permissions: state.host.permissions.map((p) => (p.settingsUrl === url ? { ...p, granted: true } : p)) };
+        emit({ type: "machines.changed" });
+      }, stepMs * 4);
       return null;
     },
   };

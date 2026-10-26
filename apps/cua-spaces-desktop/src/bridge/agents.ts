@@ -67,6 +67,30 @@ export function agentsMethods({ model }: BridgeContext): Handlers {
       const runId = string(args, "runId");
       return persistent.runEvents(space, runId, count(args, "cursor") ?? 0, count(args, "max"));
     },
+    // Start a run in a Space and reply to it: the daemon's agent_start and
+    // agent_message, answered as is (snake_case, like agents.events).
+    "agents.start": async (args) => {
+      const space = string(args, "spaceId");
+      const agent = string(args, "agent");
+      const prompt = string(args, "prompt");
+      const persistent = model.agents.persistent;
+      if (!persistent.canCallTools) throw Failure.unsupported("Starting a run needs the cua daemon");
+      const env = Array.isArray(args.envFromHost) ? args.envFromHost.filter((v): v is string => typeof v === "string") : [];
+      return persistent.startRun(space, agent, prompt, {
+        repo: optionalString(args, "repo"),
+        branch: optionalString(args, "branch"),
+        model: optionalString(args, "model"),
+        envFromHost: env,
+      });
+    },
+    "agents.message": async (args) => {
+      const space = string(args, "spaceId");
+      const runId = string(args, "runId");
+      const text = string(args, "text");
+      const persistent = model.agents.persistent;
+      if (!persistent.canCallTools) throw Failure.unsupported("Replying to a run needs the cua daemon");
+      return persistent.sendMessage(space, runId, text, args.force === true);
+    },
     "agents.pause": pauseOrResume(true),
     "agents.resume": pauseOrResume(false),
     "agents.setup": async () => {
@@ -80,6 +104,12 @@ export function agentsMethods({ model }: BridgeContext): Handlers {
       const coding = model.agents.coding;
       if (args.agents === undefined || args.agents === null) await coding.configureAll();
       else await coding.act(strings(args, "agents"), false);
+      return encode(coding.rows ?? []);
+    },
+    "agents.signIn": async (args) => {
+      needSetup();
+      const coding = model.agents.coding;
+      await coding.signIn(string(args, "agent"));
       return encode(coding.rows ?? []);
     },
     // A persistent agent's Memory, Routines and Access: what the native

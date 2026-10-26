@@ -92,7 +92,7 @@ async fn launch_once_wiring_child() {
     std::fs::create_dir_all(&dir).unwrap();
     let mut st: QemuState = serde_json::from_value(serde_json::json!({
         "name":"vm", "kind":"instance", "arch":"aarch64", "os":"windows",
-        "disk":"disk", "disk_format":"qcow2", "firmware":{"type":"bios"},
+        "disk":dir.join("disk"), "disk_format":"qcow2", "firmware":{"type":"bios"},
         "cpus":2, "memory_mb":4096, "created_at":0
     }))
     .unwrap();
@@ -104,7 +104,7 @@ async fn launch_once_wiring_child() {
         }
         spec.tpm = true;
         let error = runtime
-            .launch_once(&mut st, &spec, None, true)
+            .launch_once(&mut st, &spec, Boot::default(), true, true)
             .await
             .unwrap_err();
         assert!(error.to_string().contains("swtpm is not available"));
@@ -113,7 +113,7 @@ async fn launch_once_wiring_child() {
         std::fs::create_dir(dir.join("tpm")).unwrap();
         assert!(!spec.tpm);
         let error = runtime
-            .launch_once(&mut st, &spec, None, true)
+            .launch_once(&mut st, &spec, Boot::default(), true, true)
             .await
             .unwrap_err();
         assert!(error.to_string().contains("swtpm.log"));

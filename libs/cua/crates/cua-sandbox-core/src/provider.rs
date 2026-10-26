@@ -41,7 +41,7 @@ pub fn is_contrib_location(word: &str) -> bool {
 /// Spaces on them) run there with your credentials (see [`crate::byoc`]).
 /// `modal` is also a contrib word: with the `byoc` providers built, Modal
 /// sandboxes join the relay instead of using Modal's tunnels.
-pub const CLOUD_LOCATIONS: &[&str] = &["aws", "gcp", "modal"];
+pub const CLOUD_LOCATIONS: &[&str] = &["aws", "gcp", "hetzner", "modal"];
 
 /// Whether `word` names your own cloud (see [`CLOUD_LOCATIONS`]).
 pub fn is_cloud_location(word: &str) -> bool {

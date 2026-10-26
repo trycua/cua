@@ -645,6 +645,8 @@ pub(crate) fn resolve_bundle_id_to_locator(bundle_id: &str) -> Option<AppLocator
 
 /// Mirror of Swift's `AppLauncher.locate(name:)`.
 ///
+/// 0. an absolute path to an existing `.app` bundle (the `launch_path`
+///    `list_apps` reports) is used as given;
 /// 1. filesystem lookup by bundle filename in the canonical roots
 ///    (system first so /Applications wins over ~/Applications);
 /// 2. LaunchServices bundle-id lookup, in case the caller passed a
@@ -655,6 +657,13 @@ pub(crate) fn resolve_bundle_id_to_locator(bundle_id: &str) -> Option<AppLocator
 ///    integration tests; can be added if we hit a non-English-name app
 ///    in the wild.
 pub(crate) fn locate_by_name(name: &str) -> Option<AppLocator> {
+    let as_path = std::path::Path::new(name.trim_end_matches('/'));
+    if as_path.is_absolute()
+        && as_path.extension().is_some_and(|ext| ext == "app")
+        && as_path.is_dir()
+    {
+        return Some(AppLocator::Path(as_path.to_string_lossy().into_owned()));
+    }
     let app_name = if name.ends_with(".app") {
         name.to_owned()
     } else {
@@ -1192,6 +1201,30 @@ mod tests {
                 states
             },
         )
+    }
+
+    #[test]
+    fn locate_by_name_accepts_absolute_app_bundle_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let bundle = dir.path().join("Zz Path Only Fixture.app");
+        std::fs::create_dir(&bundle).unwrap();
+        let expected = bundle.to_string_lossy().into_owned();
+        assert!(matches!(
+            super::locate_by_name(&expected),
+            Some(super::AppLocator::Path(p)) if p == expected
+        ));
+        // A trailing slash (as shells and Finder add) resolves to the same bundle.
+        assert!(matches!(
+            super::locate_by_name(&format!("{expected}/")),
+            Some(super::AppLocator::Path(p)) if p == expected
+        ));
+        // A missing bundle is still "not installed".
+        let missing = dir
+            .path()
+            .join("Missing.app")
+            .to_string_lossy()
+            .into_owned();
+        assert!(super::locate_by_name(&missing).is_none());
     }
 
     #[test]

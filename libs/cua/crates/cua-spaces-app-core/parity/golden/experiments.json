@@ -10,7 +10,7 @@
         "open: Open [-] ?Open the desktop in its own window (primary)"
       ],
       "menu": [
-        "status: No Spaces (disabled)",
+        "status: No Spaces running (disabled)",
         "---",
         "open: Open Cua Spaces",
         "new-space: New Space…",
@@ -23,11 +23,11 @@
           "canBack": true,
           "canSkip": false,
           "choices": [],
-          "dots": "Welcome,Sign in,AI agents,Menu bar,This machine,*Done",
+          "dots": "Welcome,Sign in,AI agents,Menu bar,This computer,*Done",
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces and agents available after a restart.",
-          "lede": "Cua Spaces is in your menu bar.",
+          "lede": "3 things are left. You can finish them now, or later from the menu bar.",
           "notice": null,
           "noticeLink": null,
           "presentations": [],
@@ -40,13 +40,16 @@
           "showMark": false,
           "step": "done",
           "summary": [
-            "cua command: not installed",
-            "Account: not signed in",
-            "AI agents: none",
             "Shows in: Notch and menu bar",
-            "This machine: Only used to open other computers"
+            "This computer: Opens your other computers"
           ],
-          "title": "You're all set",
+          "title": "Almost done",
+          "todos": [
+            "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
+            "[ ] Account ~Reach your computers from any device. -> Sign in",
+            "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
+            "[ ] Cua Volume ~Shared folder: files your agents can share across your computers. -> Turn on (optional)"
+          ],
           "usage": null
         },
         "pages": [
@@ -72,8 +75,8 @@
         "- notch choice: Spaces tab in the notch {*Show|Hide}",
         "- welcome text: Welcome [Show again]",
         "# Privacy (privacy)",
-        "- telemetry choice: Share anonymous usage data {*On|Off}",
-        "- telemetry-note note: Features used, sandbox types, durations and error categories. Never paths, names, prompts, screen content or Keyvault items. <What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry>",
+        "- telemetry choice: Share usage data to help improve Cua {*On|Off}",
+        "- telemetry-note note: Which features you use and when something goes wrong. Linked to your account through a random ID while you're signed in. Never your files, what you type or your screen. <What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry>",
         "# AI agents (agents) [Configure all detected agents] (disabled)"
       ],
       "signals": [],
@@ -83,12 +86,10 @@
         "# Experiments (experiments)",
         "- experiment:cua_volume toggle: Cua Volume {On|*Off}",
         "- experiment:cua_volume-note note: Memory and files your agents share across every Space.",
-        "- experiment:your_cloud toggle: Your cloud {On|*Off}",
-        "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud or Modal account.",
+        "- experiment:your_cloud toggle: Your cloud {*On|Off}",
+        "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud, Hetzner or Modal account.",
         "- experiment:sharing toggle: Sharing {*On|Off}",
-        "- experiment:sharing-note note: Share a Space with other Cua accounts.",
-        "- experiment:classic_ui toggle: Use classic UI {*On|Off}",
-        "- experiment:classic_ui-note note: Open the previous Spaces window instead of the New UI."
+        "- experiment:sharing-note note: Share a Space with other Cua accounts."
       ],
       "volumePage": null,
       "wizard": {
@@ -98,12 +99,17 @@
           "placement",
           "kind",
           "runtime",
+          "connect-cloud",
           "connect-by-address"
         ],
         "placements": [
-          "local | This Mac | Container on this Mac (gVisor when installed) | on *",
+          "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
           "---",
-          "host:m-mini | Mac mini | Through the Cua relay | on"
+          "local | This Mac | Linux, on this Mac | on *",
+          "---",
+          "host:m-mini | Mac mini | Through the Cua relay | on",
+          "---",
+          "aws | AWS · us-west-2 | t4g.medium, about $0.04/hour | on"
         ]
       }
     },
@@ -116,7 +122,7 @@
         "open: Open [-] ?Open the desktop in its own window (primary)"
       ],
       "menu": [
-        "status: No Spaces · Syncing 2… (disabled)",
+        "status: No Spaces running · Syncing 2… (disabled)",
         "volume-conflicts: 1 conflict",
         "---",
         "open: Open Cua Spaces",
@@ -130,11 +136,11 @@
           "canBack": true,
           "canSkip": false,
           "choices": [],
-          "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,This machine,*Done",
+          "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,This computer,*Done",
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces, agents and Cua Volume available after a restart.",
-          "lede": "Cua Spaces is in your menu bar.",
+          "lede": "3 things are left. You can finish them now, or later from the menu bar.",
           "notice": null,
           "noticeLink": null,
           "presentations": [],
@@ -147,14 +153,16 @@
           "showMark": false,
           "step": "done",
           "summary": [
-            "cua command: not installed",
-            "Account: not signed in",
-            "AI agents: none",
             "Shows in: Notch and menu bar",
-            "Cua Volume: In Finder",
-            "This machine: Only used to open other computers"
+            "This computer: Opens your other computers"
           ],
-          "title": "You're all set",
+          "title": "Almost done",
+          "todos": [
+            "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
+            "[ ] Account ~Reach your computers from any device. -> Sign in",
+            "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
+            "[x] Cua Volume ~Shared folder: files your agents can share across your computers. In Finder. (optional)"
+          ],
           "usage": null
         },
         "pages": [
@@ -186,8 +194,8 @@
         "- mount choice: Add Cua Volume to Finder {*On|Off}",
         "- mount-path text: In Finder at = ~/Cua Volume [Show in Finder] ?/Users/maya/Cua Volume < /Users/maya/Cua Volume>",
         "# Privacy (privacy)",
-        "- telemetry choice: Share anonymous usage data {*On|Off}",
-        "- telemetry-note note: Features used, sandbox types, durations and error categories. Never paths, names, prompts, screen content or Keyvault items. <What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry>",
+        "- telemetry choice: Share usage data to help improve Cua {*On|Off}",
+        "- telemetry-note note: Which features you use and when something goes wrong. Linked to your account through a random ID while you're signed in. Never your files, what you type or your screen. <What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry>",
         "# AI agents (agents) [Configure all detected agents] (disabled)"
       ],
       "signals": [
@@ -199,6 +207,7 @@
         {
           "experiments": [
             "cua_volume",
+            "your_cloud",
             "sharing"
           ],
           "type": "experiments-on"
@@ -210,12 +219,142 @@
         "# Experiments (experiments)",
         "- experiment:cua_volume toggle: Cua Volume {*On|Off}",
         "- experiment:cua_volume-note note: Memory and files your agents share across every Space.",
-        "- experiment:your_cloud toggle: Your cloud {On|*Off}",
-        "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud or Modal account.",
+        "- experiment:your_cloud toggle: Your cloud {*On|Off}",
+        "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud, Hetzner or Modal account.",
         "- experiment:sharing toggle: Sharing {*On|Off}",
-        "- experiment:sharing-note note: Share a Space with other Cua accounts.",
-        "- experiment:classic_ui toggle: Use classic UI {*On|Off}",
-        "- experiment:classic_ui-note note: Open the previous Spaces window instead of the New UI."
+        "- experiment:sharing-note note: Share a Space with other Cua accounts."
+      ],
+      "volumePage": "Volume",
+      "wizard": {
+        "fields": [
+          "os",
+          "image",
+          "placement",
+          "kind",
+          "runtime",
+          "connect-cloud",
+          "connect-by-address"
+        ],
+        "placements": [
+          "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
+          "---",
+          "local | This Mac | Linux, on this Mac | on *",
+          "---",
+          "host:m-mini | Mac mini | Through the Cua relay | on",
+          "---",
+          "aws | AWS · us-west-2 | t4g.medium, about $0.04/hour | on"
+        ]
+      }
+    },
+    {
+      "actions": [
+        "teleport: Teleport an app [arrow.down.circle] ?Teleport an app into this Space",
+        "pip: Picture in picture [pip.enter] ?Picture in picture",
+        "share: Share [person.badge.plus] ?Share this Space",
+        "delete: Remove [trash] ?Remove from the list (destructive)",
+        "open: Open [-] ?Open the desktop in its own window (primary)"
+      ],
+      "menu": [
+        "status: No Spaces running · Syncing 2… (disabled)",
+        "volume-conflicts: 1 conflict",
+        "---",
+        "open: Open Cua Spaces",
+        "new-space: New Space…",
+        "settings: Settings… ⌘,",
+        "---",
+        "quit: Quit Cua Spaces ⌘Q"
+      ],
+      "onboarding": {
+        "done": {
+          "canBack": true,
+          "canSkip": false,
+          "choices": [],
+          "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,This computer,*Done",
+          "drive": null,
+          "driveStorage": null,
+          "launchAtLogin": "[x] Launch at login ~Keeps your Spaces, agents and Cua Volume available after a restart.",
+          "lede": "3 things are left. You can finish them now, or later from the menu bar.",
+          "notice": null,
+          "noticeLink": null,
+          "presentations": [],
+          "primary": "Start using Cua Spaces",
+          "prompts": [
+            "Open a Linux Space and run my test suite in it",
+            "Use my Space's browser to finish the checkout test and show me",
+            "Share this Space with a teammate as a viewer"
+          ],
+          "showMark": false,
+          "step": "done",
+          "summary": [
+            "Shows in: Notch and menu bar",
+            "This computer: Opens your other computers"
+          ],
+          "title": "Almost done",
+          "todos": [
+            "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
+            "[ ] Account ~Reach your computers from any device. -> Sign in",
+            "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
+            "[x] Cua Volume ~Shared folder: files your agents can share across your computers. In Finder. (optional)"
+          ],
+          "usage": null
+        },
+        "pages": [
+          "welcome",
+          "signin",
+          "agents",
+          "presentation",
+          "drive",
+          "mode",
+          "done"
+        ]
+      },
+      "settings": [
+        "= Settings",
+        "# Account (account)",
+        "- account text: maya@example.com [Sign out]",
+        "# Teams (teams)",
+        "- teams text: Teams = Manage your team in the account app",
+        "- teams-manage text: Invite people, roles and plans [Manage team] < https://app.cua.ai/team>",
+        "- teams-billing text: Billing [Billing and plans] < https://app.cua.ai/billing>",
+        "# General (general)",
+        "- launch-at-login toggle: Launch Cua Spaces at login {*On|Off}",
+        "- launch-at-login-note note: Keeps your Spaces, agents and Cua Volume available after a restart.",
+        "- notch choice: Spaces tab in the notch {*Show|Hide}",
+        "- welcome text: Welcome [Show again]",
+        "# Storage (storage)",
+        "- backend choice: Store files on {*This Mac|S3-compatible}",
+        "- fs-path text: Stored in = ~/.cua/volume/data ?/Users/maya/.cua/volume/data",
+        "- mount choice: Add Cua Volume to Finder {*On|Off}",
+        "- mount-path text: In Finder at = ~/Cua Volume [Show in Finder] ?/Users/maya/Cua Volume < /Users/maya/Cua Volume>",
+        "# Privacy (privacy)",
+        "- telemetry choice: Share usage data to help improve Cua {*On|Off}",
+        "- telemetry-note note: Which features you use and when something goes wrong. Linked to your account through a random ID while you're signed in. Never your files, what you type or your screen. <What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry>",
+        "# AI agents (agents) [Configure all detected agents] (disabled)"
+      ],
+      "signals": [
+        {
+          "action": "experiment_off",
+          "experiment": "your_cloud",
+          "type": "experiment"
+        },
+        {
+          "experiments": [
+            "cua_volume",
+            "sharing"
+          ],
+          "type": "experiments-on"
+        }
+      ],
+      "step": "your cloud off",
+      "tab": [
+        "= Experiments",
+        "# Experiments (experiments)",
+        "- experiment:cua_volume toggle: Cua Volume {*On|Off}",
+        "- experiment:cua_volume-note note: Memory and files your agents share across every Space.",
+        "- experiment:your_cloud toggle: Your cloud {On|*Off}",
+        "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud, Hetzner or Modal account.",
+        "- experiment:sharing toggle: Sharing {*On|Off}",
+        "- experiment:sharing-note note: Share a Space with other Cua accounts."
       ],
       "volumePage": "Volume",
       "wizard": {
@@ -228,7 +367,9 @@
           "connect-by-address"
         ],
         "placements": [
-          "local | This Mac | Container on this Mac (gVisor when installed) | on *",
+          "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
+          "---",
+          "local | This Mac | Linux, on this Mac | on *",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on"
         ]
@@ -243,7 +384,7 @@
         "open: Open [-] ?Open the desktop in its own window (primary)"
       ],
       "menu": [
-        "status: No Spaces · Syncing 2… (disabled)",
+        "status: No Spaces running · Syncing 2… (disabled)",
         "volume-conflicts: 1 conflict",
         "---",
         "open: Open Cua Spaces",
@@ -257,11 +398,11 @@
           "canBack": true,
           "canSkip": false,
           "choices": [],
-          "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,This machine,*Done",
+          "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,This computer,*Done",
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces, agents and Cua Volume available after a restart.",
-          "lede": "Cua Spaces is in your menu bar.",
+          "lede": "3 things are left. You can finish them now, or later from the menu bar.",
           "notice": null,
           "noticeLink": null,
           "presentations": [],
@@ -274,14 +415,16 @@
           "showMark": false,
           "step": "done",
           "summary": [
-            "cua command: not installed",
-            "Account: not signed in",
-            "AI agents: none",
             "Shows in: Notch and menu bar",
-            "Cua Volume: In Finder",
-            "This machine: Only used to open other computers"
+            "This computer: Opens your other computers"
           ],
-          "title": "You're all set",
+          "title": "Almost done",
+          "todos": [
+            "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
+            "[ ] Account ~Reach your computers from any device. -> Sign in",
+            "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
+            "[x] Cua Volume ~Shared folder: files your agents can share across your computers. In Finder. (optional)"
+          ],
           "usage": null
         },
         "pages": [
@@ -313,139 +456,8 @@
         "- mount choice: Add Cua Volume to Finder {*On|Off}",
         "- mount-path text: In Finder at = ~/Cua Volume [Show in Finder] ?/Users/maya/Cua Volume < /Users/maya/Cua Volume>",
         "# Privacy (privacy)",
-        "- telemetry choice: Share anonymous usage data {*On|Off}",
-        "- telemetry-note note: Features used, sandbox types, durations and error categories. Never paths, names, prompts, screen content or Keyvault items. <What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry>",
-        "# AI agents (agents) [Configure all detected agents] (disabled)"
-      ],
-      "signals": [
-        {
-          "action": "experiment_on",
-          "experiment": "your_cloud",
-          "type": "experiment"
-        },
-        {
-          "experiments": [
-            "cua_volume",
-            "your_cloud",
-            "sharing"
-          ],
-          "type": "experiments-on"
-        }
-      ],
-      "step": "your cloud on",
-      "tab": [
-        "= Experiments",
-        "# Experiments (experiments)",
-        "- experiment:cua_volume toggle: Cua Volume {*On|Off}",
-        "- experiment:cua_volume-note note: Memory and files your agents share across every Space.",
-        "- experiment:your_cloud toggle: Your cloud {*On|Off}",
-        "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud or Modal account.",
-        "- experiment:sharing toggle: Sharing {*On|Off}",
-        "- experiment:sharing-note note: Share a Space with other Cua accounts.",
-        "- experiment:classic_ui toggle: Use classic UI {*On|Off}",
-        "- experiment:classic_ui-note note: Open the previous Spaces window instead of the New UI."
-      ],
-      "volumePage": "Volume",
-      "wizard": {
-        "fields": [
-          "os",
-          "image",
-          "placement",
-          "kind",
-          "runtime",
-          "connect-cloud",
-          "connect-by-address"
-        ],
-        "placements": [
-          "local | This Mac | Container on this Mac (gVisor when installed) | on *",
-          "---",
-          "host:m-mini | Mac mini | Through the Cua relay | on",
-          "---",
-          "aws | AWS · us-west-2 | t4g.medium, about $0.04/hour | on"
-        ]
-      }
-    },
-    {
-      "actions": [
-        "teleport: Teleport an app [arrow.down.circle] ?Teleport an app into this Space",
-        "pip: Picture in picture [pip.enter] ?Picture in picture",
-        "share: Share [person.badge.plus] ?Share this Space",
-        "delete: Remove [trash] ?Remove from the list (destructive)",
-        "open: Open [-] ?Open the desktop in its own window (primary)"
-      ],
-      "menu": [
-        "status: No Spaces · Syncing 2… (disabled)",
-        "volume-conflicts: 1 conflict",
-        "---",
-        "open: Open Cua Spaces",
-        "new-space: New Space…",
-        "settings: Settings… ⌘,",
-        "---",
-        "quit: Quit Cua Spaces ⌘Q"
-      ],
-      "onboarding": {
-        "done": {
-          "canBack": true,
-          "canSkip": false,
-          "choices": [],
-          "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,This machine,*Done",
-          "drive": null,
-          "driveStorage": null,
-          "launchAtLogin": "[x] Launch at login ~Keeps your Spaces, agents and Cua Volume available after a restart.",
-          "lede": "Cua Spaces is in your menu bar.",
-          "notice": null,
-          "noticeLink": null,
-          "presentations": [],
-          "primary": "Start using Cua Spaces",
-          "prompts": [
-            "Open a Linux Space and run my test suite in it",
-            "Use my Space's browser to finish the checkout test and show me",
-            "Share this Space with a teammate as a viewer"
-          ],
-          "showMark": false,
-          "step": "done",
-          "summary": [
-            "cua command: not installed",
-            "Account: not signed in",
-            "AI agents: none",
-            "Shows in: Notch and menu bar",
-            "Cua Volume: In Finder",
-            "This machine: Only used to open other computers"
-          ],
-          "title": "You're all set",
-          "usage": null
-        },
-        "pages": [
-          "welcome",
-          "signin",
-          "agents",
-          "presentation",
-          "drive",
-          "mode",
-          "done"
-        ]
-      },
-      "settings": [
-        "= Settings",
-        "# Account (account)",
-        "- account text: maya@example.com [Sign out]",
-        "# Teams (teams)",
-        "- teams text: Teams = Manage your team in the account app",
-        "- teams-manage text: Invite people, roles and plans [Manage team] < https://app.cua.ai/team>",
-        "- teams-billing text: Billing [Billing and plans] < https://app.cua.ai/billing>",
-        "# General (general)",
-        "- launch-at-login toggle: Launch Cua Spaces at login {*On|Off}",
-        "- launch-at-login-note note: Keeps your Spaces, agents and Cua Volume available after a restart.",
-        "- notch choice: Spaces tab in the notch {*Show|Hide}",
-        "- welcome text: Welcome [Show again]",
-        "# Storage (storage)",
-        "- backend choice: Store files on {*This Mac|S3-compatible}",
-        "- fs-path text: Stored in = ~/.cua/volume/data ?/Users/maya/.cua/volume/data",
-        "- mount choice: Add Cua Volume to Finder {*On|Off}",
-        "- mount-path text: In Finder at = ~/Cua Volume [Show in Finder] ?/Users/maya/Cua Volume < /Users/maya/Cua Volume>",
-        "# Privacy (privacy)",
-        "- telemetry choice: Share anonymous usage data {*On|Off}",
-        "- telemetry-note note: Features used, sandbox types, durations and error categories. Never paths, names, prompts, screen content or Keyvault items. <What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry>",
+        "- telemetry choice: Share usage data to help improve Cua {*On|Off}",
+        "- telemetry-note note: Which features you use and when something goes wrong. Linked to your account through a random ID while you're signed in. Never your files, what you type or your screen. <What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry>",
         "# AI agents (agents) [Configure all detected agents] (disabled)"
       ],
       "signals": [],
@@ -455,12 +467,10 @@
         "# Experiments (experiments)",
         "- experiment:cua_volume toggle: Cua Volume {*On|Off}",
         "- experiment:cua_volume-note note: Memory and files your agents share across every Space.",
-        "- experiment:your_cloud toggle: Your cloud {*On|Off}",
-        "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud or Modal account.",
+        "- experiment:your_cloud toggle: Your cloud {On|*Off}",
+        "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud, Hetzner or Modal account.",
         "- experiment:sharing toggle: Sharing {*On|Off}",
-        "- experiment:sharing-note note: Share a Space with other Cua accounts.",
-        "- experiment:classic_ui toggle: Use classic UI {*On|Off}",
-        "- experiment:classic_ui-note note: Open the previous Spaces window instead of the New UI."
+        "- experiment:sharing-note note: Share a Space with other Cua accounts."
       ],
       "volumePage": "Volume",
       "wizard": {
@@ -470,15 +480,14 @@
           "placement",
           "kind",
           "runtime",
-          "connect-cloud",
           "connect-by-address"
         ],
         "placements": [
-          "local | This Mac | Container on this Mac (gVisor when installed) | on *",
+          "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
           "---",
-          "host:m-mini | Mac mini | Through the Cua relay | on",
+          "local | This Mac | Linux, on this Mac | on *",
           "---",
-          "aws | AWS · us-west-2 | t4g.medium, about $0.04/hour | on"
+          "host:m-mini | Mac mini | Through the Cua relay | on"
         ]
       }
     },
@@ -491,7 +500,7 @@
         "open: Open [-] ?Open the desktop in its own window (primary)"
       ],
       "menu": [
-        "status: No Spaces · Syncing 2… (disabled)",
+        "status: No Spaces running · Syncing 2… (disabled)",
         "volume-conflicts: 1 conflict",
         "---",
         "open: Open Cua Spaces",
@@ -505,11 +514,11 @@
           "canBack": true,
           "canSkip": false,
           "choices": [],
-          "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,This machine,*Done",
+          "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,This computer,*Done",
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces, agents and Cua Volume available after a restart.",
-          "lede": "Cua Spaces is in your menu bar.",
+          "lede": "3 things are left. You can finish them now, or later from the menu bar.",
           "notice": null,
           "noticeLink": null,
           "presentations": [],
@@ -522,14 +531,16 @@
           "showMark": false,
           "step": "done",
           "summary": [
-            "cua command: not installed",
-            "Account: not signed in",
-            "AI agents: none",
             "Shows in: Notch and menu bar",
-            "Cua Volume: In Finder",
-            "This machine: Only used to open other computers"
+            "This computer: Opens your other computers"
           ],
-          "title": "You're all set",
+          "title": "Almost done",
+          "todos": [
+            "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
+            "[ ] Account ~Reach your computers from any device. -> Sign in",
+            "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
+            "[x] Cua Volume ~Shared folder: files your agents can share across your computers. In Finder. (optional)"
+          ],
           "usage": null
         },
         "pages": [
@@ -561,8 +572,8 @@
         "- mount choice: Add Cua Volume to Finder {*On|Off}",
         "- mount-path text: In Finder at = ~/Cua Volume [Show in Finder] ?/Users/maya/Cua Volume < /Users/maya/Cua Volume>",
         "# Privacy (privacy)",
-        "- telemetry choice: Share anonymous usage data {*On|Off}",
-        "- telemetry-note note: Features used, sandbox types, durations and error categories. Never paths, names, prompts, screen content or Keyvault items. <What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry>",
+        "- telemetry choice: Share usage data to help improve Cua {*On|Off}",
+        "- telemetry-note note: Which features you use and when something goes wrong. Linked to your account through a random ID while you're signed in. Never your files, what you type or your screen. <What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry>",
         "# AI agents (agents) [Configure all detected agents] (disabled)"
       ],
       "signals": [],
@@ -572,12 +583,10 @@
         "# Experiments (experiments)",
         "- experiment:cua_volume toggle: Cua Volume {*On|Off}",
         "- experiment:cua_volume-note note: Memory and files your agents share across every Space.",
-        "- experiment:your_cloud toggle: Your cloud {*On|Off}",
-        "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud or Modal account.",
+        "- experiment:your_cloud toggle: Your cloud {On|*Off}",
+        "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud, Hetzner or Modal account.",
         "- experiment:sharing toggle: Sharing {*On|Off}",
-        "- experiment:sharing-note note: Share a Space with other Cua accounts.",
-        "- experiment:classic_ui toggle: Use classic UI {*On|Off}",
-        "- experiment:classic_ui-note note: Open the previous Spaces window instead of the New UI."
+        "- experiment:sharing-note note: Share a Space with other Cua accounts."
       ],
       "volumePage": "Volume",
       "wizard": {
@@ -587,15 +596,14 @@
           "placement",
           "kind",
           "runtime",
-          "connect-cloud",
           "connect-by-address"
         ],
         "placements": [
-          "local | This Mac | Container on this Mac (gVisor when installed) | on *",
+          "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
           "---",
-          "host:m-mini | Mac mini | Through the Cua relay | on",
+          "local | This Mac | Linux, on this Mac | on *",
           "---",
-          "aws | AWS · us-west-2 | t4g.medium, about $0.04/hour | on"
+          "host:m-mini | Mac mini | Through the Cua relay | on"
         ]
       }
     },
@@ -608,7 +616,7 @@
         "open: Open [-] ?Open the desktop in its own window (primary)"
       ],
       "menu": [
-        "status: No Spaces · Syncing 2… (disabled)",
+        "status: No Spaces running · Syncing 2… (disabled)",
         "volume-conflicts: 1 conflict",
         "---",
         "open: Open Cua Spaces",
@@ -622,11 +630,11 @@
           "canBack": true,
           "canSkip": false,
           "choices": [],
-          "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,This machine,*Done",
+          "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,This computer,*Done",
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces, agents and Cua Volume available after a restart.",
-          "lede": "Cua Spaces is in your menu bar.",
+          "lede": "3 things are left. You can finish them now, or later from the menu bar.",
           "notice": null,
           "noticeLink": null,
           "presentations": [],
@@ -639,14 +647,16 @@
           "showMark": false,
           "step": "done",
           "summary": [
-            "cua command: not installed",
-            "Account: not signed in",
-            "AI agents: none",
             "Shows in: Notch and menu bar",
-            "Cua Volume: In Finder",
-            "This machine: Only used to open other computers"
+            "This computer: Opens your other computers"
           ],
-          "title": "You're all set",
+          "title": "Almost done",
+          "todos": [
+            "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
+            "[ ] Account ~Reach your computers from any device. -> Sign in",
+            "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
+            "[x] Cua Volume ~Shared folder: files your agents can share across your computers. In Finder. (optional)"
+          ],
           "usage": null
         },
         "pages": [
@@ -678,8 +688,8 @@
         "- mount choice: Add Cua Volume to Finder {*On|Off}",
         "- mount-path text: In Finder at = ~/Cua Volume [Show in Finder] ?/Users/maya/Cua Volume < /Users/maya/Cua Volume>",
         "# Privacy (privacy)",
-        "- telemetry choice: Share anonymous usage data {*On|Off}",
-        "- telemetry-note note: Features used, sandbox types, durations and error categories. Never paths, names, prompts, screen content or Keyvault items. <What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry>",
+        "- telemetry choice: Share usage data to help improve Cua {*On|Off}",
+        "- telemetry-note note: Which features you use and when something goes wrong. Linked to your account through a random ID while you're signed in. Never your files, what you type or your screen. <What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry>",
         "# AI agents (agents) [Configure all detected agents] (disabled)"
       ],
       "signals": [],
@@ -689,12 +699,10 @@
         "# Experiments (experiments)",
         "- experiment:cua_volume toggle: Cua Volume {*On|Off}",
         "- experiment:cua_volume-note note: Memory and files your agents share across every Space.",
-        "- experiment:your_cloud toggle: Your cloud {*On|Off}",
-        "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud or Modal account.",
+        "- experiment:your_cloud toggle: Your cloud {On|*Off}",
+        "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud, Hetzner or Modal account.",
         "- experiment:sharing toggle: Sharing {*On|Off}",
-        "- experiment:sharing-note note: Share a Space with other Cua accounts.",
-        "- experiment:classic_ui toggle: Use classic UI {*On|Off}",
-        "- experiment:classic_ui-note note: Open the previous Spaces window instead of the New UI."
+        "- experiment:sharing-note note: Share a Space with other Cua accounts."
       ],
       "volumePage": "Volume",
       "wizard": {
@@ -704,15 +712,14 @@
           "placement",
           "kind",
           "runtime",
-          "connect-cloud",
           "connect-by-address"
         ],
         "placements": [
-          "local | This Mac | Container on this Mac (gVisor when installed) | on *",
+          "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
           "---",
-          "host:m-mini | Mac mini | Through the Cua relay | on",
+          "local | This Mac | Linux, on this Mac | on *",
           "---",
-          "aws | AWS · us-west-2 | t4g.medium, about $0.04/hour | on"
+          "host:m-mini | Mac mini | Through the Cua relay | on"
         ]
       }
     },
@@ -725,7 +732,7 @@
         "open: Open [-] ?Open the desktop in its own window (primary)"
       ],
       "menu": [
-        "status: No Spaces (disabled)",
+        "status: No Spaces running (disabled)",
         "---",
         "open: Open Cua Spaces",
         "new-space: New Space…",
@@ -738,11 +745,11 @@
           "canBack": true,
           "canSkip": false,
           "choices": [],
-          "dots": "Welcome,Sign in,AI agents,Menu bar,This machine,*Done",
+          "dots": "Welcome,Sign in,AI agents,Menu bar,This computer,*Done",
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces and agents available after a restart.",
-          "lede": "Cua Spaces is in your menu bar.",
+          "lede": "3 things are left. You can finish them now, or later from the menu bar.",
           "notice": null,
           "noticeLink": null,
           "presentations": [],
@@ -755,13 +762,16 @@
           "showMark": false,
           "step": "done",
           "summary": [
-            "cua command: not installed",
-            "Account: not signed in",
-            "AI agents: none",
             "Shows in: Notch and menu bar",
-            "This machine: Only used to open other computers"
+            "This computer: Opens your other computers"
           ],
-          "title": "You're all set",
+          "title": "Almost done",
+          "todos": [
+            "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
+            "[ ] Account ~Reach your computers from any device. -> Sign in",
+            "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
+            "[ ] Cua Volume ~Shared folder: files your agents can share across your computers. -> Turn on (optional)"
+          ],
           "usage": null
         },
         "pages": [
@@ -787,8 +797,8 @@
         "- notch choice: Spaces tab in the notch {*Show|Hide}",
         "- welcome text: Welcome [Show again]",
         "# Privacy (privacy)",
-        "- telemetry choice: Share anonymous usage data {*On|Off}",
-        "- telemetry-note note: Features used, sandbox types, durations and error categories. Never paths, names, prompts, screen content or Keyvault items. <What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry>",
+        "- telemetry choice: Share usage data to help improve Cua {*On|Off}",
+        "- telemetry-note note: Which features you use and when something goes wrong. Linked to your account through a random ID while you're signed in. Never your files, what you type or your screen. <What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry>",
         "# AI agents (agents) [Configure all detected agents] (disabled)"
       ],
       "signals": [
@@ -799,7 +809,6 @@
         },
         {
           "experiments": [
-            "your_cloud",
             "sharing"
           ],
           "type": "experiments-on"
@@ -811,12 +820,132 @@
         "# Experiments (experiments)",
         "- experiment:cua_volume toggle: Cua Volume {On|*Off}",
         "- experiment:cua_volume-note note: Memory and files your agents share across every Space.",
-        "- experiment:your_cloud toggle: Your cloud {*On|Off}",
-        "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud or Modal account.",
+        "- experiment:your_cloud toggle: Your cloud {On|*Off}",
+        "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud, Hetzner or Modal account.",
         "- experiment:sharing toggle: Sharing {*On|Off}",
-        "- experiment:sharing-note note: Share a Space with other Cua accounts.",
-        "- experiment:classic_ui toggle: Use classic UI {*On|Off}",
-        "- experiment:classic_ui-note note: Open the previous Spaces window instead of the New UI."
+        "- experiment:sharing-note note: Share a Space with other Cua accounts."
+      ],
+      "volumePage": null,
+      "wizard": {
+        "fields": [
+          "os",
+          "image",
+          "placement",
+          "kind",
+          "runtime",
+          "connect-by-address"
+        ],
+        "placements": [
+          "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
+          "---",
+          "local | This Mac | Linux, on this Mac | on *",
+          "---",
+          "host:m-mini | Mac mini | Through the Cua relay | on"
+        ]
+      }
+    },
+    {
+      "actions": [
+        "teleport: Teleport an app [arrow.down.circle] ?Teleport an app into this Space",
+        "pip: Picture in picture [pip.enter] ?Picture in picture",
+        "share: Share [person.badge.plus] ?Share this Space",
+        "delete: Remove [trash] ?Remove from the list (destructive)",
+        "open: Open [-] ?Open the desktop in its own window (primary)"
+      ],
+      "menu": [
+        "status: No Spaces running (disabled)",
+        "---",
+        "open: Open Cua Spaces",
+        "new-space: New Space…",
+        "settings: Settings… ⌘,",
+        "---",
+        "quit: Quit Cua Spaces ⌘Q"
+      ],
+      "onboarding": {
+        "done": {
+          "canBack": true,
+          "canSkip": false,
+          "choices": [],
+          "dots": "Welcome,Sign in,AI agents,Menu bar,This computer,*Done",
+          "drive": null,
+          "driveStorage": null,
+          "launchAtLogin": "[x] Launch at login ~Keeps your Spaces and agents available after a restart.",
+          "lede": "3 things are left. You can finish them now, or later from the menu bar.",
+          "notice": null,
+          "noticeLink": null,
+          "presentations": [],
+          "primary": "Start using Cua Spaces",
+          "prompts": [
+            "Open a Linux Space and run my test suite in it",
+            "Use my Space's browser to finish the checkout test and show me",
+            "Share this Space with a teammate as a viewer"
+          ],
+          "showMark": false,
+          "step": "done",
+          "summary": [
+            "Shows in: Notch and menu bar",
+            "This computer: Opens your other computers"
+          ],
+          "title": "Almost done",
+          "todos": [
+            "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
+            "[ ] Account ~Reach your computers from any device. -> Sign in",
+            "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
+            "[ ] Cua Volume ~Shared folder: files your agents can share across your computers. -> Turn on (optional)"
+          ],
+          "usage": null
+        },
+        "pages": [
+          "welcome",
+          "signin",
+          "agents",
+          "presentation",
+          "mode",
+          "done"
+        ]
+      },
+      "settings": [
+        "= Settings",
+        "# Account (account)",
+        "- account text: maya@example.com [Sign out]",
+        "# Teams (teams)",
+        "- teams text: Teams = Manage your team in the account app",
+        "- teams-manage text: Invite people, roles and plans [Manage team] < https://app.cua.ai/team>",
+        "- teams-billing text: Billing [Billing and plans] < https://app.cua.ai/billing>",
+        "# General (general)",
+        "- launch-at-login toggle: Launch Cua Spaces at login {*On|Off}",
+        "- launch-at-login-note note: Keeps your Spaces and agents available after a restart.",
+        "- notch choice: Spaces tab in the notch {*Show|Hide}",
+        "- welcome text: Welcome [Show again]",
+        "# Privacy (privacy)",
+        "- telemetry choice: Share usage data to help improve Cua {*On|Off}",
+        "- telemetry-note note: Which features you use and when something goes wrong. Linked to your account through a random ID while you're signed in. Never your files, what you type or your screen. <What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry>",
+        "# AI agents (agents) [Configure all detected agents] (disabled)"
+      ],
+      "signals": [
+        {
+          "action": "experiment_on",
+          "experiment": "your_cloud",
+          "type": "experiment"
+        },
+        {
+          "experiments": [
+            "your_cloud",
+            "sharing"
+          ],
+          "type": "experiments-on"
+        }
+      ],
+      "step": "your cloud on again",
+      "tab": [
+        "= Experiments",
+        "# Experiments (experiments)",
+        "- experiment:cua_volume toggle: Cua Volume {On|*Off}",
+        "- experiment:cua_volume-note note: Memory and files your agents share across every Space.",
+        "- experiment:your_cloud toggle: Your cloud {*On|Off}",
+        "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud, Hetzner or Modal account.",
+        "- experiment:sharing toggle: Sharing {*On|Off}",
+        "- experiment:sharing-note note: Share a Space with other Cua accounts."
       ],
       "volumePage": null,
       "wizard": {
@@ -830,7 +959,9 @@
           "connect-by-address"
         ],
         "placements": [
-          "local | This Mac | Container on this Mac (gVisor when installed) | on *",
+          "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
+          "---",
+          "local | This Mac | Linux, on this Mac | on *",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on",
           "---",
@@ -842,12 +973,11 @@
       "actions": [
         "teleport: Teleport an app [arrow.down.circle] ?Teleport an app into this Space",
         "pip: Picture in picture [pip.enter] ?Picture in picture",
-        "share: Share [person.badge.plus] ?Share this Space",
         "delete: Remove [trash] ?Remove from the list (destructive)",
         "open: Open [-] ?Open the desktop in its own window (primary)"
       ],
       "menu": [
-        "status: No Spaces (disabled)",
+        "status: No Spaces running (disabled)",
         "---",
         "open: Open Cua Spaces",
         "new-space: New Space…",
@@ -860,11 +990,11 @@
           "canBack": true,
           "canSkip": false,
           "choices": [],
-          "dots": "Welcome,Sign in,AI agents,Menu bar,This machine,*Done",
+          "dots": "Welcome,Sign in,AI agents,Menu bar,This computer,*Done",
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces and agents available after a restart.",
-          "lede": "Cua Spaces is in your menu bar.",
+          "lede": "3 things are left. You can finish them now, or later from the menu bar.",
           "notice": null,
           "noticeLink": null,
           "presentations": [],
@@ -877,13 +1007,16 @@
           "showMark": false,
           "step": "done",
           "summary": [
-            "cua command: not installed",
-            "Account: not signed in",
-            "AI agents: none",
             "Shows in: Notch and menu bar",
-            "This machine: Only used to open other computers"
+            "This computer: Opens your other computers"
           ],
-          "title": "You're all set",
+          "title": "Almost done",
+          "todos": [
+            "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
+            "[ ] Account ~Reach your computers from any device. -> Sign in",
+            "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
+            "[ ] Cua Volume ~Shared folder: files your agents can share across your computers. -> Turn on (optional)"
+          ],
           "usage": null
         },
         "pages": [
@@ -909,125 +1042,8 @@
         "- notch choice: Spaces tab in the notch {*Show|Hide}",
         "- welcome text: Welcome [Show again]",
         "# Privacy (privacy)",
-        "- telemetry choice: Share anonymous usage data {*On|Off}",
-        "- telemetry-note note: Features used, sandbox types, durations and error categories. Never paths, names, prompts, screen content or Keyvault items. <What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry>",
-        "# AI agents (agents) [Configure all detected agents] (disabled)"
-      ],
-      "signals": [
-        {
-          "action": "experiment_off",
-          "experiment": "your_cloud",
-          "type": "experiment"
-        },
-        {
-          "experiments": [
-            "sharing"
-          ],
-          "type": "experiments-on"
-        }
-      ],
-      "step": "your cloud off",
-      "tab": [
-        "= Experiments",
-        "# Experiments (experiments)",
-        "- experiment:cua_volume toggle: Cua Volume {On|*Off}",
-        "- experiment:cua_volume-note note: Memory and files your agents share across every Space.",
-        "- experiment:your_cloud toggle: Your cloud {On|*Off}",
-        "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud or Modal account.",
-        "- experiment:sharing toggle: Sharing {*On|Off}",
-        "- experiment:sharing-note note: Share a Space with other Cua accounts.",
-        "- experiment:classic_ui toggle: Use classic UI {*On|Off}",
-        "- experiment:classic_ui-note note: Open the previous Spaces window instead of the New UI."
-      ],
-      "volumePage": null,
-      "wizard": {
-        "fields": [
-          "os",
-          "image",
-          "placement",
-          "kind",
-          "runtime",
-          "connect-by-address"
-        ],
-        "placements": [
-          "local | This Mac | Container on this Mac (gVisor when installed) | on *",
-          "---",
-          "host:m-mini | Mac mini | Through the Cua relay | on"
-        ]
-      }
-    },
-    {
-      "actions": [
-        "teleport: Teleport an app [arrow.down.circle] ?Teleport an app into this Space",
-        "pip: Picture in picture [pip.enter] ?Picture in picture",
-        "delete: Remove [trash] ?Remove from the list (destructive)",
-        "open: Open [-] ?Open the desktop in its own window (primary)"
-      ],
-      "menu": [
-        "status: No Spaces (disabled)",
-        "---",
-        "open: Open Cua Spaces",
-        "new-space: New Space…",
-        "settings: Settings… ⌘,",
-        "---",
-        "quit: Quit Cua Spaces ⌘Q"
-      ],
-      "onboarding": {
-        "done": {
-          "canBack": true,
-          "canSkip": false,
-          "choices": [],
-          "dots": "Welcome,Sign in,AI agents,Menu bar,This machine,*Done",
-          "drive": null,
-          "driveStorage": null,
-          "launchAtLogin": "[x] Launch at login ~Keeps your Spaces and agents available after a restart.",
-          "lede": "Cua Spaces is in your menu bar.",
-          "notice": null,
-          "noticeLink": null,
-          "presentations": [],
-          "primary": "Start using Cua Spaces",
-          "prompts": [
-            "Open a Linux Space and run my test suite in it",
-            "Use my Space's browser to finish the checkout test and show me",
-            "Share this Space with a teammate as a viewer"
-          ],
-          "showMark": false,
-          "step": "done",
-          "summary": [
-            "cua command: not installed",
-            "Account: not signed in",
-            "AI agents: none",
-            "Shows in: Notch and menu bar",
-            "This machine: Only used to open other computers"
-          ],
-          "title": "You're all set",
-          "usage": null
-        },
-        "pages": [
-          "welcome",
-          "signin",
-          "agents",
-          "presentation",
-          "mode",
-          "done"
-        ]
-      },
-      "settings": [
-        "= Settings",
-        "# Account (account)",
-        "- account text: maya@example.com [Sign out]",
-        "# Teams (teams)",
-        "- teams text: Teams = Manage your team in the account app",
-        "- teams-manage text: Invite people, roles and plans [Manage team] < https://app.cua.ai/team>",
-        "- teams-billing text: Billing [Billing and plans] < https://app.cua.ai/billing>",
-        "# General (general)",
-        "- launch-at-login toggle: Launch Cua Spaces at login {*On|Off}",
-        "- launch-at-login-note note: Keeps your Spaces and agents available after a restart.",
-        "- notch choice: Spaces tab in the notch {*Show|Hide}",
-        "- welcome text: Welcome [Show again]",
-        "# Privacy (privacy)",
-        "- telemetry choice: Share anonymous usage data {*On|Off}",
-        "- telemetry-note note: Features used, sandbox types, durations and error categories. Never paths, names, prompts, screen content or Keyvault items. <What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry>",
+        "- telemetry choice: Share usage data to help improve Cua {*On|Off}",
+        "- telemetry-note note: Which features you use and when something goes wrong. Linked to your account through a random ID while you're signed in. Never your files, what you type or your screen. <What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry>",
         "# AI agents (agents) [Configure all detected agents] (disabled)"
       ],
       "signals": [
@@ -1037,7 +1053,9 @@
           "type": "experiment"
         },
         {
-          "experiments": [],
+          "experiments": [
+            "your_cloud"
+          ],
           "type": "experiments-on"
         }
       ],
@@ -1047,12 +1065,10 @@
         "# Experiments (experiments)",
         "- experiment:cua_volume toggle: Cua Volume {On|*Off}",
         "- experiment:cua_volume-note note: Memory and files your agents share across every Space.",
-        "- experiment:your_cloud toggle: Your cloud {On|*Off}",
-        "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud or Modal account.",
+        "- experiment:your_cloud toggle: Your cloud {*On|Off}",
+        "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud, Hetzner or Modal account.",
         "- experiment:sharing toggle: Sharing {On|*Off}",
-        "- experiment:sharing-note note: Share a Space with other Cua accounts.",
-        "- experiment:classic_ui toggle: Use classic UI {*On|Off}",
-        "- experiment:classic_ui-note note: Open the previous Spaces window instead of the New UI."
+        "- experiment:sharing-note note: Share a Space with other Cua accounts."
       ],
       "volumePage": null,
       "wizard": {
@@ -1062,244 +1078,17 @@
           "placement",
           "kind",
           "runtime",
+          "connect-cloud",
           "connect-by-address"
         ],
         "placements": [
-          "local | This Mac | Container on this Mac (gVisor when installed) | on *",
+          "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
           "---",
-          "host:m-mini | Mac mini | Through the Cua relay | on"
-        ]
-      }
-    },
-    {
-      "actions": [
-        "teleport: Teleport an app [arrow.down.circle] ?Teleport an app into this Space",
-        "pip: Picture in picture [pip.enter] ?Picture in picture",
-        "delete: Remove [trash] ?Remove from the list (destructive)",
-        "open: Open [-] ?Open the desktop in its own window (primary)"
-      ],
-      "menu": [
-        "status: No Spaces (disabled)",
-        "---",
-        "open: Open Cua Spaces",
-        "new-space: New Space…",
-        "settings: Settings… ⌘,",
-        "---",
-        "quit: Quit Cua Spaces ⌘Q"
-      ],
-      "onboarding": {
-        "done": {
-          "canBack": true,
-          "canSkip": false,
-          "choices": [],
-          "dots": "Welcome,Sign in,AI agents,Menu bar,This machine,*Done",
-          "drive": null,
-          "driveStorage": null,
-          "launchAtLogin": "[x] Launch at login ~Keeps your Spaces and agents available after a restart.",
-          "lede": "Cua Spaces is in your menu bar.",
-          "notice": null,
-          "noticeLink": null,
-          "presentations": [],
-          "primary": "Start using Cua Spaces",
-          "prompts": [
-            "Open a Linux Space and run my test suite in it",
-            "Use my Space's browser to finish the checkout test and show me",
-            "Share this Space with a teammate as a viewer"
-          ],
-          "showMark": false,
-          "step": "done",
-          "summary": [
-            "cua command: not installed",
-            "Account: not signed in",
-            "AI agents: none",
-            "Shows in: Notch and menu bar",
-            "This machine: Only used to open other computers"
-          ],
-          "title": "You're all set",
-          "usage": null
-        },
-        "pages": [
-          "welcome",
-          "signin",
-          "agents",
-          "presentation",
-          "mode",
-          "done"
-        ]
-      },
-      "settings": [
-        "= Settings",
-        "# Account (account)",
-        "- account text: maya@example.com [Sign out]",
-        "# Teams (teams)",
-        "- teams text: Teams = Manage your team in the account app",
-        "- teams-manage text: Invite people, roles and plans [Manage team] < https://app.cua.ai/team>",
-        "- teams-billing text: Billing [Billing and plans] < https://app.cua.ai/billing>",
-        "# General (general)",
-        "- launch-at-login toggle: Launch Cua Spaces at login {*On|Off}",
-        "- launch-at-login-note note: Keeps your Spaces and agents available after a restart.",
-        "- notch choice: Spaces tab in the notch {*Show|Hide}",
-        "- welcome text: Welcome [Show again]",
-        "# Privacy (privacy)",
-        "- telemetry choice: Share anonymous usage data {*On|Off}",
-        "- telemetry-note note: Features used, sandbox types, durations and error categories. Never paths, names, prompts, screen content or Keyvault items. <What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry>",
-        "# AI agents (agents) [Configure all detected agents] (disabled)"
-      ],
-      "signals": [
-        {
-          "action": "experiment_on",
-          "experiment": "web_ui",
-          "type": "experiment"
-        },
-        {
-          "experiments": [
-            "web_ui"
-          ],
-          "type": "experiments-on"
-        }
-      ],
-      "step": "new ui on (use classic ui off)",
-      "tab": [
-        "= Experiments",
-        "# Experiments (experiments)",
-        "- experiment:cua_volume toggle: Cua Volume {On|*Off}",
-        "- experiment:cua_volume-note note: Memory and files your agents share across every Space.",
-        "- experiment:your_cloud toggle: Your cloud {On|*Off}",
-        "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud or Modal account.",
-        "- experiment:sharing toggle: Sharing {On|*Off}",
-        "- experiment:sharing-note note: Share a Space with other Cua accounts.",
-        "- experiment:classic_ui toggle: Use classic UI {On|*Off}",
-        "- experiment:classic_ui-note note: Open the previous Spaces window instead of the New UI."
-      ],
-      "volumePage": null,
-      "wizard": {
-        "fields": [
-          "os",
-          "image",
-          "placement",
-          "kind",
-          "runtime",
-          "connect-by-address"
-        ],
-        "placements": [
-          "local | This Mac | Container on this Mac (gVisor when installed) | on *",
+          "local | This Mac | Linux, on this Mac | on *",
           "---",
-          "host:m-mini | Mac mini | Through the Cua relay | on"
-        ]
-      }
-    },
-    {
-      "actions": [
-        "teleport: Teleport an app [arrow.down.circle] ?Teleport an app into this Space",
-        "pip: Picture in picture [pip.enter] ?Picture in picture",
-        "delete: Remove [trash] ?Remove from the list (destructive)",
-        "open: Open [-] ?Open the desktop in its own window (primary)"
-      ],
-      "menu": [
-        "status: No Spaces (disabled)",
-        "---",
-        "open: Open Cua Spaces",
-        "new-space: New Space…",
-        "settings: Settings… ⌘,",
-        "---",
-        "quit: Quit Cua Spaces ⌘Q"
-      ],
-      "onboarding": {
-        "done": {
-          "canBack": true,
-          "canSkip": false,
-          "choices": [],
-          "dots": "Welcome,Sign in,AI agents,Menu bar,This machine,*Done",
-          "drive": null,
-          "driveStorage": null,
-          "launchAtLogin": "[x] Launch at login ~Keeps your Spaces and agents available after a restart.",
-          "lede": "Cua Spaces is in your menu bar.",
-          "notice": null,
-          "noticeLink": null,
-          "presentations": [],
-          "primary": "Start using Cua Spaces",
-          "prompts": [
-            "Open a Linux Space and run my test suite in it",
-            "Use my Space's browser to finish the checkout test and show me",
-            "Share this Space with a teammate as a viewer"
-          ],
-          "showMark": false,
-          "step": "done",
-          "summary": [
-            "cua command: not installed",
-            "Account: not signed in",
-            "AI agents: none",
-            "Shows in: Notch and menu bar",
-            "This machine: Only used to open other computers"
-          ],
-          "title": "You're all set",
-          "usage": null
-        },
-        "pages": [
-          "welcome",
-          "signin",
-          "agents",
-          "presentation",
-          "mode",
-          "done"
-        ]
-      },
-      "settings": [
-        "= Settings",
-        "# Account (account)",
-        "- account text: maya@example.com [Sign out]",
-        "# Teams (teams)",
-        "- teams text: Teams = Manage your team in the account app",
-        "- teams-manage text: Invite people, roles and plans [Manage team] < https://app.cua.ai/team>",
-        "- teams-billing text: Billing [Billing and plans] < https://app.cua.ai/billing>",
-        "# General (general)",
-        "- launch-at-login toggle: Launch Cua Spaces at login {*On|Off}",
-        "- launch-at-login-note note: Keeps your Spaces and agents available after a restart.",
-        "- notch choice: Spaces tab in the notch {*Show|Hide}",
-        "- welcome text: Welcome [Show again]",
-        "# Privacy (privacy)",
-        "- telemetry choice: Share anonymous usage data {*On|Off}",
-        "- telemetry-note note: Features used, sandbox types, durations and error categories. Never paths, names, prompts, screen content or Keyvault items. <What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry>",
-        "# AI agents (agents) [Configure all detected agents] (disabled)"
-      ],
-      "signals": [
-        {
-          "action": "experiment_off",
-          "experiment": "web_ui",
-          "type": "experiment"
-        },
-        {
-          "experiments": [],
-          "type": "experiments-on"
-        }
-      ],
-      "step": "use classic ui on",
-      "tab": [
-        "= Experiments",
-        "# Experiments (experiments)",
-        "- experiment:cua_volume toggle: Cua Volume {On|*Off}",
-        "- experiment:cua_volume-note note: Memory and files your agents share across every Space.",
-        "- experiment:your_cloud toggle: Your cloud {On|*Off}",
-        "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud or Modal account.",
-        "- experiment:sharing toggle: Sharing {On|*Off}",
-        "- experiment:sharing-note note: Share a Space with other Cua accounts.",
-        "- experiment:classic_ui toggle: Use classic UI {*On|Off}",
-        "- experiment:classic_ui-note note: Open the previous Spaces window instead of the New UI."
-      ],
-      "volumePage": null,
-      "wizard": {
-        "fields": [
-          "os",
-          "image",
-          "placement",
-          "kind",
-          "runtime",
-          "connect-by-address"
-        ],
-        "placements": [
-          "local | This Mac | Container on this Mac (gVisor when installed) | on *",
+          "host:m-mini | Mac mini | Through the Cua relay | on",
           "---",
-          "host:m-mini | Mac mini | Through the Cua relay | on"
+          "aws | AWS · us-west-2 | t4g.medium, about $0.04/hour | on"
         ]
       }
     }

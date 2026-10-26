@@ -3328,7 +3328,7 @@ public struct AppAboutView: Equatable, Hashable {
      */
     public var versionLine: String
     /**
-     * Acknowledgements, Privacy Policy, Terms of Service, Report an Issue.
+     * Acknowledgements, Privacy Policy, Terms of Service, System Status, Report an Issue.
      */
     public var links: [AppAboutLink]
     /**
@@ -3350,7 +3350,7 @@ public struct AppAboutView: Equatable, Hashable {
          * "Version 0.2.0 (0.2.0.123)".
          */versionLine: String,
         /**
-         * Acknowledgements, Privacy Policy, Terms of Service, Report an Issue.
+         * Acknowledgements, Privacy Policy, Terms of Service, System Status, Report an Issue.
          */links: [AppAboutLink],
         /**
          * "© 2026 Cua AI, Inc. All rights reserved."
@@ -4781,6 +4781,14 @@ public struct AppAgentSettingsRow: Equatable, Hashable {
      * Skills directory.
      */
     public var skillsDir: String?
+    /**
+     * The account it signs in with on its own (`ChatGPT`), when known.
+     */
+    public var signIn: String?
+    /**
+     * That sign-in is on this computer.
+     */
+    public var signedIn: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -4811,7 +4819,13 @@ public struct AppAgentSettingsRow: Equatable, Hashable {
          */mcpConfig: String?,
         /**
          * Skills directory.
-         */skillsDir: String?) {
+         */skillsDir: String?,
+        /**
+         * The account it signs in with on its own (`ChatGPT`), when known.
+         */signIn: String?,
+        /**
+         * That sign-in is on this computer.
+         */signedIn: Bool) {
         self.agent = agent
         self.name = name
         self.installed = installed
@@ -4821,6 +4835,8 @@ public struct AppAgentSettingsRow: Equatable, Hashable {
         self.skillsTotal = skillsTotal
         self.mcpConfig = mcpConfig
         self.skillsDir = skillsDir
+        self.signIn = signIn
+        self.signedIn = signedIn
     }
 
 
@@ -4847,7 +4863,9 @@ public struct FfiConverterTypeAppAgentSettingsRow: FfiConverterRustBuffer {
                 skillsInstalled: FfiConverterUInt32.read(from: &buf),
                 skillsTotal: FfiConverterUInt32.read(from: &buf),
                 mcpConfig: FfiConverterOptionString.read(from: &buf),
-                skillsDir: FfiConverterOptionString.read(from: &buf)
+                skillsDir: FfiConverterOptionString.read(from: &buf),
+                signIn: FfiConverterOptionString.read(from: &buf),
+                signedIn: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -4861,6 +4879,8 @@ public struct FfiConverterTypeAppAgentSettingsRow: FfiConverterRustBuffer {
         FfiConverterUInt32.write(value.skillsTotal, into: &buf)
         FfiConverterOptionString.write(value.mcpConfig, into: &buf)
         FfiConverterOptionString.write(value.skillsDir, into: &buf)
+        FfiConverterOptionString.write(value.signIn, into: &buf)
+        FfiConverterBool.write(value.signedIn, into: &buf)
     }
 }
 
@@ -5013,6 +5033,15 @@ public struct AppAgentSetupStatus: Equatable, Hashable {
      * Problem reading its config.
      */
     public var error: String?
+    /**
+     * The account it signs in with on its own (`ChatGPT` for Codex), when
+     * the setup can see that sign-in.
+     */
+    public var signIn: String?
+    /**
+     * That sign-in is on this computer.
+     */
+    public var signedIn: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -5043,7 +5072,14 @@ public struct AppAgentSetupStatus: Equatable, Hashable {
          */skillsOutdated: [String],
         /**
          * Problem reading its config.
-         */error: String?) {
+         */error: String?,
+        /**
+         * The account it signs in with on its own (`ChatGPT` for Codex), when
+         * the setup can see that sign-in.
+         */signIn: String?,
+        /**
+         * That sign-in is on this computer.
+         */signedIn: Bool) {
         self.id = id
         self.name = name
         self.installed = installed
@@ -5053,6 +5089,8 @@ public struct AppAgentSetupStatus: Equatable, Hashable {
         self.skillsInstalled = skillsInstalled
         self.skillsOutdated = skillsOutdated
         self.error = error
+        self.signIn = signIn
+        self.signedIn = signedIn
     }
 
 
@@ -5079,7 +5117,9 @@ public struct FfiConverterTypeAppAgentSetupStatus: FfiConverterRustBuffer {
                 cuaConfigured: FfiConverterBool.read(from: &buf),
                 skillsInstalled: FfiConverterSequenceString.read(from: &buf),
                 skillsOutdated: FfiConverterSequenceString.read(from: &buf),
-                error: FfiConverterOptionString.read(from: &buf)
+                error: FfiConverterOptionString.read(from: &buf),
+                signIn: FfiConverterOptionString.read(from: &buf),
+                signedIn: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -5093,6 +5133,8 @@ public struct FfiConverterTypeAppAgentSetupStatus: FfiConverterRustBuffer {
         FfiConverterSequenceString.write(value.skillsInstalled, into: &buf)
         FfiConverterSequenceString.write(value.skillsOutdated, into: &buf)
         FfiConverterOptionString.write(value.error, into: &buf)
+        FfiConverterOptionString.write(value.signIn, into: &buf)
+        FfiConverterBool.write(value.signedIn, into: &buf)
     }
 }
 
@@ -6142,214 +6184,6 @@ public func FfiConverterTypeAppAuditInput_lower(_ value: AppAuditInput) -> RustB
 }
 
 
-public struct AppBillingCard: Equatable, Hashable {
-    /**
-     * `visa`, `mastercard`, ...
-     */
-    public var brand: String
-    /**
-     * Last four digits.
-     */
-    public var last4: String
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * `visa`, `mastercard`, ...
-         */brand: String,
-        /**
-         * Last four digits.
-         */last4: String) {
-        self.brand = brand
-        self.last4 = last4
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension AppBillingCard: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeAppBillingCard: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppBillingCard {
-        return
-            try AppBillingCard(
-                brand: FfiConverterString.read(from: &buf),
-                last4: FfiConverterString.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: AppBillingCard, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.brand, into: &buf)
-        FfiConverterString.write(value.last4, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeAppBillingCard_lift(_ buf: RustBuffer) throws -> AppBillingCard {
-    return try FfiConverterTypeAppBillingCard.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeAppBillingCard_lower(_ value: AppBillingCard) -> RustBuffer {
-    return FfiConverterTypeAppBillingCard.lower(value)
-}
-
-
-public struct AppBillingCredit: Equatable, Hashable {
-    /**
-     * What is left, US cents.
-     */
-    public var balanceUsdCents: Int64
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * What is left, US cents.
-         */balanceUsdCents: Int64) {
-        self.balanceUsdCents = balanceUsdCents
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension AppBillingCredit: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeAppBillingCredit: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppBillingCredit {
-        return
-            try AppBillingCredit(
-                balanceUsdCents: FfiConverterInt64.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: AppBillingCredit, into buf: inout [UInt8]) {
-        FfiConverterInt64.write(value.balanceUsdCents, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeAppBillingCredit_lift(_ buf: RustBuffer) throws -> AppBillingCredit {
-    return try FfiConverterTypeAppBillingCredit.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeAppBillingCredit_lower(_ value: AppBillingCredit) -> RustBuffer {
-    return FfiConverterTypeAppBillingCredit.lower(value)
-}
-
-
-public struct AppBillingStatus: Equatable, Hashable {
-    /**
-     * Billing is on for this account (off: Settings shows no Billing row).
-     */
-    public var billingEnabled: Bool
-    /**
-     * The saved default card.
-     */
-    public var card: AppBillingCard?
-    /**
-     * The account's credit, when it has any.
-     */
-    public var credit: AppBillingCredit?
-    /**
-     * The website billing page (credit, cards, plans).
-     */
-    public var billingUrl: String?
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * Billing is on for this account (off: Settings shows no Billing row).
-         */billingEnabled: Bool,
-        /**
-         * The saved default card.
-         */card: AppBillingCard?,
-        /**
-         * The account's credit, when it has any.
-         */credit: AppBillingCredit?,
-        /**
-         * The website billing page (credit, cards, plans).
-         */billingUrl: String?) {
-        self.billingEnabled = billingEnabled
-        self.card = card
-        self.credit = credit
-        self.billingUrl = billingUrl
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension AppBillingStatus: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeAppBillingStatus: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppBillingStatus {
-        return
-            try AppBillingStatus(
-                billingEnabled: FfiConverterBool.read(from: &buf),
-                card: FfiConverterOptionTypeAppBillingCard.read(from: &buf),
-                credit: FfiConverterOptionTypeAppBillingCredit.read(from: &buf),
-                billingUrl: FfiConverterOptionString.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: AppBillingStatus, into buf: inout [UInt8]) {
-        FfiConverterBool.write(value.billingEnabled, into: &buf)
-        FfiConverterOptionTypeAppBillingCard.write(value.card, into: &buf)
-        FfiConverterOptionTypeAppBillingCredit.write(value.credit, into: &buf)
-        FfiConverterOptionString.write(value.billingUrl, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeAppBillingStatus_lift(_ buf: RustBuffer) throws -> AppBillingStatus {
-    return try FfiConverterTypeAppBillingStatus.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeAppBillingStatus_lower(_ value: AppBillingStatus) -> RustBuffer {
-    return FfiConverterTypeAppBillingStatus.lower(value)
-}
-
-
 public struct AppCatalogEntry: Equatable, Hashable {
     /**
      * Id.
@@ -6577,6 +6411,10 @@ public struct AppChecklistRow: Equatable, Hashable {
      * Done (ticked, struck through).
      */
     public var done: Bool
+    /**
+     * Skipped (struck through, not ticked); never with `done`.
+     */
+    public var skipped: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -6595,12 +6433,16 @@ public struct AppChecklistRow: Equatable, Hashable {
          */action: String,
         /**
          * Done (ticked, struck through).
-         */done: Bool) {
+         */done: Bool,
+        /**
+         * Skipped (struck through, not ticked); never with `done`.
+         */skipped: Bool) {
         self.step = step
         self.title = title
         self.detail = detail
         self.action = action
         self.done = done
+        self.skipped = skipped
     }
 
 
@@ -6623,7 +6465,8 @@ public struct FfiConverterTypeAppChecklistRow: FfiConverterRustBuffer {
                 title: FfiConverterString.read(from: &buf),
                 detail: FfiConverterString.read(from: &buf),
                 action: FfiConverterString.read(from: &buf),
-                done: FfiConverterBool.read(from: &buf)
+                done: FfiConverterBool.read(from: &buf),
+                skipped: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -6633,6 +6476,7 @@ public struct FfiConverterTypeAppChecklistRow: FfiConverterRustBuffer {
         FfiConverterString.write(value.detail, into: &buf)
         FfiConverterString.write(value.action, into: &buf)
         FfiConverterBool.write(value.done, into: &buf)
+        FfiConverterBool.write(value.skipped, into: &buf)
     }
 }
 
@@ -6751,6 +6595,12 @@ public struct AppChecklistState: Equatable, Hashable {
      * It was on screen once (`checklist_shown` was recorded).
      */
     public var shown: Bool
+    /**
+     * Steps skipped ("Skip"), each once, in checklist order: they count as
+     * done for the progress and for `complete`, and a skipped step done
+     * later shows as done.
+     */
+    public var skipped: [AppChecklistStep]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -6763,10 +6613,16 @@ public struct AppChecklistState: Equatable, Hashable {
          */dismissed: Bool,
         /**
          * It was on screen once (`checklist_shown` was recorded).
-         */shown: Bool) {
+         */shown: Bool,
+        /**
+         * Steps skipped ("Skip"), each once, in checklist order: they count as
+         * done for the progress and for `complete`, and a skipped step done
+         * later shows as done.
+         */skipped: [AppChecklistStep]) {
         self.done = done
         self.dismissed = dismissed
         self.shown = shown
+        self.skipped = skipped
     }
 
 
@@ -6787,7 +6643,8 @@ public struct FfiConverterTypeAppChecklistState: FfiConverterRustBuffer {
             try AppChecklistState(
                 done: FfiConverterSequenceTypeAppChecklistStep.read(from: &buf),
                 dismissed: FfiConverterBool.read(from: &buf),
-                shown: FfiConverterBool.read(from: &buf)
+                shown: FfiConverterBool.read(from: &buf),
+                skipped: FfiConverterSequenceTypeAppChecklistStep.read(from: &buf)
         )
     }
 
@@ -6795,6 +6652,7 @@ public struct FfiConverterTypeAppChecklistState: FfiConverterRustBuffer {
         FfiConverterSequenceTypeAppChecklistStep.write(value.done, into: &buf)
         FfiConverterBool.write(value.dismissed, into: &buf)
         FfiConverterBool.write(value.shown, into: &buf)
+        FfiConverterSequenceTypeAppChecklistStep.write(value.skipped, into: &buf)
     }
 }
 
@@ -6906,6 +6764,14 @@ public struct AppChecklistView: Equatable, Hashable {
      */
     public var closeLabel: String
     /**
+     * "Skip", on each step not done or skipped.
+     */
+    public var skipLabel: String
+    /**
+     * "Hide", or "Done" once complete: closes the checklist.
+     */
+    public var hideLabel: String
+    /**
      * The steps in order.
      */
     public var rows: [AppChecklistRow]
@@ -6932,6 +6798,12 @@ public struct AppChecklistView: Equatable, Hashable {
          * The close button's accessibility label.
          */closeLabel: String,
         /**
+         * "Skip", on each step not done or skipped.
+         */skipLabel: String,
+        /**
+         * "Hide", or "Done" once complete: closes the checklist.
+         */hideLabel: String,
+        /**
          * The steps in order.
          */rows: [AppChecklistRow]) {
         self.visible = visible
@@ -6940,6 +6812,8 @@ public struct AppChecklistView: Equatable, Hashable {
         self.detail = detail
         self.progress = progress
         self.closeLabel = closeLabel
+        self.skipLabel = skipLabel
+        self.hideLabel = hideLabel
         self.rows = rows
     }
 
@@ -6965,6 +6839,8 @@ public struct FfiConverterTypeAppChecklistView: FfiConverterRustBuffer {
                 detail: FfiConverterString.read(from: &buf),
                 progress: FfiConverterString.read(from: &buf),
                 closeLabel: FfiConverterString.read(from: &buf),
+                skipLabel: FfiConverterString.read(from: &buf),
+                hideLabel: FfiConverterString.read(from: &buf),
                 rows: FfiConverterSequenceTypeAppChecklistRow.read(from: &buf)
         )
     }
@@ -6976,6 +6852,8 @@ public struct FfiConverterTypeAppChecklistView: FfiConverterRustBuffer {
         FfiConverterString.write(value.detail, into: &buf)
         FfiConverterString.write(value.progress, into: &buf)
         FfiConverterString.write(value.closeLabel, into: &buf)
+        FfiConverterString.write(value.skipLabel, into: &buf)
+        FfiConverterString.write(value.hideLabel, into: &buf)
         FfiConverterSequenceTypeAppChecklistRow.write(value.rows, into: &buf)
     }
 }
@@ -7002,7 +6880,7 @@ public struct AppChromeInput: Equatable, Hashable {
      */
     public var identity: String?
     /**
-     * Cua Cloud works (signed in, or client credentials).
+     * The Cua account works (signed in, or client credentials).
      */
     public var cloudConfigured: Bool
     /**
@@ -7022,7 +6900,7 @@ public struct AppChromeInput: Equatable, Hashable {
          * The signed-in account.
          */identity: String?,
         /**
-         * Cua Cloud works (signed in, or client credentials).
+         * The Cua account works (signed in, or client credentials).
          */cloudConfigured: Bool,
         /**
          * Signing in is possible here (the native shell).
@@ -7118,7 +6996,8 @@ public struct AppCliInstallPlan: Equatable, Hashable {
      */
     public var bundledVersion: String?
     /**
-     * Another `cua` found earlier on PATH (it would shadow `target`).
+     * Another CLI of the same name found earlier on PATH (it would shadow
+     * `target`).
      */
     public var shadowedBy: String?
     /**
@@ -7133,6 +7012,13 @@ public struct AppCliInstallPlan: Equatable, Hashable {
      * The line that would be added to `path_profile`.
      */
     public var pathLine: String?
+    /**
+     * A working CLI of this channel already on this machine: `target`, else
+     * the first in the usual install folders or on PATH (a Finder-launched
+     * app's PATH lacks `~/.local/bin`, so the folders are searched too).
+     * Local looks for `cua-local` only: a Stable `cua` is not its CLI.
+     */
+    public var found: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -7162,7 +7048,8 @@ public struct AppCliInstallPlan: Equatable, Hashable {
          * `cua --version` of the bundled CLI.
          */bundledVersion: String?,
         /**
-         * Another `cua` found earlier on PATH (it would shadow `target`).
+         * Another CLI of the same name found earlier on PATH (it would shadow
+         * `target`).
          */shadowedBy: String?,
         /**
          * `bin_dir` is already on PATH.
@@ -7172,7 +7059,13 @@ public struct AppCliInstallPlan: Equatable, Hashable {
          */pathProfile: String?,
         /**
          * The line that would be added to `path_profile`.
-         */pathLine: String?) {
+         */pathLine: String?,
+        /**
+         * A working CLI of this channel already on this machine: `target`, else
+         * the first in the usual install folders or on PATH (a Finder-launched
+         * app's PATH lacks `~/.local/bin`, so the folders are searched too).
+         * Local looks for `cua-local` only: a Stable `cua` is not its CLI.
+         */found: String?) {
         self.source = source
         self.target = target
         self.binDir = binDir
@@ -7185,6 +7078,7 @@ public struct AppCliInstallPlan: Equatable, Hashable {
         self.onPath = onPath
         self.pathProfile = pathProfile
         self.pathLine = pathLine
+        self.found = found
     }
 
 
@@ -7214,7 +7108,8 @@ public struct FfiConverterTypeAppCliInstallPlan: FfiConverterRustBuffer {
                 shadowedBy: FfiConverterOptionString.read(from: &buf),
                 onPath: FfiConverterBool.read(from: &buf),
                 pathProfile: FfiConverterOptionString.read(from: &buf),
-                pathLine: FfiConverterOptionString.read(from: &buf)
+                pathLine: FfiConverterOptionString.read(from: &buf),
+                found: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -7231,6 +7126,7 @@ public struct FfiConverterTypeAppCliInstallPlan: FfiConverterRustBuffer {
         FfiConverterBool.write(value.onPath, into: &buf)
         FfiConverterOptionString.write(value.pathProfile, into: &buf)
         FfiConverterOptionString.write(value.pathLine, into: &buf)
+        FfiConverterOptionString.write(value.found, into: &buf)
     }
 }
 
@@ -7522,6 +7418,11 @@ public struct AppCloudConnectState: Equatable, Hashable {
      */
     public var makeDefault: Bool
     /**
+     * The shell's token field (Hetzner) is not empty. Only this flag
+     * lives here; the token itself stays in the shell's secure field.
+     */
+    public var tokenEntered: Bool
+    /**
      * Where it is.
      */
     public var phase: AppCloudConnectPhase
@@ -7542,12 +7443,17 @@ public struct AppCloudConnectState: Equatable, Hashable {
          * Also make it the default location.
          */makeDefault: Bool,
         /**
+         * The shell's token field (Hetzner) is not empty. Only this flag
+         * lives here; the token itself stays in the shell's secure field.
+         */tokenEntered: Bool,
+        /**
          * Where it is.
          */phase: AppCloudConnectPhase) {
         self.selected = selected
         self.value = value
         self.profile = profile
         self.makeDefault = makeDefault
+        self.tokenEntered = tokenEntered
         self.phase = phase
     }
 
@@ -7571,6 +7477,7 @@ public struct FfiConverterTypeAppCloudConnectState: FfiConverterRustBuffer {
                 value: FfiConverterString.read(from: &buf),
                 profile: FfiConverterString.read(from: &buf),
                 makeDefault: FfiConverterBool.read(from: &buf),
+                tokenEntered: FfiConverterBool.read(from: &buf),
                 phase: FfiConverterTypeAppCloudConnectPhase.read(from: &buf)
         )
     }
@@ -7580,6 +7487,7 @@ public struct FfiConverterTypeAppCloudConnectState: FfiConverterRustBuffer {
         FfiConverterString.write(value.value, into: &buf)
         FfiConverterString.write(value.profile, into: &buf)
         FfiConverterBool.write(value.makeDefault, into: &buf)
+        FfiConverterBool.write(value.tokenEntered, into: &buf)
         FfiConverterTypeAppCloudConnectPhase.write(value.phase, into: &buf)
     }
 }
@@ -7617,6 +7525,11 @@ public struct AppCloudConnectView: Equatable, Hashable {
      * The profile field (AWS, Modal).
      */
     public var profileField: AppCloudField?
+    /**
+     * The API token field (Hetzner only): a masked field whose value the
+     * shell keeps (`value` is always empty here).
+     */
+    public var tokenField: AppCloudField?
     /**
      * The checks the last test ran.
      */
@@ -7693,6 +7606,10 @@ public struct AppCloudConnectView: Equatable, Hashable {
          * The profile field (AWS, Modal).
          */profileField: AppCloudField?,
         /**
+         * The API token field (Hetzner only): a masked field whose value the
+         * shell keeps (`value` is always empty here).
+         */tokenField: AppCloudField?,
+        /**
          * The checks the last test ran.
          */checks: [AppCloudCheckRow],
         /**
@@ -7741,6 +7658,7 @@ public struct AppCloudConnectView: Equatable, Hashable {
         self.rows = rows
         self.field = field
         self.profileField = profileField
+        self.tokenField = tokenField
         self.checks = checks
         self.result = result
         self.touches = touches
@@ -7777,6 +7695,7 @@ public struct FfiConverterTypeAppCloudConnectView: FfiConverterRustBuffer {
                 rows: FfiConverterSequenceTypeAppCloudProviderRow.read(from: &buf),
                 field: FfiConverterOptionTypeAppCloudField.read(from: &buf),
                 profileField: FfiConverterOptionTypeAppCloudField.read(from: &buf),
+                tokenField: FfiConverterOptionTypeAppCloudField.read(from: &buf),
                 checks: FfiConverterSequenceTypeAppCloudCheckRow.read(from: &buf),
                 result: FfiConverterOptionString.read(from: &buf),
                 touches: FfiConverterSequenceString.read(from: &buf),
@@ -7799,6 +7718,7 @@ public struct FfiConverterTypeAppCloudConnectView: FfiConverterRustBuffer {
         FfiConverterSequenceTypeAppCloudProviderRow.write(value.rows, into: &buf)
         FfiConverterOptionTypeAppCloudField.write(value.field, into: &buf)
         FfiConverterOptionTypeAppCloudField.write(value.profileField, into: &buf)
+        FfiConverterOptionTypeAppCloudField.write(value.tokenField, into: &buf)
         FfiConverterSequenceTypeAppCloudCheckRow.write(value.checks, into: &buf)
         FfiConverterOptionString.write(value.result, into: &buf)
         FfiConverterSequenceString.write(value.touches, into: &buf)
@@ -8026,79 +7946,13 @@ public func FfiConverterTypeAppCloudOffer_lower(_ value: AppCloudOffer) -> RustB
 }
 
 
-public struct AppCloudPricing: Equatable, Hashable {
-    /**
-     * USD per reserved vCPU per hour.
-     */
-    public var vcpuHourUsd: Double
-    /**
-     * USD per reserved GB (GiB) of memory per hour.
-     */
-    public var memoryGibHourUsd: Double
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * USD per reserved vCPU per hour.
-         */vcpuHourUsd: Double,
-        /**
-         * USD per reserved GB (GiB) of memory per hour.
-         */memoryGibHourUsd: Double) {
-        self.vcpuHourUsd = vcpuHourUsd
-        self.memoryGibHourUsd = memoryGibHourUsd
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension AppCloudPricing: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeAppCloudPricing: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppCloudPricing {
-        return
-            try AppCloudPricing(
-                vcpuHourUsd: FfiConverterDouble.read(from: &buf),
-                memoryGibHourUsd: FfiConverterDouble.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: AppCloudPricing, into buf: inout [UInt8]) {
-        FfiConverterDouble.write(value.vcpuHourUsd, into: &buf)
-        FfiConverterDouble.write(value.memoryGibHourUsd, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeAppCloudPricing_lift(_ buf: RustBuffer) throws -> AppCloudPricing {
-    return try FfiConverterTypeAppCloudPricing.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeAppCloudPricing_lower(_ value: AppCloudPricing) -> RustBuffer {
-    return FfiConverterTypeAppCloudPricing.lower(value)
-}
-
-
 public struct AppCloudProviderInput: Equatable, Hashable {
     /**
-     * `aws`, `gcp`, `modal`.
+     * `aws`, `gcp`, `hetzner`, `modal`.
      */
     public var name: String
     /**
-     * `AWS`, `Google Cloud`, `Modal`.
+     * `AWS`, `Google Cloud`, `Hetzner`, `Modal`.
      */
     public var title: String
     /**
@@ -8138,10 +7992,10 @@ public struct AppCloudProviderInput: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * `aws`, `gcp`, `modal`.
+         * `aws`, `gcp`, `hetzner`, `modal`.
          */name: String,
         /**
-         * `AWS`, `Google Cloud`, `Modal`.
+         * `AWS`, `Google Cloud`, `Hetzner`, `Modal`.
          */title: String,
         /**
          * Connected already.
@@ -8338,7 +8192,7 @@ public func FfiConverterTypeAppCloudProviderRow_lower(_ value: AppCloudProviderR
 
 public struct AppCloudTargetArgs: Equatable, Hashable {
     /**
-     * `aws`, `gcp`, `modal`.
+     * `aws`, `gcp`, `hetzner`, `modal`.
      */
     public var provider: String
     /**
@@ -8357,12 +8211,17 @@ public struct AppCloudTargetArgs: Equatable, Hashable {
      * Modal environment.
      */
     public var environment: String?
+    /**
+     * Hetzner: the shell attaches the API token it holds as the call's
+     * secret `token`. The token itself is never in this value.
+     */
+    public var usesToken: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
     public init(
         /**
-         * `aws`, `gcp`, `modal`.
+         * `aws`, `gcp`, `hetzner`, `modal`.
          */provider: String,
         /**
          * AWS or Modal profile.
@@ -8375,12 +8234,17 @@ public struct AppCloudTargetArgs: Equatable, Hashable {
          */project: String?,
         /**
          * Modal environment.
-         */environment: String?) {
+         */environment: String?,
+        /**
+         * Hetzner: the shell attaches the API token it holds as the call's
+         * secret `token`. The token itself is never in this value.
+         */usesToken: Bool) {
         self.provider = provider
         self.profile = profile
         self.region = region
         self.project = project
         self.environment = environment
+        self.usesToken = usesToken
     }
 
 
@@ -8403,7 +8267,8 @@ public struct FfiConverterTypeAppCloudTargetArgs: FfiConverterRustBuffer {
                 profile: FfiConverterOptionString.read(from: &buf),
                 region: FfiConverterOptionString.read(from: &buf),
                 project: FfiConverterOptionString.read(from: &buf),
-                environment: FfiConverterOptionString.read(from: &buf)
+                environment: FfiConverterOptionString.read(from: &buf),
+                usesToken: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -8413,6 +8278,7 @@ public struct FfiConverterTypeAppCloudTargetArgs: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.region, into: &buf)
         FfiConverterOptionString.write(value.project, into: &buf)
         FfiConverterOptionString.write(value.environment, into: &buf)
+        FfiConverterBool.write(value.usesToken, into: &buf)
     }
 }
 
@@ -8487,6 +8353,360 @@ public func FfiConverterTypeAppComputerGrantInput_lift(_ buf: RustBuffer) throws
 #endif
 public func FfiConverterTypeAppComputerGrantInput_lower(_ value: AppComputerGrantInput) -> RustBuffer {
     return FfiConverterTypeAppComputerGrantInput.lower(value)
+}
+
+
+public struct AppComputerResources: Equatable, Hashable {
+    /**
+     * `this-mac`, or the relay machine id.
+     */
+    public var id: String
+    /**
+     * Display name (empty for this Mac).
+     */
+    public var name: String
+    /**
+     * Reachable now.
+     */
+    public var online: Bool
+    /**
+     * When the computer measured this, Unix ms.
+     */
+    public var sampledAtMs: UInt64
+    /**
+     * Processor cores.
+     */
+    public var cpuCount: UInt32
+    /**
+     * Busy now, 0 to 100.
+     */
+    public var cpuPercent: Double
+    /**
+     * 1-minute load average.
+     */
+    public var loadAverage1m: Double
+    /**
+     * Memory size, bytes.
+     */
+    public var memoryTotal: UInt64
+    /**
+     * Memory in use, bytes.
+     */
+    public var memoryUsed: UInt64
+    /**
+     * Size of the volume that holds Spaces, bytes.
+     */
+    public var diskTotal: UInt64
+    /**
+     * Free bytes on it.
+     */
+    public var diskFree: UInt64
+    /**
+     * Extra Spaces on it.
+     */
+    public var spacesCount: UInt32
+    /**
+     * Of those, running.
+     */
+    public var spacesRunning: UInt32
+    /**
+     * Cores given to the running ones.
+     */
+    public var spacesCpuAllocated: UInt32
+    /**
+     * Memory given to the running ones, bytes.
+     */
+    public var spacesMemoryAllocated: UInt64
+    /**
+     * Memory the running guests report in use, bytes.
+     */
+    public var spacesMemoryUsed: UInt64
+    /**
+     * Bytes all its extra Spaces take on it.
+     */
+    public var spacesDiskBytes: UInt64
+    /**
+     * False when some Space's disk could only be estimated.
+     */
+    public var spacesDiskExact: Bool
+    /**
+     * The low-disk signal.
+     */
+    public var warning: AppDiskWarning
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `this-mac`, or the relay machine id.
+         */id: String,
+        /**
+         * Display name (empty for this Mac).
+         */name: String,
+        /**
+         * Reachable now.
+         */online: Bool,
+        /**
+         * When the computer measured this, Unix ms.
+         */sampledAtMs: UInt64,
+        /**
+         * Processor cores.
+         */cpuCount: UInt32,
+        /**
+         * Busy now, 0 to 100.
+         */cpuPercent: Double,
+        /**
+         * 1-minute load average.
+         */loadAverage1m: Double,
+        /**
+         * Memory size, bytes.
+         */memoryTotal: UInt64,
+        /**
+         * Memory in use, bytes.
+         */memoryUsed: UInt64,
+        /**
+         * Size of the volume that holds Spaces, bytes.
+         */diskTotal: UInt64,
+        /**
+         * Free bytes on it.
+         */diskFree: UInt64,
+        /**
+         * Extra Spaces on it.
+         */spacesCount: UInt32,
+        /**
+         * Of those, running.
+         */spacesRunning: UInt32,
+        /**
+         * Cores given to the running ones.
+         */spacesCpuAllocated: UInt32,
+        /**
+         * Memory given to the running ones, bytes.
+         */spacesMemoryAllocated: UInt64,
+        /**
+         * Memory the running guests report in use, bytes.
+         */spacesMemoryUsed: UInt64,
+        /**
+         * Bytes all its extra Spaces take on it.
+         */spacesDiskBytes: UInt64,
+        /**
+         * False when some Space's disk could only be estimated.
+         */spacesDiskExact: Bool,
+        /**
+         * The low-disk signal.
+         */warning: AppDiskWarning) {
+        self.id = id
+        self.name = name
+        self.online = online
+        self.sampledAtMs = sampledAtMs
+        self.cpuCount = cpuCount
+        self.cpuPercent = cpuPercent
+        self.loadAverage1m = loadAverage1m
+        self.memoryTotal = memoryTotal
+        self.memoryUsed = memoryUsed
+        self.diskTotal = diskTotal
+        self.diskFree = diskFree
+        self.spacesCount = spacesCount
+        self.spacesRunning = spacesRunning
+        self.spacesCpuAllocated = spacesCpuAllocated
+        self.spacesMemoryAllocated = spacesMemoryAllocated
+        self.spacesMemoryUsed = spacesMemoryUsed
+        self.spacesDiskBytes = spacesDiskBytes
+        self.spacesDiskExact = spacesDiskExact
+        self.warning = warning
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppComputerResources: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppComputerResources: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppComputerResources {
+        return
+            try AppComputerResources(
+                id: FfiConverterString.read(from: &buf),
+                name: FfiConverterString.read(from: &buf),
+                online: FfiConverterBool.read(from: &buf),
+                sampledAtMs: FfiConverterUInt64.read(from: &buf),
+                cpuCount: FfiConverterUInt32.read(from: &buf),
+                cpuPercent: FfiConverterDouble.read(from: &buf),
+                loadAverage1m: FfiConverterDouble.read(from: &buf),
+                memoryTotal: FfiConverterUInt64.read(from: &buf),
+                memoryUsed: FfiConverterUInt64.read(from: &buf),
+                diskTotal: FfiConverterUInt64.read(from: &buf),
+                diskFree: FfiConverterUInt64.read(from: &buf),
+                spacesCount: FfiConverterUInt32.read(from: &buf),
+                spacesRunning: FfiConverterUInt32.read(from: &buf),
+                spacesCpuAllocated: FfiConverterUInt32.read(from: &buf),
+                spacesMemoryAllocated: FfiConverterUInt64.read(from: &buf),
+                spacesMemoryUsed: FfiConverterUInt64.read(from: &buf),
+                spacesDiskBytes: FfiConverterUInt64.read(from: &buf),
+                spacesDiskExact: FfiConverterBool.read(from: &buf),
+                warning: FfiConverterTypeAppDiskWarning.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppComputerResources, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterBool.write(value.online, into: &buf)
+        FfiConverterUInt64.write(value.sampledAtMs, into: &buf)
+        FfiConverterUInt32.write(value.cpuCount, into: &buf)
+        FfiConverterDouble.write(value.cpuPercent, into: &buf)
+        FfiConverterDouble.write(value.loadAverage1m, into: &buf)
+        FfiConverterUInt64.write(value.memoryTotal, into: &buf)
+        FfiConverterUInt64.write(value.memoryUsed, into: &buf)
+        FfiConverterUInt64.write(value.diskTotal, into: &buf)
+        FfiConverterUInt64.write(value.diskFree, into: &buf)
+        FfiConverterUInt32.write(value.spacesCount, into: &buf)
+        FfiConverterUInt32.write(value.spacesRunning, into: &buf)
+        FfiConverterUInt32.write(value.spacesCpuAllocated, into: &buf)
+        FfiConverterUInt64.write(value.spacesMemoryAllocated, into: &buf)
+        FfiConverterUInt64.write(value.spacesMemoryUsed, into: &buf)
+        FfiConverterUInt64.write(value.spacesDiskBytes, into: &buf)
+        FfiConverterBool.write(value.spacesDiskExact, into: &buf)
+        FfiConverterTypeAppDiskWarning.write(value.warning, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppComputerResources_lift(_ buf: RustBuffer) throws -> AppComputerResources {
+    return try FfiConverterTypeAppComputerResources.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppComputerResources_lower(_ value: AppComputerResources) -> RustBuffer {
+    return FfiConverterTypeAppComputerResources.lower(value)
+}
+
+
+public struct AppComputerView: Equatable, Hashable {
+    /**
+     * The computer's id.
+     */
+    public var id: String
+    /**
+     * Its name.
+     */
+    public var name: String
+    /**
+     * Reachable now.
+     */
+    public var online: Bool
+    /**
+     * "Offline, as of 5 min ago" or "Updated 2 min ago"; none when the
+     * numbers are a moment old.
+     */
+    public var age: String?
+    /**
+     * Processor, Memory, Space for files.
+     */
+    public var rows: [AppResourceRow]
+    /**
+     * "Its extra Spaces use: ..." (see [`ThisMacView::extra_spaces`]).
+     */
+    public var extraSpaces: String?
+    /**
+     * The warning, when its disk is low.
+     */
+    public var warning: AppWarningView?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The computer's id.
+         */id: String,
+        /**
+         * Its name.
+         */name: String,
+        /**
+         * Reachable now.
+         */online: Bool,
+        /**
+         * "Offline, as of 5 min ago" or "Updated 2 min ago"; none when the
+         * numbers are a moment old.
+         */age: String?,
+        /**
+         * Processor, Memory, Space for files.
+         */rows: [AppResourceRow],
+        /**
+         * "Its extra Spaces use: ..." (see [`ThisMacView::extra_spaces`]).
+         */extraSpaces: String?,
+        /**
+         * The warning, when its disk is low.
+         */warning: AppWarningView?) {
+        self.id = id
+        self.name = name
+        self.online = online
+        self.age = age
+        self.rows = rows
+        self.extraSpaces = extraSpaces
+        self.warning = warning
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppComputerView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppComputerView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppComputerView {
+        return
+            try AppComputerView(
+                id: FfiConverterString.read(from: &buf),
+                name: FfiConverterString.read(from: &buf),
+                online: FfiConverterBool.read(from: &buf),
+                age: FfiConverterOptionString.read(from: &buf),
+                rows: FfiConverterSequenceTypeAppResourceRow.read(from: &buf),
+                extraSpaces: FfiConverterOptionString.read(from: &buf),
+                warning: FfiConverterOptionTypeAppWarningView.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppComputerView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterBool.write(value.online, into: &buf)
+        FfiConverterOptionString.write(value.age, into: &buf)
+        FfiConverterSequenceTypeAppResourceRow.write(value.rows, into: &buf)
+        FfiConverterOptionString.write(value.extraSpaces, into: &buf)
+        FfiConverterOptionTypeAppWarningView.write(value.warning, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppComputerView_lift(_ buf: RustBuffer) throws -> AppComputerView {
+    return try FfiConverterTypeAppComputerView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppComputerView_lower(_ value: AppComputerView) -> RustBuffer {
+    return FfiConverterTypeAppComputerView.lower(value)
 }
 
 
@@ -8586,7 +8806,7 @@ public func FfiConverterTypeAppConflictView_lower(_ value: AppConflictView) -> R
 
 public struct AppConnectedCloud: Equatable, Hashable {
     /**
-     * The SDK's `on` word: `aws`, `gcp`, `modal`.
+     * The SDK's `on` word: `aws`, `gcp`, `hetzner`, `modal`.
      */
     public var name: String
     /**
@@ -8614,7 +8834,7 @@ public struct AppConnectedCloud: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * The SDK's `on` word: `aws`, `gcp`, `modal`.
+         * The SDK's `on` word: `aws`, `gcp`, `hetzner`, `modal`.
          */name: String,
         /**
          * `AWS`, `Google Cloud`, `Modal`.
@@ -8796,6 +9016,92 @@ public func FfiConverterTypeAppConsentItem_lower(_ value: AppConsentItem) -> Rus
 }
 
 
+public struct AppCreateFix: Equatable, Hashable {
+    /**
+     * What is wrong and what to do, in plain words.
+     */
+    public var text: String
+    /**
+     * The button's words.
+     */
+    public var label: String
+    /**
+     * What the button does.
+     */
+    public var action: AppCreateFixAction
+    /**
+     * The command to copy or the page to open.
+     */
+    public var value: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * What is wrong and what to do, in plain words.
+         */text: String,
+        /**
+         * The button's words.
+         */label: String,
+        /**
+         * What the button does.
+         */action: AppCreateFixAction,
+        /**
+         * The command to copy or the page to open.
+         */value: String?) {
+        self.text = text
+        self.label = label
+        self.action = action
+        self.value = value
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppCreateFix: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppCreateFix: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppCreateFix {
+        return
+            try AppCreateFix(
+                text: FfiConverterString.read(from: &buf),
+                label: FfiConverterString.read(from: &buf),
+                action: FfiConverterTypeAppCreateFixAction.read(from: &buf),
+                value: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppCreateFix, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.text, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterTypeAppCreateFixAction.write(value.action, into: &buf)
+        FfiConverterOptionString.write(value.value, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppCreateFix_lift(_ buf: RustBuffer) throws -> AppCreateFix {
+    return try FfiConverterTypeAppCreateFix.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppCreateFix_lower(_ value: AppCreateFix) -> RustBuffer {
+    return FfiConverterTypeAppCreateFix.lower(value)
+}
+
+
 public struct AppCreatePlan: Equatable, Hashable {
     /**
      * Where.
@@ -8822,11 +9128,11 @@ public struct AppCreatePlan: Equatable, Hashable {
      */
     public var name: String?
     /**
-     * vCPUs (local and Cua Cloud).
+     * vCPUs (local and remote).
      */
     public var cpus: UInt32?
     /**
-     * Memory MB (local and Cua Cloud).
+     * Memory MB (local and remote).
      */
     public var memoryMb: UInt32?
     /**
@@ -8870,10 +9176,10 @@ public struct AppCreatePlan: Equatable, Hashable {
          * Name, when given.
          */name: String?,
         /**
-         * vCPUs (local and Cua Cloud).
+         * vCPUs (local and remote).
          */cpus: UInt32?,
         /**
-         * Memory MB (local and Cua Cloud).
+         * Memory MB (local and remote).
          */memoryMb: UInt32?,
         /**
          * Local VMs only: grow the disk to this many GB (larger than the
@@ -8972,8 +9278,8 @@ public struct AppCreateSpaceArgs: Equatable, Hashable {
      */
     public var image: String
     /**
-     * The SDK's `on`: `local`, `cloud`, `host:<machine>`, or a connected
-     * cloud's word (`aws`, `gcp`, `modal`).
+     * The SDK's `on`: `local`, `cloud`, `auto`, `host:<machine>`, or a
+     * connected cloud's word (`aws`, `gcp`, `hetzner`, `modal`).
      */
     public var on: String
     /**
@@ -9016,8 +9322,8 @@ public struct AppCreateSpaceArgs: Equatable, Hashable {
          * Image ref.
          */image: String,
         /**
-         * The SDK's `on`: `local`, `cloud`, `host:<machine>`, or a connected
-         * cloud's word (`aws`, `gcp`, `modal`).
+         * The SDK's `on`: `local`, `cloud`, `auto`, `host:<machine>`, or a
+         * connected cloud's word (`aws`, `gcp`, `hetzner`, `modal`).
          */on: String,
         /**
          * `container` / `vm`.
@@ -9127,6 +9433,12 @@ public struct AppCreatesState: Equatable, Hashable {
      * Spaces being turned off or on (or whose last try failed).
      */
     public var powering: [AppPendingPower]
+    /**
+     * The same failure in a row, per cause, machine and image (kept when
+     * the failed row is dismissed; a success there clears it). No error
+     * text, only the cause word.
+     */
+    public var streaks: [AppFailureStreak]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -9139,10 +9451,16 @@ public struct AppCreatesState: Equatable, Hashable {
          */deleting: [AppPendingDelete],
         /**
          * Spaces being turned off or on (or whose last try failed).
-         */powering: [AppPendingPower]) {
+         */powering: [AppPendingPower],
+        /**
+         * The same failure in a row, per cause, machine and image (kept when
+         * the failed row is dismissed; a success there clears it). No error
+         * text, only the cause word.
+         */streaks: [AppFailureStreak]) {
         self.pending = pending
         self.deleting = deleting
         self.powering = powering
+        self.streaks = streaks
     }
 
 
@@ -9163,7 +9481,8 @@ public struct FfiConverterTypeAppCreatesState: FfiConverterRustBuffer {
             try AppCreatesState(
                 pending: FfiConverterSequenceTypeAppPendingCreate.read(from: &buf),
                 deleting: FfiConverterSequenceTypeAppPendingDelete.read(from: &buf),
-                powering: FfiConverterSequenceTypeAppPendingPower.read(from: &buf)
+                powering: FfiConverterSequenceTypeAppPendingPower.read(from: &buf),
+                streaks: FfiConverterSequenceTypeAppFailureStreak.read(from: &buf)
         )
     }
 
@@ -9171,6 +9490,7 @@ public struct FfiConverterTypeAppCreatesState: FfiConverterRustBuffer {
         FfiConverterSequenceTypeAppPendingCreate.write(value.pending, into: &buf)
         FfiConverterSequenceTypeAppPendingDelete.write(value.deleting, into: &buf)
         FfiConverterSequenceTypeAppPendingPower.write(value.powering, into: &buf)
+        FfiConverterSequenceTypeAppFailureStreak.write(value.streaks, into: &buf)
     }
 }
 
@@ -9187,82 +9507,6 @@ public func FfiConverterTypeAppCreatesState_lift(_ buf: RustBuffer) throws -> Ap
 #endif
 public func FfiConverterTypeAppCreatesState_lower(_ value: AppCreatesState) -> RustBuffer {
     return FfiConverterTypeAppCreatesState.lower(value)
-}
-
-
-public struct AppCreditNotice: Equatable, Hashable {
-    /**
-     * [`OUT_OF_CREDIT`].
-     */
-    public var text: String
-    /**
-     * [`ADD_CREDIT`].
-     */
-    public var button: String
-    /**
-     * The website billing page.
-     */
-    public var url: String
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * [`OUT_OF_CREDIT`].
-         */text: String,
-        /**
-         * [`ADD_CREDIT`].
-         */button: String,
-        /**
-         * The website billing page.
-         */url: String) {
-        self.text = text
-        self.button = button
-        self.url = url
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension AppCreditNotice: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeAppCreditNotice: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppCreditNotice {
-        return
-            try AppCreditNotice(
-                text: FfiConverterString.read(from: &buf),
-                button: FfiConverterString.read(from: &buf),
-                url: FfiConverterString.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: AppCreditNotice, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.text, into: &buf)
-        FfiConverterString.write(value.button, into: &buf)
-        FfiConverterString.write(value.url, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeAppCreditNotice_lift(_ buf: RustBuffer) throws -> AppCreditNotice {
-    return try FfiConverterTypeAppCreditNotice.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeAppCreditNotice_lower(_ value: AppCreditNotice) -> RustBuffer {
-    return FfiConverterTypeAppCreditNotice.lower(value)
 }
 
 
@@ -11001,6 +11245,168 @@ public func FfiConverterTypeAppDevicesView_lift(_ buf: RustBuffer) throws -> App
 #endif
 public func FfiConverterTypeAppDevicesView_lower(_ value: AppDevicesView) -> RustBuffer {
     return FfiConverterTypeAppDevicesView.lower(value)
+}
+
+
+public struct AppDiskOnHost: Equatable, Hashable {
+    /**
+     * Bytes only this Space holds; none when they could not be measured.
+     */
+    public var bytes: UInt64?
+    /**
+     * Blocks its files occupy, clones counted in full.
+     */
+    public var allocated: UInt64
+    /**
+     * Part of it is shared with other copies.
+     */
+    public var sharesSpace: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Bytes only this Space holds; none when they could not be measured.
+         */bytes: UInt64?,
+        /**
+         * Blocks its files occupy, clones counted in full.
+         */allocated: UInt64,
+        /**
+         * Part of it is shared with other copies.
+         */sharesSpace: Bool) {
+        self.bytes = bytes
+        self.allocated = allocated
+        self.sharesSpace = sharesSpace
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppDiskOnHost: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppDiskOnHost: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppDiskOnHost {
+        return
+            try AppDiskOnHost(
+                bytes: FfiConverterOptionUInt64.read(from: &buf),
+                allocated: FfiConverterUInt64.read(from: &buf),
+                sharesSpace: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppDiskOnHost, into buf: inout [UInt8]) {
+        FfiConverterOptionUInt64.write(value.bytes, into: &buf)
+        FfiConverterUInt64.write(value.allocated, into: &buf)
+        FfiConverterBool.write(value.sharesSpace, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppDiskOnHost_lift(_ buf: RustBuffer) throws -> AppDiskOnHost {
+    return try FfiConverterTypeAppDiskOnHost.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppDiskOnHost_lower(_ value: AppDiskOnHost) -> RustBuffer {
+    return FfiConverterTypeAppDiskOnHost.lower(value)
+}
+
+
+public struct AppDiskWarning: Equatable, Hashable {
+    /**
+     * How low it is.
+     */
+    public var level: AppDiskLevel
+    /**
+     * Free bytes on the volume that holds Spaces.
+     */
+    public var free: UInt64
+    /**
+     * Size of that volume.
+     */
+    public var total: UInt64
+    /**
+     * The line that was crossed (0 when ok).
+     */
+    public var threshold: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * How low it is.
+         */level: AppDiskLevel,
+        /**
+         * Free bytes on the volume that holds Spaces.
+         */free: UInt64,
+        /**
+         * Size of that volume.
+         */total: UInt64,
+        /**
+         * The line that was crossed (0 when ok).
+         */threshold: UInt64) {
+        self.level = level
+        self.free = free
+        self.total = total
+        self.threshold = threshold
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppDiskWarning: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppDiskWarning: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppDiskWarning {
+        return
+            try AppDiskWarning(
+                level: FfiConverterTypeAppDiskLevel.read(from: &buf),
+                free: FfiConverterUInt64.read(from: &buf),
+                total: FfiConverterUInt64.read(from: &buf),
+                threshold: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppDiskWarning, into buf: inout [UInt8]) {
+        FfiConverterTypeAppDiskLevel.write(value.level, into: &buf)
+        FfiConverterUInt64.write(value.free, into: &buf)
+        FfiConverterUInt64.write(value.total, into: &buf)
+        FfiConverterUInt64.write(value.threshold, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppDiskWarning_lift(_ buf: RustBuffer) throws -> AppDiskWarning {
+    return try FfiConverterTypeAppDiskWarning.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppDiskWarning_lower(_ value: AppDiskWarning) -> RustBuffer {
+    return FfiConverterTypeAppDiskWarning.lower(value)
 }
 
 
@@ -13935,8 +14341,8 @@ public struct AppExperiments: Equatable, Hashable {
      */
     public var sharing: Bool
     /**
-     * The New UI (the shared web UI) is the main window: the user's choice
-     * or, without one, [`new_ui_default`] ([`crate::settings::resolve_new_ui`]).
+     * The shared web UI is the main window. Always on in the macOS shell
+     * ([`crate::settings::resolve_new_ui`]); kept for older files and builds.
      */
     public var webUi: Bool
 
@@ -13954,8 +14360,8 @@ public struct AppExperiments: Equatable, Hashable {
          * key reads as on (the plans on cua.ai/pricing list sharing).
          */sharing: Bool,
         /**
-         * The New UI (the shared web UI) is the main window: the user's choice
-         * or, without one, [`new_ui_default`] ([`crate::settings::resolve_new_ui`]).
+         * The shared web UI is the main window. Always on in the macOS shell
+         * ([`crate::settings::resolve_new_ui`]); kept for older files and builds.
          */webUi: Bool) {
         self.cuaVolume = cuaVolume
         self.yourCloud = yourCloud
@@ -14007,6 +14413,218 @@ public func FfiConverterTypeAppExperiments_lift(_ buf: RustBuffer) throws -> App
 #endif
 public func FfiConverterTypeAppExperiments_lower(_ value: AppExperiments) -> RustBuffer {
     return FfiConverterTypeAppExperiments.lower(value)
+}
+
+
+public struct AppExternalImage: Equatable, Hashable {
+    /**
+     * The reference to create a Space from.
+     */
+    public var reference: String
+    /**
+     * A short title.
+     */
+    public var title: String
+    /**
+     * The provider's default image.
+     */
+    public var `default`: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The reference to create a Space from.
+         */reference: String,
+        /**
+         * A short title.
+         */title: String,
+        /**
+         * The provider's default image.
+         */`default`: Bool) {
+        self.reference = reference
+        self.title = title
+        self.`default` = `default`
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppExternalImage: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppExternalImage: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppExternalImage {
+        return
+            try AppExternalImage(
+                reference: FfiConverterString.read(from: &buf),
+                title: FfiConverterString.read(from: &buf),
+                default: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppExternalImage, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.reference, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterBool.write(value.`default`, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppExternalImage_lift(_ buf: RustBuffer) throws -> AppExternalImage {
+    return try FfiConverterTypeAppExternalImage.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppExternalImage_lower(_ value: AppExternalImage) -> RustBuffer {
+    return FfiConverterTypeAppExternalImage.lower(value)
+}
+
+
+public struct AppExternalRuntime: Equatable, Hashable {
+    /**
+     * Its name: the runtime word a create passes (`acme`).
+     */
+    public var name: String
+    /**
+     * The name it gives itself ("macOS VMs"), else its name.
+     */
+    public var label: String
+    /**
+     * One line about it, when it gave one.
+     */
+    public var description: String?
+    /**
+     * What its Spaces present as (a micro VM is a virtual machine).
+     */
+    public var kind: AppSpaceKind
+    /**
+     * The guest operating systems it runs (`macos`, `linux`, `windows`).
+     */
+    public var os: [String]
+    /**
+     * The guest architectures it runs (`arm64`, `amd64`).
+     */
+    public var arch: [String]
+    /**
+     * It can create Spaces now.
+     */
+    public var ready: Bool
+    /**
+     * Its doctor's one line.
+     */
+    public var detail: String
+    /**
+     * The images it offers.
+     */
+    public var images: [AppExternalImage]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Its name: the runtime word a create passes (`acme`).
+         */name: String,
+        /**
+         * The name it gives itself ("macOS VMs"), else its name.
+         */label: String,
+        /**
+         * One line about it, when it gave one.
+         */description: String?,
+        /**
+         * What its Spaces present as (a micro VM is a virtual machine).
+         */kind: AppSpaceKind,
+        /**
+         * The guest operating systems it runs (`macos`, `linux`, `windows`).
+         */os: [String],
+        /**
+         * The guest architectures it runs (`arm64`, `amd64`).
+         */arch: [String],
+        /**
+         * It can create Spaces now.
+         */ready: Bool,
+        /**
+         * Its doctor's one line.
+         */detail: String,
+        /**
+         * The images it offers.
+         */images: [AppExternalImage]) {
+        self.name = name
+        self.label = label
+        self.description = description
+        self.kind = kind
+        self.os = os
+        self.arch = arch
+        self.ready = ready
+        self.detail = detail
+        self.images = images
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppExternalRuntime: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppExternalRuntime: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppExternalRuntime {
+        return
+            try AppExternalRuntime(
+                name: FfiConverterString.read(from: &buf),
+                label: FfiConverterString.read(from: &buf),
+                description: FfiConverterOptionString.read(from: &buf),
+                kind: FfiConverterTypeAppSpaceKind.read(from: &buf),
+                os: FfiConverterSequenceString.read(from: &buf),
+                arch: FfiConverterSequenceString.read(from: &buf),
+                ready: FfiConverterBool.read(from: &buf),
+                detail: FfiConverterString.read(from: &buf),
+                images: FfiConverterSequenceTypeAppExternalImage.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppExternalRuntime, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterOptionString.write(value.description, into: &buf)
+        FfiConverterTypeAppSpaceKind.write(value.kind, into: &buf)
+        FfiConverterSequenceString.write(value.os, into: &buf)
+        FfiConverterSequenceString.write(value.arch, into: &buf)
+        FfiConverterBool.write(value.ready, into: &buf)
+        FfiConverterString.write(value.detail, into: &buf)
+        FfiConverterSequenceTypeAppExternalImage.write(value.images, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppExternalRuntime_lift(_ buf: RustBuffer) throws -> AppExternalRuntime {
+    return try FfiConverterTypeAppExternalRuntime.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppExternalRuntime_lower(_ value: AppExternalRuntime) -> RustBuffer {
+    return FfiConverterTypeAppExternalRuntime.lower(value)
 }
 
 
@@ -14280,6 +14898,92 @@ public func FfiConverterTypeAppFactWarning_lower(_ value: AppFactWarning) -> Rus
 }
 
 
+public struct AppFailureStreak: Equatable, Hashable {
+    /**
+     * The cause word (`insufficient_disk`, `runtime_not_running`, ...).
+     */
+    public var kind: String
+    /**
+     * Where: `local`, `cloud`, or `relay:<machine>`.
+     */
+    public var place: String
+    /**
+     * The image asked for (empty for the default).
+     */
+    public var image: String
+    /**
+     * Failures in a row.
+     */
+    public var count: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The cause word (`insufficient_disk`, `runtime_not_running`, ...).
+         */kind: String,
+        /**
+         * Where: `local`, `cloud`, or `relay:<machine>`.
+         */place: String,
+        /**
+         * The image asked for (empty for the default).
+         */image: String,
+        /**
+         * Failures in a row.
+         */count: UInt32) {
+        self.kind = kind
+        self.place = place
+        self.image = image
+        self.count = count
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppFailureStreak: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppFailureStreak: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppFailureStreak {
+        return
+            try AppFailureStreak(
+                kind: FfiConverterString.read(from: &buf),
+                place: FfiConverterString.read(from: &buf),
+                image: FfiConverterString.read(from: &buf),
+                count: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppFailureStreak, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.kind, into: &buf)
+        FfiConverterString.write(value.place, into: &buf)
+        FfiConverterString.write(value.image, into: &buf)
+        FfiConverterUInt32.write(value.count, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppFailureStreak_lift(_ buf: RustBuffer) throws -> AppFailureStreak {
+    return try FfiConverterTypeAppFailureStreak.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppFailureStreak_lower(_ value: AppFailureStreak) -> RustBuffer {
+    return FfiConverterTypeAppFailureStreak.lower(value)
+}
+
+
 public struct AppFileVersionInput: Equatable, Hashable {
     public var version: String
     public var modifiedMs: UInt64
@@ -14406,7 +15110,7 @@ public func FfiConverterTypeAppFileView_lower(_ value: AppFileView) -> RustBuffe
 
 public struct AppGpuChoice: Equatable, Hashable {
     /**
-     * `lume`, `qemu`, `container`, `gvisor`, `fleet`.
+     * `lume`, `qemu`, `container`, `gvisor`, `cloud`.
      */
     public var runtime: String
     /**
@@ -14438,7 +15142,7 @@ public struct AppGpuChoice: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * `lume`, `qemu`, `container`, `gvisor`, `fleet`.
+         * `lume`, `qemu`, `container`, `gvisor`, `cloud`.
          */runtime: String,
         /**
          * What the create passes as `gpu` (`paravirtual`).
@@ -14623,6 +15327,142 @@ public func FfiConverterTypeAppGpuRow_lift(_ buf: RustBuffer) throws -> AppGpuRo
 #endif
 public func FfiConverterTypeAppGpuRow_lower(_ value: AppGpuRow) -> RustBuffer {
     return FfiConverterTypeAppGpuRow.lower(value)
+}
+
+
+public struct AppGuestUsage: Equatable, Hashable {
+    /**
+     * Cores the guest sees.
+     */
+    public var cpuCount: UInt32
+    /**
+     * Busy now, 0 to 100.
+     */
+    public var cpuPercent: Double
+    /**
+     * 1-minute load average.
+     */
+    public var loadAverage1m: Double
+    /**
+     * Memory in use, bytes.
+     */
+    public var memoryUsed: UInt64
+    /**
+     * Memory size, bytes.
+     */
+    public var memoryTotal: UInt64
+    /**
+     * `memory_total` is the guest's own limit.
+     */
+    public var memoryLimited: Bool
+    /**
+     * Disk in use, bytes.
+     */
+    public var diskUsed: UInt64
+    /**
+     * Disk size, bytes.
+     */
+    public var diskTotal: UInt64
+    /**
+     * `disk_total` is the guest's own disk.
+     */
+    public var diskLimited: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Cores the guest sees.
+         */cpuCount: UInt32,
+        /**
+         * Busy now, 0 to 100.
+         */cpuPercent: Double,
+        /**
+         * 1-minute load average.
+         */loadAverage1m: Double,
+        /**
+         * Memory in use, bytes.
+         */memoryUsed: UInt64,
+        /**
+         * Memory size, bytes.
+         */memoryTotal: UInt64,
+        /**
+         * `memory_total` is the guest's own limit.
+         */memoryLimited: Bool,
+        /**
+         * Disk in use, bytes.
+         */diskUsed: UInt64,
+        /**
+         * Disk size, bytes.
+         */diskTotal: UInt64,
+        /**
+         * `disk_total` is the guest's own disk.
+         */diskLimited: Bool) {
+        self.cpuCount = cpuCount
+        self.cpuPercent = cpuPercent
+        self.loadAverage1m = loadAverage1m
+        self.memoryUsed = memoryUsed
+        self.memoryTotal = memoryTotal
+        self.memoryLimited = memoryLimited
+        self.diskUsed = diskUsed
+        self.diskTotal = diskTotal
+        self.diskLimited = diskLimited
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppGuestUsage: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppGuestUsage: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppGuestUsage {
+        return
+            try AppGuestUsage(
+                cpuCount: FfiConverterUInt32.read(from: &buf),
+                cpuPercent: FfiConverterDouble.read(from: &buf),
+                loadAverage1m: FfiConverterDouble.read(from: &buf),
+                memoryUsed: FfiConverterUInt64.read(from: &buf),
+                memoryTotal: FfiConverterUInt64.read(from: &buf),
+                memoryLimited: FfiConverterBool.read(from: &buf),
+                diskUsed: FfiConverterUInt64.read(from: &buf),
+                diskTotal: FfiConverterUInt64.read(from: &buf),
+                diskLimited: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppGuestUsage, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.cpuCount, into: &buf)
+        FfiConverterDouble.write(value.cpuPercent, into: &buf)
+        FfiConverterDouble.write(value.loadAverage1m, into: &buf)
+        FfiConverterUInt64.write(value.memoryUsed, into: &buf)
+        FfiConverterUInt64.write(value.memoryTotal, into: &buf)
+        FfiConverterBool.write(value.memoryLimited, into: &buf)
+        FfiConverterUInt64.write(value.diskUsed, into: &buf)
+        FfiConverterUInt64.write(value.diskTotal, into: &buf)
+        FfiConverterBool.write(value.diskLimited, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppGuestUsage_lift(_ buf: RustBuffer) throws -> AppGuestUsage {
+    return try FfiConverterTypeAppGuestUsage.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppGuestUsage_lower(_ value: AppGuestUsage) -> RustBuffer {
+    return FfiConverterTypeAppGuestUsage.lower(value)
 }
 
 
@@ -15719,6 +16559,112 @@ public func FfiConverterTypeAppHostLimit_lift(_ buf: RustBuffer) throws -> AppHo
 #endif
 public func FfiConverterTypeAppHostLimit_lower(_ value: AppHostLimit) -> RustBuffer {
     return FfiConverterTypeAppHostLimit.lower(value)
+}
+
+
+public struct AppHostLoad: Equatable, Hashable {
+    /**
+     * CPU it offers, in thousandths.
+     */
+    public var millicpusTotal: UInt32
+    /**
+     * Of that, free.
+     */
+    public var millicpusFree: UInt32
+    /**
+     * Memory it offers (MiB).
+     */
+    public var memoryTotalMb: UInt64
+    /**
+     * Of that, free.
+     */
+    public var memoryFreeMb: UInt64
+    /**
+     * Spaces running there.
+     */
+    public var spaces: UInt32
+    /**
+     * Why it takes nothing now (empty: it does).
+     */
+    public var problem: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * CPU it offers, in thousandths.
+         */millicpusTotal: UInt32,
+        /**
+         * Of that, free.
+         */millicpusFree: UInt32,
+        /**
+         * Memory it offers (MiB).
+         */memoryTotalMb: UInt64,
+        /**
+         * Of that, free.
+         */memoryFreeMb: UInt64,
+        /**
+         * Spaces running there.
+         */spaces: UInt32,
+        /**
+         * Why it takes nothing now (empty: it does).
+         */problem: String) {
+        self.millicpusTotal = millicpusTotal
+        self.millicpusFree = millicpusFree
+        self.memoryTotalMb = memoryTotalMb
+        self.memoryFreeMb = memoryFreeMb
+        self.spaces = spaces
+        self.problem = problem
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppHostLoad: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppHostLoad: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppHostLoad {
+        return
+            try AppHostLoad(
+                millicpusTotal: FfiConverterUInt32.read(from: &buf),
+                millicpusFree: FfiConverterUInt32.read(from: &buf),
+                memoryTotalMb: FfiConverterUInt64.read(from: &buf),
+                memoryFreeMb: FfiConverterUInt64.read(from: &buf),
+                spaces: FfiConverterUInt32.read(from: &buf),
+                problem: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppHostLoad, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.millicpusTotal, into: &buf)
+        FfiConverterUInt32.write(value.millicpusFree, into: &buf)
+        FfiConverterUInt64.write(value.memoryTotalMb, into: &buf)
+        FfiConverterUInt64.write(value.memoryFreeMb, into: &buf)
+        FfiConverterUInt32.write(value.spaces, into: &buf)
+        FfiConverterString.write(value.problem, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppHostLoad_lift(_ buf: RustBuffer) throws -> AppHostLoad {
+    return try FfiConverterTypeAppHostLoad.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppHostLoad_lower(_ value: AppHostLoad) -> RustBuffer {
+    return FfiConverterTypeAppHostLoad.lower(value)
 }
 
 
@@ -18176,6 +19122,354 @@ public func FfiConverterTypeAppLineView_lower(_ value: AppLineView) -> RustBuffe
 }
 
 
+public struct AppListView: Equatable, Hashable {
+    /**
+     * "Create your first Space": only when the list is complete and has no
+     * Space. A list still loading, or with computers still answering, is
+     * not empty yet (an app update restarting the daemon must not show it).
+     */
+    public var empty: Bool
+    /**
+     * One quiet line where the Spaces go while the list is not complete
+     * ("Reaching 6 computers…"), below what is known so far.
+     */
+    public var reachingLine: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * "Create your first Space": only when the list is complete and has no
+         * Space. A list still loading, or with computers still answering, is
+         * not empty yet (an app update restarting the daemon must not show it).
+         */empty: Bool,
+        /**
+         * One quiet line where the Spaces go while the list is not complete
+         * ("Reaching 6 computers…"), below what is known so far.
+         */reachingLine: String?) {
+        self.empty = empty
+        self.reachingLine = reachingLine
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppListView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppListView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppListView {
+        return
+            try AppListView(
+                empty: FfiConverterBool.read(from: &buf),
+                reachingLine: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppListView, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.empty, into: &buf)
+        FfiConverterOptionString.write(value.reachingLine, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppListView_lift(_ buf: RustBuffer) throws -> AppListView {
+    return try FfiConverterTypeAppListView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppListView_lower(_ value: AppListView) -> RustBuffer {
+    return FfiConverterTypeAppListView.lower(value)
+}
+
+
+public struct AppListViewInput: Equatable, Hashable {
+    /**
+     * The list was read at least once: before that nothing is known, not
+     * even this machine's Spaces.
+     */
+    public var loaded: Bool
+    /**
+     * Some of the account's computers have not answered yet.
+     */
+    public var incomplete: Bool
+    /**
+     * How many computers are still being reached (0 when unknown).
+     */
+    public var reaching: UInt32
+    /**
+     * Spaces listed now.
+     */
+    public var count: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The list was read at least once: before that nothing is known, not
+         * even this machine's Spaces.
+         */loaded: Bool,
+        /**
+         * Some of the account's computers have not answered yet.
+         */incomplete: Bool,
+        /**
+         * How many computers are still being reached (0 when unknown).
+         */reaching: UInt32,
+        /**
+         * Spaces listed now.
+         */count: UInt32) {
+        self.loaded = loaded
+        self.incomplete = incomplete
+        self.reaching = reaching
+        self.count = count
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppListViewInput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppListViewInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppListViewInput {
+        return
+            try AppListViewInput(
+                loaded: FfiConverterBool.read(from: &buf),
+                incomplete: FfiConverterBool.read(from: &buf),
+                reaching: FfiConverterUInt32.read(from: &buf),
+                count: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppListViewInput, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.loaded, into: &buf)
+        FfiConverterBool.write(value.incomplete, into: &buf)
+        FfiConverterUInt32.write(value.reaching, into: &buf)
+        FfiConverterUInt32.write(value.count, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppListViewInput_lift(_ buf: RustBuffer) throws -> AppListViewInput {
+    return try FfiConverterTypeAppListViewInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppListViewInput_lower(_ value: AppListViewInput) -> RustBuffer {
+    return FfiConverterTypeAppListViewInput.lower(value)
+}
+
+
+public struct AppLocalNetworkInput: Equatable, Hashable {
+    /**
+     * The app's own connect.
+     */
+    public var access: AppLocalNetworkAccess
+    /**
+     * The app already explained and made macOS ask (saved by the shell).
+     */
+    public var asked: Bool
+    /**
+     * `netstat -rn -f inet`, or empty when it could not be read.
+     */
+    public var routes: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The app's own connect.
+         */access: AppLocalNetworkAccess,
+        /**
+         * The app already explained and made macOS ask (saved by the shell).
+         */asked: Bool,
+        /**
+         * `netstat -rn -f inet`, or empty when it could not be read.
+         */routes: String) {
+        self.access = access
+        self.asked = asked
+        self.routes = routes
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppLocalNetworkInput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppLocalNetworkInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppLocalNetworkInput {
+        return
+            try AppLocalNetworkInput(
+                access: FfiConverterTypeAppLocalNetworkAccess.read(from: &buf),
+                asked: FfiConverterBool.read(from: &buf),
+                routes: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppLocalNetworkInput, into buf: inout [UInt8]) {
+        FfiConverterTypeAppLocalNetworkAccess.write(value.access, into: &buf)
+        FfiConverterBool.write(value.asked, into: &buf)
+        FfiConverterString.write(value.routes, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppLocalNetworkInput_lift(_ buf: RustBuffer) throws -> AppLocalNetworkInput {
+    return try FfiConverterTypeAppLocalNetworkInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppLocalNetworkInput_lower(_ value: AppLocalNetworkInput) -> RustBuffer {
+    return FfiConverterTypeAppLocalNetworkInput.lower(value)
+}
+
+
+public struct AppLocalNetworkStep: Equatable, Hashable {
+    public var kind: AppLocalNetworkStepKind
+    /**
+     * The dialog's title (none for Proceed).
+     */
+    public var title: String
+    /**
+     * The dialog's text; for Fail also the create's error.
+     */
+    public var message: String
+    /**
+     * The main button: Continue, Open Settings or OK.
+     */
+    public var primary: String
+    /**
+     * The other button: Cancel or OK; empty when there is one button.
+     */
+    public var secondary: String
+    /**
+     * What the main button opens (Fail for missing access).
+     */
+    public var settingsUrl: String?
+    /**
+     * For Fail: the create's error variant (`local_network_denied`,
+     * `local_network_vpn`; telemetry's `error_subclass`).
+     */
+    public var errorVariant: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(kind: AppLocalNetworkStepKind,
+        /**
+         * The dialog's title (none for Proceed).
+         */title: String,
+        /**
+         * The dialog's text; for Fail also the create's error.
+         */message: String,
+        /**
+         * The main button: Continue, Open Settings or OK.
+         */primary: String,
+        /**
+         * The other button: Cancel or OK; empty when there is one button.
+         */secondary: String,
+        /**
+         * What the main button opens (Fail for missing access).
+         */settingsUrl: String?,
+        /**
+         * For Fail: the create's error variant (`local_network_denied`,
+         * `local_network_vpn`; telemetry's `error_subclass`).
+         */errorVariant: String) {
+        self.kind = kind
+        self.title = title
+        self.message = message
+        self.primary = primary
+        self.secondary = secondary
+        self.settingsUrl = settingsUrl
+        self.errorVariant = errorVariant
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppLocalNetworkStep: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppLocalNetworkStep: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppLocalNetworkStep {
+        return
+            try AppLocalNetworkStep(
+                kind: FfiConverterTypeAppLocalNetworkStepKind.read(from: &buf),
+                title: FfiConverterString.read(from: &buf),
+                message: FfiConverterString.read(from: &buf),
+                primary: FfiConverterString.read(from: &buf),
+                secondary: FfiConverterString.read(from: &buf),
+                settingsUrl: FfiConverterOptionString.read(from: &buf),
+                errorVariant: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppLocalNetworkStep, into buf: inout [UInt8]) {
+        FfiConverterTypeAppLocalNetworkStepKind.write(value.kind, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterString.write(value.message, into: &buf)
+        FfiConverterString.write(value.primary, into: &buf)
+        FfiConverterString.write(value.secondary, into: &buf)
+        FfiConverterOptionString.write(value.settingsUrl, into: &buf)
+        FfiConverterString.write(value.errorVariant, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppLocalNetworkStep_lift(_ buf: RustBuffer) throws -> AppLocalNetworkStep {
+    return try FfiConverterTypeAppLocalNetworkStep.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppLocalNetworkStep_lower(_ value: AppLocalNetworkStep) -> RustBuffer {
+    return FfiConverterTypeAppLocalNetworkStep.lower(value)
+}
+
+
 public struct AppLocalStorage: Equatable, Hashable {
     /**
      * Bytes the SDK keeps free on a volume (a create that would leave
@@ -18976,6 +20270,1928 @@ public func FfiConverterTypeAppMachinesPageInput_lower(_ value: AppMachinesPageI
 }
 
 
+public struct AppMachinesView: Equatable, Hashable {
+    /**
+     * "3 machines, 2 online".
+     */
+    public var summary: String
+    /**
+     * The list's groups (only those with machines).
+     */
+    public var groups: [AppMachinesViewGroup]
+    /**
+     * Every machine, in list order.
+     */
+    public var machines: [AppMachinesViewMachine]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * "3 machines, 2 online".
+         */summary: String,
+        /**
+         * The list's groups (only those with machines).
+         */groups: [AppMachinesViewGroup],
+        /**
+         * Every machine, in list order.
+         */machines: [AppMachinesViewMachine]) {
+        self.summary = summary
+        self.groups = groups
+        self.machines = machines
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppMachinesView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppMachinesView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppMachinesView {
+        return
+            try AppMachinesView(
+                summary: FfiConverterString.read(from: &buf),
+                groups: FfiConverterSequenceTypeAppMachinesViewGroup.read(from: &buf),
+                machines: FfiConverterSequenceTypeAppMachinesViewMachine.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppMachinesView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.summary, into: &buf)
+        FfiConverterSequenceTypeAppMachinesViewGroup.write(value.groups, into: &buf)
+        FfiConverterSequenceTypeAppMachinesViewMachine.write(value.machines, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMachinesView_lift(_ buf: RustBuffer) throws -> AppMachinesView {
+    return try FfiConverterTypeAppMachinesView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMachinesView_lower(_ value: AppMachinesView) -> RustBuffer {
+    return FfiConverterTypeAppMachinesView.lower(value)
+}
+
+
+public struct AppMachinesViewAbout: Equatable, Hashable {
+    /**
+     * Its name ("Ada's MacBook Pro").
+     */
+    public var computerName: String
+    /**
+     * The app's version ("0.9.1").
+     */
+    public var appVersion: String
+    /**
+     * Its system and version ("macOS 26.5.2").
+     */
+    public var osVersion: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Its name ("Ada's MacBook Pro").
+         */computerName: String,
+        /**
+         * The app's version ("0.9.1").
+         */appVersion: String,
+        /**
+         * Its system and version ("macOS 26.5.2").
+         */osVersion: String) {
+        self.computerName = computerName
+        self.appVersion = appVersion
+        self.osVersion = osVersion
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppMachinesViewAbout: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppMachinesViewAbout: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppMachinesViewAbout {
+        return
+            try AppMachinesViewAbout(
+                computerName: FfiConverterString.read(from: &buf),
+                appVersion: FfiConverterString.read(from: &buf),
+                osVersion: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppMachinesViewAbout, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.computerName, into: &buf)
+        FfiConverterString.write(value.appVersion, into: &buf)
+        FfiConverterString.write(value.osVersion, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMachinesViewAbout_lift(_ buf: RustBuffer) throws -> AppMachinesViewAbout {
+    return try FfiConverterTypeAppMachinesViewAbout.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMachinesViewAbout_lower(_ value: AppMachinesViewAbout) -> RustBuffer {
+    return FfiConverterTypeAppMachinesViewAbout.lower(value)
+}
+
+
+public struct AppMachinesViewCheck: Equatable, Hashable {
+    /**
+     * `machine.local_network`, `machine.disk`, ...
+     */
+    public var id: String
+    /**
+     * `pass`, `warn`, `fail`, `skip`.
+     */
+    public var status: String
+    /**
+     * What it found.
+     */
+    public var message: String
+    /**
+     * What to do.
+     */
+    public var remediation: String
+    /**
+     * `app`, `settings_url`, `free_gb`, ...
+     */
+    public var facts: [String: String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `machine.local_network`, `machine.disk`, ...
+         */id: String,
+        /**
+         * `pass`, `warn`, `fail`, `skip`.
+         */status: String,
+        /**
+         * What it found.
+         */message: String,
+        /**
+         * What to do.
+         */remediation: String,
+        /**
+         * `app`, `settings_url`, `free_gb`, ...
+         */facts: [String: String]) {
+        self.id = id
+        self.status = status
+        self.message = message
+        self.remediation = remediation
+        self.facts = facts
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppMachinesViewCheck: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppMachinesViewCheck: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppMachinesViewCheck {
+        return
+            try AppMachinesViewCheck(
+                id: FfiConverterString.read(from: &buf),
+                status: FfiConverterString.read(from: &buf),
+                message: FfiConverterString.read(from: &buf),
+                remediation: FfiConverterString.read(from: &buf),
+                facts: FfiConverterDictionaryStringString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppMachinesViewCheck, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.status, into: &buf)
+        FfiConverterString.write(value.message, into: &buf)
+        FfiConverterString.write(value.remediation, into: &buf)
+        FfiConverterDictionaryStringString.write(value.facts, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMachinesViewCheck_lift(_ buf: RustBuffer) throws -> AppMachinesViewCheck {
+    return try FfiConverterTypeAppMachinesViewCheck.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMachinesViewCheck_lower(_ value: AppMachinesViewCheck) -> RustBuffer {
+    return FfiConverterTypeAppMachinesViewCheck.lower(value)
+}
+
+
+public struct AppMachinesViewDesktop: Equatable, Hashable {
+    /**
+     * The Space's id (its page).
+     */
+    public var id: String
+    /**
+     * Its name, as the Spaces list names it.
+     */
+    public var name: String
+    /**
+     * Its system ("Ubuntu 24.04.5 LTS", "macOS").
+     */
+    public var os: String
+    /**
+     * Its status word ("Running", "Stopped").
+     */
+    public var status: String
+    /**
+     * Running (the green dot).
+     */
+    public var running: Bool
+    /**
+     * "Desktop".
+     */
+    public var label: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The Space's id (its page).
+         */id: String,
+        /**
+         * Its name, as the Spaces list names it.
+         */name: String,
+        /**
+         * Its system ("Ubuntu 24.04.5 LTS", "macOS").
+         */os: String,
+        /**
+         * Its status word ("Running", "Stopped").
+         */status: String,
+        /**
+         * Running (the green dot).
+         */running: Bool,
+        /**
+         * "Desktop".
+         */label: String) {
+        self.id = id
+        self.name = name
+        self.os = os
+        self.status = status
+        self.running = running
+        self.label = label
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppMachinesViewDesktop: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppMachinesViewDesktop: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppMachinesViewDesktop {
+        return
+            try AppMachinesViewDesktop(
+                id: FfiConverterString.read(from: &buf),
+                name: FfiConverterString.read(from: &buf),
+                os: FfiConverterString.read(from: &buf),
+                status: FfiConverterString.read(from: &buf),
+                running: FfiConverterBool.read(from: &buf),
+                label: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppMachinesViewDesktop, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.os, into: &buf)
+        FfiConverterString.write(value.status, into: &buf)
+        FfiConverterBool.write(value.running, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMachinesViewDesktop_lift(_ buf: RustBuffer) throws -> AppMachinesViewDesktop {
+    return try FfiConverterTypeAppMachinesViewDesktop.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMachinesViewDesktop_lower(_ value: AppMachinesViewDesktop) -> RustBuffer {
+    return FfiConverterTypeAppMachinesViewDesktop.lower(value)
+}
+
+
+public struct AppMachinesViewFact: Equatable, Hashable {
+    /**
+     * "OS", "App", "Connection", "Service".
+     */
+    public var label: String
+    /**
+     * Its value.
+     */
+    public var value: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * "OS", "App", "Connection", "Service".
+         */label: String,
+        /**
+         * Its value.
+         */value: String) {
+        self.label = label
+        self.value = value
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppMachinesViewFact: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppMachinesViewFact: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppMachinesViewFact {
+        return
+            try AppMachinesViewFact(
+                label: FfiConverterString.read(from: &buf),
+                value: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppMachinesViewFact, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterString.write(value.value, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMachinesViewFact_lift(_ buf: RustBuffer) throws -> AppMachinesViewFact {
+    return try FfiConverterTypeAppMachinesViewFact.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMachinesViewFact_lower(_ value: AppMachinesViewFact) -> RustBuffer {
+    return FfiConverterTypeAppMachinesViewFact.lower(value)
+}
+
+
+public struct AppMachinesViewGroup: Equatable, Hashable {
+    /**
+     * `yours`, `old` or `team`.
+     */
+    public var id: String
+    /**
+     * "Your machines", "Offline for 30+ days (2)", "Team machines".
+     */
+    public var title: String
+    /**
+     * Collapsed until opened (the old machines).
+     */
+    public var collapsed: Bool
+    /**
+     * Its machines' ids, in order.
+     */
+    public var ids: [String]
+    /**
+     * Remove old machines.
+     */
+    public var removeAll: AppMachinesViewRemoveAll?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `yours`, `old` or `team`.
+         */id: String,
+        /**
+         * "Your machines", "Offline for 30+ days (2)", "Team machines".
+         */title: String,
+        /**
+         * Collapsed until opened (the old machines).
+         */collapsed: Bool,
+        /**
+         * Its machines' ids, in order.
+         */ids: [String],
+        /**
+         * Remove old machines.
+         */removeAll: AppMachinesViewRemoveAll?) {
+        self.id = id
+        self.title = title
+        self.collapsed = collapsed
+        self.ids = ids
+        self.removeAll = removeAll
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppMachinesViewGroup: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppMachinesViewGroup: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppMachinesViewGroup {
+        return
+            try AppMachinesViewGroup(
+                id: FfiConverterString.read(from: &buf),
+                title: FfiConverterString.read(from: &buf),
+                collapsed: FfiConverterBool.read(from: &buf),
+                ids: FfiConverterSequenceString.read(from: &buf),
+                removeAll: FfiConverterOptionTypeAppMachinesViewRemoveAll.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppMachinesViewGroup, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterBool.write(value.collapsed, into: &buf)
+        FfiConverterSequenceString.write(value.ids, into: &buf)
+        FfiConverterOptionTypeAppMachinesViewRemoveAll.write(value.removeAll, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMachinesViewGroup_lift(_ buf: RustBuffer) throws -> AppMachinesViewGroup {
+    return try FfiConverterTypeAppMachinesViewGroup.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMachinesViewGroup_lower(_ value: AppMachinesViewGroup) -> RustBuffer {
+    return FfiConverterTypeAppMachinesViewGroup.lower(value)
+}
+
+
+public struct AppMachinesViewHealth: Equatable, Hashable {
+    /**
+     * The machine's row id (`this-mac`, a relay machine id).
+     */
+    public var id: String
+    /**
+     * Its checks.
+     */
+    public var checks: [AppMachinesViewCheck]
+    /**
+     * The Cua version of the daemon that checked.
+     */
+    public var cuaVersion: String
+    /**
+     * Why it could not be checked, when it could not.
+     */
+    public var error: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The machine's row id (`this-mac`, a relay machine id).
+         */id: String,
+        /**
+         * Its checks.
+         */checks: [AppMachinesViewCheck],
+        /**
+         * The Cua version of the daemon that checked.
+         */cuaVersion: String,
+        /**
+         * Why it could not be checked, when it could not.
+         */error: String?) {
+        self.id = id
+        self.checks = checks
+        self.cuaVersion = cuaVersion
+        self.error = error
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppMachinesViewHealth: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppMachinesViewHealth: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppMachinesViewHealth {
+        return
+            try AppMachinesViewHealth(
+                id: FfiConverterString.read(from: &buf),
+                checks: FfiConverterSequenceTypeAppMachinesViewCheck.read(from: &buf),
+                cuaVersion: FfiConverterString.read(from: &buf),
+                error: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppMachinesViewHealth, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterSequenceTypeAppMachinesViewCheck.write(value.checks, into: &buf)
+        FfiConverterString.write(value.cuaVersion, into: &buf)
+        FfiConverterOptionString.write(value.error, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMachinesViewHealth_lift(_ buf: RustBuffer) throws -> AppMachinesViewHealth {
+    return try FfiConverterTypeAppMachinesViewHealth.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMachinesViewHealth_lower(_ value: AppMachinesViewHealth) -> RustBuffer {
+    return FfiConverterTypeAppMachinesViewHealth.lower(value)
+}
+
+
+public struct AppMachinesViewInput: Equatable, Hashable {
+    /**
+     * What the rows are listed from ([`machines::page_rows`]).
+     */
+    public var page: AppMachinesPageInput
+    /**
+     * The account's relay machines (none while signed out).
+     */
+    public var relay: [AppMachinesViewRelay]
+    /**
+     * This machine's host state (`None` while it loads).
+     */
+    public var host: AppHostState?
+    /**
+     * This computer.
+     */
+    public var about: AppMachinesViewAbout
+    /**
+     * The rows when the shell already listed them (an older host's rows,
+     * merged by the web UI); `None`: [`machines::page_rows`] of `page`.
+     */
+    public var rows: [AppMachinePageRow]?
+    /**
+     * What each machine's daemon reported of its health, by row id, for
+     * the machines whose `health_target` the shell checked
+     * ([`crate::machines_health`]).
+     */
+    public var health: [AppMachinesViewHealth]
+    /**
+     * The Cua Spaces update this app found (its version); empty when this
+     * app is the newest release.
+     */
+    public var appUpdate: String
+    /**
+     * That update is downloaded and ready to restart into.
+     */
+    public var appUpdateReady: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * What the rows are listed from ([`machines::page_rows`]).
+         */page: AppMachinesPageInput,
+        /**
+         * The account's relay machines (none while signed out).
+         */relay: [AppMachinesViewRelay],
+        /**
+         * This machine's host state (`None` while it loads).
+         */host: AppHostState?,
+        /**
+         * This computer.
+         */about: AppMachinesViewAbout,
+        /**
+         * The rows when the shell already listed them (an older host's rows,
+         * merged by the web UI); `None`: [`machines::page_rows`] of `page`.
+         */rows: [AppMachinePageRow]?,
+        /**
+         * What each machine's daemon reported of its health, by row id, for
+         * the machines whose `health_target` the shell checked
+         * ([`crate::machines_health`]).
+         */health: [AppMachinesViewHealth],
+        /**
+         * The Cua Spaces update this app found (its version); empty when this
+         * app is the newest release.
+         */appUpdate: String,
+        /**
+         * That update is downloaded and ready to restart into.
+         */appUpdateReady: Bool) {
+        self.page = page
+        self.relay = relay
+        self.host = host
+        self.about = about
+        self.rows = rows
+        self.health = health
+        self.appUpdate = appUpdate
+        self.appUpdateReady = appUpdateReady
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppMachinesViewInput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppMachinesViewInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppMachinesViewInput {
+        return
+            try AppMachinesViewInput(
+                page: FfiConverterTypeAppMachinesPageInput.read(from: &buf),
+                relay: FfiConverterSequenceTypeAppMachinesViewRelay.read(from: &buf),
+                host: FfiConverterOptionTypeAppHostState.read(from: &buf),
+                about: FfiConverterTypeAppMachinesViewAbout.read(from: &buf),
+                rows: FfiConverterOptionSequenceTypeAppMachinePageRow.read(from: &buf),
+                health: FfiConverterSequenceTypeAppMachinesViewHealth.read(from: &buf),
+                appUpdate: FfiConverterString.read(from: &buf),
+                appUpdateReady: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppMachinesViewInput, into buf: inout [UInt8]) {
+        FfiConverterTypeAppMachinesPageInput.write(value.page, into: &buf)
+        FfiConverterSequenceTypeAppMachinesViewRelay.write(value.relay, into: &buf)
+        FfiConverterOptionTypeAppHostState.write(value.host, into: &buf)
+        FfiConverterTypeAppMachinesViewAbout.write(value.about, into: &buf)
+        FfiConverterOptionSequenceTypeAppMachinePageRow.write(value.rows, into: &buf)
+        FfiConverterSequenceTypeAppMachinesViewHealth.write(value.health, into: &buf)
+        FfiConverterString.write(value.appUpdate, into: &buf)
+        FfiConverterBool.write(value.appUpdateReady, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMachinesViewInput_lift(_ buf: RustBuffer) throws -> AppMachinesViewInput {
+    return try FfiConverterTypeAppMachinesViewInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMachinesViewInput_lower(_ value: AppMachinesViewInput) -> RustBuffer {
+    return FfiConverterTypeAppMachinesViewInput.lower(value)
+}
+
+
+public struct AppMachinesViewIssue: Equatable, Hashable {
+    /**
+     * The check it comes from (`machine.disk`, `service`, `version`).
+     */
+    public var id: String
+    /**
+     * `warn` or `fail`; `info` for a note that is no problem (it does not
+     * tint the row's dot).
+     */
+    public var level: String
+    /**
+     * One plain sentence.
+     */
+    public var text: String
+    /**
+     * Its fix, when there is one here.
+     */
+    public var action: AppMachinesViewIssueAction?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The check it comes from (`machine.disk`, `service`, `version`).
+         */id: String,
+        /**
+         * `warn` or `fail`; `info` for a note that is no problem (it does not
+         * tint the row's dot).
+         */level: String,
+        /**
+         * One plain sentence.
+         */text: String,
+        /**
+         * Its fix, when there is one here.
+         */action: AppMachinesViewIssueAction?) {
+        self.id = id
+        self.level = level
+        self.text = text
+        self.action = action
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppMachinesViewIssue: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppMachinesViewIssue: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppMachinesViewIssue {
+        return
+            try AppMachinesViewIssue(
+                id: FfiConverterString.read(from: &buf),
+                level: FfiConverterString.read(from: &buf),
+                text: FfiConverterString.read(from: &buf),
+                action: FfiConverterOptionTypeAppMachinesViewIssueAction.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppMachinesViewIssue, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.level, into: &buf)
+        FfiConverterString.write(value.text, into: &buf)
+        FfiConverterOptionTypeAppMachinesViewIssueAction.write(value.action, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMachinesViewIssue_lift(_ buf: RustBuffer) throws -> AppMachinesViewIssue {
+    return try FfiConverterTypeAppMachinesViewIssue.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMachinesViewIssue_lower(_ value: AppMachinesViewIssue) -> RustBuffer {
+    return FfiConverterTypeAppMachinesViewIssue.lower(value)
+}
+
+
+public struct AppMachinesViewIssueAction: Equatable, Hashable {
+    /**
+     * "Open Local Network settings", "Free disk space", "Restart service".
+     */
+    public var label: String
+    /**
+     * A System Settings pane to open (`host.openSettings`).
+     */
+    public var url: String?
+    /**
+     * A host action to run (`host.action`).
+     */
+    public var hostAction: AppHostActionId?
+    /**
+     * Restart into the Cua Spaces update this app already downloaded
+     * (the shell's own update flow, the sidebar's "Restart to update").
+     */
+    public var appUpdate: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * "Open Local Network settings", "Free disk space", "Restart service".
+         */label: String,
+        /**
+         * A System Settings pane to open (`host.openSettings`).
+         */url: String?,
+        /**
+         * A host action to run (`host.action`).
+         */hostAction: AppHostActionId?,
+        /**
+         * Restart into the Cua Spaces update this app already downloaded
+         * (the shell's own update flow, the sidebar's "Restart to update").
+         */appUpdate: Bool) {
+        self.label = label
+        self.url = url
+        self.hostAction = hostAction
+        self.appUpdate = appUpdate
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppMachinesViewIssueAction: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppMachinesViewIssueAction: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppMachinesViewIssueAction {
+        return
+            try AppMachinesViewIssueAction(
+                label: FfiConverterString.read(from: &buf),
+                url: FfiConverterOptionString.read(from: &buf),
+                hostAction: FfiConverterOptionTypeAppHostActionId.read(from: &buf),
+                appUpdate: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppMachinesViewIssueAction, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterOptionString.write(value.url, into: &buf)
+        FfiConverterOptionTypeAppHostActionId.write(value.hostAction, into: &buf)
+        FfiConverterBool.write(value.appUpdate, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMachinesViewIssueAction_lift(_ buf: RustBuffer) throws -> AppMachinesViewIssueAction {
+    return try FfiConverterTypeAppMachinesViewIssueAction.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMachinesViewIssueAction_lower(_ value: AppMachinesViewIssueAction) -> RustBuffer {
+    return FfiConverterTypeAppMachinesViewIssueAction.lower(value)
+}
+
+
+public struct AppMachinesViewMachine: Equatable, Hashable {
+    /**
+     * The row's id ([`MachinePageRow::id`]).
+     */
+    public var id: String
+    /**
+     * Its name.
+     */
+    public var name: String
+    /**
+     * "This Mac" on the machine this app runs on.
+     */
+    public var badge: String?
+    /**
+     * The row's one muted line ("2 Spaces running", "Ready for Spaces",
+     * "Offline · last seen 9 days ago").
+     */
+    public var line: String
+    /**
+     * Usable now (the green dot): online and sharing.
+     */
+    public var online: Bool
+    /**
+     * The dot's tint for its issues: `warn`, `fail`, or empty.
+     */
+    public var health: String
+    /**
+     * What the shell passes to `Spaces.machine_health` to check it: empty
+     * for This Mac, its id for another of your machines; `None` when it
+     * can't be checked from here (offline, not yours).
+     */
+    public var healthTarget: String?
+    /**
+     * `macos`, `linux`, `windows`, or empty.
+     */
+    public var os: String
+    /**
+     * The machine this app runs on.
+     */
+    public var current: Bool
+    /**
+     * Someone shares it with you (a team machine).
+     */
+    public var team: Bool
+    /**
+     * The page's status line ("Online", "Offline · last seen 9 days ago").
+     */
+    public var status: String
+    /**
+     * After the status: who shares it ("Shared by your team").
+     */
+    public var sharedBy: String?
+    /**
+     * Rename, when it can be renamed from here.
+     */
+    public var rename: AppMachinesViewRename?
+    /**
+     * "Issues".
+     */
+    public var issuesTitle: String
+    /**
+     * What is wrong, one sentence each with its fix; empty when healthy
+     * (the section is hidden then) or offline.
+     */
+    public var issues: [AppMachinesViewIssue]
+    /**
+     * One line over the switches (offline, signed out).
+     */
+    public var notice: String?
+    /**
+     * The notice's button (Sign In).
+     */
+    public var noticeAction: AppHostAction?
+    /**
+     * Provide Spaces, then Share this desktop.
+     */
+    public var toggles: [AppMachinesViewToggle]
+    /**
+     * Under read-only switches: where they change.
+     */
+    public var togglesNote: String?
+    /**
+     * "Spaces on this machine".
+     */
+    public var spacesTitle: String
+    /**
+     * The Spaces on it.
+     */
+    public var spaces: [AppMachinesViewSpace]
+    /**
+     * Its own desktop, when it shares it (shown above `spaces`).
+     */
+    public var desktop: AppMachinesViewDesktop?
+    /**
+     * When it has none.
+     */
+    public var spacesEmpty: String?
+    /**
+     * New Space here.
+     */
+    public var newSpace: AppMachinesViewNewSpace
+    /**
+     * "Details" (collapsed).
+     */
+    public var detailsTitle: String
+    /**
+     * OS, App, Connection, Service.
+     */
+    public var details: [AppMachinesViewFact]
+    /**
+     * Remove from account (none for a team machine).
+     */
+    public var remove: AppMachinesViewRemove?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The row's id ([`MachinePageRow::id`]).
+         */id: String,
+        /**
+         * Its name.
+         */name: String,
+        /**
+         * "This Mac" on the machine this app runs on.
+         */badge: String?,
+        /**
+         * The row's one muted line ("2 Spaces running", "Ready for Spaces",
+         * "Offline · last seen 9 days ago").
+         */line: String,
+        /**
+         * Usable now (the green dot): online and sharing.
+         */online: Bool,
+        /**
+         * The dot's tint for its issues: `warn`, `fail`, or empty.
+         */health: String,
+        /**
+         * What the shell passes to `Spaces.machine_health` to check it: empty
+         * for This Mac, its id for another of your machines; `None` when it
+         * can't be checked from here (offline, not yours).
+         */healthTarget: String?,
+        /**
+         * `macos`, `linux`, `windows`, or empty.
+         */os: String,
+        /**
+         * The machine this app runs on.
+         */current: Bool,
+        /**
+         * Someone shares it with you (a team machine).
+         */team: Bool,
+        /**
+         * The page's status line ("Online", "Offline · last seen 9 days ago").
+         */status: String,
+        /**
+         * After the status: who shares it ("Shared by your team").
+         */sharedBy: String?,
+        /**
+         * Rename, when it can be renamed from here.
+         */rename: AppMachinesViewRename?,
+        /**
+         * "Issues".
+         */issuesTitle: String,
+        /**
+         * What is wrong, one sentence each with its fix; empty when healthy
+         * (the section is hidden then) or offline.
+         */issues: [AppMachinesViewIssue],
+        /**
+         * One line over the switches (offline, signed out).
+         */notice: String?,
+        /**
+         * The notice's button (Sign In).
+         */noticeAction: AppHostAction?,
+        /**
+         * Provide Spaces, then Share this desktop.
+         */toggles: [AppMachinesViewToggle],
+        /**
+         * Under read-only switches: where they change.
+         */togglesNote: String?,
+        /**
+         * "Spaces on this machine".
+         */spacesTitle: String,
+        /**
+         * The Spaces on it.
+         */spaces: [AppMachinesViewSpace],
+        /**
+         * Its own desktop, when it shares it (shown above `spaces`).
+         */desktop: AppMachinesViewDesktop?,
+        /**
+         * When it has none.
+         */spacesEmpty: String?,
+        /**
+         * New Space here.
+         */newSpace: AppMachinesViewNewSpace,
+        /**
+         * "Details" (collapsed).
+         */detailsTitle: String,
+        /**
+         * OS, App, Connection, Service.
+         */details: [AppMachinesViewFact],
+        /**
+         * Remove from account (none for a team machine).
+         */remove: AppMachinesViewRemove?) {
+        self.id = id
+        self.name = name
+        self.badge = badge
+        self.line = line
+        self.online = online
+        self.health = health
+        self.healthTarget = healthTarget
+        self.os = os
+        self.current = current
+        self.team = team
+        self.status = status
+        self.sharedBy = sharedBy
+        self.rename = rename
+        self.issuesTitle = issuesTitle
+        self.issues = issues
+        self.notice = notice
+        self.noticeAction = noticeAction
+        self.toggles = toggles
+        self.togglesNote = togglesNote
+        self.spacesTitle = spacesTitle
+        self.spaces = spaces
+        self.desktop = desktop
+        self.spacesEmpty = spacesEmpty
+        self.newSpace = newSpace
+        self.detailsTitle = detailsTitle
+        self.details = details
+        self.remove = remove
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppMachinesViewMachine: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppMachinesViewMachine: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppMachinesViewMachine {
+        return
+            try AppMachinesViewMachine(
+                id: FfiConverterString.read(from: &buf),
+                name: FfiConverterString.read(from: &buf),
+                badge: FfiConverterOptionString.read(from: &buf),
+                line: FfiConverterString.read(from: &buf),
+                online: FfiConverterBool.read(from: &buf),
+                health: FfiConverterString.read(from: &buf),
+                healthTarget: FfiConverterOptionString.read(from: &buf),
+                os: FfiConverterString.read(from: &buf),
+                current: FfiConverterBool.read(from: &buf),
+                team: FfiConverterBool.read(from: &buf),
+                status: FfiConverterString.read(from: &buf),
+                sharedBy: FfiConverterOptionString.read(from: &buf),
+                rename: FfiConverterOptionTypeAppMachinesViewRename.read(from: &buf),
+                issuesTitle: FfiConverterString.read(from: &buf),
+                issues: FfiConverterSequenceTypeAppMachinesViewIssue.read(from: &buf),
+                notice: FfiConverterOptionString.read(from: &buf),
+                noticeAction: FfiConverterOptionTypeAppHostAction.read(from: &buf),
+                toggles: FfiConverterSequenceTypeAppMachinesViewToggle.read(from: &buf),
+                togglesNote: FfiConverterOptionString.read(from: &buf),
+                spacesTitle: FfiConverterString.read(from: &buf),
+                spaces: FfiConverterSequenceTypeAppMachinesViewSpace.read(from: &buf),
+                desktop: FfiConverterOptionTypeAppMachinesViewDesktop.read(from: &buf),
+                spacesEmpty: FfiConverterOptionString.read(from: &buf),
+                newSpace: FfiConverterTypeAppMachinesViewNewSpace.read(from: &buf),
+                detailsTitle: FfiConverterString.read(from: &buf),
+                details: FfiConverterSequenceTypeAppMachinesViewFact.read(from: &buf),
+                remove: FfiConverterOptionTypeAppMachinesViewRemove.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppMachinesViewMachine, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterOptionString.write(value.badge, into: &buf)
+        FfiConverterString.write(value.line, into: &buf)
+        FfiConverterBool.write(value.online, into: &buf)
+        FfiConverterString.write(value.health, into: &buf)
+        FfiConverterOptionString.write(value.healthTarget, into: &buf)
+        FfiConverterString.write(value.os, into: &buf)
+        FfiConverterBool.write(value.current, into: &buf)
+        FfiConverterBool.write(value.team, into: &buf)
+        FfiConverterString.write(value.status, into: &buf)
+        FfiConverterOptionString.write(value.sharedBy, into: &buf)
+        FfiConverterOptionTypeAppMachinesViewRename.write(value.rename, into: &buf)
+        FfiConverterString.write(value.issuesTitle, into: &buf)
+        FfiConverterSequenceTypeAppMachinesViewIssue.write(value.issues, into: &buf)
+        FfiConverterOptionString.write(value.notice, into: &buf)
+        FfiConverterOptionTypeAppHostAction.write(value.noticeAction, into: &buf)
+        FfiConverterSequenceTypeAppMachinesViewToggle.write(value.toggles, into: &buf)
+        FfiConverterOptionString.write(value.togglesNote, into: &buf)
+        FfiConverterString.write(value.spacesTitle, into: &buf)
+        FfiConverterSequenceTypeAppMachinesViewSpace.write(value.spaces, into: &buf)
+        FfiConverterOptionTypeAppMachinesViewDesktop.write(value.desktop, into: &buf)
+        FfiConverterOptionString.write(value.spacesEmpty, into: &buf)
+        FfiConverterTypeAppMachinesViewNewSpace.write(value.newSpace, into: &buf)
+        FfiConverterString.write(value.detailsTitle, into: &buf)
+        FfiConverterSequenceTypeAppMachinesViewFact.write(value.details, into: &buf)
+        FfiConverterOptionTypeAppMachinesViewRemove.write(value.remove, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMachinesViewMachine_lift(_ buf: RustBuffer) throws -> AppMachinesViewMachine {
+    return try FfiConverterTypeAppMachinesViewMachine.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMachinesViewMachine_lower(_ value: AppMachinesViewMachine) -> RustBuffer {
+    return FfiConverterTypeAppMachinesViewMachine.lower(value)
+}
+
+
+public struct AppMachinesViewNewSpace: Equatable, Hashable {
+    /**
+     * "New Space here".
+     */
+    public var label: String
+    /**
+     * The wizard's placement (`local`, `host:<id>`).
+     */
+    public var on: String
+    /**
+     * Can be pressed now.
+     */
+    public var enabled: Bool
+    /**
+     * Why not, when it cannot.
+     */
+    public var help: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * "New Space here".
+         */label: String,
+        /**
+         * The wizard's placement (`local`, `host:<id>`).
+         */on: String,
+        /**
+         * Can be pressed now.
+         */enabled: Bool,
+        /**
+         * Why not, when it cannot.
+         */help: String?) {
+        self.label = label
+        self.on = on
+        self.enabled = enabled
+        self.help = help
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppMachinesViewNewSpace: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppMachinesViewNewSpace: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppMachinesViewNewSpace {
+        return
+            try AppMachinesViewNewSpace(
+                label: FfiConverterString.read(from: &buf),
+                on: FfiConverterString.read(from: &buf),
+                enabled: FfiConverterBool.read(from: &buf),
+                help: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppMachinesViewNewSpace, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterString.write(value.on, into: &buf)
+        FfiConverterBool.write(value.enabled, into: &buf)
+        FfiConverterOptionString.write(value.help, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMachinesViewNewSpace_lift(_ buf: RustBuffer) throws -> AppMachinesViewNewSpace {
+    return try FfiConverterTypeAppMachinesViewNewSpace.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMachinesViewNewSpace_lower(_ value: AppMachinesViewNewSpace) -> RustBuffer {
+    return FfiConverterTypeAppMachinesViewNewSpace.lower(value)
+}
+
+
+public struct AppMachinesViewRelay: Equatable, Hashable {
+    /**
+     * Machine id.
+     */
+    public var id: String
+    /**
+     * `owner`, or `shared` for a machine someone shares with you.
+     */
+    public var role: String
+    /**
+     * The team you reach it through, for a team machine.
+     */
+    public var team: String?
+    /**
+     * Its owner's email, when the relay says.
+     */
+    public var ownerEmail: String?
+    /**
+     * It creates Spaces for your devices (`None`: it did not say).
+     */
+    public var providesSpaces: Bool?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Machine id.
+         */id: String,
+        /**
+         * `owner`, or `shared` for a machine someone shares with you.
+         */role: String,
+        /**
+         * The team you reach it through, for a team machine.
+         */team: String?,
+        /**
+         * Its owner's email, when the relay says.
+         */ownerEmail: String?,
+        /**
+         * It creates Spaces for your devices (`None`: it did not say).
+         */providesSpaces: Bool?) {
+        self.id = id
+        self.role = role
+        self.team = team
+        self.ownerEmail = ownerEmail
+        self.providesSpaces = providesSpaces
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppMachinesViewRelay: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppMachinesViewRelay: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppMachinesViewRelay {
+        return
+            try AppMachinesViewRelay(
+                id: FfiConverterString.read(from: &buf),
+                role: FfiConverterString.read(from: &buf),
+                team: FfiConverterOptionString.read(from: &buf),
+                ownerEmail: FfiConverterOptionString.read(from: &buf),
+                providesSpaces: FfiConverterOptionBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppMachinesViewRelay, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.role, into: &buf)
+        FfiConverterOptionString.write(value.team, into: &buf)
+        FfiConverterOptionString.write(value.ownerEmail, into: &buf)
+        FfiConverterOptionBool.write(value.providesSpaces, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMachinesViewRelay_lift(_ buf: RustBuffer) throws -> AppMachinesViewRelay {
+    return try FfiConverterTypeAppMachinesViewRelay.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMachinesViewRelay_lower(_ value: AppMachinesViewRelay) -> RustBuffer {
+    return FfiConverterTypeAppMachinesViewRelay.lower(value)
+}
+
+
+public struct AppMachinesViewRemove: Equatable, Hashable {
+    /**
+     * "Remove from account".
+     */
+    public var label: String
+    /**
+     * Can be pressed now.
+     */
+    public var enabled: Bool
+    /**
+     * Why not, when it cannot.
+     */
+    public var help: String?
+    /**
+     * This machine: its host setup is removed (the host's `remove`).
+     */
+    public var host: Bool
+    /**
+     * Another machine: it leaves the relay directory (`relay:<id>`).
+     */
+    public var machine: String?
+    /**
+     * The device on it, revoked too.
+     */
+    public var device: String?
+    /**
+     * Asked first.
+     */
+    public var confirm: AppHostConfirm
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * "Remove from account".
+         */label: String,
+        /**
+         * Can be pressed now.
+         */enabled: Bool,
+        /**
+         * Why not, when it cannot.
+         */help: String?,
+        /**
+         * This machine: its host setup is removed (the host's `remove`).
+         */host: Bool,
+        /**
+         * Another machine: it leaves the relay directory (`relay:<id>`).
+         */machine: String?,
+        /**
+         * The device on it, revoked too.
+         */device: String?,
+        /**
+         * Asked first.
+         */confirm: AppHostConfirm) {
+        self.label = label
+        self.enabled = enabled
+        self.help = help
+        self.host = host
+        self.machine = machine
+        self.device = device
+        self.confirm = confirm
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppMachinesViewRemove: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppMachinesViewRemove: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppMachinesViewRemove {
+        return
+            try AppMachinesViewRemove(
+                label: FfiConverterString.read(from: &buf),
+                enabled: FfiConverterBool.read(from: &buf),
+                help: FfiConverterOptionString.read(from: &buf),
+                host: FfiConverterBool.read(from: &buf),
+                machine: FfiConverterOptionString.read(from: &buf),
+                device: FfiConverterOptionString.read(from: &buf),
+                confirm: FfiConverterTypeAppHostConfirm.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppMachinesViewRemove, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterBool.write(value.enabled, into: &buf)
+        FfiConverterOptionString.write(value.help, into: &buf)
+        FfiConverterBool.write(value.host, into: &buf)
+        FfiConverterOptionString.write(value.machine, into: &buf)
+        FfiConverterOptionString.write(value.device, into: &buf)
+        FfiConverterTypeAppHostConfirm.write(value.confirm, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMachinesViewRemove_lift(_ buf: RustBuffer) throws -> AppMachinesViewRemove {
+    return try FfiConverterTypeAppMachinesViewRemove.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMachinesViewRemove_lower(_ value: AppMachinesViewRemove) -> RustBuffer {
+    return FfiConverterTypeAppMachinesViewRemove.lower(value)
+}
+
+
+public struct AppMachinesViewRemoveAll: Equatable, Hashable {
+    /**
+     * "Remove old machines".
+     */
+    public var label: String
+    /**
+     * Asked first.
+     */
+    public var confirm: AppHostConfirm
+    /**
+     * What each removal does.
+     */
+    public var removes: [AppMachinesViewRemove]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * "Remove old machines".
+         */label: String,
+        /**
+         * Asked first.
+         */confirm: AppHostConfirm,
+        /**
+         * What each removal does.
+         */removes: [AppMachinesViewRemove]) {
+        self.label = label
+        self.confirm = confirm
+        self.removes = removes
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppMachinesViewRemoveAll: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppMachinesViewRemoveAll: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppMachinesViewRemoveAll {
+        return
+            try AppMachinesViewRemoveAll(
+                label: FfiConverterString.read(from: &buf),
+                confirm: FfiConverterTypeAppHostConfirm.read(from: &buf),
+                removes: FfiConverterSequenceTypeAppMachinesViewRemove.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppMachinesViewRemoveAll, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterTypeAppHostConfirm.write(value.confirm, into: &buf)
+        FfiConverterSequenceTypeAppMachinesViewRemove.write(value.removes, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMachinesViewRemoveAll_lift(_ buf: RustBuffer) throws -> AppMachinesViewRemoveAll {
+    return try FfiConverterTypeAppMachinesViewRemoveAll.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMachinesViewRemoveAll_lower(_ value: AppMachinesViewRemoveAll) -> RustBuffer {
+    return FfiConverterTypeAppMachinesViewRemoveAll.lower(value)
+}
+
+
+public struct AppMachinesViewRename: Equatable, Hashable {
+    /**
+     * `host` (This machine's host setup), `machine` (another machine of
+     * yours on the relay) or `device` (one of your devices).
+     */
+    public var target: String
+    /**
+     * The id it is saved under (the relay machine's or the device's).
+     */
+    public var id: String
+    /**
+     * The dialog's title.
+     */
+    public var title: String
+    /**
+     * Its confirming button.
+     */
+    public var confirmLabel: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `host` (This machine's host setup), `machine` (another machine of
+         * yours on the relay) or `device` (one of your devices).
+         */target: String,
+        /**
+         * The id it is saved under (the relay machine's or the device's).
+         */id: String,
+        /**
+         * The dialog's title.
+         */title: String,
+        /**
+         * Its confirming button.
+         */confirmLabel: String) {
+        self.target = target
+        self.id = id
+        self.title = title
+        self.confirmLabel = confirmLabel
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppMachinesViewRename: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppMachinesViewRename: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppMachinesViewRename {
+        return
+            try AppMachinesViewRename(
+                target: FfiConverterString.read(from: &buf),
+                id: FfiConverterString.read(from: &buf),
+                title: FfiConverterString.read(from: &buf),
+                confirmLabel: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppMachinesViewRename, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.target, into: &buf)
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterString.write(value.confirmLabel, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMachinesViewRename_lift(_ buf: RustBuffer) throws -> AppMachinesViewRename {
+    return try FfiConverterTypeAppMachinesViewRename.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMachinesViewRename_lower(_ value: AppMachinesViewRename) -> RustBuffer {
+    return FfiConverterTypeAppMachinesViewRename.lower(value)
+}
+
+
+public struct AppMachinesViewSpace: Equatable, Hashable {
+    /**
+     * The Space's id (its page).
+     */
+    public var id: String
+    /**
+     * Its name.
+     */
+    public var name: String
+    /**
+     * Its system ("Ubuntu 24.04.5 LTS", "macOS").
+     */
+    public var os: String
+    /**
+     * Its status word ("Running", "Stopped").
+     */
+    public var status: String
+    /**
+     * Running (the green dot).
+     */
+    public var running: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The Space's id (its page).
+         */id: String,
+        /**
+         * Its name.
+         */name: String,
+        /**
+         * Its system ("Ubuntu 24.04.5 LTS", "macOS").
+         */os: String,
+        /**
+         * Its status word ("Running", "Stopped").
+         */status: String,
+        /**
+         * Running (the green dot).
+         */running: Bool) {
+        self.id = id
+        self.name = name
+        self.os = os
+        self.status = status
+        self.running = running
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppMachinesViewSpace: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppMachinesViewSpace: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppMachinesViewSpace {
+        return
+            try AppMachinesViewSpace(
+                id: FfiConverterString.read(from: &buf),
+                name: FfiConverterString.read(from: &buf),
+                os: FfiConverterString.read(from: &buf),
+                status: FfiConverterString.read(from: &buf),
+                running: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppMachinesViewSpace, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.os, into: &buf)
+        FfiConverterString.write(value.status, into: &buf)
+        FfiConverterBool.write(value.running, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMachinesViewSpace_lift(_ buf: RustBuffer) throws -> AppMachinesViewSpace {
+    return try FfiConverterTypeAppMachinesViewSpace.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMachinesViewSpace_lower(_ value: AppMachinesViewSpace) -> RustBuffer {
+    return FfiConverterTypeAppMachinesViewSpace.lower(value)
+}
+
+
+public struct AppMachinesViewToggle: Equatable, Hashable {
+    /**
+     * `spaces` or `desktop`.
+     */
+    public var id: String
+    /**
+     * "Provide Spaces", "Share this desktop".
+     */
+    public var label: String
+    /**
+     * One line under it.
+     */
+    public var help: String
+    /**
+     * On now.
+     */
+    public var on: Bool
+    /**
+     * Changed here (This machine); another machine's are read-only.
+     */
+    public var editable: Bool
+    /**
+     * Can be flipped now.
+     */
+    public var enabled: Bool
+    /**
+     * What flipping it runs, in order (the host's actions).
+     */
+    public var actions: [AppHostActionId]
+    /**
+     * Before This machine is set up: flipping it opens the setup form
+     * with this profile (`desktop` or `spare`).
+     */
+    public var setup: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `spaces` or `desktop`.
+         */id: String,
+        /**
+         * "Provide Spaces", "Share this desktop".
+         */label: String,
+        /**
+         * One line under it.
+         */help: String,
+        /**
+         * On now.
+         */on: Bool,
+        /**
+         * Changed here (This machine); another machine's are read-only.
+         */editable: Bool,
+        /**
+         * Can be flipped now.
+         */enabled: Bool,
+        /**
+         * What flipping it runs, in order (the host's actions).
+         */actions: [AppHostActionId],
+        /**
+         * Before This machine is set up: flipping it opens the setup form
+         * with this profile (`desktop` or `spare`).
+         */setup: String?) {
+        self.id = id
+        self.label = label
+        self.help = help
+        self.on = on
+        self.editable = editable
+        self.enabled = enabled
+        self.actions = actions
+        self.setup = setup
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppMachinesViewToggle: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppMachinesViewToggle: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppMachinesViewToggle {
+        return
+            try AppMachinesViewToggle(
+                id: FfiConverterString.read(from: &buf),
+                label: FfiConverterString.read(from: &buf),
+                help: FfiConverterString.read(from: &buf),
+                on: FfiConverterBool.read(from: &buf),
+                editable: FfiConverterBool.read(from: &buf),
+                enabled: FfiConverterBool.read(from: &buf),
+                actions: FfiConverterSequenceTypeAppHostActionId.read(from: &buf),
+                setup: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppMachinesViewToggle, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterString.write(value.help, into: &buf)
+        FfiConverterBool.write(value.on, into: &buf)
+        FfiConverterBool.write(value.editable, into: &buf)
+        FfiConverterBool.write(value.enabled, into: &buf)
+        FfiConverterSequenceTypeAppHostActionId.write(value.actions, into: &buf)
+        FfiConverterOptionString.write(value.setup, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMachinesViewToggle_lift(_ buf: RustBuffer) throws -> AppMachinesViewToggle {
+    return try FfiConverterTypeAppMachinesViewToggle.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMachinesViewToggle_lower(_ value: AppMachinesViewToggle) -> RustBuffer {
+    return FfiConverterTypeAppMachinesViewToggle.lower(value)
+}
+
+
 public struct AppMainChrome: Equatable, Hashable {
     /**
      * Window title when nothing is selected.
@@ -19727,6 +22943,72 @@ public func FfiConverterTypeAppModeChoice_lift(_ buf: RustBuffer) throws -> AppM
 #endif
 public func FfiConverterTypeAppModeChoice_lower(_ value: AppModeChoice) -> RustBuffer {
     return FfiConverterTypeAppModeChoice.lower(value)
+}
+
+
+public struct AppMsg: Equatable, Hashable {
+    /**
+     * The catalog key, `<area>.<screen_or_component>.<element>`.
+     */
+    public var code: String
+    /**
+     * Values for the text's variables.
+     */
+    public var vars: [String: String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The catalog key, `<area>.<screen_or_component>.<element>`.
+         */code: String,
+        /**
+         * Values for the text's variables.
+         */vars: [String: String]) {
+        self.code = code
+        self.vars = vars
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppMsg: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppMsg: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppMsg {
+        return
+            try AppMsg(
+                code: FfiConverterString.read(from: &buf),
+                vars: FfiConverterDictionaryStringString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppMsg, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.code, into: &buf)
+        FfiConverterDictionaryStringString.write(value.vars, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMsg_lift(_ buf: RustBuffer) throws -> AppMsg {
+    return try FfiConverterTypeAppMsg.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMsg_lower(_ value: AppMsg) -> RustBuffer {
+    return FfiConverterTypeAppMsg.lower(value)
 }
 
 
@@ -21398,7 +24680,7 @@ public struct AppNotchView: Equatable, Hashable {
      */
     public var label: String
     /**
-     * "N Spaces": the tab's spoken label (remote Spaces only).
+     * "N Spaces": the tab's spoken label (Spaces on or starting only).
      */
     public var countLabel: String
     /**
@@ -21423,7 +24705,8 @@ public struct AppNotchView: Equatable, Hashable {
      */
     public var hidden: Bool
     /**
-     * The tab shows (closed, no drag in flight; a drag tucks it away).
+     * The tab shows (closed, no drag in flight, at least one Space on or
+     * starting; a drag tucks it away, and with none the notch is bare).
      */
     public var showTab: Bool
     /**
@@ -21460,7 +24743,7 @@ public struct AppNotchView: Equatable, Hashable {
          * Accessibility label of the panel.
          */label: String,
         /**
-         * "N Spaces": the tab's spoken label (remote Spaces only).
+         * "N Spaces": the tab's spoken label (Spaces on or starting only).
          */countLabel: String,
         /**
          * The tab's two rows: the count over the word.
@@ -21479,7 +24762,8 @@ public struct AppNotchView: Equatable, Hashable {
          * The notch is hidden (menu bar only): draw nothing.
          */hidden: Bool,
         /**
-         * The tab shows (closed, no drag in flight; a drag tucks it away).
+         * The tab shows (closed, no drag in flight, at least one Space on or
+         * starting; a drag tucks it away, and with none the notch is bare).
          */showTab: Bool,
         /**
          * The pointer rests on the closed notch while the dwell runs: the
@@ -22352,7 +25636,7 @@ public struct AppOnboardingState: Equatable, Hashable {
     public var launchAtLogin: Bool
     /**
      * The usage-data switch on Welcome: the machine's telemetry setting
-     * (Settings' "Share anonymous usage data", `cua telemetry off`), none
+     * (Settings' "Share usage data to help improve Cua", `cua telemetry off`), none
      * until the shell read it (then it shows on).
      */
     public var telemetry: AppTelemetryInput?
@@ -22368,6 +25652,11 @@ public struct AppOnboardingState: Equatable, Hashable {
      * Welcome shows again (Back).
      */
     public var runCounted: Bool
+    /**
+     * A page opened from Done's to-do list: leaving it (Continue, Skip or
+     * Back) comes back to Done.
+     */
+    public var revisit: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -22443,7 +25732,7 @@ public struct AppOnboardingState: Equatable, Hashable {
          */launchAtLogin: Bool,
         /**
          * The usage-data switch on Welcome: the machine's telemetry setting
-         * (Settings' "Share anonymous usage data", `cua telemetry off`), none
+         * (Settings' "Share usage data to help improve Cua", `cua telemetry off`), none
          * until the shell read it (then it shows on).
          */telemetry: AppTelemetryInput?,
         /**
@@ -22455,7 +25744,11 @@ public struct AppOnboardingState: Equatable, Hashable {
          * when Welcome showed on a machine whose usage notice was already
          * shown, else when Welcome was left. Once per run, however often
          * Welcome shows again (Back).
-         */runCounted: Bool) {
+         */runCounted: Bool,
+        /**
+         * A page opened from Done's to-do list: leaving it (Continue, Skip or
+         * Back) comes back to Done.
+         */revisit: Bool) {
         self.step = step
         self.cliTarget = cliTarget
         self.cliPlan = cliPlan
@@ -22481,6 +25774,7 @@ public struct AppOnboardingState: Equatable, Hashable {
         self.telemetry = telemetry
         self.experiments = experiments
         self.runCounted = runCounted
+        self.revisit = revisit
     }
 
 
@@ -22523,7 +25817,8 @@ public struct FfiConverterTypeAppOnboardingState: FfiConverterRustBuffer {
                 launchAtLogin: FfiConverterBool.read(from: &buf),
                 telemetry: FfiConverterOptionTypeAppTelemetryInput.read(from: &buf),
                 experiments: FfiConverterTypeAppExperiments.read(from: &buf),
-                runCounted: FfiConverterBool.read(from: &buf)
+                runCounted: FfiConverterBool.read(from: &buf),
+                revisit: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -22553,6 +25848,7 @@ public struct FfiConverterTypeAppOnboardingState: FfiConverterRustBuffer {
         FfiConverterOptionTypeAppTelemetryInput.write(value.telemetry, into: &buf)
         FfiConverterTypeAppExperiments.write(value.experiments, into: &buf)
         FfiConverterBool.write(value.runCounted, into: &buf)
+        FfiConverterBool.write(value.revisit, into: &buf)
     }
 }
 
@@ -22569,6 +25865,112 @@ public func FfiConverterTypeAppOnboardingState_lift(_ buf: RustBuffer) throws ->
 #endif
 public func FfiConverterTypeAppOnboardingState_lower(_ value: AppOnboardingState) -> RustBuffer {
     return FfiConverterTypeAppOnboardingState.lower(value)
+}
+
+
+public struct AppOnboardingTodo: Equatable, Hashable {
+    /**
+     * Which.
+     */
+    public var id: AppOnboardingTodoId
+    /**
+     * "Cua CLI".
+     */
+    public var title: String
+    /**
+     * One plain line under it.
+     */
+    public var note: String
+    /**
+     * Set up.
+     */
+    public var done: Bool
+    /**
+     * Nice to have: "You're all set" does not wait for it.
+     */
+    public var optional: Bool
+    /**
+     * The fix's button ("Install the Cua CLI"), while not done.
+     */
+    public var action: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Which.
+         */id: AppOnboardingTodoId,
+        /**
+         * "Cua CLI".
+         */title: String,
+        /**
+         * One plain line under it.
+         */note: String,
+        /**
+         * Set up.
+         */done: Bool,
+        /**
+         * Nice to have: "You're all set" does not wait for it.
+         */optional: Bool,
+        /**
+         * The fix's button ("Install the Cua CLI"), while not done.
+         */action: String?) {
+        self.id = id
+        self.title = title
+        self.note = note
+        self.done = done
+        self.optional = optional
+        self.action = action
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppOnboardingTodo: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppOnboardingTodo: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppOnboardingTodo {
+        return
+            try AppOnboardingTodo(
+                id: FfiConverterTypeAppOnboardingTodoId.read(from: &buf),
+                title: FfiConverterString.read(from: &buf),
+                note: FfiConverterString.read(from: &buf),
+                done: FfiConverterBool.read(from: &buf),
+                optional: FfiConverterBool.read(from: &buf),
+                action: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppOnboardingTodo, into buf: inout [UInt8]) {
+        FfiConverterTypeAppOnboardingTodoId.write(value.id, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterString.write(value.note, into: &buf)
+        FfiConverterBool.write(value.done, into: &buf)
+        FfiConverterBool.write(value.optional, into: &buf)
+        FfiConverterOptionString.write(value.action, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppOnboardingTodo_lift(_ buf: RustBuffer) throws -> AppOnboardingTodo {
+    return try FfiConverterTypeAppOnboardingTodo.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppOnboardingTodo_lower(_ value: AppOnboardingTodo) -> RustBuffer {
+    return FfiConverterTypeAppOnboardingTodo.lower(value)
 }
 
 
@@ -22655,6 +26057,12 @@ public struct AppOnboardingView: Equatable, Hashable {
      * Done's "Launch at login" checkbox.
      */
     public var launchAtLogin: AppOnboardingCheckbox?
+    /**
+     * Done's to-do list: the Cua CLI, the account, an AI agent and Cua
+     * Volume, each set up or with its fix. The title says "Almost done"
+     * until every one that is not optional is.
+     */
+    public var todos: [AppOnboardingTodo]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -22721,7 +26129,12 @@ public struct AppOnboardingView: Equatable, Hashable {
          */drive: AppDriveCard?,
         /**
          * Done's "Launch at login" checkbox.
-         */launchAtLogin: AppOnboardingCheckbox?) {
+         */launchAtLogin: AppOnboardingCheckbox?,
+        /**
+         * Done's to-do list: the Cua CLI, the account, an AI agent and Cua
+         * Volume, each set up or with its fix. The title says "Almost done"
+         * until every one that is not optional is.
+         */todos: [AppOnboardingTodo]) {
         self.step = step
         self.dots = dots
         self.title = title
@@ -22741,6 +26154,7 @@ public struct AppOnboardingView: Equatable, Hashable {
         self.usage = usage
         self.drive = drive
         self.launchAtLogin = launchAtLogin
+        self.todos = todos
     }
 
 
@@ -22777,7 +26191,8 @@ public struct FfiConverterTypeAppOnboardingView: FfiConverterRustBuffer {
                 noticeLinkUrl: FfiConverterOptionString.read(from: &buf),
                 usage: FfiConverterOptionTypeAppUsageToggle.read(from: &buf),
                 drive: FfiConverterOptionTypeAppDriveCard.read(from: &buf),
-                launchAtLogin: FfiConverterOptionTypeAppOnboardingCheckbox.read(from: &buf)
+                launchAtLogin: FfiConverterOptionTypeAppOnboardingCheckbox.read(from: &buf),
+                todos: FfiConverterSequenceTypeAppOnboardingTodo.read(from: &buf)
         )
     }
 
@@ -22801,6 +26216,7 @@ public struct FfiConverterTypeAppOnboardingView: FfiConverterRustBuffer {
         FfiConverterOptionTypeAppUsageToggle.write(value.usage, into: &buf)
         FfiConverterOptionTypeAppDriveCard.write(value.drive, into: &buf)
         FfiConverterOptionTypeAppOnboardingCheckbox.write(value.launchAtLogin, into: &buf)
+        FfiConverterSequenceTypeAppOnboardingTodo.write(value.todos, into: &buf)
     }
 }
 
@@ -23198,10 +26614,6 @@ public struct AppPendingCreate: Equatable, Hashable {
      */
     public var error: String?
     /**
-     * It failed for want of Cua Cloud credit: the billing page.
-     */
-    public var creditUrl: String?
-    /**
      * The registered Space's id once it finished; the row goes when the
      * registry lists it.
      */
@@ -23261,6 +26673,27 @@ public struct AppPendingCreate: Equatable, Hashable {
      * That machine's name, for the row and for a failure that names it.
      */
     public var hostName: String?
+    /**
+     * How many times the app ran this create again by itself: 0, or 1
+     * after a failure that usually passes ([`fail_decision`]).
+     */
+    public var attempt: UInt32
+    /**
+     * The create failed and the app runs it again now: the shell starts
+     * the same create (same arguments, same pending id) once more. Cleared
+     * by the new attempt's first progress or its end.
+     */
+    public var retryPending: Bool
+    /**
+     * The finer cause (`error_subclass` word) of the failure the app
+     * retried, for the create's final usage event.
+     */
+    public var retriedSubclass: String?
+    /**
+     * It failed the same way as the last create of this image here: the
+     * fix to show instead of a plain Try again ([`fix_for`]).
+     */
+    public var fix: AppCreateFix?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -23295,9 +26728,6 @@ public struct AppPendingCreate: Equatable, Hashable {
         /**
          * Why it failed.
          */error: String?,
-        /**
-         * It failed for want of Cua Cloud credit: the billing page.
-         */creditUrl: String?,
         /**
          * The registered Space's id once it finished; the row goes when the
          * registry lists it.
@@ -23344,7 +26774,24 @@ public struct AppPendingCreate: Equatable, Hashable {
          */host: String?,
         /**
          * That machine's name, for the row and for a failure that names it.
-         */hostName: String?) {
+         */hostName: String?,
+        /**
+         * How many times the app ran this create again by itself: 0, or 1
+         * after a failure that usually passes ([`fail_decision`]).
+         */attempt: UInt32,
+        /**
+         * The create failed and the app runs it again now: the shell starts
+         * the same create (same arguments, same pending id) once more. Cleared
+         * by the new attempt's first progress or its end.
+         */retryPending: Bool,
+        /**
+         * The finer cause (`error_subclass` word) of the failure the app
+         * retried, for the create's final usage event.
+         */retriedSubclass: String?,
+        /**
+         * It failed the same way as the last create of this image here: the
+         * fix to show instead of a plain Try again ([`fix_for`]).
+         */fix: AppCreateFix?) {
         self.id = id
         self.name = name
         self.os = os
@@ -23355,7 +26802,6 @@ public struct AppPendingCreate: Equatable, Hashable {
         self.pulled = pulled
         self.permille = permille
         self.error = error
-        self.creditUrl = creditUrl
         self.spaceId = spaceId
         self.image = image
         self.kind = kind
@@ -23369,6 +26815,10 @@ public struct AppPendingCreate: Equatable, Hashable {
         self.gpu = gpu
         self.host = host
         self.hostName = hostName
+        self.attempt = attempt
+        self.retryPending = retryPending
+        self.retriedSubclass = retriedSubclass
+        self.fix = fix
     }
 
 
@@ -23397,7 +26847,6 @@ public struct FfiConverterTypeAppPendingCreate: FfiConverterRustBuffer {
                 pulled: FfiConverterBool.read(from: &buf),
                 permille: FfiConverterUInt32.read(from: &buf),
                 error: FfiConverterOptionString.read(from: &buf),
-                creditUrl: FfiConverterOptionString.read(from: &buf),
                 spaceId: FfiConverterOptionString.read(from: &buf),
                 image: FfiConverterOptionString.read(from: &buf),
                 kind: FfiConverterOptionTypeAppSpaceKind.read(from: &buf),
@@ -23410,7 +26859,11 @@ public struct FfiConverterTypeAppPendingCreate: FfiConverterRustBuffer {
                 cancelling: FfiConverterBool.read(from: &buf),
                 gpu: FfiConverterBool.read(from: &buf),
                 host: FfiConverterOptionString.read(from: &buf),
-                hostName: FfiConverterOptionString.read(from: &buf)
+                hostName: FfiConverterOptionString.read(from: &buf),
+                attempt: FfiConverterUInt32.read(from: &buf),
+                retryPending: FfiConverterBool.read(from: &buf),
+                retriedSubclass: FfiConverterOptionString.read(from: &buf),
+                fix: FfiConverterOptionTypeAppCreateFix.read(from: &buf)
         )
     }
 
@@ -23425,7 +26878,6 @@ public struct FfiConverterTypeAppPendingCreate: FfiConverterRustBuffer {
         FfiConverterBool.write(value.pulled, into: &buf)
         FfiConverterUInt32.write(value.permille, into: &buf)
         FfiConverterOptionString.write(value.error, into: &buf)
-        FfiConverterOptionString.write(value.creditUrl, into: &buf)
         FfiConverterOptionString.write(value.spaceId, into: &buf)
         FfiConverterOptionString.write(value.image, into: &buf)
         FfiConverterOptionTypeAppSpaceKind.write(value.kind, into: &buf)
@@ -23439,6 +26891,10 @@ public struct FfiConverterTypeAppPendingCreate: FfiConverterRustBuffer {
         FfiConverterBool.write(value.gpu, into: &buf)
         FfiConverterOptionString.write(value.host, into: &buf)
         FfiConverterOptionString.write(value.hostName, into: &buf)
+        FfiConverterUInt32.write(value.attempt, into: &buf)
+        FfiConverterBool.write(value.retryPending, into: &buf)
+        FfiConverterOptionString.write(value.retriedSubclass, into: &buf)
+        FfiConverterOptionTypeAppCreateFix.write(value.fix, into: &buf)
     }
 }
 
@@ -24530,8 +27986,8 @@ public func FfiConverterTypeAppPickerTileSection_lower(_ value: AppPickerTileSec
 
 public struct AppPlacementOption: Equatable, Hashable {
     /**
-     * What choosing it sets as the create's `on`: `local`, `cloud`,
-     * `host:<machine>`, or a connected cloud's word (`aws`).
+     * What choosing it sets as the create's `on`: `auto`, `local`,
+     * `cloud`, `host:<machine>`, or a connected cloud's word (`aws`).
      */
     public var id: String
     /**
@@ -24540,8 +27996,8 @@ public struct AppPlacementOption: Equatable, Hashable {
      */
     public var label: String
     /**
-     * Its group, in menu order (a separator between groups): `this-mac`,
-     * `hosts`, `clouds`.
+     * Its group, in menu order (a separator between groups): `auto`,
+     * `this-mac`, `hosts`, `clouds`.
      */
     public var group: String
     /**
@@ -24561,16 +28017,16 @@ public struct AppPlacementOption: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * What choosing it sets as the create's `on`: `local`, `cloud`,
-         * `host:<machine>`, or a connected cloud's word (`aws`).
+         * What choosing it sets as the create's `on`: `auto`, `local`,
+         * `cloud`, `host:<machine>`, or a connected cloud's word (`aws`).
          */id: String,
         /**
          * The menu's text: "This Mac", "Mac mini", "Mac mini (offline)",
          * "Mac mini (not sharing)", "AWS · us-west-2".
          */label: String,
         /**
-         * Its group, in menu order (a separator between groups): `this-mac`,
-         * `hosts`, `clouds`.
+         * Its group, in menu order (a separator between groups): `auto`,
+         * `this-mac`, `hosts`, `clouds`.
          */group: String,
         /**
          * Chosen.
@@ -24973,9 +28429,10 @@ public struct AppPowerButton: Equatable, Hashable {
     public var symbol: String
     /**
      * Tooltip and accessibility label: "Suspend", "Resume", "Turn off" or
-     * "Turn on"; while it runs, "Suspending…" and the like.
+     * "Turn on" (`spaces.power.*`); while it runs, "Suspending…" and the
+     * like (`spaces.status.*`).
      */
-    public var help: String
+    public var help: AppMsg
     /**
      * A press turns it on (else off): the shell's SDK call.
      */
@@ -24997,8 +28454,9 @@ public struct AppPowerButton: Equatable, Hashable {
          */symbol: String,
         /**
          * Tooltip and accessibility label: "Suspend", "Resume", "Turn off" or
-         * "Turn on"; while it runs, "Suspending…" and the like.
-         */help: String,
+         * "Turn on" (`spaces.power.*`); while it runs, "Suspending…" and the
+         * like (`spaces.status.*`).
+         */help: AppMsg,
         /**
          * A press turns it on (else off): the shell's SDK call.
          */turnOn: Bool,
@@ -25032,7 +28490,7 @@ public struct FfiConverterTypeAppPowerButton: FfiConverterRustBuffer {
         return
             try AppPowerButton(
                 symbol: FfiConverterString.read(from: &buf),
-                help: FfiConverterString.read(from: &buf),
+                help: FfiConverterTypeAppMsg.read(from: &buf),
                 turnOn: FfiConverterBool.read(from: &buf),
                 enabled: FfiConverterBool.read(from: &buf),
                 busy: FfiConverterBool.read(from: &buf)
@@ -25041,7 +28499,7 @@ public struct FfiConverterTypeAppPowerButton: FfiConverterRustBuffer {
 
     public static func write(_ value: AppPowerButton, into buf: inout [UInt8]) {
         FfiConverterString.write(value.symbol, into: &buf)
-        FfiConverterString.write(value.help, into: &buf)
+        FfiConverterTypeAppMsg.write(value.help, into: &buf)
         FfiConverterBool.write(value.turnOn, into: &buf)
         FfiConverterBool.write(value.enabled, into: &buf)
         FfiConverterBool.write(value.busy, into: &buf)
@@ -25696,7 +29154,7 @@ public func FfiConverterTypeAppRefreshReport_lower(_ value: AppRefreshReport) ->
 
 public struct AppRelayAllowanceNotice: Equatable, Hashable {
     /**
-     * "You've used your free relay allowance for this month. ..."
+     * On Free: "You're using 2 of 2 live sessions on the free plan. ..."
      */
     public var text: String
     /**
@@ -25728,7 +29186,7 @@ public struct AppRelayAllowanceNotice: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * "You've used your free relay allowance for this month. ..."
+         * On Free: "You're using 2 of 2 live sessions on the free plan. ..."
          */text: String,
         /**
          * [`UPGRADE`].
@@ -26557,6 +30015,284 @@ public func FfiConverterTypeAppResourceEditView_lift(_ buf: RustBuffer) throws -
 #endif
 public func FfiConverterTypeAppResourceEditView_lower(_ value: AppResourceEditView) -> RustBuffer {
     return FfiConverterTypeAppResourceEditView.lower(value)
+}
+
+
+public struct AppResourceRow: Equatable, Hashable {
+    /**
+     * "Processor", "Memory" or "Space for files".
+     */
+    public var label: String
+    /**
+     * The numbers in words.
+     */
+    public var value: String
+    /**
+     * How full the small bar is, 0 to 1; none for a row with no bar.
+     */
+    public var fraction: Double?
+    /**
+     * How to colour it.
+     */
+    public var tone: AppResourceTone
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * "Processor", "Memory" or "Space for files".
+         */label: String,
+        /**
+         * The numbers in words.
+         */value: String,
+        /**
+         * How full the small bar is, 0 to 1; none for a row with no bar.
+         */fraction: Double?,
+        /**
+         * How to colour it.
+         */tone: AppResourceTone) {
+        self.label = label
+        self.value = value
+        self.fraction = fraction
+        self.tone = tone
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppResourceRow: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppResourceRow: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppResourceRow {
+        return
+            try AppResourceRow(
+                label: FfiConverterString.read(from: &buf),
+                value: FfiConverterString.read(from: &buf),
+                fraction: FfiConverterOptionDouble.read(from: &buf),
+                tone: FfiConverterTypeAppResourceTone.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppResourceRow, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterString.write(value.value, into: &buf)
+        FfiConverterOptionDouble.write(value.fraction, into: &buf)
+        FfiConverterTypeAppResourceTone.write(value.tone, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppResourceRow_lift(_ buf: RustBuffer) throws -> AppResourceRow {
+    return try FfiConverterTypeAppResourceRow.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppResourceRow_lower(_ value: AppResourceRow) -> RustBuffer {
+    return FfiConverterTypeAppResourceRow.lower(value)
+}
+
+
+public struct AppResourcesSnapshot: Equatable, Hashable {
+    /**
+     * Grows by one per sample.
+     */
+    public var sequence: UInt64
+    /**
+     * Unix ms.
+     */
+    public var sampledAtMs: UInt64
+    /**
+     * This Mac.
+     */
+    public var thisMac: AppComputerResources
+    /**
+     * Extra Spaces on this Mac.
+     */
+    public var spaces: [AppSpaceResources]
+    /**
+     * Your other computers.
+     */
+    public var computers: [AppComputerResources]
+    /**
+     * This Mac's low-disk signal, for the menu bar.
+     */
+    public var warning: AppDiskWarning
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Grows by one per sample.
+         */sequence: UInt64,
+        /**
+         * Unix ms.
+         */sampledAtMs: UInt64,
+        /**
+         * This Mac.
+         */thisMac: AppComputerResources,
+        /**
+         * Extra Spaces on this Mac.
+         */spaces: [AppSpaceResources],
+        /**
+         * Your other computers.
+         */computers: [AppComputerResources],
+        /**
+         * This Mac's low-disk signal, for the menu bar.
+         */warning: AppDiskWarning) {
+        self.sequence = sequence
+        self.sampledAtMs = sampledAtMs
+        self.thisMac = thisMac
+        self.spaces = spaces
+        self.computers = computers
+        self.warning = warning
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppResourcesSnapshot: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppResourcesSnapshot: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppResourcesSnapshot {
+        return
+            try AppResourcesSnapshot(
+                sequence: FfiConverterUInt64.read(from: &buf),
+                sampledAtMs: FfiConverterUInt64.read(from: &buf),
+                thisMac: FfiConverterTypeAppComputerResources.read(from: &buf),
+                spaces: FfiConverterSequenceTypeAppSpaceResources.read(from: &buf),
+                computers: FfiConverterSequenceTypeAppComputerResources.read(from: &buf),
+                warning: FfiConverterTypeAppDiskWarning.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppResourcesSnapshot, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.sequence, into: &buf)
+        FfiConverterUInt64.write(value.sampledAtMs, into: &buf)
+        FfiConverterTypeAppComputerResources.write(value.thisMac, into: &buf)
+        FfiConverterSequenceTypeAppSpaceResources.write(value.spaces, into: &buf)
+        FfiConverterSequenceTypeAppComputerResources.write(value.computers, into: &buf)
+        FfiConverterTypeAppDiskWarning.write(value.warning, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppResourcesSnapshot_lift(_ buf: RustBuffer) throws -> AppResourcesSnapshot {
+    return try FfiConverterTypeAppResourcesSnapshot.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppResourcesSnapshot_lower(_ value: AppResourcesSnapshot) -> RustBuffer {
+    return FfiConverterTypeAppResourcesSnapshot.lower(value)
+}
+
+
+public struct AppResourcesView: Equatable, Hashable {
+    /**
+     * This Mac.
+     */
+    public var thisMac: AppThisMacView
+    /**
+     * Each extra Space.
+     */
+    public var spaces: [AppSpaceResourcesView]
+    /**
+     * Each other computer.
+     */
+    public var computers: [AppComputerView]
+    /**
+     * The menu bar's warning: none when the disk is fine.
+     */
+    public var warning: AppWarningView?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * This Mac.
+         */thisMac: AppThisMacView,
+        /**
+         * Each extra Space.
+         */spaces: [AppSpaceResourcesView],
+        /**
+         * Each other computer.
+         */computers: [AppComputerView],
+        /**
+         * The menu bar's warning: none when the disk is fine.
+         */warning: AppWarningView?) {
+        self.thisMac = thisMac
+        self.spaces = spaces
+        self.computers = computers
+        self.warning = warning
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppResourcesView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppResourcesView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppResourcesView {
+        return
+            try AppResourcesView(
+                thisMac: FfiConverterTypeAppThisMacView.read(from: &buf),
+                spaces: FfiConverterSequenceTypeAppSpaceResourcesView.read(from: &buf),
+                computers: FfiConverterSequenceTypeAppComputerView.read(from: &buf),
+                warning: FfiConverterOptionTypeAppWarningView.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppResourcesView, into buf: inout [UInt8]) {
+        FfiConverterTypeAppThisMacView.write(value.thisMac, into: &buf)
+        FfiConverterSequenceTypeAppSpaceResourcesView.write(value.spaces, into: &buf)
+        FfiConverterSequenceTypeAppComputerView.write(value.computers, into: &buf)
+        FfiConverterOptionTypeAppWarningView.write(value.warning, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppResourcesView_lift(_ buf: RustBuffer) throws -> AppResourcesView {
+    return try FfiConverterTypeAppResourcesView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppResourcesView_lower(_ value: AppResourcesView) -> RustBuffer {
+    return FfiConverterTypeAppResourcesView.lower(value)
 }
 
 
@@ -27904,10 +31640,6 @@ public struct AppSandboxImage: Equatable, Hashable {
      */
     public var local: AppLocalEngine?
     /**
-     * Cloud engine.
-     */
-    public var cloud: AppCloudEngine?
-    /**
      * `slim`, `full` or `xcode` (canonical images only).
      */
     public var tier: AppImageTier?
@@ -27960,9 +31692,6 @@ public struct AppSandboxImage: Equatable, Hashable {
          * Local engine.
          */local: AppLocalEngine?,
         /**
-         * Cloud engine.
-         */cloud: AppCloudEngine?,
-        /**
          * `slim`, `full` or `xcode` (canonical images only).
          */tier: AppImageTier?,
         /**
@@ -27988,7 +31717,6 @@ public struct AppSandboxImage: Equatable, Hashable {
         self.summary = summary
         self.spacesd = spacesd
         self.local = local
-        self.cloud = cloud
         self.tier = tier
         self.published = published
         self.distro = distro
@@ -28021,7 +31749,6 @@ public struct FfiConverterTypeAppSandboxImage: FfiConverterRustBuffer {
                 summary: FfiConverterString.read(from: &buf),
                 spacesd: FfiConverterBool.read(from: &buf),
                 local: FfiConverterOptionTypeAppLocalEngine.read(from: &buf),
-                cloud: FfiConverterOptionTypeAppCloudEngine.read(from: &buf),
                 tier: FfiConverterOptionTypeAppImageTier.read(from: &buf),
                 published: FfiConverterBool.read(from: &buf),
                 distro: FfiConverterOptionTypeAppImageDistro.read(from: &buf),
@@ -28040,7 +31767,6 @@ public struct FfiConverterTypeAppSandboxImage: FfiConverterRustBuffer {
         FfiConverterString.write(value.summary, into: &buf)
         FfiConverterBool.write(value.spacesd, into: &buf)
         FfiConverterOptionTypeAppLocalEngine.write(value.local, into: &buf)
-        FfiConverterOptionTypeAppCloudEngine.write(value.cloud, into: &buf)
         FfiConverterOptionTypeAppImageTier.write(value.tier, into: &buf)
         FfiConverterBool.write(value.published, into: &buf)
         FfiConverterOptionTypeAppImageDistro.write(value.distro, into: &buf)
@@ -28170,11 +31896,11 @@ public struct AppSensitiveOption: Equatable, Hashable {
     /**
      * Label.
      */
-    public var label: String
+    public var label: AppMsg
     /**
      * The line under the label.
      */
-    public var detail: String
+    public var detail: AppMsg
     /**
      * Checked.
      */
@@ -28188,10 +31914,10 @@ public struct AppSensitiveOption: Equatable, Hashable {
          */group: AppSensitiveGroup,
         /**
          * Label.
-         */label: String,
+         */label: AppMsg,
         /**
          * The line under the label.
-         */detail: String,
+         */detail: AppMsg,
         /**
          * Checked.
          */checked: Bool) {
@@ -28218,16 +31944,16 @@ public struct FfiConverterTypeAppSensitiveOption: FfiConverterRustBuffer {
         return
             try AppSensitiveOption(
                 group: FfiConverterTypeAppSensitiveGroup.read(from: &buf),
-                label: FfiConverterString.read(from: &buf),
-                detail: FfiConverterString.read(from: &buf),
+                label: FfiConverterTypeAppMsg.read(from: &buf),
+                detail: FfiConverterTypeAppMsg.read(from: &buf),
                 checked: FfiConverterBool.read(from: &buf)
         )
     }
 
     public static func write(_ value: AppSensitiveOption, into buf: inout [UInt8]) {
         FfiConverterTypeAppSensitiveGroup.write(value.group, into: &buf)
-        FfiConverterString.write(value.label, into: &buf)
-        FfiConverterString.write(value.detail, into: &buf)
+        FfiConverterTypeAppMsg.write(value.label, into: &buf)
+        FfiConverterTypeAppMsg.write(value.detail, into: &buf)
         FfiConverterBool.write(value.checked, into: &buf)
     }
 }
@@ -28338,7 +32064,9 @@ public struct AppSettings: Equatable, Hashable {
      */
     public var theme: AppSwitcherTheme
     /**
-     * Where New Space starts.
+     * Where New Space starts. A word this build does not know (the
+     * retired `cloud`) reads as this Mac, so an old file keeps its other
+     * settings.
      */
     public var defaultLocation: AppLocation
     /**
@@ -28366,17 +32094,16 @@ public struct AppSettings: Equatable, Hashable {
     public var launchAtLogin: Bool?
     /**
      * Settings, Experiments: every switch off unless turned on
-     * ([`crate::experiments`]). Its `webUi` is the New UI as this launch
-     * shows it ([`resolve_new_ui`]); the file keeps only [`Self::new_ui`]'s
+     * ([`crate::experiments`]). Its `webUi` is always on in the macOS
+     * shell ([`resolve_new_ui`]); the file keeps only [`Self::new_ui`]'s
      * "on" there, the value older builds read.
      */
     public var experiments: AppExperiments
     /**
-     * The New UI as the user chose it (Settings, Experiments, "Use classic
-     * UI"); `None`: never chosen, so
-     * [`crate::experiments::new_ui_default`] decides. An older build's
-     * saved `webUi: true` reads as `Some(true)`; its `false` was only the
-     * saved default, so it reads as never chosen ([`load`]).
+     * The New UI as an older build's "Use classic UI" saved it. Read and
+     * kept for those builds, never acted on: the web UI is the only UI
+     * ([`resolve_new_ui`]). An older build's saved `webUi: true` reads as
+     * `Some(true)`; its `false` was only the saved default ([`load`]).
      */
     public var newUi: Bool?
     /**
@@ -28422,7 +32149,9 @@ public struct AppSettings: Equatable, Hashable {
          * Switcher theme.
          */theme: AppSwitcherTheme,
         /**
-         * Where New Space starts.
+         * Where New Space starts. A word this build does not know (the
+         * retired `cloud`) reads as this Mac, so an old file keeps its other
+         * settings.
          */defaultLocation: AppLocation,
         /**
          * Hide the notch over full-screen apps.
@@ -28444,16 +32173,15 @@ public struct AppSettings: Equatable, Hashable {
          */launchAtLogin: Bool?,
         /**
          * Settings, Experiments: every switch off unless turned on
-         * ([`crate::experiments`]). Its `webUi` is the New UI as this launch
-         * shows it ([`resolve_new_ui`]); the file keeps only [`Self::new_ui`]'s
+         * ([`crate::experiments`]). Its `webUi` is always on in the macOS
+         * shell ([`resolve_new_ui`]); the file keeps only [`Self::new_ui`]'s
          * "on" there, the value older builds read.
          */experiments: AppExperiments,
         /**
-         * The New UI as the user chose it (Settings, Experiments, "Use classic
-         * UI"); `None`: never chosen, so
-         * [`crate::experiments::new_ui_default`] decides. An older build's
-         * saved `webUi: true` reads as `Some(true)`; its `false` was only the
-         * saved default, so it reads as never chosen ([`load`]).
+         * The New UI as an older build's "Use classic UI" saved it. Read and
+         * kept for those builds, never acted on: the web UI is the only UI
+         * ([`resolve_new_ui`]). An older build's saved `webUi: true` reads as
+         * `Some(true)`; its `false` was only the saved default ([`load`]).
          */newUi: Bool?,
         /**
          * Keyvault copies (import ids) the user dismissed from the notch: it no
@@ -28574,7 +32302,7 @@ public struct AppSettingsInput: Equatable, Hashable {
      */
     public var identity: String?
     /**
-     * Cua Cloud through client credentials (an API key): its client id.
+     * The Cua account through client credentials (an API key): its client id.
      */
     public var apiKeyClient: String?
     /**
@@ -28590,14 +32318,6 @@ public struct AppSettingsInput: Equatable, Hashable {
      * entry point).
      */
     public var menuBar: Bool
-    /**
-     * Where New Space starts.
-     */
-    public var defaultLocation: AppLocation
-    /**
-     * The environment sets the default location: which variable.
-     */
-    public var locationLockedBy: String?
     /**
      * The telemetry switch (none until read).
      */
@@ -28620,10 +32340,6 @@ public struct AppSettingsInput: Equatable, Hashable {
      * app's links only.
      */
     public var teams: AppTeamsInput?
-    /**
-     * The account's Cua Cloud billing, once read (signed in).
-     */
-    public var billing: AppBillingStatus?
     /**
      * Launch at login, once the system was asked (none: no rows).
      */
@@ -28667,6 +32383,11 @@ public struct AppSettingsInput: Equatable, Hashable {
      * `builtin`, `system`); none: no Linux row.
      */
     public var linuxSource: String?
+    /**
+     * Overflow into your clouds when this machine is full
+     * (`placement.overflow`); none: no row.
+     */
+    public var overflow: Bool?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -28675,7 +32396,7 @@ public struct AppSettingsInput: Equatable, Hashable {
          * The signed-in account.
          */identity: String?,
         /**
-         * Cua Cloud through client credentials (an API key): its client id.
+         * The Cua account through client credentials (an API key): its client id.
          */apiKeyClient: String?,
         /**
          * The sign-in in progress.
@@ -28687,12 +32408,6 @@ public struct AppSettingsInput: Equatable, Hashable {
          * The Spaces tab is hidden from the notch (the menu bar item is the
          * entry point).
          */menuBar: Bool,
-        /**
-         * Where New Space starts.
-         */defaultLocation: AppLocation,
-        /**
-         * The environment sets the default location: which variable.
-         */locationLockedBy: String?,
         /**
          * The telemetry switch (none until read).
          */telemetry: AppTelemetryInput?,
@@ -28710,9 +32425,6 @@ public struct AppSettingsInput: Equatable, Hashable {
          * app's URL. None: the Teams section shows the production account
          * app's links only.
          */teams: AppTeamsInput?,
-        /**
-         * The account's Cua Cloud billing, once read (signed in).
-         */billing: AppBillingStatus?,
         /**
          * Launch at login, once the system was asked (none: no rows).
          */loginItem: AppLoginItemInput?,
@@ -28746,20 +32458,21 @@ public struct AppSettingsInput: Equatable, Hashable {
         /**
          * Which engine local Linux Spaces run on (`runtime.linux`: `auto`,
          * `builtin`, `system`); none: no Linux row.
-         */linuxSource: String?) {
+         */linuxSource: String?,
+        /**
+         * Overflow into your clouds when this machine is full
+         * (`placement.overflow`); none: no row.
+         */overflow: Bool?) {
         self.identity = identity
         self.apiKeyClient = apiKeyClient
         self.signIn = signIn
         self.canSignOut = canSignOut
         self.menuBar = menuBar
-        self.defaultLocation = defaultLocation
-        self.locationLockedBy = locationLockedBy
         self.telemetry = telemetry
         self.agents = agents
         self.agentsBusy = agentsBusy
         self.agentsPending = agentsPending
         self.teams = teams
-        self.billing = billing
         self.loginItem = loginItem
         self.experiments = experiments
         self.keyvaultAutoWipe = keyvaultAutoWipe
@@ -28769,6 +32482,7 @@ public struct AppSettingsInput: Equatable, Hashable {
         self.autoConnect = autoConnect
         self.lumeSource = lumeSource
         self.linuxSource = linuxSource
+        self.overflow = overflow
     }
 
 
@@ -28792,14 +32506,11 @@ public struct FfiConverterTypeAppSettingsInput: FfiConverterRustBuffer {
                 signIn: FfiConverterTypeAppSignInPhase.read(from: &buf),
                 canSignOut: FfiConverterBool.read(from: &buf),
                 menuBar: FfiConverterBool.read(from: &buf),
-                defaultLocation: FfiConverterTypeAppLocation.read(from: &buf),
-                locationLockedBy: FfiConverterOptionString.read(from: &buf),
                 telemetry: FfiConverterOptionTypeAppTelemetryInput.read(from: &buf),
                 agents: FfiConverterOptionSequenceTypeAppAgentSettingsRow.read(from: &buf),
                 agentsBusy: FfiConverterBool.read(from: &buf),
                 agentsPending: FfiConverterSequenceString.read(from: &buf),
                 teams: FfiConverterOptionTypeAppTeamsInput.read(from: &buf),
-                billing: FfiConverterOptionTypeAppBillingStatus.read(from: &buf),
                 loginItem: FfiConverterOptionTypeAppLoginItemInput.read(from: &buf),
                 experiments: FfiConverterTypeAppExperiments.read(from: &buf),
                 keyvaultAutoWipe: FfiConverterOptionBool.read(from: &buf),
@@ -28808,7 +32519,8 @@ public struct FfiConverterTypeAppSettingsInput: FfiConverterRustBuffer {
                 keyvaultProtection: FfiConverterSequenceTypeAppFact.read(from: &buf),
                 autoConnect: FfiConverterOptionBool.read(from: &buf),
                 lumeSource: FfiConverterOptionString.read(from: &buf),
-                linuxSource: FfiConverterOptionString.read(from: &buf)
+                linuxSource: FfiConverterOptionString.read(from: &buf),
+                overflow: FfiConverterOptionBool.read(from: &buf)
         )
     }
 
@@ -28818,14 +32530,11 @@ public struct FfiConverterTypeAppSettingsInput: FfiConverterRustBuffer {
         FfiConverterTypeAppSignInPhase.write(value.signIn, into: &buf)
         FfiConverterBool.write(value.canSignOut, into: &buf)
         FfiConverterBool.write(value.menuBar, into: &buf)
-        FfiConverterTypeAppLocation.write(value.defaultLocation, into: &buf)
-        FfiConverterOptionString.write(value.locationLockedBy, into: &buf)
         FfiConverterOptionTypeAppTelemetryInput.write(value.telemetry, into: &buf)
         FfiConverterOptionSequenceTypeAppAgentSettingsRow.write(value.agents, into: &buf)
         FfiConverterBool.write(value.agentsBusy, into: &buf)
         FfiConverterSequenceString.write(value.agentsPending, into: &buf)
         FfiConverterOptionTypeAppTeamsInput.write(value.teams, into: &buf)
-        FfiConverterOptionTypeAppBillingStatus.write(value.billing, into: &buf)
         FfiConverterOptionTypeAppLoginItemInput.write(value.loginItem, into: &buf)
         FfiConverterTypeAppExperiments.write(value.experiments, into: &buf)
         FfiConverterOptionBool.write(value.keyvaultAutoWipe, into: &buf)
@@ -28835,6 +32544,7 @@ public struct FfiConverterTypeAppSettingsInput: FfiConverterRustBuffer {
         FfiConverterOptionBool.write(value.autoConnect, into: &buf)
         FfiConverterOptionString.write(value.lumeSource, into: &buf)
         FfiConverterOptionString.write(value.linuxSource, into: &buf)
+        FfiConverterOptionBool.write(value.overflow, into: &buf)
     }
 }
 
@@ -29258,6 +32968,72 @@ public func FfiConverterTypeAppSettingsSection_lower(_ value: AppSettingsSection
 }
 
 
+public struct AppShareActionView: Equatable, Hashable {
+    /**
+     * The button's words.
+     */
+    public var label: String
+    /**
+     * Where it opens.
+     */
+    public var url: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The button's words.
+         */label: String,
+        /**
+         * Where it opens.
+         */url: String) {
+        self.label = label
+        self.url = url
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppShareActionView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppShareActionView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppShareActionView {
+        return
+            try AppShareActionView(
+                label: FfiConverterString.read(from: &buf),
+                url: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppShareActionView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterString.write(value.url, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppShareActionView_lift(_ buf: RustBuffer) throws -> AppShareActionView {
+    return try FfiConverterTypeAppShareActionView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppShareActionView_lower(_ value: AppShareActionView) -> RustBuffer {
+    return FfiConverterTypeAppShareActionView.lower(value)
+}
+
+
 public struct AppShareEntryInput: Equatable, Hashable {
     /**
      * Email or account id.
@@ -29331,6 +33107,72 @@ public func FfiConverterTypeAppShareEntryInput_lift(_ buf: RustBuffer) throws ->
 #endif
 public func FfiConverterTypeAppShareEntryInput_lower(_ value: AppShareEntryInput) -> RustBuffer {
     return FfiConverterTypeAppShareEntryInput.lower(value)
+}
+
+
+public struct AppShareGate: Equatable, Hashable {
+    /**
+     * "Sharing is for teams. Start a team to share this Space."
+     */
+    public var reason: String
+    /**
+     * "See Teams": where Teams starts, at one seat.
+     */
+    public var action: AppShareActionView
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * "Sharing is for teams. Start a team to share this Space."
+         */reason: String,
+        /**
+         * "See Teams": where Teams starts, at one seat.
+         */action: AppShareActionView) {
+        self.reason = reason
+        self.action = action
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppShareGate: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppShareGate: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppShareGate {
+        return
+            try AppShareGate(
+                reason: FfiConverterString.read(from: &buf),
+                action: FfiConverterTypeAppShareActionView.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppShareGate, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.reason, into: &buf)
+        FfiConverterTypeAppShareActionView.write(value.action, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppShareGate_lift(_ buf: RustBuffer) throws -> AppShareGate {
+    return try FfiConverterTypeAppShareGate.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppShareGate_lower(_ value: AppShareGate) -> RustBuffer {
+    return FfiConverterTypeAppShareGate.lower(value)
 }
 
 
@@ -29427,6 +33269,148 @@ public func FfiConverterTypeAppShareInput_lift(_ buf: RustBuffer) throws -> AppS
 #endif
 public func FfiConverterTypeAppShareInput_lower(_ value: AppShareInput) -> RustBuffer {
     return FfiConverterTypeAppShareInput.lower(value)
+}
+
+
+public struct AppShareRemovalInput: Equatable, Hashable {
+    /**
+     * The person (an email or account id).
+     */
+    public var who: String
+    /**
+     * The computer's name.
+     */
+    public var machineName: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The person (an email or account id).
+         */who: String,
+        /**
+         * The computer's name.
+         */machineName: String) {
+        self.who = who
+        self.machineName = machineName
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppShareRemovalInput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppShareRemovalInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppShareRemovalInput {
+        return
+            try AppShareRemovalInput(
+                who: FfiConverterString.read(from: &buf),
+                machineName: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppShareRemovalInput, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.who, into: &buf)
+        FfiConverterString.write(value.machineName, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppShareRemovalInput_lift(_ buf: RustBuffer) throws -> AppShareRemovalInput {
+    return try FfiConverterTypeAppShareRemovalInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppShareRemovalInput_lower(_ value: AppShareRemovalInput) -> RustBuffer {
+    return FfiConverterTypeAppShareRemovalInput.lower(value)
+}
+
+
+public struct AppShareRemovalNote: Equatable, Hashable {
+    /**
+     * One line: who can no longer open what, and why.
+     */
+    public var text: String
+    /**
+     * "Invite to your team".
+     */
+    public var action: AppShareActionView
+    /**
+     * Dismiss.
+     */
+    public var dismiss: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * One line: who can no longer open what, and why.
+         */text: String,
+        /**
+         * "Invite to your team".
+         */action: AppShareActionView,
+        /**
+         * Dismiss.
+         */dismiss: String) {
+        self.text = text
+        self.action = action
+        self.dismiss = dismiss
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppShareRemovalNote: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppShareRemovalNote: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppShareRemovalNote {
+        return
+            try AppShareRemovalNote(
+                text: FfiConverterString.read(from: &buf),
+                action: FfiConverterTypeAppShareActionView.read(from: &buf),
+                dismiss: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppShareRemovalNote, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.text, into: &buf)
+        FfiConverterTypeAppShareActionView.write(value.action, into: &buf)
+        FfiConverterString.write(value.dismiss, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppShareRemovalNote_lift(_ buf: RustBuffer) throws -> AppShareRemovalNote {
+    return try FfiConverterTypeAppShareRemovalNote.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppShareRemovalNote_lower(_ value: AppShareRemovalNote) -> RustBuffer {
+    return FfiConverterTypeAppShareRemovalNote.lower(value)
 }
 
 
@@ -29829,7 +33813,7 @@ public struct AppSidebarRow: Equatable, Hashable {
     /**
      * Status word (the dot's accessibility label).
      */
-    public var statusText: String
+    public var statusText: AppMsg
     /**
      * Tooltip.
      */
@@ -29885,7 +33869,7 @@ public struct AppSidebarRow: Equatable, Hashable {
          */status: AppSpaceStatus,
         /**
          * Status word (the dot's accessibility label).
-         */statusText: String,
+         */statusText: AppMsg,
         /**
          * Tooltip.
          */detail: String,
@@ -29949,7 +33933,7 @@ public struct FfiConverterTypeAppSidebarRow: FfiConverterRustBuffer {
                 name: FfiConverterString.read(from: &buf),
                 osIcon: FfiConverterString.read(from: &buf),
                 status: FfiConverterTypeAppSpaceStatus.read(from: &buf),
-                statusText: FfiConverterString.read(from: &buf),
+                statusText: FfiConverterTypeAppMsg.read(from: &buf),
                 detail: FfiConverterString.read(from: &buf),
                 dim: FfiConverterBool.read(from: &buf),
                 selected: FfiConverterBool.read(from: &buf),
@@ -29966,7 +33950,7 @@ public struct FfiConverterTypeAppSidebarRow: FfiConverterRustBuffer {
         FfiConverterString.write(value.name, into: &buf)
         FfiConverterString.write(value.osIcon, into: &buf)
         FfiConverterTypeAppSpaceStatus.write(value.status, into: &buf)
-        FfiConverterString.write(value.statusText, into: &buf)
+        FfiConverterTypeAppMsg.write(value.statusText, into: &buf)
         FfiConverterString.write(value.detail, into: &buf)
         FfiConverterBool.write(value.dim, into: &buf)
         FfiConverterBool.write(value.selected, into: &buf)
@@ -29996,9 +33980,10 @@ public func FfiConverterTypeAppSidebarRow_lower(_ value: AppSidebarRow) -> RustB
 
 public struct AppSidebarSection: Equatable, Hashable {
     /**
-     * "Cua Cloud", "This Mac", "Connected", "My machines".
+     * "This Mac", "Connected", "My computers"
+     * (`spaces.sidebar.section.*`).
      */
-    public var title: String
+    public var title: AppMsg
     /**
      * Rows.
      */
@@ -30008,8 +33993,9 @@ public struct AppSidebarSection: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * "Cua Cloud", "This Mac", "Connected", "My machines".
-         */title: String,
+         * "This Mac", "Connected", "My computers"
+         * (`spaces.sidebar.section.*`).
+         */title: AppMsg,
         /**
          * Rows.
          */rows: [AppSidebarRow]) {
@@ -30033,13 +34019,13 @@ public struct FfiConverterTypeAppSidebarSection: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppSidebarSection {
         return
             try AppSidebarSection(
-                title: FfiConverterString.read(from: &buf),
+                title: FfiConverterTypeAppMsg.read(from: &buf),
                 rows: FfiConverterSequenceTypeAppSidebarRow.read(from: &buf)
         )
     }
 
     public static func write(_ value: AppSidebarSection, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterTypeAppMsg.write(value.title, into: &buf)
         FfiConverterSequenceTypeAppSidebarRow.write(value.rows, into: &buf)
     }
 }
@@ -30074,9 +34060,10 @@ public struct AppSidebarView: Equatable, Hashable {
      */
     public var selectedId: String?
     /**
-     * "No matches" / "No Spaces yet" when nothing is listed.
+     * "No matches" / "No Spaces yet" when nothing is listed
+     * (`spaces.sidebar.*`).
      */
-    public var emptyText: String?
+    public var emptyText: AppMsg?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -30091,8 +34078,9 @@ public struct AppSidebarView: Equatable, Hashable {
          * The effective selection (falls back to the first Space).
          */selectedId: String?,
         /**
-         * "No matches" / "No Spaces yet" when nothing is listed.
-         */emptyText: String?) {
+         * "No matches" / "No Spaces yet" when nothing is listed
+         * (`spaces.sidebar.*`).
+         */emptyText: AppMsg?) {
         self.thisMachine = thisMachine
         self.sections = sections
         self.selectedId = selectedId
@@ -30118,7 +34106,7 @@ public struct FfiConverterTypeAppSidebarView: FfiConverterRustBuffer {
                 thisMachine: FfiConverterOptionTypeAppSidebarRow.read(from: &buf),
                 sections: FfiConverterSequenceTypeAppSidebarSection.read(from: &buf),
                 selectedId: FfiConverterOptionString.read(from: &buf),
-                emptyText: FfiConverterOptionString.read(from: &buf)
+                emptyText: FfiConverterOptionTypeAppMsg.read(from: &buf)
         )
     }
 
@@ -30126,7 +34114,7 @@ public struct FfiConverterTypeAppSidebarView: FfiConverterRustBuffer {
         FfiConverterOptionTypeAppSidebarRow.write(value.thisMachine, into: &buf)
         FfiConverterSequenceTypeAppSidebarSection.write(value.sections, into: &buf)
         FfiConverterOptionString.write(value.selectedId, into: &buf)
-        FfiConverterOptionString.write(value.emptyText, into: &buf)
+        FfiConverterOptionTypeAppMsg.write(value.emptyText, into: &buf)
     }
 }
 
@@ -30143,6 +34131,336 @@ public func FfiConverterTypeAppSidebarView_lift(_ buf: RustBuffer) throws -> App
 #endif
 public func FfiConverterTypeAppSidebarView_lower(_ value: AppSidebarView) -> RustBuffer {
     return FfiConverterTypeAppSidebarView.lower(value)
+}
+
+
+public struct AppSignInFooter: Equatable, Hashable {
+    /**
+     * Which state.
+     */
+    public var state: AppSignInFooterState
+    /**
+     * The line: "Signed in as …", "Waiting for your browser…", "Sign-in
+     * didn't finish. …", "Not signed in".
+     */
+    public var text: String
+    /**
+     * The signed-in account (state `SignedIn`).
+     */
+    public var identity: String?
+    /**
+     * Waiting: the code to confirm in the browser.
+     */
+    public var code: String?
+    /**
+     * "Code".
+     */
+    public var codeLabel: String
+    /**
+     * Waiting with a page: "Open again".
+     */
+    public var reopenLabel: String?
+    /**
+     * Starting or waiting: "Cancel".
+     */
+    public var cancelLabel: String?
+    /**
+     * "Sign in" or "Try again" (none while signed in or waiting).
+     */
+    public var actionLabel: String?
+    /**
+     * Failed: why.
+     */
+    public var reason: AppSignInFailure?
+    /**
+     * Failed: the error's own words, behind "Details".
+     */
+    public var detail: String?
+    /**
+     * "Details".
+     */
+    public var detailsLabel: String
+    /**
+     * Failed: the toast the shell shows once, when it fails.
+     */
+    public var toast: AppSignInToast?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Which state.
+         */state: AppSignInFooterState,
+        /**
+         * The line: "Signed in as …", "Waiting for your browser…", "Sign-in
+         * didn't finish. …", "Not signed in".
+         */text: String,
+        /**
+         * The signed-in account (state `SignedIn`).
+         */identity: String?,
+        /**
+         * Waiting: the code to confirm in the browser.
+         */code: String?,
+        /**
+         * "Code".
+         */codeLabel: String,
+        /**
+         * Waiting with a page: "Open again".
+         */reopenLabel: String?,
+        /**
+         * Starting or waiting: "Cancel".
+         */cancelLabel: String?,
+        /**
+         * "Sign in" or "Try again" (none while signed in or waiting).
+         */actionLabel: String?,
+        /**
+         * Failed: why.
+         */reason: AppSignInFailure?,
+        /**
+         * Failed: the error's own words, behind "Details".
+         */detail: String?,
+        /**
+         * "Details".
+         */detailsLabel: String,
+        /**
+         * Failed: the toast the shell shows once, when it fails.
+         */toast: AppSignInToast?) {
+        self.state = state
+        self.text = text
+        self.identity = identity
+        self.code = code
+        self.codeLabel = codeLabel
+        self.reopenLabel = reopenLabel
+        self.cancelLabel = cancelLabel
+        self.actionLabel = actionLabel
+        self.reason = reason
+        self.detail = detail
+        self.detailsLabel = detailsLabel
+        self.toast = toast
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppSignInFooter: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppSignInFooter: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppSignInFooter {
+        return
+            try AppSignInFooter(
+                state: FfiConverterTypeAppSignInFooterState.read(from: &buf),
+                text: FfiConverterString.read(from: &buf),
+                identity: FfiConverterOptionString.read(from: &buf),
+                code: FfiConverterOptionString.read(from: &buf),
+                codeLabel: FfiConverterString.read(from: &buf),
+                reopenLabel: FfiConverterOptionString.read(from: &buf),
+                cancelLabel: FfiConverterOptionString.read(from: &buf),
+                actionLabel: FfiConverterOptionString.read(from: &buf),
+                reason: FfiConverterOptionTypeAppSignInFailure.read(from: &buf),
+                detail: FfiConverterOptionString.read(from: &buf),
+                detailsLabel: FfiConverterString.read(from: &buf),
+                toast: FfiConverterOptionTypeAppSignInToast.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppSignInFooter, into buf: inout [UInt8]) {
+        FfiConverterTypeAppSignInFooterState.write(value.state, into: &buf)
+        FfiConverterString.write(value.text, into: &buf)
+        FfiConverterOptionString.write(value.identity, into: &buf)
+        FfiConverterOptionString.write(value.code, into: &buf)
+        FfiConverterString.write(value.codeLabel, into: &buf)
+        FfiConverterOptionString.write(value.reopenLabel, into: &buf)
+        FfiConverterOptionString.write(value.cancelLabel, into: &buf)
+        FfiConverterOptionString.write(value.actionLabel, into: &buf)
+        FfiConverterOptionTypeAppSignInFailure.write(value.reason, into: &buf)
+        FfiConverterOptionString.write(value.detail, into: &buf)
+        FfiConverterString.write(value.detailsLabel, into: &buf)
+        FfiConverterOptionTypeAppSignInToast.write(value.toast, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppSignInFooter_lift(_ buf: RustBuffer) throws -> AppSignInFooter {
+    return try FfiConverterTypeAppSignInFooter.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppSignInFooter_lower(_ value: AppSignInFooter) -> RustBuffer {
+    return FfiConverterTypeAppSignInFooter.lower(value)
+}
+
+
+public struct AppSignInFooterInput: Equatable, Hashable {
+    /**
+     * The signed-in account.
+     */
+    public var identity: String?
+    /**
+     * The Cua account works through client credentials (an API key).
+     */
+    public var cloudConfigured: Bool
+    /**
+     * Signing in is possible here.
+     */
+    public var canSignIn: Bool
+    /**
+     * The sign-in in progress.
+     */
+    public var signIn: AppSignInPhase
+    /**
+     * The page the sign-in finishes on is known (Open again).
+     */
+    public var hasUrl: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The signed-in account.
+         */identity: String?,
+        /**
+         * The Cua account works through client credentials (an API key).
+         */cloudConfigured: Bool,
+        /**
+         * Signing in is possible here.
+         */canSignIn: Bool,
+        /**
+         * The sign-in in progress.
+         */signIn: AppSignInPhase,
+        /**
+         * The page the sign-in finishes on is known (Open again).
+         */hasUrl: Bool) {
+        self.identity = identity
+        self.cloudConfigured = cloudConfigured
+        self.canSignIn = canSignIn
+        self.signIn = signIn
+        self.hasUrl = hasUrl
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppSignInFooterInput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppSignInFooterInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppSignInFooterInput {
+        return
+            try AppSignInFooterInput(
+                identity: FfiConverterOptionString.read(from: &buf),
+                cloudConfigured: FfiConverterBool.read(from: &buf),
+                canSignIn: FfiConverterBool.read(from: &buf),
+                signIn: FfiConverterTypeAppSignInPhase.read(from: &buf),
+                hasUrl: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppSignInFooterInput, into buf: inout [UInt8]) {
+        FfiConverterOptionString.write(value.identity, into: &buf)
+        FfiConverterBool.write(value.cloudConfigured, into: &buf)
+        FfiConverterBool.write(value.canSignIn, into: &buf)
+        FfiConverterTypeAppSignInPhase.write(value.signIn, into: &buf)
+        FfiConverterBool.write(value.hasUrl, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppSignInFooterInput_lift(_ buf: RustBuffer) throws -> AppSignInFooterInput {
+    return try FfiConverterTypeAppSignInFooterInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppSignInFooterInput_lower(_ value: AppSignInFooterInput) -> RustBuffer {
+    return FfiConverterTypeAppSignInFooterInput.lower(value)
+}
+
+
+public struct AppSignInToast: Equatable, Hashable {
+    /**
+     * "Sign-in didn't finish".
+     */
+    public var title: String
+    /**
+     * The reason (none for an unknown one).
+     */
+    public var body: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * "Sign-in didn't finish".
+         */title: String,
+        /**
+         * The reason (none for an unknown one).
+         */body: String?) {
+        self.title = title
+        self.body = body
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppSignInToast: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppSignInToast: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppSignInToast {
+        return
+            try AppSignInToast(
+                title: FfiConverterString.read(from: &buf),
+                body: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppSignInToast, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterOptionString.write(value.body, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppSignInToast_lift(_ buf: RustBuffer) throws -> AppSignInToast {
+    return try FfiConverterTypeAppSignInToast.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppSignInToast_lower(_ value: AppSignInToast) -> RustBuffer {
+    return FfiConverterTypeAppSignInToast.lower(value)
 }
 
 
@@ -30179,10 +34497,6 @@ public struct AppSpace: Equatable, Hashable {
      * Placeholder scene.
      */
     public var scene: AppThumbnailScene
-    /**
-     * Group (cloud namespace or location word).
-     */
-    public var fleetId: String?
     /**
      * Fixture machine size.
      */
@@ -30288,9 +34602,6 @@ public struct AppSpace: Equatable, Hashable {
          * Placeholder scene.
          */scene: AppThumbnailScene,
         /**
-         * Group (cloud namespace or location word).
-         */fleetId: String?,
-        /**
          * Fixture machine size.
          */size: String?,
         /**
@@ -30357,7 +34668,6 @@ public struct AppSpace: Equatable, Hashable {
         self.lastUsedAt = lastUsedAt
         self.startedAt = startedAt
         self.scene = scene
-        self.fleetId = fleetId
         self.size = size
         self.region = region
         self.provider = provider
@@ -30401,7 +34711,6 @@ public struct FfiConverterTypeAppSpace: FfiConverterRustBuffer {
                 lastUsedAt: FfiConverterInt64.read(from: &buf),
                 startedAt: FfiConverterOptionInt64.read(from: &buf),
                 scene: FfiConverterTypeAppThumbnailScene.read(from: &buf),
-                fleetId: FfiConverterOptionString.read(from: &buf),
                 size: FfiConverterOptionString.read(from: &buf),
                 region: FfiConverterOptionString.read(from: &buf),
                 provider: FfiConverterOptionTypeAppSpaceProvider.read(from: &buf),
@@ -30431,7 +34740,6 @@ public struct FfiConverterTypeAppSpace: FfiConverterRustBuffer {
         FfiConverterInt64.write(value.lastUsedAt, into: &buf)
         FfiConverterOptionInt64.write(value.startedAt, into: &buf)
         FfiConverterTypeAppThumbnailScene.write(value.scene, into: &buf)
-        FfiConverterOptionString.write(value.fleetId, into: &buf)
         FfiConverterOptionString.write(value.size, into: &buf)
         FfiConverterOptionString.write(value.region, into: &buf)
         FfiConverterOptionTypeAppSpaceProvider.write(value.provider, into: &buf)
@@ -30654,11 +34962,6 @@ public struct AppSpaceDetail: Equatable, Hashable {
      */
     public var sections: [String]
     /**
-     * A cloud Space refused for want of credit: one line and "Add
-     * credit" (the website billing page).
-     */
-    public var creditNotice: AppCreditNotice?
-    /**
      * Why turning it off or on failed, shown inline under the preview.
      */
     public var powerError: String?
@@ -30728,10 +35031,6 @@ public struct AppSpaceDetail: Equatable, Hashable {
          * The sections under the facts, in order (Stream, Agents, Teleport).
          */sections: [String],
         /**
-         * A cloud Space refused for want of credit: one line and "Add
-         * credit" (the website billing page).
-         */creditNotice: AppCreditNotice?,
-        /**
          * Why turning it off or on failed, shown inline under the preview.
          */powerError: String?,
         /**
@@ -30762,7 +35061,6 @@ public struct AppSpaceDetail: Equatable, Hashable {
         self.actions = actions
         self.confirm = confirm
         self.sections = sections
-        self.creditNotice = creditNotice
         self.powerError = powerError
         self.access = access
         self.desktopNote = desktopNote
@@ -30799,7 +35097,6 @@ public struct FfiConverterTypeAppSpaceDetail: FfiConverterRustBuffer {
                 actions: FfiConverterSequenceTypeAppDetailAction.read(from: &buf),
                 confirm: FfiConverterTypeAppDeleteConfirm.read(from: &buf),
                 sections: FfiConverterSequenceString.read(from: &buf),
-                creditNotice: FfiConverterOptionTypeAppCreditNotice.read(from: &buf),
                 powerError: FfiConverterOptionString.read(from: &buf),
                 access: FfiConverterOptionTypeAppMachineAccessNotice.read(from: &buf),
                 desktopNote: FfiConverterOptionString.read(from: &buf),
@@ -30822,7 +35119,6 @@ public struct FfiConverterTypeAppSpaceDetail: FfiConverterRustBuffer {
         FfiConverterSequenceTypeAppDetailAction.write(value.actions, into: &buf)
         FfiConverterTypeAppDeleteConfirm.write(value.confirm, into: &buf)
         FfiConverterSequenceString.write(value.sections, into: &buf)
-        FfiConverterOptionTypeAppCreditNotice.write(value.creditNotice, into: &buf)
         FfiConverterOptionString.write(value.powerError, into: &buf)
         FfiConverterOptionTypeAppMachineAccessNotice.write(value.access, into: &buf)
         FfiConverterOptionString.write(value.desktopNote, into: &buf)
@@ -30874,6 +35170,10 @@ public struct AppSpaceHost: Equatable, Hashable {
      * it is online and refused because its owner stopped sharing it.
      */
     public var limits: [AppHostLimit]
+    /**
+     * How busy it is, when it answered and reports it.
+     */
+    public var load: AppHostLoad?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -30898,13 +35198,17 @@ public struct AppSpaceHost: Equatable, Hashable {
         /**
          * Its limits, when it answered; a [`HOST_SHARING_STOPPED`] entry when
          * it is online and refused because its owner stopped sharing it.
-         */limits: [AppHostLimit]) {
+         */limits: [AppHostLimit],
+        /**
+         * How busy it is, when it answered and reports it.
+         */load: AppHostLoad?) {
         self.id = id
         self.name = name
         self.via = via
         self.online = online
         self.os = os
         self.limits = limits
+        self.load = load
     }
 
 
@@ -30928,7 +35232,8 @@ public struct FfiConverterTypeAppSpaceHost: FfiConverterRustBuffer {
                 via: FfiConverterString.read(from: &buf),
                 online: FfiConverterBool.read(from: &buf),
                 os: FfiConverterString.read(from: &buf),
-                limits: FfiConverterSequenceTypeAppHostLimit.read(from: &buf)
+                limits: FfiConverterSequenceTypeAppHostLimit.read(from: &buf),
+                load: FfiConverterOptionTypeAppHostLoad.read(from: &buf)
         )
     }
 
@@ -30939,6 +35244,7 @@ public struct FfiConverterTypeAppSpaceHost: FfiConverterRustBuffer {
         FfiConverterBool.write(value.online, into: &buf)
         FfiConverterString.write(value.os, into: &buf)
         FfiConverterSequenceTypeAppHostLimit.write(value.limits, into: &buf)
+        FfiConverterOptionTypeAppHostLoad.write(value.load, into: &buf)
     }
 }
 
@@ -31078,11 +35384,6 @@ public struct AppSpaceProgress: Equatable, Hashable {
      */
     public var error: String?
     /**
-     * It failed because the account is out of Cua Cloud credit: the
-     * website billing page "Add credit" opens.
-     */
-    public var creditUrl: String?
-    /**
      * While it downloads: "4.2 of 22.1 GB · 85 MB/s · about 4 min"
      * ([`crate::spaces::creating::transfer_text`]).
      */
@@ -31095,6 +35396,17 @@ public struct AppSpaceProgress: Equatable, Hashable {
      * Cancel was pressed and the create is being cleaned up.
      */
     public var cancelling: Bool
+    /**
+     * The app is running the create a second time by itself, after a
+     * failure that usually passes (the label says "Retrying…" while it
+     * prepares).
+     */
+    public var retrying: Bool
+    /**
+     * It failed the same way twice in a row (same cause, same machine,
+     * same image): the fix to show instead of a plain Try again.
+     */
+    public var fix: AppCreateFix?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -31112,10 +35424,6 @@ public struct AppSpaceProgress: Equatable, Hashable {
          * Why the create failed.
          */error: String?,
         /**
-         * It failed because the account is out of Cua Cloud credit: the
-         * website billing page "Add credit" opens.
-         */creditUrl: String?,
-        /**
          * While it downloads: "4.2 of 22.1 GB · 85 MB/s · about 4 min"
          * ([`crate::spaces::creating::transfer_text`]).
          */transfer: String?,
@@ -31124,15 +35432,25 @@ public struct AppSpaceProgress: Equatable, Hashable {
          */cancellable: Bool,
         /**
          * Cancel was pressed and the create is being cleaned up.
-         */cancelling: Bool) {
+         */cancelling: Bool,
+        /**
+         * The app is running the create a second time by itself, after a
+         * failure that usually passes (the label says "Retrying…" while it
+         * prepares).
+         */retrying: Bool,
+        /**
+         * It failed the same way twice in a row (same cause, same machine,
+         * same image): the fix to show instead of a plain Try again.
+         */fix: AppCreateFix?) {
         self.phase = phase
         self.permille = permille
         self.label = label
         self.error = error
-        self.creditUrl = creditUrl
         self.transfer = transfer
         self.cancellable = cancellable
         self.cancelling = cancelling
+        self.retrying = retrying
+        self.fix = fix
     }
 
 
@@ -31155,10 +35473,11 @@ public struct FfiConverterTypeAppSpaceProgress: FfiConverterRustBuffer {
                 permille: FfiConverterUInt32.read(from: &buf),
                 label: FfiConverterString.read(from: &buf),
                 error: FfiConverterOptionString.read(from: &buf),
-                creditUrl: FfiConverterOptionString.read(from: &buf),
                 transfer: FfiConverterOptionString.read(from: &buf),
                 cancellable: FfiConverterBool.read(from: &buf),
-                cancelling: FfiConverterBool.read(from: &buf)
+                cancelling: FfiConverterBool.read(from: &buf),
+                retrying: FfiConverterBool.read(from: &buf),
+                fix: FfiConverterOptionTypeAppCreateFix.read(from: &buf)
         )
     }
 
@@ -31167,10 +35486,11 @@ public struct FfiConverterTypeAppSpaceProgress: FfiConverterRustBuffer {
         FfiConverterUInt32.write(value.permille, into: &buf)
         FfiConverterString.write(value.label, into: &buf)
         FfiConverterOptionString.write(value.error, into: &buf)
-        FfiConverterOptionString.write(value.creditUrl, into: &buf)
         FfiConverterOptionString.write(value.transfer, into: &buf)
         FfiConverterBool.write(value.cancellable, into: &buf)
         FfiConverterBool.write(value.cancelling, into: &buf)
+        FfiConverterBool.write(value.retrying, into: &buf)
+        FfiConverterOptionTypeAppCreateFix.write(value.fix, into: &buf)
     }
 }
 
@@ -31187,6 +35507,222 @@ public func FfiConverterTypeAppSpaceProgress_lift(_ buf: RustBuffer) throws -> A
 #endif
 public func FfiConverterTypeAppSpaceProgress_lower(_ value: AppSpaceProgress) -> RustBuffer {
     return FfiConverterTypeAppSpaceProgress.lower(value)
+}
+
+
+public struct AppSpaceResources: Equatable, Hashable {
+    /**
+     * `local:<name>`.
+     */
+    public var id: String
+    /**
+     * `running`, `stopped`, `suspended`, or empty when unknown.
+     */
+    public var powerState: String
+    /**
+     * Cores given to it (0: unknown).
+     */
+    public var cpuAllocated: UInt32
+    /**
+     * Memory given to it, bytes (0: unknown).
+     */
+    public var memoryAllocated: UInt64
+    /**
+     * Its disk's size limit, bytes (0: unknown).
+     */
+    public var diskAllocated: UInt64
+    /**
+     * The guest's own numbers; none while it is off or unreachable.
+     */
+    public var usage: AppGuestUsage?
+    /**
+     * What it costs this Mac; none for a container.
+     */
+    public var diskOnHost: AppDiskOnHost?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `local:<name>`.
+         */id: String,
+        /**
+         * `running`, `stopped`, `suspended`, or empty when unknown.
+         */powerState: String,
+        /**
+         * Cores given to it (0: unknown).
+         */cpuAllocated: UInt32,
+        /**
+         * Memory given to it, bytes (0: unknown).
+         */memoryAllocated: UInt64,
+        /**
+         * Its disk's size limit, bytes (0: unknown).
+         */diskAllocated: UInt64,
+        /**
+         * The guest's own numbers; none while it is off or unreachable.
+         */usage: AppGuestUsage?,
+        /**
+         * What it costs this Mac; none for a container.
+         */diskOnHost: AppDiskOnHost?) {
+        self.id = id
+        self.powerState = powerState
+        self.cpuAllocated = cpuAllocated
+        self.memoryAllocated = memoryAllocated
+        self.diskAllocated = diskAllocated
+        self.usage = usage
+        self.diskOnHost = diskOnHost
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppSpaceResources: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppSpaceResources: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppSpaceResources {
+        return
+            try AppSpaceResources(
+                id: FfiConverterString.read(from: &buf),
+                powerState: FfiConverterString.read(from: &buf),
+                cpuAllocated: FfiConverterUInt32.read(from: &buf),
+                memoryAllocated: FfiConverterUInt64.read(from: &buf),
+                diskAllocated: FfiConverterUInt64.read(from: &buf),
+                usage: FfiConverterOptionTypeAppGuestUsage.read(from: &buf),
+                diskOnHost: FfiConverterOptionTypeAppDiskOnHost.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppSpaceResources, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.powerState, into: &buf)
+        FfiConverterUInt32.write(value.cpuAllocated, into: &buf)
+        FfiConverterUInt64.write(value.memoryAllocated, into: &buf)
+        FfiConverterUInt64.write(value.diskAllocated, into: &buf)
+        FfiConverterOptionTypeAppGuestUsage.write(value.usage, into: &buf)
+        FfiConverterOptionTypeAppDiskOnHost.write(value.diskOnHost, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppSpaceResources_lift(_ buf: RustBuffer) throws -> AppSpaceResources {
+    return try FfiConverterTypeAppSpaceResources.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppSpaceResources_lower(_ value: AppSpaceResources) -> RustBuffer {
+    return FfiConverterTypeAppSpaceResources.lower(value)
+}
+
+
+public struct AppSpaceResourcesView: Equatable, Hashable {
+    /**
+     * The Space's id.
+     */
+    public var id: String
+    /**
+     * Processor, Memory, Space for files: what it was given and, while it
+     * runs, what it uses now.
+     */
+    public var rows: [AppResourceRow]
+    /**
+     * What it costs this Mac, not what the guest sees: "Uses about 31 GB
+     * on this Mac (shares space with other copies)". None for a container.
+     */
+    public var onThisMac: String?
+    /**
+     * The Space is off: "Stopped · uses about 6 GB on this Mac".
+     */
+    public var offLine: String?
+    /**
+     * Whether the numbers are live (the Space runs and answered).
+     */
+    public var live: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The Space's id.
+         */id: String,
+        /**
+         * Processor, Memory, Space for files: what it was given and, while it
+         * runs, what it uses now.
+         */rows: [AppResourceRow],
+        /**
+         * What it costs this Mac, not what the guest sees: "Uses about 31 GB
+         * on this Mac (shares space with other copies)". None for a container.
+         */onThisMac: String?,
+        /**
+         * The Space is off: "Stopped · uses about 6 GB on this Mac".
+         */offLine: String?,
+        /**
+         * Whether the numbers are live (the Space runs and answered).
+         */live: Bool) {
+        self.id = id
+        self.rows = rows
+        self.onThisMac = onThisMac
+        self.offLine = offLine
+        self.live = live
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppSpaceResourcesView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppSpaceResourcesView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppSpaceResourcesView {
+        return
+            try AppSpaceResourcesView(
+                id: FfiConverterString.read(from: &buf),
+                rows: FfiConverterSequenceTypeAppResourceRow.read(from: &buf),
+                onThisMac: FfiConverterOptionString.read(from: &buf),
+                offLine: FfiConverterOptionString.read(from: &buf),
+                live: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppSpaceResourcesView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterSequenceTypeAppResourceRow.write(value.rows, into: &buf)
+        FfiConverterOptionString.write(value.onThisMac, into: &buf)
+        FfiConverterOptionString.write(value.offLine, into: &buf)
+        FfiConverterBool.write(value.live, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppSpaceResourcesView_lift(_ buf: RustBuffer) throws -> AppSpaceResourcesView {
+    return try FfiConverterTypeAppSpaceResourcesView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppSpaceResourcesView_lower(_ value: AppSpaceResourcesView) -> RustBuffer {
+    return FfiConverterTypeAppSpaceResourcesView.lower(value)
 }
 
 
@@ -31568,6 +36104,18 @@ public func FfiConverterTypeAppSpaceSdkRef_lower(_ value: AppSpaceSdkRef) -> Rus
 
 public struct AppSpaceUsage: Equatable, Hashable {
     /**
+     * Cores the guest sees (0 from a guest that does not report it).
+     */
+    public var cpuCount: UInt32
+    /**
+     * Busy now, 0 to 100.
+     */
+    public var cpuPercent: Double
+    /**
+     * 1-minute load average.
+     */
+    public var loadAverage1m: Double
+    /**
      * Memory in use, bytes.
      */
     public var memoryUsed: UInt64
@@ -31596,6 +36144,15 @@ public struct AppSpaceUsage: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
+         * Cores the guest sees (0 from a guest that does not report it).
+         */cpuCount: UInt32,
+        /**
+         * Busy now, 0 to 100.
+         */cpuPercent: Double,
+        /**
+         * 1-minute load average.
+         */loadAverage1m: Double,
+        /**
          * Memory in use, bytes.
          */memoryUsed: UInt64,
         /**
@@ -31613,6 +36170,9 @@ public struct AppSpaceUsage: Equatable, Hashable {
         /**
          * `disk_total` is the guest's own disk.
          */diskLimited: Bool) {
+        self.cpuCount = cpuCount
+        self.cpuPercent = cpuPercent
+        self.loadAverage1m = loadAverage1m
         self.memoryUsed = memoryUsed
         self.memoryTotal = memoryTotal
         self.memoryLimited = memoryLimited
@@ -31637,6 +36197,9 @@ public struct FfiConverterTypeAppSpaceUsage: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppSpaceUsage {
         return
             try AppSpaceUsage(
+                cpuCount: FfiConverterUInt32.read(from: &buf),
+                cpuPercent: FfiConverterDouble.read(from: &buf),
+                loadAverage1m: FfiConverterDouble.read(from: &buf),
                 memoryUsed: FfiConverterUInt64.read(from: &buf),
                 memoryTotal: FfiConverterUInt64.read(from: &buf),
                 memoryLimited: FfiConverterBool.read(from: &buf),
@@ -31647,6 +36210,9 @@ public struct FfiConverterTypeAppSpaceUsage: FfiConverterRustBuffer {
     }
 
     public static func write(_ value: AppSpaceUsage, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.cpuCount, into: &buf)
+        FfiConverterDouble.write(value.cpuPercent, into: &buf)
+        FfiConverterDouble.write(value.loadAverage1m, into: &buf)
         FfiConverterUInt64.write(value.memoryUsed, into: &buf)
         FfiConverterUInt64.write(value.memoryTotal, into: &buf)
         FfiConverterBool.write(value.memoryLimited, into: &buf)
@@ -32891,7 +37457,8 @@ public struct AppTeamInput: Equatable, Hashable {
      */
     public var role: String
     /**
-     * `free`, `teams`, ...
+     * `free`, `teams`, ... After the plan is cancelled but while it still
+     * runs, `teams@<RFC 3339 end>`.
      */
     public var plan: String
     /**
@@ -32903,6 +37470,14 @@ public struct AppTeamInput: Equatable, Hashable {
      * Pending invites' emails (only owners and admins can read them).
      */
     public var invites: [String]
+    /**
+     * The team's last payment failed and it is in its grace period.
+     */
+    public var paymentFailed: Bool
+    /**
+     * The end of the grace period (RFC 3339), when known.
+     */
+    public var paymentFailedUntil: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -32917,14 +37492,21 @@ public struct AppTeamInput: Equatable, Hashable {
          * The account's role in it.
          */role: String,
         /**
-         * `free`, `teams`, ...
+         * `free`, `teams`, ... After the plan is cancelled but while it still
+         * runs, `teams@<RFC 3339 end>`.
          */plan: String,
         /**
          * Paid seats.
          */seats: Int64, members: [AppTeamPersonInput],
         /**
          * Pending invites' emails (only owners and admins can read them).
-         */invites: [String]) {
+         */invites: [String],
+        /**
+         * The team's last payment failed and it is in its grace period.
+         */paymentFailed: Bool,
+        /**
+         * The end of the grace period (RFC 3339), when known.
+         */paymentFailedUntil: String?) {
         self.id = id
         self.alias = alias
         self.name = name
@@ -32933,6 +37515,8 @@ public struct AppTeamInput: Equatable, Hashable {
         self.seats = seats
         self.members = members
         self.invites = invites
+        self.paymentFailed = paymentFailed
+        self.paymentFailedUntil = paymentFailedUntil
     }
 
 
@@ -32958,7 +37542,9 @@ public struct FfiConverterTypeAppTeamInput: FfiConverterRustBuffer {
                 plan: FfiConverterString.read(from: &buf),
                 seats: FfiConverterInt64.read(from: &buf),
                 members: FfiConverterSequenceTypeAppTeamPersonInput.read(from: &buf),
-                invites: FfiConverterSequenceString.read(from: &buf)
+                invites: FfiConverterSequenceString.read(from: &buf),
+                paymentFailed: FfiConverterBool.read(from: &buf),
+                paymentFailedUntil: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -32971,6 +37557,8 @@ public struct FfiConverterTypeAppTeamInput: FfiConverterRustBuffer {
         FfiConverterInt64.write(value.seats, into: &buf)
         FfiConverterSequenceTypeAppTeamPersonInput.write(value.members, into: &buf)
         FfiConverterSequenceString.write(value.invites, into: &buf)
+        FfiConverterBool.write(value.paymentFailed, into: &buf)
+        FfiConverterOptionString.write(value.paymentFailedUntil, into: &buf)
     }
 }
 
@@ -33816,6 +38404,94 @@ public func FfiConverterTypeAppThisDevice_lower(_ value: AppThisDevice) -> RustB
 }
 
 
+public struct AppThisMacView: Equatable, Hashable {
+    /**
+     * "This Mac".
+     */
+    public var title: String
+    /**
+     * Processor, Memory, Space for files.
+     */
+    public var rows: [AppResourceRow]
+    /**
+     * "Your extra Spaces use: 6 cores, 12 GB of memory, about 25 GB for
+     * files." None when there are no extra Spaces.
+     */
+    public var extraSpaces: String?
+    /**
+     * The warning, when the disk is low.
+     */
+    public var warning: AppWarningView?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * "This Mac".
+         */title: String,
+        /**
+         * Processor, Memory, Space for files.
+         */rows: [AppResourceRow],
+        /**
+         * "Your extra Spaces use: 6 cores, 12 GB of memory, about 25 GB for
+         * files." None when there are no extra Spaces.
+         */extraSpaces: String?,
+        /**
+         * The warning, when the disk is low.
+         */warning: AppWarningView?) {
+        self.title = title
+        self.rows = rows
+        self.extraSpaces = extraSpaces
+        self.warning = warning
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppThisMacView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppThisMacView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppThisMacView {
+        return
+            try AppThisMacView(
+                title: FfiConverterString.read(from: &buf),
+                rows: FfiConverterSequenceTypeAppResourceRow.read(from: &buf),
+                extraSpaces: FfiConverterOptionString.read(from: &buf),
+                warning: FfiConverterOptionTypeAppWarningView.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppThisMacView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterSequenceTypeAppResourceRow.write(value.rows, into: &buf)
+        FfiConverterOptionString.write(value.extraSpaces, into: &buf)
+        FfiConverterOptionTypeAppWarningView.write(value.warning, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppThisMacView_lift(_ buf: RustBuffer) throws -> AppThisMacView {
+    return try FfiConverterTypeAppThisMacView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppThisMacView_lower(_ value: AppThisMacView) -> RustBuffer {
+    return FfiConverterTypeAppThisMacView.lower(value)
+}
+
+
 public struct AppThumbnailPolicy: Equatable, Hashable {
     /**
      * While the notch is open: every running Space, this often.
@@ -34270,7 +38946,7 @@ public func FfiConverterTypeAppUnconfirmedMachine_lower(_ value: AppUnconfirmedM
 
 public struct AppUsageToggle: Equatable, Hashable {
     /**
-     * "Share anonymous usage data".
+     * "Share usage data to help improve Cua".
      */
     public var label: String
     /**
@@ -34290,7 +38966,7 @@ public struct AppUsageToggle: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * "Share anonymous usage data".
+         * "Share usage data to help improve Cua".
          */label: String,
         /**
          * On.
@@ -34556,15 +39232,87 @@ public func FfiConverterTypeAppVaultSource_lower(_ value: AppVaultSource) -> Rus
 }
 
 
+public struct AppWarningView: Equatable, Hashable {
+    /**
+     * The sentence.
+     */
+    public var text: String
+    /**
+     * The button ("See what's using space").
+     */
+    public var button: String
+    /**
+     * Under the floor where creating a Space already fails.
+     */
+    public var critical: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The sentence.
+         */text: String,
+        /**
+         * The button ("See what's using space").
+         */button: String,
+        /**
+         * Under the floor where creating a Space already fails.
+         */critical: Bool) {
+        self.text = text
+        self.button = button
+        self.critical = critical
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppWarningView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppWarningView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppWarningView {
+        return
+            try AppWarningView(
+                text: FfiConverterString.read(from: &buf),
+                button: FfiConverterString.read(from: &buf),
+                critical: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppWarningView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.text, into: &buf)
+        FfiConverterString.write(value.button, into: &buf)
+        FfiConverterBool.write(value.critical, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppWarningView_lift(_ buf: RustBuffer) throws -> AppWarningView {
+    return try FfiConverterTypeAppWarningView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppWarningView_lower(_ value: AppWarningView) -> RustBuffer {
+    return FfiConverterTypeAppWarningView.lower(value)
+}
+
+
 public struct AppWizardEnv: Equatable, Hashable {
     /**
      * Where "Run on" starts (Settings, `cua config set default.on`).
      */
     public var defaultLocation: AppLocation
-    /**
-     * Signed in (or client credentials).
-     */
-    public var cloudAvailable: Bool
     /**
      * A local container backend or Lume exists.
      */
@@ -34607,10 +39355,6 @@ public struct AppWizardEnv: Equatable, Hashable {
      */
     public var storage: AppLocalStorage?
     /**
-     * This account's Cua Cloud rates, when known (no estimate without).
-     */
-    public var cloudPricing: AppCloudPricing?
-    /**
      * The user's connected clouds (`cloud_status`), for "Your cloud"
      * (offered only while its experiment is on: [`offered_clouds`]).
      */
@@ -34642,9 +39386,6 @@ public struct AppWizardEnv: Equatable, Hashable {
         /**
          * Where "Run on" starts (Settings, `cua config set default.on`).
          */defaultLocation: AppLocation,
-        /**
-         * Signed in (or client credentials).
-         */cloudAvailable: Bool,
         /**
          * A local container backend or Lume exists.
          */localAvailable: Bool,
@@ -34678,9 +39419,6 @@ public struct AppWizardEnv: Equatable, Hashable {
          * when known.
          */storage: AppLocalStorage?,
         /**
-         * This account's Cua Cloud rates, when known (no estimate without).
-         */cloudPricing: AppCloudPricing?,
-        /**
          * The user's connected clouds (`cloud_status`), for "Your cloud"
          * (offered only while its experiment is on: [`offered_clouds`]).
          */clouds: [AppConnectedCloud],
@@ -34701,7 +39439,6 @@ public struct AppWizardEnv: Equatable, Hashable {
          * (the wasm build) is given one; tests give a fixed one.
          */nameSeed: UInt64?) {
         self.defaultLocation = defaultLocation
-        self.cloudAvailable = cloudAvailable
         self.localAvailable = localAvailable
         self.localReason = localReason
         self.localBackends = localBackends
@@ -34711,7 +39448,6 @@ public struct AppWizardEnv: Equatable, Hashable {
         self.lumeSource = lumeSource
         self.linuxSource = linuxSource
         self.storage = storage
-        self.cloudPricing = cloudPricing
         self.clouds = clouds
         self.hosts = hosts
         self.experiments = experiments
@@ -34736,7 +39472,6 @@ public struct FfiConverterTypeAppWizardEnv: FfiConverterRustBuffer {
         return
             try AppWizardEnv(
                 defaultLocation: FfiConverterTypeAppLocation.read(from: &buf),
-                cloudAvailable: FfiConverterBool.read(from: &buf),
                 localAvailable: FfiConverterBool.read(from: &buf),
                 localReason: FfiConverterOptionString.read(from: &buf),
                 localBackends: FfiConverterOptionSequenceString.read(from: &buf),
@@ -34746,7 +39481,6 @@ public struct FfiConverterTypeAppWizardEnv: FfiConverterRustBuffer {
                 lumeSource: FfiConverterOptionString.read(from: &buf),
                 linuxSource: FfiConverterOptionString.read(from: &buf),
                 storage: FfiConverterOptionTypeAppLocalStorage.read(from: &buf),
-                cloudPricing: FfiConverterOptionTypeAppCloudPricing.read(from: &buf),
                 clouds: FfiConverterSequenceTypeAppConnectedCloud.read(from: &buf),
                 hosts: FfiConverterSequenceTypeAppSpaceHost.read(from: &buf),
                 experiments: FfiConverterTypeAppExperiments.read(from: &buf),
@@ -34757,7 +39491,6 @@ public struct FfiConverterTypeAppWizardEnv: FfiConverterRustBuffer {
 
     public static func write(_ value: AppWizardEnv, into buf: inout [UInt8]) {
         FfiConverterTypeAppLocation.write(value.defaultLocation, into: &buf)
-        FfiConverterBool.write(value.cloudAvailable, into: &buf)
         FfiConverterBool.write(value.localAvailable, into: &buf)
         FfiConverterOptionString.write(value.localReason, into: &buf)
         FfiConverterOptionSequenceString.write(value.localBackends, into: &buf)
@@ -34767,7 +39500,6 @@ public struct FfiConverterTypeAppWizardEnv: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.lumeSource, into: &buf)
         FfiConverterOptionString.write(value.linuxSource, into: &buf)
         FfiConverterOptionTypeAppLocalStorage.write(value.storage, into: &buf)
-        FfiConverterOptionTypeAppCloudPricing.write(value.cloudPricing, into: &buf)
         FfiConverterSequenceTypeAppConnectedCloud.write(value.clouds, into: &buf)
         FfiConverterSequenceTypeAppSpaceHost.write(value.hosts, into: &buf)
         FfiConverterTypeAppExperiments.write(value.experiments, into: &buf)
@@ -43237,6 +47969,10 @@ public enum AppAboutLinkId: Equatable, Hashable {
      */
     case terms
     /**
+     * The public status page.
+     */
+    case status
+    /**
      * A new issue.
      */
     case issue
@@ -43267,7 +48003,9 @@ public struct FfiConverterTypeAppAboutLinkId: FfiConverterRustBuffer {
 
         case 3: return .terms
 
-        case 4: return .issue
+        case 4: return .status
+
+        case 5: return .issue
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -43289,8 +48027,12 @@ public struct FfiConverterTypeAppAboutLinkId: FfiConverterRustBuffer {
             writeInt(&buf, Int32(3))
 
 
-        case .issue:
+        case .status:
             writeInt(&buf, Int32(4))
+
+
+        case .issue:
+            writeInt(&buf, Int32(5))
 
         }
     }
@@ -44121,7 +48863,15 @@ public enum AppChecklistAction: Equatable, Hashable {
      */
     case shown
     /**
-     * Closed with ×.
+     * "Skip" on a step: not for this person; it counts as done.
+     */
+    case skip(
+        /**
+         * The step.
+         */step: AppChecklistStep
+    )
+    /**
+     * Closed with × ("Hide", or "Done" once complete).
      */
     case dismiss
     /**
@@ -44179,14 +48929,17 @@ public struct FfiConverterTypeAppChecklistAction: FfiConverterRustBuffer {
 
         case 2: return .shown
 
-        case 3: return .dismiss
-
-        case 4: return .reopen
-
-        case 5: return .observe(otherMachine: try FfiConverterBool.read(from: &buf), hasSpace: try FfiConverterBool.read(from: &buf), agentRan: try FfiConverterBool.read(from: &buf)
+        case 3: return .skip(step: try FfiConverterTypeAppChecklistStep.read(from: &buf)
         )
 
-        case 6: return .merge(state: try FfiConverterTypeAppChecklistState.read(from: &buf)
+        case 4: return .dismiss
+
+        case 5: return .reopen
+
+        case 6: return .observe(otherMachine: try FfiConverterBool.read(from: &buf), hasSpace: try FfiConverterBool.read(from: &buf), agentRan: try FfiConverterBool.read(from: &buf)
+        )
+
+        case 7: return .merge(state: try FfiConverterTypeAppChecklistState.read(from: &buf)
         )
 
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -44206,23 +48959,28 @@ public struct FfiConverterTypeAppChecklistAction: FfiConverterRustBuffer {
             writeInt(&buf, Int32(2))
 
 
-        case .dismiss:
+        case let .skip(step):
             writeInt(&buf, Int32(3))
+            FfiConverterTypeAppChecklistStep.write(step, into: &buf)
 
 
-        case .reopen:
+        case .dismiss:
             writeInt(&buf, Int32(4))
 
 
-        case let .observe(otherMachine,hasSpace,agentRan):
+        case .reopen:
             writeInt(&buf, Int32(5))
+
+
+        case let .observe(otherMachine,hasSpace,agentRan):
+            writeInt(&buf, Int32(6))
             FfiConverterBool.write(otherMachine, into: &buf)
             FfiConverterBool.write(hasSpace, into: &buf)
             FfiConverterBool.write(agentRan, into: &buf)
 
 
         case let .merge(state):
-            writeInt(&buf, Int32(6))
+            writeInt(&buf, Int32(7))
             FfiConverterTypeAppChecklistState.write(state, into: &buf)
 
         }
@@ -44358,7 +49116,7 @@ public enum AppCloudConnectAction: Equatable, Hashable {
      */
     case select(
         /**
-         * `aws`, `gcp`, `modal`.
+         * `aws`, `gcp`, `hetzner`, `modal`.
          */name: String
     )
     /**
@@ -44384,6 +49142,15 @@ public enum AppCloudConnectAction: Equatable, Hashable {
         /**
          * On.
          */on: Bool
+    )
+    /**
+     * The token field changed between empty and not empty (the text
+     * itself is never sent here).
+     */
+    case setTokenEntered(
+        /**
+         * Not empty.
+         */entered: Bool
     )
     /**
      * Test pressed (the shell runs the view's request).
@@ -44456,17 +49223,20 @@ public struct FfiConverterTypeAppCloudConnectAction: FfiConverterRustBuffer {
         case 4: return .setMakeDefault(on: try FfiConverterBool.read(from: &buf)
         )
 
-        case 5: return .test
-
-        case 6: return .tested(ok: try FfiConverterBool.read(from: &buf), account: try FfiConverterString.read(from: &buf), checks: try FfiConverterSequenceTypeAppCloudCheckInput.read(from: &buf)
+        case 5: return .setTokenEntered(entered: try FfiConverterBool.read(from: &buf)
         )
 
-        case 7: return .connect
+        case 6: return .test
 
-        case 8: return .connected(label: try FfiConverterString.read(from: &buf)
+        case 7: return .tested(ok: try FfiConverterBool.read(from: &buf), account: try FfiConverterString.read(from: &buf), checks: try FfiConverterSequenceTypeAppCloudCheckInput.read(from: &buf)
         )
 
-        case 9: return .failed(error: try FfiConverterString.read(from: &buf)
+        case 8: return .connect
+
+        case 9: return .connected(label: try FfiConverterString.read(from: &buf)
+        )
+
+        case 10: return .failed(error: try FfiConverterString.read(from: &buf)
         )
 
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -44497,28 +49267,33 @@ public struct FfiConverterTypeAppCloudConnectAction: FfiConverterRustBuffer {
             FfiConverterBool.write(on, into: &buf)
 
 
-        case .test:
+        case let .setTokenEntered(entered):
             writeInt(&buf, Int32(5))
+            FfiConverterBool.write(entered, into: &buf)
+
+
+        case .test:
+            writeInt(&buf, Int32(6))
 
 
         case let .tested(ok,account,checks):
-            writeInt(&buf, Int32(6))
+            writeInt(&buf, Int32(7))
             FfiConverterBool.write(ok, into: &buf)
             FfiConverterString.write(account, into: &buf)
             FfiConverterSequenceTypeAppCloudCheckInput.write(checks, into: &buf)
 
 
         case .connect:
-            writeInt(&buf, Int32(7))
+            writeInt(&buf, Int32(8))
 
 
         case let .connected(label):
-            writeInt(&buf, Int32(8))
+            writeInt(&buf, Int32(9))
             FfiConverterString.write(label, into: &buf)
 
 
         case let .failed(error):
-            writeInt(&buf, Int32(9))
+            writeInt(&buf, Int32(10))
             FfiConverterString.write(error, into: &buf)
 
         }
@@ -44772,79 +49547,6 @@ public func FfiConverterTypeAppCloudConnectRequest_lower(_ value: AppCloudConnec
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
-public enum AppCloudEngine: Equatable, Hashable {
-
-    /**
-     * gVisor containers.
-     */
-    case gvisor
-    /**
-     * KubeVirt VMs.
-     */
-    case kubevirt
-
-
-
-
-
-}
-
-#if compiler(>=6)
-extension AppCloudEngine: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeAppCloudEngine: FfiConverterRustBuffer {
-    typealias SwiftType = AppCloudEngine
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppCloudEngine {
-        let variant: Int32 = try readInt(&buf)
-        switch variant {
-
-        case 1: return .gvisor
-
-        case 2: return .kubevirt
-
-        default: throw UniffiInternalError.unexpectedEnumCase
-        }
-    }
-
-    public static func write(_ value: AppCloudEngine, into buf: inout [UInt8]) {
-        switch value {
-
-
-        case .gvisor:
-            writeInt(&buf, Int32(1))
-
-
-        case .kubevirt:
-            writeInt(&buf, Int32(2))
-
-        }
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeAppCloudEngine_lift(_ buf: RustBuffer) throws -> AppCloudEngine {
-    return try FfiConverterTypeAppCloudEngine.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeAppCloudEngine_lower(_ value: AppCloudEngine) -> RustBuffer {
-    return FfiConverterTypeAppCloudEngine.lower(value)
-}
-
-
-// Note that we don't yet support `indirect` for enums.
-// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
-
 public enum AppConsentKind: Equatable, Hashable {
 
     /**
@@ -45078,7 +49780,10 @@ public enum AppCreateAction: Equatable, Hashable {
          */error: String,
         /**
          * The error enum's case name, when the shell has one.
-         */errorVariant: String
+         */errorVariant: String,
+        /**
+         * Epoch ms (an automatic retry starts its clock here).
+         */now: Int64?
     )
     /**
      * Remove a failed row.
@@ -45195,7 +49900,7 @@ public struct FfiConverterTypeAppCreateAction: FfiConverterRustBuffer {
         case 7: return .finish(id: try FfiConverterString.read(from: &buf), spaceId: try FfiConverterString.read(from: &buf)
         )
 
-        case 8: return .fail(id: try FfiConverterString.read(from: &buf), error: try FfiConverterString.read(from: &buf), errorVariant: try FfiConverterString.read(from: &buf)
+        case 8: return .fail(id: try FfiConverterString.read(from: &buf), error: try FfiConverterString.read(from: &buf), errorVariant: try FfiConverterString.read(from: &buf), now: try FfiConverterOptionInt64.read(from: &buf)
         )
 
         case 9: return .dismiss(id: try FfiConverterString.read(from: &buf)
@@ -45280,11 +49985,12 @@ public struct FfiConverterTypeAppCreateAction: FfiConverterRustBuffer {
             FfiConverterString.write(spaceId, into: &buf)
 
 
-        case let .fail(id,error,errorVariant):
+        case let .fail(id,error,errorVariant,now):
             writeInt(&buf, Int32(8))
             FfiConverterString.write(id, into: &buf)
             FfiConverterString.write(error, into: &buf)
             FfiConverterString.write(errorVariant, into: &buf)
+            FfiConverterOptionInt64.write(now, into: &buf)
 
 
         case let .dismiss(id):
@@ -45342,6 +50048,89 @@ public func FfiConverterTypeAppCreateAction_lift(_ buf: RustBuffer) throws -> Ap
 #endif
 public func FfiConverterTypeAppCreateAction_lower(_ value: AppCreateAction) -> RustBuffer {
     return FfiConverterTypeAppCreateAction.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum AppCreateFixAction: Equatable, Hashable {
+
+    /**
+     * Copies `value` (a Terminal command) to the clipboard.
+     */
+    case copyCommand
+    /**
+     * Opens `value` (a help page) in the browser.
+     */
+    case openUrl
+    /**
+     * Opens the failed create's details (the diagnostic report to review).
+     */
+    case details
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppCreateFixAction: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppCreateFixAction: FfiConverterRustBuffer {
+    typealias SwiftType = AppCreateFixAction
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppCreateFixAction {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .copyCommand
+
+        case 2: return .openUrl
+
+        case 3: return .details
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: AppCreateFixAction, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .copyCommand:
+            writeInt(&buf, Int32(1))
+
+
+        case .openUrl:
+            writeInt(&buf, Int32(2))
+
+
+        case .details:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppCreateFixAction_lift(_ buf: RustBuffer) throws -> AppCreateFixAction {
+    return try FfiConverterTypeAppCreateFixAction.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppCreateFixAction_lower(_ value: AppCreateFixAction) -> RustBuffer {
+    return FfiConverterTypeAppCreateFixAction.lower(value)
 }
 
 
@@ -45652,6 +50441,90 @@ public func FfiConverterTypeAppDeviceAction_lift(_ buf: RustBuffer) throws -> Ap
 #endif
 public func FfiConverterTypeAppDeviceAction_lower(_ value: AppDeviceAction) -> RustBuffer {
     return FfiConverterTypeAppDeviceAction.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum AppDiskLevel: Equatable, Hashable {
+
+    /**
+     * Plenty.
+     */
+    case ok
+    /**
+     * Under 50 GB or 15% of the volume, whichever line is higher (never
+     * above 100 GB).
+     */
+    case low
+    /**
+     * Under the floor where creating a Space already fails.
+     */
+    case critical
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppDiskLevel: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppDiskLevel: FfiConverterRustBuffer {
+    typealias SwiftType = AppDiskLevel
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppDiskLevel {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .ok
+
+        case 2: return .low
+
+        case 3: return .critical
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: AppDiskLevel, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .ok:
+            writeInt(&buf, Int32(1))
+
+
+        case .low:
+            writeInt(&buf, Int32(2))
+
+
+        case .critical:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppDiskLevel_lift(_ buf: RustBuffer) throws -> AppDiskLevel {
+    return try FfiConverterTypeAppDiskLevel.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppDiskLevel_lower(_ value: AppDiskLevel) -> RustBuffer {
+    return FfiConverterTypeAppDiskLevel.lower(value)
 }
 
 
@@ -47465,6 +52338,10 @@ public enum AppImageTier: Equatable, Hashable {
      * macOS: full plus one pinned Xcode.
      */
     case xcode
+    /**
+     * Linux: slim plus the Docker engine, a VM with dockerd up at boot.
+     */
+    case docker
 
 
 
@@ -47492,6 +52369,8 @@ public struct FfiConverterTypeAppImageTier: FfiConverterRustBuffer {
 
         case 3: return .xcode
 
+        case 4: return .docker
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -47510,6 +52389,10 @@ public struct FfiConverterTypeAppImageTier: FfiConverterRustBuffer {
 
         case .xcode:
             writeInt(&buf, Int32(3))
+
+
+        case .docker:
+            writeInt(&buf, Int32(4))
 
         }
     }
@@ -47621,6 +52504,12 @@ public enum AppLocalEngine: Equatable, Hashable {
      * A Lume VM.
      */
     case lume
+    /**
+     * An external runtime provider installed on this Mac, by its name
+     * ([`ExternalRuntimeInfo::name`]).
+     */
+    case external(String
+    )
 
 
 
@@ -47648,6 +52537,9 @@ public struct FfiConverterTypeAppLocalEngine: FfiConverterRustBuffer {
 
         case 3: return .lume
 
+        case 4: return .external(try FfiConverterString.read(from: &buf)
+        )
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -47666,6 +52558,11 @@ public struct FfiConverterTypeAppLocalEngine: FfiConverterRustBuffer {
 
         case .lume:
             writeInt(&buf, Int32(3))
+
+
+        case let .external(v1):
+            writeInt(&buf, Int32(4))
+            FfiConverterString.write(v1, into: &buf)
 
         }
     }
@@ -47690,19 +52587,182 @@ public func FfiConverterTypeAppLocalEngine_lower(_ value: AppLocalEngine) -> Rus
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
-public enum AppLocation: Equatable, Hashable {
+public enum AppLocalNetworkAccess: Equatable, Hashable {
 
     /**
-     * Cua Cloud (the SDK's `on="cloud"`). The apps do not offer it for new
-     * Spaces ([`CLOUD_SPACES_OFFERED`]); existing cloud Spaces still list.
+     * A connect to the local network went out.
      */
-    case cloud
+    case allowed
+    /**
+     * macOS blocked it (not allowed yet, or turned off).
+     */
+    case blocked
+    /**
+     * No local network to try, or no clear answer.
+     */
+    case unknown
+    /**
+     * Not probed: the app has not explained yet, and a connect while access
+     * is undecided makes macOS ask before the explanation.
+     */
+    case notChecked
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppLocalNetworkAccess: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppLocalNetworkAccess: FfiConverterRustBuffer {
+    typealias SwiftType = AppLocalNetworkAccess
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppLocalNetworkAccess {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .allowed
+
+        case 2: return .blocked
+
+        case 3: return .unknown
+
+        case 4: return .notChecked
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: AppLocalNetworkAccess, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .allowed:
+            writeInt(&buf, Int32(1))
+
+
+        case .blocked:
+            writeInt(&buf, Int32(2))
+
+
+        case .unknown:
+            writeInt(&buf, Int32(3))
+
+
+        case .notChecked:
+            writeInt(&buf, Int32(4))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppLocalNetworkAccess_lift(_ buf: RustBuffer) throws -> AppLocalNetworkAccess {
+    return try FfiConverterTypeAppLocalNetworkAccess.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppLocalNetworkAccess_lower(_ value: AppLocalNetworkAccess) -> RustBuffer {
+    return FfiConverterTypeAppLocalNetworkAccess.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum AppLocalNetworkStepKind: Equatable, Hashable {
+
+    case proceed
+    case explain
+    case fail
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppLocalNetworkStepKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppLocalNetworkStepKind: FfiConverterRustBuffer {
+    typealias SwiftType = AppLocalNetworkStepKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppLocalNetworkStepKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .proceed
+
+        case 2: return .explain
+
+        case 3: return .fail
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: AppLocalNetworkStepKind, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .proceed:
+            writeInt(&buf, Int32(1))
+
+
+        case .explain:
+            writeInt(&buf, Int32(2))
+
+
+        case .fail:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppLocalNetworkStepKind_lift(_ buf: RustBuffer) throws -> AppLocalNetworkStepKind {
+    return try FfiConverterTypeAppLocalNetworkStepKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppLocalNetworkStepKind_lower(_ value: AppLocalNetworkStepKind) -> RustBuffer {
+    return FfiConverterTypeAppLocalNetworkStepKind.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum AppLocation: Equatable, Hashable {
+
     /**
      * This Mac.
      */
     case local
     /**
-     * The user's own cloud account (AWS, Google Cloud, Modal), connected
+     * The user's own cloud account (AWS, Google Cloud, Hetzner, Modal), connected
      * with `cua cloud connect`: the SDK's `on` is the provider's word
      * (`aws`), which the wizard carries beside it.
      */
@@ -47713,6 +52773,13 @@ public enum AppLocation: Equatable, Hashable {
      * `host:<machine>`, which the wizard carries beside it.
      */
     case host
+    /**
+     * The least-loaded of the user's machines that can take it: this Mac
+     * or one of their machines that provides Spaces (the SDK's
+     * `on="auto"`). Offered only while the user has such a machine, and
+     * never a default.
+     */
+    case auto
 
 
 
@@ -47734,13 +52801,13 @@ public struct FfiConverterTypeAppLocation: FfiConverterRustBuffer {
         let variant: Int32 = try readInt(&buf)
         switch variant {
 
-        case 1: return .cloud
+        case 1: return .local
 
-        case 2: return .local
+        case 2: return .yours
 
-        case 3: return .yours
+        case 3: return .host
 
-        case 4: return .host
+        case 4: return .auto
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -47750,19 +52817,19 @@ public struct FfiConverterTypeAppLocation: FfiConverterRustBuffer {
         switch value {
 
 
-        case .cloud:
+        case .local:
             writeInt(&buf, Int32(1))
 
 
-        case .local:
+        case .yours:
             writeInt(&buf, Int32(2))
 
 
-        case .yours:
+        case .host:
             writeInt(&buf, Int32(3))
 
 
-        case .host:
+        case .auto:
             writeInt(&buf, Int32(4))
 
         }
@@ -48884,7 +53951,7 @@ public enum AppOnboardingAction: Equatable, Hashable {
      */
     case welcomeShown
     /**
-     * Welcome's "Share anonymous usage data" switch (not while the
+     * Welcome's "Share usage data to help improve Cua" switch (not while the
      * environment decides). The shell writes the setting.
      */
     case usageDataToggled(
@@ -48901,6 +53968,25 @@ public enum AppOnboardingAction: Equatable, Hashable {
         /**
          * The switches.
          */experiments: AppExperiments
+    )
+    /**
+     * A to-do on Done was clicked: its page opens, and leaving it comes
+     * back to Done. Cua Volume needs its experiment on first (the shell
+     * turns it on and sends `experiments-loaded`).
+     */
+    case todoChosen(
+        /**
+         * Which.
+         */id: AppOnboardingTodoId
+    )
+    /**
+     * The coding agents that already use cua (set up earlier, from the
+     * CLI or Settings), as the shell read them. Any page.
+     */
+    case agentsDetected(
+        /**
+         * Their names.
+         */configured: [String]
     )
 
 
@@ -48993,6 +54079,12 @@ public struct FfiConverterTypeAppOnboardingAction: FfiConverterRustBuffer {
         )
 
         case 26: return .experimentsLoaded(experiments: try FfiConverterTypeAppExperiments.read(from: &buf)
+        )
+
+        case 27: return .todoChosen(id: try FfiConverterTypeAppOnboardingTodoId.read(from: &buf)
+        )
+
+        case 28: return .agentsDetected(configured: try FfiConverterSequenceString.read(from: &buf)
         )
 
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -49127,6 +54219,16 @@ public struct FfiConverterTypeAppOnboardingAction: FfiConverterRustBuffer {
         case let .experimentsLoaded(experiments):
             writeInt(&buf, Int32(26))
             FfiConverterTypeAppExperiments.write(experiments, into: &buf)
+
+
+        case let .todoChosen(id):
+            writeInt(&buf, Int32(27))
+            FfiConverterTypeAppOnboardingTodoId.write(id, into: &buf)
+
+
+        case let .agentsDetected(configured):
+            writeInt(&buf, Int32(28))
+            FfiConverterSequenceString.write(configured, into: &buf)
 
         }
     }
@@ -49353,6 +54455,99 @@ public func FfiConverterTypeAppOnboardingStep_lift(_ buf: RustBuffer) throws -> 
 #endif
 public func FfiConverterTypeAppOnboardingStep_lower(_ value: AppOnboardingStep) -> RustBuffer {
     return FfiConverterTypeAppOnboardingStep.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum AppOnboardingTodoId: Equatable, Hashable {
+
+    /**
+     * The Cua CLI.
+     */
+    case cli
+    /**
+     * The Cua account.
+     */
+    case signin
+    /**
+     * A coding agent that uses cua.
+     */
+    case agents
+    /**
+     * Cua Volume (optional).
+     */
+    case volume
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppOnboardingTodoId: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppOnboardingTodoId: FfiConverterRustBuffer {
+    typealias SwiftType = AppOnboardingTodoId
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppOnboardingTodoId {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .cli
+
+        case 2: return .signin
+
+        case 3: return .agents
+
+        case 4: return .volume
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: AppOnboardingTodoId, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .cli:
+            writeInt(&buf, Int32(1))
+
+
+        case .signin:
+            writeInt(&buf, Int32(2))
+
+
+        case .agents:
+            writeInt(&buf, Int32(3))
+
+
+        case .volume:
+            writeInt(&buf, Int32(4))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppOnboardingTodoId_lift(_ buf: RustBuffer) throws -> AppOnboardingTodoId {
+    return try FfiConverterTypeAppOnboardingTodoId.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppOnboardingTodoId_lower(_ value: AppOnboardingTodoId) -> RustBuffer {
+    return FfiConverterTypeAppOnboardingTodoId.lower(value)
 }
 
 
@@ -50866,6 +56061,89 @@ public func FfiConverterTypeAppResourceField_lower(_ value: AppResourceField) ->
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
+public enum AppResourceTone: Equatable, Hashable {
+
+    /**
+     * Nothing to say.
+     */
+    case normal
+    /**
+     * Running low.
+     */
+    case warning
+    /**
+     * Out.
+     */
+    case critical
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppResourceTone: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppResourceTone: FfiConverterRustBuffer {
+    typealias SwiftType = AppResourceTone
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppResourceTone {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .normal
+
+        case 2: return .warning
+
+        case 3: return .critical
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: AppResourceTone, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .normal:
+            writeInt(&buf, Int32(1))
+
+
+        case .warning:
+            writeInt(&buf, Int32(2))
+
+
+        case .critical:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppResourceTone_lift(_ buf: RustBuffer) throws -> AppResourceTone {
+    return try FfiConverterTypeAppResourceTone.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppResourceTone_lower(_ value: AppResourceTone) -> RustBuffer {
+    return FfiConverterTypeAppResourceTone.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
 public enum AppRosterAction: Equatable, Hashable {
 
     /**
@@ -51160,9 +56438,11 @@ public enum AppRuntime: Equatable, Hashable {
      */
     case lume
     /**
-     * KubeVirt.
+     * An external runtime provider installed on this machine, by its name
+     * (the `<name>` of its `cua-runtime-<name>` executable).
      */
-    case kubevirt
+    case other(String
+    )
 
 
 
@@ -51194,7 +56474,8 @@ public struct FfiConverterTypeAppRuntime: FfiConverterRustBuffer {
 
         case 5: return .lume
 
-        case 6: return .kubevirt
+        case 6: return .other(try FfiConverterString.read(from: &buf)
+        )
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -51224,8 +56505,9 @@ public struct FfiConverterTypeAppRuntime: FfiConverterRustBuffer {
             writeInt(&buf, Int32(5))
 
 
-        case .kubevirt:
+        case let .other(v1):
             writeInt(&buf, Int32(6))
+            FfiConverterString.write(v1, into: &buf)
 
         }
     }
@@ -51806,6 +57088,234 @@ public func FfiConverterTypeAppShareSheetAction_lower(_ value: AppShareSheetActi
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
+public enum AppSignInFailure: Equatable, Hashable {
+
+    /**
+     * The browser never confirmed: the wait ran out, or the code expired
+     * before it was confirmed.
+     */
+    case notConfirmed
+    /**
+     * The person declined it in the browser.
+     */
+    case declined
+    /**
+     * The sign-in service refused the code (expired or already used).
+     */
+    case codeRejected
+    /**
+     * This computer could not reach the sign-in service.
+     */
+    case offline
+    /**
+     * The sign-in service answered with its own error.
+     */
+    case serviceUnavailable
+    /**
+     * Signed in, but the session could not be stored on this computer (a
+     * locked keychain, a credential store that refused the write).
+     */
+    case couldNotSave
+    /**
+     * Anything else (the words are behind Details).
+     */
+    case unknown
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppSignInFailure: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppSignInFailure: FfiConverterRustBuffer {
+    typealias SwiftType = AppSignInFailure
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppSignInFailure {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .notConfirmed
+
+        case 2: return .declined
+
+        case 3: return .codeRejected
+
+        case 4: return .offline
+
+        case 5: return .serviceUnavailable
+
+        case 6: return .couldNotSave
+
+        case 7: return .unknown
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: AppSignInFailure, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .notConfirmed:
+            writeInt(&buf, Int32(1))
+
+
+        case .declined:
+            writeInt(&buf, Int32(2))
+
+
+        case .codeRejected:
+            writeInt(&buf, Int32(3))
+
+
+        case .offline:
+            writeInt(&buf, Int32(4))
+
+
+        case .serviceUnavailable:
+            writeInt(&buf, Int32(5))
+
+
+        case .couldNotSave:
+            writeInt(&buf, Int32(6))
+
+
+        case .unknown:
+            writeInt(&buf, Int32(7))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppSignInFailure_lift(_ buf: RustBuffer) throws -> AppSignInFailure {
+    return try FfiConverterTypeAppSignInFailure.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppSignInFailure_lower(_ value: AppSignInFailure) -> RustBuffer {
+    return FfiConverterTypeAppSignInFailure.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum AppSignInFooterState: Equatable, Hashable {
+
+    /**
+     * Not signed in: "Sign in".
+     */
+    case signedOut
+    /**
+     * Asking for a code / opening the browser.
+     */
+    case starting
+    /**
+     * The browser is open.
+     */
+    case waiting
+    /**
+     * It failed: the reason and Try again.
+     */
+    case failed
+    /**
+     * Signed in.
+     */
+    case signedIn
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppSignInFooterState: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppSignInFooterState: FfiConverterRustBuffer {
+    typealias SwiftType = AppSignInFooterState
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppSignInFooterState {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .signedOut
+
+        case 2: return .starting
+
+        case 3: return .waiting
+
+        case 4: return .failed
+
+        case 5: return .signedIn
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: AppSignInFooterState, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .signedOut:
+            writeInt(&buf, Int32(1))
+
+
+        case .starting:
+            writeInt(&buf, Int32(2))
+
+
+        case .waiting:
+            writeInt(&buf, Int32(3))
+
+
+        case .failed:
+            writeInt(&buf, Int32(4))
+
+
+        case .signedIn:
+            writeInt(&buf, Int32(5))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppSignInFooterState_lift(_ buf: RustBuffer) throws -> AppSignInFooterState {
+    return try FfiConverterTypeAppSignInFooterState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppSignInFooterState_lower(_ value: AppSignInFooterState) -> RustBuffer {
+    return FfiConverterTypeAppSignInFooterState.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
 public enum AppSignInPhase: Equatable, Hashable {
 
     /**
@@ -51822,15 +57332,25 @@ public enum AppSignInPhase: Equatable, Hashable {
     case waiting(
         /**
          * The code to confirm there, when the flow has one.
-         */userCode: String?
+         */userCode: String?,
+        /**
+         * A browser opened on this computer (false: the page is to be
+         * opened by hand, here or on another device).
+         */opened: Bool
     )
     /**
-     * It failed.
+     * It failed ([`crate::sign_in::failed`] makes it).
      */
     case failed(
         /**
-         * Why.
-         */message: String
+         * Why ([`crate::sign_in::SignInFailure`]).
+         */reason: AppSignInFailure,
+        /**
+         * The line shown: "Sign-in didn't finish." and the reason.
+         */message: String,
+        /**
+         * The error's own words, behind Details (never shown by default).
+         */detail: String?
     )
 
 
@@ -51857,10 +57377,10 @@ public struct FfiConverterTypeAppSignInPhase: FfiConverterRustBuffer {
 
         case 2: return .starting
 
-        case 3: return .waiting(userCode: try FfiConverterOptionString.read(from: &buf)
+        case 3: return .waiting(userCode: try FfiConverterOptionString.read(from: &buf), opened: try FfiConverterBool.read(from: &buf)
         )
 
-        case 4: return .failed(message: try FfiConverterString.read(from: &buf)
+        case 4: return .failed(reason: try FfiConverterTypeAppSignInFailure.read(from: &buf), message: try FfiConverterString.read(from: &buf), detail: try FfiConverterOptionString.read(from: &buf)
         )
 
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -51879,14 +57399,17 @@ public struct FfiConverterTypeAppSignInPhase: FfiConverterRustBuffer {
             writeInt(&buf, Int32(2))
 
 
-        case let .waiting(userCode):
+        case let .waiting(userCode,opened):
             writeInt(&buf, Int32(3))
             FfiConverterOptionString.write(userCode, into: &buf)
+            FfiConverterBool.write(opened, into: &buf)
 
 
-        case let .failed(message):
+        case let .failed(reason,message,detail):
             writeInt(&buf, Int32(4))
+            FfiConverterTypeAppSignInFailure.write(reason, into: &buf)
             FfiConverterString.write(message, into: &buf)
+            FfiConverterOptionString.write(detail, into: &buf)
 
         }
     }
@@ -52080,10 +57603,6 @@ public func FfiConverterTypeAppSpaceOs_lower(_ value: AppSpaceOs) -> RustBuffer 
 public enum AppSpaceProvider: Equatable, Hashable {
 
     /**
-     * Cua Cloud.
-     */
-    case cloud
-    /**
      * This Mac.
      */
     case local
@@ -52116,13 +57635,11 @@ public struct FfiConverterTypeAppSpaceProvider: FfiConverterRustBuffer {
         let variant: Int32 = try readInt(&buf)
         switch variant {
 
-        case 1: return .cloud
+        case 1: return .local
 
-        case 2: return .local
+        case 2: return .direct
 
-        case 3: return .direct
-
-        case 4: return .relay
+        case 3: return .relay
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -52132,20 +57649,16 @@ public struct FfiConverterTypeAppSpaceProvider: FfiConverterRustBuffer {
         switch value {
 
 
-        case .cloud:
+        case .local:
             writeInt(&buf, Int32(1))
 
 
-        case .local:
+        case .direct:
             writeInt(&buf, Int32(2))
 
 
-        case .direct:
-            writeInt(&buf, Int32(3))
-
-
         case .relay:
-            writeInt(&buf, Int32(4))
+            writeInt(&buf, Int32(3))
 
         }
     }
@@ -53527,13 +59040,17 @@ public enum AppTelemetrySignal: Equatable, Hashable {
     case onboardingPage(
         /**
          * `welcome`, `signin`, `agents`, `presentation`, `volume`,
-         * `this_machine` or `done`.
+         * `this_machine` or `done`; or, with a `step_*` action, one of
+         * `schema::FIRST_RUN_STEPS` (`connect_agent`, `terminal`, ...).
          */page: String,
         /**
-         * `shown`, `completed`, `skipped` or `back`.
+         * `shown`, `completed`, `skipped` or `back`; or `step_viewed`,
+         * `step_completed`, `step_failed` or `step_skipped`, which send
+         * `cua_onboarding_step_*` and `cua_onboarding_skipped`.
          */action: String,
         /**
-         * The page's answer as a fixed word, or `none`.
+         * The page's answer as a fixed word, or `none`; for
+         * `step_failed`, the reason (`timeout`, `install_failed`, ...).
          */choice: String
     )
     /**
@@ -53575,7 +59092,14 @@ public enum AppTelemetrySignal: Equatable, Hashable {
          */gpu: Bool,
         /**
          * The error enum's case name, when the shell sent one.
-         */errorVariant: String
+         */errorVariant: String,
+        /**
+         * 1 when the app ran the create a second time by itself, else 0.
+         */retryAttempt: UInt32,
+        /**
+         * The finer cause (`error_subclass`): the failure's, or on a
+         * retried create that worked, the failure it recovered from.
+         */errorSubclass: String
     )
     /**
      * A Space create started (`cua_space_create_started`).
@@ -53625,8 +59149,19 @@ public enum AppTelemetrySignal: Equatable, Hashable {
          * `viewer`, `editor` or `none`.
          */role: String,
         /**
-         * `ok` or `error`.
-         */outcome: String
+         * `ok`, `error`, or `cancelled` when the confirmation prompt was
+         * dismissed.
+         */outcome: String,
+        /**
+         * Why it did not happen (`presence_denied`, `presence_cancelled`,
+         * `presence_unavailable`, `not_signed_in`, `device_not_enrolled`,
+         * `driver_unsupported`, `relay_refused`, `relay_unreachable`,
+         * `invalid_who` or `other`); `none` when it worked.
+         */errorKind: String,
+        /**
+         * Where it stopped (`request`, `presence`, `account`, `device`,
+         * `driver`, `relay` or `other`); `none` when it worked.
+         */failedStage: String
     )
     /**
      * An updater step (`cua_app_update`).
@@ -53714,7 +59249,7 @@ public struct FfiConverterTypeAppTelemetrySignal: FfiConverterRustBuffer {
         case 6: return .spaceWizard(action: try FfiConverterString.read(from: &buf)
         )
 
-        case 7: return .spaceCreate(location: try FfiConverterString.read(from: &buf), guestOs: try FfiConverterString.read(from: &buf), kind: try FfiConverterString.read(from: &buf), outcome: try FfiConverterString.read(from: &buf), failedPhase: try FfiConverterString.read(from: &buf), stalled: try FfiConverterBool.read(from: &buf), elapsedMs: try FfiConverterUInt64.read(from: &buf), gpu: try FfiConverterBool.read(from: &buf), errorVariant: try FfiConverterString.read(from: &buf)
+        case 7: return .spaceCreate(location: try FfiConverterString.read(from: &buf), guestOs: try FfiConverterString.read(from: &buf), kind: try FfiConverterString.read(from: &buf), outcome: try FfiConverterString.read(from: &buf), failedPhase: try FfiConverterString.read(from: &buf), stalled: try FfiConverterBool.read(from: &buf), elapsedMs: try FfiConverterUInt64.read(from: &buf), gpu: try FfiConverterBool.read(from: &buf), errorVariant: try FfiConverterString.read(from: &buf), retryAttempt: try FfiConverterUInt32.read(from: &buf), errorSubclass: try FfiConverterString.read(from: &buf)
         )
 
         case 8: return .spaceCreateStarted(location: try FfiConverterString.read(from: &buf), guestOs: try FfiConverterString.read(from: &buf), kind: try FfiConverterString.read(from: &buf), gpu: try FfiConverterBool.read(from: &buf)
@@ -53723,7 +59258,7 @@ public struct FfiConverterTypeAppTelemetrySignal: FfiConverterRustBuffer {
         case 9: return .volumeSetup(surface: try FfiConverterString.read(from: &buf), storage: try FfiConverterString.read(from: &buf), addToFinder: try FfiConverterBool.read(from: &buf), mountMethod: try FfiConverterString.read(from: &buf), outcome: try FfiConverterString.read(from: &buf)
         )
 
-        case 10: return .share(action: try FfiConverterString.read(from: &buf), role: try FfiConverterString.read(from: &buf), outcome: try FfiConverterString.read(from: &buf)
+        case 10: return .share(action: try FfiConverterString.read(from: &buf), role: try FfiConverterString.read(from: &buf), outcome: try FfiConverterString.read(from: &buf), errorKind: try FfiConverterString.read(from: &buf), failedStage: try FfiConverterString.read(from: &buf)
         )
 
         case 11: return .appUpdate(action: try FfiConverterString.read(from: &buf), channel: try FfiConverterString.read(from: &buf), trigger: try FfiConverterString.read(from: &buf)
@@ -53779,7 +59314,7 @@ public struct FfiConverterTypeAppTelemetrySignal: FfiConverterRustBuffer {
             FfiConverterString.write(action, into: &buf)
 
 
-        case let .spaceCreate(location,guestOs,kind,outcome,failedPhase,stalled,elapsedMs,gpu,errorVariant):
+        case let .spaceCreate(location,guestOs,kind,outcome,failedPhase,stalled,elapsedMs,gpu,errorVariant,retryAttempt,errorSubclass):
             writeInt(&buf, Int32(7))
             FfiConverterString.write(location, into: &buf)
             FfiConverterString.write(guestOs, into: &buf)
@@ -53790,6 +59325,8 @@ public struct FfiConverterTypeAppTelemetrySignal: FfiConverterRustBuffer {
             FfiConverterUInt64.write(elapsedMs, into: &buf)
             FfiConverterBool.write(gpu, into: &buf)
             FfiConverterString.write(errorVariant, into: &buf)
+            FfiConverterUInt32.write(retryAttempt, into: &buf)
+            FfiConverterString.write(errorSubclass, into: &buf)
 
 
         case let .spaceCreateStarted(location,guestOs,kind,gpu):
@@ -53809,11 +59346,13 @@ public struct FfiConverterTypeAppTelemetrySignal: FfiConverterRustBuffer {
             FfiConverterString.write(outcome, into: &buf)
 
 
-        case let .share(action,role,outcome):
+        case let .share(action,role,outcome,errorKind,failedStage):
             writeInt(&buf, Int32(10))
             FfiConverterString.write(action, into: &buf)
             FfiConverterString.write(role, into: &buf)
             FfiConverterString.write(outcome, into: &buf)
+            FfiConverterString.write(errorKind, into: &buf)
+            FfiConverterString.write(failedStage, into: &buf)
 
 
         case let .appUpdate(action,channel,trigger):
@@ -54575,7 +60114,7 @@ public enum AppWindowMode: Equatable, Hashable {
      */
     case ambientTeleport
     case switcher
-    case createFleet
+    case createSpace
 
 
 
@@ -54603,7 +60142,7 @@ public struct FfiConverterTypeAppWindowMode: FfiConverterRustBuffer {
 
         case 3: return .switcher
 
-        case 4: return .createFleet
+        case 4: return .createSpace
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -54625,7 +60164,7 @@ public struct FfiConverterTypeAppWindowMode: FfiConverterRustBuffer {
             writeInt(&buf, Int32(3))
 
 
-        case .createFleet:
+        case .createSpace:
             writeInt(&buf, Int32(4))
 
         }
@@ -57885,78 +63424,6 @@ fileprivate struct FfiConverterOptionTypeAppApproveRequest: FfiConverterRustBuff
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterOptionTypeAppBillingCard: FfiConverterRustBuffer {
-    typealias SwiftType = AppBillingCard?
-
-    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
-        guard let value = value else {
-            writeInt(&buf, Int8(0))
-            return
-        }
-        writeInt(&buf, Int8(1))
-        FfiConverterTypeAppBillingCard.write(value, into: &buf)
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
-        switch try readInt(&buf) as Int8 {
-        case 0: return nil
-        case 1: return try FfiConverterTypeAppBillingCard.read(from: &buf)
-        default: throw UniffiInternalError.unexpectedOptionalTag
-        }
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-fileprivate struct FfiConverterOptionTypeAppBillingCredit: FfiConverterRustBuffer {
-    typealias SwiftType = AppBillingCredit?
-
-    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
-        guard let value = value else {
-            writeInt(&buf, Int8(0))
-            return
-        }
-        writeInt(&buf, Int8(1))
-        FfiConverterTypeAppBillingCredit.write(value, into: &buf)
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
-        switch try readInt(&buf) as Int8 {
-        case 0: return nil
-        case 1: return try FfiConverterTypeAppBillingCredit.read(from: &buf)
-        default: throw UniffiInternalError.unexpectedOptionalTag
-        }
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-fileprivate struct FfiConverterOptionTypeAppBillingStatus: FfiConverterRustBuffer {
-    typealias SwiftType = AppBillingStatus?
-
-    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
-        guard let value = value else {
-            writeInt(&buf, Int8(0))
-            return
-        }
-        writeInt(&buf, Int8(1))
-        FfiConverterTypeAppBillingStatus.write(value, into: &buf)
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
-        switch try readInt(&buf) as Int8 {
-        case 0: return nil
-        case 1: return try FfiConverterTypeAppBillingStatus.read(from: &buf)
-        default: throw UniffiInternalError.unexpectedOptionalTag
-        }
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
 fileprivate struct FfiConverterOptionTypeAppCatalogEntry: FfiConverterRustBuffer {
     typealias SwiftType = AppCatalogEntry?
 
@@ -58029,8 +63496,8 @@ fileprivate struct FfiConverterOptionTypeAppCloudField: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterOptionTypeAppCloudPricing: FfiConverterRustBuffer {
-    typealias SwiftType = AppCloudPricing?
+fileprivate struct FfiConverterOptionTypeAppCreateFix: FfiConverterRustBuffer {
+    typealias SwiftType = AppCreateFix?
 
     public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
         guard let value = value else {
@@ -58038,37 +63505,13 @@ fileprivate struct FfiConverterOptionTypeAppCloudPricing: FfiConverterRustBuffer
             return
         }
         writeInt(&buf, Int8(1))
-        FfiConverterTypeAppCloudPricing.write(value, into: &buf)
+        FfiConverterTypeAppCreateFix.write(value, into: &buf)
     }
 
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
-        case 1: return try FfiConverterTypeAppCloudPricing.read(from: &buf)
-        default: throw UniffiInternalError.unexpectedOptionalTag
-        }
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-fileprivate struct FfiConverterOptionTypeAppCreditNotice: FfiConverterRustBuffer {
-    typealias SwiftType = AppCreditNotice?
-
-    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
-        guard let value = value else {
-            writeInt(&buf, Int8(0))
-            return
-        }
-        writeInt(&buf, Int8(1))
-        FfiConverterTypeAppCreditNotice.write(value, into: &buf)
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
-        switch try readInt(&buf) as Int8 {
-        case 0: return nil
-        case 1: return try FfiConverterTypeAppCreditNotice.read(from: &buf)
+        case 1: return try FfiConverterTypeAppCreateFix.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -58117,6 +63560,30 @@ fileprivate struct FfiConverterOptionTypeAppDeviceConfirm: FfiConverterRustBuffe
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeAppDeviceConfirm.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeAppDiskOnHost: FfiConverterRustBuffer {
+    typealias SwiftType = AppDiskOnHost?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAppDiskOnHost.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAppDiskOnHost.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -58413,6 +63880,30 @@ fileprivate struct FfiConverterOptionTypeAppGpuRow: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeAppGuestUsage: FfiConverterRustBuffer {
+    typealias SwiftType = AppGuestUsage?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAppGuestUsage.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAppGuestUsage.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeAppHostAccount: FfiConverterRustBuffer {
     typealias SwiftType = AppHostAccount?
 
@@ -58477,6 +63968,30 @@ fileprivate struct FfiConverterOptionTypeAppHostConfirm: FfiConverterRustBuffer 
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeAppHostConfirm.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeAppHostLoad: FfiConverterRustBuffer {
+    typealias SwiftType = AppHostLoad?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAppHostLoad.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAppHostLoad.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -58749,6 +64264,126 @@ fileprivate struct FfiConverterOptionTypeAppMachineAccessNotice: FfiConverterRus
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeAppMachinesViewDesktop: FfiConverterRustBuffer {
+    typealias SwiftType = AppMachinesViewDesktop?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAppMachinesViewDesktop.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAppMachinesViewDesktop.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeAppMachinesViewIssueAction: FfiConverterRustBuffer {
+    typealias SwiftType = AppMachinesViewIssueAction?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAppMachinesViewIssueAction.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAppMachinesViewIssueAction.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeAppMachinesViewRemove: FfiConverterRustBuffer {
+    typealias SwiftType = AppMachinesViewRemove?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAppMachinesViewRemove.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAppMachinesViewRemove.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeAppMachinesViewRemoveAll: FfiConverterRustBuffer {
+    typealias SwiftType = AppMachinesViewRemoveAll?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAppMachinesViewRemoveAll.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAppMachinesViewRemoveAll.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeAppMachinesViewRename: FfiConverterRustBuffer {
+    typealias SwiftType = AppMachinesViewRename?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAppMachinesViewRename.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAppMachinesViewRename.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeAppMenuPreview: FfiConverterRustBuffer {
     typealias SwiftType = AppMenuPreview?
 
@@ -58765,6 +64400,30 @@ fileprivate struct FfiConverterOptionTypeAppMenuPreview: FfiConverterRustBuffer 
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeAppMenuPreview.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeAppMsg: FfiConverterRustBuffer {
+    typealias SwiftType = AppMsg?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAppMsg.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAppMsg.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -59277,6 +64936,54 @@ fileprivate struct FfiConverterOptionTypeAppRuntimeSwitch: FfiConverterRustBuffe
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeAppShareGate: FfiConverterRustBuffer {
+    typealias SwiftType = AppShareGate?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAppShareGate.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAppShareGate.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeAppShareRemovalNote: FfiConverterRustBuffer {
+    typealias SwiftType = AppShareRemovalNote?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAppShareRemovalNote.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAppShareRemovalNote.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeAppSidebarRow: FfiConverterRustBuffer {
     typealias SwiftType = AppSidebarRow?
 
@@ -59293,6 +65000,30 @@ fileprivate struct FfiConverterOptionTypeAppSidebarRow: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeAppSidebarRow.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeAppSignInToast: FfiConverterRustBuffer {
+    typealias SwiftType = AppSignInToast?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAppSignInToast.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAppSignInToast.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -59613,6 +65344,30 @@ fileprivate struct FfiConverterOptionTypeAppUsageToggle: FfiConverterRustBuffer 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeAppWarningView: FfiConverterRustBuffer {
+    typealias SwiftType = AppWarningView?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAppWarningView.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAppWarningView.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeKvCredentialForm: FfiConverterRustBuffer {
     typealias SwiftType = KvCredentialForm?
 
@@ -59877,30 +65632,6 @@ fileprivate struct FfiConverterOptionTypeAppCloudConnectRequest: FfiConverterRus
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterOptionTypeAppCloudEngine: FfiConverterRustBuffer {
-    typealias SwiftType = AppCloudEngine?
-
-    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
-        guard let value = value else {
-            writeInt(&buf, Int8(0))
-            return
-        }
-        writeInt(&buf, Int8(1))
-        FfiConverterTypeAppCloudEngine.write(value, into: &buf)
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
-        switch try readInt(&buf) as Int8 {
-        case 0: return nil
-        case 1: return try FfiConverterTypeAppCloudEngine.read(from: &buf)
-        default: throw UniffiInternalError.unexpectedOptionalTag
-        }
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
 fileprivate struct FfiConverterOptionTypeAppDeviceAction: FfiConverterRustBuffer {
     typealias SwiftType = AppDeviceAction?
 
@@ -59989,6 +65720,30 @@ fileprivate struct FfiConverterOptionTypeAppEnrollMethod: FfiConverterRustBuffer
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeAppEnrollMethod.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeAppHostActionId: FfiConverterRustBuffer {
+    typealias SwiftType = AppHostActionId?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAppHostActionId.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAppHostActionId.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -60133,6 +65888,30 @@ fileprivate struct FfiConverterOptionTypeAppShareRequest: FfiConverterRustBuffer
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeAppShareRequest.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeAppSignInFailure: FfiConverterRustBuffer {
+    typealias SwiftType = AppSignInFailure?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAppSignInFailure.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAppSignInFailure.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -60421,6 +66200,30 @@ fileprivate struct FfiConverterOptionSequenceTypeAppGpuChoice: FfiConverterRustB
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterSequenceTypeAppGpuChoice.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionSequenceTypeAppMachinePageRow: FfiConverterRustBuffer {
+    typealias SwiftType = [AppMachinePageRow]?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterSequenceTypeAppMachinePageRow.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterSequenceTypeAppMachinePageRow.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -61077,6 +66880,56 @@ fileprivate struct FfiConverterSequenceTypeAppComputerGrantInput: FfiConverterRu
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeAppComputerResources: FfiConverterRustBuffer {
+    typealias SwiftType = [AppComputerResources]
+
+    public static func write(_ value: [AppComputerResources], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAppComputerResources.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AppComputerResources] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AppComputerResources]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAppComputerResources.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeAppComputerView: FfiConverterRustBuffer {
+    typealias SwiftType = [AppComputerView]
+
+    public static func write(_ value: [AppComputerView], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAppComputerView.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AppComputerView] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AppComputerView]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAppComputerView.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeAppConflictView: FfiConverterRustBuffer {
     typealias SwiftType = [AppConflictView]
 
@@ -61452,6 +67305,56 @@ fileprivate struct FfiConverterSequenceTypeAppEntrySection: FfiConverterRustBuff
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeAppExternalImage: FfiConverterRustBuffer {
+    typealias SwiftType = [AppExternalImage]
+
+    public static func write(_ value: [AppExternalImage], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAppExternalImage.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AppExternalImage] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AppExternalImage]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAppExternalImage.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeAppExternalRuntime: FfiConverterRustBuffer {
+    typealias SwiftType = [AppExternalRuntime]
+
+    public static func write(_ value: [AppExternalRuntime], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAppExternalRuntime.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AppExternalRuntime] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AppExternalRuntime]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAppExternalRuntime.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeAppFact: FfiConverterRustBuffer {
     typealias SwiftType = [AppFact]
 
@@ -61469,6 +67372,31 @@ fileprivate struct FfiConverterSequenceTypeAppFact: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeAppFact.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeAppFailureStreak: FfiConverterRustBuffer {
+    typealias SwiftType = [AppFailureStreak]
+
+    public static func write(_ value: [AppFailureStreak], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAppFailureStreak.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AppFailureStreak] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AppFailureStreak]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAppFailureStreak.read(from: &buf))
         }
         return seq
     }
@@ -62002,6 +67930,256 @@ fileprivate struct FfiConverterSequenceTypeAppMachinePageRow: FfiConverterRustBu
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeAppMachinesViewCheck: FfiConverterRustBuffer {
+    typealias SwiftType = [AppMachinesViewCheck]
+
+    public static func write(_ value: [AppMachinesViewCheck], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAppMachinesViewCheck.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AppMachinesViewCheck] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AppMachinesViewCheck]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAppMachinesViewCheck.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeAppMachinesViewFact: FfiConverterRustBuffer {
+    typealias SwiftType = [AppMachinesViewFact]
+
+    public static func write(_ value: [AppMachinesViewFact], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAppMachinesViewFact.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AppMachinesViewFact] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AppMachinesViewFact]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAppMachinesViewFact.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeAppMachinesViewGroup: FfiConverterRustBuffer {
+    typealias SwiftType = [AppMachinesViewGroup]
+
+    public static func write(_ value: [AppMachinesViewGroup], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAppMachinesViewGroup.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AppMachinesViewGroup] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AppMachinesViewGroup]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAppMachinesViewGroup.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeAppMachinesViewHealth: FfiConverterRustBuffer {
+    typealias SwiftType = [AppMachinesViewHealth]
+
+    public static func write(_ value: [AppMachinesViewHealth], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAppMachinesViewHealth.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AppMachinesViewHealth] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AppMachinesViewHealth]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAppMachinesViewHealth.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeAppMachinesViewIssue: FfiConverterRustBuffer {
+    typealias SwiftType = [AppMachinesViewIssue]
+
+    public static func write(_ value: [AppMachinesViewIssue], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAppMachinesViewIssue.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AppMachinesViewIssue] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AppMachinesViewIssue]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAppMachinesViewIssue.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeAppMachinesViewMachine: FfiConverterRustBuffer {
+    typealias SwiftType = [AppMachinesViewMachine]
+
+    public static func write(_ value: [AppMachinesViewMachine], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAppMachinesViewMachine.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AppMachinesViewMachine] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AppMachinesViewMachine]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAppMachinesViewMachine.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeAppMachinesViewRelay: FfiConverterRustBuffer {
+    typealias SwiftType = [AppMachinesViewRelay]
+
+    public static func write(_ value: [AppMachinesViewRelay], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAppMachinesViewRelay.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AppMachinesViewRelay] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AppMachinesViewRelay]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAppMachinesViewRelay.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeAppMachinesViewRemove: FfiConverterRustBuffer {
+    typealias SwiftType = [AppMachinesViewRemove]
+
+    public static func write(_ value: [AppMachinesViewRemove], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAppMachinesViewRemove.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AppMachinesViewRemove] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AppMachinesViewRemove]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAppMachinesViewRemove.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeAppMachinesViewSpace: FfiConverterRustBuffer {
+    typealias SwiftType = [AppMachinesViewSpace]
+
+    public static func write(_ value: [AppMachinesViewSpace], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAppMachinesViewSpace.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AppMachinesViewSpace] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AppMachinesViewSpace]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAppMachinesViewSpace.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeAppMachinesViewToggle: FfiConverterRustBuffer {
+    typealias SwiftType = [AppMachinesViewToggle]
+
+    public static func write(_ value: [AppMachinesViewToggle], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAppMachinesViewToggle.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AppMachinesViewToggle] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AppMachinesViewToggle]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAppMachinesViewToggle.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeAppMenuItem: FfiConverterRustBuffer {
     typealias SwiftType = [AppMenuItem]
 
@@ -62194,6 +68372,31 @@ fileprivate struct FfiConverterSequenceTypeAppNotificationInput: FfiConverterRus
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeAppNotificationInput.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeAppOnboardingTodo: FfiConverterRustBuffer {
+    typealias SwiftType = [AppOnboardingTodo]
+
+    public static func write(_ value: [AppOnboardingTodo], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAppOnboardingTodo.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AppOnboardingTodo] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AppOnboardingTodo]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAppOnboardingTodo.read(from: &buf))
         }
         return seq
     }
@@ -62677,6 +68880,31 @@ fileprivate struct FfiConverterSequenceTypeAppRemoteWindowGroup: FfiConverterRus
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeAppResourceRow: FfiConverterRustBuffer {
+    typealias SwiftType = [AppResourceRow]
+
+    public static func write(_ value: [AppResourceRow], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAppResourceRow.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AppResourceRow] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AppResourceRow]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAppResourceRow.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeAppReviewDomain: FfiConverterRustBuffer {
     typealias SwiftType = [AppReviewDomain]
 
@@ -63002,6 +69230,31 @@ fileprivate struct FfiConverterSequenceTypeAppShareEntryInput: FfiConverterRustB
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeAppShareRemovalInput: FfiConverterRustBuffer {
+    typealias SwiftType = [AppShareRemovalInput]
+
+    public static func write(_ value: [AppShareRemovalInput], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAppShareRemovalInput.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AppShareRemovalInput] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AppShareRemovalInput]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAppShareRemovalInput.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeAppShareRowView: FfiConverterRustBuffer {
     typealias SwiftType = [AppShareRowView]
 
@@ -63144,6 +69397,56 @@ fileprivate struct FfiConverterSequenceTypeAppSpaceHost: FfiConverterRustBuffer 
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeAppSpaceHost.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeAppSpaceResources: FfiConverterRustBuffer {
+    typealias SwiftType = [AppSpaceResources]
+
+    public static func write(_ value: [AppSpaceResources], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAppSpaceResources.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AppSpaceResources] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AppSpaceResources]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAppSpaceResources.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeAppSpaceResourcesView: FfiConverterRustBuffer {
+    typealias SwiftType = [AppSpaceResourcesView]
+
+    public static func write(_ value: [AppSpaceResourcesView], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAppSpaceResourcesView.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AppSpaceResourcesView] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AppSpaceResourcesView]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAppSpaceResourcesView.read(from: &buf))
         }
         return seq
     }
@@ -64252,6 +70555,31 @@ fileprivate struct FfiConverterSequenceTypeAppDragOverlayEvent: FfiConverterRust
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeAppHostActionId: FfiConverterRustBuffer {
+    typealias SwiftType = [AppHostActionId]
+
+    public static func write(_ value: [AppHostActionId], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAppHostActionId.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AppHostActionId] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AppHostActionId]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAppHostActionId.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeAppNotchEffect: FfiConverterRustBuffer {
     typealias SwiftType = [AppNotchEffect]
 
@@ -64607,6 +70935,23 @@ public func appAccountAppUrl() -> String  {
 })
 }
 /**
+ * The owner has seen the note: it is not shown again.
+ */
+public func appAckShareRemovals(accountToken: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_spaces_ffi_fn_func_app_ack_share_removals(FfiConverterString.lower(accountToken)
+                )
+            },
+            pollFunc: ffi_cua_spaces_ffi_rust_future_poll_void,
+            completeFunc: ffi_cua_spaces_ffi_rust_future_complete_void,
+            freeFunc: ffi_cua_spaces_ffi_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+/**
  * The add or replace sheet.
  */
 public func appAgentKeyForm(input: AppAgentKeysInput, form: AppAgentKeyFormInput) -> AppAgentKeyFormView  {
@@ -64879,17 +71224,6 @@ public func appApproveView(state: AppApproveSheetState, devices: [AppDeviceInput
     uniffi_cua_spaces_ffi_fn_func_app_approve_view(
         FfiConverterTypeAppApproveSheetState_lower(state),
         FfiConverterSequenceTypeAppDeviceInput.lower(devices),$0
-    )
-})
-}
-/**
- * The SDK's billing status as the app core takes it (Settings' Billing
- * row).
- */
-public func appBillingStatus(status: FleetBillingStatus) -> AppBillingStatus  {
-    return try!  FfiConverterTypeAppBillingStatus_lift(try! rustCall() {
-    uniffi_cua_spaces_ffi_fn_func_app_billing_status(
-        FfiConverterTypeFleetBillingStatus_lower(status),$0
     )
 })
 }
@@ -65599,6 +71933,17 @@ public func appHostFormView(state: AppHostFormState, identity: String?) -> AppHo
 })
 }
 /**
+ * The one short line under a machine of yours in the sidebar ("3 running
+ * · 40% CPU", "Paused"); `None` while it is offline or reports no load.
+ */
+public func appHostLoadText(host: AppSpaceHost) -> String?  {
+    return try!  FfiConverterOptionString.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_host_load_text(
+        FfiConverterTypeAppSpaceHost_lower(host),$0
+    )
+})
+}
+/**
  * Whether a direct-mode address is `ip:port` or `host:port`.
  */
 public func appHostLooksLikeListen(value: String) -> Bool  {
@@ -65752,6 +72097,29 @@ public func appLaunchInputFromJson(json: String)throws  -> AppLaunchInput  {
 })
 }
 /**
+ * Whether a create needs the Local Network check (`local_network::applies`).
+ */
+public func appLocalNetworkApplies(provider: AppSpaceProvider, os: AppSpaceOs, hostIsMac: Bool) -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_local_network_applies(
+        FfiConverterTypeAppSpaceProvider_lower(provider),
+        FfiConverterTypeAppSpaceOs_lower(os),
+        FfiConverterBool.lower(hostIsMac),$0
+    )
+})
+}
+/**
+ * What to do before a macOS Space is created on this Mac
+ * (`local_network::step`): go ahead, explain then ask, or fail.
+ */
+public func appLocalNetworkStep(input: AppLocalNetworkInput) -> AppLocalNetworkStep  {
+    return try!  FfiConverterTypeAppLocalNetworkStep_lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_local_network_step(
+        FfiConverterTypeAppLocalNetworkInput_lower(input),$0
+    )
+})
+}
+/**
  * What the app does about launch at login at launch (the user's choice,
  * whether the first run finished, whether this machine provides Spaces or
  * runs persistent agents, and what the system reports).
@@ -65797,6 +72165,27 @@ public func appMachinesPageRows(input: AppMachinesPageInput) -> [AppMachinePageR
     return try!  FfiConverterSequenceTypeAppMachinePageRow.lift(try! rustCall() {
     uniffi_cua_spaces_ffi_fn_func_app_machines_page_rows(
         FfiConverterTypeAppMachinesPageInput_lower(input),$0
+    )
+})
+}
+/**
+ * The Machines page as every UI draws it: the list in groups, one line
+ * per row, and each machine's page.
+ */
+public func appMachinesView(input: AppMachinesViewInput) -> AppMachinesView  {
+    return try!  FfiConverterTypeAppMachinesView_lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_machines_view(
+        FfiConverterTypeAppMachinesViewInput_lower(input),$0
+    )
+})
+}
+/**
+ * Machines view input from JSON (fixtures, parity flows).
+ */
+public func appMachinesViewInputFromJson(json: String)throws  -> AppMachinesViewInput  {
+    return try  FfiConverterTypeAppMachinesViewInput_lift(try rustCallWithError(FfiConverterTypeCuaError_lift) {
+    uniffi_cua_spaces_ffi_fn_func_app_machines_view_input_from_json(
+        FfiConverterString.lower(json),$0
     )
 })
 }
@@ -65974,6 +72363,28 @@ public func appNotificationsView(feed: [AppNotificationInput], nowMs: UInt64) ->
 })
 }
 /**
+ * The Spaces on or starting (the notch tab and the menu bar item); never
+ * This machine, a stopped Space or a failed one.
+ */
+public func appOnCount(spaces: [AppSpace]) -> UInt32  {
+    return try!  FfiConverterUInt32.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_on_count(
+        FfiConverterSequenceTypeAppSpace.lower(spaces),$0
+    )
+})
+}
+/**
+ * The menu bar item's status line for `count` Spaces on ("No Spaces
+ * running", "3 Spaces running").
+ */
+public func appOnStatusLine(count: UInt32) -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_on_status_line(
+        FfiConverterUInt32.lower(count),$0
+    )
+})
+}
+/**
  * A first-run action from JSON (parity flows).
  */
 public func appOnboardingActionFromJson(json: String)throws  -> AppOnboardingAction  {
@@ -66065,7 +72476,7 @@ public func appOnboardingView(state: AppOnboardingState) -> AppOnboardingView  {
 })
 }
 /**
- * The Spaces the user can open (the notch tab and the menu bar item).
+ * The Spaces the user can open (the open notch's tiles), on or not.
  */
 public func appOpenableCount(spaces: [AppSpace]) -> UInt32  {
     return try!  FfiConverterUInt32.lift(try! rustCall() {
@@ -66303,6 +72714,18 @@ public func appPickerWindowGrid(windows: [AppOpenWindow], query: String, selecte
 })
 }
 /**
+ * The relay refusing a new session over the plan's cap, from the error's
+ * text: the sentence and Upgrade. None for any other error.
+ */
+public func appPlanLimitNotice(error: String, accountApp: String) -> AppRelayAllowanceNotice?  {
+    return try!  FfiConverterOptionTypeAppRelayAllowanceNotice.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_plan_limit_notice(
+        FfiConverterString.lower(error),
+        FfiConverterString.lower(accountApp),$0
+    )
+})
+}
+/**
  * The power button next to Delete, for a Space that turns off and on.
  */
 public func appPowerButton(space: AppSpace) -> AppPowerButton?  {
@@ -66410,6 +72833,66 @@ public func appRelayUsageView(usage: AppRelayUsage) -> AppRelayUsageView?  {
     return try!  FfiConverterOptionTypeAppRelayUsageView.lift(try! rustCall() {
     uniffi_cua_spaces_ffi_fn_func_app_relay_usage_view(
         FfiConverterTypeAppRelayUsage_lower(usage),$0
+    )
+})
+}
+/**
+ * Another of your computers' panel.
+ */
+public func appResourcesComputer(computer: ComputerResources, nowMs: UInt64) -> AppComputerView  {
+    return try!  FfiConverterTypeAppComputerView_lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_resources_computer(
+        FfiConverterTypeComputerResources_lower(computer),
+        FfiConverterUInt64.lower(nowMs),$0
+    )
+})
+}
+/**
+ * One extra Space's panel: what it was given and uses now, and what it
+ * costs this Mac.
+ */
+public func appResourcesSpace(space: SpaceResources) -> AppSpaceResourcesView  {
+    return try!  FfiConverterTypeAppSpaceResourcesView_lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_resources_space(
+        FfiConverterTypeSpaceResources_lower(space),$0
+    )
+})
+}
+/**
+ * This Mac's panel (Processor, Memory, Space for files, what the extra
+ * Spaces use, the warning).
+ */
+public func appResourcesThisMac(computer: ComputerResources) -> AppThisMacView  {
+    return try!  FfiConverterTypeAppThisMacView_lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_resources_this_mac(
+        FfiConverterTypeComputerResources_lower(computer),$0
+    )
+})
+}
+/**
+ * Everything the apps draw from one snapshot of what this Mac, its extra
+ * Spaces and your other computers use (`Spaces.resources`, or a snapshot
+ * event of `Spaces.watch_resources`): this Mac's rows and warning, each
+ * extra Space's rows and what it costs this Mac, each other computer's
+ * rows. The words are the core's; no shell formats a number. `now_ms` is
+ * the shell's clock (Unix ms), for how old another computer's numbers are.
+ */
+public func appResourcesView(snapshot: ResourcesSnapshot, nowMs: UInt64) -> AppResourcesView  {
+    return try!  FfiConverterTypeAppResourcesView_lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_resources_view(
+        FfiConverterTypeResourcesSnapshot_lower(snapshot),
+        FfiConverterUInt64.lower(nowMs),$0
+    )
+})
+}
+/**
+ * The menu bar's low-disk warning (from a `LowDisk` event or a
+ * snapshot's `warning`); none when the disk is fine.
+ */
+public func appResourcesWarning(warning: DiskWarning) -> AppWarningView?  {
+    return try!  FfiConverterOptionTypeAppWarningView.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_resources_warning(
+        FfiConverterTypeDiskWarning_lower(warning),$0
     )
 })
 }
@@ -66611,6 +73094,30 @@ public func appShareActionFromJson(json: String)throws  -> AppShareSheetAction  
 })
 }
 /**
+ * A refused share in plain words (`share_outside_team`,
+ * `sharing_needs_team`); `None` for any other error.
+ */
+public func appShareErrorWords(error: String, who: String) -> String?  {
+    return try!  FfiConverterOptionString.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_share_error_words(
+        FfiConverterString.lower(error),
+        FfiConverterString.lower(who),$0
+    )
+})
+}
+/**
+ * Why the Share sheet is closed, from whether the account is in a team
+ * that can share (`None`: the host could not say, so the sheet stays open
+ * and the server decides). Sharing is for teams (CUA-1883).
+ */
+public func appShareGate(hasTeam: Bool?) -> AppShareGate?  {
+    return try!  FfiConverterOptionTypeAppShareGate.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_share_gate(
+        FfiConverterOptionBool.lower(hasTeam),$0
+    )
+})
+}
+/**
  * A new Share sheet.
  */
 public func appShareInitial() -> AppShareSheetState  {
@@ -66642,6 +73149,35 @@ public func appShareReduce(input: AppShareInput, state: AppShareSheetState, acti
 })
 }
 /**
+ * The owner's one-line note about people removed from shared computers.
+ */
+public func appShareRemovalNote(removals: [AppShareRemovalInput]) -> AppShareRemovalNote?  {
+    return try!  FfiConverterOptionTypeAppShareRemovalNote.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_share_removal_note(
+        FfiConverterSequenceTypeAppShareRemovalInput.lower(removals),$0
+    )
+})
+}
+/**
+ * People removed from the account's shared computers because sharing is
+ * for teams now, until [`app_ack_share_removals`]. Empty on a server that
+ * predates it.
+ */
+public func appShareRemovals(accountToken: String)async throws  -> [AppShareRemovalInput]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_spaces_ffi_fn_func_app_share_removals(FfiConverterString.lower(accountToken)
+                )
+            },
+            pollFunc: ffi_cua_spaces_ffi_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_spaces_ffi_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_spaces_ffi_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeAppShareRemovalInput.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+/**
  * The Share sheet's state from JSON (fixtures, parity).
  */
 public func appShareStateFromJson(json: String)throws  -> AppShareSheetState  {
@@ -66671,6 +73207,39 @@ public func appSidebar(spaces: [AppSpace], query: String, selectedId: String) ->
         FfiConverterSequenceTypeAppSpace.lower(spaces),
         FfiConverterString.lower(query),
         FfiConverterString.lower(selectedId),$0
+    )
+})
+}
+/**
+ * The failed phase for a known reason, with the error's words for Details.
+ */
+public func appSignInFailed(reason: AppSignInFailure, detail: String?) -> AppSignInPhase  {
+    return try!  FfiConverterTypeAppSignInPhase_lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_sign_in_failed(
+        FfiConverterTypeAppSignInFailure_lower(reason),
+        FfiConverterOptionString.lower(detail),$0
+    )
+})
+}
+/**
+ * The failed phase for an error the shell caught: the SDK error's case
+ * (`Timeout`, `Http`, ...; empty for another error) and its words.
+ */
+public func appSignInFailedFromError(variant: String, message: String) -> AppSignInPhase  {
+    return try!  FfiConverterTypeAppSignInPhase_lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_sign_in_failed_from_error(
+        FfiConverterString.lower(variant),
+        FfiConverterString.lower(message),$0
+    )
+})
+}
+/**
+ * The sidebar's foot: every sign-in state in one place.
+ */
+public func appSignInFooter(input: AppSignInFooterInput) -> AppSignInFooter  {
+    return try!  FfiConverterTypeAppSignInFooter_lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_sign_in_footer(
+        FfiConverterTypeAppSignInFooterInput_lower(input),$0
     )
 })
 }
@@ -66779,6 +73348,17 @@ public func appSpacesFromJson(json: String)throws  -> [AppSpace]  {
     return try  FfiConverterSequenceTypeAppSpace.lift(try rustCallWithError(FfiConverterTypeCuaError_lift) {
     uniffi_cua_spaces_ffi_fn_func_app_spaces_from_json(
         FfiConverterString.lower(json),$0
+    )
+})
+}
+/**
+ * The Spaces page's empty state and "Reaching N computers…" line: the
+ * first-run page only for a complete list with no Space.
+ */
+public func appSpacesListView(input: AppListViewInput) -> AppListView  {
+    return try!  FfiConverterTypeAppListView_lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_spaces_list_view(
+        FfiConverterTypeAppListViewInput_lower(input),$0
     )
 })
 }
@@ -67093,8 +73673,19 @@ public func appTelemetrySignInFailed(message: String?) -> [AppTelemetrySignal]  
 })
 }
 /**
+ * A sign-in failed for `reason` or was cancelled (none): its kind only.
+ */
+public func appTelemetrySignInFailure(reason: AppSignInFailure?) -> [AppTelemetrySignal]  {
+    return try!  FfiConverterSequenceTypeAppTelemetrySignal.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_telemetry_sign_in_failure(
+        FfiConverterOptionTypeAppSignInFailure.lower(reason),$0
+    )
+})
+}
+/**
  * The app started: attributes this process's events to `spaces_app` at
- * `version`, lets the app show the first-run notice itself (nothing is
+ * `version`, links usage data to the signed-in account in the background
+ * when the Spaces API offers it, lets the app show the first-run notice itself (nothing is
  * sent before it has been shown once), and records `app_launched` (on a
  * first run, once the notice shows). Call once at launch, before the
  * first `Cua`. `onboarding_eligible`: the first run is still to finish
@@ -67338,6 +73929,19 @@ public func appWizardReduce(state: AppWizardState, action: AppWizardAction, env:
         FfiConverterTypeAppWizardState_lower(state),
         FfiConverterTypeAppWizardAction_lower(action),
         FfiConverterTypeAppWizardEnv_lower(env),$0
+    )
+})
+}
+/**
+ * Registers the external runtime providers in a `cua runtime doctor`
+ * JSON report (`LocalDoctorReport.report_json`) for the New Space wizard,
+ * and returns them: their images join the catalog and run only on this
+ * Mac. A report with none removes any registered before.
+ */
+public func appWizardUseDoctorReport(reportJson: String) -> [AppExternalRuntime]  {
+    return try!  FfiConverterSequenceTypeAppExternalRuntime.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_wizard_use_doctor_report(
+        FfiConverterString.lower(reportJson),$0
     )
 })
 }
@@ -67812,6 +74416,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_account_app_url() != 9943) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_ack_share_removals() != 16071) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_spaces_ffi_checksum_func_app_agent_key_form() != 42778) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -67888,9 +74495,6 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_approve_view() != 20205) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cua_spaces_ffi_checksum_func_app_billing_status() != 4162) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_catalog_entries_from_json() != 39250) {
@@ -68097,6 +74701,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_host_form_view() != 29547) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_host_load_text() != 2057) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_spaces_ffi_checksum_func_app_host_looks_like_listen() != 31223) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -68139,6 +74746,12 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_launch_input_from_json() != 52356) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_local_network_applies() != 17515) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_local_network_step() != 45497) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_spaces_ffi_checksum_func_app_login_item_launch_plan() != 57994) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -68149,6 +74762,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_machines_page_rows() != 50072) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_machines_view() != 7497) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_machines_view_input_from_json() != 47089) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_main_chrome() != 29313) {
@@ -68199,6 +74818,12 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_notifications_view() != 27432) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_on_count() != 27823) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_on_status_line() != 37662) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_spaces_ffi_checksum_func_app_onboarding_action_from_json() != 6687) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -68226,7 +74851,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_onboarding_view() != 63118) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_spaces_ffi_checksum_func_app_openable_count() != 46279) {
+    if (uniffi_cua_spaces_ffi_checksum_func_app_openable_count() != 49692) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_os_icon_svg() != 43181) {
@@ -68292,6 +74917,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_picker_window_grid() != 8477) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_plan_limit_notice() != 24944) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_spaces_ffi_checksum_func_app_power_button() != 25513) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -68317,6 +74945,21 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_relay_usage_view() != 38605) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_resources_computer() != 3991) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_resources_space() != 24195) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_resources_this_mac() != 29209) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_resources_view() != 22202) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_resources_warning() != 3548) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_review_remember() != 9631) {
@@ -68373,6 +75016,12 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_share_action_from_json() != 61097) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_share_error_words() != 56839) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_share_gate() != 9867) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_spaces_ffi_checksum_func_app_share_initial() != 65098) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -68382,6 +75031,12 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_share_reduce() != 46853) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_share_removal_note() != 63359) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_share_removals() != 49780) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_spaces_ffi_checksum_func_app_share_state_from_json() != 38498) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -68389,6 +75044,15 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_sidebar() != 2197) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_sign_in_failed() != 6165) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_sign_in_failed_from_error() != 6411) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_sign_in_footer() != 8779) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_space_accepts_drop() != 51121) {
@@ -68416,6 +75080,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_spaces_from_json() != 7600) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_spaces_list_view() != 47161) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_status_line() != 47728) {
@@ -68502,7 +75169,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_telemetry_sign_in_failed() != 34262) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_spaces_ffi_checksum_func_app_telemetry_start() != 189) {
+    if (uniffi_cua_spaces_ffi_checksum_func_app_telemetry_sign_in_failure() != 23014) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_telemetry_start() != 30125) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_telemetry_storage() != 21459) {
@@ -68569,6 +75239,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_wizard_reduce() != 39558) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_wizard_use_doctor_report() != 19874) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_wizard_validate_image_ref() != 53096) {

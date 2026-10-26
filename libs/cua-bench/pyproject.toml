@@ -1,7 +1,7 @@
 [project]
 name = "cua-bench"
-version = "0.3.0"
-description = "Run computer-use benchmark datasets on local and cloud sandboxes"
+version = "0.3.1"
+description = "Run computer-use benchmark datasets on sandboxes"
 readme = "README.md"
 license = "MIT"
 authors = [
@@ -55,7 +55,7 @@ dependencies = [
 [project.optional-dependencies]
 # Full installation with all features
 all = [
-    "cua-bench[browser,agents,cloud,otel,spice]",
+    "cua-bench[browser,agents,otel,spice]",
 ]
 
 # Packaging scripts (e.g. package_kicad_submission.py)
@@ -78,12 +78,6 @@ otel = [
     "opentelemetry-api>=1.20.0",
     "opentelemetry-sdk>=1.20.0",
     "opentelemetry-exporter-otlp-proto-http>=1.20.0",
-]
-
-# Deprecated: Cua Cloud has ended. Kept so `cua-bench[cloud]` still installs;
-# it only adds OpenTelemetry export for long batches.
-cloud = [
-    "cua-bench[otel]",
 ]
 
 # SPICE circuit simulation (for KiCad netlist evaluation)

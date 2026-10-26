@@ -209,9 +209,11 @@ export function createDemoSettings(ctx: DemoSettingsContext): Handlers {
     },
 
     "update.get": () => ({ ...update }),
-    "update.install": () => {
+    "update.install": async () => {
       // Nothing downloaded: nothing to install, and the state says so.
       if (update.status !== "downloaded") return { ...update };
+      // Installing takes a moment before the relaunch.
+      await wait(stepMs);
       // The real host relaunches into the new version.
       update = { ...update, status: "idle", currentVersion: update.version ?? update.currentVersion, version: null, notesUrl: null };
       emit({ type: "update.changed" });
@@ -277,7 +279,7 @@ export function createDemoSettings(ctx: DemoSettingsContext): Handlers {
     // Works like the relay: one code per machine, 30 minutes, shown once.
     // The demo's other computer runs the command after a few reads.
     "devices.createPairingCode": async ({ team }) => {
-      if (!ctx.signedIn()) throw new HostError("Sign in to Cua to add a machine", "signed_out");
+      if (!ctx.signedIn()) throw new HostError("Sign in to Cua to add a computer", "signed_out");
       await wait(stepMs / 2);
       const t = Math.floor(now() / 1000);
       pairingSeq += 1;

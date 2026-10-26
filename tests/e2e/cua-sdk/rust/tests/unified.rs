@@ -1,5 +1,8 @@
 //! unified-sandbox-api (Rust). Scenario definition:
 //! ../python/test_unified_api.py; the assertions here are the same.
+// The test futures nest deeply enough that computing their layout passes
+// the default query depth of 128.
+#![recursion_limit = "256"]
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -7,10 +10,7 @@ use std::net::TcpStream;
 use std::sync::Arc;
 use std::time::Duration;
 
-use cua_sdk_e2e::cua::{
-    CloudOptions, HttpHeader, ReadinessProbe, Sandbox, SandboxCreateOptions,
-    SandboxPhase,
-};
+use cua_sdk_e2e::cua::{HttpHeader, ReadinessProbe, Sandbox, SandboxCreateOptions, SandboxPhase};
 use cua_sdk_e2e::*;
 
 const MIN: Duration = Duration::from_secs(60);
@@ -165,7 +165,7 @@ async fn mcp_through_service(sb: &Arc<Sandbox>, env_expected: bool) -> Res {
 }
 
 #[tokio::test]
-async fn unified_api_fake_fleet_and_daemon_public_url() {
+async fn unified_api_cloud_ended_and_daemon_public_url() {
     e2e(
         "unified-sandbox-api",
         "hermetic",
@@ -174,17 +174,12 @@ async fn unified_api_fake_fleet_and_daemon_public_url() {
         None,
         || async {
             let fx = Fixtures::start()?;
-            // Cua Cloud has ended: a cloud create (command and services on a
-            // managed gVisor pool) fails before anything is created.
-            let c = embedded_fleet(Some((&fx.fleet_base_url, &fx.fleet_token)));
+            // Cua Cloud has ended: a cloud create (command and services) fails
+            // before anything is created.
+            let c = embedded_local();
             assert_cloud_ended(&c, |o| {
                 o.command = Some(vec!["python".into(), "/srv.py".into()]);
                 o.services = HashMap::from([("mcp".to_string(), 8765u16)]);
-                o.runtime = Some("gvisor".into());
-                o.cloud = Some(CloudOptions {
-                    max_pool_size: Some(2),
-                    ..Default::default()
-                });
             })
             .await?;
 

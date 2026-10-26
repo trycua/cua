@@ -198,8 +198,19 @@ def test_version_check_catches_a_package_file_that_drifted(tmp_path):
 
 
 def test_legacy_baselines_are_exactly_the_enrolled_packages_last_legacy_tags():
-    expected = {f"{component}-v{MANIFEST[path]}" for path, component in ENROLLED.items()}
-    assert release_notes.LEGACY_BASELINE_TAGS == expected
+    # One baseline per enrolled package, named for its last legacy tag. Until the
+    # package's first Release Please release that is the manifest version; the
+    # release PR then moves the manifest ahead of it (the baseline must stay for
+    # the notes of that release), so the baseline may be older, never newer.
+    by_component = {}
+    for tag in release_notes.LEGACY_BASELINE_TAGS:
+        component, version = tag.rsplit("-v", 1)
+        assert component not in by_component, f"two legacy baselines for {component}"
+        by_component[component] = tuple(int(part) for part in version.split("."))
+    assert set(by_component) == set(ENROLLED.values())
+    for path, component in ENROLLED.items():
+        released = tuple(int(part) for part in MANIFEST[path].split("."))
+        assert by_component[component] <= released, f"{component} baseline is newer than its manifest version"
 
 
 def test_only_a_legacy_baseline_relaxes_the_changelog_citation_check(monkeypatch, tmp_path):

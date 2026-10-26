@@ -18,6 +18,7 @@ import { OP_SHAPES, SHAPE_DEFS } from "../../cua-spaces-web/src/bridge/contracts
 import { HOST_COVERAGE } from "../../cua-spaces-web/src/bridge/coverage";
 import { OPERATIONS, type OpArgs, type OpName } from "../../cua-spaces-web/src/bridge/protocol";
 import { createBridge, type Bridge } from "../src/bridge";
+import { runtimeWord } from "../src/model/backend";
 import type { BridgeEvent } from "../src/bridge/host";
 import { createOptions } from "../src/bridge/spaces";
 import { hostRecorded, telemetrySignal } from "../src/bridge/telemetry";
@@ -149,6 +150,8 @@ describe.skipIf(!built)("the bridge on the app core", () => {
       ["machines.list", {}],
       ["host.status", {}],
       ["telemetry.track", { signals: [{ type: "step", step: "app_launched", ok: true }] }],
+      ["telemetry.linkNotice", {}],
+      ["telemetry.acknowledgeLinkNotice", {}],
       ["window.setBackgroundColor", { color: "#16181c" }],
       ["window.setDragRegions", { rects: [{ x: 78, y: 0, width: 400, height: 38 }] }],
       ["window.setDropTargets", { targets: [{ spaceId: space, x: 20, y: 60, width: 232, height: 180 }] }],
@@ -168,7 +171,13 @@ describe.skipIf(!built)("the bridge on the app core", () => {
       ["clouds.status", {}],
       ["clouds.test", { target: { provider: "aws", region: "us-west-2" } }],
       ["clouds.connect", { target: { provider: "aws", region: "us-west-2" }, makeDefault: false }],
+      ["nudges.pending", {}],
+      ["nudges.answer", { id: "none", choice: "separate" }],
+      ["links.list", {}],
+      ["links.create", { target: "3000" }],
+      ["links.stop", { id: "all" }],
       ["checklist.get", {}],
+      ["cli.plan", {}],
       ["checklist.send", { action: { type: "done", step: "teleport" } }],
       ["session.signOut", {}],
     ];
@@ -176,8 +185,8 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     for (const [method, args] of cases) problems.push(...shapeProblems(method, await call(method, args)));
     expect(problems).toEqual([]);
     // Every ported method has its case (or is checked below).
-    // (Teleport and the Keyvault: vault-native.test.ts; This machine, Devices, Settings and the rest: host-bridge.test.ts; the relay allowance: relay-usage.test.ts; presence: presence-bridge.test.ts; the Windows runtime fix: below.)
-    const elsewhere = new Set(["session.signIn", "spaces.create", "spaces.delete", "spaces.openStream", "relay.usage", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime", ...AGENT_METHODS, ...VAULT_METHODS, ...HOST_METHODS]);
+    // (Teleport and the Keyvault: vault-native.test.ts; This machine, Devices, Settings and the rest: host-bridge.test.ts; the relay allowance: relay-usage.test.ts; resource numbers: resources.test.ts; presence: presence-bridge.test.ts; the Machines page's rename, remove and health checks: machines-view.test.ts; the Windows runtime fix: below.)
+    const elsewhere = new Set(["session.signIn", "spaces.create", "spaces.delete", "spaces.openStream", "relay.usage", "sharing.removals", "sharing.ackRemovals", "resources.get", "machines.rename", "machines.remove", "machines.checkHealth", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime", "cli.install", ...AGENT_METHODS, ...VAULT_METHODS, ...HOST_METHODS]);
     const ported = bridge.registry.methods.filter((m) => !NOT_YET.includes(m) && !elsewhere.has(m));
     expect(ported.filter((m) => !cases.some(([c]) => c === m))).toEqual([]);
   });
@@ -209,7 +218,7 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     const list = (await call("spaces.list")) as { loaded: boolean; spaces: { space: { id: string; os: string; status: string }; detail: { title: string } }[] };
     expect(list.loaded).toBe(true);
     // In the core's order; This machine is there because this app manages a host.
-    expect(list.spaces.map((s) => s.space.id).sort()).toEqual(["cloud:builder", "direct:10.0.0.5:3211", "local:aurora", "this-mac"]);
+    expect(list.spaces.map((s) => s.space.id).sort()).toEqual(["direct:10.0.0.5:3211", "direct:builder", "local:aurora", "this-mac"]);
     const aurora = list.spaces.find((s) => s.space.id === "local:aurora")!;
     expect(aurora.space).toMatchObject({ os: "linux", status: "running" });
     expect(typeof aurora.detail.title).toBe("string");
@@ -219,7 +228,8 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     const config = { image: "ghcr.io/trycua/linux:24.04", kind: "container", on: "local", name: "dev" };
     const made = (await call("spaces.create", { pendingId: "pending:1", config, os: "linux" })) as { id: string; name: string };
     expect(made).toMatchObject({ id: "local:dev", name: "dev" });
-    expect(backend.created[0]).toMatchObject({ image: config.image, on: "local", kind: "container", runtime: "auto", name: "dev", spacesd: true });
+    expect(backend.created[0]).toMatchObject({ image: config.image, on: "local", kind: "container", name: "dev", spacesd: true });
+    expect(runtimeWord(backend.created[0]!.runtime)).toBe("auto");
     const progress = events.filter((e) => e.event === "spaces.createProgress").map((e) => e.payload as { pendingId: string; phase: string; bytesTotal: number | null });
     expect(progress.map((p) => p.phase)).toEqual(["preparing", "pulling", "ready"]);
     expect(progress[1]).toMatchObject({ pendingId: "pending:1", bytesTotal: 10 });
@@ -245,7 +255,7 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     const row = model.spaces.find((s) => s.id === "pending:mac")!;
     expect(row.progress).toMatchObject({ label: "Downloading macOS (first time only)…", transfer: "12.4 of 30.0 GB · 85 MB/s · about 4 min" });
     expect(row.progress!.permille).toBeGreaterThan(10);
-    expect(row.detail).toBe("Another machine · Downloading macOS (first time only)…");
+    expect(row.detail).toBe("Another computer · Downloading macOS (first time only)…");
     release();
     await create;
   });
@@ -254,7 +264,8 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     expect(await code("spaces.create", { pendingId: "nope", config: { image: "x", kind: "container" } })).toBe("bad_args");
     expect(await code("spaces.create", { pendingId: "pending:2", config: { image: "x", kind: "box" } })).toBe("bad_args");
     expect(await code("spaces.create", { pendingId: "pending:2", config: { kind: "vm" } })).toBe("bad_args");
-    expect(await code("spaces.create", { pendingId: "pending:2", config: { image: "x", kind: "vm", runtime: "xen" } })).toBe("bad_args");
+    // Not a runtime word (an external provider's name is lowercase letters, digits and dashes).
+    expect(await code("spaces.create", { pendingId: "pending:2", config: { image: "x", kind: "vm", runtime: "Xen VM" } })).toBe("bad_args");
   });
 
   it("cancels a create still running: the row goes and the create answers cancelled", async () => {
@@ -317,6 +328,25 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     expect(sessionEvents()).toBe(2);
   });
 
+  it("says why a sign-in failed, typed, so the page never keeps waiting", async () => {
+    await call("session.signOut");
+    await call("session.signIn");
+    await until(() => model.signIn.tag === "Waiting");
+    account.failSignIn(new Error("could not reach the sign-in service: error sending request"));
+    await until(() => model.signIn.tag === "Failed");
+    expect(await call("session.get")).toMatchObject({
+      signIn: {
+        type: "failed",
+        reason: "offline",
+        message: "Sign-in didn't finish. Can't reach Cua. Check your connection.",
+        detail: "could not reach the sign-in service: error sending request",
+      },
+      signInUrl: null,
+    });
+    const kinds = telemetry.recorded.flatMap((s) => (s.tag === "SignInFailed" ? [s.inner.errorKind] : []));
+    expect(kinds.at(-1)).toBe("transport");
+  });
+
   it("answers the Machines page from the host and the relay's devices", async () => {
     const m = (await call("machines.list")) as Record<string, unknown>;
     expect(m.signedIn).toBe(true);
@@ -345,6 +375,16 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     expect(telemetrySignal(native, { type: "experiments-on", experiments: ["cua_volume", "BAD"] })).toBeNull();
     expect(telemetrySignal(native, { type: "space-create", location: "local", guestOs: "linux", kind: "container", outcome: "ready", failedPhase: "none", stalled: false, elapsedMs: 1200, gpu: false })).toBeNull();
     expect(telemetrySignal(native, { type: "launched", onboardingEligible: null })).not.toBeNull();
+  });
+
+  it("answers the one-time linking notice from the host's telemetry, and records that it was closed", async () => {
+    telemetry.linkNoticeDue = true;
+    const notice = (await call("telemetry.linkNotice")) as Record<string, unknown>;
+    expect(notice).toMatchObject({ due: true, title: "We've updated how usage data works", okLabel: "Got it", turnOffLabel: "Turn off usage data", detailsLabel: "What is collected", docsUrl: "https://cua.ai/docs/cua-sdk/concepts/telemetry" });
+    const before = telemetry.linkNoticeAcknowledged;
+    expect(await call("telemetry.acknowledgeLinkNotice")).toBeNull();
+    expect(telemetry.linkNoticeAcknowledged).toBe(before + 1);
+    expect(((await call("telemetry.linkNotice")) as { due: boolean }).due).toBe(false);
   });
 
   it("leaves a create's signals to the host, which records them from the create it runs", async () => {
@@ -467,7 +507,7 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     const wait = () => new Promise((r) => setTimeout(r, 80));
     try {
       backend.rows = async () => {
-        throw sdkError("Unauthenticated", "Relay authentication failed. Sign in again to refresh your machines.");
+        throw sdkError("Unauthenticated", "Relay authentication failed. Sign in again to refresh your computers.");
       };
       await wait();
       await model.refresh();
@@ -548,10 +588,13 @@ describe.skipIf(!built)("the bridge on the app core", () => {
       "spaces.add": { url: "http://studio.local:7400", token: null, name: "studio" },
       "clouds.test": { target: { provider: "aws", region: "us-west-2" } },
       "clouds.connect": { target: { provider: "aws", region: "us-west-2" }, makeDefault: false },
+      "nudges.answer": { id: "none", choice: "separate" },
+      "links.create": { target: "3000" },
+      "links.stop": { id: "all" },
       "checklist.send": { action: { type: "done", step: "teleport" } },
     };
-    // This machine, Devices, Settings and the rest: host-bridge.test.ts reads them with their arguments.
-    const skip = new Set<OpName>(["spaces.create", "spaces.delete", "session.signIn", "session.signOut", "session.openExternal", "spaces.openStream", "relay.usage", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime", ...VAULT_OPS, ...(HOST_OPS as OpName[])]);
+    // This machine, Devices, Settings and the rest: host-bridge.test.ts reads them with their arguments (the Machines page's rename and remove: machines-view.test.ts).
+    const skip = new Set<OpName>(["spaces.create", "spaces.delete", "session.signIn", "session.signOut", "session.openExternal", "spaces.openStream", "relay.usage", "sharing.removals", "sharing.ackRemovals", "resources.get", "machines.rename", "machines.remove", "machines.checkHealth", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime", "cli.install", ...VAULT_OPS, ...(HOST_OPS as OpName[])]);
     const problems: string[] = [];
     const checked: string[] = [];
     for (const op of OPERATIONS) {

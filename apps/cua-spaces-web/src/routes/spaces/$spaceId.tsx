@@ -5,19 +5,21 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { ArrowDownCircleIcon, ChevronLeftIcon, MonitorIcon, PictureInPicture2Icon, PlayIcon, SquareIcon, Trash2Icon, UserPlusIcon } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
-import { parseDropped, useBridge, useDevices, useExperiments, useMachines, useSession, useShareSheet, useSpaceDetail, useSpaceFiles, useSpaces, useTeleport, type CreateReport, type Space, type StreamRow } from "@/bridge";
+import { hostResources, parseDropped, runCreateFix, spaceResources, useBridge, useResources, useDevices, useExperiments, useMachines, useSession, useShareSheet, useSpaceDetail, useSpaceFiles, useSpaces, useTeleport, type CreateReport, type Machine, type ResourcesSnapshot, type Space, type StreamRow } from "@/bridge";
 import { DiagnosticReportDialog } from "@/components/diagnostic-report-dialog";
 import { OsIcon } from "@/components/os-icon";
 import { EmptyState, Page } from "@/components/page";
 import { AgentsSection } from "@/components/space-detail/agents-section";
 import { DropWell } from "@/components/space-detail/drop-well";
 import { FactList } from "@/components/space-detail/facts";
+import { SpaceResourcesPanel } from "@/components/resources/space-resources-panel";
 import { StreamSection } from "@/components/space-detail/stream-section";
 import { StreamSurface } from "@/components/space-detail/stream-surface";
 import { StateLabel } from "@/components/state-dot";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
+import { thisComputerText } from "@/lib/host-labels";
 import { useSpaceVolumeError } from "@/lib/space-volume";
 import { volumeUnavailableNote } from "@/lib/volume-notes";
 import { canDelete, canPower, createError, createProgress, machineName, powerLabel, powerPending, spacePlace, spaceState } from "@/lib/spaces";
@@ -58,10 +60,11 @@ function SpaceDetailPage() {
   const [report, setReport] = useState<CreateReport | null>(null);
   const [reportOpen, setReportOpen] = useState(false);
   const { data: machines = [] } = useMachines();
+  const resources = useResources();
   const [confirm, setConfirm] = useState<Confirm>(null);
   const teleport = useTeleport();
   const sharing = useShareSheet();
-  const { data: session } = useSession();
+  const { data: session, openExternal } = useSession();
   const { core } = useBridge();
   const space = spaces?.find((s) => s.id === spaceId);
   // Apps and files dropped on this Space's notch tile: the same as a drop on the well (an app opens Teleport at it), once.
@@ -114,7 +117,7 @@ function SpaceDetailPage() {
             </Button>
           }
         >
-          {error ? error.message : "It may have been deleted, or it runs on a machine this app can't see."}
+          {error ? error.message : "It may have been deleted, or it runs on a computer this app can't see."}
         </EmptyState>
       </Page>
     );
@@ -180,6 +183,20 @@ function SpaceDetailPage() {
       setReport(r);
       setReportOpen(true);
     });
+  // It failed the same way twice: the core's fix for that cause (copy a
+  // command, open the help page, or the details) instead of Try again.
+  const createFix = space.progress?.fix;
+  const fix = createFix
+    ? () =>
+        void runCreateFix(createFix, {
+          copy: async (text) => {
+            await navigator.clipboard?.writeText(text);
+            toast(`Copied ${text}`, { description: "Paste it in Terminal.", type: "success" });
+          },
+          openExternal: (url) => openExternal(url),
+          details: openReport,
+        }).catch((e: unknown) => toast("Couldn't do that", { description: message(e), type: "error" }))
+    : undefined;
   // Picture in picture where the host has panels; its own window where it doesn't.
   const onPip = (row: StreamRow) =>
     run("open", async () => {
@@ -267,7 +284,19 @@ function SpaceDetailPage() {
         // One of your machines that keeps its desktop private: why, in place
         // of the desktop, then the Spaces it provides (no New Space button
         // beside the note).
-        <MachineSpaces note={detail.desktopNote} listSpaces={Boolean(detail.newSpace)} spaces={hostedSpaces(spaces ?? [], space.id)} />
+        <MachineSpaces
+          note={detail.desktopNote}
+          listSpaces={Boolean(detail.newSpace)}
+          spaces={hostedSpaces(spaces ?? [], space.id)}
+          // This machine's own screen: its switches live on its Computers page.
+          action={
+            detail.isHost ? (
+              <Button variant="outline" size="sm" data-host-desktop-action="" render={<Link to="/machines" />}>
+                Open Computers
+              </Button>
+            ) : null
+          }
+        />
       ) : (
         <StreamSurface
           spaceId={space.id}
@@ -279,9 +308,11 @@ function SpaceDetailPage() {
           onAccessAction={enroll}
           className="h-72"
         >
-          {surfaceState(space, pending, turnOn, start, dismiss, retry, openReport) ?? poppedOutState}
+          {surfaceState(space, pending, turnOn, start, dismiss, retry, openReport, fix) ?? poppedOutState}
         </StreamSurface>
       )}
+
+      <SpaceResources space={space} spaces={spaces ?? []} snapshot={resources} machines={machines} />
 
       <div className="mt-8 grid items-start gap-x-6 md:grid-cols-2">
         <div>
@@ -371,12 +402,16 @@ function hostedSpaces(spaces: readonly Space[], machineSpaceId: string): Space[]
   return spaces.filter((s) => s.host === machine);
 }
 
-/** A machine that does not share its desktop: the core's line, then the
- * Spaces it provides when it provides any. */
-function MachineSpaces({ note, listSpaces, spaces }: { note: string; listSpaces: boolean; spaces: Space[] }) {
+/** A machine that does not share its desktop, or this machine's own
+ * screen (never streamed here): the core's line and its one action, then
+ * the Spaces it provides when it provides any. */
+function MachineSpaces({ note, listSpaces, spaces, action }: { note: string; listSpaces: boolean; spaces: Space[]; action?: ReactNode }) {
   return (
     <section data-machine-desktop-note="">
-      <p className="rounded-xl border px-4 py-3 text-[13px] text-muted-foreground">{note}</p>
+      <div className="flex items-center justify-between gap-4 rounded-xl border px-4 py-3">
+        <p className="text-[13px] text-muted-foreground">{note}</p>
+        {action}
+      </div>
       {listSpaces ? (
         <div data-machine-spaces="" className="mt-6">
           <h2 className="mb-2 px-1 text-[13px] font-semibold">Spaces</h2>
@@ -426,21 +461,35 @@ function surfaceState(
   onDismiss: () => void,
   onRetry?: () => void,
   onReport?: () => void,
+  onFix?: () => void,
 ): ReactNode {
   const state = spaceState(space);
   if (state === "failed") {
+    // The same failure twice: its fix replaces a plain Try again.
+    const fix = space.progress?.fix;
     return (
       <>
         <p className="text-[13px] font-medium">Couldn't create this Space</p>
         <p data-create-error="" className="mt-2 max-w-md text-center text-xs text-destructive">
           {createError(space) || "No reason was reported."}
         </p>
+        {fix ? (
+          <p data-create-fix="" className="mt-2 max-w-md text-center text-xs text-muted-foreground">
+            {fix.text}
+          </p>
+        ) : null}
         <div className="mt-4 flex flex-wrap justify-center gap-2">
-          {onRetry ? <Button onClick={onRetry}>Try again</Button> : null}
+          {fix && onFix ? (
+            <Button data-create-fix-button="" onClick={onFix}>
+              {fix.label}
+            </Button>
+          ) : onRetry ? (
+            <Button onClick={onRetry}>Try again</Button>
+          ) : null}
           <Button variant="outline" onClick={onDismiss}>
             Remove from list
           </Button>
-          {onReport ? (
+          {onReport && fix?.action !== "details" ? (
             <Button variant="outline" data-send-report="" onClick={onReport}>
               Send a report…
             </Button>
@@ -478,4 +527,22 @@ function surfaceState(
     );
   }
   return undefined;
+}
+
+/** Processor, memory and disk for this Space, when its computer sends them. */
+function SpaceResources({ space, spaces, snapshot, machines }: { space: Space; spaces: Space[]; snapshot: ResourcesSnapshot | null; machines: Machine[] }) {
+  const mine = spaceResources(snapshot, space.id);
+  const state = spaceState(space);
+  if (!mine || (state !== "running" && state !== "stopped")) return null;
+  const local = space.provider === "local";
+  const machine = local ? machines.find((m) => m.current) : machines.find((m) => m.id === space.host || m.spaceIds.includes(space.id));
+  const host = hostResources(snapshot, machine);
+  const computer = local ? thisComputerText() : (machine?.name ?? space.hostName ?? "its computer");
+  // The Spaces on the same computer, with the numbers it sent, for the disk bar.
+  const sameComputer = (s: Space) => (local ? s.provider === "local" : s.host === space.host);
+  const siblings = spaces.flatMap((s) => {
+    const bytes = sameComputer(s) ? spaceResources(snapshot, s.id)?.diskOnHost?.bytes : null;
+    return bytes != null ? [{ id: s.id, name: s.name, bytes }] : [];
+  });
+  return <SpaceResourcesPanel space={mine} name={space.name} host={host} computer={computer} siblings={siblings} />;
 }

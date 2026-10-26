@@ -159,6 +159,9 @@ pub const ERROR_KINDS: &[&str] = &[
     "virtualization_unavailable",
     // The account's sandbox quota, plan limit or credits ran out.
     "quota_exceeded",
+    // Cua Cloud has ended: a cloud create is refused up front. Expected, so
+    // reports can leave it out of the failures that need a fix.
+    "cloud_ended",
     "env",
     "http",
     "unauthenticated",
@@ -173,18 +176,33 @@ pub const ERROR_KINDS: &[&str] = &[
     "internal",
     "ambiguous_sandbox",
     "insufficient_disk",
+    "host_capacity",
     // A Spaces-app create the app explained from the error's text: macOS
     // Local Network privacy blocked the new VM; Apple's two macOS VMs
     // were already running.
     "local_network",
     "vm_limit",
     "requires_cua_app",
+    // A failed create's text, read into a cause: the guest asked for more
+    // memory than the machine has, a port the Space needs is taken, a file
+    // or folder could not be written, the machine could not reach the
+    // network.
+    "out_of_memory",
+    "port_in_use",
+    "file_access",
+    "network",
     "cancelled",
     // An agent run: cua_spaces `Error::Agent`, a run that recorded a
     // failure, a run whose process went away mid-turn.
     "agent",
     "agent_failed",
     "agent_crashed",
+    // Why an agent run failed or stopped, a fixed word chosen on device
+    // from the run's recorded error (never the text itself).
+    "no_api_key",
+    "provider_error",
+    "timeout",
+    "user_cancelled",
     "other",
 ];
 pub const DURATIONS: &[&str] = &[
@@ -302,6 +320,31 @@ pub const FEATURES: &[&str] = &[
     "upsell_machine_dismiss",
     "upsell_plan_card_click",
     "upsell_account_menu_click",
+    // The limit cards: shown, clicked or dismissed, by what happened.
+    "upsell_card_hours_shown",
+    "upsell_card_hours_click",
+    "upsell_card_hours_dismiss",
+    "upsell_card_sessions_shown",
+    "upsell_card_sessions_click",
+    "upsell_card_sessions_dismiss",
+    "upsell_card_invite_shown",
+    "upsell_card_invite_click",
+    "upsell_card_invite_dismiss",
+    "upsell_card_seats_shown",
+    "upsell_card_seats_click",
+    "upsell_card_seats_dismiss",
+    "upsell_card_machines_shown",
+    "upsell_card_machines_click",
+    "upsell_card_machines_dismiss",
+    // Sign-in recovery (CUA-2285): how a sign-in ran and where it got stuck.
+    // The reason a sign-in failed stays in `error_kind`; these add the way
+    // (the browser, or a code to enter on any device).
+    "sign_in_started_browser",
+    "sign_in_started_code",
+    "sign_in_still_waiting",
+    "sign_in_code_instead",
+    "sign_in_failed_browser",
+    "sign_in_failed_code",
 ];
 /// Install steps live in [`INSTALLER_STEPS`] (`cua_installer_step`): the
 /// installers send them before any Cua program is on the machine.
@@ -375,6 +418,39 @@ pub const ONBOARDING_PAGES: &[&str] = &[
     "this_machine",
     "done",
 ];
+/// The first run's screens in the order the app shows them
+/// (`cua-spaces-app-core` `first_run`), as `cua_onboarding_step_*` and
+/// `cua_onboarding_skipped` name them. Its position (1 to 6) is the
+/// `step_index`, so a funnel keeps its order whichever screens a machine
+/// skips (no terminal screen once the CLI is installed, no permissions off a Mac).
+pub const FIRST_RUN_STEPS: &[&str] = &[
+    "welcome",
+    "connect_agent",
+    "terminal",
+    "sign_in",
+    "permissions",
+    "create_space",
+];
+/// Why a first-run screen failed (fixed words; never the message).
+pub const FIRST_RUN_FAIL_REASONS: &[&str] = &[
+    "timeout",
+    "cancelled",
+    "permission_denied",
+    "unauthenticated",
+    "transport",
+    "http",
+    "internal",
+    "install_failed",
+    "connect_failed",
+    "setup_failed",
+    "create_failed",
+    "other",
+];
+/// How a first-run screen was skipped: `step` (that screen's own Skip or
+/// Not now) or `later` (Skip for now, which leaves the whole first run).
+pub const FIRST_RUN_SKIP_HOWS: &[&str] = &["step", "later"];
+/// The version of the first run these events describe (`onboarding_version`).
+pub const FIRST_RUN_VERSION: u64 = 2;
 /// What happened on a first-run page.
 pub const PAGE_ACTIONS: &[&str] = &["shown", "completed", "skipped", "back"];
 /// The answer a first-run page was left with (fixed words; `none` for a
@@ -405,6 +481,19 @@ pub const CREATE_PHASES: &[&str] = &[
     "waiting_for_services",
     "connecting",
     "other",
+];
+/// The finer cause of a failed Space create, where `error_kind` alone is
+/// too coarse (`cua_create_failure::retry::Subclass`): a local runtime that
+/// did not start this time, Cua's service that did not take the create, an
+/// image download that stopped partway, macOS Local Network privacy off, a
+/// VPN routing the VM's network away. `none` when there is nothing finer.
+pub const ERROR_SUBCLASSES: &[&str] = &[
+    "none",
+    "runtime_start",
+    "daemon_unresponsive",
+    "pull_interrupted",
+    "local_network_denied",
+    "local_network_vpn",
 ];
 /// Time from create to ready (or to the failure), bucketed finely enough
 /// for median and p90 estimates.
@@ -458,6 +547,29 @@ pub const KEYVAULT_METHODS: &[&str] = &["os_key_store", "passphrase", "recovery_
 pub const SHARE_ACTIONS: &[&str] = &["share", "unshare", "change_role"];
 /// The role a Space is shared with.
 pub const SHARE_ROLES: &[&str] = &["viewer", "editor", "none"];
+/// Why a share, unshare or role change did not happen; `none` when it did.
+/// From the error's words, never the words themselves (CUA-1855).
+pub const SHARE_ERROR_KINDS: &[&str] = &[
+    "none",
+    // The user's confirmation (Touch ID, Windows Hello, polkit): refused,
+    // dismissed, or no prompt could be shown.
+    "presence_denied",
+    "presence_cancelled",
+    "presence_unavailable",
+    "not_signed_in",
+    "device_not_enrolled",
+    // The Space cannot be shared (its driver cannot attach to the relay).
+    "driver_unsupported",
+    "relay_refused",
+    "relay_unreachable",
+    // Not an email or account id.
+    "invalid_who",
+    "other",
+];
+/// Where a failed share stopped; `none` when it worked.
+pub const SHARE_STAGES: &[&str] = &[
+    "none", "request", "presence", "account", "device", "driver", "relay", "other",
+];
 /// Updater steps. In the product's words: `found` is update_available,
 /// `downloaded` is update_downloaded (the background download finished),
 /// `installed` is update_installed.
@@ -478,6 +590,9 @@ pub const ENROLL_METHODS: &[&str] = &["sign_in", "approval", "rekey"];
 /// The Spaces app's experiments (Settings, Experiments;
 /// `cua-spaces-app-core` `experiments::Experiment::id`).
 pub const EXPERIMENTS: &[&str] = &["cua_volume", "your_cloud", "sharing"];
+/// The Spaces app's interface language, as a fixed set: the languages it
+/// ships or plans to; any other language reads `other`. No region, no text.
+pub const UI_LOCALES: &[&str] = &["en", "zh-Hans", "ko", "pt-BR", "ja", "es", "other"];
 /// An experiment's switch turned on or off.
 pub const EXPERIMENT_ACTIONS: &[&str] = &["experiment_on", "experiment_off"];
 pub const STREAM_TRANSPORTS: &[&str] = &["quic", "webrtc", "websocket", "grpc", "other"];
@@ -546,6 +661,21 @@ pub const CLI_COMMANDS: &[&str] = include!("cli_commands.in");
 // ---------------------------------------------------------------------------
 // Common properties
 // ---------------------------------------------------------------------------
+
+/// The first-run funnel events' own properties.
+const FIRST_RUN_PROPS: &[Prop] = &[
+    p("step", Kind::Enum(FIRST_RUN_STEPS), "The first-run screen."),
+    p(
+        "step_index",
+        Kind::Count { max: 6 },
+        "Its position, 1 to 6.",
+    ),
+    p(
+        "onboarding_version",
+        Kind::Count { max: 100 },
+        "The first run's version (2).",
+    ),
+];
 
 /// Added to every event.
 pub const COMMON: &[Prop] = &[
@@ -630,7 +760,7 @@ const AGENT_HARNESS: Prop = p(
 const AGENT_LOCATION: Prop = p(
     "location",
     Kind::Enum(LOCATIONS),
-    "Where the Space runs: local, cloud, relay (a machine of the account) or direct (added by address).",
+    "Where the Space runs: local, cloud, relay (a computer of the account) or direct (added by address).",
 );
 const AGENT_ENTRY: Prop = p(
     "entry",
@@ -689,6 +819,10 @@ pub mod event {
     pub const SPACESD_SESSION_DELIVERIES: &str = "cua_spacesd_session_deliveries";
     pub const APP_ACTIVE: &str = "cua_app_active";
     pub const ONBOARDING_PAGE: &str = "cua_onboarding_page";
+    pub const ONBOARDING_STEP_VIEWED: &str = "cua_onboarding_step_viewed";
+    pub const ONBOARDING_STEP_COMPLETED: &str = "cua_onboarding_step_completed";
+    pub const ONBOARDING_STEP_FAILED: &str = "cua_onboarding_step_failed";
+    pub const ONBOARDING_SKIPPED: &str = "cua_onboarding_skipped";
     pub const SPACE_WIZARD: &str = "cua_space_wizard";
     pub const SPACE_CREATE: &str = "cua_space_create";
     pub const SPACE_CREATE_STARTED: &str = "cua_space_create_started";
@@ -1123,16 +1257,23 @@ pub const EVENTS: &[EventSpec] = &[
     },
     EventSpec {
         name: event::APP_ACTIVE,
-        version: 2,
+        version: 3,
         tier: Tier::Usage,
         sample_rate: 1.0,
         products: CLIENTS,
-        props: &[p(
-            "experiments_on",
-            Kind::Set(EXPERIMENTS),
-            "The Spaces app's experiments turned on in Settings, Experiments on this install (cua_volume, your_cloud, sharing, joined with +), or none.",
-        )],
-        purpose: "Retention (day 1, day 7, day 30) and daily and weekly active installs: at most one per install per UTC day, on a day the product is used. Also how many installs use each experiment.",
+        props: &[
+            p(
+                "experiments_on",
+                Kind::Set(EXPERIMENTS),
+                "The Spaces app's experiments turned on in Settings, Experiments on this install (cua_volume, your_cloud, sharing, joined with +), or none.",
+            ),
+            p(
+                "ui_locale",
+                Kind::Enum(UI_LOCALES),
+                "The Spaces app's interface language (en, zh-Hans, ko, pt-BR, ja, es), or other. en until the app says otherwise.",
+            ),
+        ],
+        purpose: "Retention (day 1, day 7, day 30) and daily and weekly active installs: at most one per install per UTC day, on a day the product is used. Also how many installs use each experiment, and which interface languages to ship.",
     },
     EventSpec {
         name: event::ONBOARDING_PAGE,
@@ -1154,6 +1295,76 @@ pub const EVENTS: &[EventSpec] = &[
             ),
         ],
         purpose: "Onboarding funnel: which page people leave on, and what they pick on each.",
+    },
+    EventSpec {
+        name: event::ONBOARDING_STEP_VIEWED,
+        version: 1,
+        tier: Tier::Usage,
+        sample_rate: 1.0,
+        products: &["spaces_app"],
+        props: FIRST_RUN_PROPS,
+        purpose: "Onboarding v2 funnel: how many installs see each first-run screen. The OS and app version are the common os_family and product_version.",
+    },
+    EventSpec {
+        name: event::ONBOARDING_STEP_COMPLETED,
+        version: 1,
+        tier: Tier::Usage,
+        sample_rate: 1.0,
+        products: &["spaces_app"],
+        props: FIRST_RUN_PROPS,
+        purpose: "Onboarding v2 funnel: how many installs finish each first-run screen.",
+    },
+    EventSpec {
+        name: event::ONBOARDING_STEP_FAILED,
+        version: 1,
+        tier: Tier::Usage,
+        sample_rate: 1.0,
+        products: &["spaces_app"],
+        props: &[
+            p("step", Kind::Enum(FIRST_RUN_STEPS), "The first-run screen."),
+            p(
+                "step_index",
+                Kind::Count { max: 6 },
+                "Its position, 1 to 6.",
+            ),
+            p(
+                "onboarding_version",
+                Kind::Count { max: 100 },
+                "The first run's version (2).",
+            ),
+            p(
+                "reason",
+                Kind::Enum(FIRST_RUN_FAIL_REASONS),
+                "Why it failed, as a fixed word.",
+            ),
+        ],
+        purpose: "Onboarding v2 funnel: which first-run screens fail, and why.",
+    },
+    EventSpec {
+        name: event::ONBOARDING_SKIPPED,
+        version: 1,
+        tier: Tier::Usage,
+        sample_rate: 1.0,
+        products: &["spaces_app"],
+        props: &[
+            p("step", Kind::Enum(FIRST_RUN_STEPS), "The first-run screen."),
+            p(
+                "step_index",
+                Kind::Count { max: 6 },
+                "Its position, 1 to 6.",
+            ),
+            p(
+                "onboarding_version",
+                Kind::Count { max: 100 },
+                "The first run's version (2).",
+            ),
+            p(
+                "how",
+                Kind::Enum(FIRST_RUN_SKIP_HOWS),
+                "step: that screen's own Skip or Not now; later: Skip for now, which leaves the whole first run.",
+            ),
+        ],
+        purpose: "Onboarding v2 funnel: the screens people skip, and where they leave the first run with Skip for now.",
     },
     EventSpec {
         name: event::SPACE_WIZARD,
@@ -1184,7 +1395,7 @@ pub const EVENTS: &[EventSpec] = &[
     },
     EventSpec {
         name: event::SPACE_CREATE,
-        version: 3,
+        version: 4,
         tier: Tier::Usage,
         sample_rate: 1.0,
         products: &["spaces_app"],
@@ -1210,8 +1421,18 @@ pub const EVENTS: &[EventSpec] = &[
                 "Time from pressing Create to ready, to the failure, or to the cancel finishing, bucketed.",
             ),
             p("gpu", Kind::Bool, "GPU acceleration was turned on."),
+            p(
+                "retry_attempt",
+                Kind::Count { max: 1 },
+                "1 when the app ran the create a second time by itself after a passing failure (the event is the create's final outcome, sent once), else 0.",
+            ),
+            p(
+                "error_subclass",
+                Kind::Enum(ERROR_SUBCLASSES),
+                "The finer cause of the failure (runtime_start, daemon_unresponsive, pull_interrupted, local_network_denied, local_network_vpn); on a retried create that succeeded, the cause of the failure it recovered from; none otherwise. Never the message.",
+            ),
         ],
-        purpose: "Activation and reliability: Space create success, failure and cancel rates by kind, location and GPU, time to ready or to cancel, which phase fails or is cancelled, stall timeouts.",
+        purpose: "Activation and reliability: Space create success, failure and cancel rates by kind, location and GPU, time to ready or to cancel, which phase fails or is cancelled, stall timeouts, and how often one automatic retry saves a create.",
     },
     EventSpec {
         name: event::VOLUME_SETUP,
@@ -1228,7 +1449,7 @@ pub const EVENTS: &[EventSpec] = &[
             p(
                 "storage",
                 Kind::Enum(VOLUME_STORAGE),
-                "Where the files live: this machine, an S3-compatible bucket, or decide later.",
+                "Where the files live: this computer, an S3-compatible bucket, or decide later.",
             ),
             p(
                 "add_to_finder",
@@ -1284,7 +1505,7 @@ pub const EVENTS: &[EventSpec] = &[
             p(
                 "signed_in",
                 Kind::Bool,
-                "A Cua account session is stored on this machine (no network, no keychain read).",
+                "A Cua account session is stored on this computer (no network, no keychain read).",
             ),
             p(
                 "token_state",
@@ -1302,7 +1523,7 @@ pub const EVENTS: &[EventSpec] = &[
                 "The HTTP status the relay or download answered a failure with; 0 when none.",
             ),
         ],
-        purpose: "Host Spaces adoption: machines set up for access, and by which profile.",
+        purpose: "Host Spaces adoption: computers set up for access, and by which profile.",
     },
     EventSpec {
         name: event::HOST_SPACE_PROVIDED,
@@ -1316,7 +1537,7 @@ pub const EVENTS: &[EventSpec] = &[
             OUTCOME,
             ERROR_KIND,
         ],
-        purpose: "Host Spaces use: Spaces a host machine created for the account's other devices.",
+        purpose: "Host Spaces use: Spaces a host computer created for the account's other devices.",
     },
     EventSpec {
         name: event::KEYVAULT_ACTION,
@@ -1341,7 +1562,7 @@ pub const EVENTS: &[EventSpec] = &[
     },
     EventSpec {
         name: event::SHARE,
-        version: 1,
+        version: 2,
         tier: Tier::Usage,
         sample_rate: 1.0,
         products: &["spaces_app"],
@@ -1357,8 +1578,18 @@ pub const EVENTS: &[EventSpec] = &[
                 "viewer (view-only) or editor; none for unshare.",
             ),
             OUTCOME,
+            p(
+                "error_kind",
+                Kind::Enum(SHARE_ERROR_KINDS),
+                "Why it did not happen: the confirmation was refused, dismissed or could not be shown, not signed in, device not approved, the Space cannot be shared, the relay refused or could not be reached, not an email; none when it worked. Never who.",
+            ),
+            p(
+                "failed_stage",
+                Kind::Enum(SHARE_STAGES),
+                "Where it stopped (request, presence, account, device, driver, relay); none when it worked.",
+            ),
         ],
-        purpose: "Sharing adoption, and how often Spaces are shared view-only.",
+        purpose: "Sharing adoption, how often Spaces are shared view-only, and why sharing fails.",
     },
     EventSpec {
         name: event::PRESENCE_SESSION,
@@ -1412,7 +1643,7 @@ pub const EVENTS: &[EventSpec] = &[
             p(
                 "method",
                 Kind::Enum(ENROLL_METHODS),
-                "A fresh sign-in, an approval from an enrolled device, or a same-machine re-key.",
+                "A fresh sign-in, an approval from an enrolled device, or a same-computer re-key.",
             ),
             OUTCOME,
         ],
@@ -1449,8 +1680,9 @@ pub fn spec(name: &str) -> Option<&'static EventSpec> {
 // Catalogs
 // ---------------------------------------------------------------------------
 
-const IMAGE_CATALOG_JSON: &str = include_str!("../../../../images/sandbox-images.json");
-const TELEPORT_TARGETS_JSON: &str = include_str!("../../cua-teleport/src/ux/targets.json");
+const IMAGE_CATALOG_JSON: &str = include_str!(concat!(env!("OUT_DIR"), "/sandbox-images.json"));
+const TELEPORT_TARGETS_JSON: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/teleport-targets.json"));
 /// Teleport provider ids (`cua_teleport` providers); a cua-teleport test
 /// checks the list against the registry.
 pub const TELEPORT_PROVIDERS: &[&str] = &[

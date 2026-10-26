@@ -94,14 +94,17 @@ describe.skipIf(!wasmBuilt)("the shell as the SwiftUI main window (real routes, 
     await waitFor(() => expect(calls.some(([op, a]) => op === "spaces.setPower" && (a as { on: boolean }).on === false)).toBe(true));
   });
 
-  it("lays out every Keyvault row the host reports, and changes its switches", async () => {
-    const { calls } = await mount("/settings", { macHost: true });
-    const section = await found<HTMLElement>('[data-settings-section="keyvault"]');
-    const row = (id: string) => section.querySelector<HTMLElement>(`[data-setting-row="${id}"]`);
+  it("lays out every Keyvault option the host reports, on the Keyvault page, and changes its switches", async () => {
+    const { calls } = await mount("/keyvault", { macHost: true });
+    fireEvent.click(await found<HTMLElement>("[data-keyvault-options]"));
+    const dialog = await found<HTMLElement>("[data-keyvault-options-dialog]");
+    const row = (id: string) => dialog.querySelector<HTMLElement>(`[data-setting-row="${id}"]`);
     await waitFor(() => expect(row("keyvault-unlock-prompt")).toBeTruthy());
     expect(row("keyvault-auto-wipe")).toBeTruthy();
     expect(row("keyvault-site-icons")).toBeTruthy();
     expect(row("keyvault-protection:Unlock")?.textContent).toContain("Mac login");
+    // Plain words, not the core's.
+    expect(within(row("keyvault-auto-wipe")!).getByText("Remove saved sign-ins from Spaces after an hour")).toBeTruthy();
 
     fireEvent.click(within(row("keyvault-unlock-prompt")!).getByRole("switch"));
     await waitFor(() => expect(calls).toContainEqual(["settings.choose", { row: "keyvault-unlock-prompt", option: "off" }]));

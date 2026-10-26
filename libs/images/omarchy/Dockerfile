@@ -94,6 +94,12 @@ RUN set -eu; \
     yes | pacman -Scc >/dev/null; rm -f /tmp/packages.desktop; \
     mv /etc/pacman.d/mirrorlist.omarchy /etc/pacman.d/mirrorlist
 
+# CUA-1948: the compromised eMudhra intermediates. Arch's ca-certificates-mozilla
+# 3.131.1-1 drops the roots they chain to; an older archive snapshot may not have
+# it yet, so block them explicitly (a no-op once they are gone).
+COPY omarchy/files/distrust-emudhra.sh /tmp/distrust-emudhra.sh
+RUN sh /tmp/distrust-emudhra.sh && rm -f /tmp/distrust-emudhra.sh
+
 # The desktop user (uid 1000, like every libs/images desktop), seeded from
 # Omarchy's /etc/skel and its unattended setup: the default theme applied
 # headless, first-run and finalize marked done (they are interactive), and the

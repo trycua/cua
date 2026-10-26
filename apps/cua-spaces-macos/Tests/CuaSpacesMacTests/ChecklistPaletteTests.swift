@@ -41,6 +41,25 @@ struct ChecklistPaletteTests {
         #expect(!ChecklistModel(path: path).view.visible)
     }
 
+    @Test func aSkippedStepIsKeptAndCountsAsDone() throws {
+        let path = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cua-checklist-\(UUID().uuidString)/checklist.json").path
+        let checklist = ChecklistModel(path: path)
+        checklist.send(.skip(step: .teleport))
+        #expect(checklist.view.progress == "1 of 5")
+        #expect(checklist.stored["skipped"] as? [String] == ["teleport"])
+        let again = ChecklistModel(path: path)
+        #expect(again.state.skipped == [.teleport])
+        #expect(again.view.rows.first { $0.step == .teleport }?.skipped == true)
+        // A file from an older app has no skips.
+        let old = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cua-checklist-\(UUID().uuidString).json")
+        try Data(#"{"done":["share"],"dismissed":false,"shown":true}"#.utf8).write(to: old)
+        let read = ChecklistModel(path: old.path)
+        #expect(read.state.done == [.share])
+        #expect(read.state.skipped.isEmpty)
+    }
+
     @Test func theLastStepCompletesIt() {
         let telemetry = FixtureTelemetry()
         let checklist = ChecklistModel(path: nil)
@@ -209,11 +228,11 @@ struct ChecklistPaletteTests {
     @Test func thePaletteRanksWithTheCore() {
         let entries = [
             AppPaletteEntry(group: "Actions", label: "New Space", hint: nil, keywords: "create add"),
-            AppPaletteEntry(group: "Go to", label: "Machines", hint: nil, keywords: "page"),
+            AppPaletteEntry(group: "Go to", label: "Computers", hint: nil, keywords: "page"),
             AppPaletteEntry(group: "Spaces", label: "Stop builder", hint: "Running", keywords: nil),
         ]
         #expect(appPaletteRank(entries: entries, query: "") == [0, 1, 2])
-        #expect(appPaletteRank(entries: entries, query: "mach") == [1])
+        #expect(appPaletteRank(entries: entries, query: "comp") == [1])
         #expect(appPaletteRank(entries: entries, query: "stop run") == [2])
     }
 }

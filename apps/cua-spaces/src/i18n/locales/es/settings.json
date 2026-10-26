@@ -1,0 +1,10 @@
+{
+  "settings.this_machine.sharing_label": "Uso compartido",
+  "settings.cloud.clouds_label": "Nubes",
+  "settings.cloud.sign_in_found": "Inicio de sesión encontrado",
+  "settings.cloud.touches_label": "Lo que Cua tocará",
+  "settings.cloud.checks_label": "Comprobaciones",
+  "settings.accessibility.enable_window_drag": "Activa el arrastre de ventanas en Ajustes del Sistema → Privacidad → Accesibilidad",
+  "settings.language.label": "Idioma",
+  "settings.language.system_default": "Predeterminado del sistema"
+}

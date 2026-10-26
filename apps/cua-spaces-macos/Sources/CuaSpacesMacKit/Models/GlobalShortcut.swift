@@ -42,14 +42,10 @@ final class GlobalShortcut {
         installed = shortcut
     }
 
-    /// The window of the UI in use, in front.
+    /// The main window, in front.
     static func bringForward(_ model: AppModel) {
         NSApp.activate()
-        if CuaSpacesMacApp.opensWebUIAtLaunch(model) {
-            WebUIWindowController.show(model: model)
-        } else {
-            WebUIWindowController.actions?.openMain()
-        }
+        MainUIRouter(model: model).openMain()
     }
 }
 

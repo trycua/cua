@@ -7,13 +7,15 @@ and releases it on exit (including cancellation, e.g. Ctrl-C):
 * ``--on local``: ``Sandbox.ephemeral(image, on="local")``. The SDK runs a
   container under gVisor (``runsc``) or a VM under QEMU / Lume.
 * ``--on cloud`` (Cua Cloud) and ``--image pool:<name>`` end with
-  :class:`~cua_bench.targets.CloudEnded`: Cua Cloud has ended.
+  :class:`~cua_bench.targets.CloudEnded`: Cua Cloud has ended. They are
+  refused when the target is resolved; this module refuses a hand-built
+  ``Target(on="cloud")`` too.
 * ``--on e2b`` (``daytona``, ``modal``, ...): ``Sandbox.ephemeral(image,
   on="e2b")``; the SDK's contrib provider runs the same registry image on
   that platform. cua-bench has no provider-specific code: the location word
   goes to the SDK as is.
-* ``--on aws`` (``gcp``, ``modal``): your own cloud account, connected with
-  ``cua cloud connect``; the SDK starts one VM (or Modal sandbox) per
+* ``--on aws`` (``gcp``, ``hetzner``, ``modal``): your own cloud account, connected with
+  ``cua cloud connect``; the SDK starts one VM (or Hetzner server, or Modal sandbox) per
   sandbox, joined to the cua.ai relay, and deletes it with the handle.
 
 The lifecycle uses only public cua-sandbox API (``Image``, ``Sandbox.ephemeral``).
@@ -41,7 +43,6 @@ class Progress:
 
     stage: str  # waiting | ready | release
     message: str
-    pool: Optional[str] = None
     elapsed: float = 0.0
 
 
@@ -169,8 +170,8 @@ async def open_sandbox(
     """Yield a connected sandbox for ``spec``; release it on exit."""
     image_cls, sandbox_cls = _sdk()
 
-    if spec.pool or target.cloud:
-        # Cua Cloud has ended: neither `--on cloud` nor `--image pool:<name>` starts one.
+    if target.on == "cloud":
+        # Cua Cloud has ended: `--on cloud` starts nothing.
         from cua_bench.targets import CloudEnded
 
         raise CloudEnded()

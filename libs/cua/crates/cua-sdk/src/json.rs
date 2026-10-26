@@ -46,6 +46,68 @@ fn status(s: tonic::Status) -> CuaError {
     }
 }
 
+/// File requests that act as a user, and where their `run_as` lives in the
+/// request JSON.
+#[cfg(not(any(target_arch = "wasm32", feature = "web")))]
+const RUN_AS_METHODS: &[(&str, &[&str])] = &[
+    ("/cua.env.v1.FilesystemService/Stat", &[]),
+    ("/cua.env.v1.FilesystemService/ListDir", &[]),
+    ("/cua.env.v1.FilesystemService/MakeDir", &[]),
+    ("/cua.env.v1.FilesystemService/Move", &[]),
+    ("/cua.env.v1.FilesystemService/Remove", &[]),
+    ("/cua.env.v1.FilesystemService/WatchDir", &[]),
+    ("/cua.env.v1.FilesystemService/CreateWatcher", &[]),
+    ("/cua.env.v1.FilesystemService/ReadFile", &[]),
+    ("/cua.env.v1.FilesystemService/CreateSignedUrl", &[]),
+    ("/cua.env.v1.FilesystemService/BeginUpload", &["header"]),
+];
+
+/// Sets `run_as` to `user` in a file request's JSON (in `header` for
+/// `BeginUpload`). `user` of `None` or empty returns the request unchanged.
+/// Refuses a method that has no `run_as`, a request that is not a JSON
+/// object, and one that already names a different user.
+#[cfg(not(any(target_arch = "wasm32", feature = "web")))]
+pub(crate) fn with_run_as(path: &str, request_json: &str, user: Option<&str>) -> Result<String> {
+    let Some(user) = user.filter(|u| !u.is_empty()) else {
+        return Ok(request_json.to_owned());
+    };
+    let Some((_, nested)) = RUN_AS_METHODS.iter().find(|(m, _)| *m == path) else {
+        return Err(CuaError::InvalidArgument(format!(
+            "user applies to file requests (Stat, ListDir, MakeDir, Move, Remove, WatchDir, \
+             CreateWatcher, ReadFile, CreateSignedUrl, BeginUpload), not {path}"
+        )));
+    };
+    let mut value: serde_json::Value = if request_json.trim().is_empty() {
+        serde_json::json!({})
+    } else {
+        serde_json::from_str(request_json)
+            .map_err(|e| CuaError::InvalidArgument(format!("request JSON: {e}")))?
+    };
+    let mut at = value
+        .as_object_mut()
+        .ok_or_else(|| CuaError::InvalidArgument("the request must be a JSON object".into()))?;
+    for key in nested.iter() {
+        at = at
+            .entry((*key).to_owned())
+            .or_insert_with(|| serde_json::json!({}))
+            .as_object_mut()
+            .ok_or_else(|| CuaError::InvalidArgument(format!("{key} must be a JSON object")))?;
+    }
+    for key in ["run_as", "runAs"] {
+        if let Some(existing) = at.get(key).and_then(|v| v.as_str())
+            && !existing.is_empty()
+            && existing != user
+        {
+            return Err(CuaError::InvalidArgument(format!(
+                "the request already acts as {existing:?}, not {user:?}"
+            )));
+        }
+        at.remove(key);
+    }
+    at.insert("run_as".into(), serde_json::Value::String(user.to_owned()));
+    Ok(value.to_string())
+}
+
 /// Unary RPCs reachable through `SpacesdClient.call_json`.
 pub const JSON_UNARY_METHODS: &[&str] = &[
     "/cua.env.v1.AccessibilityService/GetTree",
@@ -79,6 +141,17 @@ pub const JSON_UNARY_METHODS: &[&str] = &[
     "/cua.env.v1.HostSpacesService/CancelHostSpace",
     "/cua.env.v1.HostSpacesService/SetHostSpacePower",
     "/cua.env.v1.HostSpacesService/DeleteCloudSpace",
+    "/cua.env.v1.HostSpacesService/SetHostWarm",
+    "/cua.env.v1.HostSpacesService/SetHostSpaceEgress",
+    "/cua.env.v1.HostJobsService/RunHostJobs",
+    "/cua.env.v1.HostJobsService/GetHostJob",
+    "/cua.env.v1.HostJobsService/ListHostJobs",
+    "/cua.env.v1.HostJobsService/CancelHostJob",
+    "/cua.env.v1.HostSnapshotsService/ListHostSnapshots",
+    "/cua.env.v1.HostSnapshotsService/ExportHostSnapshot",
+    "/cua.env.v1.HostSnapshotsService/CreateHostSnapshot",
+    "/cua.env.v1.HostSnapshotsService/DeleteHostSnapshot",
+    "/cua.env.v1.HostSpacesService/DiagnoseHost",
     "/cua.env.v1.VolumeService/AttachVolume",
     "/cua.env.v1.VolumeService/DetachVolume",
     "/cua.env.v1.VolumeService/GetVolumeStatus",
@@ -89,6 +162,8 @@ pub const JSON_UNARY_METHODS: &[&str] = &[
     "/cua.env.v1.ProcessService/SignalProcess",
     "/cua.env.v1.ProcessService/CloseStdin",
     "/cua.env.v1.ProcessService/ResizePty",
+    "/cua.env.v1.ProcessService/GetExecRecord",
+    "/cua.env.v1.ProcessService/AdvanceEpoch",
     "/cua.env.v1.StreamService/ListTargets",
     "/cua.env.v1.StreamService/OpenMedia",
     "/cua.env.v1.StreamService/SetPreferences",
@@ -132,6 +207,8 @@ pub const JSON_UNARY_METHODS: &[&str] = &[
 pub const JSON_STREAM_METHODS: &[&str] = &[
     "/cua.env.v1.FilesystemService/WatchDir",
     "/cua.env.v1.FilesystemService/ReadFile",
+    "/cua.env.v1.HostSnapshotsService/PullHostSnapshot",
+    "/cua.env.v1.HostSnapshotsService/PublishHostSnapshot",
     "/cua.env.v1.PresenceService/Join",
     "/cua.env.v1.SystemService/Diagnose",
     "/cua.env.v1.WindowsService/WatchWindows",
@@ -436,6 +513,70 @@ pub(crate) async fn call_unary<C: Channel>(ch: C, path: &str, json: &str) -> Res
             )
             .await
         }
+        "/cua.env.v1.HostJobsService/RunHostJobs" => {
+            unary::<C, pb::RunHostJobsRequest, pb::RunHostJobsResponse>(
+                ch,
+                "/cua.env.v1.HostJobsService/RunHostJobs",
+                json,
+            )
+            .await
+        }
+        "/cua.env.v1.HostJobsService/GetHostJob" => {
+            unary::<C, pb::GetHostJobRequest, pb::GetHostJobResponse>(
+                ch,
+                "/cua.env.v1.HostJobsService/GetHostJob",
+                json,
+            )
+            .await
+        }
+        "/cua.env.v1.HostJobsService/ListHostJobs" => {
+            unary::<C, pb::ListHostJobsRequest, pb::ListHostJobsResponse>(
+                ch,
+                "/cua.env.v1.HostJobsService/ListHostJobs",
+                json,
+            )
+            .await
+        }
+        "/cua.env.v1.HostJobsService/CancelHostJob" => {
+            unary::<C, pb::CancelHostJobRequest, pb::CancelHostJobResponse>(
+                ch,
+                "/cua.env.v1.HostJobsService/CancelHostJob",
+                json,
+            )
+            .await
+        }
+        "/cua.env.v1.HostSnapshotsService/ListHostSnapshots" => {
+            unary::<C, pb::ListHostSnapshotsRequest, pb::ListHostSnapshotsResponse>(
+                ch,
+                "/cua.env.v1.HostSnapshotsService/ListHostSnapshots",
+                json,
+            )
+            .await
+        }
+        "/cua.env.v1.HostSnapshotsService/ExportHostSnapshot" => {
+            unary::<C, pb::ExportHostSnapshotRequest, pb::ExportHostSnapshotResponse>(
+                ch,
+                "/cua.env.v1.HostSnapshotsService/ExportHostSnapshot",
+                json,
+            )
+            .await
+        }
+        "/cua.env.v1.HostSnapshotsService/CreateHostSnapshot" => {
+            unary::<C, pb::CreateHostSnapshotRequest, pb::CreateHostSnapshotResponse>(
+                ch,
+                "/cua.env.v1.HostSnapshotsService/CreateHostSnapshot",
+                json,
+            )
+            .await
+        }
+        "/cua.env.v1.HostSnapshotsService/DeleteHostSnapshot" => {
+            unary::<C, pb::DeleteHostSnapshotRequest, pb::DeleteHostSnapshotResponse>(
+                ch,
+                "/cua.env.v1.HostSnapshotsService/DeleteHostSnapshot",
+                json,
+            )
+            .await
+        }
         "/cua.env.v1.HostSpacesService/GetHostSpaces" => {
             unary::<C, pb::GetHostSpacesRequest, pb::GetHostSpacesResponse>(
                 ch,
@@ -476,10 +617,34 @@ pub(crate) async fn call_unary<C: Channel>(ch: C, path: &str, json: &str) -> Res
             )
             .await
         }
+        "/cua.env.v1.HostSpacesService/SetHostSpaceEgress" => {
+            unary::<C, pb::SetHostSpaceEgressRequest, pb::SetHostSpaceEgressResponse>(
+                ch,
+                "/cua.env.v1.HostSpacesService/SetHostSpaceEgress",
+                json,
+            )
+            .await
+        }
         "/cua.env.v1.HostSpacesService/DeleteCloudSpace" => {
             unary::<C, pb::DeleteCloudSpaceRequest, pb::DeleteCloudSpaceResponse>(
                 ch,
                 "/cua.env.v1.HostSpacesService/DeleteCloudSpace",
+                json,
+            )
+            .await
+        }
+        "/cua.env.v1.HostSpacesService/SetHostWarm" => {
+            unary::<C, pb::SetHostWarmRequest, pb::SetHostWarmResponse>(
+                ch,
+                "/cua.env.v1.HostSpacesService/SetHostWarm",
+                json,
+            )
+            .await
+        }
+        "/cua.env.v1.HostSpacesService/DiagnoseHost" => {
+            unary::<C, pb::DiagnoseHostRequest, pb::DiagnoseHostResponse>(
+                ch,
+                "/cua.env.v1.HostSpacesService/DiagnoseHost",
                 json,
             )
             .await
@@ -560,6 +725,22 @@ pub(crate) async fn call_unary<C: Channel>(ch: C, path: &str, json: &str) -> Res
             unary::<C, pb::ResizePtyRequest, pb::ResizePtyResponse>(
                 ch,
                 "/cua.env.v1.ProcessService/ResizePty",
+                json,
+            )
+            .await
+        }
+        "/cua.env.v1.ProcessService/GetExecRecord" => {
+            unary::<C, pb::GetExecRecordRequest, pb::GetExecRecordResponse>(
+                ch,
+                "/cua.env.v1.ProcessService/GetExecRecord",
+                json,
+            )
+            .await
+        }
+        "/cua.env.v1.ProcessService/AdvanceEpoch" => {
+            unary::<C, pb::AdvanceEpochRequest, pb::AdvanceEpochResponse>(
+                ch,
+                "/cua.env.v1.ProcessService/AdvanceEpoch",
                 json,
             )
             .await
@@ -895,6 +1076,26 @@ pub(crate) async fn call_stream<C: Channel>(
             )
             .await
         }
+        "/cua.env.v1.HostSnapshotsService/PullHostSnapshot" => {
+            stream::<C, pb::PullHostSnapshotRequest, pb::PullHostSnapshotResponse>(
+                ch,
+                "/cua.env.v1.HostSnapshotsService/PullHostSnapshot",
+                json,
+                max,
+                timeout,
+            )
+            .await
+        }
+        "/cua.env.v1.HostSnapshotsService/PublishHostSnapshot" => {
+            stream::<C, pb::PublishHostSnapshotRequest, pb::PublishHostSnapshotResponse>(
+                ch,
+                "/cua.env.v1.HostSnapshotsService/PublishHostSnapshot",
+                json,
+                max,
+                timeout,
+            )
+            .await
+        }
         "/cua.env.v1.PresenceService/Join" => {
             stream::<C, pb::JoinRequest, pb::JoinResponse>(
                 ch,
@@ -936,6 +1137,57 @@ mod tests {
     use super::*;
     use prost::Message;
     use std::collections::BTreeSet;
+
+    #[cfg(not(any(target_arch = "wasm32", feature = "web")))]
+    #[test]
+    fn user_sets_run_as_on_file_requests_only() {
+        let stat = "/cua.env.v1.FilesystemService/Stat";
+        let out = with_run_as(stat, r#"{"path":"/a"}"#, Some("bob")).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["run_as"], "bob");
+        assert_eq!(v["path"], "/a");
+        // The JSON decodes into the typed request with the user set.
+        let req: pb::StatRequest = serde_json::from_str(&out).unwrap();
+        assert_eq!((req.path.as_str(), req.run_as.as_str()), ("/a", "bob"));
+        // An empty body is an empty object; no user leaves it untouched.
+        let out = with_run_as(stat, "", Some("bob")).unwrap();
+        assert_eq!(out, r#"{"run_as":"bob"}"#);
+        assert_eq!(with_run_as(stat, "{}", None).unwrap(), "{}");
+        assert_eq!(with_run_as(stat, "{}", Some("")).unwrap(), "{}");
+        // The same user again is fine (either spelling); another is not.
+        let out = with_run_as(stat, r#"{"runAs":"bob"}"#, Some("bob")).unwrap();
+        assert_eq!(out, r#"{"run_as":"bob"}"#);
+        assert!(matches!(
+            with_run_as(stat, r#"{"run_as":"alice"}"#, Some("bob")),
+            Err(CuaError::InvalidArgument(_))
+        ));
+        // A write names the user in its header.
+        let begin = "/cua.env.v1.FilesystemService/BeginUpload";
+        let out = with_run_as(begin, r#"{"header":{"path":"/x"}}"#, Some("bob")).unwrap();
+        let req: pb::BeginUploadRequest = serde_json::from_str(&out).unwrap();
+        assert_eq!(req.header.unwrap().run_as, "bob");
+        let out = with_run_as(begin, "{}", Some("bob")).unwrap();
+        let req: pb::BeginUploadRequest = serde_json::from_str(&out).unwrap();
+        assert_eq!(req.header.unwrap().run_as, "bob");
+        // Other methods and non-objects refuse it.
+        for bad in [
+            with_run_as("/cua.env.v1.SystemService/Health", "{}", Some("bob")),
+            with_run_as(stat, "[1]", Some("bob")),
+            with_run_as(stat, "nope", Some("bob")),
+        ] {
+            assert!(matches!(bad, Err(CuaError::InvalidArgument(_))), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn every_run_as_method_is_a_real_filesystem_rpc_with_the_field() {
+        for (method, _) in RUN_AS_METHODS {
+            assert!(
+                JSON_UNARY_METHODS.contains(method) || JSON_STREAM_METHODS.contains(method),
+                "{method} is not reachable through call_json"
+            );
+        }
+    }
 
     /// Every RPC of the compiled `cua.env.v1` contract is reachable from the
     /// SDK: typed, through the JSON escape hatch, or (client streams) via

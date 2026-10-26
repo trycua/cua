@@ -261,7 +261,7 @@ observes the new grant:
 
 ```bash
 ~/.local/bin/cua-driver-local stop
-open -a CuaDriverLocal
+open /Applications/CuaDriverLocal.app
 ```
 
 Then verify the daemon's own identity and the read-only status contract before
@@ -335,7 +335,7 @@ After seeding, restart `CuaDriverLocal.app` before checking permission status if
 
 ```bash
 ~/.local/bin/cua-driver-local stop
-open -a CuaDriverLocal
+open /Applications/CuaDriverLocal.app
 ```
 
 If the VM sudo password is not the default `lume`, pass it without putting it

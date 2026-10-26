@@ -2,15 +2,15 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * The getting-started checklist on the Spaces page: five first steps,
- * ticked off as they happen, closable, and back from the command palette
- * or Help > Getting Started. Its steps, words and progress are the core's
- * (`bridge/checklist.ts`); this draws them and runs each step's button.
+ * The getting-started checklist in the sidebar: five first steps, ticked
+ * off as they happen, each skippable, closable, and back from the command
+ * palette or Help > Getting Started. Its steps, words and progress are the
+ * core's (`bridge/checklist.ts`); this draws them and runs each step.
  */
 
 import { useNavigate } from "@tanstack/react-router";
-import { CheckIcon, XIcon } from "lucide-react";
-import { useEffect } from "react";
+import { CheckIcon, ChevronDownIcon } from "lucide-react";
+import { useEffect, useSyncExternalStore } from "react";
 
 import {
   useAgents,
@@ -27,7 +27,6 @@ import {
 } from "@/bridge";
 import { spaceDetail } from "@/bridge/space-detail";
 import { WEBKIT_EVENT, WEBKIT_OPEN_CHECKLIST_EVENT, type WebkitEventDetail } from "@/bridge/webkit-protocol";
-import { Button } from "@/components/ui/button";
 import { toast, toastError } from "@/components/ui/toast";
 import { useNewSpace } from "@/hooks/use-new-space";
 import { realSpaces, spaceState } from "@/lib/spaces";
@@ -53,20 +52,32 @@ function spaceFor(spaces: Space[], offers: (space: Space) => boolean | undefined
   return { offered };
 }
 
-export function GettingStarted() {
-  const { view, shown, dismiss } = useChecklist();
+/** Whether the sidebar's checklist is open (Help > Getting Started opens it). */
+let expanded = false;
+const expandListeners = new Set<() => void>();
+export function setExpanded(on: boolean): void {
+  expanded = on;
+  for (const l of [...expandListeners]) l();
+}
+function useExpanded(): boolean {
+  return useSyncExternalStore(
+    (l) => {
+      expandListeners.add(l);
+      return () => void expandListeners.delete(l);
+    },
+    () => expanded,
+    () => false,
+  );
+}
+
+/** What each step's row does when clicked. */
+function useChecklistGo(): (step: ChecklistStep) => void {
   const navigate = useNavigate();
   const newSpace = useNewSpace();
   const { data: spaces = [], isLoading: spacesLoading } = useSpaces();
   const { data: session } = useSession();
   const teleport = useTeleport();
   const share = useShareSheet();
-  const visible = view?.visible ?? false;
-
-  useEffect(() => {
-    if (visible) shown();
-  }, [visible, shown]);
-
   const { core } = useBridge();
   const exp = useExperiments();
   const experiments = exp.unsupported ? undefined : (exp.data?.experiments ?? {});
@@ -83,15 +94,11 @@ export function GettingStarted() {
     const { space, offered } = spaceFor(spaces, offers(id));
     if (space) return void open(space).catch(toastError(`Couldn't open ${what}`));
     if (!offered && id === "share") {
-      toast("Sharing is off", { description: "Turn it on in Settings, Experiments." });
-      return void navigate({ to: "/settings/experiments" });
+      return void toast("Sharing isn't available yet", { description: "It is not switched on for this account." });
     }
     toast("Start a Space first", { description: `${what} works on a running Space.` });
   };
-
-  if (!view || !visible) return null;
-
-  const go = (step: ChecklistStep) => {
+  return (step) => {
     switch (step) {
       case "add_machine":
         return void navigate({ href: ADD_MACHINE_HREF });
@@ -105,50 +112,82 @@ export function GettingStarted() {
         return void navigate({ to: "/agents" });
     }
   };
+}
 
+/**
+ * "Get started 2/5" at the bottom of the sidebar. Its steps open in place,
+ * above it: each does its thing when clicked, and has a quiet Skip (a
+ * skipped step counts as done). Hide closes it ("Done" once complete); Help
+ * > Getting Started brings it back, open. The steps, words and progress are
+ * the core's (`bridge/checklist.ts`).
+ */
+export function SidebarGetStarted() {
+  const { view, shown, dismiss, skip } = useChecklist();
+  const open = useExpanded();
+  const go = useChecklistGo();
+  const visible = view?.visible ?? false;
+
+  useEffect(() => {
+    if (visible) shown();
+  }, [visible, shown]);
+
+  if (!view || !visible) return null;
+  const settled = view.rows.filter((r) => r.done || r.skipped).length;
+  const share = settled / view.rows.length;
   return (
-    <section data-checklist="" aria-labelledby="checklist-title" className="mb-6 rounded-xl border bg-card shadow-xs">
-      <header className="flex items-start gap-3 px-4 pt-3.5 pb-2">
-        <div className="min-w-0 flex-1">
-          <h2 id="checklist-title" className="text-[14px] font-semibold">
-            {view.title}
-          </h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">{view.detail}</p>
-        </div>
-        <span className="mt-0.5 text-xs tabular-nums text-muted-foreground" data-checklist-count="">
-          {view.progress} done
-        </span>
-        <Button variant="ghost" size="icon-sm" aria-label={view.closeLabel} onClick={() => dismiss()}>
-          <XIcon className="size-3.5 text-muted-foreground" />
-        </Button>
-      </header>
-      <ol className="divide-y border-t">
-        {view.rows.map(({ step, title, detail, action, done }) => (
-          <li key={step} data-checklist-step={step} data-done={done || undefined} className="flex items-center gap-3 px-4 py-2.5">
-            <span
-              aria-hidden
-              className={cn(
-                "flex size-5 shrink-0 items-center justify-center rounded-full border",
-                done ? "border-brand bg-brand text-white" : "border-foreground/20",
-              )}
-            >
-              {done ? <CheckIcon className="size-3" strokeWidth={3} /> : null}
-            </span>
-            <div className="min-w-0 flex-1">
-              <div className={cn("text-[13px] font-medium", done && "text-muted-foreground line-through decoration-foreground/30")}>
+    <section data-checklist="" data-open={open || undefined} aria-label={view.title} className="mx-2 mb-1">
+      {open ? (
+        <ol className="mb-1 border-t border-foreground/10 pt-1" data-checklist-steps="">
+          {view.rows.map(({ step, title, detail, done, skipped }) => (
+            <li key={step} data-checklist-step={step} data-done={done || undefined} data-skipped={skipped || undefined} className="group flex h-7 items-center gap-2 rounded-md px-2 text-[12.5px] hover:bg-foreground/5">
+              <span
+                aria-hidden
+                className={cn(
+                  "flex size-3.5 shrink-0 items-center justify-center rounded-full border",
+                  done ? "border-brand bg-brand text-white" : skipped ? "border-foreground/25 bg-foreground/10" : "border-foreground/25",
+                )}
+              >
+                {done ? <CheckIcon className="size-2" strokeWidth={3.5} /> : null}
+              </span>
+              <button
+                type="button"
+                title={detail}
+                disabled={done || skipped}
+                onClick={() => go(step)}
+                className={cn("min-w-0 flex-1 truncate text-left outline-none disabled:cursor-default", done || skipped ? "text-muted-foreground line-through decoration-foreground/30" : "text-foreground")}
+              >
                 {title}
-                <span className="sr-only">{done ? " (done)" : ""}</span>
-              </div>
-              <div className="truncate text-xs text-muted-foreground">{detail}</div>
-            </div>
-            {done ? null : (
-              <Button variant="outline" size="sm" onClick={() => go(step)}>
-                {action}
-              </Button>
-            )}
-          </li>
-        ))}
-      </ol>
+                <span className="sr-only">{done ? " (done)" : skipped ? " (skipped)" : ""}</span>
+              </button>
+              {done ? null : skipped ? (
+                <span className="text-[11px] text-muted-foreground">Skipped</span>
+              ) : (
+                <button type="button" className="text-[11px] text-muted-foreground opacity-70 hover:text-foreground hover:opacity-100" onClick={() => skip(step)} data-checklist-skip={step}>
+                  {view.skipLabel}
+                </button>
+              )}
+            </li>
+          ))}
+        </ol>
+      ) : null}
+      <div className="flex h-7 items-center gap-2 rounded-md px-2 text-[13px] text-muted-foreground hover:bg-foreground/5">
+        <button type="button" className="flex min-w-0 flex-1 items-center gap-2 text-left outline-none hover:text-foreground" onClick={() => setExpanded(!open)} aria-expanded={open} data-checklist-toggle="">
+          <svg viewBox="0 0 16 16" aria-hidden className="size-3.5 shrink-0 -rotate-90">
+            <circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" strokeOpacity=".25" strokeWidth="2" />
+            <circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" strokeWidth="2" strokeDasharray={`${share * 40.8} 40.8`} />
+          </svg>
+          <span className="flex-1 truncate">{view.title}</span>
+          <span className="tabular-nums" data-checklist-count="">
+            {settled}/{view.rows.length}
+          </span>
+          <ChevronDownIcon aria-hidden className={cn("size-3.5 transition-transform", open ? "" : "rotate-180")} />
+        </button>
+        {open || view.complete ? (
+          <button type="button" className="text-[11px] hover:text-foreground" onClick={() => dismiss()} aria-label={view.closeLabel} data-checklist-hide="">
+            {view.hideLabel}
+          </button>
+        ) : null}
+      </div>
     </section>
   );
 }
@@ -164,7 +203,6 @@ export function GettingStarted() {
  */
 export function ChecklistTracker() {
   const { state, send, reopen } = useChecklist();
-  const navigate = useNavigate();
   const { data: machines } = useMachines();
   const { data: spaces } = useSpaces();
 
@@ -178,11 +216,11 @@ export function ChecklistTracker() {
     const onHostEvent = (event: Event) => {
       if ((event as CustomEvent<WebkitEventDetail>).detail?.event !== WEBKIT_OPEN_CHECKLIST_EVENT) return;
       reopen();
-      void navigate({ to: "/spaces" });
+      setExpanded(true);
     };
     window.addEventListener(WEBKIT_EVENT, onHostEvent);
     return () => window.removeEventListener(WEBKIT_EVENT, onHostEvent);
-  }, [reopen, navigate]);
+  }, [reopen]);
 
   // Agents are only read while this step is open.
   return state.done.run_agent ? null : <AgentProgress onRun={() => send({ type: "observe", otherMachine: false, hasSpace: false, agentRan: true })} />;

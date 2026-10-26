@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDemoAdapter } from "@/bridge/adapters/demo";
 import { noCore } from "@/bridge/__tests__/testCore";
 import { BridgeProvider, type Space } from "@/bridge";
-import { StreamSurface } from "@/components/space-detail/stream-surface";
+import { CONNECT_TIMEOUT_MS, CONNECT_TIMEOUT_REASON, StreamSurface } from "@/components/space-detail/stream-surface";
 import { ToastProvider } from "@/components/ui/toast";
 import { canStreamTile } from "@/components/video/tile-video";
 import { resetVideoSlotLoader } from "@/components/video/use-video-slot";
@@ -51,6 +51,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   cleanup();
   delete (window as Win).webkit;
   vi.unstubAllGlobals();
@@ -277,9 +278,53 @@ describe("<StreamSurface> native video", () => {
     expect(container.querySelector('[data-stream-state="connecting"]')).toBeTruthy();
   });
 
+  // Regression: the viewer waited on "Loading the desktop…" / "Connecting…"
+  // forever. With no picture after CONNECT_TIMEOUT_MS it says it could not
+  // connect, why, and offers one action (Try again); a late picture still shows.
+  it("never waits silently: no picture within the timeout says why, with Try again", async () => {
+    expect(CONNECT_TIMEOUT_MS).toBeGreaterThanOrEqual(15_000);
+    expect(CONNECT_TIMEOUT_MS).toBeLessThanOrEqual(30_000);
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    hostDrawsVideo();
+    const { container, getByText, queryByText } = mount();
+    await waitFor(() => expect(updates()).not.toHaveLength(0));
+    const first = updates()[0]!;
+    act(() => void vi.advanceTimersByTime(CONNECT_TIMEOUT_MS - 1_000));
+    expect(container.querySelector('[data-stream-state="connecting"]')).toBeTruthy();
+    expect(queryByText("Could not connect to the desktop")).toBeNull();
+    act(() => void vi.advanceTimersByTime(1_000));
+    expect(container.querySelector('[data-stream-state="failed"]')).toBeTruthy();
+    expect(getByText("Could not connect to the desktop")).toBeTruthy();
+    expect(container.querySelector("[data-cover-reason]")?.textContent).toBe(CONNECT_TIMEOUT_REASON);
+    // One action: Try again (no second button for a stall).
+    expect(container.querySelectorAll("[data-desktop-cover] button")).toHaveLength(1);
+    expect(getByText("Try again")).toBeTruthy();
+    // A picture that arrives late still shows.
+    act(() => hostEvent("video.surface", { surfaceId: first.surfaceId, state: "live" }));
+    expect(container.querySelector('[data-stream-state="live"]')).toBeTruthy();
+    expect(container.querySelector("[data-desktop-cover]")).toBeNull();
+  });
+
+  it("starts the wait over on Try again after a timeout", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    hostDrawsVideo();
+    const { container, getByText } = mount();
+    await waitFor(() => expect(updates()).not.toHaveLength(0));
+    const first = updates()[0]!;
+    act(() => void vi.advanceTimersByTime(CONNECT_TIMEOUT_MS));
+    expect(container.querySelector('[data-stream-state="failed"]')).toBeTruthy();
+    act(() => getByText("Try again").click());
+    await waitFor(() => expect(updates().some((u) => u.surfaceId !== first.surfaceId)).toBe(true));
+    expect(container.querySelector('[data-stream-state="connecting"]')).toBeTruthy();
+    act(() => void vi.advanceTimersByTime(CONNECT_TIMEOUT_MS - 1_000));
+    expect(container.querySelector('[data-stream-state="connecting"]')).toBeTruthy();
+    act(() => void vi.advanceTimersByTime(1_000));
+    expect(container.querySelector('[data-stream-state="failed"]')).toBeTruthy();
+  });
+
   it("says why once when the host could not open a stream, and not for one that failed once open", async () => {
     hostDrawsVideo();
-    const { getByText, queryByText } = render(
+    const { getByText, getAllByText, queryByText } = render(
       <BridgeProvider adapter={createDemoAdapter({ latencyMs: 1 })} core={noCore}>
         <ToastProvider>
           <StreamSurface spaceId="sp-1" os="macos" canStream previewText="Not reachable" />
@@ -295,7 +340,9 @@ describe("<StreamSurface> native video", () => {
     const second = updates().find((u) => u.surfaceId !== first.surfaceId)!;
     act(() => hostEvent("video.surface", { surfaceId: second.surfaceId, state: "failed", reason: "scripted provider failure", opening: true }));
     await waitFor(() => expect(getByText("Could not open sp-1")).toBeTruthy());
-    expect(getByText("scripted provider failure")).toBeTruthy();
+    // In the toast, and on the cover under "Could not connect".
+    expect(getAllByText("scripted provider failure")).toHaveLength(2);
+    expect(document.querySelector("[data-cover-reason]")?.textContent).toBe("scripted provider failure");
   });
 
   /** The demo host, answering `settings.get` with auto-connect off and

@@ -16,6 +16,8 @@
 //!
 //! The Spaces apps ship this binary as their `cua`.
 
+#![recursion_limit = "256"]
+
 use std::io::Write;
 use std::sync::Arc;
 
@@ -28,6 +30,8 @@ use cua_sdk::{Cua, CuaError, MediaEvent, MediaOpenOptions, MediaSession, Spacesd
 
 pub mod drive_config;
 pub mod keyvault_cmd;
+pub mod pool_ext;
+mod pool_modal;
 pub mod teleport;
 pub mod teleport_session;
 pub mod viewer;
@@ -127,6 +131,7 @@ impl cua_spaces_ffi::media_decode::DecodedFrameSink for Decoded {
 /// Registers the Cua Spaces extensions (the daemon's and the commands).
 pub fn register() {
     cua_spaces_ext::daemon::register();
+    pool_ext::register();
     cua_cli::extension::register(Arc::new(CuaSpacesCli));
 }
 

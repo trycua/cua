@@ -18,8 +18,13 @@ path = "src/lib.rs"
 name = "cua-spaces-cli"
 path = "src/main.rs"
 
+[features]
+default = []
+# Modal as overflow capacity of your machines (needs the cua-modal-helper binary).
+contrib-modal = ["dep:cua-contrib", "cua-contrib/modal"]
+
 [dependencies]
-cua-cli = { path = "../cua-cli" }
+cua-cli = { path = "../cua-cli", features = ["byoc"] }
 cua-spaces-ext = { workspace = true, features = ["s3", "mount"] }
 cua-spaces-ffi = { path = "../cua-spaces-ffi" }
 cua-spacesd-html5 = { path = "../cua-spacesd-html5", features = ["standalone"] }
@@ -29,12 +34,29 @@ cua-teleport.workspace = true
 cua-volume.workspace = true
 cua-auth.workspace = true
 cua-home.workspace = true
+# The pool agent `cua daemon` runs (batch runs on all your machines).
+cua-spaces-cluster.workspace = true
+cua-daemon.workspace = true
+cua-spaces = { path = "../cua-spaces" }
+cua-cluster.workspace = true
+cua-host.workspace = true
+humantime.workspace = true
+rand.workspace = true
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "json"] }
+# Modal as overflow capacity of your machines (feature `contrib-modal`, off
+# by default like the MIT `cua`'s contrib providers).
+cua-contrib = { workspace = true, optional = true }
+cua-sandbox-core.workspace = true
+# Host Spaces requests (the pool's link to your machines).
+cua-proto.workspace = true
+futures-util.workspace = true
 async-trait.workspace = true
 axum.workspace = true
 url.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true }
+tracing.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
@@ -44,7 +66,6 @@ cua-media-protocol.workspace = true
 cua-daemon = { workspace = true, features = ["server", "client", "test-fixtures"] }
 cua-spacesd-client = { workspace = true, features = ["testing"] }
 cua-host = { workspace = true, features = ["testing"] }
-cua-fleet = { workspace = true, features = ["testing"] }
 cua-sandbox-core = { workspace = true, features = ["testing"] }
 clap.workspace = true
 tempfile.workspace = true

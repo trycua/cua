@@ -1,14 +1,18 @@
 ---
-title: Create a Space with the Cua SDK
-description: Create a Linux Space on your own machine from Python or TypeScript, run a command in it, take a screenshot, ask Cua Driver for its windows, watch it, and delete it.
+title: Use Spaces from code
+description: Create a Linux Space on your own computer from Python or TypeScript, run a command in it, take a screenshot, ask Cua Driver for its windows, watch it, and delete it. Then start from a full agent app in TypeScript, Rust or Swift.
+keywords:
+  - Cua Spaces example
+  - TypeScript agent app
+  - Tauri agent app
 ---
 
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
 This walkthrough is for developers. A Space is a desktop your agents can use and
-you can watch. You create one on your own machine from code, run a command in it,
+you can watch. You create one on your own computer from code, run a command in it,
 take a screenshot, ask Cua Driver which windows it sees, watch the desktop,
-and delete the Space. Nothing leaves your machine.
+and delete the Space. Nothing leaves your computer.
 
 Requirements: Docker (or Podman or Colima) and about 4 GB of free memory.
 
@@ -38,7 +42,7 @@ npm install @trycua/cua
 
 ## 2. Create a Space and use it
 
-The program passes no location, so the Space runs on this machine: the
+The program passes no location, so the Space runs on this computer: the
 canonical Linux desktop (`ghcr.io/trycua/linux:24.04`) in a container.
 
 <Tabs groupId="sdk-lang" persist items={['Python', 'TypeScript']}>
@@ -143,11 +147,70 @@ cua spaces delete local:space-1a2b3c
 
 `cua spaces ls` shows what is left.
 
+## Examples in other languages
+
+[Cua Bots](/spaces/examples/cua-bots) is the featured example, in SwiftUI. The OpenKoalaBots samples build a smaller agent app three times, in TypeScript, Rust (Tauri) and Swift, so you can start from the language you ship in. Each one runs named bots as long-lived agent threads on a shared Space, streams the Space's desktop next to the thread, sends files into it and runs routines.
+
+![The Tauri sample: a bot's thread next to the live Space](/img/openkoalabots/openkoalabots-tauri-thread.png)
+
+### Source
+
+| Language | Sample | Built on |
+|---|---|---|
+| TypeScript | [`examples/openkoalabot-example-ts`](https://github.com/trycua/cua/tree/main/examples/openkoalabot-example-ts) | A Node server and web UI on `@trycua/cua` |
+| Rust (Tauri) | [`examples/openkoalabot-example-tauri`](https://github.com/trycua/cua/tree/main/examples/openkoalabot-example-tauri) | A Tauri 2 app on the `cua-spaces` crate |
+| Swift | [`examples/openkoalabot-example-swift`](https://github.com/trycua/cua/tree/main/examples/openkoalabot-example-swift) | A SwiftUI app on `Cua` and `CuaSpaces` |
+
+All three pass one headless test, [`examples/openkoalabot-example-scenario`](https://github.com/trycua/cua/tree/main/examples/openkoalabot-example-scenario).
+
+### Run one
+
+From a clone of [trycua/cua](https://github.com/trycua/cua). The samples build the cua SDK from source, so you need Rust.
+
+<Tabs items={['TypeScript', 'Rust + Tauri', 'Swift']}>
+  <Tab value="TypeScript">
+    ```bash skip="no-runner"
+    (cd libs/cua && cargo build --release -p cua-sdk)
+    (cd libs/cua/typescript && npm ci && npm run stage:uniffi && npm run build && npm run build:browser)
+    cd examples/openkoalabot-example-ts
+    npm ci && npm run build && npm run build:web
+    npm run serve    # open the URL it prints
+    ```
+  </Tab>
+  <Tab value="Rust + Tauri">
+    ```bash skip="no-runner"
+    cd examples/openkoalabot-example-tauri
+    pnpm install --frozen-lockfile
+    pnpm tauri build --debug --no-bundle
+    src-tauri/target/debug/openkoalabot-example-tauri
+    ```
+  </Tab>
+  <Tab value="Swift">
+    ```bash skip="no-runner"
+    (cd libs/cua && cargo build --release -p cua-sdk && node scripts/stage-uniffi-library.mjs --only=swift)
+    cd examples/openkoalabot-example-swift
+    swift build && .build/debug/OpenKoalaBotExample
+    ```
+  </Tab>
+</Tabs>
+
+Each app needs a Space: create one with **New Space**, or add one by address.
+
+### Where each part is explained
+
+| Part | Guide |
+|------|-------|
+| Create, add and delete a Space | [Create a Space](/spaces/guides/add-a-space) |
+| Live desktop and presence | [Stream a desktop](/spaces/guides/stream-a-desktop) |
+| File attachments | [Send a file into a Space](/spaces/guides/cua-volume#send-a-file-into-a-space) |
+| Session teleport | [Teleport an app](/spaces/guides/teleport-an-app) |
+| Bots as agent threads | [Run an agent inside a Space](/spaces/guides/connect-your-agent#run-an-agent-inside-a-space) |
+
 ## Next
 
-- [Reach another machine](/cua-sdk#reach-another-machine): connect the SDK to
-  any machine that runs cua-spacesd, by address and token.
-- [Host Spaces on a spare Mac](/spaces/guides/host-spaces-on-your-spare-mac):
-  let your laptop create Spaces on another machine, over the relay, ssh or
+- [Reach another computer](/cua-sdk#reach-another-machine): connect the SDK to
+  any computer that runs cua-spacesd, by address and token.
+- [Add a computer](/spaces/guides/add-a-computer#use-a-spare-mac-to-host-spaces):
+  let your laptop create Spaces on another computer, over the relay, ssh or
   Tailscale.
 - [Create a Space](/spaces/guides/add-a-space): any image, progress, GPUs.

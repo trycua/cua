@@ -136,6 +136,8 @@ pub enum Command {
     },
     Doctor {
         json: bool,
+        /// macOS: make LaunchServices forget every other copy of the app.
+        fix: bool,
     },
     Diagnose,
     /// `cua-driver permissions status|grant [--json]` — report TCC status
@@ -964,7 +966,8 @@ pub fn parse_command() -> Command {
             // `--json` switches to machine-readable output for scripting.
             // Bare flag — no value, position-independent.
             let json = args.iter().any(|a| a == "--json");
-            Command::Doctor { json }
+            let fix = args.iter().any(|a| a == "--fix");
+            Command::Doctor { json, fix }
         }
         Some("diagnose") => Command::Diagnose,
         Some("permissions") => {
@@ -1406,7 +1409,6 @@ impl std::fmt::Display for LaunchDaemonError {
 
 impl std::error::Error for LaunchDaemonError {}
 
-#[cfg(target_os = "macos")]
 pub fn launch_daemon_and_wait(
     socket_path: &str,
     timeout_secs: u64,
@@ -1428,6 +1430,20 @@ pub fn launch_daemon_and_wait(
     )
 }
 
+fn wait_for_daemon_listening(socket_path: &str, timeout_secs: u64) -> bool {
+    use std::time::{Duration, Instant};
+
+    // 100ms tick matches Swift's `usleep(100_000)`.
+    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
+    while Instant::now() < deadline {
+        if crate::serve::is_daemon_listening(socket_path) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    false
+}
+
 #[cfg(target_os = "macos")]
 fn launch_daemon_with_state_and_wait(
     socket_path: &str,
@@ -1437,7 +1453,6 @@ fn launch_daemon_with_state_and_wait(
     _allow_managed_restart: bool,
 ) -> Result<(), LaunchDaemonError> {
     use std::process::{Command as Cmd, Stdio};
-    use std::time::{Duration, Instant};
 
     // Forward `--socket <path>` to the relaunched daemon when the caller
     // passed a non-default socket via `cua-driver mcp --socket /path`.
@@ -1447,9 +1462,14 @@ fn launch_daemon_with_state_and_wait(
     // actually differs from the default, so the common case keeps the
     // shorter `open` argv (and matches Swift's invocation byte-for-byte).
     let app_name = crate::bundle::app_name();
+    let cli_name = crate::bundle::cli_name();
     let app_path = crate::bundle::app_bundle_path();
     let pass_socket = socket_path != crate::serve::default_socket_path();
-    let open_args = daemon_launch_arguments(app_name, socket_path, state, experimental_history);
+    // Launch the resolved bundle by path rather than `-a <name>`: when more
+    // than one copy is registered (for example `/Applications` and
+    // `~/Applications`), LaunchServices may otherwise pick a different copy
+    // than the one this CLI belongs to, with different TCC grants.
+    let open_args = daemon_launch_arguments(&app_path, socket_path, state, experimental_history);
     // Thread the Claude-Code compat flag through to the daemon. Without this
     // the proxy-spawned daemon always called build_macos_registry() (compat
     // hardcoded false), so `cua-driver mcp --claude-code-computer-use-compat`
@@ -1482,26 +1502,21 @@ fn launch_daemon_with_state_and_wait(
         return Err(LaunchDaemonError {
             kind: LaunchDaemonErrorKind::Failed,
             message: format!(
-                "`open -n -g -a {app_name} --args serve{}` exited {:?}. \
-             Check that `{app_path}` is installed.",
+                "launching `{app_path}` exited {:?}{}. Check that {app_name} is installed \
+             at that path, then run `{cli_name} permissions grant`.",
+                status.code(),
                 if pass_socket {
-                    format!(" --socket {socket_path}")
+                    format!(" (socket {socket_path})")
                 } else {
                     String::new()
                 },
-                status.code()
             ),
         });
     }
 
     // Poll the UDS until the daemon answers a probe or we time out.
-    // 100ms tick matches Swift's `usleep(100_000)`.
-    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
-    while Instant::now() < deadline {
-        if crate::serve::is_daemon_listening(socket_path) {
-            return Ok(());
-        }
-        std::thread::sleep(Duration::from_millis(100));
+    if wait_for_daemon_listening(socket_path, timeout_secs) {
+        return Ok(());
     }
 
     Err(LaunchDaemonError {
@@ -1515,28 +1530,6 @@ fn launch_daemon_with_state_and_wait(
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn launch_daemon_and_wait(
-    socket_path: &str,
-    timeout_secs: u64,
-    claude_code_compat: bool,
-    grants: &[String],
-    experimental_history: bool,
-) -> Result<(), LaunchDaemonError> {
-    let state = crate::history_runtime::DaemonLaunchState {
-        claude_code_compat,
-        grants: grants.to_vec(),
-        ..Default::default()
-    };
-    launch_daemon_with_state_and_wait(
-        socket_path,
-        timeout_secs,
-        &state,
-        experimental_history,
-        true,
-    )
-}
-
-#[cfg(not(target_os = "macos"))]
 fn launch_daemon_with_state_and_wait(
     socket_path: &str,
     timeout_secs: u64,
@@ -1544,8 +1537,6 @@ fn launch_daemon_with_state_and_wait(
     experimental_history: bool,
     allow_managed_restart: bool,
 ) -> Result<(), LaunchDaemonError> {
-    use std::time::{Duration, Instant};
-
     let executable = std::env::current_exe().map_err(|error| LaunchDaemonError {
         kind: LaunchDaemonErrorKind::Failed,
         message: format!("current Cua Driver executable is unavailable: {error}"),
@@ -1576,12 +1567,8 @@ fn launch_daemon_with_state_and_wait(
         spawn_detached_windows_daemon(&executable, &arguments)?;
     }
 
-    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
-    while Instant::now() < deadline {
-        if crate::serve::is_daemon_listening(socket_path) {
-            return Ok(());
-        }
-        std::thread::sleep(Duration::from_millis(100));
+    if wait_for_daemon_listening(socket_path, timeout_secs) {
+        return Ok(());
     }
     Err(LaunchDaemonError {
         kind: LaunchDaemonErrorKind::Timeout,
@@ -1745,7 +1732,7 @@ fn restart_managed_daemon_if_present(_executable: &std::path::Path) -> bool {
 
 #[cfg(target_os = "macos")]
 fn daemon_launch_arguments(
-    app_name: &str,
+    app: &str,
     socket_path: &str,
     state: &crate::history_runtime::DaemonLaunchState,
     experimental_history: bool,
@@ -1753,8 +1740,7 @@ fn daemon_launch_arguments(
     let mut args = vec![
         "-n".to_owned(),
         "-g".to_owned(),
-        "-a".to_owned(),
-        app_name.to_owned(),
+        app.to_owned(),
         "--args".to_owned(),
         "serve".to_owned(),
     ];
@@ -1863,42 +1849,18 @@ where
             );
         }
         #[cfg(target_os = "macos")]
-        {
+        let experimental_history = {
             let app_name = crate::bundle::app_name();
-            let socket_suffix = if socket_path != crate::serve::default_socket_path() {
-                format!(" --socket {socket_path}")
-            } else {
-                String::new()
-            };
             eprintln!(
                 "{}: mcp launched without {app_name}.app's TCC grants; \
-                 auto-launching the daemon via `open -n -g -a {app_name} --args serve{socket_suffix}` \
+                 auto-launching the installed {app_name}.app daemon \
                  and proxying MCP requests through it.",
                 crate::bundle::cli_name()
             );
-            if let Err(error) = launch_daemon_and_wait(
-                &socket_path,
-                10,
-                claude_code_compat,
-                grants,
-                crate::history_runtime::preview_admitted_preference(),
-            ) {
-                if let Some(on_startup) = on_startup.take() {
-                    on_startup(
-                        if error.kind == LaunchDaemonErrorKind::Timeout {
-                            McpDaemonStartup::LaunchTimeout
-                        } else {
-                            McpDaemonStartup::LaunchFailed
-                        },
-                        false,
-                    );
-                }
-                return Err(error.into());
-            }
-            daemon = McpDaemonStartup::Launched;
-        }
+            crate::history_runtime::preview_admitted_preference()
+        };
         #[cfg(not(target_os = "macos"))]
-        {
+        let experimental_history = {
             if !crate::history_runtime::preview_admitted_preference() {
                 if let Some(on_startup) = on_startup.take() {
                     on_startup(McpDaemonStartup::UnsupportedRelaunch, false);
@@ -1911,23 +1873,28 @@ where
                      Then re-run `cua-driver mcp`."
                 );
             }
-            if let Err(error) =
-                launch_daemon_and_wait(&socket_path, 10, claude_code_compat, grants, true)
-            {
-                if let Some(on_startup) = on_startup.take() {
-                    on_startup(
-                        if error.kind == LaunchDaemonErrorKind::Timeout {
-                            McpDaemonStartup::LaunchTimeout
-                        } else {
-                            McpDaemonStartup::LaunchFailed
-                        },
-                        false,
-                    );
-                }
-                return Err(error.into());
+            true
+        };
+        if let Err(error) = launch_daemon_and_wait(
+            &socket_path,
+            10,
+            claude_code_compat,
+            grants,
+            experimental_history,
+        ) {
+            if let Some(on_startup) = on_startup.take() {
+                on_startup(
+                    if error.kind == LaunchDaemonErrorKind::Timeout {
+                        McpDaemonStartup::LaunchTimeout
+                    } else {
+                        McpDaemonStartup::LaunchFailed
+                    },
+                    false,
+                );
             }
-            daemon = McpDaemonStartup::Launched;
+            return Err(error.into());
         }
+        daemon = McpDaemonStartup::Launched;
     }
 
     if let Some(on_startup) = on_startup.take() {
@@ -2137,7 +2104,10 @@ pub fn build_manifest() -> serde_json::Value {
               ] },
             { "name": "doctor",
               "description": "Self-diagnose probes for runtime prerequisites (permissions, accessibility, capture, etc.).",
-              "args": [ { "name": "--json", "type": "flag", "description": "Machine-readable doctor report." } ] },
+              "args": [
+                  { "name": "--json", "type": "flag", "description": "Machine-readable doctor report." },
+                  { "name": "--fix", "type": "flag", "description": "macOS: make LaunchServices forget every other copy of CuaDriver.app (no files are deleted)." }
+              ] },
             { "name": "diagnose",
               "description": "Emit a developer-focused diagnostic dump suitable for bug reports.",
               "args": [] },
@@ -3548,8 +3518,8 @@ fn run_permissions_status(json: bool) {
             format!(
                 "No {app_name} daemon is running under the driver's own identity ({bundle_id}), \
                  so its real TCC status can't be read from this process. \
-                 Run `{cli_name} permissions grant` to grant + verify, or start the daemon \
-                 (`open -n -g -a {app_name} --args serve`) and re-run this command."
+                 Run `{cli_name} permissions grant` to grant + verify and start the daemon, \
+                 then re-run this command."
             )
         };
         if json {
@@ -4647,10 +4617,10 @@ fn cli_docs_literal() -> serde_json::Value {
             {
                 "name": "doctor",
                 "abstract": "Run platform-aware diagnostic probes.",
-                "discussion": "Exit code is non-zero when any probe is an error.",
+                "discussion": "Exit code is non-zero when any probe is an error. On macOS it warns about other copies of CuaDriver.app that macOS can launch instead of the installed one, and about permission rows tied to a different path or version.",
                 "arguments": no_args,
                 "options": no_options,
-                "flags": [{"name":"json","short_name":null,"help":"Emit the probe report as JSON.","default_value":false}],
+                "flags": [{"name":"json","short_name":null,"help":"Emit the probe report as JSON.","default_value":false},{"name":"fix","short_name":null,"help":"macOS: make LaunchServices forget every other copy of CuaDriver.app. No files are deleted.","default_value":false}],
                 "subcommands": no_subcommands
             },
             {
@@ -4853,6 +4823,7 @@ const CLI_EXAMPLES: &[(&str, &[(&str, &str)])] = &[
     ("doctor", &[
         ("cua-driver doctor", "Run the diagnostic probes"),
         ("cua-driver doctor --json", "Emit the probe report as JSON"),
+        ("cua-driver doctor --fix", "macOS: make macOS forget extra copies of the app (deletes no files)"),
     ]),
     ("diagnose", &[("cua-driver diagnose", "Print an install and permission report to paste into an issue")]),
     ("autostart", &[("cua-driver autostart status", "Check the autostart entry")]),
@@ -5415,11 +5386,13 @@ pub fn run_config_cmd(
 ///
 /// See [`crate::doctor`] for the probe catalog. Output is plain text by
 /// default; `--json` switches to a machine-readable shape for scripting.
+/// `--fix` (macOS) also makes LaunchServices forget every other copy of the
+/// app; it never deletes a file.
 /// Exit code is `0` when every probe is `[ok]` or `[warn]`, non-zero when
 /// at least one `[err]` probe failed (e.g. the binary cannot resolve its
 /// own install dir).
-pub fn run_doctor_cmd(json: bool) {
-    let report = crate::doctor::run();
+pub fn run_doctor_cmd(json: bool, fix: bool) {
+    let report = crate::doctor::run(fix);
 
     if json {
         let val = report.to_json();
@@ -5491,6 +5464,15 @@ fn first_sentence(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn wait_for_daemon_listening_zero_timeout_returns_false() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("missing.sock");
+        assert!(!super::wait_for_daemon_listening(
+            socket.to_str().unwrap(),
+            0
+        ));
+    }
 
     #[test]
     fn cli_docs_json_examples_cover_every_command() {
@@ -5773,7 +5755,12 @@ mod tests {
             grants,
         };
         #[cfg(target_os = "macos")]
-        let launch = daemon_launch_arguments("CuaDriver", "/tmp/history-test.sock", &state, true);
+        let launch = daemon_launch_arguments(
+            "/Applications/CuaDriver.app",
+            "/tmp/history-test.sock",
+            &state,
+            true,
+        );
         #[cfg(not(target_os = "macos"))]
         let launch = daemon_process_arguments("history-test.sock", &state, true);
         assert!(launch
@@ -5796,6 +5783,27 @@ mod tests {
         assert!(launch
             .windows(2)
             .any(|pair| pair == ["--socket", "/tmp/history-test.sock"]));
+    }
+
+    /// The daemon must be launched from the exact installed bundle path. `open -a
+    /// CuaDriver` lets LaunchServices pick any registered copy named CuaDriver
+    /// (an old version in the Trash or a benchmark folder), which then owns the
+    /// permission prompts and the System Settings entry.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn daemon_launch_targets_the_exact_bundle_path_not_the_app_name() {
+        let launch = daemon_launch_arguments(
+            "/Applications/CuaDriver.app",
+            &crate::serve::default_socket_path(),
+            &crate::history_runtime::DaemonLaunchState::default(),
+            false,
+        );
+        assert_eq!(
+            launch,
+            ["-n", "-g", "/Applications/CuaDriver.app", "--args", "serve"]
+        );
+        assert!(!launch.contains(&"-a".to_owned()));
+        assert!(!launch.contains(&"CuaDriver".to_owned()));
     }
 
     #[test]

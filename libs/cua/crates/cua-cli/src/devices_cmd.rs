@@ -6,7 +6,7 @@
 //! device; `cua auth login` does (see [`after_login`]).
 
 use crate::auth;
-use crate::util::{self, line};
+use crate::util::{self, hint_line, line};
 use clap::Subcommand;
 use cua_host::{DeviceAuth, DeviceState, DeviceView};
 use cua_sdk::CuaError;
@@ -21,11 +21,11 @@ pub enum DevicesCmd {
   cua devices status")]
     Status {
         /// Relay URL (default $CUA_RELAY_URL, else the CUA_ENV relay, https://relay.cua.ai in production).
-        #[arg(long)]
+        #[arg(long, hide = true)]
         relay: Option<String>,
     },
     /// Enroll this device. Right after a fresh `cua auth login` it enrolls
-    /// at once (and replaces this machine's older device key, if any);
+    /// at once (and replaces this computer's older device key, if any);
     /// otherwise it shows a one-time code to approve from an enrolled
     /// device (`cua devices approve <code>` or the Cua Spaces app).
     #[command(after_help = "Examples:
@@ -39,7 +39,7 @@ pub enum DevicesCmd {
         #[arg(long)]
         wait: bool,
         /// Relay URL.
-        #[arg(long)]
+        #[arg(long, hide = true)]
         relay: Option<String>,
     },
     /// Approve a new device (or re-verify an expired one) from this
@@ -58,7 +58,7 @@ pub enum DevicesCmd {
         #[arg(long)]
         yes: bool,
         /// Relay URL.
-        #[arg(long)]
+        #[arg(long, hide = true)]
         relay: Option<String>,
     },
     /// Your devices and their state.
@@ -70,7 +70,7 @@ pub enum DevicesCmd {
     )]
     Ls {
         /// Relay URL.
-        #[arg(long)]
+        #[arg(long, hide = true)]
         relay: Option<String>,
     },
     /// Rename a device.
@@ -82,10 +82,10 @@ pub enum DevicesCmd {
         /// New name.
         name: String,
         /// Relay URL.
-        #[arg(long)]
+        #[arg(long, hide = true)]
         relay: Option<String>,
     },
-    /// Revoke a device: it can no longer list or reach your machines.
+    /// Revoke a device: it can no longer list or reach your computers.
     #[command(after_help = "Examples:
   cua devices revoke dev_0123456789abcdef01234567")]
     Revoke {
@@ -95,10 +95,10 @@ pub enum DevicesCmd {
         #[arg(long)]
         yes: bool,
         /// Relay URL.
-        #[arg(long)]
+        #[arg(long, hide = true)]
         relay: Option<String>,
     },
-    /// Who accessed what, and when: enrollments, device sessions, machine
+    /// Who accessed what, and when: enrollments, device sessions, computer
     /// access (yours and by accounts you share with), sharing changes.
     #[command(after_help = "Examples:
   cua devices audit
@@ -108,7 +108,7 @@ pub enum DevicesCmd {
         #[arg(long, default_value_t = 50)]
         limit: usize,
         /// Relay URL.
-        #[arg(long)]
+        #[arg(long, hide = true)]
         relay: Option<String>,
     },
 }
@@ -191,6 +191,8 @@ pub async fn after_login(home: &Path, out: &mut dyn Write) {
         ),
         Ok(Ok(r)) => {
             if let Some(code) = r.code {
+                // The command runs on another, enrolled device, which may have
+                // either CLI: it is not renamed.
                 line(
                     out,
                     format!(
@@ -199,13 +201,13 @@ pub async fn after_login(home: &Path, out: &mut dyn Write) {
                 );
             }
         }
-        Ok(Err(e)) => line(
+        Ok(Err(e)) => hint_line(
             out,
             format!(
                 "Signed in, but this device could not be enrolled yet ({e}); run `cua devices enroll`."
             ),
         ),
-        Err(_) => line(
+        Err(_) => hint_line(
             out,
             "Signed in, but the relay did not answer in time to enroll this device; run `cua devices enroll`.",
         ),
@@ -227,7 +229,7 @@ fn approve_needs_terminal(cmd: &DevicesCmd, interactive: bool) -> Option<CuaErro
     match cmd {
         DevicesCmd::Approve { yes: false, .. } if !interactive => Some(CuaError::InvalidArgument(
             "`cua devices approve` needs --yes when not run in a terminal (it cannot ask \
-                 for confirmation): approving lets that device list and reach your machines"
+                 for confirmation): approving lets that device list and reach your computers"
                 .into(),
         )),
         _ => None,
@@ -302,14 +304,14 @@ pub async fn run_with(
             }
             match (&id, &this) {
                 (None, _) => {
-                    line(
+                    hint_line(
                         out,
                         "This device is not enrolled (run `cua devices enroll`).",
                     );
                     return Ok(1);
                 }
                 (Some(id), None) => match state {
-                    Ok(None) => line(
+                    Ok(None) => hint_line(
                         out,
                         format!(
                             "This device ({id}) is not registered on {} (run `cua devices enroll`).",
@@ -378,7 +380,7 @@ pub async fn run_with(
                     line(
                         out,
                         format!(
-                            "It replaces this machine's older device key ({}).",
+                            "It replaces this computer's older device key ({}).",
                             r.superseded.join(", ")
                         ),
                     );
@@ -399,7 +401,7 @@ pub async fn run_with(
                             .unwrap_or_else(|| "in 10 minutes".into())
                     ),
                 );
-                line(
+                hint_line(
                     out,
                     "Or sign in again: `cua auth login` enrolls this device (older relays: only your first device).",
                 );
@@ -442,7 +444,7 @@ pub async fn run_with(
                     )
                 })?;
             // Enrolling a device widens who reaches your machines: ask.
-            if !yes && !confirm(&format!("Let {target} list and reach your machines?")) {
+            if !yes && !confirm(&format!("Let {target} list and reach your computers?")) {
                 return Err(CuaError::PermissionDenied(
                     "not approved (pass --yes to approve without a prompt)".into(),
                 ));
@@ -528,7 +530,7 @@ pub async fn run_with(
                     parts.push(format!("device {d}"));
                 }
                 if let Some(m) = &e.machine {
-                    parts.push(format!("machine {m}"));
+                    parts.push(format!("computer {m}"));
                 }
                 if let Some(s) = &e.subject {
                     parts.push(s.clone());
@@ -738,7 +740,9 @@ mod tests {
         let text = run_text(enroll(), &rekeyed, false).await.unwrap();
         let old = laptop.device_id().unwrap().unwrap();
         assert!(
-            text.contains(&format!("replaces this machine's older device key ({old})")),
+            text.contains(&format!(
+                "replaces this computer's older device key ({old})"
+            )),
             "{text}"
         );
         // A pending device, approved by the id `cua devices ls` shows.

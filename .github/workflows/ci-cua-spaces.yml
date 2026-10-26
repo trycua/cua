@@ -34,6 +34,10 @@ on:
       - "apps/cua-spaces/**"
       - "libs/cua/**"
       - ".github/workflows/ci-cua-spaces.yml"
+      - ".github/flaky/**"
+      - ".github/scripts/flaky/**"
+      - ".github/actions/nextest/**"
+      - ".github/actions/flaky-upload/**"
   push:
     branches: [main]
     paths:
@@ -166,9 +170,22 @@ jobs:
             apps/cua-spaces/src-tauri -> target
             libs/cua -> target
       - run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/nextest
+      # One retry; a test that passes only on it is reported and gets a `flaky`
+      # issue (.github/flaky/).
       - name: Rust command-layer tests (hermetic)
         shell: bash
-        run: cargo test --manifest-path src-tauri/Cargo.toml --locked --test host_commands --test commands --test installer_commands --test app_core_parity --lib -- --test-threads=4
+        run: >-
+          "$GITHUB_WORKSPACE/.github/scripts/flaky/flaky.sh" run --suite spaces-rust --format junit
+          --results src-tauri/target/nextest/ci/junit.xml --
+          cargo nextest run --manifest-path src-tauri/Cargo.toml --locked
+          --config-file "$GITHUB_WORKSPACE/.github/flaky/nextest.toml" --profile ci
+          --test host_commands --test commands --test installer_commands --test app_core_parity --lib
+          --test-threads 4
+      - uses: ./.github/actions/flaky-upload
+        if: always()
+        with:
+          suite: spaces-rust
 
   frontend:
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
@@ -198,7 +215,17 @@ jobs:
           cache-dependency-path: apps/cua-spaces/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
-      - run: pnpm test
+      - name: Tests
+        env:
+          FLAKY_RESULTS_OUT: ${{ runner.temp }}/flaky-vitest/spaces.json
+        run: |
+          cp "$GITHUB_WORKSPACE/.github/flaky/vitest-reporter.mjs" ./.flaky-vitest-reporter.mjs
+          "$GITHUB_WORKSPACE/.github/scripts/flaky/flaky.sh" run --suite spaces-vitest --format vitest --results "$FLAKY_RESULTS_OUT" -- \
+            pnpm test -- --retry=1 --reporter=default --reporter=./.flaky-vitest-reporter.mjs
+      - uses: ./.github/actions/flaky-upload
+        if: always()
+        with:
+          suite: spaces-vitest
 
   bundle:
     name: bundle (${{ matrix.name }})
@@ -266,9 +293,22 @@ jobs:
             libx11-dev libxkbcommon-dev libwayland-dev libxcb1-dev libx11-xcb-dev \
             libxkbcommon-x11-dev libxrandr-dev libxi-dev libudev-dev
       - run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/nextest
+      # One retry; a test that passes only on it is reported and gets a `flaky`
+      # issue (.github/flaky/).
       - name: Rust command-layer tests (hermetic)
         shell: bash
-        run: cargo test --manifest-path src-tauri/Cargo.toml --locked --test host_commands --test commands --test installer_commands --test app_core_parity --lib -- --test-threads=4
+        run: >-
+          "$GITHUB_WORKSPACE/.github/scripts/flaky/flaky.sh" run --suite "spaces-rust-bundle-${{ matrix.name }}" --format junit
+          --results src-tauri/target/nextest/ci/junit.xml --
+          cargo nextest run --manifest-path src-tauri/Cargo.toml --locked
+          --config-file "$GITHUB_WORKSPACE/.github/flaky/nextest.toml" --profile ci
+          --test host_commands --test commands --test installer_commands --test app_core_parity --lib
+          --test-threads 4
+      - uses: ./.github/actions/flaky-upload
+        if: always()
+        with:
+          suite: spaces-rust-bundle-${{ matrix.name }}
       - name: Stage the cua CLI sidecar
         shell: bash
         # Not a hang: a cold release build of the CLI took 76-122 minutes on the

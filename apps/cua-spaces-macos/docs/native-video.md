@@ -80,7 +80,7 @@ CSS px become points through `pageZoom × magnification`. A web view that isn't 
 
 **Pausing.** While the window is fully hidden (minimized, covered, or on another Space), every session stops but the one the desktop's picture-in-picture panel shows. They open again when the window shows.
 
-**Lifecycle.** A page load (`didCommit`), the web content process ending, and the window closing all tear every surface and session down.
+**Lifecycle.** A page load (`didCommit`), the web content process ending, and the window closing all tear every surface and session down. A viewer slot the page removes keeps its session for `slotGrace` (1.5 s): the Space page moves its viewer between call view's stage and thread view's mini-player by removing one slot and adding another, and the new slot binds to the same live session, with no reconnect.
 
 ### Input and keyboard focus
 

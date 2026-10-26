@@ -31,8 +31,11 @@ export function ThreadView({
   onRemoveAgent,
   empty,
   className,
+  endInset = 0,
 }: {
   items: ThreadItem[];
+  /** Room kept clear at the end (px): thread mode's mini-player sits there, never over the newest message. */
+  endInset?: number;
   /** Removes an agent member from its card (absent: the host can't). */
   onRemoveAgent?: (handle: string) => Promise<void>;
   /** Scrolled to the top: read the page before (when there is one). */
@@ -74,6 +77,11 @@ export function ThreadView({
     // Follows the first and last items, not every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [first, last, items.length]);
+  // The mini-player moved to (or grew at) the bottom: keep the newest entry in view above it.
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (el && atEnd.current) el.scrollTop = el.scrollHeight;
+  }, [endInset]);
   return (
     <div
       ref={ref}
@@ -97,7 +105,7 @@ export function ThreadView({
       {items.length === 0 ? (
         <div className="flex h-full items-end px-8 pb-4">{empty}</div>
       ) : (
-        <div className="flex min-h-full flex-col justify-end gap-1 px-8 pt-5 pb-4">
+        <div className="flex min-h-full flex-col justify-end gap-1 px-8 pt-5 pb-4" style={endInset ? { paddingBottom: endInset + 16 } : undefined}>
           {items.map((item) => (
             <ThreadItemView key={item.key} item={item} roster={roster} onAnswer={onAnswer} onOpenAttachment={onOpenAttachment} onRemoveAgent={onRemoveAgent} />
           ))}

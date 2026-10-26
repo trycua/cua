@@ -12,7 +12,7 @@
 import { hostOs } from "./host-os";
 import { spokenName } from "./space-names";
 import { isUnsupported, type DataAdapter } from "./adapter";
-import type { AgentRunStatus, AgentSetupRow, PersistentAgent, SpaceAgentRun } from "./contracts/agents";
+import type { AgentMessageSent, AgentRunStatus, AgentSetupRow, AgentStarted, AgentStartRequest, PersistentAgent, SpaceAgentRun } from "./contracts/agents";
 import type { CoreClient } from "./core";
 import { withCreateContext } from "./create-context";
 import { HOST_RUNS_CREATES, loadCreateStreaks, saveCreateStreaks } from "./create-retry";
@@ -1264,6 +1264,22 @@ export class BridgeStore {
 
   resumeAgent(name: string): Promise<void> {
     return this.agentAction(() => this.adapter.call("agents.resume", { name }));
+  }
+
+  /** Starts a coding agent in a Space (`agents.start`); the runs are read again. */
+  async startRun(req: AgentStartRequest): Promise<AgentStarted> {
+    let started: AgentStarted | undefined;
+    await this.agentAction(async () => {
+      started = await this.adapter.call("agents.start", req);
+    });
+    return started!;
+  }
+
+  /** Sends a reply to a run (`agents.message`); its conversation is read again at once. */
+  async sendToRun(ref: RunRef, text: string, force = false): Promise<AgentMessageSent> {
+    const sent = await this.adapter.call("agents.message", { spaceId: ref.spaceId, runId: ref.runId, text, ...(force ? { force } : {}) });
+    void this.refresh("agents");
+    return sent;
   }
 
   agentSetup(): Promise<AgentSetupRow[]> {

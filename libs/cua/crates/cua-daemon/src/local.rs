@@ -2414,15 +2414,30 @@ async fn preflight_refusal(os: cua_vmm::GuestOs, backend: BackendKind) -> Runtim
         Runs::Vm
     };
     let req = cua_vmm::preflight::request(cua_vmm::preflight::guest_of(os), runs, None);
-    let mut facts = cua_vmm::preflight::gather(&req).await;
+    let mut facts =
+        cua_vmm::preflight::gather_waiting(&req, cua_vmm::local_network::PROMPT_PATIENCE).await;
     facts.free_bytes = None;
     match cua_vmm::preflight::evaluate(&req, &facts)
         .into_iter()
         .next()
     {
-        Some(issue) => Err(RuntimeError::Other(issue.message)),
+        Some(issue) => Err(RuntimeError::Other(refusal_text(issue))),
         None => Ok(()),
     }
+}
+
+/// The refusal's words: a Local Network refusal names the app macOS holds
+/// responsible for this daemon (what System Settings lists: "Cua Spaces
+/// Local" for the Local build), not the generic name.
+fn refusal_text(issue: cua_create_failure::preflight::Issue) -> String {
+    use cua_create_failure::preflight::{IssueKind, local_network_denied};
+    if issue.kind == IssueKind::LocalNetwork
+        && let Some(app) = cua_vmm::local_network::ResponsibleApp::of_this_process()
+        && app.bundle
+    {
+        return local_network_denied(&app.name);
+    }
+    issue.message
 }
 
 // ------------------------------------------------------------------ doctor

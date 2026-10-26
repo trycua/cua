@@ -18,6 +18,23 @@ struct LocalNetworkPermissionTests {
         #expect(LiveLocalNetworkPermission.subnetHost(ip: ip, mask: 0xFFFF_FFFF) == nil)
     }
 
+    @Test func theProbeAimsAtTheDefaultGateway() {
+        let table = """
+        Routing tables
+
+        Internet:
+        Destination        Gateway            Flags               Netif Expire
+        default            192.168.1.254      UGScg                 en1
+        default            link#24            UCSIg               utun4
+        10.200.1.190/32    link#24            UCS                 utun4
+        """
+        #expect(LiveLocalNetworkPermission.defaultGateway(inRoutes: table) == "192.168.1.254")
+        // A VPN's tunnel or a link route is no local network.
+        #expect(LiveLocalNetworkPermission.defaultGateway(inRoutes: "default  10.0.0.1  UGScg  utun3") == nil)
+        #expect(LiveLocalNetworkPermission.defaultGateway(inRoutes: "default  link#6  UCSg  en0") == nil)
+        #expect(LiveLocalNetworkPermission.defaultGateway(inRoutes: "") == nil)
+    }
+
     /// A probe that answers from a script.
     final class FakeProbe: LocalNetworkProbing, @unchecked Sendable {
         var answers: [AppLocalNetworkAccess]

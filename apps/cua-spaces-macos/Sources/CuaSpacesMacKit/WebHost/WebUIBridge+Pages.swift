@@ -295,6 +295,16 @@ extension WebUIBridge {
             guard url.hasPrefix("x-apple.systempreferences:"), let u = URL(string: url) else {
                 throw Failure.badArgs("Only System Settings panes open here")
             }
+            // Local Network: the daemon connects (which makes macOS ask, in a
+            // dialog of its own); the pane opens only when it stays blocked
+            // and no macOS prompt is waiting for an answer.
+            if url.contains("Privacy_LocalNetwork") {
+                await model.checkLocalNetworkFromDaemon(every: 0)
+                if model.daemonLocalNetworkAllowed != true, LiveLocalNetworkProbe().promptsShowing() == 0 {
+                    NSWorkspace.shared.open(u)
+                }
+                return NSNull()
+            }
             // Screen Recording and Accessibility: the app's guide to the
             // pane (PermissionFlow), never macOS's bare prompt.
             if !PermissionGuide.guide(url) { NSWorkspace.shared.open(u) }

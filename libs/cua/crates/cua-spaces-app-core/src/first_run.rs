@@ -1203,7 +1203,11 @@ pub fn asks_permissions(input: &FirstRunInput) -> bool {
             .is_none_or(|h| h.share_desktop != Some(false))
 }
 
-/// The two permissions a shared screen needs, as rows: also what Settings
+/// The host's permission id for macOS Local Network access.
+pub const LOCAL_NETWORK: &str = "local-network";
+
+/// The permissions a shared screen needs (two, and Local Network where macOS
+/// Spaces run), as rows: also what Settings
 /// shows later (the same words and buttons).
 pub fn permissions_view(input: &FirstRunInput) -> PermissionsView {
     let place = this_computer(&input.host_os);
@@ -1218,7 +1222,13 @@ pub fn permissions_view(input: &FirstRunInput) -> PermissionsView {
         .host
         .as_ref()
         .filter(|h| h.configured && !input.host_setting_up);
-    let rows: Vec<CheckRow> = [
+    // The host lists a "local-network" entry (granted or not) when macOS Spaces
+    // can run on this Mac, and the page then asks for it with the other two.
+    let local_network = input
+        .host
+        .as_ref()
+        .is_some_and(|h| h.permissions.iter().any(|p| p.id == LOCAL_NETWORK));
+    let mut wanted = vec![
         // Plain words, not the panes' names: macOS renames them (Accessibility
         // is "Device Control and Data Access" from macOS 27), and Allow opens
         // the right one anyway.
@@ -1234,40 +1244,57 @@ pub fn permissions_view(input: &FirstRunInput) -> PermissionsView {
             format!("So they can click and type on {place}."),
             "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
         ),
-    ]
-    .into_iter()
-    .map(|(id, title, note, pane)| {
-        let (state, note, action, settings_url) = match known {
-            None => (
-                RowState::Checking,
-                format!("Adding {place} to your account first…"),
-                None,
-                None,
-            ),
-            Some(host) => match missing_permission(host, id) {
-                Some(p) => (
-                    RowState::Fix,
-                    note,
-                    Some(button("allow", "Allow")),
-                    Some(p.settings_url.unwrap_or_else(|| pane.into())),
+    ];
+    if local_network {
+        wanted.push((
+            LOCAL_NETWORK,
+            "Run Spaces on this Mac".to_string(),
+            "So the macOS Spaces you create here can start and connect.".to_string(),
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork",
+        ));
+    }
+    let count = wanted.len();
+    let rows: Vec<CheckRow> = wanted
+        .into_iter()
+        .map(|(id, title, note, pane)| {
+            let (state, note, action, settings_url) = match known {
+                None => (
+                    RowState::Checking,
+                    format!("Adding {place} to your account first…"),
+                    None,
+                    None,
                 ),
-                None => (RowState::Ok, "Allowed".into(), None, None),
-            },
-        };
-        CheckRow {
-            id: id.into(),
-            state,
-            title,
-            note,
-            action,
-            settings_url,
-        }
-    })
-    .collect();
+                Some(host) => match missing_permission(host, id) {
+                    Some(p) => (
+                        RowState::Fix,
+                        note,
+                        Some(button("allow", "Allow")),
+                        Some(p.settings_url.unwrap_or_else(|| pane.into())),
+                    ),
+                    None => (RowState::Ok, "Allowed".into(), None, None),
+                },
+            };
+            CheckRow {
+                id: id.into(),
+                state,
+                title,
+                note,
+                action,
+                settings_url,
+            }
+        })
+        .collect();
     let all = rows.iter().all(|r| r.state == RowState::Ok);
     PermissionsView {
         title: format!("Share {place}'s screen."),
-        lede: format!("Allow two permissions so your team and agents can see and use {place}."),
+        lede: if count == 2 {
+            format!("Allow two permissions so your team and agents can see and use {place}.")
+        } else {
+            format!(
+                "Allow three permissions so your team and agents can see and use {place}, and \
+                 so macOS Spaces can run on it."
+            )
+        },
         rows,
         note: format!("Allow opens System Settings, where you turn on {app}."),
         primary: all.then(|| button("continue", "Continue")),
@@ -2330,6 +2357,47 @@ mod tests {
         let p = view(&i).permissions.unwrap();
         assert!(p.rows.iter().all(|r| r.state == RowState::Checking));
         assert!(p.primary.is_none());
+    }
+
+    #[test]
+    fn a_mac_that_runs_macos_spaces_also_asks_for_local_network() {
+        let mut i = FirstRunInput {
+            step: FirstRunStep::Permissions,
+            host_os: "macos".into(),
+            signed_in: true,
+            host: Some(FirstRunHost {
+                configured: true,
+                running: true,
+                permissions: vec![FirstRunPermission {
+                    id: LOCAL_NETWORK.into(),
+                    granted: false,
+                    settings_url: None,
+                }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let p = view(&i).permissions.unwrap();
+        assert_eq!(
+            p.rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+            ["screen-recording", "accessibility", "local-network"]
+        );
+        // The two the host does not list are granted; Local Network is not.
+        assert_eq!(p.rows[0].state, RowState::Ok);
+        assert_eq!(p.rows[2].state, RowState::Fix);
+        assert!(
+            p.rows[2]
+                .settings_url
+                .as_deref()
+                .is_some_and(|u| u.contains("Privacy_LocalNetwork"))
+        );
+        assert!(p.lede.starts_with("Allow three permissions"));
+        assert!(p.primary.is_none());
+        // Granted: listed, and no longer in the way.
+        i.host.as_mut().unwrap().permissions[0].granted = true;
+        let p = view(&i).permissions.unwrap();
+        assert_eq!(p.rows[2].state, RowState::Ok);
+        assert_eq!(p.primary.unwrap().id, "continue");
     }
 
     #[test]

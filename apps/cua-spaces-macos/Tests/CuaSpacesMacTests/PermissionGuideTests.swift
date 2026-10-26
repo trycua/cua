@@ -56,7 +56,7 @@ struct PermissionGuideTests {
         #expect(PermissionGuide.instruction(for: .accessibility, listed: PermissionGuide.isListed(.accessibility)) == .switchOn)
         PermissionGuide.markListed(.accessibility, false)
         #expect(PermissionGuide.instruction(for: .accessibility, listed: PermissionGuide.isListed(.accessibility)) == .drag)
-        #expect(PermissionGuide.switchOnText(appName: "Cua Spaces Local") == "Switch on Cua Spaces Local in the list.")
+        #expect(PermissionGuide.switchOnText(appName: "Cua Spaces Local") == "Turn on Cua Spaces Local in System Settings, then come back.")
     }
 
     @Test func readsWhatAFreshProcessReports() {
@@ -65,5 +65,30 @@ struct PermissionGuideTests {
         #expect(PermissionGuide.parseGrants("screen-recording=1 accessibility=1") == [.screenRecording, .accessibility])
         #expect(PermissionGuide.parseGrants("").isEmpty)
         #expect(PermissionGuide.parseGrants("garbage=1").isEmpty)
+    }
+
+    @Test func tellsNotAskedFromSwitchedOffFromGranted() {
+        #expect(PermissionGuide.state(granted: false, listed: false) == .notDetermined)
+        #expect(PermissionGuide.state(granted: false, listed: true) == .off)
+        #expect(PermissionGuide.state(granted: true, listed: true) == .granted)
+        // An off permission is guided by opening its pane, never by a prompt.
+        #expect(PermissionGuide.instruction(for: .screenRecording, listed: true) == .switchOn)
+    }
+
+    @Test func deniedThenSettingsOpenedThenGrantedCompletesWithoutAnotherClick() async {
+        // Off for three polls, then the person turns it on in System Settings.
+        actor Reads { var n = 0; func next() -> Set<PermissionFlowPane> { n += 1; return n > 3 ? [.screenRecording] : [] } }
+        let reads = Reads()
+        let done = await PermissionGuide.waitForGrant(.screenRecording, read: { await reads.next() },
+                                                      interval: .milliseconds(1), giveUpAfter: .seconds(5))
+        #expect(done)
+        #expect(PermissionGuide.needsReopen(after: .screenRecording))
+        #expect(PermissionGuide.settingsURL(for: .screenRecording)?.hasSuffix("Privacy_ScreenCapture") == true)
+    }
+
+    @Test func staysUndoneWhileItIsOff() async {
+        let done = await PermissionGuide.waitForGrant(.accessibility, read: { [] },
+                                                      interval: .milliseconds(1), giveUpAfter: .milliseconds(30))
+        #expect(!done)
     }
 }

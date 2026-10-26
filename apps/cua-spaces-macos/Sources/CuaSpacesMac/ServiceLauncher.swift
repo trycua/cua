@@ -184,9 +184,7 @@ enum ServiceLauncher {
         NSLog("cua-spaces service: Screen Recording and Accessibility are asked %@",
               appAsks ? "by the app (its permissions screen)" : "here (macOS's prompts)")
         if !spec.args.contains("--no-desktop") && !appAsks {
-            if !CGPreflightScreenCaptureAccess() { _ = CGRequestScreenCaptureAccess() }
-            let prompt = "AXTrustedCheckOptionPrompt" // kAXTrustedCheckOptionPrompt
-            _ = AXIsProcessTrustedWithOptions([prompt: true] as CFDictionary)
+            PermissionRequester.requestScreenRecordingAndAccessibility()
         }
         guard let pid = spawn(spec.args, env: spec.env, logPath: spec.logPath, workingDir: spec.workingDir) else {
             exit(1)

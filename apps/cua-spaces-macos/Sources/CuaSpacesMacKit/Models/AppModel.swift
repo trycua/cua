@@ -230,6 +230,8 @@ public final class AppModel {
         }
         self.host.onChange = { [weak self] in self?.recompose() }
         followChecklist()
+        // No notification prompt before the first run is done.
+        PermissionRequester.firstRunDone = { [weak onboarding] in onboarding?.completed ?? false }
         // Done's "Launch at login" checkbox is the user's choice.
         onboarding.onLaunchAtLogin = { [weak self] on in self?.setLaunchAtLogin(on) }
         // Which experiments are on: the day's `cua_app_active` carries them.

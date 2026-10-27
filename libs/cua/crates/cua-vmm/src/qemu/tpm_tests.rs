@@ -243,7 +243,7 @@ fn fake_args(record: &Path, tpm_dir: &Path) -> Vec<String> {
 
 fn wait_started(child: &mut std::process::Child, record: &Path, tpm_dir: &Path) {
     for _ in 0..500 {
-        if tpm_dir.join("swtpm.sock").exists() && record_pid(record).is_some() {
+        if tpm_dir.join("swtpm.sock").exists() && record_pid(record).ok().flatten().is_some() {
             return;
         }
         std::thread::sleep(Duration::from_millis(10));
@@ -426,8 +426,15 @@ async fn cancelled_launch_child() {
         ..Default::default()
     };
     let launch = runtime.launch_once(&mut st, &spec, boot, true, true);
+    // Early: cancelled while the launch shell runs. Late: cancelled after the
+    // pid is persisted, while the launch waits for QMP.
+    let wait = if std::env::var("CUA_CANCEL_LATE").is_ok() {
+        Duration::from_secs(2)
+    } else {
+        Duration::from_millis(100)
+    };
     assert!(
-        tokio::time::timeout(Duration::from_millis(100), launch)
+        tokio::time::timeout(wait, launch)
             .await
             .is_err()
     );
@@ -467,6 +474,16 @@ async fn cancelled_launch_child() {
 
 #[test]
 fn cancelled_launch_cleans_up_before_settle_returns() {
+    cancelled_launch(false);
+}
+
+/// Production guard ownership: cancelled after the pid is persisted.
+#[test]
+fn a_launch_cancelled_while_waiting_for_qmp_keeps_the_vm_until_cleanup() {
+    cancelled_launch(true);
+}
+
+fn cancelled_launch(late: bool) {
     let tmp = tempfile::tempdir().unwrap();
     let bin = tmp.path().join("bin");
     std::fs::create_dir(&bin).unwrap();
@@ -486,9 +503,10 @@ fn cancelled_launch_cleans_up_before_settle_returns() {
     exe(
         "swtpm",
         format!(
-            "#!/bin/sh\nsleep 0.5\nfor a; do case \"$a\" in file=*) f=\"${{a#file=}}\";; dir=*) d=\"${{a#dir=}}\";; esac; done\n\"{link}\" --exact qemu::tpm_tests::fake_swtpm --nocapture -- --pid \"file=$f\" --tpmstate \"dir=$d\" </dev/null >/dev/null 2>&1 &\nwhile [ ! -S \"$d/swtpm.sock\" ] || [ ! -s \"$f\" ]; do sleep 0.01; done\ncp \"$f\" {pid}\n",
+            "#!/bin/sh\n{nap}for a; do case \"$a\" in file=*) f=\"${{a#file=}}\";; dir=*) d=\"${{a#dir=}}\";; esac; done\n\"{link}\" --exact qemu::tpm_tests::fake_swtpm --nocapture -- --pid \"file=$f\" --tpmstate \"dir=$d\" </dev/null >/dev/null 2>&1 &\nwhile [ ! -S \"$d/swtpm.sock\" ] || [ ! -s \"$f\" ]; do sleep 0.01; done\ncp \"$f\" {pid}\n",
             link = link.display(),
-            pid = tmp.path().join("fake.pid").display()
+            pid = tmp.path().join("fake.pid").display(),
+            nap = if late { "" } else { "sleep 0.5\n" }
         ),
     );
     let output = std::process::Command::new(std::env::current_exe().unwrap())
@@ -502,6 +520,7 @@ fn cancelled_launch_cleans_up_before_settle_returns() {
             format!("{}:{}", bin.display(), std::env::var("PATH").unwrap()),
         )
         .env("CUA_CANCEL_ROOT", tmp.path())
+        .envs(late.then_some(("CUA_CANCEL_LATE", "1")))
         .output()
         .unwrap();
     assert!(
@@ -560,7 +579,7 @@ async fn late_cleanup_leaves_the_replacement_swtpm() {
     assert!(crate::cleanup::settle(Duration::from_secs(10)).await);
     old.wait().unwrap();
     assert!(new.try_wait().unwrap().is_none(), "replacement survives");
-    assert_eq!(record_pid(&new_record), Some(new.id()));
+    assert_eq!(record_pid(&new_record).unwrap(), Some(new.id()));
     new.kill().unwrap();
     new.wait().unwrap();
 }
@@ -913,6 +932,45 @@ async fn an_unreadable_run_dir_stops_and_copies_nothing() {
     assert!(!dst.join("tpm").exists());
     assert!(fake.try_wait().unwrap().is_none());
     assert!(record.exists());
+    fake.kill().unwrap();
+    fake.wait().unwrap();
+}
+
+#[tokio::test]
+async fn an_unreadable_or_malformed_record_stops_and_copies_nothing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let link = fake_swtpm_link(tmp.path());
+    let runtime = QemuRuntime::new(QemuConfig {
+        root: tmp.path().join("root"),
+        ..Default::default()
+    });
+    let dir = runtime.dir("vm");
+    let tpm = dir.join("tpm");
+    std::fs::create_dir_all(&tpm).unwrap();
+    let record = dir.join("swtpm.a.pid");
+    let mut fake = spawn_fake(&link, &record, &tpm);
+    let text = std::fs::read_to_string(&record).unwrap();
+    let mut st = tpm_state("vm", &dir);
+    st.pid = None;
+    let dst = tmp.path().join("dst");
+    std::fs::set_permissions(&record, std::fs::Permissions::from_mode(0)).unwrap();
+    let unreadable = std::fs::read_to_string(&record).is_err();
+    for malformed in [false, true] {
+        if malformed {
+            std::fs::set_permissions(&record, std::fs::Permissions::from_mode(0o600)).unwrap();
+            std::fs::write(&record, "garbage").unwrap();
+        } else if !unreadable {
+            continue; // root reads anything
+        }
+        assert!(runtime.stop_tpm(&st).await.is_err());
+        assert!(runtime.force_stop(&mut st, Duration::ZERO).await.is_err());
+        assert!(runtime.tpm_stopped(&st).is_err());
+        assert!(runtime.copy_tpm(&st, &dst).is_err());
+        assert!(!dst.join("tpm").exists());
+        assert!(fake.try_wait().unwrap().is_none(), "swtpm survives");
+        assert!(record.exists() && tpm.exists());
+    }
+    std::fs::write(&record, text).unwrap();
     fake.kill().unwrap();
     fake.wait().unwrap();
 }

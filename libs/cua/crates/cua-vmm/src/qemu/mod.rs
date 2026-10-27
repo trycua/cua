@@ -1695,7 +1695,7 @@ impl QemuRuntime {
         let run = self.run_dir(st);
         let tpm_dir = run.join("tpm");
         for record in tpm_records(&run)? {
-            if let Some(pid) = record_pid(&record)
+            if let Some(pid) = record_pid(&record)?
                 && swtpm_state(pid, &record, &tpm_dir) != Tpm::Gone
             {
                 return Err(VmmError::invalid(format!(
@@ -4714,10 +4714,19 @@ fn text_identity(cmd: &str, file: &str, dir: &str) -> (bool, bool) {
 }
 
 /// The pid a swtpm record holds.
-fn record_pid(record: &Path) -> Option<u32> {
-    std::fs::read_to_string(record)
-        .ok()
-        .and_then(|t| t.trim().parse::<u32>().ok())
+/// A vanished record is `None`; an unreadable or malformed one is an error,
+/// never "no TPM".
+fn record_pid(record: &Path) -> Result<Option<u32>> {
+    let text = match std::fs::read_to_string(record) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        r => r?,
+    };
+    text.trim().parse::<u32>().map(Some).map_err(|_| {
+        VmmError::other(format!(
+            "the swtpm record {} is malformed; remove it once its TPM is gone",
+            record.display()
+        ))
+    })
 }
 
 /// The swtpm records in a VM's run directory. Only a missing directory is
@@ -4742,7 +4751,7 @@ fn tpm_records(dir: &Path) -> Result<Vec<PathBuf>> {
 /// End the swtpm a record names: TERM, then KILL. The record is removed only
 /// once that swtpm is gone; otherwise it stays and this is an error.
 async fn end_record(record: &Path, tpm_dir: &Path) -> Result<()> {
-    let Some(pid) = record_pid(record) else {
+    let Some(pid) = record_pid(record)? else {
         return Ok(());
     };
     for (sig, polls) in [("TERM", 20), ("KILL", 10)] {

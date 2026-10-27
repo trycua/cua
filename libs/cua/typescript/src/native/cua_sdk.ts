@@ -6776,8 +6776,9 @@ const FfiConverterTypeComputerResources = (() => {
  */
 export type ConfigEntry = {
     /**
-     * `default.on`, `default.kind`, `default.runtime`, `runtime.lume`,
-     * `runtime.linux` or `telemetry.enabled`.
+     * `default.on`, `default.kind`, `default.runtime`, `runtime.container`,
+     * `runtime.vm`, `runtime.microvm` (and their `_path`) or
+     * `telemetry.enabled`.
      */
     key: string,
     /**
@@ -16257,6 +16258,245 @@ const FfiConverterTypeRoutineInfo = (() => {
     return new FFIConverter();
 })();
 
+/**
+ * A runtime installed on this machine for one kind of Space.
+ */
+export type RuntimeDetected = {
+    /**
+     * `docker`, `podman`, `lume`, `qemu`, `container`, `firecracker`.
+     */
+    tool: string,
+    /**
+     * As people know it (`Docker`, `Apple container`).
+     */
+    name: string,
+    path: string,
+    /**
+     * As `--version` says it (`27.3.1`).
+     */
+    version?: string,
+    /**
+     * The guest system it runs, when only one (`macOS`, `Linux`).
+     */
+    guests?: string
+}
+
+/**
+ * Generated factory for {@link RuntimeDetected} record objects.
+ */
+export const RuntimeDetected = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<RuntimeDetected, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<RuntimeDetected>,
+    });
+})();
+
+const FfiConverterTypeRuntimeDetected = (() => {
+    type TypeName = RuntimeDetected;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                tool: FfiConverterString.read(from),
+                name: FfiConverterString.read(from),
+                path: FfiConverterString.read(from),
+                version: FfiConverterOptionalString.read(from),
+                guests: FfiConverterOptionalString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.tool, into);
+            FfiConverterString.write(value.name, into);
+            FfiConverterString.write(value.path, into);
+            FfiConverterOptionalString.write(value.version, into);
+            FfiConverterOptionalString.write(value.guests, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.tool) +
+             FfiConverterString.allocationSize(value.name) +
+             FfiConverterString.allocationSize(value.path) +
+             FfiConverterOptionalString.allocationSize(value.version) +
+             FfiConverterOptionalString.allocationSize(value.guests);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * What a binary is, for one kind of Space (`runtime_check_path`).
+ */
+export type RuntimePathProbe = {
+    path: string,
+    /**
+     * A file is there.
+     */
+    exists: boolean,
+    /**
+     * It can be run.
+     */
+    executable: boolean,
+    /**
+     * The tool it is, when it is one the kind takes.
+     */
+    tool?: string,
+    name?: string,
+    version?: string,
+    /**
+     * The oldest version cua runs on.
+     */
+    minVersion?: string,
+    /**
+     * The names of the tools the kind takes here (`Docker`, `Podman`).
+     */
+    expected: Array<string>,
+    guests?: string
+}
+
+/**
+ * Generated factory for {@link RuntimePathProbe} record objects.
+ */
+export const RuntimePathProbe = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<RuntimePathProbe, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<RuntimePathProbe>,
+    });
+})();
+
+const FfiConverterTypeRuntimePathProbe = (() => {
+    type TypeName = RuntimePathProbe;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                path: FfiConverterString.read(from),
+                exists: FfiConverterBool.read(from),
+                executable: FfiConverterBool.read(from),
+                tool: FfiConverterOptionalString.read(from),
+                name: FfiConverterOptionalString.read(from),
+                version: FfiConverterOptionalString.read(from),
+                minVersion: FfiConverterOptionalString.read(from),
+                expected: FfiConverterSequenceString.read(from),
+                guests: FfiConverterOptionalString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.path, into);
+            FfiConverterBool.write(value.exists, into);
+            FfiConverterBool.write(value.executable, into);
+            FfiConverterOptionalString.write(value.tool, into);
+            FfiConverterOptionalString.write(value.name, into);
+            FfiConverterOptionalString.write(value.version, into);
+            FfiConverterOptionalString.write(value.minVersion, into);
+            FfiConverterSequenceString.write(value.expected, into);
+            FfiConverterOptionalString.write(value.guests, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.path) +
+             FfiConverterBool.allocationSize(value.exists) +
+             FfiConverterBool.allocationSize(value.executable) +
+             FfiConverterOptionalString.allocationSize(value.tool) +
+             FfiConverterOptionalString.allocationSize(value.name) +
+             FfiConverterOptionalString.allocationSize(value.version) +
+             FfiConverterOptionalString.allocationSize(value.minVersion) +
+             FfiConverterSequenceString.allocationSize(value.expected) +
+             FfiConverterOptionalString.allocationSize(value.guests);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * One kind of Space's runtime, as Settings shows it.
+ */
+export type RuntimeKindState = {
+    /**
+     * `container`, `vm` or `microvm`.
+     */
+    kind: string,
+    /**
+     * `runtime.<kind>`: `auto`, `builtin` or `system`.
+     */
+    source: string,
+    /**
+     * `runtime.<kind>_path`, when set.
+     */
+    path?: string,
+    /**
+     * What is installed here for the kind, the one used first.
+     */
+    detected: Array<RuntimeDetected>,
+    /**
+     * The path in use (the custom one, else the first detected), probed.
+     */
+    check?: RuntimePathProbe,
+    /**
+     * The names of the tools the kind takes here (`Docker`, `Podman`).
+     */
+    expected: Array<string>
+}
+
+/**
+ * Generated factory for {@link RuntimeKindState} record objects.
+ */
+export const RuntimeKindState = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<RuntimeKindState, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<RuntimeKindState>,
+    });
+})();
+
+const FfiConverterTypeRuntimeKindState = (() => {
+    type TypeName = RuntimeKindState;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                kind: FfiConverterString.read(from),
+                source: FfiConverterString.read(from),
+                path: FfiConverterOptionalString.read(from),
+                detected: FfiConverterSequenceTypeRuntimeDetected.read(from),
+                check: FfiConverterOptionalTypeRuntimePathProbe.read(from),
+                expected: FfiConverterSequenceString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.kind, into);
+            FfiConverterString.write(value.source, into);
+            FfiConverterOptionalString.write(value.path, into);
+            FfiConverterSequenceTypeRuntimeDetected.write(value.detected, into);
+            FfiConverterOptionalTypeRuntimePathProbe.write(value.check, into);
+            FfiConverterSequenceString.write(value.expected, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.kind) +
+             FfiConverterString.allocationSize(value.source) +
+             FfiConverterOptionalString.allocationSize(value.path) +
+             FfiConverterSequenceTypeRuntimeDetected.allocationSize(value.detected) +
+             FfiConverterOptionalTypeRuntimePathProbe.allocationSize(value.check) +
+             FfiConverterSequenceString.allocationSize(value.expected);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 
 // Enum: RegistrySecret
 export enum RegistrySecret_Tags {
@@ -25504,11 +25744,28 @@ export interface AgentSetupLike {
  */
     detect(): Array<AgentInfo>;
 /**
+ * Starts `agent`'s device-code sign-in made for Cua (Codex: `codex login
+ * --device-auth` in a folder Cua owns). JSON `{id, url, code}`: show the
+ * link and the code, then wait with [`Self::device_sign_in_wait_json`].
+ */
+    deviceSignInStartJson(agent: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<string>;
+/**
+ * Waits for a device sign-in to be approved and saves it into Keyvault on
+ * This Mac. JSON: `{imported, refused, line}` (as Connect's `sign_in`).
+ */
+    deviceSignInWaitJson(id: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<string>;
+/**
  * Disconnect: what Connect did, undone (the previous config entry back
  * from Cua's record, the skills, and with `sign_in` the copy in
  * Keyvault). JSON `{outcomes, removed_sign_ins}`.
  */
     disconnectJson(agents: Array<string>, signIn: boolean, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<string>;
+/**
+ * Disconnect of some parts only (an app's page's switches): Cua's skills
+ * and/or its MCP entry, and with `sign_in` the copy in Keyvault. JSON
+ * `{outcomes, removed_sign_ins}`.
+ */
+    disconnectPartsJson(agents: Array<string>, skills: boolean, mcp: boolean, signIn: boolean, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<string>;
 /**
  * Installs `skills` (empty: all bundled) for `agents`. Folders cua did
  * not write are skipped unless `force`.
@@ -25702,6 +25959,79 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
+ * Starts `agent`'s device-code sign-in made for Cua (Codex: `codex login
+ * --device-auth` in a folder Cua owns). JSON `{id, url, code}`: show the
+ * link and the code, then wait with [`Self::device_sign_in_wait_json`].
+ */
+    async deviceSignInStartJson(agent: string, asyncOpts_?: { signal: AbortSignal }): Promise<string> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_agentsetup_device_sign_in_start_json(
+                    uniffiTypeAgentSetupObjectFactory.clonePointer(this),FfiConverterString.lower(agent, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
+ * Waits for a device sign-in to be approved and saves it into Keyvault on
+ * This Mac. JSON: `{imported, refused, line}` (as Connect's `sign_in`).
+ */
+    async deviceSignInWaitJson(id: string, asyncOpts_?: { signal: AbortSignal }): Promise<string> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_agentsetup_device_sign_in_wait_json(
+                    uniffiTypeAgentSetupObjectFactory.clonePointer(this),FfiConverterString.lower(id, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
  * Disconnect: what Connect did, undone (the previous config entry back
  * from Cua's record, the skills, and with `sign_in` the copy in
  * Keyvault). JSON `{outcomes, removed_sign_ins}`.
@@ -25714,6 +26044,43 @@ private constructor(pointer: UniffiHandle) {
             /*rustFutureFunc:*/ () => {
                 return nativeModule().uniffi_cua_sdk_fn_method_agentsetup_disconnect_json(
                     uniffiTypeAgentSetupObjectFactory.clonePointer(this),FfiConverterSequenceString.lower(agents, nativeModule().rustbuffer_alloc),FfiConverterBool.lower(signIn, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
+ * Disconnect of some parts only (an app's page's switches): Cua's skills
+ * and/or its MCP entry, and with `sign_in` the copy in Keyvault. JSON
+ * `{outcomes, removed_sign_ins}`.
+ */
+    async disconnectPartsJson(agents: Array<string>, skills: boolean, mcp: boolean, signIn: boolean, asyncOpts_?: { signal: AbortSignal }): Promise<string> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_agentsetup_disconnect_parts_json(
+                    uniffiTypeAgentSetupObjectFactory.clonePointer(this),FfiConverterSequenceString.lower(agents, nativeModule().rustbuffer_alloc),FfiConverterBool.lower(skills, nativeModule().rustbuffer_alloc),FfiConverterBool.lower(mcp, nativeModule().rustbuffer_alloc),FfiConverterBool.lower(signIn, nativeModule().rustbuffer_alloc)
                 );
             },
             /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
@@ -28151,6 +28518,20 @@ export interface LocalLike {
  */
     pushImage(reference: string, destination: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<string>;
 /**
+ * What `path` is for `kind` (`container`, `vm`, `microvm`): there,
+ * runnable, which runtime and its version. Settings checks a typed path
+ * with it before it is saved (`runtime.<kind>_path`).
+ */
+    runtimeCheckPath(kind: string, path: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<RuntimePathProbe>;
+/**
+ * Each kind of Space (`container`, `vm`, `microvm`) with its runtime
+ * setting (`runtime.<kind>`), the runtimes installed on this machine
+ * for it and what the path in use is. Read-only: runs each runtime's
+ * `--version`, nothing else; probed in this process (the daemon runs
+ * on the same host).
+ */
+    runtimeKinds(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<RuntimeKindState>>;
+/**
  * Provisions `components` (`qemu`, `lume`; `runsc` reports its plan).
  * Empty = everything provisionable. `dry_run` only reports.
  */
@@ -28320,6 +28701,82 @@ private constructor(pointer: UniffiHandle) {
             // export. The bytes the runtime hands back must be deserialized
             // here using the per-callable return-type converter.
             /*liftFunc:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
+ * What `path` is for `kind` (`container`, `vm`, `microvm`): there,
+ * runnable, which runtime and its version. Settings checks a typed path
+ * with it before it is saved (`runtime.<kind>_path`).
+ */
+    async runtimeCheckPath(kind: string, path: string, asyncOpts_?: { signal: AbortSignal }): Promise<RuntimePathProbe> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_local_runtime_check_path(
+                    uniffiTypeLocalObjectFactory.clonePointer(this),FfiConverterString.lower(kind, nativeModule().rustbuffer_alloc),FfiConverterString.lower(path, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeRuntimePathProbe.lift.bind(FfiConverterTypeRuntimePathProbe),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
+ * Each kind of Space (`container`, `vm`, `microvm`) with its runtime
+ * setting (`runtime.<kind>`), the runtimes installed on this machine
+ * for it and what the path in use is. Read-only: runs each runtime's
+ * `--version`, nothing else; probed in this process (the daemon runs
+ * on the same host).
+ */
+    async runtimeKinds(asyncOpts_?: { signal: AbortSignal }): Promise<Array<RuntimeKindState>> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_local_runtime_kinds(
+                    uniffiTypeLocalObjectFactory.clonePointer(this)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterSequenceTypeRuntimeKindState.lift.bind(FfiConverterSequenceTypeRuntimeKindState),
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
             /*asyncOpts:*/ asyncOpts_,
             /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
@@ -45656,6 +46113,12 @@ const FfiConverterSequenceTypeComputerResources = new FfiConverterArray(FfiConve
 // FfiConverter for ComputerResources | undefined
 const FfiConverterOptionalTypeComputerResources = new FfiConverterOptional(FfiConverterTypeComputerResources);
 
+// FfiConverter for Array<RuntimeDetected>
+const FfiConverterSequenceTypeRuntimeDetected = new FfiConverterArray(FfiConverterTypeRuntimeDetected);
+
+// FfiConverter for RuntimePathProbe | undefined
+const FfiConverterOptionalTypeRuntimePathProbe = new FfiConverterOptional(FfiConverterTypeRuntimePathProbe);
+
 // FfiConverter for Array<ReadinessProbe>
 const FfiConverterSequenceTypeReadinessProbe = new FfiConverterArray(FfiConverterTypeReadinessProbe);
 
@@ -45766,6 +46229,9 @@ const FfiConverterOptionalTypeAgentRunOptions = new FfiConverterOptional(FfiConv
 
 // FfiConverter for Array<PairingCode>
 const FfiConverterSequenceTypePairingCode = new FfiConverterArray(FfiConverterTypePairingCode);
+
+// FfiConverter for Array<RuntimeKindState>
+const FfiConverterSequenceTypeRuntimeKindState = new FfiConverterArray(FfiConverterTypeRuntimeKindState);
 
 // FfiConverter for Array<SetupStep>
 const FfiConverterSequenceTypeSetupStep = new FfiConverterArray(FfiConverterTypeSetupStep);
@@ -46158,8 +46624,17 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_agentsetup_detect() !== 59369) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_agentsetup_detect");
     }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_agentsetup_device_sign_in_start_json() !== 18365) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_agentsetup_device_sign_in_start_json");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_agentsetup_device_sign_in_wait_json() !== 39143) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_agentsetup_device_sign_in_wait_json");
+    }
     if (nativeModule().uniffi_cua_sdk_checksum_method_agentsetup_disconnect_json() !== 14363) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_agentsetup_disconnect_json");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_agentsetup_disconnect_parts_json() !== 37278) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_agentsetup_disconnect_parts_json");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_agentsetup_install_skills() !== 40049) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_agentsetup_install_skills");
@@ -46403,6 +46878,12 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_local_push_image() !== 29472) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_local_push_image");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_local_runtime_check_path() !== 59009) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_local_runtime_check_path");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_local_runtime_kinds() !== 34595) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_local_runtime_kinds");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_local_setup() !== 57791) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_local_setup");
@@ -47646,6 +48127,9 @@ export default Object.freeze({
     FfiConverterTypeRoutineInfo,
     FfiConverterTypeRuntimeCheck,
     FfiConverterTypeRuntimeCheckStatus,
+    FfiConverterTypeRuntimeDetected,
+    FfiConverterTypeRuntimeKindState,
+    FfiConverterTypeRuntimePathProbe,
     FfiConverterTypeSandbox,
     FfiConverterTypeSandboxCreateOptions,
     FfiConverterTypeSandboxInfo,

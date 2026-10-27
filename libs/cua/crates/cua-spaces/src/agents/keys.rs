@@ -28,7 +28,85 @@ pub const SECRET_NAME: &str = "agent-keys";
 /// The app's settings methods (`SpaceService.CallSpaceTool` names). They are
 /// not contract tools: no MCP server lists or calls them, so an agent can
 /// never read or change a key.
-pub const APP_METHODS: &[&str] = &["agent_keys.list", "agent_keys.set", "agent_keys.remove"];
+pub const APP_METHODS: &[&str] = &[
+    "agent_keys.list",
+    "agent_keys.set",
+    "agent_keys.remove",
+    "agent_keys.shell",
+    "agent_keys.from_shell",
+];
+
+/// The provider keys Cua may read from your login shell, by name (Settings,
+/// Connectors: "Use ANTHROPIC_API_KEY from your shell"). Nothing else is
+/// ever read there.
+pub const SHELL_NAMES: &[&str] = &[
+    "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+    "COPILOT_GITHUB_TOKEN",
+];
+
+/// How long the login shell has to answer.
+const SHELL_WAIT: Duration = Duration::from_secs(5);
+
+/// The marker before the value in the shell's answer (anything a profile prints comes before it).
+const SHELL_MARK: &str = "__cua_shell_value__";
+
+/// Your login shell: `$SHELL`, else zsh.
+pub fn login_shell() -> std::path::PathBuf {
+    std::env::var_os("SHELL")
+        .filter(|s| !s.is_empty())
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| "/bin/zsh".into())
+}
+
+/// `name`'s value in a login, interactive `shell` (the profile files your
+/// terminal reads), when it is one of [`SHELL_NAMES`] and set. The shell's
+/// stdin is closed and it is stopped after [`SHELL_WAIT`].
+pub fn shell_value(shell: &std::path::Path, name: &str) -> Option<String> {
+    if !SHELL_NAMES.contains(&name) {
+        return None;
+    }
+    let script = format!("printf '\\n{SHELL_MARK}%s' \"${{{name}-}}\"");
+    let mut child = std::process::Command::new(shell)
+        .args(["-l", "-i", "-c", &script])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+    let mut out = child.stdout.take()?;
+    let reader = std::thread::spawn(move || {
+        let mut s = Vec::new();
+        let _ = std::io::Read::read_to_end(&mut out, &mut s);
+        String::from_utf8_lossy(&s).into_owned()
+    });
+    let start = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if start.elapsed() < SHELL_WAIT => {
+                std::thread::sleep(Duration::from_millis(20))
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    }
+    let text = reader.join().ok()?;
+    let value = text.rsplit_once(SHELL_MARK)?.1.trim().to_string();
+    (!value.is_empty()).then_some(value)
+}
+
+/// Which of [`SHELL_NAMES`] your login shell has set (names only).
+pub fn shell_names(shell: &std::path::Path) -> Vec<String> {
+    SHELL_NAMES
+        .iter()
+        .filter(|n| shell_value(shell, n).is_some())
+        .map(|n| (*n).to_string())
+        .collect()
+}
 
 /// Whether `name` is one of [`APP_METHODS`].
 pub fn is_app_method(name: &str) -> bool {
@@ -250,9 +328,11 @@ struct Blob {
     keys: Vec<Stored>,
 }
 
-/// How long a read of the vault item is reused (the app and readiness
-/// checks read often; the daemon is the one writer).
-const CACHE_FOR: Duration = Duration::from_secs(30);
+/// How long a read of the vault item is reused by readiness checks and a
+/// run's env (they read in bursts). Short, because the daemon is not the one
+/// writer: the app saves the sign-ins Connect makes into the same item, and
+/// the next run must see them.
+const CACHE_FOR: Duration = Duration::from_secs(2);
 
 /// The stored agent keys of one credential store.
 pub struct AgentKeys {
@@ -360,7 +440,7 @@ impl AgentKeys {
     /// The stored keys, without their values.
     pub fn list(&self) -> Result<Vec<KeyInfo>> {
         let mut g = self.lock();
-        Ok(self.read(&mut g, false)?.iter().map(Stored::info).collect())
+        Ok(self.read(&mut g, true)?.iter().map(Stored::info).collect())
     }
 
     /// [`AgentKeys::list`] with the providers and availability.
@@ -585,28 +665,67 @@ struct RemoveArgs {
     env: String,
 }
 
+#[derive(Serialize)]
+struct ShellReport {
+    /// The provider keys your login shell has set (names; never a value).
+    names: Vec<String>,
+}
+
 /// Runs one of [`APP_METHODS`] against `keys`; every answer is the
-/// [`KeysReport`] after the change. `None` for any other name.
+/// [`KeysReport`] after the change, except `agent_keys.shell` (which names
+/// your login shell has set). `None` for any other name. `shell` is the
+/// login shell `agent_keys.shell` and `agent_keys.from_shell` read.
 pub fn app_call(
     keys: &AgentKeys,
     name: &str,
     args: serde_json::Value,
-) -> Option<Result<KeysReport>> {
+    shell: &std::path::Path,
+) -> Option<Result<serde_json::Value>> {
     let args = if args.is_null() {
         serde_json::json!({})
     } else {
         args
     };
+    let report = |r: Result<KeysReport>| {
+        r.and_then(|r| serde_json::to_value(r).map_err(|e| Error::Agent(e.to_string())))
+    };
     Some(match name {
-        "agent_keys.list" => keys.report(),
-        "agent_keys.set" => serde_json::from_value::<SetArgs>(args)
-            .map_err(|e| Error::InvalidArgument(format!("agent_keys.set: {}", redact_serde(&e))))
-            .and_then(|a| keys.set(&a.provider, a.env.as_deref(), &a.value))
-            .and_then(|_| keys.report()),
-        "agent_keys.remove" => serde_json::from_value::<RemoveArgs>(args)
-            .map_err(|e| Error::InvalidArgument(format!("agent_keys.remove: {e}")))
-            .and_then(|a| keys.remove(&a.env))
-            .and_then(|_| keys.report()),
+        "agent_keys.list" => report(keys.report()),
+        "agent_keys.set" => report(
+            serde_json::from_value::<SetArgs>(args)
+                .map_err(|e| {
+                    Error::InvalidArgument(format!("agent_keys.set: {}", redact_serde(&e)))
+                })
+                .and_then(|a| keys.set(&a.provider, a.env.as_deref(), &a.value))
+                .and_then(|_| keys.report()),
+        ),
+        "agent_keys.remove" => report(
+            serde_json::from_value::<RemoveArgs>(args)
+                .map_err(|e| Error::InvalidArgument(format!("agent_keys.remove: {e}")))
+                .and_then(|a| keys.remove(&a.env))
+                .and_then(|_| keys.report()),
+        ),
+        "agent_keys.shell" => serde_json::to_value(ShellReport {
+            names: shell_names(shell),
+        })
+        .map_err(|e| Error::Agent(e.to_string())),
+        // The value goes straight from your shell into the store; it is never answered.
+        "agent_keys.from_shell" => report(
+            serde_json::from_value::<RemoveArgs>(args)
+                .map_err(|e| Error::InvalidArgument(format!("agent_keys.from_shell: {e}")))
+                .and_then(|a| {
+                    let value = shell_value(shell, &a.env).ok_or_else(|| {
+                        Error::InvalidArgument(format!("{} isn't set in your shell", a.env))
+                    })?;
+                    let provider = provider_of(&a.env);
+                    keys.set(
+                        provider,
+                        (provider == "other").then_some(a.env.as_str()),
+                        &value,
+                    )
+                })
+                .and_then(|_| keys.report()),
+        ),
         _ => return None,
     })
 }
@@ -616,7 +735,7 @@ pub fn app_call(
 /// that is not one of [`APP_METHODS`].
 #[cfg(feature = "mcp")]
 pub fn app_tool(name: &str, args: serde_json::Value) -> Option<crate::mcp::ToolOutcome> {
-    app_call(global(), name, args).map(|r| match r {
+    app_call(global(), name, args, &login_shell()).map(|r| match r {
         Ok(report) => crate::mcp::ToolOutcome::json(&report),
         Err(e) => crate::mcp::ToolOutcome::error(&e),
     })
@@ -691,6 +810,38 @@ mod tests {
     }
 
     #[test]
+    fn a_sign_in_the_app_saves_shows_in_the_daemons_next_list_and_run() {
+        // The daemon reads the list (and warms its cache) before Connect.
+        let (daemon, dir) = temp_keys();
+        assert!(daemon.list().unwrap().is_empty());
+        assert!(daemon.names().is_empty());
+        // The app saves the sign-in Connect made into the same item.
+        let app = AgentKeys::new(cua_auth::Store::TestKeychain(dir.clone()));
+        app.import(
+            "codex",
+            "CODEX_AUTH_JSON",
+            "Codex · ChatGPT sign-in",
+            "{\"tokens\":{}}",
+            None,
+        )
+        .unwrap();
+        // Settings' next read sees it right away.
+        let listed = daemon.list().unwrap();
+        assert_eq!(
+            listed.iter().map(|k| k.env.as_str()).collect::<Vec<_>>(),
+            ["CODEX_AUTH_JSON"]
+        );
+        // And a run started a moment later gets it.
+        std::thread::sleep(CACHE_FOR + Duration::from_millis(50));
+        assert!(
+            daemon
+                .values(&["CODEX_AUTH_JSON"])
+                .contains_key("CODEX_AUTH_JSON")
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn a_short_key_shows_no_characters() {
         let (keys, dir) = temp_keys();
         assert_eq!(keys.set("openai", None, "short").unwrap().last4, "");
@@ -756,22 +907,86 @@ mod tests {
     }
 
     #[test]
+    fn a_key_from_your_shell_is_saved_and_only_its_name_is_answered() {
+        let (keys, dir) = temp_keys();
+        // A login shell whose profile prints noise and exports one key; it runs the command it is given.
+        let shell = dir.join("fake-shell");
+        std::fs::write(
+            &shell,
+            "#!/bin/sh\necho 'welcome to your shell'\nANTHROPIC_API_KEY=sk-ant-from-shell-0000-wxyz; export ANTHROPIC_API_KEY\nshift 3\nexec /bin/sh -c \"$1\"\n",
+        )
+        .unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let names = app_call(&keys, "agent_keys.shell", serde_json::json!({}), &shell)
+            .unwrap()
+            .unwrap();
+        assert_eq!(names, serde_json::json!({"names": ["ANTHROPIC_API_KEY"]}));
+        let r = app_call(
+            &keys,
+            "agent_keys.from_shell",
+            serde_json::json!({"env": "ANTHROPIC_API_KEY"}),
+            &shell,
+        )
+        .unwrap()
+        .unwrap();
+        let text = serde_json::to_string(&r).unwrap();
+        assert!(
+            text.contains("wxyz") && !text.contains("sk-ant-from-shell"),
+            "{text}"
+        );
+        assert_eq!(
+            keys.values(&["ANTHROPIC_API_KEY"])
+                .get("ANTHROPIC_API_KEY")
+                .map(String::as_str),
+            Some("sk-ant-from-shell-0000-wxyz")
+        );
+        // Not set there, or not a provider key Cua reads: refused.
+        assert!(
+            app_call(
+                &keys,
+                "agent_keys.from_shell",
+                serde_json::json!({"env": "OPENAI_API_KEY"}),
+                &shell
+            )
+            .unwrap()
+            .is_err()
+        );
+        assert!(
+            app_call(
+                &keys,
+                "agent_keys.from_shell",
+                serde_json::json!({"env": "HOME"}),
+                &shell
+            )
+            .unwrap()
+            .is_err()
+        );
+        assert_eq!(shell_value(&shell, "PATH"), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn app_methods_answer_the_report_without_values() {
         let (keys, dir) = temp_keys();
         let r = app_call(
             &keys,
             "agent_keys.set",
             serde_json::json!({"provider": "openai", "value": "sk-test-0000-1234"}),
+            std::path::Path::new("/nonexistent-shell"),
         )
         .unwrap()
         .unwrap();
-        assert_eq!(r.keys.len(), 1);
+        assert_eq!(r["keys"].as_array().unwrap().len(), 1);
         assert!(!serde_json::to_string(&r).unwrap().contains("sk-test-0000"));
         // A malformed call does not echo what it was given.
         let e = app_call(
             &keys,
             "agent_keys.set",
             serde_json::json!({"provider": "openai", "value": 12345678}),
+            std::path::Path::new("/nonexistent-shell"),
         )
         .unwrap()
         .unwrap_err();
@@ -780,11 +995,20 @@ mod tests {
             &keys,
             "agent_keys.remove",
             serde_json::json!({"env": "OPENAI_API_KEY"}),
+            std::path::Path::new("/nonexistent-shell"),
         )
         .unwrap()
         .unwrap();
-        assert!(r.keys.is_empty());
-        assert!(app_call(&keys, "agent_start", serde_json::json!({})).is_none());
+        assert!(r["keys"].as_array().unwrap().is_empty());
+        assert!(
+            app_call(
+                &keys,
+                "agent_start",
+                serde_json::json!({}),
+                std::path::Path::new("/nonexistent-shell")
+            )
+            .is_none()
+        );
         for m in APP_METHODS {
             assert!(
                 cua_spaces_contract::tool(m).is_none(),

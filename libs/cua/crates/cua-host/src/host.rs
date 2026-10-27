@@ -411,14 +411,52 @@ pub struct HostConfig {
     /// machine ($0).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usd_per_hour: Option<String>,
+    /// The service's TCP port when it is not the channel's (3211, or 3221
+    /// for Local): another program, most often another macOS user's host
+    /// service, held the channel's port when setup ran (see
+    /// [`crate::ports`]). Unset: the channel's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+    /// The service's QUIC (UDP) port when it is not the channel's (3212, or
+    /// 3222 for Local). Unset: the channel's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quic_port: Option<u16>,
+    /// `CUA_CREDENTIAL_STORE` as it was set where `cua host setup` ran
+    /// (`file` when the session was saved in `credentials.json`, as over
+    /// SSH, where the login keychain cannot be used): passed on to the
+    /// service, so it and the `cua daemon` it starts read the same session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential_store: Option<String>,
+    /// `CUA_HOME` as it was set where `cua host setup` ran: passed on to
+    /// the service, so it and the `cua daemon` it starts use the same home.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cua_home: Option<String>,
+}
+
+impl HostConfig {
+    /// The ports the service listens on for a build of `channel`: the ones
+    /// setup chose, else the channel's.
+    pub fn service_ports(&self, channel: CuaChannel) -> cua_home::channel::Ports {
+        let ports = channel.ports();
+        cua_home::channel::Ports {
+            tcp: self.port.unwrap_or(ports.tcp),
+            quic: self.quic_port.unwrap_or(ports.quic),
+            ..ports
+        }
+    }
+}
+
+/// `name` where setup runs, when set and not empty.
+fn setup_env(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|v| v.trim().to_owned())
+        .filter(|v| !v.is_empty())
 }
 
 /// `CUA_MESH` where setup runs, when set.
 fn mesh_env() -> Option<String> {
-    std::env::var("CUA_MESH")
-        .ok()
-        .map(|v| v.trim().to_owned())
-        .filter(|v| !v.is_empty())
+    setup_env("CUA_MESH")
 }
 
 /// A macOS privacy pane the user must grant the driver in.
@@ -826,6 +864,11 @@ fn valid_machine_id(id: &str) -> bool {
 /// The environment variables of cua-spacesd's `--port` and `--quic-port`.
 const PORT_ENV: &str = "CUA_ENV_PORT";
 const QUIC_PORT_ENV: &str = "CUA_ENV_QUIC_PORT";
+/// How long setup waits for this user's stopped service to let go of its
+/// ports before it takes them to be another program's.
+const PORT_RELEASE_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+/// The credential store setting (`file` or `keychain`) of `cua-auth`.
+const CREDENTIAL_STORE_ENV: &str = "CUA_CREDENTIAL_STORE";
 
 /// The environment variable with this machine's cost per hour (US
 /// dollars), passed on to the host service.
@@ -1203,7 +1246,10 @@ impl Host {
         // passed: it is 3212 for every channel, by design (a port of the
         // mesh's own network that guest Spaces and older cua-spacesd builds
         // fix, so two hosts on one Mac do not compete for it).
-        let (ports, stable) = (channel.ports(), CuaChannel::Stable.ports());
+        //
+        // The same goes for a pair setup chose because another program
+        // (another macOS user's host service) held the channel's.
+        let (ports, stable) = (config.service_ports(channel), CuaChannel::Stable.ports());
         if ports.tcp != stable.tcp {
             args.extend(["--port".to_string(), ports.tcp.to_string()]);
             env.push((PORT_ENV.into(), ports.tcp.to_string()));
@@ -1220,6 +1266,16 @@ impl Host {
         }
         if let Some(usd) = &config.usd_per_hour {
             env.push((HOST_USD_PER_HOUR.into(), usd.clone()));
+        }
+        // The session store and home setup used: without them the service
+        // (and the `cua daemon` it starts) would look for the sign-in in
+        // the default store, the keychain, which a session saved to the
+        // file over SSH is not in.
+        if let Some(store) = &config.credential_store {
+            env.push((CREDENTIAL_STORE_ENV.into(), store.clone()));
+        }
+        if let Some(home) = &config.cua_home {
+            env.push(("CUA_HOME".into(), home.clone()));
         }
         ServiceSpec {
             program: config.driver_bin.clone(),
@@ -1334,6 +1390,8 @@ impl Host {
             provide_spaces,
             mesh: mesh_env(),
             usd_per_hour: host_usd_per_hour(),
+            credential_store: setup_env(CREDENTIAL_STORE_ENV),
+            cua_home: setup_env("CUA_HOME"),
             ..Default::default()
         };
         if opts.download_first && helper_launcher.is_none() {
@@ -1450,13 +1508,16 @@ impl Host {
             return Err(Error::Service(missing_libraries_message(&missing)));
         }
         *stage = SetupStage::Service;
-        write_json(&self.paths.config(), &config)?;
         if runner == RunnerKind::AppHelper {
             // Never two services: the old LaunchAgent (and its binary)
             // goes before the helper starts.
             self.retire_legacy()?;
         }
         let manager = self.manager(runner);
+        let previous = self.config().ok().flatten();
+        self.choose_ports(&mut config, previous.as_ref(), manager.as_ref())
+            .await?;
+        write_json(&self.paths.config(), &config)?;
         manager.install(&self.service_spec(&config))?;
         manager.start()?;
         if let Err(e) = confirm_running(manager.as_ref(), &self.paths.log()).await {
@@ -1478,6 +1539,79 @@ impl Host {
             },
         );
         self.status().await
+    }
+
+    /// Sets `config`'s ports ([`HostConfig::port`], [`HostConfig::quic_port`]):
+    /// the ones this service already has, else the channel's, while they
+    /// are free; when another program holds them (most often another macOS
+    /// user's host service on the same Mac), a per-user pair
+    /// ([`crate::ports`]). This user's own service holding them is not
+    /// another program: it is stopped (setup restarts it anyway) and its
+    /// ports kept, so running setup again never moves them.
+    ///
+    /// A direct host listens where `--direct` says; only its QUIC port can
+    /// move.
+    async fn choose_ports(
+        &self,
+        config: &mut HostConfig,
+        previous: Option<&HostConfig>,
+        manager: &dyn ServiceManager,
+    ) -> Result<()> {
+        use crate::ports::{self, Transport};
+        let channel = CuaChannel::current();
+        let default = channel.ports();
+        let listen = config
+            .listen
+            .as_deref()
+            .and_then(|l| l.parse::<SocketAddr>().ok());
+        // A joined host binds loopback; a direct one its listen address.
+        let ip = listen.map_or(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), |l| {
+            l.ip()
+        });
+        let fixed_tcp = listen.map(|l| l.port());
+        let free = |(tcp, quic): ports::PortPair| {
+            (fixed_tcp.is_some() || manager.port_free(SocketAddr::new(ip, tcp), Transport::Tcp))
+                && manager.port_free(SocketAddr::new(ip, quic), Transport::Udp)
+        };
+        let mut preferred: Vec<ports::PortPair> = Vec::new();
+        if let Some(p) = previous {
+            let p = p.service_ports(channel);
+            preferred.push((p.tcp, p.quic));
+        }
+        preferred.push((default.tcp, default.quic));
+        if !free(preferred[0]) && manager.state().installed {
+            // Perhaps this user's own service: stop it and give it a moment
+            // to let go of its sockets.
+            let _ = manager.stop();
+            let deadline = tokio::time::Instant::now() + PORT_RELEASE_WAIT;
+            while !free(preferred[0]) && tokio::time::Instant::now() < deadline {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        }
+        let candidates = ports::candidates(&preferred, ports::per_user_seed());
+        let Some((tcp, quic)) = ports::first_free(&candidates, free) else {
+            let (lo, hi) = ports::per_user_range();
+            return Err(Error::Service(format!(
+                "no free port for the host service: {}/{} (TCP/UDP) and the per-user ports \
+                 {lo}-{hi} are all in use by other programs; stop one of them, then run \
+                 `{} host setup` again",
+                preferred[0].0,
+                preferred[0].1,
+                crate::cli()
+            )));
+        };
+        let tcp = fixed_tcp.map_or(tcp, |_| default.tcp);
+        if quic != preferred[0].1 || (fixed_tcp.is_none() && tcp != preferred[0].0) {
+            tracing::warn!(
+                "port {}/{} is in use by another program (another user's Cua host on this \
+                 machine?); this host service listens on {tcp} (TCP) and {quic} (QUIC) instead",
+                preferred[0].0,
+                preferred[0].1,
+            );
+        }
+        config.port = (tcp != default.tcp).then_some(tcp);
+        config.quic_port = (quic != default.quic).then_some(quic);
+        Ok(())
     }
 
     /// Whether a setup with `opts` provides Spaces: what it says, else

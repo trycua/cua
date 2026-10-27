@@ -385,12 +385,12 @@ describe("SettingsPanel Privacy", () => {
     expect(screen.getByTitle("Set by env DO_NOT_TRACK")).toBeInTheDocument();
   });
 
-  it("lists Account, Teams, General, Privacy, AI agents and Experiments in order, with Show again", async () => {
+  it("lists Account, Teams, General, Runtimes, Privacy, AI agents and Experiments in order, with Show again", async () => {
     const onShowWelcome = vi.fn();
     renderPanel({ telemetry: fakeTelemetry(), onShowWelcome });
     await screen.findByText("Share usage data to help improve Cua");
     const titles = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
-    expect(titles).toEqual(["Account", "Teams", "General", "Privacy", "AI agents", "Experiments", "Language"]);
+    expect(titles).toEqual(["Account", "Teams", "General", "Runtimes", "Privacy", "AI agents", "Experiments", "Language"]);
     await userEvent.click(screen.getByRole("button", { name: "Show again" }));
     expect(onShowWelcome).toHaveBeenCalled();
   });

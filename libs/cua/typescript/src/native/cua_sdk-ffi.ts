@@ -1013,8 +1013,23 @@ const DEFINITIONS = {
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
+    "uniffi_cua_sdk_fn_method_agentsetup_device_sign_in_start_json": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_fn_method_agentsetup_device_sign_in_wait_json": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_fn_method_agentsetup_disconnect_json": {
       args: [FfiType.Handle, FfiType.RustBuffer, FfiType.Int8],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_fn_method_agentsetup_disconnect_parts_json": {
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.Int8, FfiType.Int8, FfiType.Int8],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
@@ -1420,6 +1435,16 @@ const DEFINITIONS = {
     },
     "uniffi_cua_sdk_fn_method_local_push_image": {
       args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_fn_method_local_runtime_check_path": {
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_fn_method_local_runtime_kinds": {
+      args: [FfiType.Handle],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
@@ -3483,7 +3508,22 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_checksum_method_agentsetup_device_sign_in_start_json": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_checksum_method_agentsetup_device_sign_in_wait_json": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_checksum_method_agentsetup_disconnect_json": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_checksum_method_agentsetup_disconnect_parts_json": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -3889,6 +3929,16 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_sdk_checksum_method_local_push_image": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_checksum_method_local_runtime_check_path": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_checksum_method_local_runtime_kinds": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -5977,7 +6027,10 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_method_agentsetup_connect_json(uniffiSelf: bigint, agents: Uint8Array, server: Uint8Array, skills: number, mcp: number, signIn: number): bigint;
     uniffi_cua_sdk_fn_method_agentsetup_connection_status_json(uniffiSelf: bigint, expected: Uint8Array, refresh: number, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_sdk_fn_method_agentsetup_detect(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_sdk_fn_method_agentsetup_device_sign_in_start_json(uniffiSelf: bigint, agent: Uint8Array): bigint;
+    uniffi_cua_sdk_fn_method_agentsetup_device_sign_in_wait_json(uniffiSelf: bigint, id: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_agentsetup_disconnect_json(uniffiSelf: bigint, agents: Uint8Array, signIn: number): bigint;
+    uniffi_cua_sdk_fn_method_agentsetup_disconnect_parts_json(uniffiSelf: bigint, agents: Uint8Array, skills: number, mcp: number, signIn: number): bigint;
     uniffi_cua_sdk_fn_method_agentsetup_install_skills(uniffiSelf: bigint, agents: Uint8Array, skills: Uint8Array, force: number): bigint;
     uniffi_cua_sdk_fn_method_agentsetup_onboarding_declined(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): number;
     uniffi_cua_sdk_fn_method_agentsetup_remove(uniffiSelf: bigint, agents: Uint8Array, skills: number, mcp: number): bigint;
@@ -6059,6 +6112,8 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_method_local_doctor(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_local_pull_image(uniffiSelf: bigint, reference: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_local_push_image(uniffiSelf: bigint, reference: Uint8Array, destination: Uint8Array): bigint;
+    uniffi_cua_sdk_fn_method_local_runtime_check_path(uniffiSelf: bigint, kind: Uint8Array, path: Uint8Array): bigint;
+    uniffi_cua_sdk_fn_method_local_runtime_kinds(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_local_setup(uniffiSelf: bigint, components: Uint8Array, dryRun: number): bigint;
     uniffi_cua_sdk_fn_method_local_storage(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_loginattempt_method(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
@@ -6471,7 +6526,10 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_method_agentsetup_connect_json(): number;
     uniffi_cua_sdk_checksum_method_agentsetup_connection_status_json(): number;
     uniffi_cua_sdk_checksum_method_agentsetup_detect(): number;
+    uniffi_cua_sdk_checksum_method_agentsetup_device_sign_in_start_json(): number;
+    uniffi_cua_sdk_checksum_method_agentsetup_device_sign_in_wait_json(): number;
     uniffi_cua_sdk_checksum_method_agentsetup_disconnect_json(): number;
+    uniffi_cua_sdk_checksum_method_agentsetup_disconnect_parts_json(): number;
     uniffi_cua_sdk_checksum_method_agentsetup_install_skills(): number;
     uniffi_cua_sdk_checksum_method_agentsetup_onboarding_declined(): number;
     uniffi_cua_sdk_checksum_method_agentsetup_remove(): number;
@@ -6553,6 +6611,8 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_method_local_doctor(): number;
     uniffi_cua_sdk_checksum_method_local_pull_image(): number;
     uniffi_cua_sdk_checksum_method_local_push_image(): number;
+    uniffi_cua_sdk_checksum_method_local_runtime_check_path(): number;
+    uniffi_cua_sdk_checksum_method_local_runtime_kinds(): number;
     uniffi_cua_sdk_checksum_method_local_setup(): number;
     uniffi_cua_sdk_checksum_method_local_storage(): number;
     uniffi_cua_sdk_checksum_method_loginattempt_method(): number;

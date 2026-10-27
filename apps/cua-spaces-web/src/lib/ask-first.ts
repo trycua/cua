@@ -46,6 +46,8 @@ export interface AskTask {
   lastStatus: AgentRunStatus | null;
   /** It runs on this Mac itself (its own Space id is in `spaceId`): nothing to throw away. */
   onHost?: boolean;
+  /** Started in its Space's thread (the redesign): the job is the Space's first message, @mentioning the agent. */
+  inSpace?: boolean;
 }
 
 const KEY = "cua.askFirst.tasks";

@@ -401,6 +401,24 @@ struct WebUIHostTests {
         #expect(s?["accountUrl"] as? String == appAccountAppUrl())
     }
 
+    /// Settings, Advanced's rows come with the page's first `settings.get`,
+    /// before New Space ever probed: every kind's runtime row, and overflow
+    /// (they were missing: only New Space's probe read the settings).
+    @Test func settingsCarryTheRuntimeChoicesOnTheFirstRead() async throws {
+        let backend = FixtureSpacesBackend()
+        backend.fixtureLumeSource = "system"
+        let (bridge, model) = bridge(backend: backend)
+        #expect(model.lumeSource == nil)
+        let s = try #require(try await bridge.handle("settings.get", [:]) as? [String: Any])
+        let page = try #require(s["page"] as? [String: Any])
+        let sections = try #require(page["sections"] as? [[String: Any]])
+        let ids = sections.flatMap { $0["rows"] as? [[String: Any]] ?? [] }.compactMap { $0["id"] as? String }
+        for kind in ["container", "vm", "microvm"] { #expect(ids.contains("runtime:\(kind)")) }
+        #expect(ids.contains("placement-overflow"))
+        // New Space's "Use built-in Lume" reads the same setting.
+        #expect(model.lumeSource == "system")
+    }
+
     @Test func theGlobalShortcutSaysWhetherTheSystemGaveIt() async throws {
         let (bridge, _) = bridge()
         defer { GlobalShortcut.installed = nil }

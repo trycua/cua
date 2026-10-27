@@ -300,7 +300,6 @@ export function toSettingsSnapshot(s: WkSettings, page: Pick<SettingsValues, "th
   const telemetryOn = telemetry ? active(telemetry) === "on" : DEFAULT_SETTINGS.telemetry;
   // The rows only this host lays out: what they show now, so the core lays
   // them out again on the page (null: the host has none).
-  const source = (id: string) => (rows.has(id) ? (active(rows.get(id)) ?? "auto") : null);
   const on = (id: string) => (rows.has(id) ? active(rows.get(id)) === "on" : null);
   const protection = [...rows.values()]
     .filter((r) => r.id.startsWith("keyvault-protection:"))
@@ -332,9 +331,9 @@ export function toSettingsSnapshot(s: WkSettings, page: Pick<SettingsValues, "th
         }
       : null,
     hostSettings: {
-      lumeSource: source("macos-runtime"),
-      linuxSource: source("linux-runtime"),
+      runtimes: s.runtimes ?? null,
       autoConnect: on("auto-connect"),
+      overflow: on("placement-overflow"),
       keyvaultAutoWipe: on("keyvault-auto-wipe"),
       keyvaultUnlockPrompt: on("keyvault-unlock-prompt"),
       keyvaultSiteIcons: on("keyvault-site-icons"),
@@ -710,7 +709,10 @@ export function createWebkitAdapter(
     "agents.connect": async ({ agents, signIn, skills, mcp }) =>
       // No timeout: Claude Code's sign-in waits for its one browser approval.
       list(await request("agents.connect", { agents, signIn, skills: skills ?? true, mcp: mcp ?? true }, null)) as ConnectResult[],
-    "agents.disconnect": ({ agents, signIn }) => request<{ removed_sign_ins: string[] }>("agents.disconnect", { agents, signIn }),
+    "agents.disconnect": ({ agents, signIn, skills, mcp }) =>
+      request<{ removed_sign_ins: string[] }>("agents.disconnect", { agents, signIn, ...(skills === undefined ? {} : { skills }), ...(mcp === undefined ? {} : { mcp }) }),
+    "agents.signInStart": ({ agent }) => request<OpResult<"agents.signInStart">>("agents.signInStart", { agent }),
+    "agents.signInWait": ({ id }) => request<OpResult<"agents.signInWait">>("agents.signInWait", { id }),
     "session.openExternal": async ({ url }) => {
       win.open?.(url, "_blank", "noopener");
       return null;

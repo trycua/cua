@@ -88,6 +88,14 @@ public protocol SpacesBackend: AnyObject, Sendable {
     func placementOverflow() async -> Bool?
     /// Sets `placement.overflow`.
     func setPlacementOverflow(_ on: Bool) async throws
+    /// Each kind of Space's runtime setting (`runtime.<kind>`, its path) and
+    /// what is installed on this Mac for it (`runtime_kinds`), when known.
+    func runtimeKinds() async -> [AppRuntimeKindInput]?
+    /// What `path` is for `kind` (`container`, `vm`, `microvm`).
+    func runtimeCheckPath(kind: String, path: String) async throws -> AppRuntimePathCheck
+    /// Writes a runtime setting (`runtime.container`, `runtime.vm_path`), or
+    /// unsets it (`nil`).
+    func setRuntimeSetting(key: String, value: String?) async throws
     /// Free space where local Spaces are written and which images are
     /// pulled (`local().storage()`), when known.
     func localStorage() async -> LocalStorage?
@@ -271,6 +279,11 @@ public extension SpacesBackend {
     func setLinuxSource(_ value: String) async throws {}
     func placementOverflow() async -> Bool? { nil }
     func setPlacementOverflow(_ on: Bool) async throws {}
+    func runtimeKinds() async -> [AppRuntimeKindInput]? { nil }
+    func runtimeCheckPath(kind: String, path: String) async throws -> AppRuntimePathCheck {
+        throw FixtureError(message: "Runtimes can't be checked here")
+    }
+    func setRuntimeSetting(key: String, value: String?) async throws {}
 }
 
 /// The wizard's GPU choices from the SDK's `gpu_support`: the first option
@@ -594,6 +607,35 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
 
     public func placementOverflow() async -> Bool? {
         (try? configGet(key: "placement.overflow")).map { $0.value != "off" }
+    }
+
+    public func runtimeKinds() async -> [AppRuntimeKindInput]? {
+        let result = await withTimeout(seconds: Self.probeSeconds) { [cua] in try await cua.local().runtimeKinds() }
+        guard case .success(let kinds) = result else { return nil }
+        return kinds.map(Self.runtimeKind)
+    }
+
+    public func runtimeCheckPath(kind: String, path: String) async throws -> AppRuntimePathCheck {
+        Self.pathCheck(try await cua.local().runtimeCheckPath(kind: kind, path: path))
+    }
+
+    public func setRuntimeSetting(key: String, value: String?) async throws {
+        if let value { _ = try configSet(key: key, value: value) } else { _ = try configUnset(key: key) }
+    }
+
+    /// The SDK's kind as the app core's Settings input takes it.
+    static func runtimeKind(_ k: RuntimeKindState) -> AppRuntimeKindInput {
+        AppRuntimeKindInput(
+            kind: k.kind, source: k.source, path: k.path,
+            detected: k.detected.map {
+                AppDetectedRuntime(tool: $0.tool, name: $0.name, path: $0.path, version: $0.version, guests: $0.guests)
+            },
+            check: k.check.map(pathCheck), expected: k.expected)
+    }
+
+    static func pathCheck(_ p: RuntimePathProbe) -> AppRuntimePathCheck {
+        AppRuntimePathCheck(path: p.path, exists: p.exists, executable: p.executable, tool: p.tool, name: p.name,
+                            version: p.version, minVersion: p.minVersion, expected: p.expected, guests: p.guests)
     }
 
     public func setPlacementOverflow(_ on: Bool) async throws {
@@ -1240,6 +1282,40 @@ public final class FixtureSpacesBackend: SpacesBackend, @unchecked Sendable {
     public var fixturePlacementOverflow: Bool? = true
     public func placementOverflow() async -> Bool? { await MainActor.run { fixturePlacementOverflow } }
     public func setPlacementOverflow(_ on: Bool) async throws { await MainActor.run { fixturePlacementOverflow = on } }
+    /// The fixture Mac's runtime settings (`runtime.<kind>`, `runtime.<kind>_path`).
+    public var fixtureRuntimeSettings: [String: String] = [:]
+    /// What the fixture Mac has installed, per kind (path, version).
+    public var fixtureInstalled: [String: [AppDetectedRuntime]] = [
+        "container": [AppDetectedRuntime(tool: "docker", name: "Docker", path: "/usr/local/bin/docker", version: "27.3.1", guests: nil)],
+        "vm": [AppDetectedRuntime(tool: "lume", name: "Lume", path: "/opt/homebrew/bin/lume", version: "0.6.1", guests: "macOS")],
+        "microvm": [],
+    ]
+    static let fixtureExpected = ["container": ["Docker", "Podman"], "vm": ["Lume"], "microvm": ["Apple container"]]
+    public func runtimeKinds() async -> [AppRuntimeKindInput]? {
+        await MainActor.run {
+            ["container", "vm", "microvm"].map { kind in
+                let found = fixtureInstalled[kind] ?? []
+                let path = fixtureRuntimeSettings["runtime.\(kind)_path"]
+                let inUse = path ?? found.first?.path
+                return AppRuntimeKindInput(kind: kind, source: fixtureRuntimeSettings["runtime.\(kind)"] ?? "auto", path: path,
+                                           detected: found, check: inUse.map { fixtureCheck(kind: kind, path: $0) },
+                                           expected: Self.fixtureExpected[kind] ?? [])
+            }
+        }
+    }
+    public func runtimeCheckPath(kind: String, path: String) async throws -> AppRuntimePathCheck {
+        await MainActor.run { fixtureCheck(kind: kind, path: path) }
+    }
+    public func setRuntimeSetting(key: String, value: String?) async throws {
+        await MainActor.run { fixtureRuntimeSettings[key] = value }
+    }
+    func fixtureCheck(kind: String, path: String) -> AppRuntimePathCheck {
+        let known = (fixtureInstalled[kind] ?? []).first { $0.path == path }
+        return AppRuntimePathCheck(path: path, exists: known != nil, executable: known != nil, tool: known?.tool,
+                                   name: known?.name, version: known?.version,
+                                   minVersion: known?.tool == "lume" ? "0.6.0" : nil,
+                                   expected: Self.fixtureExpected[kind] ?? [], guests: known?.guests)
+    }
     public func localBackends() async -> [String]? { await MainActor.run { fixtureBackends } }
     /// Why each of the fixture Mac's runtimes that is not ready is not.
     public var fixtureRuntimeDetails: [String: String] = [:]

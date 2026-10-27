@@ -496,6 +496,13 @@ impl QemuRuntime {
 
     pub async fn binary(&self, arch: Arch) -> Result<PathBuf> {
         let name = format!("qemu-system-{}", arch.qemu());
+        // `runtime.vm_path` (with `runtime.vm = system`), when it is this
+        // arch's QEMU.
+        if let Some(p) = crate::kinds::configured_bin(crate::kinds::RuntimeKind::Vm)
+            .filter(|p| p.file_name().is_some_and(|n| n == name.as_str()))
+        {
+            return Ok(p);
+        }
         if let Some(p) = host::which(&name) {
             return Ok(p);
         }

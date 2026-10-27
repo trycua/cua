@@ -428,6 +428,8 @@ register machines: `CUA_RELAY_TOKENS`/`CUA_RELAY_TOKEN_FILE` or
 | `CUA_RELAY_TOKENS` | unset | Static mode: comma-separated registration tokens. |
 | `CUA_RELAY_TOKEN_FILE` | unset | Static mode: one token per line (`#` comments). |
 | `CUA_RELAY_MAX_MACHINES_PER_TOKEN` | `16` | Static mode: machines per registration token. |
+| `CUA_RELAY_JOIN_RATE_PER_SEC` | `250` | Computer joins admitted per second once the burst is used. A restart brings every computer back at once: the rest get `503` with a jittered `Retry-After`, which the join client honours. `0` turns the limit off. |
+| `CUA_RELAY_JOIN_BURST` | `500` | Computer joins admitted at once. |
 | `CUA_RELAY_ALLOW_ANONYMOUS_CLIENTS` | off | Static mode: also forward requests without a spacesd credential. |
 | `CUA_RELAY_HOST_DOMAIN` | unset | Host mode: `<machine-id>.<domain>` routes to that machine, and path mode (`/m/<id>/…`) refuses on the main origin (S6; see "Machine origin" below). |
 | `CUA_RELAY_ADMIN_TOKEN` | unset | Enables `GET /relay/v1/machines`. |

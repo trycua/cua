@@ -201,6 +201,11 @@ async function startNativeHost(showRoute: (route: string) => void, globalShortcu
         const r = win instanceof BrowserWindow ? await dialog.showOpenDialog(win, { properties }) : await dialog.showOpenDialog({ properties });
         return r.canceled ? null : r.filePaths;
       },
+      chooseProgram: async (win) => {
+        const options = { properties: ["openFile", "showHiddenFiles", "treatPackageAsDirectory"] as ("openFile" | "showHiddenFiles" | "treatPackageAsDirectory")[], defaultPath: process.platform === "win32" ? undefined : "/usr/local/bin", buttonLabel: "Use" };
+        const r = win instanceof BrowserWindow ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
+        return r.canceled ? null : (r.filePaths[0] ?? null);
+      },
       pip,
       ...prompts,
     },

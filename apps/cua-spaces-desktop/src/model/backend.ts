@@ -10,6 +10,8 @@ import type {
   AppCreateSpaceArgs,
   AppGpuChoice,
   AppRuntime,
+  AppRuntimeKindInput,
+  AppRuntimePathCheck,
   AppSpaceAgentRun,
   AppSpaceHost,
   AppSpaceKind,
@@ -161,6 +163,12 @@ export interface SpacesBackend {
   setLumeSource(value: string): Promise<void>;
   linuxSource(): Promise<string | null>;
   setLinuxSource(value: string): Promise<void>;
+  /** Each kind of Space's runtime setting and what is installed for it (`runtime_kinds`); null when unknown. */
+  runtimeKinds(): Promise<AppRuntimeKindInput[] | null>;
+  /** What `path` is for `kind` (`container`, `vm`, `microvm`). */
+  runtimeCheckPath(kind: string, path: string): Promise<AppRuntimePathCheck>;
+  /** Writes a runtime setting (`runtime.container`, `runtime.vm_path`), or unsets it (null). */
+  setRuntimeSetting(key: string, value: string | null): Promise<void>;
   localStorage(): Promise<LocalStorage | null>;
   /** A Cua account is signed in (or client credentials are set). */
   loggedIn(): Promise<boolean>;
@@ -576,6 +584,20 @@ export class LiveSpacesBackend implements SpacesBackend {
 
   async setLinuxSource(value: string): Promise<void> {
     this.native.configSet("runtime.linux", value);
+  }
+
+  async runtimeKinds(): Promise<AppRuntimeKindInput[] | null> {
+    const kinds = await bounded(PROBE_SECONDS, () => this.cua.local().runtimeKinds());
+    return kinds?.map((k) => ({ kind: k.kind, source: k.source, path: k.path, detected: k.detected, check: k.check, expected: k.expected })) ?? null;
+  }
+
+  async runtimeCheckPath(kind: string, path: string): Promise<AppRuntimePathCheck> {
+    return this.cua.local().runtimeCheckPath(kind, path);
+  }
+
+  async setRuntimeSetting(key: string, value: string | null): Promise<void> {
+    if (value === null) this.native.configUnset(key);
+    else this.native.configSet(key, value);
   }
 
   async localStorage(): Promise<LocalStorage | null> {

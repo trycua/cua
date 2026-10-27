@@ -690,8 +690,9 @@ export function settingsPage(
     keyvaultSiteIcons: settings.hostSettings?.keyvaultSiteIcons ?? true,
     keyvaultProtection: settings.hostSettings?.keyvaultProtection ?? [],
     autoConnect: settings.hostSettings?.autoConnect ?? null,
-    lumeSource: settings.hostSettings?.lumeSource ?? null,
-    linuxSource: settings.hostSettings?.linuxSource ?? null,
+    overflow: settings.hostSettings?.overflow ?? null,
+    // Every host's runtimes section; what the host read fills it in.
+    runtimes: settings.hostSettings?.runtimes ?? null,
     agents: agents?.agents ?? null,
     agentsBusy: agents?.agentsBusy ?? false,
     agentsPending: agents?.agentsPending ?? [],

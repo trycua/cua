@@ -602,23 +602,18 @@ struct ViewModelTests {
         await model.loadSettings()
         let page = model.settingsPage
         #expect(page.sections.map(\.id) == ["account", "teams", "general", "runtimes", "privacy", "agents"])
-        // Settings, Runtimes: macOS VMs picks runtime.lume.
-        let runtime = page.sections.first { $0.id == "runtimes" }!.rows[0]
-        #expect(runtime.options.map(\.id) == ["auto", "builtin", "system"])
-        #expect(runtime.options.first(where: \.active)?.id == "auto")
-        await model.choose(row: "macos-runtime", option: "builtin")
-        #expect(model.lumeSource == "builtin")
-        #expect(model.settingsPage.sections.first { $0.id == "runtimes" }!.rows[0]
-            .options.first(where: \.active)?.id == "builtin")
-        // Linux picks runtime.linux (the built-in Linux runtime).
-        let linux = model.settingsPage.sections.first { $0.id == "runtimes" }!.rows
-            .first { $0.id == "linux-runtime" }!
-        #expect(linux.label == "Linux")
-        #expect(linux.options.first(where: \.active)?.id == "auto")
-        await model.choose(row: "linux-runtime", option: "system")
-        #expect(model.linuxSource == "system")
-        #expect(model.settingsPage.sections.first { $0.id == "runtimes" }!.rows
-            .first { $0.id == "linux-runtime" }!.options.first(where: \.active)?.id == "system")
+        // Settings, Runtimes: one row per kind; Virtual machines picks runtime.vm.
+        let runtimes = { model.settingsPage.sections.first { $0.id == "runtimes" }!.rows }
+        #expect(runtimes().map(\.id) == ["runtime:container", "runtime:vm", "runtime:microvm"])
+        let vm = runtimes()[1]
+        #expect(vm.label == "Virtual machines")
+        #expect(vm.options.map(\.id) == ["auto", "builtin", "system"])
+        #expect(vm.options.first(where: \.active)?.id == "auto")
+        await model.choose(row: "runtime:vm", option: "builtin")
+        #expect(runtimes()[1].options.first(where: \.active)?.id == "builtin")
+        await model.choose(row: "runtime:container", option: "system")
+        #expect(runtimes().first { $0.id == "runtime:container" }!.options.first(where: \.active)?.id == "system")
+        #expect(runtimes().contains { $0.id == "runtime-path:container" })
         #expect(model.chrome.signInLabel == "Sign in")
         await model.press(row: "sign-in")
         #expect(model.identity == "you@example.com")
@@ -684,10 +679,10 @@ struct ViewModelTests {
         #expect(mac.wizard.view.kindTiles.first { $0.id == "microvm" }?.enabled == false)
         // No words in New Space; Settings, Advanced, Runtimes says why.
         #expect(mac.wizard.view.kindTiles.first { $0.id == "microvm" }?.detail == "")
-        let microvm = mac.settingsPage.sections.first { $0.id == "runtimes" }?.rows.filter { $0.id.hasPrefix("microvm-") }
-        #expect(microvm?.map(\.id) == ["microvm-runtime", "microvm-runtime-note"])
-        #expect(microvm?.first?.value == "Not available")
-        #expect(microvm?.last?.label == "MicroVM needs macOS 26.")
+        await mac.readRuntimes()
+        let microvm = mac.settingsPage.sections.first { $0.id == "runtimes" }?.rows.first { $0.id == "runtime:microvm" }
+        #expect(microvm?.value == "Not available")
+        #expect(microvm?.help == "MicroVMs need macOS 26")
         #expect(appWizardCreateArgs(plan: mac.wizard.view.plan).kind == .container)
     }
 

@@ -35,6 +35,12 @@ public protocol AgentSetupRunning: AnyObject, Sendable {
     func connectJson(agents: [String], signIn: Bool, skills: Bool, mcp: Bool) async throws -> String
     /// Disconnect: both undone. JSON `{outcomes, removed_sign_ins}`.
     func disconnectJson(agents: [String], signIn: Bool) async throws -> String
+    /// Disconnect of some parts only (an app's page's switches).
+    func disconnectPartsJson(agents: [String], skills: Bool, mcp: Bool, signIn: Bool) async throws -> String
+    /// An agent's device-code sign-in made for Cua (Codex): JSON `{id, url, code}`.
+    func deviceSignInStartJson(agent: String) async throws -> String
+    /// Waits for it to be approved and saves it in Keyvault: JSON as Connect's `sign_in`.
+    func deviceSignInWaitJson(id: String) async throws -> String
 }
 
 /// The SDK's `AgentSetup`, registering the app's own `cua` as the MCP
@@ -83,6 +89,18 @@ public final class LiveAgentSetup: AgentSetupRunning, @unchecked Sendable {
 
     public func disconnectJson(agents: [String], signIn: Bool) async throws -> String {
         try await inner.disconnectJson(agents: agents, signIn: signIn)
+    }
+
+    public func disconnectPartsJson(agents: [String], skills: Bool, mcp: Bool, signIn: Bool) async throws -> String {
+        try await inner.disconnectPartsJson(agents: agents, skills: skills, mcp: mcp, signIn: signIn)
+    }
+
+    public func deviceSignInStartJson(agent: String) async throws -> String {
+        try await inner.deviceSignInStartJson(agent: agent)
+    }
+
+    public func deviceSignInWaitJson(id: String) async throws -> String {
+        try await inner.deviceSignInWaitJson(id: id)
     }
 }
 
@@ -186,6 +204,22 @@ public final class FixtureAgentSetup: AgentSetupRunning, @unchecked Sendable {
     public func disconnectJson(agents: [String], signIn: Bool) async throws -> String {
         _ = try await remove(agents: agents)
         return #"{"outcomes":[],"removed_sign_ins":[]}"#
+    }
+
+    public func disconnectPartsJson(agents: [String], skills: Bool, mcp: Bool, signIn: Bool) async throws -> String {
+        calls.append("disconnect-parts:\(agents.joined(separator: ",")):\(skills):\(mcp)")
+        return #"{"outcomes":[],"removed_sign_ins":[]}"#
+    }
+
+    /// Codex's device code, approved at once (no browser in fixtures).
+    public func deviceSignInStartJson(agent: String) async throws -> String {
+        calls.append("device-start:\(agent)")
+        return #"{"id":"\#(agent)-1","url":"https://auth.openai.com/codex/device","code":"ABCD-12345"}"#
+    }
+
+    public func deviceSignInWaitJson(id: String) async throws -> String {
+        calls.append("device-wait:\(id)")
+        return #"{"imported":{"source":"codex","env":"CODEX_AUTH_JSON","label":"Codex · ChatGPT sign-in","expires_ms":null,"added_ms":1},"refused":null,"line":null}"#
     }
 
     public func remove(agents: [String]) async throws -> [AppAgentSetupOutcomeInput] {

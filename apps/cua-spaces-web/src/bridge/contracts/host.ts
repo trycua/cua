@@ -740,10 +740,12 @@ export interface SettingsInput {
   keyvaultProtection?: { label: string; value: string }[];
   /** "Connect to the desktop automatically" (none: no row). */
   autoConnect?: boolean | null;
-  /** Which Lume macOS Spaces run on (none: no Runtimes section). */
-  lumeSource?: string | null;
-  /** Which engine local Linux Spaces run on (none: no Linux row). */
-  linuxSource?: string | null;
+  /** Overflow into your clouds when this machine is full (`placement.overflow`; none: no row). */
+  overflow?: boolean | null;
+  /** Settings, Advanced's runtimes: each kind's setting, what is installed
+   * for it and whether it runs here (`runtimes::RuntimesInput`). None: not
+   * read yet (the rows still show, "Checking…"). */
+  runtimes?: RuntimesInput | null;
   /** The coding agents (Settings, AI agents; none while detecting). */
   agents?: AgentSetupRow[] | null;
   /** "Configure all detected agents" is running. */
@@ -797,4 +799,62 @@ export interface SettingsSection {
 export interface SettingsPage {
   title: string;
   sections: SettingsSection[];
+}
+
+/** A runtime the host found for one kind (`runtimes::DetectedRuntime`). */
+export interface DetectedRuntime {
+  /** `docker`, `podman`, `lume`, `qemu`, `container`, `firecracker`. */
+  tool: string;
+  /** As people know it (`Docker`, `Apple container`). */
+  name: string;
+  path: string;
+  version?: string | null;
+  /** The one guest system it runs, when only one (`macOS`, `Linux`). */
+  guests?: string | null;
+}
+
+/** What a binary is for one kind (`runtimes::RuntimePathCheck`; the host's `runtimes.check`). */
+export interface RuntimePathCheck {
+  path: string;
+  exists: boolean;
+  executable: boolean;
+  tool?: string | null;
+  name?: string | null;
+  version?: string | null;
+  minVersion?: string | null;
+  /** The tools the kind takes here (`Docker`, `Podman`). */
+  expected: string[];
+  guests?: string | null;
+}
+
+/** One kind as the host read it (`runtimes::RuntimeKindInput`). */
+export interface RuntimeKindInput {
+  /** `container`, `vm`, `microvm`. */
+  kind: string;
+  /** `runtime.<kind>`: `auto`, `builtin`, `system`. */
+  source?: string | null;
+  /** `runtime.<kind>_path`, when set. */
+  path?: string | null;
+  /** What is installed for the kind, the one used first (null: not looked for yet). */
+  detected?: DetectedRuntime[] | null;
+  /** The path in use, probed. */
+  check?: RuntimePathCheck | null;
+  /** The tools the kind takes here. */
+  expected?: string[];
+}
+
+/** What Settings knows about this machine's runtimes (`runtimes::RuntimesInput`). */
+export interface RuntimesInput {
+  os?: "macos" | "windows" | "linux" | "unknown" | null;
+  hostArch?: string | null;
+  /** The runtime doctor's ready backends (null: not read yet). */
+  localBackends?: string[] | null;
+  localDetails?: Record<string, string> | null;
+  kinds?: RuntimeKindInput[] | null;
+}
+
+/** A path's one line (`settings.runtimePathVerdict`). */
+export interface RuntimePathVerdict {
+  ok: boolean;
+  line: string;
 }

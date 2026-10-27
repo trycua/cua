@@ -638,6 +638,13 @@ public final class PendingSpacesBackend: SpacesBackend, AgentsToolRunning, Cloud
     public func setLinuxSource(_ value: String) async throws { try await b().setLinuxSource(value) }
     public func placementOverflow() async -> Bool? { await b().placementOverflow() }
     public func setPlacementOverflow(_ on: Bool) async throws { try await b().setPlacementOverflow(on) }
+    public func runtimeKinds() async -> [AppRuntimeKindInput]? { await b().runtimeKinds() }
+    public func runtimeCheckPath(kind: String, path: String) async throws -> AppRuntimePathCheck {
+        try await b().runtimeCheckPath(kind: kind, path: path)
+    }
+    public func setRuntimeSetting(key: String, value: String?) async throws {
+        try await b().setRuntimeSetting(key: key, value: value)
+    }
     public func localStorage() async -> LocalStorage? { await b().localStorage() }
     public func runningMacosVms() async -> Int? { await b().runningMacosVms() }
     // The Machines page: Remove from account and each computer's health
@@ -741,6 +748,15 @@ public final class PendingAgentSetup: AgentSetupRunning, @unchecked Sendable {
     }
     public func disconnectJson(agents: [String], signIn: Bool) async throws -> String {
         try await s().disconnectJson(agents: agents, signIn: signIn)
+    }
+    public func disconnectPartsJson(agents: [String], skills: Bool, mcp: Bool, signIn: Bool) async throws -> String {
+        try await s().disconnectPartsJson(agents: agents, skills: skills, mcp: mcp, signIn: signIn)
+    }
+    public func deviceSignInStartJson(agent: String) async throws -> String {
+        try await s().deviceSignInStartJson(agent: agent)
+    }
+    public func deviceSignInWaitJson(id: String) async throws -> String {
+        try await s().deviceSignInWaitJson(id: id)
     }
 }
 

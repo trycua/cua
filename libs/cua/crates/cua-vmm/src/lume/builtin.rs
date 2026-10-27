@@ -80,27 +80,21 @@ impl LumeSource {
     /// The setting now: the environment, else the config file, else auto.
     /// Read on every use, so a change in Settings applies at once.
     pub fn current() -> Self {
-        if let Some(s) = std::env::var(SETTING_ENV)
-            .ok()
-            .and_then(|v| Self::parse(&v))
-        {
-            return s;
-        }
-        Self::from_config(&host::cua_home().join("config.toml"))
+        Self::of(crate::kinds::source(crate::kinds::RuntimeKind::Vm))
     }
 
-    /// `[runtime] lume = "..."` in `path` (auto when absent or unreadable).
+    /// `[runtime] vm` (or the older `lume`) in `path` (auto when
+    /// absent or unreadable).
     pub fn from_config(path: &Path) -> Self {
-        std::fs::read_to_string(path)
-            .ok()
-            .and_then(|t| t.parse::<toml_edit::DocumentMut>().ok())
-            .and_then(|d| {
-                d.get("runtime")?
-                    .get("lume")?
-                    .as_str()
-                    .and_then(Self::parse)
-            })
-            .unwrap_or_default()
+        Self::of(crate::kinds::source_in(crate::kinds::RuntimeKind::Vm, path))
+    }
+
+    fn of(s: crate::kinds::KindSource) -> Self {
+        match s {
+            crate::kinds::KindSource::Auto => Self::Auto,
+            crate::kinds::KindSource::Builtin => Self::Builtin,
+            crate::kinds::KindSource::System => Self::System,
+        }
     }
 
     /// Whether the built-in Lume may be used (and downloaded).
@@ -151,7 +145,10 @@ pub fn resolve(source: LumeSource) -> Option<PathBuf> {
 pub fn resolve_for(channel: CuaChannel, source: LumeSource) -> Option<PathBuf> {
     let system = || system_lume(channel, host::which, &root());
     match source {
-        LumeSource::System => system(),
+        // `runtime.vm_path` overrides the one found on PATH.
+        LumeSource::System => crate::kinds::custom_path(crate::kinds::RuntimeKind::Vm)
+            .filter(|p| p.is_file())
+            .or_else(system),
         LumeSource::Builtin => installed(),
         LumeSource::Auto => system()
             .filter(|p| system_binary_usable(source, binary_version_for(channel, p).as_deref()))

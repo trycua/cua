@@ -15,8 +15,9 @@ use cua_sandbox_core::settings::{self, Entry, Settings};
 /// One setting's effective value.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct ConfigEntry {
-    /// `default.on`, `default.kind`, `default.runtime`, `runtime.lume`,
-    /// `runtime.linux` or `telemetry.enabled`.
+    /// `default.on`, `default.kind`, `default.runtime`, `runtime.container`,
+    /// `runtime.vm`, `runtime.microvm` (and their `_path`) or
+    /// `telemetry.enabled`.
     pub key: String,
     /// The effective value.
     pub value: String,
@@ -177,7 +178,7 @@ mod tests {
             config_list()
                 .unwrap()
                 .iter()
-                .any(|e| e.key == "runtime.linux")
+                .any(|e| e.key == "runtime.container")
         );
         assert!(config_path().ends_with("config.toml"));
     }

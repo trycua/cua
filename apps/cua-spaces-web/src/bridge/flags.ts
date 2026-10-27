@@ -2,15 +2,15 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * Feature flags for the web UI. A flag is off unless something turns it on,
- * in this order:
+ * Feature flags for the web UI. A flag takes its default (off, except
+ * `spaces_redesign`, which is on) unless something sets it, in this order:
  *
  * 1. this device's override (`localStorage` `cua.flag.<name>` = `1` or `0`),
  *    which is how a dev build or a tester forces one;
  * 2. the build's default (`VITE_CUA_FLAG_<NAME>` = `1`);
  * 3. the remote value, when a source has set one (`setRemoteFlags`: the
  *    PostHog feature-flag payload, once the shells pass it in);
- * 4. off.
+ * 4. the flag's default.
  *
  * A flag only decides what the UI draws. Plans and limits are enforced by the
  * relay and the control plane, never by a flag.
@@ -26,14 +26,15 @@ import { useSyncExternalStore } from "react";
  *   this device.
  * - `spaces_redesign`: the redesigned Spaces page, Space page (thread, stream
  *   switching), Agents tab (chat), Add a computer, sidebar and page
- *   language. Off (the default), each of those routes draws the page as it
- *   was (`src/legacy/`); the core, daemon, CLI, SDK, MCP, Settings and
- *   Connect a cloud are the same either way. Settings → Advanced → Labs
- *   turns it on for this device.
+ *   language. On (the default), the redesign is drawn. Off, each of those
+ *   routes draws the classic page (`src/legacy/`); the core, daemon, CLI,
+ *   SDK, MCP, Settings and Connect a cloud are the same either way.
+ *   Settings → Advanced → Labs → "New design" switches back to the classic
+ *   design for this device.
  */
 export type FlagName = "upsell_cards" | "spaces_ask_first_home" | "spaces_redesign";
 
-const DEFAULTS: Record<FlagName, boolean> = { upsell_cards: false, spaces_ask_first_home: false, spaces_redesign: false };
+const DEFAULTS: Record<FlagName, boolean> = { upsell_cards: false, spaces_ask_first_home: false, spaces_redesign: true };
 
 const key = (name: FlagName) => `cua.flag.${name}`;
 let remote: Partial<Record<FlagName, boolean>> = {};

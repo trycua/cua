@@ -30,7 +30,7 @@
  */
 
 import type { MachineAccessNotice } from "./contracts/devices";
-import type { MachinePageRow, MachinesView } from "./contracts/host";
+import type { MachinePageRow, MachinesView, RuntimesInput } from "./contracts/host";
 import { AGENT_DETAIL_WEBKIT_METHODS } from "./ops/agent-detail";
 import { AGENT_KEYS_WEBKIT_METHODS } from "./ops/agent-keys";
 import { KEYVAULT_MANAGE_WEBKIT_METHODS } from "./ops/keyvault-manage";
@@ -78,6 +78,8 @@ export const WEBKIT_METHODS = [
   "agents.status",
   "agents.connect",
   "agents.disconnect",
+  "agents.signInStart",
+  "agents.signInWait",
   ...AGENT_DETAIL_WEBKIT_METHODS,
   ...AGENT_KEYS_WEBKIT_METHODS,
   ...KEYVAULT_SETUP_WEBKIT_METHODS,
@@ -124,6 +126,8 @@ export const WEBKIT_METHODS = [
   "loginItem.get",
   "loginItem.set",
   "loginItem.openSettings",
+  "runtimes.check",
+  "runtimes.browse",
   "devices.get",
   "devices.enroll",
   "devices.checkEnrolled",
@@ -372,6 +376,8 @@ export interface WkSettings {
   cli?: { name: string; installed: boolean } | null;
   /** `AppSettings.tips`; absent: an older host that keeps none. Saved with `settings.update`. */
   tips?: { off: boolean; done: string[] };
+  /** Settings, Advanced's runtimes as the host read them (`runtimes::RuntimesInput`); absent: not read. */
+  runtimes?: RuntimesInput | null;
 }
 
 /** `keyvault.*`: the core's page views, plus the overview (camelCase records). */

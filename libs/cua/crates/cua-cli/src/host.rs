@@ -1635,6 +1635,19 @@ pub async fn remove_machine(
     out: &mut dyn Write,
 ) -> Result<i32, CuaError> {
     use cua_host::DeviceState;
+    // The row is removed through `cua`, the lookup and the device through
+    // `auth`: they must be one relay (a daemon keeps its own).
+    let bound = cua
+        .embedded_runtime()
+        .and_then(|r| r.spaces().relay_account())
+        .map(|a| a.url);
+    let same = |a: &str, b: &str| a.trim_end_matches('/') == b.trim_end_matches('/');
+    if !bound.is_some_and(|u| same(&u, auth.relay_url())) {
+        return Err(CuaError::InvalidArgument(format!(
+            "this runtime is not bound to the relay {} that your account uses; run it with --embedded",
+            auth.relay_url()
+        )));
+    }
     // Fresh from the relay: the Space resolver reads a possibly cold cache.
     let relay = RelayClient::new(auth.relay_url()).map_err(host_err)?;
     let token = tokens.access_token().await.map_err(host_err)?;
@@ -1699,7 +1712,7 @@ pub async fn remove_machine(
             let v = serde_json::json!({
                 "machine": { "id": rid, "name": m.name },
                 "removed": removed,
-                "device": { "status": status, "ids": ids },
+                "device": { "status": status, "ids": ids, "message": text },
             });
             line(out, v.to_string());
         } else {
@@ -5124,6 +5137,92 @@ mod tests {
                 assert!(text.contains(id.as_str()), "{text}");
             }
             assert!(text.contains("cua devices revoke <id>"), "{text}");
+        }
+
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn machines_rm_refuses_a_runtime_bound_to_another_relay() {
+            // A daemon-like runtime on relay B, the caller's account on A.
+            let f = fx(&["old-laptop"]).await;
+            let other = FakeRelay::start().await;
+            let dir = tempfile::tempdir().unwrap();
+            let cua = cua_sdk::Cua::embedded(cua_sdk::CuaConfig {
+                state_dir: Some(dir.path().join("sandboxes").display().to_string()),
+                spaces_home: Some(dir.path().join("cua").display().to_string()),
+                ..Default::default()
+            })
+            .unwrap();
+            let url = other.url.clone();
+            attach_relay_account(&cua, || {
+                cua_spaces::RelayAccount::new(url, Arc::new(StaticToken("acct".into())))
+            });
+            let g = Fx { cua, ..f };
+            let (r, text, asked) = rm(&g, "old-laptop", false, || true).await;
+            let Err(CuaError::InvalidArgument(m)) = r else {
+                panic!("{r:?}")
+            };
+            assert!(m.contains("--embedded"), "{m}");
+            assert_eq!(asked, 0);
+            assert!(text.is_empty(), "{text}");
+            assert!(g.relay.machine(ID).is_some());
+            assert_eq!(
+                g.relay.device_state(&g.remote[0]),
+                Some(DeviceState::Enrolled)
+            );
+        }
+
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn machines_rm_device_failure_keeps_recovery_steps() {
+            // This device is revoked while the prompt is open (and the relay
+            // stops requiring devices): the row goes, the revoke is refused.
+            for json in [false, true] {
+                let f = fx(&["old-laptop"]).await;
+                let dir = tempfile::tempdir().unwrap();
+                let cua = cua_sdk::Cua::embedded(cua_sdk::CuaConfig {
+                    state_dir: Some(dir.path().join("sandboxes").display().to_string()),
+                    spaces_home: Some(dir.path().join("cua").display().to_string()),
+                    ..Default::default()
+                })
+                .unwrap();
+                let url = f.relay.url.clone();
+                attach_relay_account(&cua, || {
+                    cua_spaces::RelayAccount::new(url, Arc::new(StaticToken("acct".into())))
+                });
+                let g = Fx { cua, ..f };
+                let (admin, _) = device(&g.relay, "admin", 9).await;
+                let mut out = Vec::new();
+                let r = remove_machine(
+                    &g.cua,
+                    &g.auth,
+                    &StaticToken("acct".into()),
+                    "old-laptop",
+                    &|_| {
+                        g.relay.require_devices(false);
+                        std::thread::scope(|s| {
+                            s.spawn(|| {
+                                tokio::runtime::Runtime::new()
+                                    .unwrap()
+                                    .block_on(admin.revoke(&g.laptop))
+                                    .unwrap()
+                            });
+                        });
+                        true
+                    },
+                    json,
+                    &mut out,
+                )
+                .await;
+                let text = String::from_utf8(out).unwrap();
+                assert!(matches!(r, Err(CuaError::PermissionDenied(_))), "{r:?} {text}");
+                assert!(g.relay.machine(ID).is_none(), "{text}");
+                assert_eq!(
+                    g.relay.device_state(&g.remote[0]),
+                    Some(DeviceState::Enrolled)
+                );
+                assert!(text.contains("cua devices revoke <id>"), "{text}");
+                if json {
+                    assert!(text.contains(r#""status":"failed""#), "{text}");
+                }
+            }
         }
 
         #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

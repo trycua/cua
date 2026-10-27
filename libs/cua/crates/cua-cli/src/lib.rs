@@ -1864,12 +1864,15 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
             return cloud_cmd::run(&cua, cmd, json, out).await;
         }
         Command::Machines(host::MachinesCmd::Rm { name, yes }) => {
+            // Embedded: the row, the lookup and the device all use this
+            // process's relay, never a daemon's.
             let rest = Cli {
                 command: Command::Spaces(host::SpacesCmd::Ls {
                     relay: None,
                     label: vec![],
                     no_size: false,
                 }),
+                embedded: true,
                 ..cli
             };
             let cua = open(&rest, false).await?;

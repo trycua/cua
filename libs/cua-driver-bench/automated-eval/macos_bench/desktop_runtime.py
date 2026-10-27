@@ -118,14 +118,13 @@ def record_pid(pid: int, role: str) -> None:
     if not path or detect_platform() != "linux":
         return
     try:
-        try:
-            pgid: int | None = os.getpgid(pid)
-        except OSError:
-            pgid = None
-        with open(path, "a", encoding="utf-8") as handle:
-            handle.write(json.dumps({"pid": pid, "pgid": pgid, "role": role}) + "\n")
+        pgid: int | None = os.getpgid(pid)
     except OSError:
-        pass
+        pgid = None
+    # An enabled ledger that cannot be written must fail the caller: the cleanup proof
+    # would otherwise certify an incomplete ownership record.
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps({"pid": pid, "pgid": pgid, "role": role}) + "\n")
 
 
 def start_app(
@@ -142,12 +141,15 @@ def start_app(
             stderr=output,
             start_new_session=True,
         )
-    record_pid(proc.pid, Path(argv[0]).name)
-    time.sleep(0.15)
-    if proc.poll() is not None:
+    try:
+        record_pid(proc.pid, Path(argv[0]).name)
+        time.sleep(0.15)
+        if proc.poll() is not None:
+            raise RuntimeError(f"{argv[0]} exited ({proc.returncode}); see {log}")
+    except BaseException:
         stop_group(proc.pid)
         proc.wait()
-        raise RuntimeError(f"{argv[0]} exited ({proc.returncode}); see {log}")
+        raise
     return proc
 
 
@@ -335,6 +337,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     doc.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
+    def terminate(signum: int, _frame: object) -> None:
+        raise SystemExit(128 + signum)
+
+    # SIGTERM must unwind through the cleanup below instead of killing the process outright.
+    previous = signal.signal(signal.SIGTERM, terminate)
+    try:
+        return _doctor(args)
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
+def _doctor(args: argparse.Namespace) -> int:
     binary = args.cua_bin
     args.out.mkdir(parents=True, exist_ok=True)
     state = Path(tempfile.mkdtemp(prefix="cdb-doctor-"))

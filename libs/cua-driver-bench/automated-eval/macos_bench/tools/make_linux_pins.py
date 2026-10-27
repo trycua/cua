@@ -89,9 +89,15 @@ def main(argv: list[str] | None = None) -> int:
     pins = build_pins(args.cua_bin, args.cua_skills, report, version)
     out.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=out.parent, prefix=".pins-")
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        handle.write(json.dumps(pins, indent=2) + "\n")
-    os.replace(tmp, out)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(pins, indent=2) + "\n")
+        try:
+            os.link(tmp, out)  # atomic no-clobber publish
+        except FileExistsError:
+            raise SystemExit(f"refusing to overwrite {out}") from None
+    finally:
+        os.unlink(tmp)
     return 0
 
 

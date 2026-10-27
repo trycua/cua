@@ -105,10 +105,60 @@ class RecordPidTest(unittest.TestCase):
                 entry = json.loads(ledger.read_text())
                 self.assertEqual(entry["pid"], proc.pid)
                 self.assertEqual(entry["pgid"], proc.pid)
-                self.assertNotIn("30", ledger.read_text())
+                self.assertEqual(set(entry), {"pid", "pgid", "role"})
+                self.assertEqual(entry["role"], "sleep")
             finally:
                 desktop.stop_group(proc.pid)
                 proc.wait(5)
+
+    @unittest.skipUnless(sys.platform == "linux", "Linux only")
+    def test_ledger_write_failure_reaps_the_new_process(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            made: list[subprocess.Popen] = []
+            real = subprocess.Popen
+
+            def spy(*a, **k):
+                made.append(real(*a, **k))
+                return made[-1]
+
+            env = {"CDB_BENCH_PID_LOG": str(Path(tmp) / "missing" / "pids.jsonl")}
+            with (
+                mock.patch.dict(os.environ, env),
+                mock.patch.object(desktop.subprocess, "Popen", spy),
+                self.assertRaises(OSError),
+            ):
+                desktop.start_app(["sleep", "30"], Path(tmp) / "home", Path(tmp) / "log")
+            self.assertEqual(len(made), 1)
+            self.assertIsNotNone(made[0].poll())
+
+    @unittest.skipUnless(sys.platform == "linux", "Linux only")
+    def test_doctor_sigterm_reaps_private_daemon(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            pidfile = Path(tmp) / "pid"
+            fake = Path(tmp) / "driver"
+            fake.write_text(
+                f'#!/bin/sh\n[ "$1" = serve ] && {{ echo $$ > {pidfile}; exec sleep 300; }}\n'
+                "exit 1\n"
+            )
+            fake.chmod(0o755)
+            proc = subprocess.Popen(
+                [sys.executable, str(BENCH / "desktop_runtime.py"), "doctor",
+                 "--cua-bin", str(fake), "--out", str(Path(tmp) / "out")]
+            )  # fmt: skip
+            try:
+                deadline = time.monotonic() + 10
+                while not pidfile.exists() and time.monotonic() < deadline:
+                    time.sleep(0.1)
+                time.sleep(0.5)
+                daemon = int(pidfile.read_text())
+                proc.send_signal(signal.SIGTERM)
+                proc.wait(20)
+                time.sleep(0.5)
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(daemon, 0)
+            finally:
+                if proc.poll() is None:
+                    proc.kill()
 
     def test_noop_without_variable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ):
@@ -383,6 +433,23 @@ class PinsTest(unittest.TestCase):
         self.out.write_text("old")
         refuses(lambda: None)
         self.assertEqual(self.out.read_text(), "old")
+
+    def test_competing_writer_is_preserved(self) -> None:
+        self.out.parent.mkdir(parents=True)
+        real_link = os.link
+
+        def racing(src, dst):
+            self.out.write_text("competitor")
+            return real_link(src, dst)
+
+        with (
+            mock.patch.object(pins_tool, "in_checkout", return_value=False),
+            mock.patch.object(pins_tool.os, "link", racing),
+            self.assertRaises(SystemExit),
+        ):
+            self.run_tool()
+        self.assertEqual(self.out.read_text(), "competitor")
+        self.assertEqual([p.name for p in self.out.parent.iterdir()], [self.out.name])
 
     def test_refuses_inside_checkout(self) -> None:
         self.out = BENCH / "should-not-exist.json"

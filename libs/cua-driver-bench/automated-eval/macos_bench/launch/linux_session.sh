@@ -79,9 +79,21 @@ timeout 15 gdbus call --session --dest org.a11y.Bus --object-path /org/a11y/bus 
 # command would otherwise hold the pipe open and block the launcher before its checks run.
 log="$CDB_SESSION_DIR/launch.log"
 offset=$(stat -c %s "$log" 2>/dev/null || echo 0)
+# The session runs in the background so cancellation of this script is forwarded to it and
+# the teardown, ledger check and exit file still happen.
 timeout "${CDB_SESSION_TIMEOUT:-0}" xvfb-run -a --server-args='-screen 0 1920x1080x24' \
-  dbus-run-session -- bash -euo pipefail -c "$inner" linux-session "$@" >> "$log" 2>&1
-status=$?
+  dbus-run-session -- bash -euo pipefail -c "$inner" linux-session "$@" >> "$log" 2>&1 &
+session=$!
+cancelled=0
+trap 'cancelled=143; kill -TERM "$session" 2>/dev/null' TERM
+trap 'cancelled=130; kill -TERM "$session" 2>/dev/null' INT
+while :; do
+  wait "$session"
+  status=$?
+  kill -0 "$session" 2>/dev/null || break
+done
+trap - TERM INT
+[ "$status" -eq 0 ] && [ "$cancelled" -ne 0 ] && status=$cancelled
 tail -c +"$((offset + 1))" "$log"
 command_status=$status
 

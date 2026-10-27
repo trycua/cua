@@ -47,7 +47,12 @@ class McpStdioClient:
             bufsize=1,
             start_new_session=True,
         )
-        desktop.record_pid(self.proc.pid, "mcp-client")
+        try:
+            desktop.record_pid(self.proc.pid, "mcp-client")
+        except BaseException:
+            desktop.stop_group(self.proc.pid)
+            self.proc.wait()
+            raise
         self._next = 0
         self._responses: dict[int, dict[str, Any]] = {}
         self._cond = threading.Condition()

@@ -1074,6 +1074,31 @@ class LinuxLauncherTest(unittest.TestCase):
                     except OSError:
                         pass
 
+    def test_sigterm_to_launcher_tears_down_and_reports(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ev = Path(tmp) / "ev"
+            env = {k: v for k, v in os.environ.items() if k != "CDB_BENCH_PID_LOG"}
+            proc = subprocess.Popen(
+                ["bash", str(self.script), "--evidence", str(ev), "--", "bash", "-c",
+                 'echo $$ > "$CDB_SESSION_DIR/cmd.pid"; sleep 300'],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env,
+            )  # fmt: skip
+            try:
+                deadline = time.monotonic() + 60
+                while not (ev / "cmd.pid").exists() and time.monotonic() < deadline:
+                    time.sleep(0.2)
+                self.assertTrue((ev / "cmd.pid").exists())
+                cmd = int((ev / "cmd.pid").read_text())
+                proc.send_signal(signal.SIGTERM)
+                self.assertNotEqual(proc.wait(60), 0)
+                self.assertTrue((ev / "exit").exists())
+                time.sleep(0.5)
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(cmd, 0)
+            finally:
+                if proc.poll() is None:
+                    proc.kill()
+
     @unittest.skipUnless(_x11_ready() and _has_gi(), "headless X11 session with GTK required")
     def test_doctor_private_daemon_is_reaped(self) -> None:
         import desktop_runtime as desktop

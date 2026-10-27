@@ -4213,6 +4213,9 @@ mod tests {
             fn state(&self) -> cua_host::ServiceState {
                 panic!("must not read service state")
             }
+            fn port_free(&self, _: std::net::SocketAddr, _: cua_host::ports::Transport) -> bool {
+                true
+            }
         }
         let relay = FakeRelay::start().await;
         let dir = tempfile::tempdir().unwrap();

@@ -43,6 +43,7 @@ mod helper_migration_tests;
 mod host;
 pub mod machine;
 pub mod pairing;
+pub mod ports;
 pub mod preflight;
 pub mod provided;
 pub mod relay;

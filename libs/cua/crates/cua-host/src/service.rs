@@ -259,6 +259,10 @@ pub trait ServiceManager: Send + Sync {
     fn uninstall(&self) -> Result<()>;
     /// Current state.
     fn state(&self) -> ServiceState;
+    /// Whether the service this runs could bind `addr` for `transport`
+    /// now (setup asks before it chooses the service's ports). The real
+    /// runners ask the operating system ([`crate::ports::os_port_free`]).
+    fn port_free(&self, addr: std::net::SocketAddr, transport: crate::ports::Transport) -> bool;
 }
 
 // ------------------------------------------------------------- generators
@@ -672,6 +676,9 @@ impl ServiceManager for Systemd {
             ),
         }
     }
+    fn port_free(&self, addr: std::net::SocketAddr, transport: crate::ports::Transport) -> bool {
+        crate::ports::os_port_free(addr, transport)
+    }
 }
 
 /// launchd LaunchAgent (GUI domain of the current user).
@@ -762,6 +769,9 @@ impl ServiceManager for Launchd {
             kind: "launchd".into(),
             detail: self.plist_path().display().to_string(),
         }
+    }
+    fn port_free(&self, addr: std::net::SocketAddr, transport: crate::ports::Transport) -> bool {
+        crate::ports::os_port_free(addr, transport)
     }
 }
 
@@ -1081,6 +1091,9 @@ impl ServiceManager for WindowsTask {
             detail: text.trim().to_string(),
         }
     }
+    fn port_free(&self, addr: std::net::SocketAddr, transport: crate::ports::Transport) -> bool {
+        crate::ports::os_port_free(addr, transport)
+    }
 }
 
 /// Running processes by executable path (the logon entry has no pidfile:
@@ -1302,6 +1315,9 @@ impl ServiceManager for ProcessRunner {
             kind: "process".into(),
             detail: pid.map(|p| format!("pid {p}")).unwrap_or_default(),
         }
+    }
+    fn port_free(&self, addr: std::net::SocketAddr, transport: crate::ports::Transport) -> bool {
+        crate::ports::os_port_free(addr, transport)
     }
 }
 
@@ -1615,6 +1631,9 @@ impl ServiceManager for AppHelper {
             detail: format!("{} in {}", self.channel.app_name(), self.app.display()),
         }
     }
+    fn port_free(&self, addr: std::net::SocketAddr, transport: crate::ports::Transport) -> bool {
+        crate::ports::os_port_free(addr, transport)
+    }
 }
 
 /// A registration that did not leave the helper allowed to run, in words.
@@ -1661,6 +1680,9 @@ impl ServiceManager for MissingAppHelper {
             kind: RunnerKind::AppHelper.as_str().into(),
             detail: format!("{}: the Cua Spaces app is not installed", app_helper_name()),
         }
+    }
+    fn port_free(&self, addr: std::net::SocketAddr, transport: crate::ports::Transport) -> bool {
+        crate::ports::os_port_free(addr, transport)
     }
 }
 
@@ -1750,6 +1772,11 @@ pub struct FakeServiceManager {
     running: Mutex<bool>,
     /// `start` fails while this is set.
     pub fail_start: Mutex<bool>,
+    /// Ports another program holds (any address, TCP and UDP alike): never
+    /// free. Every other port is free, so no test binds a real one.
+    pub held_by_others: Mutex<Vec<u16>>,
+    /// Ports this service holds while it runs (free once it is stopped).
+    pub held_while_running: Mutex<Vec<u16>>,
 }
 
 impl ServiceManager for FakeServiceManager {
@@ -1787,6 +1814,12 @@ impl ServiceManager for FakeServiceManager {
             kind: "fake".into(),
             detail: String::new(),
         }
+    }
+    fn port_free(&self, addr: std::net::SocketAddr, _: crate::ports::Transport) -> bool {
+        let port = addr.port();
+        !self.held_by_others.lock().unwrap().contains(&port)
+            && !(*self.running.lock().unwrap()
+                && self.held_while_running.lock().unwrap().contains(&port))
     }
 }
 

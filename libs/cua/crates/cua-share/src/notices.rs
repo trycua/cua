@@ -3,7 +3,8 @@
 
 use crate::model::Share;
 
-/// Shown when the link is in relay path mode.
+/// Shown when a browser cannot open the link: any path-mode link, and a
+/// private or team link (the hosted relay has no browser sign-in yet).
 pub const PATH_MODE: &str =
     "Browser viewing of private links is coming; this link opens for tools and signed-in devices.";
 
@@ -16,7 +17,7 @@ pub fn is_path_mode(url: &str) -> bool {
 
 /// The notices for `share`.
 pub fn notices(share: &Share) -> Vec<String> {
-    if is_path_mode(&share.url) {
+    if is_path_mode(&share.url) || share.access != crate::model::Access::Public {
         vec![PATH_MODE.to_string()]
     } else {
         Vec::new()
@@ -46,11 +47,21 @@ mod tests {
     #[test]
     fn host_mode_has_no_notices() {
         let s = share(
-            "https://sabc-1234.share.cua.ai/",
+            "https://pabc-1234.m.cua.sh/",
             Access::Public,
             Target::Port { port: 1 },
         );
         assert!(notices(&s).is_empty());
+    }
+
+    #[test]
+    fn private_host_mode_links_still_say_browsers_cannot_open_them() {
+        let s = share(
+            "https://sabcd-0123456789ab.m.cua.sh/",
+            Access::Private,
+            Target::Port { port: 1 },
+        );
+        assert_eq!(notices(&s), vec![PATH_MODE.to_string()]);
     }
 
     #[test]

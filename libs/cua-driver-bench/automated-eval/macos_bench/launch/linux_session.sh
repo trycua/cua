@@ -75,10 +75,14 @@ timeout 15 gdbus call --session --dest org.a11y.Bus --object-path /org/a11y/bus 
 "$@"
 '
 
+# Output goes straight to the log file, not through a pipe: a descendant that outlives the
+# command would otherwise hold the pipe open and block the launcher before its checks run.
+log="$CDB_SESSION_DIR/launch.log"
+offset=$(stat -c %s "$log" 2>/dev/null || echo 0)
 timeout "${CDB_SESSION_TIMEOUT:-0}" xvfb-run -a --server-args='-screen 0 1920x1080x24' \
-  dbus-run-session -- bash -euo pipefail -c "$inner" linux-session "$@" 2>&1 \
-  | tee -a "$CDB_SESSION_DIR/launch.log"
-status=${PIPESTATUS[0]}
+  dbus-run-session -- bash -euo pipefail -c "$inner" linux-session "$@" >> "$log" 2>&1
+status=$?
+tail -c +"$((offset + 1))" "$log"
 command_status=$status
 
 evidence_status=0

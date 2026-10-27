@@ -31,6 +31,28 @@ def _zombie(pid: int) -> bool:
         return False
 
 
+def _group_has_live_member(pgid: int) -> bool:
+    """True when some non-zombie process is in the group; falls back to the signal-0 answer."""
+    found = False
+    try:
+        entries = list(Path("/proc").iterdir())
+    except OSError:
+        return True
+    for entry in entries:
+        if not entry.name.isdigit():
+            continue
+        try:
+            fields = (entry / "stat").read_text("utf-8").rsplit(")", 1)[1].split()
+            state, group = fields[0], int(fields[2])
+        except (OSError, IndexError, ValueError):
+            continue
+        if group == pgid:
+            found = True
+            if state != "Z":
+                return True
+    return not found
+
+
 def _alive(pid: int, group: bool) -> bool:
     try:
         (os.killpg if group else os.kill)(pid, 0)
@@ -38,7 +60,7 @@ def _alive(pid: int, group: bool) -> bool:
         return False
     except PermissionError:
         pass
-    return not (not group and _zombie(pid))
+    return _group_has_live_member(pid) if group else not _zombie(pid)
 
 
 def check_ledger(path: Path) -> list[str]:
@@ -66,13 +88,41 @@ def check_ledger(path: Path) -> list[str]:
         role = entry.get("role")
         if _alive(pid, False):
             problems.append(f"process still alive: pid {pid} ({role})")
-        elif pgid is not None and (pgid != pid or not _zombie(pid)) and _alive(pgid, True):
+        elif pgid is not None and _alive(pgid, True):
             problems.append(f"process group still alive: pgid {pgid} ({role})")
     return problems
 
 
 def _nonempty(path: Path) -> bool:
     return path.is_file() and path.stat().st_size > 0
+
+
+def _valid_row(row: object) -> str | None:
+    if not isinstance(row, dict):
+        return "row is not an object"
+    if not isinstance(row.get("trial_id"), str) or not row["trial_id"]:
+        return "trial_id must be a non-empty string"
+    attempt = row.get("attempt")
+    if not isinstance(attempt, int) or isinstance(attempt, bool) or attempt < 1:
+        return "attempt must be a positive integer"
+    if not isinstance(row.get("arm"), str):
+        return "arm must be a string"
+    return None
+
+
+def _video_problem(attempt: Path) -> str | None:
+    video = attempt / "video"
+    if not _nonempty(video / "video.mp4") or not _nonempty(video / "video-720p.mp4"):
+        return "compressed video missing"
+    try:
+        meta = json.loads((video / "video.json").read_text("utf-8"))
+    except (OSError, ValueError):
+        return "video.json missing or invalid"
+    if not isinstance(meta, dict):
+        return "video.json is not an object"
+    if meta.get("error"):
+        return f"video compression failed: {meta['error']}"
+    return None
 
 
 def check_run(run: Path) -> list[str]:
@@ -88,11 +138,11 @@ def check_run(run: Path) -> list[str]:
             continue
         try:
             row = json.loads(line)
-            if not isinstance(row, dict):
-                raise ValueError("row is not an object")
-            row["trial_id"], row["attempt"]
-        except (ValueError, KeyError) as error:
-            problems.append(f"results.jsonl:{number} malformed row: {error!r}")
+            invalid = _valid_row(row)
+        except ValueError as error:
+            invalid = f"invalid JSON: {error}"
+        if invalid:
+            problems.append(f"results.jsonl:{number} malformed row: {invalid}")
             continue
         rows.append(row)
     if not rows and not problems:
@@ -100,10 +150,14 @@ def check_run(run: Path) -> list[str]:
     recorder, sentinel = "none", True
     try:
         manifest = json.loads((run / "manifest.json").read_text("utf-8"))
-        recorder = manifest.get("recorder", "none")
-        sentinel = "--no-sentinel" not in (manifest.get("argv") or [])
+        if not isinstance(manifest, dict):
+            raise ValueError("manifest is not an object")
+        recorder, argv = manifest.get("recorder"), manifest.get("argv")
+        if not isinstance(recorder, str) or not isinstance(argv, list):
+            raise ValueError("manifest needs string recorder and list argv")
+        sentinel = "--no-sentinel" not in argv
     except (OSError, ValueError) as error:
-        problems.append(f"manifest.json unreadable: {error}")
+        problems.append(f"manifest.json unreadable or invalid: {error}")
     seen: set[tuple] = set()
     for row in rows:
         key = (row["trial_id"], row["attempt"])
@@ -135,11 +189,12 @@ def check_run(run: Path) -> list[str]:
             if not events:
                 problems.append(f"{name}: sentinel events missing or invalid")
         if recorder != "none":
-            videos = [p for p in attempt.rglob("video*.mp4") if p.stat().st_size > 0]
             if not row.get("recording_started"):
                 problems.append(f"{name}: recording not started")
-            elif not videos:
-                problems.append(f"{name}: compressed video missing")
+            else:
+                video = _video_problem(attempt)
+                if video:
+                    problems.append(f"{name}: {video}")
     trials = run / "trials"
     if trials.is_dir():
         for directory in sorted(trials.glob("*/a*")):
@@ -151,9 +206,11 @@ def check_run(run: Path) -> list[str]:
                     problems.append(
                         f"orphan attempt directory {directory.parent.name}/{directory.name}"
                     )
-    ledger = run.resolve().parent / "pids.jsonl"
-    if ledger.is_file():
-        problems += check_ledger(ledger)
+    for session in run.resolve().parents[:2]:
+        ledger = session / "pids.jsonl"
+        if ledger.is_file():
+            problems += check_ledger(ledger)
+            break
     return problems
 
 

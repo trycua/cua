@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 import claude_arms as ca
+from desktop_runtime import record_pid
 from desktop_runtime import stop_group as kill_group
 
 ELICIT_APP = re.compile(r'Allow Computer Use to use "(.+)"\?')
@@ -82,6 +83,7 @@ def run_claude(
         finally:
             if token_fd is not None:
                 os.close(token_fd)
+        record_pid(proc.pid, "claude")
         lock = threading.Lock()
 
         def send(obj: dict[str, Any]) -> None:

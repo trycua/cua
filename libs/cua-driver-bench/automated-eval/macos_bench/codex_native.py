@@ -52,6 +52,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 import arms
+from desktop_runtime import record_pid
 from browser_use_cli import Invocation
 
 ARM = "cx-codex-cu"
@@ -434,6 +435,7 @@ def chatgpt_checks(cli: Path, env: dict[str, str], model: str) -> list[tuple[str
                 stderr=subprocess.DEVNULL,
                 start_new_session=True,
             )
+            record_pid(proc.pid, "chatgpt-check")
             assert proc.stdin is not None and proc.stdout is not None
             selector.register(proc.stdout, selectors.EVENT_READ)
             pending = b""
@@ -544,6 +546,7 @@ def run_codex(
             bufsize=1,
             start_new_session=True,
         )
+        record_pid(proc.pid, "codex")
         lock = threading.Lock()
         next_id = [0]
 

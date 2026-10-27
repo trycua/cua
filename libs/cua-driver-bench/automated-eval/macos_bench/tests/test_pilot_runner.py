@@ -1045,26 +1045,30 @@ class LinuxLauncherTest(unittest.TestCase):
             self.assertTrue((ev / "launch.log").exists())
 
     def test_surviving_child_fails_the_check(self) -> None:
+        def leaked_pids(ev: Path) -> list[int]:
+            try:
+                lines = (ev / "pids.jsonl").read_text().splitlines()
+            except OSError:
+                return []
+            return [json.loads(x)["pid"] for x in lines if json.loads(x).get("role") == "leak"]
+
         with tempfile.TemporaryDirectory() as tmp:
             ev = Path(tmp) / "ev"
-            done = self.launch(
-                ev,
-                "bash",
-                "-c",
-                'setsid sleep 300 & echo "{\\"pid\\": $!, \\"pgid\\": $!, \\"role\\": \\"leak\\"}"'
-                ' >> "$CDB_BENCH_PID_LOG"; sleep 0.5',
-            )
-            leaked = [
-                json.loads(x)["pid"]
-                for x in (ev / "pids.jsonl").read_text().splitlines()
-                if json.loads(x)["role"] == "leak"
-            ]
             try:
+                done = self.launch(
+                    ev,
+                    "bash",
+                    "-c",
+                    'setsid sleep 300 & echo "{\\"pid\\": $!, \\"pgid\\": $!, \\"role\\": \\"leak\\"}"'
+                    ' >> "$CDB_BENCH_PID_LOG"; sleep 0.5',
+                )
+                leaked = leaked_pids(ev)
                 self.assertNotEqual(done.returncode, 0)
                 self.assertEqual(len(leaked), 1)
                 os.kill(leaked[0], 0)
+                self.assertIn("command=0 evidence=1", (ev / "exit").read_text())
             finally:
-                for pid in leaked:
+                for pid in leaked_pids(ev):
                     try:
                         os.kill(pid, signal.SIGKILL)
                     except OSError:

@@ -383,9 +383,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 proc.wait(5)
             except subprocess.TimeoutExpired:
                 pass
-            log = state / "driver.log"
-            if log.is_file():
-                shutil.copy2(log, args.out / "driver.log")
+        log = state / "driver.log"
+        if log.is_file():
+            shutil.copy2(log, args.out / "driver.log")
         shutil.rmtree(state, ignore_errors=True)
     (args.out / "doctor.json").write_text(json.dumps(report, indent=2) + "\n", "utf-8")
     if args.json:

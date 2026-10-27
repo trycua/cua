@@ -158,6 +158,20 @@ def write_run(root: Path, *, arm: str = "cc-cua-driver", recorder: str = "none",
     return run
 
 
+@unittest.skipUnless(sys.platform.startswith("linux"), "Linux doctor")
+class DoctorStartupLogTest(unittest.TestCase):
+    def test_failed_start_keeps_driver_log(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = Path(tmp) / "driver"
+            fake.write_text("#!/bin/sh\necho startup-boom >&2\nexit 3\n")
+            fake.chmod(0o755)
+            out = Path(tmp) / "out"
+            self.assertEqual(desktop.main(["doctor", "--cua-bin", str(fake), "--out", str(out)]), 1)
+            report = json.loads((out / "doctor.json").read_text())
+            self.assertTrue(any(c["name"] == "driver-start" for c in report["checks"]))
+            self.assertIn("startup-boom", (out / "driver.log").read_text())
+
+
 class EvidenceTest(unittest.TestCase):
     def check(self, run: Path) -> list[str]:
         return evidence.check_run(run)
@@ -194,7 +208,63 @@ class EvidenceTest(unittest.TestCase):
             video = run / "trials/T1/a1/video"
             video.mkdir()
             (video / "video.mp4").write_bytes(b"x")
+            self.assertTrue(any("video missing" in p for p in self.check(run)))
+            (video / "video-720p.mp4").write_bytes(b"x")
+            (video / "video.json").write_text(json.dumps({"error": "OSError: boom"}))
+            self.assertTrue(any("compression failed" in p for p in self.check(run)))
+            (video / "video.json").write_text("{}")
             self.assertEqual(self.check(run), [])
+
+    def test_bad_json_shapes_are_reported(self) -> None:
+        for row in ({"trial_id": [], "attempt": 1, "arm": "x"}, {"trial_id": "T1", "attempt": 1}):
+            with tempfile.TemporaryDirectory() as tmp:
+                run = write_run(Path(tmp))
+                (run / "results.jsonl").write_text(json.dumps(row) + "\n")
+                self.assertTrue(any("malformed row" in p for p in self.check(run)))
+        with tempfile.TemporaryDirectory() as tmp:
+            run = write_run(Path(tmp))
+            (run / "manifest.json").write_text("[]")
+            self.assertTrue(any("manifest.json" in p for p in self.check(run)))
+            self.assertEqual(evidence.main([str(run)]), 1)
+            self.assertTrue((run / "evidence-check.json").is_file())
+
+    def test_session_layout_ledger_is_found(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            session = Path(tmp)
+            run = write_run(session / "runs")
+            run = run.rename(session / "runs" / "RUN")
+            live = subprocess.Popen(["sleep", "30"])
+            try:
+                (session / "pids.jsonl").write_text(
+                    json.dumps({"pid": live.pid, "pgid": None, "role": "s"}) + "\n"
+                )
+                self.assertTrue(any("still alive" in p for p in self.check(run)))
+            finally:
+                live.kill()
+                live.wait()
+
+    @unittest.skipUnless(os.path.isdir("/proc/self"), "needs /proc")
+    def test_zombie_leader_with_live_child_is_alive(self) -> None:
+        leader = subprocess.Popen(
+            ["bash", "-c", "sleep 30 & echo $!; exit 0"],
+            stdout=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        )
+        child = int(leader.stdout.readline())
+        try:
+            time.sleep(0.3)  # leader exits, stays a zombie until waited
+            with tempfile.TemporaryDirectory() as tmp:
+                ledger = Path(tmp) / "pids.jsonl"
+                ledger.write_text(
+                    json.dumps({"pid": leader.pid, "pgid": leader.pid, "role": "l"}) + "\n"
+                )
+                self.assertTrue(
+                    any("group still alive" in p for p in evidence.check_ledger(ledger))
+                )
+        finally:
+            os.kill(child, signal.SIGKILL)
+            leader.wait()
 
     def test_opt_outs_lift_requirements(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

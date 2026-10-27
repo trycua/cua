@@ -349,6 +349,7 @@ def run_agent(
             stderr=err,
             start_new_session=True,
         )
+        desktop.record_pid(proc.pid, "codex")
 
         def pump() -> None:
             assert proc.stdout is not None
@@ -428,6 +429,7 @@ def launch_apps(
             stderr=out,
             start_new_session=True,
         )
+        desktop.record_pid(proc.pid, str(app["id"]))
         procs.append(proc)
         ready = app.get("ready")
         url = ready.get("http", ready.get("url")) if isinstance(ready, dict) else None

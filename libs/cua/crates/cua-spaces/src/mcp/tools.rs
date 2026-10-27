@@ -1135,6 +1135,16 @@ async fn agents(spaces: &Spaces, tool: &str, a: Value) -> Result<ToolOutcome> {
             // The caller's env, the env_from_host keys, and the keys saved
             // in Cua Spaces that this harness reads.
             let (opts, missing) = ag::start_options(&a)?;
+            // An agent run may make child Spaces of its own Space: this
+            // machine keeps the Space's spawn channel while that is on
+            // (only for a Space this machine runs).
+            let id = s.id().to_string();
+            if id.starts_with("local:")
+                && spaces.registry().get(&id).ok().flatten().is_some()
+                && let Err(e) = spaces.set_children(&id, true)
+            {
+                tracing::warn!(space = %id, error = %e, "could not turn on child Spaces");
+            }
             let started = agents.start(&a.agent, &a.prompt, opts).await;
             // The MCP `agent_start`, the SDKs' `Space.agent_start` and the
             // Spaces app all arrive here.

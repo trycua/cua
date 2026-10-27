@@ -12,7 +12,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file cua/env/v1/tunnel.proto.
  */
 export const file_cua_env_v1_tunnel: GenFile = /*@__PURE__*/
-  fileDesc("ChdjdWEvZW52L3YxL3R1bm5lbC5wcm90bxIKY3VhLmVudi52MSJUCg5Gb3J3YXJkUmVxdWVzdBIMCgRwb3J0GAEgASgNEgwKBGhvc3QYAiABKAkSJgoDdHRsGAMgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uInYKD0ZvcndhcmRSZXNwb25zZRISCgpmb3J3YXJkX2lkGAEgASgJEg4KBnRpY2tldBgCIAEoCRIPCgd3c19wYXRoGAMgASgJEi4KCmV4cGlyZXNfYXQYBCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIq4BCgtGb3J3YXJkSW5mbxISCgpmb3J3YXJkX2lkGAEgASgJEgwKBGhvc3QYAiABKAkSDAoEcG9ydBgDIAEoDRIaChJhY3RpdmVfY29ubmVjdGlvbnMYBCABKA0SEAoIYnl0ZXNfaW4YBSABKAQSEQoJYnl0ZXNfb3V0GAYgASgEEi4KCmV4cGlyZXNfYXQYByABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIhUKE0xpc3RGb3J3YXJkc1JlcXVlc3QiQQoUTGlzdEZvcndhcmRzUmVzcG9uc2USKQoIZm9yd2FyZHMYASADKAsyFy5jdWEuZW52LnYxLkZvcndhcmRJbmZvIikKE0Nsb3NlRm9yd2FyZFJlcXVlc3QSEgoKZm9yd2FyZF9pZBgBIAEoCSIWChRDbG9zZUZvcndhcmRSZXNwb25zZSKCAQoTU3RhcnRIb3RzcG90UmVxdWVzdBISCgpzb2Nrc19wb3J0GAEgASgNEhgKEHNldF9zeXN0ZW1fcHJveHkYAiABKAgSDgoGYnlwYXNzGAMgAygJEi0KCnRpY2tldF90dGwYBCABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24iYgoUU3RhcnRIb3RzcG90UmVzcG9uc2USEgoKaG90c3BvdF9pZBgBIAEoCRIOCgZ0aWNrZXQYAiABKAkSDwoHd3NfcGF0aBgDIAEoCRIVCg1zb2Nrc19hZGRyZXNzGAQgASgJIigKElN0b3BIb3RzcG90UmVxdWVzdBISCgpob3RzcG90X2lkGAEgASgJIhUKE1N0b3BIb3RzcG90UmVzcG9uc2UiGQoXR2V0SG90c3BvdFN0YXR1c1JlcXVlc3QiygEKGEdldEhvdHNwb3RTdGF0dXNSZXNwb25zZRInCgVzdGF0ZRgBIAEoDjIYLmN1YS5lbnYudjEuSG90c3BvdFN0YXRlEhIKCmhvdHNwb3RfaWQYAiABKAkSGQoRcGVlcl9wcmluY2lwYWxfaWQYAyABKAkSFQoNc29ja3NfYWRkcmVzcxgEIAEoCRIaChJhY3RpdmVfY29ubmVjdGlvbnMYBSABKA0SEQoJYnl0ZXNfb3V0GAYgASgEEhAKCGJ5dGVzX2luGAcgASgEKoYBCgxIb3RzcG90U3RhdGUSHQoZSE9UU1BPVF9TVEFURV9VTlNQRUNJRklFRBAAEhkKFUhPVFNQT1RfU1RBVEVfU1RPUFBFRBABEiIKHkhPVFNQT1RfU1RBVEVfV0FJVElOR19GT1JfUEVFUhACEhgKFEhPVFNQT1RfU1RBVEVfQUNUSVZFEAMy+wMKDVR1bm5lbFNlcnZpY2USQgoHRm9yd2FyZBIaLmN1YS5lbnYudjEuRm9yd2FyZFJlcXVlc3QaGy5jdWEuZW52LnYxLkZvcndhcmRSZXNwb25zZRJRCgxMaXN0Rm9yd2FyZHMSHy5jdWEuZW52LnYxLkxpc3RGb3J3YXJkc1JlcXVlc3QaIC5jdWEuZW52LnYxLkxpc3RGb3J3YXJkc1Jlc3BvbnNlElEKDENsb3NlRm9yd2FyZBIfLmN1YS5lbnYudjEuQ2xvc2VGb3J3YXJkUmVxdWVzdBogLmN1YS5lbnYudjEuQ2xvc2VGb3J3YXJkUmVzcG9uc2USUQoMU3RhcnRIb3RzcG90Eh8uY3VhLmVudi52MS5TdGFydEhvdHNwb3RSZXF1ZXN0GiAuY3VhLmVudi52MS5TdGFydEhvdHNwb3RSZXNwb25zZRJOCgtTdG9wSG90c3BvdBIeLmN1YS5lbnYudjEuU3RvcEhvdHNwb3RSZXF1ZXN0Gh8uY3VhLmVudi52MS5TdG9wSG90c3BvdFJlc3BvbnNlEl0KEEdldEhvdHNwb3RTdGF0dXMSIy5jdWEuZW52LnYxLkdldEhvdHNwb3RTdGF0dXNSZXF1ZXN0GiQuY3VhLmVudi52MS5HZXRIb3RzcG90U3RhdHVzUmVzcG9uc2ViBnByb3RvMw", [file_google_protobuf_duration, file_google_protobuf_timestamp]);
+  fileDesc("ChdjdWEvZW52L3YxL3R1bm5lbC5wcm90bxIKY3VhLmVudi52MSJUCg5Gb3J3YXJkUmVxdWVzdBIMCgRwb3J0GAEgASgNEgwKBGhvc3QYAiABKAkSJgoDdHRsGAMgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uInYKD0ZvcndhcmRSZXNwb25zZRISCgpmb3J3YXJkX2lkGAEgASgJEg4KBnRpY2tldBgCIAEoCRIPCgd3c19wYXRoGAMgASgJEi4KCmV4cGlyZXNfYXQYBCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIq4BCgtGb3J3YXJkSW5mbxISCgpmb3J3YXJkX2lkGAEgASgJEgwKBGhvc3QYAiABKAkSDAoEcG9ydBgDIAEoDRIaChJhY3RpdmVfY29ubmVjdGlvbnMYBCABKA0SEAoIYnl0ZXNfaW4YBSABKAQSEQoJYnl0ZXNfb3V0GAYgASgEEi4KCmV4cGlyZXNfYXQYByABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIhUKE0xpc3RGb3J3YXJkc1JlcXVlc3QiQQoUTGlzdEZvcndhcmRzUmVzcG9uc2USKQoIZm9yd2FyZHMYASADKAsyFy5jdWEuZW52LnYxLkZvcndhcmRJbmZvIikKE0Nsb3NlRm9yd2FyZFJlcXVlc3QSEgoKZm9yd2FyZF9pZBgBIAEoCSIWChRDbG9zZUZvcndhcmRSZXNwb25zZSKCAQoTU3RhcnRIb3RzcG90UmVxdWVzdBISCgpzb2Nrc19wb3J0GAEgASgNEhgKEHNldF9zeXN0ZW1fcHJveHkYAiABKAgSDgoGYnlwYXNzGAMgAygJEi0KCnRpY2tldF90dGwYBCABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24iYgoUU3RhcnRIb3RzcG90UmVzcG9uc2USEgoKaG90c3BvdF9pZBgBIAEoCRIOCgZ0aWNrZXQYAiABKAkSDwoHd3NfcGF0aBgDIAEoCRIVCg1zb2Nrc19hZGRyZXNzGAQgASgJIigKElN0b3BIb3RzcG90UmVxdWVzdBISCgpob3RzcG90X2lkGAEgASgJIhUKE1N0b3BIb3RzcG90UmVzcG9uc2UiGQoXR2V0SG90c3BvdFN0YXR1c1JlcXVlc3QiygEKGEdldEhvdHNwb3RTdGF0dXNSZXNwb25zZRInCgVzdGF0ZRgBIAEoDjIYLmN1YS5lbnYudjEuSG90c3BvdFN0YXRlEhIKCmhvdHNwb3RfaWQYAiABKAkSGQoRcGVlcl9wcmluY2lwYWxfaWQYAyABKAkSFQoNc29ja3NfYWRkcmVzcxgEIAEoCRIaChJhY3RpdmVfY29ubmVjdGlvbnMYBSABKA0SEQoJYnl0ZXNfb3V0GAYgASgEEhAKCGJ5dGVzX2luGAcgASgEImgKEVN0YXJ0U3Bhd25SZXF1ZXN0EhIKCmNhcGFiaWxpdHkYASABKAkSLQoKdGlja2V0X3R0bBgCIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbhIQCghzcGFjZV9pZBgDIAEoCSKCAQoSU3RhcnRTcGF3blJlc3BvbnNlEhAKCHNwYXduX2lkGAEgASgJEg4KBnRpY2tldBgCIAEoCRIPCgd3c19wYXRoGAMgASgJEg8KB2FkZHJlc3MYBCABKAkSEgoKdG9rZW5fcGF0aBgFIAEoCRIUCgxhZGRyZXNzX3BhdGgYBiABKAkiJAoQU3RvcFNwYXduUmVxdWVzdBIQCghzcGF3bl9pZBgBIAEoCSITChFTdG9wU3Bhd25SZXNwb25zZSIXChVHZXRTcGF3blN0YXR1c1JlcXVlc3QiegoWR2V0U3Bhd25TdGF0dXNSZXNwb25zZRIPCgdzdGFydGVkGAEgASgIEhAKCGF0dGFjaGVkGAIgASgIEhAKCHNwYXduX2lkGAMgASgJEg8KB2FkZHJlc3MYBCABKAkSGgoSYWN0aXZlX2Nvbm5lY3Rpb25zGAUgASgNKoYBCgxIb3RzcG90U3RhdGUSHQoZSE9UU1BPVF9TVEFURV9VTlNQRUNJRklFRBAAEhkKFUhPVFNQT1RfU1RBVEVfU1RPUFBFRBABEiIKHkhPVFNQT1RfU1RBVEVfV0FJVElOR19GT1JfUEVFUhACEhgKFEhPVFNQT1RfU1RBVEVfQUNUSVZFEAMy6wUKDVR1bm5lbFNlcnZpY2USQgoHRm9yd2FyZBIaLmN1YS5lbnYudjEuRm9yd2FyZFJlcXVlc3QaGy5jdWEuZW52LnYxLkZvcndhcmRSZXNwb25zZRJRCgxMaXN0Rm9yd2FyZHMSHy5jdWEuZW52LnYxLkxpc3RGb3J3YXJkc1JlcXVlc3QaIC5jdWEuZW52LnYxLkxpc3RGb3J3YXJkc1Jlc3BvbnNlElEKDENsb3NlRm9yd2FyZBIfLmN1YS5lbnYudjEuQ2xvc2VGb3J3YXJkUmVxdWVzdBogLmN1YS5lbnYudjEuQ2xvc2VGb3J3YXJkUmVzcG9uc2USUQoMU3RhcnRIb3RzcG90Eh8uY3VhLmVudi52MS5TdGFydEhvdHNwb3RSZXF1ZXN0GiAuY3VhLmVudi52MS5TdGFydEhvdHNwb3RSZXNwb25zZRJOCgtTdG9wSG90c3BvdBIeLmN1YS5lbnYudjEuU3RvcEhvdHNwb3RSZXF1ZXN0Gh8uY3VhLmVudi52MS5TdG9wSG90c3BvdFJlc3BvbnNlEl0KEEdldEhvdHNwb3RTdGF0dXMSIy5jdWEuZW52LnYxLkdldEhvdHNwb3RTdGF0dXNSZXF1ZXN0GiQuY3VhLmVudi52MS5HZXRIb3RzcG90U3RhdHVzUmVzcG9uc2USSwoKU3RhcnRTcGF3bhIdLmN1YS5lbnYudjEuU3RhcnRTcGF3blJlcXVlc3QaHi5jdWEuZW52LnYxLlN0YXJ0U3Bhd25SZXNwb25zZRJICglTdG9wU3Bhd24SHC5jdWEuZW52LnYxLlN0b3BTcGF3blJlcXVlc3QaHS5jdWEuZW52LnYxLlN0b3BTcGF3blJlc3BvbnNlElcKDkdldFNwYXduU3RhdHVzEiEuY3VhLmVudi52MS5HZXRTcGF3blN0YXR1c1JlcXVlc3QaIi5jdWEuZW52LnYxLkdldFNwYXduU3RhdHVzUmVzcG9uc2ViBnByb3RvMw", [file_google_protobuf_duration, file_google_protobuf_timestamp]);
 
 /**
  * Request for `TunnelService.Forward`.
@@ -434,6 +434,203 @@ export const GetHotspotStatusResponseSchema: GenMessage<GetHotspotStatusResponse
   messageDesc(file_cua_env_v1_tunnel, 12);
 
 /**
+ * Request for `TunnelService.StartSpawn`.
+ *
+ * @generated from message cua.env.v1.StartSpawnRequest
+ */
+export type StartSpawnRequest = Message<"cua.env.v1.StartSpawnRequest"> & {
+  /**
+   * The Space's spawn capability, minted by its host. The guest writes it
+   * to the token file (0600, owner: the user cua-spacesd runs as) for
+   * clients in the Space to present on the spawn listener.
+   *
+   * @generated from field: string capability = 1;
+   */
+  capability: string;
+
+  /**
+   * How long the ticket accepts the host's WebSocket. Unset means 60
+   * seconds.
+   *
+   * @generated from field: google.protobuf.Duration ticket_ttl = 2;
+   */
+  ticketTtl?: Duration | undefined;
+
+  /**
+   * The Space's id, for the environment of new processes (`CUA_SPACE`).
+   *
+   * @generated from field: string space_id = 3;
+   */
+  spaceId: string;
+};
+
+/**
+ * Describes the message cua.env.v1.StartSpawnRequest.
+ * Use `create(StartSpawnRequestSchema)` to create a new message.
+ */
+export const StartSpawnRequestSchema: GenMessage<StartSpawnRequest> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_tunnel, 13);
+
+/**
+ * Response for `TunnelService.StartSpawn`.
+ *
+ * @generated from message cua.env.v1.StartSpawnResponse
+ */
+export type StartSpawnResponse = Message<"cua.env.v1.StartSpawnResponse"> & {
+  /**
+   * Spawn channel id.
+   *
+   * @generated from field: string spawn_id = 1;
+   */
+  spawnId: string;
+
+  /**
+   * Ticket for the spawn WebSocket.
+   *
+   * @generated from field: string ticket = 2;
+   */
+  ticket: string;
+
+  /**
+   * WebSocket path relative to the spacesd base URL, including the ticket,
+   * for example "/spawn?ticket=…". The host keeps this socket open; the
+   * listener refuses connections while it is closed.
+   *
+   * @generated from field: string ws_path = 3;
+   */
+  wsPath: string;
+
+  /**
+   * Guest-side listener, as a URL clients in the Space use as their cua
+   * daemon, for example "http://127.0.0.1:41234".
+   *
+   * @generated from field: string address = 4;
+   */
+  address: string;
+
+  /**
+   * Where the guest wrote the capability.
+   *
+   * @generated from field: string token_path = 5;
+   */
+  tokenPath: string;
+
+  /**
+   * Where the guest wrote the listener's address (one line).
+   *
+   * @generated from field: string address_path = 6;
+   */
+  addressPath: string;
+};
+
+/**
+ * Describes the message cua.env.v1.StartSpawnResponse.
+ * Use `create(StartSpawnResponseSchema)` to create a new message.
+ */
+export const StartSpawnResponseSchema: GenMessage<StartSpawnResponse> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_tunnel, 14);
+
+/**
+ * Request for `TunnelService.StopSpawn`.
+ *
+ * @generated from message cua.env.v1.StopSpawnRequest
+ */
+export type StopSpawnRequest = Message<"cua.env.v1.StopSpawnRequest"> & {
+  /**
+   * Which channel. Empty stops the current one.
+   *
+   * @generated from field: string spawn_id = 1;
+   */
+  spawnId: string;
+};
+
+/**
+ * Describes the message cua.env.v1.StopSpawnRequest.
+ * Use `create(StopSpawnRequestSchema)` to create a new message.
+ */
+export const StopSpawnRequestSchema: GenMessage<StopSpawnRequest> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_tunnel, 15);
+
+/**
+ * Response for `TunnelService.StopSpawn`.
+ *
+ * @generated from message cua.env.v1.StopSpawnResponse
+ */
+export type StopSpawnResponse = Message<"cua.env.v1.StopSpawnResponse"> & {
+};
+
+/**
+ * Describes the message cua.env.v1.StopSpawnResponse.
+ * Use `create(StopSpawnResponseSchema)` to create a new message.
+ */
+export const StopSpawnResponseSchema: GenMessage<StopSpawnResponse> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_tunnel, 16);
+
+/**
+ * Request for `TunnelService.GetSpawnStatus`.
+ *
+ * @generated from message cua.env.v1.GetSpawnStatusRequest
+ */
+export type GetSpawnStatusRequest = Message<"cua.env.v1.GetSpawnStatusRequest"> & {
+};
+
+/**
+ * Describes the message cua.env.v1.GetSpawnStatusRequest.
+ * Use `create(GetSpawnStatusRequestSchema)` to create a new message.
+ */
+export const GetSpawnStatusRequestSchema: GenMessage<GetSpawnStatusRequest> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_tunnel, 17);
+
+/**
+ * Response for `TunnelService.GetSpawnStatus`.
+ *
+ * @generated from message cua.env.v1.GetSpawnStatusResponse
+ */
+export type GetSpawnStatusResponse = Message<"cua.env.v1.GetSpawnStatusResponse"> & {
+  /**
+   * A channel is started.
+   *
+   * @generated from field: bool started = 1;
+   */
+  started: boolean;
+
+  /**
+   * The host's WebSocket is attached.
+   *
+   * @generated from field: bool attached = 2;
+   */
+  attached: boolean;
+
+  /**
+   * Channel id, when started.
+   *
+   * @generated from field: string spawn_id = 3;
+   */
+  spawnId: string;
+
+  /**
+   * Guest-side listener URL, when started.
+   *
+   * @generated from field: string address = 4;
+   */
+  address: string;
+
+  /**
+   * Open relayed connections.
+   *
+   * @generated from field: uint32 active_connections = 5;
+   */
+  activeConnections: number;
+};
+
+/**
+ * Describes the message cua.env.v1.GetSpawnStatusResponse.
+ * Use `create(GetSpawnStatusResponseSchema)` to create a new message.
+ */
+export const GetSpawnStatusResponseSchema: GenMessage<GetSpawnStatusResponse> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_tunnel, 18);
+
+/**
  * Hotspot state.
  *
  * @generated from enum cua.env.v1.HotspotState
@@ -486,6 +683,11 @@ export const HotspotStateSchema: GenEnum<HotspotState> = /*@__PURE__*/
  *   guest loopback relays each outbound connection over the client's
  *   WebSocket, and the client dials it from its own network. Replaces the
  *   unauthenticated rcdp-socks.
+ * - Spawn: the guest-to-host channel of child Spaces. A listener on guest
+ *   loopback relays each connection over the WebSocket of the host that runs
+ *   the Space, which serves this Space's own children (create, list, delete)
+ *   and nothing else. The host knows which Space a connection comes from by
+ *   the WebSocket it opened, never by anything the guest says.
  *
  * @generated from service cua.env.v1.TunnelService
  */
@@ -550,6 +752,38 @@ export const TunnelService: GenService<{
     methodKind: "unary";
     input: typeof GetHotspotStatusRequestSchema;
     output: typeof GetHotspotStatusResponseSchema;
+  },
+  /**
+   * Starts the spawn channel and installs the Space's spawn capability.
+   * Only a caller holding the Space's own token (the host that runs it) may
+   * call it; starting it again replaces the channel and the capability.
+   *
+   * @generated from rpc cua.env.v1.TunnelService.StartSpawn
+   */
+  startSpawn: {
+    methodKind: "unary";
+    input: typeof StartSpawnRequestSchema;
+    output: typeof StartSpawnResponseSchema;
+  },
+  /**
+   * Stops the spawn channel and removes the capability from the guest.
+   *
+   * @generated from rpc cua.env.v1.TunnelService.StopSpawn
+   */
+  stopSpawn: {
+    methodKind: "unary";
+    input: typeof StopSpawnRequestSchema;
+    output: typeof StopSpawnResponseSchema;
+  },
+  /**
+   * Reports the spawn channel's state.
+   *
+   * @generated from rpc cua.env.v1.TunnelService.GetSpawnStatus
+   */
+  getSpawnStatus: {
+    methodKind: "unary";
+    input: typeof GetSpawnStatusRequestSchema;
+    output: typeof GetSpawnStatusResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_cua_env_v1_tunnel, 0);

@@ -53,6 +53,8 @@ pub enum TicketScope {
     Hotspot,
     /// The Cua Volume mount's client socket (`/volume`).
     Volume,
+    /// The host's end of the spawn channel (`/spawn`).
+    Spawn,
     /// File transfer side channels.
     Files,
     /// The web viewer's scoped bearer (`SystemService.CreateViewerTicket`).
@@ -67,6 +69,7 @@ impl TicketScope {
             Self::Tunnel => "tunnel",
             Self::Hotspot => "hotspot",
             Self::Volume => "volume",
+            Self::Spawn => "spawn",
             Self::Files => "files",
             Self::Viewer => "viewer",
         }
@@ -78,6 +81,7 @@ impl TicketScope {
             "tunnel" => Self::Tunnel,
             "hotspot" => Self::Hotspot,
             "volume" => Self::Volume,
+            "spawn" => Self::Spawn,
             "files" => Self::Files,
             "viewer" => Self::Viewer,
             _ => return None,

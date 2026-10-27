@@ -908,6 +908,10 @@ pub struct SpaceCreateOptions {
     /// With `on` a linked cloud: the region its host must be in.
     #[uniffi(default = None)]
     pub region: Option<String>,
+    /// Lets the Space make child Spaces of its own ([`Spaces::set_children`]).
+    /// `None`: off. Only a Space the machine of the runtime runs itself.
+    #[uniffi(default = None)]
+    pub children: Option<bool>,
 }
 
 impl SpaceCreateOptions {
@@ -3554,6 +3558,11 @@ impl Spaces {
                             region: text(&options.region),
                         })
                         .await?;
+                    if options.children == Some(true)
+                        && let cua_spaces::SpaceCreated::Ready { info, .. } = &created
+                    {
+                        s.set_children(&info.id, true)?;
+                    }
                     Ok(match created {
                         cua_spaces::SpaceCreated::Ready { info, reused } => SpaceCreateResult {
                             space: Some(info.into()),
@@ -3602,6 +3611,7 @@ impl Spaces {
                         egress: options.egress.map(Into::into),
                         instance_type: options.instance_type.clone().unwrap_or_default(),
                         region: options.region.clone().unwrap_or_default(),
+                        children: options.children,
                     };
                     let r = match listener {
                         Some(l) => daemon_create_streaming(d, request, l).await?,
@@ -3960,6 +3970,45 @@ impl Spaces {
                             tonic::Code::Unimplemented => CuaError::CapabilityMissing(
                                 "egress rules: the cua daemon is too old to set them; update \
                                  cua and restart its daemon"
+                                    .into(),
+                            ),
+                            _ => daemon_err(e),
+                        })?;
+                }
+            }
+            Ok(())
+        })
+        .await
+    }
+
+    /// Lets a Space make child Spaces of its own, or stops it. While on,
+    /// `cua`, the SDKs and the agent's tools in that Space create, list and
+    /// delete Spaces that belong to it (on the same machine, never wider
+    /// than it, ending no later than it), through a channel only it can
+    /// reach. Off ends its capability at once; children it made keep running
+    /// until deleted or their lifetime ends. Only for a Space the machine of
+    /// this runtime runs itself.
+    pub async fn set_children(&self, space: String, enabled: bool) -> Result<()> {
+        let host = self.host.clone();
+        run(async move {
+            match &host {
+                Host::Embedded(s) => {
+                    let id = s.resolve(&space)?.to_string();
+                    if enabled && !id.starts_with("local:") {
+                        return Err(CuaError::Unsupported(
+                            "child Spaces are available for Spaces this machine runs".into(),
+                        ));
+                    }
+                    s.set_children(&id, enabled)?;
+                }
+                Host::Daemon(d) => {
+                    d.spaces()
+                        .set_space_children(dpb::SetSpaceChildrenRequest { space, enabled })
+                        .await
+                        .map_err(|e| match e.code() {
+                            tonic::Code::Unimplemented => CuaError::CapabilityMissing(
+                                "child Spaces: the cua daemon is too old; update cua and \
+                                 restart its daemon"
                                     .into(),
                             ),
                             _ => daemon_err(e),

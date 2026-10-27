@@ -81,6 +81,10 @@ pub(crate) struct Shared {
     /// cua-spacesd).
     #[cfg(feature = "spaces")]
     pub host_spaces: Arc<cua_spaces::host_spaces::HostSpacesServer>,
+    /// Child Spaces (the spawn capabilities this host mints); `None` when
+    /// the home has no room for them.
+    #[cfg(feature = "spaces")]
+    pub children: Option<Arc<crate::children::Children>>,
 }
 
 /// Counts a request as in flight until dropped.
@@ -542,9 +546,19 @@ pub async fn start(runtime: Runtime, config: ServerConfig) -> Result<DaemonHandl
     let own = std::env::current_exe()
         .ok()
         .and_then(|e| crate::identity::of(&e));
+    #[cfg(feature = "spaces")]
+    let children = match crate::children::Children::open(runtime.spaces().home_dir()) {
+        Ok(c) => Some(Arc::new(c)),
+        Err(e) => {
+            tracing::warn!(error = %e, "child Spaces are unavailable in this daemon");
+            None
+        }
+    };
     let shared = Arc::new(Shared {
         #[cfg(feature = "spaces")]
         host_spaces,
+        #[cfg(feature = "spaces")]
+        children,
         runtime,
         token: config.token.clone(),
         info: Mutex::new(pb::GetInfoResponse {
@@ -673,6 +687,13 @@ pub async fn start(runtime: Runtime, config: ServerConfig) -> Result<DaemonHandl
             shared.shutdown.subscribe(),
         )));
     }
+    // Child Spaces: the spawn channel of each running Space with children
+    // on, and no capability left for a Space that is gone.
+    #[cfg(feature = "spaces")]
+    tasks.push(crate::children::bridge::spawn(
+        shared.clone(),
+        shared.shutdown.subscribe(),
+    ));
     // The automatic cloud sweep (`CUA_CLOUD_SWEEP_SECS`, 0: off).
     #[cfg(feature = "byoc")]
     tasks.extend(crate::cloud_sweep::spawn(
@@ -1819,5 +1840,30 @@ impl Shared {
             .get(ticket)
             .filter(|b| b.expires > SystemTime::now())
             .cloned()
+    }
+}
+
+#[cfg(all(test, feature = "spaces"))]
+impl Shared {
+    /// A daemon's shared state without its listeners, for tests of what
+    /// its services answer.
+    pub(crate) fn for_tests(runtime: Runtime) -> Arc<Self> {
+        let host_spaces = cua_spaces::host_spaces::HostSpacesServer::new(runtime.spaces().clone());
+        let children = crate::children::Children::open(runtime.spaces().home_dir())
+            .ok()
+            .map(Arc::new);
+        let (tx, _) = watch::channel(false);
+        Arc::new(Shared {
+            host_spaces,
+            children,
+            runtime,
+            token: "owner-token".into(),
+            info: Mutex::new(pb::GetInfoResponse::default()),
+            bridges: Mutex::new(HashMap::new()),
+            bridge_ttl: Duration::from_secs(60),
+            shutdown: tx,
+            inflight: Default::default(),
+            last_activity: std::sync::atomic::AtomicU64::new(0),
+        })
     }
 }

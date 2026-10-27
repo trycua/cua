@@ -130,6 +130,45 @@ pub mod metadata {
     pub const TUNNEL_WS_PATH: &str = "/tunnel";
     /// Reverse-SOCKS hotspot WebSocket path (ticket-authenticated).
     pub const HOTSPOT_WS_PATH: &str = "/hotspot";
+    /// Spawn channel WebSocket path (ticket-authenticated): the host that
+    /// runs the Space serves its child-Space API over it.
+    pub const SPAWN_WS_PATH: &str = "/spawn";
+    /// File (in a [`spawn_dirs`] directory) holding a Space's spawn
+    /// capability.
+    pub const SPAWN_TOKEN_FILE: &str = "spawn-token";
+    /// File (in a [`spawn_dirs`] directory) holding the spawn listener's URL.
+    pub const SPAWN_ADDRESS_FILE: &str = "spawn-address";
+    /// Environment of processes in a Space: its id.
+    pub const ENV_SPACE: &str = "CUA_SPACE";
+    /// Environment of processes in a Space: the spawn listener's URL.
+    pub const ENV_SPAWN: &str = "CUA_SPAWN";
+    /// Environment of processes in a Space: the capability's file.
+    pub const ENV_SPAWN_TOKEN_FILE: &str = "CUA_SPAWN_TOKEN_FILE";
+
+    /// Where a guest keeps its spawn files, in the order cua-spacesd tries
+    /// them (it takes the first it can own) and clients look: `/run/cua`,
+    /// `$XDG_RUNTIME_DIR/cua-spawn`, `/dev/shm/cua-spawn-<uid>`, then the
+    /// temp dir's `cua-spawn-<uid>` (`cua-spawn` without a uid).
+    pub fn spawn_dirs(
+        uid: Option<u32>,
+        xdg_runtime_dir: Option<&std::path::Path>,
+        temp_dir: &std::path::Path,
+    ) -> Vec<std::path::PathBuf> {
+        let mut dirs = Vec::new();
+        if let Some(uid) = uid {
+            dirs.push(std::path::PathBuf::from("/run/cua"));
+            if let Some(x) = xdg_runtime_dir.filter(|x| !x.as_os_str().is_empty()) {
+                dirs.push(x.join("cua-spawn"));
+            }
+            dirs.push(std::path::PathBuf::from(format!(
+                "/dev/shm/cua-spawn-{uid}"
+            )));
+            dirs.push(temp_dir.join(format!("cua-spawn-{uid}")));
+        } else {
+            dirs.push(temp_dir.join("cua-spawn"));
+        }
+        dirs
+    }
     /// Cua Volume WebSocket path (ticket-authenticated): the client serves
     /// the guest's volume mount over it.
     pub const VOLUME_WS_PATH: &str = "/volume";

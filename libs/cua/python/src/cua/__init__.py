@@ -204,6 +204,13 @@ async def _agent_run_stream(
 _AgentRun.stream = _agent_run_stream  # type: ignore[attr-defined]
 
 
+def auto(*, state_dir: Optional[str] = None, spaces_home: Optional[str] = None) -> Cua:
+    """The default runtime: inside a Space with children on, its spawn
+    channel (every Space made through it is a child of that Space); else the
+    `cua daemon` this machine runs, else a runtime in this process."""
+    return Cua.auto(CuaConfig(state_dir=state_dir, spaces_home=spaces_home))
+
+
 def connect(address: Optional[str] = None, token: Optional[str] = None) -> Cua:
     """A client of a running `cua daemon` (socket path or loopback URL)."""
     return Cua.connect(address, token)

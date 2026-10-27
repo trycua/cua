@@ -3162,6 +3162,27 @@ impl TunnelService for Svc {
     ) -> Result<tonic::Response<pb::GetHotspotStatusResponse>, Status> {
         Err(Status::unimplemented("mock: hotspot"))
     }
+
+    async fn start_spawn(
+        &self,
+        _: tonic::Request<pb::StartSpawnRequest>,
+    ) -> Result<tonic::Response<pb::StartSpawnResponse>, Status> {
+        Err(Status::unimplemented("mock: spawn"))
+    }
+
+    async fn stop_spawn(
+        &self,
+        _: tonic::Request<pb::StopSpawnRequest>,
+    ) -> Result<tonic::Response<pb::StopSpawnResponse>, Status> {
+        Err(Status::unimplemented("mock: spawn"))
+    }
+
+    async fn get_spawn_status(
+        &self,
+        _: tonic::Request<pb::GetSpawnStatusRequest>,
+    ) -> Result<tonic::Response<pb::GetSpawnStatusResponse>, Status> {
+        Err(Status::unimplemented("mock: spawn"))
+    }
 }
 
 /// Whether a fresh connection is a `GET …/tunnel` request (peeked, bounded).

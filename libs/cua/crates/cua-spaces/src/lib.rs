@@ -61,6 +61,7 @@ pub mod app_icon;
 /// A hash-chained audit log (the share audit).
 pub mod audit;
 pub mod build;
+pub mod children;
 #[cfg(feature = "mcp-client")]
 pub mod client;
 /// Spaces in your own cloud account: a cloud sandbox (`cua_sandbox_core::byoc`)
@@ -128,6 +129,8 @@ pub mod sharing;
 /// The Keyvault seam and the whole `request_site_login` tool: sign in to a
 /// site in a Space with a saved password, approved by the user.
 pub mod site_login;
+#[cfg(feature = "spaces-spawn")]
+pub mod spawn;
 #[cfg(feature = "spaces-stream")]
 pub mod stream;
 /// The Keyvault broker seam the `teleport_app` MCP tool routes delivery

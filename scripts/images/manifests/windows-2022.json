@@ -35,6 +35,7 @@
   ],
   "features_optional": [
     "hotspot",
+    "spawn",
     "relay_attach",
     "teleport.*",
     "audio.desktop",

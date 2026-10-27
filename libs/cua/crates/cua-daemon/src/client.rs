@@ -1190,6 +1190,41 @@ fn refused(e: &tonic::Status) -> bool {
     false
 }
 
+/// The spawn channel of the Space this process runs in, when it has one:
+/// `CUA_SPAWN` and `CUA_SPAWN_TOKEN_FILE` (set for processes started after
+/// the channel), else the files cua-spacesd keeps
+/// ([`cua_proto::metadata::spawn_dirs`]). Through it, `cua` and the SDKs
+/// in a Space make and manage the Space's own children; nothing else.
+pub fn spawn_channel() -> Option<DaemonAddress> {
+    use cua_proto::metadata as m;
+    let read = |p: &std::path::Path| {
+        std::fs::read_to_string(p)
+            .ok()
+            .map(|s| s.trim().to_owned())
+            .filter(|s| !s.is_empty())
+    };
+    if let (Some(url), Some(file)) = (
+        std::env::var(m::ENV_SPAWN).ok().filter(|v| !v.is_empty()),
+        std::env::var_os(m::ENV_SPAWN_TOKEN_FILE),
+    ) && let Some(token) = read(std::path::Path::new(&file))
+    {
+        return Some(DaemonAddress::Url { url, token });
+    }
+    #[cfg(unix)]
+    // SAFETY: getuid has no preconditions.
+    let uid = Some(unsafe { libc::getuid() });
+    #[cfg(not(unix))]
+    let uid = None;
+    let xdg = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from);
+    m::spawn_dirs(uid, xdg.as_deref(), &std::env::temp_dir())
+        .into_iter()
+        .find_map(|dir| {
+            let url = read(&dir.join(m::SPAWN_ADDRESS_FILE))?;
+            let token = read(&dir.join(m::SPAWN_TOKEN_FILE))?;
+            Some(DaemonAddress::Url { url, token })
+        })
+}
+
 /// The address of the daemon this machine runs when one accepts
 /// connections: the discovery file (`~/.cua/daemon.json`), else the
 /// default socket. A discovery file left by a daemon that exited is

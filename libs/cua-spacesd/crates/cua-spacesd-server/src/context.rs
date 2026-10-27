@@ -49,6 +49,9 @@ pub struct InitState {
     /// Environment set by the hotspot (`set_system_proxy`), layered below
     /// `env`.
     pub proxy_env: BTreeMap<String, String>,
+    /// Environment the spawn channel adds to every new process
+    /// (`CUA_SPACE`, `CUA_SPAWN`, `CUA_SPAWN_TOKEN_FILE`); `Init` keeps it.
+    pub spawn_env: BTreeMap<String, String>,
 }
 
 struct Inner {

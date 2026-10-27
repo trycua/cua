@@ -29,6 +29,7 @@
     "guides/agent-memory-and-identity",
     "guides/agent-schedules",
     "guides/keep-an-agent-running",
+    "guides/child-spaces",
     "---Keep it working---",
     "guides/troubleshoot",
     "guides/uninstall",

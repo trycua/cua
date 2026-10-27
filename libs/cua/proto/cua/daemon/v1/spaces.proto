@@ -102,6 +102,10 @@ service SpaceService {
   rpc SetSpaceLifetime(SetSpaceLifetimeRequest) returns (SetSpaceLifetimeResponse);
   // Replaces a Space's egress policy (empty removes it).
   rpc SetSpaceEgress(SetSpaceEgressRequest) returns (SetSpaceEgressResponse);
+  // Lets a Space make child Spaces of its own, or stops it. Turning it off
+  // ends the Space's spawn capability at once; children it already made
+  // keep running until they are deleted or their lifetime ends.
+  rpc SetSpaceChildren(SetSpaceChildrenRequest) returns (SetSpaceChildrenResponse);
   // Connects to a registered Space and returns a loopback env passthrough
   // (`<loopback>/v1/spaces/<key>/env`) that carries the Space's credentials,
   // so a client runs every `cua.env.v1` call and media WebSocket through the
@@ -275,6 +279,10 @@ message Space {
   // Space that is a machine on the relay is renamed there, so its `name`
   // changes instead.
   string display_name = 33;
+  // The Space may make child Spaces of its own (`SetSpaceChildren`): `cua`,
+  // the SDKs and the agent's tools in it create, list and delete Spaces
+  // that belong to it, on a channel only it can reach.
+  bool children = 41;
 }
 
 // Who a Space belongs to and who else has it (`Space.sharing`).
@@ -898,6 +906,23 @@ message CreateSpaceRequest {
   string instance_type = 26;
   // Cloud host region (a pin).
   string region = 27;
+  // Let the Space make child Spaces of its own (`SetSpaceChildren`).
+  // Unset: off.
+  optional bool children = 31;
+}
+
+// Request for `SpaceService.SetSpaceChildren`.
+message SetSpaceChildrenRequest {
+  // Id or name.
+  string space = 1;
+  // On or off.
+  bool enabled = 2;
+}
+
+// Response for `SpaceService.SetSpaceChildren`.
+message SetSpaceChildrenResponse {
+  // The Space as it is now.
+  Space space = 1;
 }
 
 // Request for `SpaceService.CreateSpaceStream`.

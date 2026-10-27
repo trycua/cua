@@ -520,7 +520,12 @@ impl ProcessManager {
             env.insert("LOGNAME".into(), user.name.clone());
             env.insert("SHELL".into(), user.shell.clone());
         }
-        for (key, value) in init.proxy_env.iter().chain(init.env.iter()) {
+        for (key, value) in init
+            .proxy_env
+            .iter()
+            .chain(init.spawn_env.iter())
+            .chain(init.env.iter())
+        {
             if value.is_empty() {
                 env.remove(key);
             } else {

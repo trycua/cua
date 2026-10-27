@@ -383,6 +383,12 @@ Examples:
         /// for good.
         #[arg(long)]
         durable: bool,
+        /// Let it make child Spaces of its own: `cua`, the SDKs and the
+        /// agent's tools in it create, list and delete Spaces that belong to
+        /// it, on this machine, never wider than it (`cua spaces children`).
+        /// Agent runs turn this on by themselves.
+        #[arg(long)]
+        children: bool,
         /// A fork source (a "bake" Space): a local QEMU VM's guest RAM is a
         /// shared file, so `cua sb checkpoint` takes milliseconds and forks
         /// of its checkpoints share its pages. Other kinds ignore it.
@@ -495,6 +501,22 @@ Examples:
         /// Remove the policy.
         #[arg(long, conflicts_with_all = ["deny", "allow"])]
         clear: bool,
+    },
+    /// Let a Space make child Spaces of its own, or stop it. While on,
+    /// `cua`, the SDKs and the agent's tools inside it create, list and
+    /// delete Spaces that belong to it: on this machine, with its egress
+    /// rules, ending no later than it, through a channel only it can reach.
+    /// Off ends its capability at once; children it made keep running
+    /// until deleted or their lifetime ends.
+    #[command(after_help = "Examples:
+  cua spaces children studio on
+  cua spaces children studio off")]
+    Children {
+        /// Space id or name.
+        space: String,
+        /// `on` or `off`.
+        #[arg(value_parser = ["on", "off"])]
+        state: String,
     },
     /// Cancel a create that is still running (here, in the daemon, or in
     /// another terminal): it stops and what it made is removed. Finished
@@ -1162,6 +1184,26 @@ pub async fn run_spaces_sdk(
                 }
             }
         }
+        SpacesCmd::Children { space, state } => {
+            let on = state == "on";
+            spaces.set_children(space.clone(), on).await?;
+            if json {
+                line(
+                    out,
+                    serde_json::json!({"space": space, "children": on}).to_string(),
+                );
+            } else if on {
+                line(
+                    out,
+                    format!(
+                        "{space} can make child Spaces of its own (inside it: `cua spaces \
+                         create`, or the create_space tool)."
+                    ),
+                );
+            } else {
+                line(out, format!("{space} can no longer make child Spaces."));
+            }
+        }
         SpacesCmd::Egress {
             space,
             deny,
@@ -1266,6 +1308,7 @@ pub async fn run_spaces_sdk(
             disk_gb,
             gpu,
             durable,
+            children,
             forkable,
             instance_type,
             region,
@@ -1315,6 +1358,7 @@ pub async fn run_spaces_sdk(
                 volumes: volumes.clone(),
                 labels: labels.clone(),
                 egress: egress.clone(),
+                children: children.then_some(true),
                 ..Default::default()
             };
             // Durable Spaces are kept by the coordinator of your machines,
@@ -4459,4 +4503,58 @@ mod tests {
         // Already attached: left alone.
         assert!(!attach_relay_account(&cua, || unreachable!()));
     }
+}
+
+/// `cua spaces ls` inside a Space: the Space's own children (and theirs),
+/// as its spawn channel lists them.
+pub async fn run_children_ls(
+    cua: &Arc<cua_sdk::Cua>,
+    json: bool,
+    out: &mut dyn Write,
+) -> Result<i32, CuaError> {
+    let list = cua.spaces().list().await?;
+    let parent_of =
+        |s: &cua_sdk::SpaceInfo| s.labels.get("cua.parent").cloned().unwrap_or_default();
+    if json {
+        let rows: Vec<serde_json::Value> = list
+            .iter()
+            .map(|s| {
+                serde_json::json!({
+                    "id": s.id,
+                    "name": if s.display_name.is_empty() { &s.name } else { &s.display_name },
+                    "parent": parent_of(s),
+                    "power": s.power,
+                    "image": s.image,
+                    "expires_at_unix": s.expires_at_unix,
+                })
+            })
+            .collect();
+        line(out, serde_json::json!({ "spaces": rows }).to_string());
+        return Ok(0);
+    }
+    if list.is_empty() {
+        line(out, "No child Spaces.");
+        return Ok(0);
+    }
+    line(
+        out,
+        format!("{:<28} {:<36} {:<10} PARENT", "NAME", "ID", "STATE"),
+    );
+    for s in &list {
+        let name = if s.display_name.is_empty() {
+            &s.name
+        } else {
+            &s.display_name
+        };
+        let state = if s.power.is_empty() {
+            "-"
+        } else {
+            s.power.as_str()
+        };
+        line(
+            out,
+            format!("{name:<28} {:<36} {state:<10} {}", s.id, parent_of(s)),
+        );
+    }
+    Ok(0)
 }

@@ -32,6 +32,13 @@ use crate::util::{duration, timestamp};
 pub const FORWARD_DEFAULT_TTL: Duration = Duration::from_secs(10 * 60);
 /// Default hotspot ticket lifetime.
 pub const HOTSPOT_DEFAULT_TTL: Duration = Duration::from_secs(60);
+/// The capability a guest with the spawn channel advertises.
+pub const SPAWN_FEATURE: &str = "spawn";
+/// Default spawn ticket lifetime.
+pub const SPAWN_DEFAULT_TTL: Duration = Duration::from_secs(60);
+/// The host end every spawn connection is opened to (the host serves its
+/// child-Space API there; the name is not dialed).
+pub const SPAWN_PEER_HOST: &str = "spawn";
 
 struct Forward {
     id: String,
@@ -53,12 +60,22 @@ struct Hotspot {
     set_system_proxy: bool,
 }
 
+/// The spawn channel: a listener on guest loopback relayed to the host.
+struct Spawn {
+    id: String,
+    address: String,
+    hub: Hub,
+    stop: CancellationToken,
+    files: super::spawn::SpawnFiles,
+}
+
 /// State shared by the gRPC service and the WebSocket routes.
 #[derive(Clone)]
 pub struct TunnelState {
     ctx: ServerContext,
     forwards: Arc<Mutex<HashMap<String, Arc<Forward>>>>,
     hotspot: Arc<Mutex<Option<Arc<Hotspot>>>>,
+    spawn: Arc<Mutex<Option<Arc<Spawn>>>>,
 }
 
 impl TunnelState {
@@ -68,6 +85,7 @@ impl TunnelState {
             ctx,
             forwards: Arc::default(),
             hotspot: Arc::default(),
+            spawn: Arc::default(),
         };
         // Revoked sessions (token file rotated or emptied): stop every
         // forward and the hotspot.
@@ -77,6 +95,7 @@ impl TunnelState {
             let weak = (
                 Arc::downgrade(&state.forwards),
                 Arc::downgrade(&state.hotspot),
+                Arc::downgrade(&state.spawn),
             );
             let ctx = state.ctx.clone();
             handle.spawn(async move {
@@ -85,7 +104,8 @@ impl TunnelState {
                         changed = revoked.changed() => if changed.is_err() { return },
                         _ = shutdown.cancelled() => return,
                     }
-                    let (Some(forwards), Some(hotspot)) = (weak.0.upgrade(), weak.1.upgrade())
+                    let (Some(forwards), Some(hotspot), Some(spawn)) =
+                        (weak.0.upgrade(), weak.1.upgrade(), weak.2.upgrade())
                     else {
                         return;
                     };
@@ -93,6 +113,7 @@ impl TunnelState {
                         ctx: ctx.clone(),
                         forwards,
                         hotspot,
+                        spawn,
                     };
                     state.revoke_all();
                 }
@@ -101,8 +122,10 @@ impl TunnelState {
         state
     }
 
-    /// Closes every forward and stops the hotspot.
+    /// Closes every forward, stops the hotspot and the spawn channel (a
+    /// new token is a new owner: the old Space's capability must not stay).
     pub fn revoke_all(&self) {
+        self.stop_spawn(None);
         let forwards: Vec<_> = self
             .forwards
             .lock()
@@ -124,6 +147,25 @@ impl TunnelState {
             .lock()
             .expect("forwards")
             .retain(|_, f| f.expires_at > now || f.active.load(Ordering::SeqCst) > 0);
+    }
+
+    fn stop_spawn(&self, id: Option<&str>) -> bool {
+        let mut slot = self.spawn.lock().expect("spawn");
+        let matches = match (slot.as_ref(), id) {
+            (Some(s), Some(id)) => s.id == id,
+            (Some(_), None) => true,
+            (None, _) => false,
+        };
+        if !matches {
+            return false;
+        }
+        if let Some(spawn) = slot.take() {
+            spawn.stop.cancel();
+            spawn.files.remove();
+            self.ctx.update_init(|state| state.spawn_env.clear());
+            tracing::info!(spawn = %spawn.id, "spawn channel stopped");
+        }
+        true
     }
 
     fn stop_hotspot(&self, id: Option<&str>) -> bool {
@@ -495,6 +537,139 @@ impl TunnelService for TunnelServiceImpl {
             bytes_in: stats.bytes_in.load(Ordering::Relaxed),
         }))
     }
+
+    async fn start_spawn(
+        &self,
+        request: Request<StartSpawnRequest>,
+    ) -> Result<GrpcResponse<StartSpawnResponse>, Status> {
+        let caller = caller(&request);
+        // Only the host that runs this Space: it holds the Space's own
+        // token. A relayed account, a viewer or a share never may (they
+        // would put themselves between the Space and its host).
+        if !caller.token_verified || caller.account.is_some() || caller.viewer.is_some() {
+            return Err(status(
+                Code::PermissionDenied,
+                ErrorReason::Unspecified,
+                "only the host that runs this Space may start its spawn channel",
+            ));
+        }
+        let body = request.into_inner();
+        if body.capability.trim().is_empty() {
+            return Err(crate::error::invalid("capability is required"));
+        }
+        self.state.stop_spawn(None);
+        let dir = super::spawn::choose_dir().map_err(|e| {
+            status(
+                Code::FailedPrecondition,
+                ErrorReason::Unspecified,
+                format!("no private directory for the spawn files: {e}"),
+            )
+        })?;
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .map_err(|e| crate::error::internal(format!("spawn listener: {e}")))?;
+        let local = listener
+            .local_addr()
+            .map_err(|e| crate::error::internal(e.to_string()))?;
+        let address = format!("http://{local}");
+        let files = super::spawn::SpawnFiles::write(&dir, body.capability.trim(), &address)
+            .map_err(|e| crate::error::internal(format!("spawn files: {e}")))?;
+        let id = format!("sp-{}", crate::util::random_id(9));
+        let hub = Hub::new();
+        let stop = CancellationToken::new();
+        {
+            let (hub, stop) = (hub.clone(), stop.clone());
+            tokio::spawn(async move {
+                tokio::select! {
+                    r = cua_spacesd_socks::serve_forward(listener, hub, SPAWN_PEER_HOST.into(), 0) => {
+                        if let Err(error) = r {
+                            tracing::warn!(%error, "spawn listener failed");
+                        }
+                    }
+                    _ = stop.cancelled() => {}
+                }
+            });
+        }
+        let token_path = files.token.to_string_lossy().into_owned();
+        let address_path = files.address.to_string_lossy().into_owned();
+        self.state.ctx.update_init(|state| {
+            state.spawn_env.clear();
+            state
+                .spawn_env
+                .insert(super::spawn::ENV_ADDRESS.into(), address.clone());
+            state
+                .spawn_env
+                .insert(super::spawn::ENV_TOKEN_FILE.into(), token_path.clone());
+            if !body.space_id.is_empty() {
+                state
+                    .spawn_env
+                    .insert(super::spawn::ENV_SPACE.into(), body.space_id.clone());
+            }
+        });
+        let ttl = duration(body.ticket_ttl.as_ref())
+            .filter(|d| !d.is_zero())
+            .unwrap_or(SPAWN_DEFAULT_TTL);
+        let (ticket, _) = self.state.ctx.mint_ticket_issued(
+            TicketScope::Spawn,
+            &id,
+            caller.principal.as_ref(),
+            None,
+            ttl,
+        );
+        *self.state.spawn.lock().expect("spawn") = Some(Arc::new(Spawn {
+            id: id.clone(),
+            address: address.clone(),
+            hub,
+            stop,
+            files,
+        }));
+        tracing::info!(spawn = %id, %address, "spawn channel started");
+        Ok(GrpcResponse::new(StartSpawnResponse {
+            spawn_id: id,
+            ws_path: ticket_path(cua_proto::metadata::SPAWN_WS_PATH, &ticket),
+            ticket,
+            address,
+            token_path,
+            address_path,
+        }))
+    }
+
+    async fn stop_spawn(
+        &self,
+        request: Request<StopSpawnRequest>,
+    ) -> Result<GrpcResponse<StopSpawnResponse>, Status> {
+        let caller = caller(&request);
+        if !caller.token_verified || caller.account.is_some() || caller.viewer.is_some() {
+            return Err(status(
+                Code::PermissionDenied,
+                ErrorReason::Unspecified,
+                "only the host that runs this Space may stop its spawn channel",
+            ));
+        }
+        let id = request.into_inner().spawn_id;
+        let id = (!id.is_empty()).then_some(id);
+        if !self.state.stop_spawn(id.as_deref()) && id.is_some() {
+            return Err(session_not_found("spawn", id.as_deref().unwrap_or("")));
+        }
+        Ok(GrpcResponse::new(StopSpawnResponse {}))
+    }
+
+    async fn get_spawn_status(
+        &self,
+        _request: Request<GetSpawnStatusRequest>,
+    ) -> Result<GrpcResponse<GetSpawnStatusResponse>, Status> {
+        let spawn = self.state.spawn.lock().expect("spawn").clone();
+        let Some(spawn) = spawn else {
+            return Ok(GrpcResponse::new(GetSpawnStatusResponse::default()));
+        };
+        Ok(GrpcResponse::new(GetSpawnStatusResponse {
+            started: true,
+            attached: spawn.hub.is_connected(),
+            spawn_id: spawn.id.clone(),
+            address: spawn.address.clone(),
+            active_connections: spawn.hub.stats().active_connections.load(Ordering::Relaxed),
+        }))
+    }
 }
 
 pub(crate) fn refuse(error: crate::auth::TicketError) -> Response {
@@ -656,6 +831,51 @@ pub async fn hotspot_ws(
                 _ = hotspot.stop.cancelled() => {}
             }
             state.stop_hotspot(Some(&hotspot.id));
+        })
+}
+
+/// `GET /spawn?ticket=…` (WebSocket): attaches the host as the peer of the
+/// spawn listener; the listener refuses connections while it is detached.
+/// A newer host socket replaces an older one (a host that restarted).
+pub async fn spawn_ws(
+    State(state): State<TunnelState>,
+    uri: Uri,
+    headers: HeaderMap,
+    upgrade: WebSocketUpgrade,
+) -> Response {
+    let (claims, subprotocol) =
+        match state
+            .ctx
+            .validate_request_ticket(&uri, &headers, TicketScope::Spawn)
+        {
+            Ok(v) => v,
+            Err(e) => return refuse(e),
+        };
+    let spawn = state.spawn.lock().expect("spawn").clone();
+    let Some(spawn) = spawn.filter(|s| s.id == claims.resource) else {
+        return (StatusCode::GONE, "spawn channel stopped").into_response();
+    };
+    with_protocol(upgrade, subprotocol)
+        .max_message_size(16 * 1024 * 1024)
+        .on_upgrade(move |socket| async move {
+            let (ws_tx, ws_rx) = socket.split();
+            let source = ws_rx
+                .take_while(|m| {
+                    futures_util::future::ready(!matches!(m, Err(_) | Ok(Message::Close(_))))
+                })
+                .filter_map(|m| async move {
+                    match m {
+                        Ok(Message::Binary(data)) => Some(data.to_vec()),
+                        _ => None,
+                    }
+                });
+            let sink = ws_tx.with(|data: Vec<u8>| async move {
+                Ok::<_, axum::Error>(Message::Binary(data.into()))
+            });
+            tokio::select! {
+                _ = spawn.hub.run_peer(Box::pin(source), Box::pin(sink)) => {}
+                _ = spawn.stop.cancelled() => {}
+            }
         })
 }
 

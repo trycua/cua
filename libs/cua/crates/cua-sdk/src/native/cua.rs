@@ -194,6 +194,17 @@ impl Cua {
     /// start` replaces it.
     #[uniffi::constructor]
     pub fn auto(config: CuaConfig) -> Result<Arc<Self>> {
+        // Inside a Space with children on: its spawn channel (every Space
+        // made through it is a child of that Space).
+        if let Some(addr) = cua_daemon::client::spawn_channel() {
+            let client = {
+                let _guard = runtime().enter();
+                DaemonClient::new(addr)?
+            };
+            return Ok(Arc::new(Self {
+                backend: Backend::Daemon(client),
+            }));
+        }
         // A daemon that is starting is waited for (bounded), not raced with
         // an embedded runtime.
         match cua_daemon::client::wait_for_starting(std::time::Duration::from_secs(30))? {

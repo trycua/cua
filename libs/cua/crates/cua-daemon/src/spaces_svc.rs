@@ -43,7 +43,7 @@ pub(crate) fn network_word(n: cua_sandbox_core::NetworkMode) -> &'static str {
 }
 
 #[cfg(feature = "spaces")]
-mod imp {
+pub(crate) mod imp {
     use super::*;
     use crate::convert::from_dur;
     use crate::passthrough;
@@ -51,11 +51,40 @@ mod imp {
     use cua_sandbox_core::placement::{Kind, On, Runtime};
     use prost::Message;
 
+    /// Sets `Space.children` from the setting.
+    pub(crate) fn mark_children(spaces: &cua_spaces::Spaces, records: &mut [pb::Space]) {
+        let on: std::collections::BTreeSet<String> =
+            spaces.children_enabled().into_iter().collect();
+        for r in records {
+            r.children = on.contains(&r.id);
+        }
+    }
+
+    /// Turns children on for `space`: only a Space this machine runs can
+    /// hold a channel to it.
+    fn turn_on_children(
+        spaces: &cua_spaces::Spaces,
+        space: &mut pb::Space,
+    ) -> Result<(), tonic::Status> {
+        if !space.id.starts_with("local:") {
+            return Err(tonic::Status::failed_precondition(
+                "child Spaces are available for Spaces this machine runs; turn them on \
+                 on the machine that runs this Space",
+            ));
+        }
+        spaces
+            .set_children(&space.id, true)
+            .map_err(|e| st(e.into()))?;
+        space.children = true;
+        Ok(())
+    }
+
     async fn record(spaces: &cua_spaces::Spaces, id: &str) -> Result<pb::Space, Error> {
         if let Some(r) = spaces.registry().get(id).map_err(Error::from)? {
             let mut r = [r];
             spaces.fill_records(&mut r);
-            let [r] = r;
+            let [mut r] = r;
+            r.children = spaces.children_on(&r.id);
             return Ok(r);
         }
         Ok(info_record(&spaces.find(id).await.map_err(Error::from)?))
@@ -349,6 +378,7 @@ mod imp {
                 s.stop_reason = self.spaces().stop_reason_of(&s.id);
             }
             self.spaces().fill_records(&mut spaces);
+            mark_children(self.spaces(), &mut spaces);
             // Plus the signed-in account's relay machines: refreshed, or
             // (`known_now`) as far as they answered, never holding up this
             // machine's own Spaces.
@@ -631,14 +661,20 @@ mod imp {
             &self,
             req: tonic::Request<pb::CreateSpaceRequest>,
         ) -> R<pb::CreateSpaceResponse> {
-            let create = create_args(req.into_inner())?;
+            let r = req.into_inner();
+            let children = r.children.unwrap_or(false);
+            let create = create_args(r)?;
             let network = create.network;
             let created = self
                 .spaces()
                 .create(create)
                 .await
                 .map_err(|e| st(e.into()))?;
-            ok(create_response(self.spaces(), created, network).await?)
+            let mut resp = create_response(self.spaces(), created, network).await?;
+            if children && let Some(s) = resp.space.as_mut() {
+                turn_on_children(self.spaces(), s)?;
+            }
+            ok(resp)
         }
 
         type CreateSpaceStreamStream = std::pin::Pin<
@@ -657,6 +693,7 @@ mod imp {
             let mut r = req.into_inner().create.unwrap_or_default();
             // The stream runs until the Space is ready.
             r.wait = Some(true);
+            let children = r.children.unwrap_or(false);
             let mut create = create_args(r)?;
             // Bounded: a slow reader drops progress, never the result (which
             // goes out on the same channel after every report).
@@ -671,11 +708,18 @@ mod imp {
             let network = create.network;
             tokio::spawn(async move {
                 let result = match spaces.create(create).await {
-                    Ok(created) => create_response(&spaces, created, network).await.map(|r| {
-                        pb::CreateSpaceStreamResponse {
-                            event: Some(Event::Result(r)),
+                    Ok(created) => match create_response(&spaces, created, network).await {
+                        Ok(mut r) => {
+                            let on = match r.space.as_mut() {
+                                Some(s) if children => turn_on_children(&spaces, s),
+                                _ => Ok(()),
+                            };
+                            on.map(|()| pb::CreateSpaceStreamResponse {
+                                event: Some(Event::Result(r)),
+                            })
                         }
-                    }),
+                        Err(e) => Err(e),
+                    },
                     Err(e) => Err(st(e.into())),
                 };
                 let _ = tx.send(result).await;
@@ -769,6 +813,31 @@ mod imp {
             ok(pb::SetSpaceEgressResponse {})
         }
 
+        async fn set_space_children(
+            &self,
+            req: tonic::Request<pb::SetSpaceChildrenRequest>,
+        ) -> R<pb::SetSpaceChildrenResponse> {
+            let r = req.into_inner();
+            let id = self
+                .spaces()
+                .resolve(&r.space)
+                .map_err(|e| st(e.into()))?
+                .to_string();
+            let mut space = record(self.spaces(), &id).await.map_err(st)?;
+            if r.enabled {
+                turn_on_children(self.spaces(), &mut space)?;
+            } else {
+                self.spaces()
+                    .set_children(&id, false)
+                    .map_err(|e| st(e.into()))?;
+                if let Some(a) = self.0.spawn_authority() {
+                    a.revoke(&id);
+                }
+                space.children = false;
+            }
+            ok(pb::SetSpaceChildrenResponse { space: Some(space) })
+        }
+
         async fn rename_space(
             &self,
             req: tonic::Request<pb::RenameSpaceRequest>,
@@ -796,6 +865,12 @@ mod imp {
             // Drop the connection an exec or a call cached for it: a new
             // Space of the same name must not reach the deleted one.
             self.rt().detach(&space).await;
+            // Its capability ends with it (the channel loop also notices).
+            if let Ok(id) = self.spaces().resolve(&space)
+                && let Some(a) = self.0.spawn_authority()
+            {
+                a.revoke(&id.to_string());
+            }
             ok(pb::DeleteSpaceResponse { message })
         }
 
@@ -1262,6 +1337,12 @@ mod imp {
             &self,
             _: tonic::Request<pb::SetSpaceEgressRequest>,
         ) -> R<pb::SetSpaceEgressResponse> {
+            off()
+        }
+        async fn set_space_children(
+            &self,
+            _: tonic::Request<pb::SetSpaceChildrenRequest>,
+        ) -> R<pb::SetSpaceChildrenResponse> {
             off()
         }
 

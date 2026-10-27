@@ -219,6 +219,21 @@ async fn orphaned_ephemeral_sandboxes_are_reaped_on_the_next_cli_run() {
 async fn low_disk_guard_fails_typed_with_a_prune_hint() {
     let mut h = home();
     h.set("CUA_DISK_FAKE_AVAILABLE", "1G");
+    // #5755: on Windows a VM create is refused up front when QEMU is not
+    // installed, before the disk guard this test is about, and GitHub's
+    // Windows runner has no QEMU. Put placeholder tools where
+    // `cua_vmm::host::which` looks (`$CUA_HOME/bin`; on Windows any file
+    // named `<tool>.exe` counts). The optional `qemu-img` architecture probe
+    // tolerates their failure to start; the disk guard refuses before
+    // anything else needs QEMU.
+    if cfg!(windows) {
+        let bin = h.cua_home().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let system = format!("qemu-system-{}", cua_vmm::Arch::host().qemu());
+        for tool in [system.as_str(), "qemu-img"] {
+            std::fs::write(bin.join(format!("{tool}.exe")), b"").unwrap();
+        }
+    }
     let disk = h.dir.path().join("base.qcow2");
     cua_disk::qcow2::write_header(&disk, None).unwrap();
     let image = format!("disk:{}", disk.display());

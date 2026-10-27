@@ -9,7 +9,7 @@ import "cua/env/v1/system.proto";
 import "cua/env/v1/warm.proto";
 
 // Spaces a host provides: a machine set up with `cua host setup
-// --provide-spaces` creates Spaces (macOS VMs with Lume on a Mac, Linux
+// --share both` creates Spaces (macOS VMs with Lume on a Mac, Linux
 // containers with Docker, whatever else runs locally) for the owner's
 // enrolled devices and the accounts it is shared with, through the relay.
 //
@@ -24,7 +24,7 @@ import "cua/env/v1/warm.proto";
 // With `share_desktop` off, a relayed caller reaches only this service and
 // `GetCapabilities` / `Health`, never the host's desktop or files.
 //
-// A host set up with `cua host setup --direct <ip:port> --provide-spaces`
+// A host set up with `cua host setup --direct <ip:port> --share both`
 // also serves it on its direct listener, to the holder of its env token,
 // by default only from loopback, Tailscale and private LAN addresses. A
 // Space created with `direct` is reached on a TCP port the host forwards

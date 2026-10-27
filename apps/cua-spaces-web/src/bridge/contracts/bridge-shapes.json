@@ -3911,6 +3911,181 @@
         "termsUrl"
       ]
     },
+    "RuntimePathCheck": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "exists": {
+          "type": "boolean"
+        },
+        "executable": {
+          "type": "boolean"
+        },
+        "tool": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "minVersion": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "expected": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "guests": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "path",
+        "exists",
+        "executable",
+        "expected"
+      ]
+    },
+    "RuntimesInput": {
+      "type": "object",
+      "properties": {
+        "os": {
+          "enum": [
+            "macos",
+            "windows",
+            "linux",
+            "unknown",
+            null
+          ]
+        },
+        "hostArch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "localBackends": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "localDetails": {
+          "anyOf": [
+            {},
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kinds": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "source": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "path": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "detected": {
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "tool": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "path": {
+                      "type": "string"
+                    },
+                    "version": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "guests": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "tool",
+                    "name",
+                    "path"
+                  ]
+                }
+              },
+              "check": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/RuntimePathCheck"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          }
+        }
+      }
+    },
     "SessionSnapshot": {
       "type": "object",
       "properties": {
@@ -4186,16 +4361,14 @@
         "hostSettings": {
           "type": "object",
           "properties": {
-            "lumeSource": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "linuxSource": {
-              "type": [
-                "string",
-                "null"
+            "runtimes": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/RuntimesInput"
+                },
+                {
+                  "type": "null"
+                }
               ]
             },
             "autoConnect": {
@@ -6588,6 +6761,16 @@
             "off",
             "done"
           ]
+        },
+        "runtimes": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RuntimesInput"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -7927,6 +8110,23 @@
         "computers",
         "warning"
       ]
+    },
+    "runtimes.browse": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "path"
+      ]
+    },
+    "runtimes.check": {
+      "$ref": "#/$defs/RuntimePathCheck"
     },
     "session.completeOnboarding": {
       "type": "null"
@@ -10068,6 +10268,23 @@
         "computers",
         "warning"
       ]
+    },
+    "runtimes.browse": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "path"
+      ]
+    },
+    "runtimes.check": {
+      "$ref": "#/$defs/RuntimePathCheck"
     },
     "session.get": {
       "$ref": "#/$defs/WkSession"

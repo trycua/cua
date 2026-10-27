@@ -177,6 +177,8 @@ export const HOST_COVERAGE = {
   "loginItem.get": { webkit: { methods: ["loginItem.get"] }, tauri: ST["loginItem.get"] },
   "loginItem.set": { webkit: { methods: ["loginItem.set"] }, tauri: ST["loginItem.set"] },
   "loginItem.openSettings": { webkit: { methods: ["loginItem.openSettings"] }, tauri: ST["loginItem.openSettings"] },
+  "runtimes.check": { webkit: { methods: ["runtimes.check"] }, tauri: ST["runtimes.check"], unsupported: { tauri: "the Tauri app has no per-kind runtime settings" } },
+  "runtimes.browse": { webkit: { methods: ["runtimes.browse"] }, tauri: ST["runtimes.browse"], unsupported: { tauri: "the Tauri app has no per-kind runtime settings" } },
   "devices.get": { webkit: { methods: ["devices.get"] }, tauri: ST["devices.get"] },
   "devices.enroll": { webkit: { methods: ["devices.enroll"] }, tauri: ST["devices.enroll"] },
   "devices.checkEnrolled": { webkit: { methods: ["devices.checkEnrolled"] }, tauri: ST["devices.checkEnrolled"] },

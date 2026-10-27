@@ -393,21 +393,6 @@ pub struct TelemetryInput {
     pub notice_shown: bool,
 }
 
-/// This machine's runtime doctor, for Settings, Advanced, Runtimes'
-/// MicroVM row (the same facts New Space's MicroVM tile follows).
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
-pub struct MicrovmInput {
-    /// This machine's system (`macos`, `linux`, `windows`).
-    pub os: Option<crate::model::SpaceOs>,
-    /// Ready backends (none: not read yet).
-    pub local_backends: Option<Vec<String>>,
-    /// Why each other backend is not ready, by backend name.
-    pub local_details: Option<std::collections::HashMap<String, String>>,
-    /// This machine's architecture (`arm64`, `amd64`).
-    pub host_arch: Option<String>,
-}
-
 /// What the Settings page shows.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -457,22 +442,15 @@ pub struct SettingsInput {
     /// "Connect to the desktop automatically" (none: no row; a shell
     /// without the preview cover leaves it out).
     pub auto_connect: Option<bool>,
-    /// Which Lume macOS Spaces run on (`runtime.lume`: `auto`, `builtin`,
-    /// `system`); none: no Runtimes section.
-    #[serde(default)]
-    pub lume_source: Option<String>,
-    /// Which engine local Linux Spaces run on (`runtime.linux`: `auto`,
-    /// `builtin`, `system`); none: no Linux row.
-    #[serde(default)]
-    pub linux_source: Option<String>,
     /// Overflow into your clouds when this machine is full
     /// (`placement.overflow`); none: no row.
     #[serde(default)]
     pub overflow: Option<bool>,
-    /// What this machine's runtime doctor said, for Runtimes' MicroVM row
-    /// (whether microVMs run here, and why not); none: no MicroVM row.
+    /// Settings, Advanced's runtimes: each kind's setting, what is
+    /// installed for it and whether it runs here. None: nothing read yet
+    /// (the rows still show, "Checking…").
     #[serde(default)]
-    pub microvm: Option<MicrovmInput>,
+    pub runtimes: Option<crate::runtimes::RuntimesInput>,
     /// Settings, General's Show tips switch: tips are on
     /// (`!AppSettings.tips.off`). A shell that does not say reads as on.
     #[serde(default = "default_true")]
@@ -499,10 +477,8 @@ impl Default for SettingsInput {
             keyvault_site_icons: true,
             keyvault_protection: vec![],
             auto_connect: None,
-            lume_source: None,
-            linux_source: None,
             overflow: None,
-            microvm: None,
+            runtimes: None,
             show_tips: true,
         }
     }
@@ -897,14 +873,8 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
         },
     ];
 
-    if input.lume_source.is_some() || input.linux_source.is_some() || input.microvm.is_some() {
-        let mut runtimes =
-            runtimes_section(input.lume_source.as_deref(), input.linux_source.as_deref());
-        if let Some(m) = &input.microvm {
-            runtimes.rows.extend(microvm_rows(m));
-        }
-        sections.push(runtimes);
-    }
+    // Every kind's runtime row, on every host, whatever is known yet.
+    sections.push(crate::runtimes::section(input.runtimes.as_ref()));
 
     if let Some(t) = &input.telemetry {
         let mut share = row("telemetry", Choice, "Share usage data to help improve Cua");
@@ -984,110 +954,6 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
     }
 }
 
-/// The help under Settings, Runtimes, macOS VMs.
-pub const MACOS_RUNTIME_HELP: &str =
-    "Built-in is Cua\u{2019}s signed Lume, downloaded the first time you need it (6 MB).";
-
-/// The help under Settings, Runtimes, Linux.
-pub const LINUX_RUNTIME_HELP: &str =
-    "Built-in is a gVisor Linux VM, downloaded the first time you need it (480 MB).";
-
-/// Settings, Runtimes: one row per local runtime Cua can provide itself,
-/// each Automatic, Built-in or System.
-/// * macOS VMs (`macos-runtime`, `runtime.lume`'s values): Built-in is
-///   Cua's signed Lume, set up on first use; System this Mac's own Lume.
-/// * Linux (`linux-runtime`, `runtime.linux`'s values): Built-in is Cua's
-///   own VM with Docker and gVisor, set up on first use; System this Mac's
-///   own container engine; Automatic Docker when it runs, else built-in.
-pub fn runtimes_section(lume_source: Option<&str>, linux_source: Option<&str>) -> SettingsSection {
-    use SettingsRowKind::*;
-    let choice = |id: &str, label: &str, source: &str| {
-        let source = match source {
-            "builtin" | "system" => source,
-            _ => "auto",
-        };
-        let mut r = row(id, Choice, label);
-        r.options = vec![
-            opt("auto", "Automatic", source == "auto"),
-            opt("builtin", "Built-in", source == "builtin"),
-            opt("system", "System", source == "system"),
-        ];
-        r
-    };
-    let mut rows = vec![];
-    if let Some(source) = lume_source {
-        rows.push(choice("macos-runtime", "macOS VMs", source));
-        rows.push(row("macos-runtime-note", Note, MACOS_RUNTIME_HELP));
-    }
-    if let Some(source) = linux_source {
-        rows.push(choice("linux-runtime", "Linux", source));
-        rows.push(row("linux-runtime-note", Note, LINUX_RUNTIME_HELP));
-    }
-    SettingsSection {
-        id: "runtimes".into(),
-        title: "Runtimes".into(),
-        button: None,
-        button_enabled: false,
-        button_help: None,
-        rows,
-    }
-}
-
-/// Runtimes' MicroVM row: whether this machine runs microVMs and on what,
-/// or why not (New Space only greys MicroVM out; the reason is told here).
-pub fn microvm_rows(m: &MicrovmInput) -> Vec<SettingsRow> {
-    use crate::wizard::{LocalProbe, MicrovmStatus, microvm_status_of};
-    use SettingsRowKind::*;
-    let probe = LocalProbe {
-        backends: m.local_backends.as_deref(),
-        details: m.local_details.as_ref(),
-        host_arch: m.host_arch.as_deref(),
-    };
-    let os = m.os.unwrap_or(crate::model::SpaceOs::Macos);
-    let mut status = row("microvm-runtime", Text, "MicroVM");
-    let note = match microvm_status_of(&probe, os) {
-        MicrovmStatus::Checking => {
-            status.value = Some("Checking\u{2026}".into());
-            None
-        }
-        MicrovmStatus::Ready(runtimes) => {
-            status.value = Some("Ready".into());
-            let names: Vec<String> = runtimes.iter().map(|r| r.label()).collect();
-            Some(row(
-                "microvm-runtime-note",
-                Note,
-                &format!("MicroVM Spaces run on {}.", join_or(&names)),
-            ))
-        }
-        MicrovmStatus::Blocked(why) => {
-            status.value = Some("Not available".into());
-            Some(row(
-                "microvm-runtime-note",
-                Error,
-                &format!("MicroVM {}", lower_first(&why)),
-            ))
-        }
-    };
-    std::iter::once(status).chain(note).collect()
-}
-
-/// "A", "A or B", "A, B or C".
-fn join_or(names: &[String]) -> String {
-    match names {
-        [] => String::new(),
-        [one] => one.clone(),
-        [rest @ .., last] => format!("{} or {last}", rest.join(", ")),
-    }
-}
-
-fn lower_first(s: &str) -> String {
-    let mut c = s.chars();
-    match c.next() {
-        Some(f) => format!("{}{}", f.to_lowercase(), c.as_str()),
-        None => String::new(),
-    }
-}
-
 /// The Settings page with Settings, Storage (the Cua Volume's store,
 /// Finder volume and cache, [`crate::drive_settings::storage_section`])
 /// after General, while the Cua Volume experiment is on. Off, Storage is
@@ -1119,93 +985,18 @@ pub fn with_storage(
 mod tests {
     use super::*;
 
+    /// Every host's page has the Runtimes section with the three kinds,
+    /// even before anything was read.
     #[test]
-    fn the_runtimes_section_shows_the_lume_choice() {
+    fn the_runtimes_section_is_always_there() {
         let p = page(&SettingsInput::default());
-        assert!(
-            !p.sections.iter().any(|s| s.id == "runtimes"),
-            "not until read"
-        );
-        let page = page(&SettingsInput {
-            lume_source: Some("system".into()),
-            ..Default::default()
-        });
-        let r = &page
-            .sections
-            .iter()
-            .find(|s| s.id == "runtimes")
-            .unwrap()
-            .rows[0];
-        assert_eq!(r.id, "macos-runtime");
-        let active: Vec<_> = r
-            .options
-            .iter()
-            .filter(|o| o.active)
-            .map(|o| o.id.as_str())
-            .collect();
-        assert_eq!(active, ["system"]);
-        let ids: Vec<_> = r.options.iter().map(|o| o.label.as_str()).collect();
-        assert_eq!(ids, ["Automatic", "Built-in", "System"]);
-    }
-
-    #[test]
-    fn runtimes_say_whether_microvms_run_here_and_why_not() {
-        use crate::model::SpaceOs;
-        let page_for = |m: MicrovmInput| {
-            let p = page(&SettingsInput {
-                microvm: Some(m),
-                ..Default::default()
-            });
-            let s = p.sections.into_iter().find(|s| s.id == "runtimes").unwrap();
-            s.rows
-                .into_iter()
-                .map(|r| (r.id, r.value.or(Some(r.label)).unwrap_or_default()))
-                .collect::<Vec<_>>()
-        };
-        let mac = |ready: &[&str]| MicrovmInput {
-            os: Some(SpaceOs::Macos),
-            local_backends: Some(ready.iter().map(|b| b.to_string()).collect()),
-            local_details: None,
-            host_arch: Some("arm64".into()),
-        };
-        assert_eq!(
-            page_for(mac(&["docker", "vz", "containerization"])),
-            [
-                ("microvm-runtime".to_string(), "Ready".to_string()),
-                (
-                    "microvm-runtime-note".to_string(),
-                    "MicroVM Spaces run on Virtualization.framework or Apple Containerization."
-                        .to_string()
-                ),
-            ]
-        );
-        assert_eq!(
-            page_for(mac(&["docker"])),
-            [
-                ("microvm-runtime".to_string(), "Not available".to_string()),
-                (
-                    "microvm-runtime-note".to_string(),
-                    "MicroVM needs macOS 26.".to_string()
-                ),
-            ]
-        );
-        assert_eq!(
-            page_for(MicrovmInput {
-                local_backends: None,
-                ..mac(&[])
-            }),
-            [(
-                "microvm-runtime".to_string(),
-                "Checking\u{2026}".to_string()
-            )]
-        );
-        // Without the doctor's answer, no MicroVM row (and no section).
-        assert!(
-            page(&SettingsInput::default())
-                .sections
-                .iter()
-                .all(|s| s.id != "runtimes")
-        );
+        let s = p.sections.iter().find(|s| s.id == "runtimes").unwrap();
+        let ids: Vec<_> = s.rows.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(ids, ["runtime:container", "runtime:vm", "runtime:microvm"]);
+        // After General.
+        let order: Vec<_> = p.sections.iter().map(|s| s.id.as_str()).collect();
+        let at = |id: &str| order.iter().position(|s| *s == id).unwrap();
+        assert!(at("general") < at("runtimes"));
     }
 
     #[test]
@@ -1224,39 +1015,6 @@ mod tests {
         std::fs::write(&ok, "{}").unwrap();
         load(&ok);
         assert!(!damaged_path(&ok).exists());
-    }
-
-    #[test]
-    fn the_runtimes_section_shows_the_linux_choice() {
-        let page = page(&SettingsInput {
-            lume_source: Some("auto".into()),
-            linux_source: Some("builtin".into()),
-            ..Default::default()
-        });
-        let s = page.sections.iter().find(|s| s.id == "runtimes").unwrap();
-        let ids: Vec<_> = s.rows.iter().map(|r| r.id.as_str()).collect();
-        assert_eq!(
-            ids,
-            [
-                "macos-runtime",
-                "macos-runtime-note",
-                "linux-runtime",
-                "linux-runtime-note"
-            ]
-        );
-        let linux = &s.rows[2];
-        assert_eq!(linux.label, "Linux");
-        let active: Vec<_> = linux
-            .options
-            .iter()
-            .filter(|o| o.active)
-            .map(|o| o.id.as_str())
-            .collect();
-        assert_eq!(active, ["builtin"]);
-        // An unknown word reads as Automatic.
-        let r = runtimes_section(None, Some("docker"));
-        assert_eq!(r.rows[0].id, "linux-runtime");
-        assert!(r.rows[0].options[0].active);
     }
 
     #[test]
@@ -1402,7 +1160,7 @@ mod tests {
     fn the_page_lists_account_general_privacy_agents() {
         let p = page(&SettingsInput::default());
         let ids: Vec<_> = p.sections.iter().map(|s| s.id.as_str()).collect();
-        assert_eq!(ids, ["account", "teams", "general", "agents"]);
+        assert_eq!(ids, ["account", "teams", "general", "runtimes", "agents"]);
         let p = page(&SettingsInput {
             identity: Some("ada@example.com".into()),
             can_sign_out: true,
@@ -1410,7 +1168,12 @@ mod tests {
             ..Default::default()
         });
         let ids: Vec<_> = p.sections.iter().map(|s| s.id.as_str()).collect();
-        assert_eq!(ids, ["account", "teams", "general", "privacy", "agents"]);
+        assert_eq!(
+            ids,
+            [
+                "account", "teams", "general", "runtimes", "privacy", "agents"
+            ]
+        );
         assert_eq!(p.sections[0].rows[0].button.as_deref(), Some("Sign out"));
         let sign_in: SignInPhase =
             serde_json::from_str(r#"{"kind":"waiting","userCode":"AB-CD"}"#).unwrap();
@@ -1437,10 +1200,10 @@ mod tests {
         assert_eq!(
             ids(&p),
             [
-                "account", "teams", "general", "privacy", "keyvault", "agents"
+                "account", "teams", "general", "runtimes", "privacy", "keyvault", "agents"
             ]
         );
-        let kv = &p.sections[4];
+        let kv = &p.sections[5];
         assert_eq!(kv.title, "Keyvault");
         let toggle = &kv.rows[0];
         assert_eq!(
@@ -1615,7 +1378,10 @@ mod tests {
                 .map(|r| r.label.clone())
         };
         let off = with_storage(&page(&input), &storage, &input.experiments);
-        assert_eq!(ids(&off), ["account", "teams", "general", "agents"]);
+        assert_eq!(
+            ids(&off),
+            ["account", "teams", "general", "runtimes", "agents"]
+        );
         assert_eq!(note(&off).as_deref(), Some(NOTE_WITHOUT_VOLUME));
         let on = SettingsInput {
             experiments: Experiments {
@@ -1627,7 +1393,9 @@ mod tests {
         let p = with_storage(&page(&on), &storage, &on.experiments);
         assert_eq!(
             ids(&p),
-            ["account", "teams", "general", "storage", "agents"]
+            [
+                "account", "teams", "general", "storage", "runtimes", "agents"
+            ]
         );
         assert_eq!(note(&p).as_deref(), Some(NOTE));
         // A settings file from before experiments: all off.

@@ -18,7 +18,8 @@ use crate::{
     cloud_page, cloud_sheet, devices, diagnostics, drive_mount_preview, drive_page, drive_settings,
     driver_preview, experiments, host, local_network, login_item, machines, notch, notifications,
     nudges, onboarding, onboarding_preview, palette, paths, persistent, presence, relay_usage,
-    resources, settings, share, sign_in, space_menu, telemetry, tips, upsell, window, wizard,
+    resources, runtimes, settings, share, sign_in, space_menu, telemetry, tips, upsell, window,
+    wizard,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -186,6 +187,8 @@ pub const METHODS: &[&str] = &[
     "settings.defaults",
     "settings.formatHotkey",
     "settings.page",
+    "settings.runtimePathVerdict",
+    "settings.runtimeChoose",
     "loginItem.launchPlan",
     "agentKeys.view",
     "agentKeys.form",
@@ -998,6 +1001,12 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         "settings.page" => out(settings::page(
             &a.get::<Option<settings::SettingsInput>>("input")?
                 .unwrap_or_default(),
+        )),
+        "settings.runtimePathVerdict" => out(runtimes::path_verdict(&a.get("check")?)),
+        "settings.runtimeChoose" => out(runtimes::choose(
+            a.get::<Option<runtimes::RuntimesInput>>("input")?.as_ref(),
+            &a.get::<String>("row")?,
+            &a.get::<String>("option")?,
         )),
         "settings.withStorage" => out(settings::with_storage(
             &a.get("page")?,

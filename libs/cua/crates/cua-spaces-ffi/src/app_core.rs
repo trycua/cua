@@ -2194,6 +2194,25 @@ pub fn app_settings_page(input: AppSettingsInput) -> AppSettingsPage {
     core::settings::page(&input)
 }
 
+/// A runtime binary's one line in Settings, Advanced ("Docker 27.3 found",
+/// "Not a Docker or Podman binary").
+#[uniffi::export]
+pub fn app_runtime_path_verdict(check: AppRuntimePathCheck) -> AppRuntimePathVerdict {
+    core::runtimes::path_verdict(&check)
+}
+
+/// The setting a runtime row's choice changes (`runtime.<kind>` or
+/// `runtime.<kind>_path`; a `None` value unsets it), or none for any other
+/// row.
+#[uniffi::export]
+pub fn app_runtimes_choose(
+    input: Option<AppRuntimesInput>,
+    row: String,
+    option: String,
+) -> Option<AppRuntimeSettingChange> {
+    core::runtimes::choose(input.as_ref(), &row, &option)
+}
+
 /// The Settings page with Settings, Storage after General while the Cua
 /// Volume experiment is on (left out while it is off).
 #[uniffi::export]

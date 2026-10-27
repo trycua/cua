@@ -4197,7 +4197,7 @@ pub const OFFER_NOT_CHECKED: &str = "Still checking this computer.";
 pub const MACOS_NEEDS_APPLE_SILICON: &str = "macOS Spaces need a Mac with Apple silicon.";
 
 /// `arm64` or `amd64` for an architecture name (`aarch64`, `x86_64`, `x64`).
-fn arch_word(arch: Option<&str>) -> Option<&'static str> {
+pub(crate) fn arch_word(arch: Option<&str>) -> Option<&'static str> {
     match arch?.to_ascii_lowercase().as_str() {
         "arm64" | "aarch64" => Some("arm64"),
         "amd64" | "x86_64" | "x64" => Some("amd64"),

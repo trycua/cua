@@ -39,6 +39,7 @@ export const METHODS = [
   "spaces.chooseFiles", "spaces.droppedFiles", "spaces.sendFiles",
   "host.setUp", "host.joinWithCode", "host.action", "host.openSettings",
   "settings.get", "settings.choose", "settings.update",
+  "runtimes.check", "runtimes.browse",
   "keyvault.get", "keyvault.lock", "keyvault.unlock",
   "keyvault.unlockVault", "keyvault.setup", "keyvault.setDisabled",
   "keyvault.approve", "keyvault.deny", "keyvault.revokeGrant",

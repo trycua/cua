@@ -36,6 +36,10 @@ import type {
   SpacePowerReport,
   TelemetryView,
   CrashReportingConfig,
+  DetectedRuntime,
+  RuntimeKindInput,
+  RuntimePathCheck,
+  RuntimesInput,
 } from "./host";
 import type { KeyvaultOverview, KvGrant } from "./keyvault";
 import type {
@@ -318,6 +322,45 @@ const SessionShape = ref(
 /** `AppSettings.tips` (`tips::TipsState`). */
 const TipsStateShape = obj<TipsState>()({ off: bool, done: strings });
 
+const RuntimePathCheckShape = ref(
+  "RuntimePathCheck",
+  obj<RuntimePathCheck>()({
+    path: str,
+    exists: bool,
+    executable: bool,
+    tool: optNull(str),
+    name: optNull(str),
+    version: optNull(str),
+    minVersion: optNull(str),
+    expected: strings,
+    guests: optNull(str),
+  }),
+);
+
+const RuntimesInputShape = ref(
+  "RuntimesInput",
+  obj<RuntimesInput>()({
+    os: optNull(os),
+    hostArch: optNull(str),
+    localBackends: optNull(strings),
+    localDetails: optNull(any),
+    kinds: optNull(
+      list(
+        obj<RuntimeKindInput>()({
+          kind: str,
+          source: optNull(str),
+          path: optNull(str),
+          detected: optNull(
+            list(obj<DetectedRuntime>()({ tool: str, name: str, path: str, version: optNull(str), guests: optNull(str) })),
+          ),
+          check: optNull(RuntimePathCheckShape),
+          expected: opt(strings),
+        }),
+      ),
+    ),
+  }),
+);
+
 const SettingsShape = ref(
   "SettingsSnapshot",
   obj<SettingsSnapshot>()({
@@ -338,8 +381,7 @@ const SettingsShape = ref(
     ),
     hostSettings: opt(
       obj<HostSettings>()({
-        lumeSource: optNull(str),
-        linuxSource: optNull(str),
+        runtimes: optNull(RuntimesInputShape),
         autoConnect: optNull(bool),
         overflow: optNull(bool),
         keyvaultAutoWipe: optNull(bool),
@@ -1378,6 +1420,8 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "loginItem.get": LoginItemShape,
   "loginItem.set": LoginItemShape,
   "loginItem.openSettings": nul,
+  "runtimes.check": RuntimePathCheckShape,
+  "runtimes.browse": object({ path: nullable(str) }),
   "devices.get": DevicesShape,
   "devices.enroll": obj<EnrollResult>()({ enrolled: bool, code: nullable(str) }),
   "devices.checkEnrolled": bool,
@@ -1534,6 +1578,7 @@ const WkSettingsShape = ref(
     accountUrl: optNull(str),
     cli: optNull(object({ name: str, installed: bool })),
     tips: opt(TipsStateShape),
+    runtimes: optNull(RuntimesInputShape),
   }),
 );
 
@@ -1725,6 +1770,8 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "loginItem.get": LoginItemShape,
   "loginItem.set": LoginItemShape,
   "loginItem.openSettings": nul,
+  "runtimes.check": RuntimePathCheckShape,
+  "runtimes.browse": object({ path: nullable(str) }),
   "devices.get": DevicesShape,
   "devices.enroll": OP_SHAPES["devices.enroll"],
   "devices.checkEnrolled": bool,

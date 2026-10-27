@@ -1097,6 +1097,10 @@ external fun uniffi_cua_sdk_checksum_method_local_pull_image(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_local_push_image(
 ): Short
+external fun uniffi_cua_sdk_checksum_method_local_runtime_check_path(
+): Short
+external fun uniffi_cua_sdk_checksum_method_local_runtime_kinds(
+): Short
 external fun uniffi_cua_sdk_checksum_method_local_setup(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_local_storage(
@@ -2055,6 +2059,10 @@ external fun uniffi_cua_sdk_fn_method_local_doctor(`ptr`: Long,
 external fun uniffi_cua_sdk_fn_method_local_pull_image(`ptr`: Long,`reference`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_local_push_image(`ptr`: Long,`reference`: RustBuffer.ByValue,`destination`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cua_sdk_fn_method_local_runtime_check_path(`ptr`: Long,`kind`: RustBuffer.ByValue,`path`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cua_sdk_fn_method_local_runtime_kinds(`ptr`: Long,
 ): Long
 external fun uniffi_cua_sdk_fn_method_local_setup(`ptr`: Long,`components`: RustBuffer.ByValue,`dryRun`: Byte,
 ): Long
@@ -3520,6 +3528,12 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_local_push_image() != 29472.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_local_runtime_check_path() != 59009.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_local_runtime_kinds() != 34595.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_local_setup() != 57791.toShort()) {
@@ -11019,6 +11033,22 @@ public interface LocalInterface {
     suspend fun `pushImage`(`reference`: kotlin.String, `destination`: kotlin.String): kotlin.String
 
     /**
+     * What `path` is for `kind` (`container`, `vm`, `microvm`): there,
+     * runnable, which runtime and its version. Settings checks a typed path
+     * with it before it is saved (`runtime.<kind>_path`).
+     */
+    suspend fun `runtimeCheckPath`(`kind`: kotlin.String, `path`: kotlin.String): RuntimePathProbe
+
+    /**
+     * Each kind of Space (`container`, `vm`, `microvm`) with its runtime
+     * setting (`runtime.<kind>`), the runtimes installed on this machine
+     * for it and what the path in use is. Read-only: runs each runtime's
+     * `--version`, nothing else; probed in this process (the daemon runs
+     * on the same host).
+     */
+    suspend fun `runtimeKinds`(): List<RuntimeKindState>
+
+    /**
      * Provisions `components` (`qemu`, `lume`; `runsc` reports its plan).
      * Empty = everything provisionable. `dry_run` only reports.
      */
@@ -11230,6 +11260,60 @@ open class Local: Disposable, AutoCloseable, LocalInterface
         { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterString.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * What `path` is for `kind` (`container`, `vm`, `microvm`): there,
+     * runnable, which runtime and its version. Settings checks a typed path
+     * with it before it is saved (`runtime.<kind>_path`).
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `runtimeCheckPath`(`kind`: kotlin.String, `path`: kotlin.String) : RuntimePathProbe {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_local_runtime_check_path(
+                uniffiHandle,
+                FfiConverterString.lower(`kind`),FfiConverterString.lower(`path`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeRuntimePathProbe.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * Each kind of Space (`container`, `vm`, `microvm`) with its runtime
+     * setting (`runtime.<kind>`), the runtimes installed on this machine
+     * for it and what the path in use is. Read-only: runs each runtime's
+     * `--version`, nothing else; probed in this process (the daemon runs
+     * on the same host).
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `runtimeKinds`() : List<RuntimeKindState> {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_local_runtime_kinds(
+                uniffiHandle,
+
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterSequenceTypeRuntimeKindState.lift(it) },
         // Error FFI converter
         CuaException.ErrorHandler,
     )
@@ -31901,8 +31985,9 @@ public object FfiConverterTypeComputerResources: FfiConverterRustBuffer<Computer
  */
 data class ConfigEntry (
     /**
-     * `default.on`, `default.kind`, `default.runtime`, `runtime.lume`,
-     * `runtime.linux` or `telemetry.enabled`.
+     * `default.on`, `default.kind`, `default.runtime`, `runtime.container`,
+     * `runtime.vm`, `runtime.microvm` (and their `_path`) or
+     * `telemetry.enabled`.
      */
     var `key`: kotlin.String
     ,
@@ -40545,6 +40630,244 @@ public object FfiConverterTypeRuntimeCheck: FfiConverterRustBuffer<RuntimeCheck>
             FfiConverterTypeRuntimeCheckStatus.write(value.`status`, buf)
             FfiConverterOptionalString.write(value.`version`, buf)
             FfiConverterString.write(value.`detail`, buf)
+    }
+}
+
+
+
+/**
+ * A runtime installed on this machine for one kind of Space.
+ */
+data class RuntimeDetected (
+    /**
+     * `docker`, `podman`, `lume`, `qemu`, `container`, `firecracker`.
+     */
+    var `tool`: kotlin.String
+    ,
+    /**
+     * As people know it (`Docker`, `Apple container`).
+     */
+    var `name`: kotlin.String
+    ,
+    var `path`: kotlin.String
+    ,
+    /**
+     * As `--version` says it (`27.3.1`).
+     */
+    var `version`: kotlin.String?
+    ,
+    /**
+     * The guest system it runs, when only one (`macOS`, `Linux`).
+     */
+    var `guests`: kotlin.String?
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRuntimeDetected: FfiConverterRustBuffer<RuntimeDetected> {
+    override fun read(buf: ByteBuffer): RuntimeDetected {
+        return RuntimeDetected(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: RuntimeDetected) = (
+            FfiConverterString.allocationSize(value.`tool`) +
+            FfiConverterString.allocationSize(value.`name`) +
+            FfiConverterString.allocationSize(value.`path`) +
+            FfiConverterOptionalString.allocationSize(value.`version`) +
+            FfiConverterOptionalString.allocationSize(value.`guests`)
+    )
+
+    override fun write(value: RuntimeDetected, buf: ByteBuffer) {
+            FfiConverterString.write(value.`tool`, buf)
+            FfiConverterString.write(value.`name`, buf)
+            FfiConverterString.write(value.`path`, buf)
+            FfiConverterOptionalString.write(value.`version`, buf)
+            FfiConverterOptionalString.write(value.`guests`, buf)
+    }
+}
+
+
+
+/**
+ * One kind of Space's runtime, as Settings shows it.
+ */
+data class RuntimeKindState (
+    /**
+     * `container`, `vm` or `microvm`.
+     */
+    var `kind`: kotlin.String
+    ,
+    /**
+     * `runtime.<kind>`: `auto`, `builtin` or `system`.
+     */
+    var `source`: kotlin.String
+    ,
+    /**
+     * `runtime.<kind>_path`, when set.
+     */
+    var `path`: kotlin.String?
+    ,
+    /**
+     * What is installed here for the kind, the one used first.
+     */
+    var `detected`: List<RuntimeDetected>
+    ,
+    /**
+     * The path in use (the custom one, else the first detected), probed.
+     */
+    var `check`: RuntimePathProbe?
+    ,
+    /**
+     * The names of the tools the kind takes here (`Docker`, `Podman`).
+     */
+    var `expected`: List<kotlin.String>
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRuntimeKindState: FfiConverterRustBuffer<RuntimeKindState> {
+    override fun read(buf: ByteBuffer): RuntimeKindState {
+        return RuntimeKindState(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterSequenceTypeRuntimeDetected.read(buf),
+            FfiConverterOptionalTypeRuntimePathProbe.read(buf),
+            FfiConverterSequenceString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: RuntimeKindState) = (
+            FfiConverterString.allocationSize(value.`kind`) +
+            FfiConverterString.allocationSize(value.`source`) +
+            FfiConverterOptionalString.allocationSize(value.`path`) +
+            FfiConverterSequenceTypeRuntimeDetected.allocationSize(value.`detected`) +
+            FfiConverterOptionalTypeRuntimePathProbe.allocationSize(value.`check`) +
+            FfiConverterSequenceString.allocationSize(value.`expected`)
+    )
+
+    override fun write(value: RuntimeKindState, buf: ByteBuffer) {
+            FfiConverterString.write(value.`kind`, buf)
+            FfiConverterString.write(value.`source`, buf)
+            FfiConverterOptionalString.write(value.`path`, buf)
+            FfiConverterSequenceTypeRuntimeDetected.write(value.`detected`, buf)
+            FfiConverterOptionalTypeRuntimePathProbe.write(value.`check`, buf)
+            FfiConverterSequenceString.write(value.`expected`, buf)
+    }
+}
+
+
+
+/**
+ * What a binary is, for one kind of Space (`runtime_check_path`).
+ */
+data class RuntimePathProbe (
+    var `path`: kotlin.String
+    ,
+    /**
+     * A file is there.
+     */
+    var `exists`: kotlin.Boolean
+    ,
+    /**
+     * It can be run.
+     */
+    var `executable`: kotlin.Boolean
+    ,
+    /**
+     * The tool it is, when it is one the kind takes.
+     */
+    var `tool`: kotlin.String?
+    ,
+    var `name`: kotlin.String?
+    ,
+    var `version`: kotlin.String?
+    ,
+    /**
+     * The oldest version cua runs on.
+     */
+    var `minVersion`: kotlin.String?
+    ,
+    /**
+     * The names of the tools the kind takes here (`Docker`, `Podman`).
+     */
+    var `expected`: List<kotlin.String>
+    ,
+    var `guests`: kotlin.String?
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRuntimePathProbe: FfiConverterRustBuffer<RuntimePathProbe> {
+    override fun read(buf: ByteBuffer): RuntimePathProbe {
+        return RuntimePathProbe(
+            FfiConverterString.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterOptionalString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: RuntimePathProbe) = (
+            FfiConverterString.allocationSize(value.`path`) +
+            FfiConverterBoolean.allocationSize(value.`exists`) +
+            FfiConverterBoolean.allocationSize(value.`executable`) +
+            FfiConverterOptionalString.allocationSize(value.`tool`) +
+            FfiConverterOptionalString.allocationSize(value.`name`) +
+            FfiConverterOptionalString.allocationSize(value.`version`) +
+            FfiConverterOptionalString.allocationSize(value.`minVersion`) +
+            FfiConverterSequenceString.allocationSize(value.`expected`) +
+            FfiConverterOptionalString.allocationSize(value.`guests`)
+    )
+
+    override fun write(value: RuntimePathProbe, buf: ByteBuffer) {
+            FfiConverterString.write(value.`path`, buf)
+            FfiConverterBoolean.write(value.`exists`, buf)
+            FfiConverterBoolean.write(value.`executable`, buf)
+            FfiConverterOptionalString.write(value.`tool`, buf)
+            FfiConverterOptionalString.write(value.`name`, buf)
+            FfiConverterOptionalString.write(value.`version`, buf)
+            FfiConverterOptionalString.write(value.`minVersion`, buf)
+            FfiConverterSequenceString.write(value.`expected`, buf)
+            FfiConverterOptionalString.write(value.`guests`, buf)
     }
 }
 
@@ -50718,6 +51041,38 @@ public object FfiConverterOptionalTypePtySize: FfiConverterRustBuffer<PtySize?> 
 /**
  * @suppress
  */
+public object FfiConverterOptionalTypeRuntimePathProbe: FfiConverterRustBuffer<RuntimePathProbe?> {
+    override fun read(buf: ByteBuffer): RuntimePathProbe? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeRuntimePathProbe.read(buf)
+    }
+
+    override fun allocationSize(value: RuntimePathProbe?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeRuntimePathProbe.allocationSize(value)
+        }
+    }
+
+    override fun write(value: RuntimePathProbe?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeRuntimePathProbe.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterOptionalTypeScreenshotOptions: FfiConverterRustBuffer<ScreenshotOptions?> {
     override fun read(buf: ByteBuffer): ScreenshotOptions? {
         if (buf.get().toInt() == 0) {
@@ -53516,6 +53871,62 @@ public object FfiConverterSequenceTypeRuntimeCheck: FfiConverterRustBuffer<List<
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterTypeRuntimeCheck.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeRuntimeDetected: FfiConverterRustBuffer<List<RuntimeDetected>> {
+    override fun read(buf: ByteBuffer): List<RuntimeDetected> {
+        val len = buf.getInt()
+        return List<RuntimeDetected>(len) {
+            FfiConverterTypeRuntimeDetected.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<RuntimeDetected>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeRuntimeDetected.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<RuntimeDetected>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeRuntimeDetected.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeRuntimeKindState: FfiConverterRustBuffer<List<RuntimeKindState>> {
+    override fun read(buf: ByteBuffer): List<RuntimeKindState> {
+        val len = buf.getInt()
+        return List<RuntimeKindState>(len) {
+            FfiConverterTypeRuntimeKindState.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<RuntimeKindState>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeRuntimeKindState.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<RuntimeKindState>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeRuntimeKindState.write(it, buf)
         }
     }
 }

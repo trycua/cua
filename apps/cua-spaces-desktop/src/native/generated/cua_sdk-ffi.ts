@@ -1429,6 +1429,16 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_fn_method_local_runtime_check_path": {
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_fn_method_local_runtime_kinds": {
+      args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_fn_method_local_setup": {
       args: [FfiType.Handle, FfiType.RustBuffer, FfiType.Int8],
       ret: FfiType.Handle,
@@ -3899,6 +3909,16 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_checksum_method_local_runtime_check_path": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_checksum_method_local_runtime_kinds": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_checksum_method_local_setup": {
       args: [],
       ret: FfiType.UInt16,
@@ -6065,6 +6085,8 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_method_local_doctor(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_local_pull_image(uniffiSelf: bigint, reference: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_local_push_image(uniffiSelf: bigint, reference: Uint8Array, destination: Uint8Array): bigint;
+    uniffi_cua_sdk_fn_method_local_runtime_check_path(uniffiSelf: bigint, kind: Uint8Array, path: Uint8Array): bigint;
+    uniffi_cua_sdk_fn_method_local_runtime_kinds(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_local_setup(uniffiSelf: bigint, components: Uint8Array, dryRun: number): bigint;
     uniffi_cua_sdk_fn_method_local_storage(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_loginattempt_method(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
@@ -6559,6 +6581,8 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_method_local_doctor(): number;
     uniffi_cua_sdk_checksum_method_local_pull_image(): number;
     uniffi_cua_sdk_checksum_method_local_push_image(): number;
+    uniffi_cua_sdk_checksum_method_local_runtime_check_path(): number;
+    uniffi_cua_sdk_checksum_method_local_runtime_kinds(): number;
     uniffi_cua_sdk_checksum_method_local_setup(): number;
     uniffi_cua_sdk_checksum_method_local_storage(): number;
     uniffi_cua_sdk_checksum_method_loginattempt_method(): number;

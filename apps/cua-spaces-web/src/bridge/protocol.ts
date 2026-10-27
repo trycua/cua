@@ -27,6 +27,7 @@ import type {
   CancelOutcome,
   CreateProgress,
   TelemetryView,
+  RuntimesInput,
 } from "./contracts/host";
 import type { AgentEventsPage, AgentMessageSent, AgentSetupRow, AgentStarted, AgentStartRequest, ConnectionReport, ConnectResult, PersistentAgent, SpaceAgentRun } from "./contracts/agents";
 import type { KeyvaultOverview, KvGrant, KvItem } from "./contracts/keyvault";
@@ -143,10 +144,8 @@ export interface GlobalShortcut {
 
 /** `settings::SettingsInput`'s host-only fields: the core lays out their rows. */
 export interface HostSettings {
-  /** Which Lume macOS Spaces run on (`auto`, `builtin`, `system`). */
-  lumeSource?: string | null;
-  /** Which engine local Linux Spaces run on (`auto`, `builtin`, `system`). */
-  linuxSource?: string | null;
+  /** Settings, Advanced's runtimes, as the host read them (`runtimes::RuntimesInput`). */
+  runtimes?: RuntimesInput | null;
   /** "Connect to the desktop automatically". */
   autoConnect?: boolean | null;
   /** New Spaces overflow into your linked cloud when this machine is full (`placement.overflow`). */
@@ -266,7 +265,8 @@ export interface HostOperations
   "settings.get": { args: Record<string, never>; result: SettingsSnapshot };
   "settings.set": { args: { key: SettingKey; value: SettingsValues[SettingKey] }; result: SettingsSnapshot };
   /** Picks an option on one of the host's own rows (`SettingsSnapshot.hostSettings`:
-   * `macos-runtime`, `linux-runtime`, `auto-connect`, `keyvault-auto-wipe`),
+   * `runtime:<kind>`, `runtime-detected:<kind>`, `runtime-path:<kind>`,
+   * `auto-connect`, `keyvault-auto-wipe`),
    * as the core's Settings page names them. The SwiftUI host also takes
    * `welcome` (General's "Show again": its welcome window). */
   "settings.choose": { args: { row: string; option: string }; result: SettingsSnapshot };

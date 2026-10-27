@@ -99,6 +99,7 @@ pub mod persistent;
 pub mod presence;
 pub mod relay_usage;
 pub mod resources;
+pub mod runtimes;
 pub mod settings;
 pub mod share;
 pub mod sign_in;

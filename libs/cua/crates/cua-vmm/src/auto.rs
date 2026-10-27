@@ -609,13 +609,11 @@ fn vz_status() -> Option<(BackendStatus, VzReport)> {
         vec![]
     };
     let mut provisioning = Vec::new();
-    if r.supported_host && missing.is_empty() {
-        if !r.kernel_cached {
-            provisioning.push(format!(
-                "download the guest kernel {} (pinned, about 17 MB)",
-                assets::KERNEL_VERSION
-            ));
-        }
+    if r.supported_host && missing.is_empty() && !r.kernel_cached {
+        provisioning.push(format!(
+            "download the guest kernel {} (pinned, about 17 MB)",
+            assets::KERNEL_VERSION
+        ));
     }
     let status = BackendStatus {
         backend: BackendKind::Vz,

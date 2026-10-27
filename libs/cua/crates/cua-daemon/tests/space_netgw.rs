@@ -34,7 +34,7 @@ use std::net::{IpAddr, TcpListener, UdpSocket};
 use std::time::Duration;
 
 use cua_vmm::egress::EgressPolicy;
-use cua_vmm::exec::{ExecRequest, GuestExec};
+use cua_vmm::exec::ExecRequest;
 use cua_vmm::microvm::{MicroVmConfig, MicroVmRuntime};
 use cua_vmm::{ImageSource, Runtime, StartSpec};
 
@@ -160,66 +160,90 @@ async fn vz_guests_reach_the_internet_and_nothing_of_the_host() {
     let body = {
         let (rt, a, b) = (rt.clone(), a.clone(), b.clone());
         async move {
-        let (_lo, lo_port) = listen("127.0.0.1:0");
-        let lan = lan_ip();
-        let (_lan_l, lan_port) = listen(&format!("{lan}:0"));
-        // The daemon's port on the host loopback (any port there is one).
-        let daemon_port = 4243;
+            let (_lo, lo_port) = listen("127.0.0.1:0");
+            let lan = lan_ip();
+            let (_lan_l, lan_port) = listen(&format!("{lan}:0"));
+            // The daemon's port on the host loopback (any port there is one).
+            let daemon_port = 4243;
 
-        let ib = rt.start(&spec(&b, EgressPolicy::default())).await.expect("start b");
-        let b_port = *ib.endpoints.ports.get(&8000).expect("b publishes 8000");
-        rt.start(&spec(&a, private_denies())).await.expect("start a");
+            let ib = rt
+                .start(&spec(&b, EgressPolicy::default()))
+                .await
+                .expect("start b");
+            let b_port = *ib.endpoints.ports.get(&8000).expect("b publishes 8000");
+            rt.start(&spec(&a, private_denies()))
+                .await
+                .expect("start a");
 
-        let host = cua_vmm::microvm::vz::HOST_IP;
-        let targets: Vec<String> = vec![
-            format!("{host}:{lo_port}"),
-            format!("{host}:{b_port}"),
-            format!("{host}:{daemon_port}"),
-            format!("{lan}:{lan_port}"),
-            format!("{lan}:{b_port}"),
-            "169.254.169.254:80".into(),
-            "192.168.1.1:80".into(),
-            "10.0.0.1:80".into(),
-            "1.1.1.1:443".into(),
-            "localtest.me".into(),
-            "10.0.0.1.nip.io".into(),
-            "192.168.1.1.nip.io".into(),
-            "one.one.one.one".into(),
-        ];
-        let out = probe(&rt, &a, &targets).await;
-        for t in &targets[..8] {
-            expect(&out, t, "blocked");
-        }
-        expect(&out, "1.1.1.1:443", "open");
-        expect(&out, "localtest.me", "-");
-        expect(&out, "10.0.0.1.nip.io", "-");
-        expect(&out, "192.168.1.1.nip.io", "-");
-        assert!(!out.contains("one.one.one.one=-"), "public DNS: {out}");
-        // Refused by the gateway, with the reason, not by a missing listener.
-        assert!(has_event(&a, "default:host-loopback", &format!("{host}:{lo_port}")));
-        assert!(has_event(&a, "default:host-address", &format!("{lan}:{lan_port}")));
-        assert!(has_event(&a, "platform:metadata", "169.254.169.254:80"));
-        assert!(has_event(&a, "user:deny", "10.0.0.1:80"));
-        assert!(has_event(&a, "user:deny", "10.0.0.1"), "the rebinding answer was stripped");
-        assert!(has_event(&a, "platform:loopback", "127.0.0.1"));
-        let ev = events(&a);
-        assert!(!ev.contains("nip.io") && !ev.contains("localtest"), "names stay out: {ev}");
+            let host = cua_vmm::microvm::vz::HOST_IP;
+            let targets: Vec<String> = vec![
+                format!("{host}:{lo_port}"),
+                format!("{host}:{b_port}"),
+                format!("{host}:{daemon_port}"),
+                format!("{lan}:{lan_port}"),
+                format!("{lan}:{b_port}"),
+                "169.254.169.254:80".into(),
+                "192.168.1.1:80".into(),
+                "10.0.0.1:80".into(),
+                "1.1.1.1:443".into(),
+                "localtest.me".into(),
+                "10.0.0.1.nip.io".into(),
+                "192.168.1.1.nip.io".into(),
+                "one.one.one.one".into(),
+            ];
+            let out = probe(&rt, &a, &targets).await;
+            for t in &targets[..8] {
+                expect(&out, t, "blocked");
+            }
+            expect(&out, "1.1.1.1:443", "open");
+            expect(&out, "localtest.me", "-");
+            expect(&out, "10.0.0.1.nip.io", "-");
+            expect(&out, "192.168.1.1.nip.io", "-");
+            assert!(!out.contains("one.one.one.one=-"), "public DNS: {out}");
+            // Refused by the gateway, with the reason, not by a missing listener.
+            assert!(has_event(
+                &a,
+                "default:host-loopback",
+                &format!("{host}:{lo_port}")
+            ));
+            assert!(has_event(
+                &a,
+                "default:host-address",
+                &format!("{lan}:{lan_port}")
+            ));
+            assert!(has_event(&a, "platform:metadata", "169.254.169.254:80"));
+            assert!(has_event(&a, "user:deny", "10.0.0.1:80"));
+            assert!(
+                has_event(&a, "user:deny", "10.0.0.1"),
+                "the rebinding answer was stripped"
+            );
+            assert!(has_event(&a, "platform:loopback", "127.0.0.1"));
+            let ev = events(&a);
+            assert!(
+                !ev.contains("nip.io") && !ev.contains("localtest"),
+                "names stay out: {ev}"
+            );
 
-        // b, without a policy, still never reaches the host or a.
-        let out = probe(&rt, &b, &[format!("{host}:{lo_port}"), format!("{lan}:{lan_port}")]).await;
-        expect(&out, &format!("{host}:{lo_port}"), "blocked");
-        expect(&out, &format!("{lan}:{lan_port}"), "blocked");
+            // b, without a policy, still never reaches the host or a.
+            let out = probe(
+                &rt,
+                &b,
+                &[format!("{host}:{lo_port}"), format!("{lan}:{lan_port}")],
+            )
+            .await;
+            expect(&out, &format!("{host}:{lo_port}"), "blocked");
+            expect(&out, &format!("{lan}:{lan_port}"), "blocked");
 
-        // A new policy applies to the running VM at once.
-        let deny_cf = EgressPolicy {
-            allow: vec![],
-            deny: vec!["1.1.1.1".into()],
-        };
-        rt.set_egress(&a, &deny_cf).await.expect("set_egress");
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        let out = probe(&rt, &a, &["1.1.1.1:443".into(), "1.0.0.1:443".into()]).await;
-        expect(&out, "1.1.1.1:443", "blocked");
-        expect(&out, "1.0.0.1:443", "open");
+            // A new policy applies to the running VM at once.
+            let deny_cf = EgressPolicy {
+                allow: vec![],
+                deny: vec!["1.1.1.1".into()],
+            };
+            rt.set_egress(&a, &deny_cf).await.expect("set_egress");
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            let out = probe(&rt, &a, &["1.1.1.1:443".into(), "1.0.0.1:443".into()]).await;
+            expect(&out, "1.1.1.1:443", "blocked");
+            expect(&out, "1.0.0.1:443", "open");
         }
     };
     // The VMs go on every path, a failed assertion too.

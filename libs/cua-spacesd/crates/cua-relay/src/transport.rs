@@ -4,6 +4,7 @@
 //! Host join transport only. TLS, WebSocket validation and the whole-connect
 //! deadline remain owned by tungstenite and `client::session` respectively.
 use std::ffi::OsString;
+use std::time::Duration;
 
 use bytes::Bytes;
 use http::{Method, Request, StatusCode, Uri};
@@ -50,13 +51,20 @@ pub(super) async fn connect(
     tokio_tungstenite::client_async_tls_with_config(request, stream, None, None)
         .await
         .map_err(|e| match e {
-            tungstenite::Error::Http(response) => {
-                SessionEnd::Refused(format!("HTTP {}", response.status()))
-            }
+            tungstenite::Error::Http(response) => match retry_after(&response) {
+                Some(after) if response.status() == StatusCode::SERVICE_UNAVAILABLE => SessionEnd::Throttled(after),
+                _ => SessionEnd::Refused(format!("HTTP {}", response.status())),
+            },
             tungstenite::Error::Tls(_) => lost("origin TLS failed"),
             tungstenite::Error::Io(_) => lost("origin handshake I/O failed"),
             _ => lost("WebSocket upgrade failed"),
         })
+}
+
+/// A refusal's `Retry-After` in seconds (at most two minutes), when it has one.
+fn retry_after<T>(response: &http::Response<T>) -> Option<Duration> {
+    let secs: u64 = response.headers().get(http::header::RETRY_AFTER)?.to_str().ok()?.trim().parse().ok()?;
+    Some(Duration::from_secs(secs.min(120)))
 }
 
 fn destination(uri: &Uri) -> Result<Uri, &'static str> {

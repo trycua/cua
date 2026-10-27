@@ -94,6 +94,14 @@ struct Args {
     /// Public base URL (assertion issuer and computer URLs).
     #[arg(long, env = "CUA_RELAY_PUBLIC_URL")]
     public_url: Option<String>,
+    /// Computer joins admitted per second once the burst is used (a restart
+    /// brings every computer back at once; the rest are told to retry
+    /// shortly). 0: no limit.
+    #[arg(long, env = "CUA_RELAY_JOIN_RATE_PER_SEC", default_value_t = cua_relay::join_limit::DEFAULT_JOIN_RATE_PER_SEC)]
+    join_rate_per_sec: f64,
+    /// Computer joins admitted at once.
+    #[arg(long, env = "CUA_RELAY_JOIN_BURST", default_value_t = cua_relay::join_limit::DEFAULT_JOIN_BURST)]
+    join_burst: u32,
     /// Maximum computers per account.
     #[arg(long, env = "CUA_RELAY_MAX_MACHINES_PER_ACCOUNT", default_value_t = 32)]
     max_machines_per_account: usize,
@@ -412,6 +420,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let relay = Relay::try_new(RelayConfig {
         tokens,
         max_machines_per_token: args.max_machines_per_token,
+        join_rate_per_sec: args.join_rate_per_sec,
+        join_burst: args.join_burst,
         max_streams_per_machine: args.max_streams_per_machine,
         max_global_streams: args.max_global_streams,
         machine_max_streams: args.machine_max_streams,

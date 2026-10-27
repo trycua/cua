@@ -28859,7 +28859,7 @@ export type AppListView = {
     empty: boolean,
     /**
      * One quiet line where the Spaces go while the list is not complete
-     * ("Reaching 6 computers…"), below what is known so far.
+     * ("Reaching 6 machines…"), below what is known so far.
      */
     reachingLine?: string
 }

@@ -522,7 +522,7 @@ pub struct AppListView {
     /// not empty yet (an app update restarting the daemon must not show it).
     pub empty: bool,
     /// One quiet line where the Spaces go while the list is not complete
-    /// ("Reaching 6 computers…"), below what is known so far.
+    /// ("Reaching 6 machines…"), below what is known so far.
     pub reaching_line: Option<String>,
 }
 

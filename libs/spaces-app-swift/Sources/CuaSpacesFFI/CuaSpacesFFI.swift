@@ -21807,7 +21807,7 @@ public struct AppListView: Equatable, Hashable {
     public var empty: Bool
     /**
      * One quiet line where the Spaces go while the list is not complete
-     * ("Reaching 6 computers…"), below what is known so far.
+     * ("Reaching 6 machines…"), below what is known so far.
      */
     public var reachingLine: String?
 
@@ -21821,7 +21821,7 @@ public struct AppListView: Equatable, Hashable {
          */empty: Bool,
         /**
          * One quiet line where the Spaces go while the list is not complete
-         * ("Reaching 6 computers…"), below what is known so far.
+         * ("Reaching 6 machines…"), below what is known so far.
          */reachingLine: String?) {
         self.empty = empty
         self.reachingLine = reachingLine

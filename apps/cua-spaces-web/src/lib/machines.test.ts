@@ -41,6 +41,14 @@ describe("machines", () => {
     expect(machineSubtitle(machine({ os: "windows", connection: "direct" }))).toBe("Windows · Direct");
   });
 
+  it("labels a signed-in device apart from a machine's connection", () => {
+    expect(connectionLabel(machine({ connection: null, device: true }))).toBe("Signed-in device, not shared");
+    expect(machineSubtitle(machine({ os: "windows", connection: null, device: true }))).toBe("Windows · Signed-in device, not shared");
+    expect(connectionLabel(machine({ connection: "relay", device: true }))).toBe("Cua relay");
+    expect(connectionLabel(machine({ connection: null, current: true }))).toBe("Not set up for access");
+    expect(connectionLabel(machine({ connection: null, current: false }))).toBe("Unknown");
+  });
+
   it("says when an offline machine was last seen", () => {
     expect(presenceLabel(machine({}), NOW)).toBe("Online");
     expect(presenceLabel(machine({ online: false }), NOW)).toBe("Offline");

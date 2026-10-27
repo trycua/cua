@@ -78,8 +78,13 @@
             "● Ada's MacBook Pro [This Mac] — Desktop and 2 Spaces",
             "● cua's Mac Studio — Desktop and 1 Space",
             "○ Cua BYOC tests — Offline",
-            "○ Adas-MacBook-Pro-2.local — Not sharing",
-            "● Ana's laptop — Online"
+            "○ Adas-MacBook-Pro-2.local — Not sharing"
+          ]
+        },
+        {
+          "group": "Your devices",
+          "rows": [
+            "● Ana's laptop — Signed-in device, not shared"
           ]
         },
         {
@@ -175,15 +180,15 @@
         {
           "group": "Your machines",
           "rows": [
-            "○ Ada's MacBook Pro [This Mac] — Not sharing",
-            "○ Cua BYOC tests — Offline",
-            "● Ana's laptop — Online"
+            "○ Ada's MacBook Pro [This Mac] — Not sharing"
           ]
         },
         {
-          "group": "Offline for 30+ days (1) (collapsed) · Remove old machines",
+          "group": "Your devices",
           "rows": [
-            "○ mac-mini-staging — Offline"
+            "○ Cua BYOC tests — Signed-in device, not shared",
+            "○ mac-mini-staging — Signed-in device, not shared",
+            "● Ana's laptop — Signed-in device, not shared"
           ]
         }
       ],
@@ -208,16 +213,6 @@
           "Remove from account -> dev_byoc"
         ],
         [
-          "Ana's laptop — Online (rename: device)",
-          "Let other machines create Spaces here: off (read-only)",
-          "Let other machines control this desktop: off (read-only)",
-          "note: Change this on that PC.",
-          "spaces: No Spaces yet.",
-          "New Space here on host:dev_lap (disabled: It doesn’t let other machines create Spaces. Turn on “Let other machines create Spaces here” in Settings on that PC.)",
-          "details: OS: Windows",
-          "Remove from account -> dev_lap"
-        ],
-        [
           "mac-mini-staging — Offline (rename: device)",
           "notice: This machine is offline. Open Cua Spaces on it to use it.",
           "Let other machines create Spaces here: off (read-only)",
@@ -226,6 +221,16 @@
           "New Space here on host:dev_old1 (disabled: It’s offline.)",
           "details: Last seen: 41 days ago; OS: macOS",
           "Remove from account -> dev_old1"
+        ],
+        [
+          "Ana's laptop — Online (rename: device)",
+          "Let other machines create Spaces here: off (read-only)",
+          "Let other machines control this desktop: off (read-only)",
+          "note: Change this on that PC.",
+          "spaces: No Spaces yet.",
+          "New Space here on host:dev_lap (disabled: It doesn’t let other machines create Spaces. Turn on “Let other machines create Spaces here” in Settings on that PC.)",
+          "details: OS: Windows",
+          "Remove from account -> dev_lap"
         ]
       ],
       "summary": "4 machines, 1 online",
@@ -260,8 +265,13 @@
             "● Ada's MacBook Pro [This Mac] — Desktop and 2 Spaces [fail]",
             "● cua's Mac Studio — Desktop and 1 Space [warn]",
             "○ Cua BYOC tests — Offline",
-            "○ Adas-MacBook-Pro-2.local — Not sharing",
-            "● Ana's laptop — Online"
+            "○ Adas-MacBook-Pro-2.local — Not sharing"
+          ]
+        },
+        {
+          "group": "Your devices",
+          "rows": [
+            "● Ana's laptop — Signed-in device, not shared"
           ]
         },
         {
@@ -364,8 +374,13 @@
             "● Ada's MacBook Pro [This Mac] — Desktop and 2 Spaces [fail]",
             "● cua's Mac Studio — Desktop and 1 Space [warn]",
             "○ Cua BYOC tests — Offline",
-            "○ Adas-MacBook-Pro-2.local — Not sharing",
-            "● Ana's laptop — Online"
+            "○ Adas-MacBook-Pro-2.local — Not sharing"
+          ]
+        },
+        {
+          "group": "Your devices",
+          "rows": [
+            "● Ana's laptop — Signed-in device, not shared"
           ]
         },
         {
@@ -468,8 +483,13 @@
             "● Ada's MacBook Pro [This Mac] — Desktop and 2 Spaces [fail]",
             "● cua's Mac Studio — Desktop and 1 Space [warn]",
             "○ Cua BYOC tests — Offline",
-            "○ Adas-MacBook-Pro-2.local — Not sharing",
-            "● Ana's laptop — Online"
+            "○ Adas-MacBook-Pro-2.local — Not sharing"
+          ]
+        },
+        {
+          "group": "Your devices",
+          "rows": [
+            "● Ana's laptop — Signed-in device, not shared"
           ]
         },
         {
@@ -570,6 +590,7 @@
         "order": [
           "clouds",
           "yours",
+          "devices",
           "old",
           "team"
         ],
@@ -618,8 +639,13 @@
             "● Ada's MacBook Pro [This Mac] — Desktop and 2 Spaces [fail]",
             "● cua's Mac Studio — Desktop and 1 Space [warn]",
             "○ Cua BYOC tests — Offline",
-            "○ Adas-MacBook-Pro-2.local — Not sharing",
-            "● Ana's laptop — Online"
+            "○ Adas-MacBook-Pro-2.local — Not sharing"
+          ]
+        },
+        {
+          "group": "Your devices",
+          "rows": [
+            "● Ana's laptop — Signed-in device, not shared"
           ]
         },
         {
@@ -720,6 +746,7 @@
         "order": [
           "clouds",
           "yours",
+          "devices",
           "old",
           "team"
         ],
@@ -769,8 +796,13 @@
             "● Ada's MacBook Pro [This Mac] — Desktop and 2 Spaces [fail]",
             "● cua's Mac Studio — Desktop and 1 Space [warn]",
             "○ Cua BYOC tests — Offline",
-            "○ Adas-MacBook-Pro-2.local — Not sharing",
-            "● Ana's laptop — Online"
+            "○ Adas-MacBook-Pro-2.local — Not sharing"
+          ]
+        },
+        {
+          "group": "Your devices",
+          "rows": [
+            "● Ana's laptop — Signed-in device, not shared"
           ]
         },
         {

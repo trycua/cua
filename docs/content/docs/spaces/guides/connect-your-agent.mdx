@@ -47,7 +47,7 @@ and Cua never reads or copies it. On another computer, sign in to Codex there
 
 An agent that Cua runs in a Space uses the provider keys saved on the computer
 that hosts the Space: the **OpenAI key** for Codex and the **Anthropic key** for
-Claude Code. Add them on **Pick your agent** or in **Settings, Agents**. They stay
+Claude Code. Add them on **Pick your agent** or in **Settings, Connectors**. They stay
 in this computer's Keychain (Credential Manager on Windows).
 
 To connect an agent later, or to remove one, open **Settings, AI agents**:
@@ -62,10 +62,11 @@ To connect an agent later, or to remove one, open **Settings, AI agents**:
 server to each agent you name.
 
 ```bash test="cli-shape" id="cua-agents-detect"
-cua agents detect          # read-only: which supported agents are installed
-cua agents setup --agents claude,codex --yes
-cua agents status          # what Cua configured for each agent
-cua agents remove          # removes only what Cua added
+cua connect detect             # read-only: which supported agents are installed
+cua connect setup --agents claude,codex --yes
+cua connect status             # what Cua configured for each agent
+cua connect remove --dry-run   # lists what it would remove
+cua connect remove             # removes only what Cua Spaces added (Cua Driver's entries stay)
 ```
 
 The [supported agents](/cua-cli/guides/mcp-server#supported-agents) include
@@ -91,7 +92,7 @@ this computer shares the same Spaces, sandboxes and streams.
 Then try the request the app offers at the end of its first run. The agent makes
 a Space on this computer:
 
-> Make a Linux Space on this Mac and stream the desktop in a new window.
+> Make a Linux Space on this Mac and show its desktop in a new window.
 
 On Windows the request says "this PC", and on Linux "this computer". When
 that works, try a bigger task:
@@ -152,9 +153,9 @@ An agent can also start other agents inside a Space, as long-lived threads.
 | `agent_status`, `agent_list`, `agent_stop` | State, output tail, stop. |
 
 Runs live in the guest (`~/.spaces-agents/<run_id>/`) and survive the client
-going away. The daemon copies your agent's credential file (for example
-`~/.claude/.credentials.json`) into the Space at start.
-`CUA_SPACES_AGENT_CREDENTIALS_HOME=none` copies nothing.
+going away. Host credential files are never copied into the Space: an API
+key reaches a run only as env you name for that run (`env_from_host`), or as
+a key saved in Settings → Connectors for that harness.
 
 In TypeScript a run is a thread:
 
@@ -236,7 +237,7 @@ and the Swift tab is from [Cua Bots](/spaces/examples/cua-bots).
 ## Agent keys
 
 Claude Code, Codex and the other harnesses need a provider key to run. Add it
-once in **Cua Spaces, Settings, Agents**, and every agent you start in a Space
+once in **Cua Spaces, Settings, Connectors**, and every agent you start in a Space
 gets the key it needs.
 
 - **Anthropic** (`ANTHROPIC_API_KEY`): Claude Code and other agents that use Claude.
@@ -275,7 +276,7 @@ from the daemon's environment) wins over a saved one.
 
 `agent_capabilities` counts saved keys: a harness whose key is saved reports
 `auth: ok`. A run with no key fails before anything is installed, and the error
-says to add the key in Settings, Agents or to set it for the Cua daemon.
+says to add the key in Settings, Connectors or to set it for the Cua daemon.
 
 ### Where the keys are kept
 
@@ -317,4 +318,4 @@ as the macOS Keychain.
 
 - [Create a Space](/spaces/guides/add-a-space): run an agent's work in a new desktop.
 - [Add a computer](/spaces/guides/add-a-computer): give your agent another computer.
-- [Persistent agents](/spaces/guides/persistent-agents): agents with a name, a memory and routines.
+- [Agents in a Space](/spaces/guides/agents-in-a-space): agents with a name, a memory and schedules.

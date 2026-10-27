@@ -432,6 +432,8 @@ pub fn activity_text(
             machine.unwrap_or("A computer"),
             by(device)
         ),
+        "share_left" => format!("{subject} left {}", machine.unwrap_or("a computer")),
+        "machine_left" => format!("You left {}", machine.unwrap_or("a computer")),
         "sharing_stopped" => format!("{} stopped sharing", machine.unwrap_or("A computer")),
         "sharing_started" => format!("{} started sharing", machine.unwrap_or("A computer")),
         "machine_registered" => format!("{} was added", machine.unwrap_or("A computer")),
@@ -1499,6 +1501,20 @@ mod tests {
                     subject: Some("bob@example.com".into()),
                     ..Default::default()
                 },
+                AuditInput {
+                    ts: 5,
+                    kind: "share_left".into(),
+                    machine: Some("m1".into()),
+                    subject: Some("cat@example.com".into()),
+                    ..Default::default()
+                },
+                AuditInput {
+                    ts: 6,
+                    kind: "machine_left".into(),
+                    device: Some("dev_a".into()),
+                    machine: Some("m1".into()),
+                    ..Default::default()
+                },
             ],
             machine_names: machines,
             ..Default::default()
@@ -1508,14 +1524,16 @@ mod tests {
         assert_eq!(
             lines,
             [
+                "You left studio-mac",
+                "cat@example.com left studio-mac",
                 "studio-mac is no longer shared with bob@example.com from MacBook",
                 "bob@example.com opened studio-mac",
                 "Phone opened studio-mac",
                 "Phone was approved from MacBook",
             ]
         );
-        assert!(v.activity[1].notable);
-        assert!(!v.activity[2].notable);
+        assert!(v.activity[3].notable);
+        assert!(!v.activity[4].notable);
         assert_eq!(
             v.recent.iter().map(|a| a.text.as_str()).collect::<Vec<_>>(),
             [

@@ -20,7 +20,11 @@
 #     checked first, in one message;
 #   - on a fresh Keychain (a certificate codesign cannot use yet) it says so and
 #     sets it up only when asked (--setup-signing), or prints the exact steps;
-#   - uninstall-local.sh removes the Local pieces and only those;
+#   - on a locked Keychain (SSH session, VM) it says the Keychain is locked and
+#     how to unlock it, not that it is new, and never sets up a locked one;
+#   - uninstall-local.sh removes the Local pieces and only those, and first
+#     takes this Mac off the relay when Local is signed in, as Local and with
+#     nothing of the caller's Stable environment;
 #   - the names in scripts/_local-common.sh are the ones CuaChannel::Local has.
 #
 #   scripts/tests/install-local-test.sh
@@ -103,6 +107,8 @@ int main(int argc, char **argv) {
         fprintf(f, " [CUA_CHANNEL=%s]\n", channel ? channel : "");
         fclose(f);
     }
+    // STUB_UNREGISTER_FAIL=1: `--service-helper unregister` exits 1.
+    if (argc >= 3 && strcmp(argv[2], "unregister") == 0 && getenv("STUB_UNREGISTER_FAIL")) return 1;
     return 0;
 }
 EOF
@@ -247,7 +253,10 @@ EOF
 # arguments to shim.log.
 write_shim() { printf '#!/bin/bash\n%s\n' "$2" > "$SHIMS/$1"; chmod +x "$SHIMS/$1"; }
 write_shim launchctl 'echo "launchctl $*" >> "$SHIM_LOG"'
-write_shim tccutil 'echo "tccutil $*" >> "$SHIM_LOG"'
+# tccutil, like the real one, can only resolve a bundle id while its app is
+# installed: the second log says whether the Local app was still there.
+write_shim tccutil 'echo "tccutil $*" >> "$SHIM_LOG"
+echo "$* app=$([ -d "$HOME/Applications/Cua Spaces Local.app" ] && echo present || echo gone)" >> "$SHIM_LOG.tcc"'
 write_shim open 'echo "open $*" >> "$SHIM_LOG"'
 write_shim lsregister 'echo "lsregister $*" >> "$SHIM_LOG"'
 # security: a Keychain with one item per service until it is deleted; or the
@@ -278,12 +287,16 @@ if [ "${SHIM_FRESH_KEYCHAIN:-0}" = 1 ]; then
     add-trusted-cert)
       if [ "${SHIM_TRUST_FAILS:-0}" = 1 ]; then echo "SecTrustSettingsSetTrustSettings: no user interaction was possible" >&2; exit 1; fi
       : > "$SHIM_STATE/trusted"; exit 0 ;;
+    unlock-keychain)
+      : > "$SHIM_STATE/unlocked"; exit 0 ;;
     set-key-partition-list)
       # SHIM_PARTITION_FAILS=1: no key matched the filter (the tool says so and changes nothing).
       if [ "${SHIM_PARTITION_FAILS:-0}" = 1 ]; then echo "security: SecItemCopyMatching: The specified item could not be found in the keychain." >&2; exit 1; fi
       : > "$SHIM_STATE/partition"; exit 0 ;;
   esac
 fi
+# No certificate in the Keychain (what the real tool says: not found).
+if [ "$1" = find-certificate ]; then exit 44; fi
 exit 0'
 # codesign: the real one, except that it can be made to fail verifying one
 # path, to stall (exit like a killed-by-alarm process, no output) on its first
@@ -298,6 +311,11 @@ write_shim codesign 'if [ "${SHIM_FRESH_KEYCHAIN:-0}" = 1 ]; then
     prev="$a"
   done
   if [ "$fake" = 1 ]; then
+    # A locked Keychain (SHIM_LOCKED_KEYCHAIN=1) in a session that cannot ask
+    # for its password, until `security unlock-keychain` ran.
+    if [ "${SHIM_LOCKED_KEYCHAIN:-0}" = 1 ] && [ ! -e "$SHIM_STATE/unlocked" ]; then
+      echo "probe: errSecInternalComponent" >&2; exit 1
+    fi
     if [ ! -e "$SHIM_STATE/trusted" ] || { [ "${SHIM_NEED_PARTITION:-0}" = 1 ] && [ ! -e "$SHIM_STATE/partition" ]; }; then
       echo "no identity found" >&2; exit 1
     fi
@@ -1106,6 +1124,49 @@ fresh_fixture
 tty_install
 check "with the key already usable after the trust it asks for no password and calls no set-key-partition-list" '! grep >/dev/null "set-key-partition-list" "$SHIM_LOG" && ! printf "%s" "$OUT" | grep -F >/dev/null "Password of the Keychain"'
 
+# A locked Keychain (an SSH session, or a VM that logged in on its own): codesign
+# fails with errSecInternalComponent, because nothing can ask for the password.
+# The message says the Keychain is locked and how to unlock it, and not that it
+# is new; the new-Keychain setup is not attempted on a locked one.
+echo "== a locked Keychain =="
+tty_unlock_install() { run env PTY_ANSWER=y PTY_PROMPT="Unlock it now" /usr/bin/python3 -I "$WORK/pty-run.py" env SHIM_FRESH_KEYCHAIN=1 "$@" "$FAKE_SCRIPTS/install-local.sh" --no-launch --setup-signing; }
+UNLOCK_CMD='security unlock-keychain "$FAKE_KEYCHAIN"'
+
+fresh_fixture
+FRESH_ARGS="--setup-signing"
+fresh_install SHIM_LOCKED_KEYCHAIN=1
+check "it says the Keychain is locked and prints the unlock command" \
+    'printf "%s" "$OUT" | grep -F >/dev/null "its Keychain ($FAKE_KEYCHAIN) is locked" && printf "%s" "$OUT" | grep -F >/dev/null "security unlock-keychain \"$FAKE_KEYCHAIN\""'
+check "it does not call a locked Keychain new, and prints the one-time setup once, as the step after unlocking" \
+    '! printf "%s" "$OUT" | grep -F >/dev/null "a new Keychain: it is not trusted" && printf "%s" "$OUT" | grep -F >/dev/null "If codesign still cannot sign after that" && [ "$(printf "%s\n" "$OUT" | grep -c "one-time setup")" = 1 ]'
+check "--setup-signing without a terminal does not set up a locked Keychain (no trust, no search list, no key access)" \
+    '! security_calls | grep >/dev/null -e "add-trusted-cert" -e "list-keychains .*-s " -e "set-key-partition-list"'
+check "the install is ad hoc, reported, as before (status $RC)" '[ "$RC" = 0 ] && printf "%s" "$OUT" | grep -F >/dev/null "signed ad hoc"'
+
+fresh_fixture
+FRESH_ARGS="--require-stable-signing"
+fresh_install SHIM_LOCKED_KEYCHAIN=1
+check "--require-stable-signing on a locked Keychain stops, installs nothing, and says it is locked" \
+    '[ "$RC" != 0 ] && [ ! -e "$LOCAL_APP" ] && printf "%s" "$OUT" | grep -F >/dev/null "is locked" && printf "%s" "$OUT" | grep -F >/dev/null "stable signing is required"'
+
+fresh_fixture
+tty_unlock_install SHIM_LOCKED_KEYCHAIN=1
+check "at a terminal it offers to unlock, runs security unlock-keychain, and goes on to the setup that a new Keychain still needs" \
+    'grep -F >/dev/null "security unlock-keychain $FAKE_KEYCHAIN" "$SHIM_LOG" && grep -n -e "^security unlock-keychain" -e "^security add-trusted-cert" "$SHIM_LOG" | sed -n 1p | grep >/dev/null unlock-keychain'
+check "and then signs with the certificate (status $RC)" '[ "$RC" = 0 ] && printf "%s" "$OUT" | grep -F >/dev/null "codesign can use the stable local certificate"'
+
+# The certificate could not be created at all: the Keychain exists, holds none,
+# and (the usual reason) refused the import.
+fresh_fixture
+install --require-stable-signing
+check "no certificate in the Keychain: it says it could not create one and that the Keychain is probably locked, with the unlock command" \
+    '[ "$RC" != 0 ] && [ ! -e "$LOCAL_APP" ] && printf "%s" "$OUT" | grep -F >/dev/null "could not create the stable local certificate in $FAKE_KEYCHAIN: the Keychain is probably locked" && printf "%s" "$OUT" | grep -F >/dev/null "security unlock-keychain \"$FAKE_KEYCHAIN\""'
+check "and it does not print steps that need the certificate (find-certificate, add-trusted-cert)" '! printf "%s" "$OUT" | grep -F >/dev/null -e "security find-certificate" -e "add-trusted-cert"'
+fresh_fixture
+rm -f "$FAKE_KEYCHAIN"
+install --require-stable-signing
+check "no Keychain at all is not called locked" '! printf "%s" "$OUT" | grep -F >/dev/null -e "locked" -e "could not create the stable local certificate"'
+
 # The real `security`, on a throwaway Keychain (not in the search list, no trust
 # change): the function the script runs matches the Local certificate's key and
 # no other signing key, and changes nothing when there is no such key.
@@ -1219,6 +1280,37 @@ check "and Stable files, lume included, are byte-identical" '[ "$(snap_stable)" 
 
 # --- 8. Uninstall --------------------------------------------------------------------------------------------------
 
+# The bundled cua of the installed Local app, as a script that logs how it was
+# called: its arguments, the variables it got, and whether the sign-in still
+# existed. `auth status`, `host remove` and `agents remove` answer as
+# STUB_AUTH_STATUS, STUB_HOST_REMOVE and STUB_AGENTS_REMOVE say (0 unless set).
+export LOCAL_CUA_LOG="$WORK/local-cua.log"
+write_local_cli() {
+    : > "$LOCAL_CUA_LOG"
+    cat > "$LOCAL_APP/Contents/MacOS/cua" <<'STUBEOF'
+#!/bin/bash
+# What the CLI would read and remove: the sign-in and the record of what Local
+# wrote into the coding agents, in the home of the environment it was asked for.
+state="$HOME/.cua-local"; [ "${CUA_ENV-}" = prod ] && state="$state/envs/prod"
+echo "cua $* [CUA_CHANNEL=${CUA_CHANNEL-}] [CUA_HOME=${CUA_HOME-}] [CUA_API_KEY=${CUA_API_KEY-}] [CUA_RELAY_URL=${CUA_RELAY_URL-}] [CUA_ENV=${CUA_ENV-}] creds=$([ -e "$state/credentials.json" ] && echo present || echo gone) agents=$([ -e "$state/agent-setup.json" ] && echo present || echo gone)" >> "$LOCAL_CUA_LOG"
+case "$*" in
+    "auth status") exit "${STUB_AUTH_STATUS:-0}" ;;
+    "host remove --force --uninstalling") exit "${STUB_HOST_REMOVE:-0}" ;;
+    "agents remove --yes")
+        # STUB_AGENTS_REMOVE=hang: start a program of its own (like `claude mcp
+        # remove`) and wait for it, so only a timeout on the whole group ends it.
+        if [ "${STUB_AGENTS_REMOVE:-0}" = hang ]; then
+            sleep 300 &
+            echo $! > "$STUB_CHILD_PID"
+            wait
+        fi
+        exit "${STUB_AGENTS_REMOVE:-0}" ;;
+esac
+exit 0
+STUBEOF
+    chmod +x "$LOCAL_APP/Contents/MacOS/cua"
+}
+
 echo "== uninstall =="
 reset_fixture
 ALL_BEFORE="$(snap_all)"
@@ -1227,6 +1319,7 @@ install
 mkdir -p "$FAKE_HOME/.cua-local/helper" "$FAKE_HOME/Library/Application Support/com.trycua.spaces.macos.local" "$FAKE_HOME/Cua Volume Local"
 echo '{}' > "$FAKE_HOME/.cua-local/helper/service.json"
 echo '{}' > "$FAKE_HOME/.cua-local/credentials.json"
+echo '{}' > "$FAKE_HOME/.cua-local/agent-setup.json"
 echo '{}' > "$FAKE_HOME/Library/Application Support/com.trycua.spaces.macos.local/settings.json"
 echo '<plist/>' > "$FAKE_HOME/Library/LaunchAgents/com.trycua.spacesd.host.local.plist"
 # What macOS keeps for the Local bundle id in ~/Library.
@@ -1239,25 +1332,36 @@ echo 'web' > "$FAKE_HOME/Library/WebKit/com.trycua.spaces.macos.local/data"
 echo 'cookies' > "$FAKE_HOME/Library/Cookies/com.trycua.spaces.macos.local.binarycookies"
 echo 'state' > "$FAKE_HOME/Library/Saved Application State/com.trycua.spaces.macos.local.savedState/windows.plist"
 echo 'mine' > "$FAKE_HOME/Cua Volume Local/keep.txt"
+write_local_cli
 BEFORE_UNINSTALL="$(snap_all)"
-: > "$SHIM_LOG"; : > "$STUB_LOG"
+: > "$SHIM_LOG"; : > "$STUB_LOG"; : > "$SHIM_LOG.tcc"
 
 STDIN_FILE="$WORK/answer-n"; echo n > "$STDIN_FILE"
 uninstall
 check "answering n removes nothing" '[ "$RC" = 0 ] && [ "$(snap_all)" = "$BEFORE_UNINSTALL" ] && printf "%s" "$OUT" | grep >/dev/null cancelled'
 STDIN_FILE=/dev/null
 uninstall
-check "no answer (no terminal) removes nothing" '[ "$(snap_all)" = "$BEFORE_UNINSTALL" ]'
+check "no answer (no terminal) removes nothing" '[ "$(snap_all)" = "$BEFORE_UNINSTALL" ] && [ ! -s "$SHIM_LOG.tcc" ]'
 
 STDIN_FILE="$WORK/answer-y"; echo y > "$STDIN_FILE"
 uninstall
 check "answering y removes Local (status $RC)" '[ "$RC" = 0 ] && [ ! -e "$LOCAL_APP" ] && [ ! -e "$LOCAL_CLI" ] && [ ! -L "$LOCAL_CLI" ]'
 STDIN_FILE=/dev/null
+check "every Local permission was reset in one call, for the Local bundle id only, while the app was still installed" \
+    '[ "$(cat "$SHIM_LOG.tcc")" = "reset All com.trycua.spaces.macos.local app=present" ] && [ "$(grep -c "^tccutil" "$SHIM_LOG")" = 1 ]'
+check "the plan said the permissions are reset, and the closing line no longer says they are kept" \
+    'printf "%s" "$OUT" | grep >/dev/null "permissions:        reset" && ! printf "%s" "$OUT" | grep >/dev/null "and the permissions macOS granted"'
 check "the Local home and its app support folder are gone" '[ ! -e "$FAKE_HOME/.cua-local" ] && [ ! -e "$FAKE_HOME/Library/Application Support/com.trycua.spaces.macos.local" ]'
 check "the Local bundle id's preferences, caches, web view data, cookies and window state are gone" \
     '[ ! -e "$FAKE_HOME/Library/Preferences/com.trycua.spaces.macos.local.plist" ] && [ ! -e "$FAKE_HOME/Library/Caches/com.trycua.spaces.macos.local" ] && [ ! -e "$FAKE_HOME/Library/HTTPStorages/com.trycua.spaces.macos.local" ] && [ ! -e "$FAKE_HOME/Library/WebKit/com.trycua.spaces.macos.local" ] && [ ! -e "$FAKE_HOME/Library/Cookies/com.trycua.spaces.macos.local.binarycookies" ] && [ ! -e "$FAKE_HOME/Library/Saved Application State/com.trycua.spaces.macos.local.savedState" ]'
 check "and Stable's preferences, caches, web view data, cookies and window state of the same kinds are still there" \
     '[ -f "$FAKE_HOME/Library/Preferences/com.trycua.spaces.macos.plist" ] && [ -f "$FAKE_HOME/Library/Caches/com.trycua.spaces.macos/Cache.db" ] && [ -f "$FAKE_HOME/Library/WebKit/com.trycua.spaces.macos/data" ] && [ -f "$FAKE_HOME/Library/Cookies/com.trycua.spaces.macos.binarycookies" ] && [ -f "$FAKE_HOME/Library/Saved Application State/com.trycua.spaces.macos.savedState/windows.plist" ]'
+check "this Mac was taken off the relay, as Local, in staging (the only environment with state), before the sign-in was deleted" \
+    'grep >/dev/null "^cua auth status \[CUA_CHANNEL=local\]" "$LOCAL_CUA_LOG" && grep >/dev/null "^cua host remove --force --uninstalling \[CUA_CHANNEL=local\] .*\[CUA_ENV=staging\] creds=present" "$LOCAL_CUA_LOG" && ! grep >/dev/null "CUA_ENV=prod" "$LOCAL_CUA_LOG"'
+check "Local's MCP server and skills were removed from the coding agents by the Local CLI (agents remove --yes, nothing more), as Local, in staging, while its record was still there" \
+    '[ "$(grep -c "^cua agents remove" "$LOCAL_CUA_LOG")" = 1 ] && grep >/dev/null "^cua agents remove --yes \[CUA_CHANNEL=local\] \[CUA_HOME=\] .*\[CUA_ENV=staging\] creds=.* agents=present\$" "$LOCAL_CUA_LOG"'
+check "and it was the Local CLI only: the released app's cua was never run, so its entries and cua-driver were not asked about" \
+    '! grep >/dev/null "^$FAKE_HOME/.local/bin/cua " "$STUB_LOG" && ! grep >/dev/null -e "cua-driver" -e "agents setup" "$LOCAL_CUA_LOG"'
 check "the Local host runner job file is gone" '[ ! -e "$FAKE_HOME/Library/LaunchAgents/com.trycua.spacesd.host.local.plist" ]'
 check "the helper login item was unregistered by the Local app itself" 'grep >/dev/null -- "--service-helper unregister \[CUA_CHANNEL=local\]" "$STUB_LOG"'
 check "launchctl was asked about the two Local labels only" \
@@ -1266,6 +1370,28 @@ check "only the Local Keychain services were deleted (both of them)" \
     'grep >/dev/null "^security delete-generic-password -s ai.cua.session.local\$" "$SHIM_LOG" && grep >/dev/null "^security delete-generic-password -s ai.cua.session.local.staging\$" "$SHIM_LOG" && ! grep "^security" "$SHIM_LOG" | grep -v -e "-s ai.cua.session.local\$" -e "-s ai.cua.session.local.staging\$"'
 check "the Local volume folder is kept" '[ "$(cat "$FAKE_HOME/Cua Volume Local/keep.txt")" = mine ]'
 check "Stable files are byte-identical after uninstall" '[ "$(snap_stable)" = "$STABLE_BEFORE" ]'
+
+echo "== uninstall --keep-permissions, and a login item that will not unregister =="
+reset_fixture
+install
+: > "$SHIM_LOG"; : > "$SHIM_LOG.tcc"
+uninstall --yes --keep-permissions
+check "--keep-permissions removes Local and resets nothing (status $RC)" \
+    '[ "$RC" = 0 ] && [ ! -e "$LOCAL_APP" ] && [ ! -s "$SHIM_LOG.tcc" ] && ! grep >/dev/null "^tccutil" "$SHIM_LOG"'
+check "and it says the permissions are kept" \
+    'printf "%s" "$OUT" | grep >/dev/null "permissions:        kept" && printf "%s" "$OUT" | grep >/dev/null "and the permissions macOS granted"'
+reset_fixture
+install
+: > "$SHIM_LOG.tcc"; : > "$STUB_LOG"
+run env STUB_UNREGISTER_FAIL=1 STUB_HELPER_STATUS=not-registered "$FAKE_SCRIPTS/uninstall-local.sh" --yes
+check "an unregister that exits 1 is retried once, and a login item that is not registered raises no warning (status $RC)" \
+    '[ "$RC" = 0 ] && [ "$(grep -c -- "--service-helper unregister" "$STUB_LOG")" = 2 ] && ! printf "%s" "$OUT" | grep >/dev/null "could not unregister its helper"'
+reset_fixture
+install
+: > "$STUB_LOG"
+run env STUB_UNREGISTER_FAIL=1 STUB_HELPER_STATUS=enabled "$FAKE_SCRIPTS/uninstall-local.sh" --yes
+check "a login item that is still enabled after the retry is reported, and the uninstall goes on" \
+    '[ "$RC" = 0 ] && [ ! -e "$LOCAL_APP" ] && printf "%s" "$OUT" | grep >/dev/null "could not unregister its helper"'
 
 echo "== uninstall and the old Local id =="
 reset_fixture
@@ -1292,7 +1418,166 @@ uninstall --yes
 check "uninstall removes the leftovers of both ids when no app is installed (status $RC)" \
     '[ "$RC" = 0 ] && legacy_data_gone && [ ! -e "$FAKE_HOME/Library/Application Support/com.trycua.spaces.macos.local" ] && [ ! -e "$FAKE_HOME/Library/Caches/com.trycua.spaces.macos.local" ]'
 check "and Stable files, whose names the new Local id extends, are byte-identical" '[ "$(snap_stable)" = "$STABLE_BEFORE" ]'
-check "uninstall never resets permission rows (macOS keeps them for a reinstall)" '! grep >/dev/null "^tccutil" "$SHIM_LOG"'
+check "with no app installed no permission rows are reset (tccutil cannot resolve a bundle id whose app is gone)" '! grep >/dev/null "^tccutil" "$SHIM_LOG"'
+
+echo "== uninstall takes this Mac off the relay, safely =="
+# A stray environment of the released Cua Spaces in the caller's shell: its
+# home and its API key must not reach the Local CLI (CUA_ENV, the opt-in to
+# production, does).
+reset_fixture
+STABLE_BEFORE="$(snap_stable)"
+install
+mkdir -p "$FAKE_HOME/.cua-local/envs/prod"
+echo '{}' > "$FAKE_HOME/.cua-local/credentials.json"
+echo '{}' > "$FAKE_HOME/.cua-local/envs/prod/credentials.json"
+echo '{}' > "$FAKE_HOME/.cua-local/agent-setup.json"
+echo '{}' > "$FAKE_HOME/.cua-local/envs/prod/agent-setup.json"
+write_local_cli
+run env CUA_HOME="$FAKE_HOME/.cua" CUA_API_KEY=stable-key CUA_RELAY_URL=https://relay.example.invalid CUA_ENV=prod "$FAKE_SCRIPTS/uninstall-local.sh" --yes
+check "uninstall with a stray Stable environment (status $RC)" '[ "$RC" = 0 ] && [ ! -e "$LOCAL_APP" ] && [ ! -e "$FAKE_HOME/.cua-local" ]'
+check "the Local CLI got none of CUA_HOME, CUA_API_KEY or CUA_RELAY_URL" \
+    '[ "$(grep -c "^cua host remove .*\[CUA_HOME=\] \[CUA_API_KEY=\] \[CUA_RELAY_URL=\]" "$LOCAL_CUA_LOG")" = 2 ]'
+check "both Local environments with state are taken off their relay, each with its own sign-in still there: staging, and prod (the opt-in), whatever CUA_ENV the shell had" \
+    'grep >/dev/null "^cua host remove .*\[CUA_ENV=staging\] creds=present" "$LOCAL_CUA_LOG" && grep >/dev/null "^cua host remove .*\[CUA_ENV=prod\] creds=present" "$LOCAL_CUA_LOG"'
+check "the same for the coding agents: each environment's Local entries are removed by the Local CLI with none of the stray variables, while that environment's record is still there" \
+    '[ "$(grep -c "^cua agents remove --yes .*\[CUA_HOME=\] \[CUA_API_KEY=\] \[CUA_RELAY_URL=\]" "$LOCAL_CUA_LOG")" = 2 ] && grep >/dev/null "^cua agents remove .*\[CUA_ENV=staging\] creds=.* agents=present" "$LOCAL_CUA_LOG" && grep >/dev/null "^cua agents remove .*\[CUA_ENV=prod\] creds=.* agents=present" "$LOCAL_CUA_LOG"'
+check "Stable files, library folders included, are byte-identical" '[ "$(snap_stable)" = "$STABLE_BEFORE" ]'
+
+# A Local home that is a link into the released Cua Spaces' folders: the CLI
+# would unregister Stable's host and delete its state, so it is not asked, and
+# only the link is removed.
+for linked in home host host-config host-token host-spaces helper-spec credentials host-elsewhere shared-helper; do
+    reset_fixture
+    mkdir -p "$FAKE_HOME/.cua/host"
+    echo '{"stable":true}' > "$FAKE_HOME/.cua/host/config.json"
+    echo 'stable-token' > "$FAKE_HOME/.cua/host/machine-token"
+    echo '[]' > "$FAKE_HOME/.cua/host/provided-spaces.json"
+    STABLE_BEFORE="$(snap_stable)"
+    install
+    write_local_cli
+    case "$linked" in
+        home) ln -s "$FAKE_HOME/.cua" "$FAKE_HOME/.cua-local" ;;
+        host)
+            mkdir -p "$FAKE_HOME/.cua-local"
+            echo '{}' > "$FAKE_HOME/.cua-local/credentials.json"
+            ln -s "$FAKE_HOME/.cua" "$FAKE_HOME/.cua-local/host" ;;
+        host-config|host-token|host-spaces)
+            # A real folder whose files are links into Stable's host folder: the
+            # CLI would read Stable's host config and token and unregister it.
+            mkdir -p "$FAKE_HOME/.cua-local/host"
+            echo '{}' > "$FAKE_HOME/.cua-local/credentials.json"
+            case "$linked" in
+                host-config) ln -s "$FAKE_HOME/.cua/host/config.json" "$FAKE_HOME/.cua-local/host/config.json" ;;
+                host-token) ln -s "$FAKE_HOME/.cua/host/machine-token" "$FAKE_HOME/.cua-local/host/machine-token" ;;
+                host-spaces) ln -s "$FAKE_HOME/.cua/host/provided-spaces.json" "$FAKE_HOME/.cua-local/host/provided-spaces.json" ;;
+            esac ;;
+        shared-helper)
+            # The helper folder is shared by every environment, so a link in it
+            # into Stable's counts for the prod home too.
+            mkdir -p "$FAKE_HOME/.cua-local/envs/prod"
+            echo '{}' > "$FAKE_HOME/.cua-local/envs/prod/credentials.json"
+            ln -s "$FAKE_HOME/.cua/helper" "$FAKE_HOME/.cua-local/helper" ;;
+        host-elsewhere)
+            # The host folder is a link to a folder of its own that holds the
+            # link into Stable's host folder: one indirection more.
+            mkdir -p "$WORK/elsewhere-host" "$FAKE_HOME/.cua-local"
+            echo '{}' > "$FAKE_HOME/.cua-local/credentials.json"
+            ln -s "$FAKE_HOME/.cua/host/config.json" "$WORK/elsewhere-host/config.json"
+            ln -s "$WORK/elsewhere-host" "$FAKE_HOME/.cua-local/host" ;;
+        helper-spec)
+            mkdir -p "$FAKE_HOME/.cua-local/helper"
+            echo '{}' > "$FAKE_HOME/.cua-local/credentials.json"
+            ln -s "$FAKE_HOME/.cua/helper/service.json" "$FAKE_HOME/.cua-local/helper/service.json" ;;
+        credentials)
+            mkdir -p "$FAKE_HOME/.cua-local"
+            ln -s "$FAKE_HOME/.cua/credentials.json" "$FAKE_HOME/.cua-local/credentials.json" ;;
+    esac
+    uninstall --yes
+    check "a Local $linked that is, or holds, a link into ~/.cua: the Local CLI is not run, and it says why (status $RC)" \
+        '[ "$RC" = 0 ] && [ ! -s "$LOCAL_CUA_LOG" ] && printf "%s" "$OUT" | grep -F >/dev/null "not taking this Mac off the staging relay or removing its coding agent entries"'
+    check "a Local $linked that is, or holds, a link into ~/.cua: only Local's own go, Stable files are byte-identical" \
+        '[ ! -e "$FAKE_HOME/.cua-local" ] && [ ! -L "$FAKE_HOME/.cua-local" ] && [ "$(snap_stable)" = "$STABLE_BEFORE" ]'
+done
+
+# A Local host folder kept elsewhere (a link to a folder that holds nothing of
+# the released app's) is fine: the CLI is run, and only the link goes.
+reset_fixture
+STABLE_BEFORE="$(snap_stable)"
+install
+mkdir -p "$WORK/own-host" "$FAKE_HOME/.cua-local"
+echo '{}' > "$FAKE_HOME/.cua-local/credentials.json"
+echo '{}' > "$WORK/own-host/config.json"
+ln -s "$WORK/own-host" "$FAKE_HOME/.cua-local/host"
+write_local_cli
+uninstall --yes
+check "a Local host folder kept elsewhere, with no link into ~/.cua: the Local CLI is run (status $RC)" \
+    '[ "$RC" = 0 ] && grep >/dev/null "^cua host remove" "$LOCAL_CUA_LOG" && grep >/dev/null "^cua agents remove" "$LOCAL_CUA_LOG" && [ ! -e "$FAKE_HOME/.cua-local" ] && [ -f "$WORK/own-host/config.json" ] && [ "$(snap_stable)" = "$STABLE_BEFORE" ]'
+reset_fixture
+STABLE_BEFORE="$(snap_stable)"
+
+# A Local that was used (it has a home), as the checks below need.
+used_local() {
+    reset_fixture
+    install
+    mkdir -p "$FAKE_HOME/.cua-local"
+    echo '{}' > "$FAKE_HOME/.cua-local/credentials.json"
+    echo '{}' > "$FAKE_HOME/.cua-local/agent-setup.json"
+    write_local_cli
+}
+
+# Not signed in: nothing to unregister, and nothing is said about it.
+used_local
+STUB_AUTH_STATUS=1 uninstall --yes
+check "not signed in: it asks nothing of the relay and says nothing" \
+    '[ "$RC" = 0 ] && grep >/dev/null "^cua auth status" "$LOCAL_CUA_LOG" && ! grep >/dev/null "host remove" "$LOCAL_CUA_LOG" && ! printf "%s" "$OUT" | grep >/dev/null -e "taking this Mac off" -e "could not take" -e warning'
+check "not signed in: the rest is removed all the same" '[ ! -e "$LOCAL_APP" ]'
+check "not signed in: the coding agents are still cleaned (it needs no sign-in)" 'grep >/dev/null "^cua agents remove --yes" "$LOCAL_CUA_LOG"'
+
+# Signed in but the relay cannot be reached: one warning, and the uninstall goes on.
+used_local
+STUB_HOST_REMOVE=1 uninstall --yes
+check "relay unreachable: one warning, and Local is removed all the same" \
+    '[ "$RC" = 0 ] && [ "$(printf "%s" "$OUT" | grep -c "could not take this Mac off the staging relay")" = 1 ] && [ ! -e "$LOCAL_APP" ]'
+check "relay unreachable: Stable files are byte-identical" '[ "$(snap_stable)" = "$STABLE_BEFORE" ]'
+check "relay unreachable: the coding agents are still cleaned" 'grep >/dev/null "^cua agents remove --yes" "$LOCAL_CUA_LOG"'
+
+# The Local CLI starts a program (an agent's own CLI) and hangs: the limit stops
+# the whole process group, so nothing keeps running (and editing an agent's
+# configuration) after the uninstall has finished; the uninstall goes on.
+used_local
+rm -f "$WORK/child.pid"
+start=$SECONDS
+CUA_UNINSTALL_CLI_SECS=2 STUB_AGENTS_REMOVE=hang STUB_CHILD_PID="$WORK/child.pid" uninstall --yes
+elapsed=$((SECONDS - start))
+check "agents remove hangs: given up at the limit, not waited for (${elapsed}s, status $RC)" \
+    '[ "$RC" = 0 ] && [ "$elapsed" -lt 30 ] && [ ! -e "$LOCAL_APP" ] && [ ! -e "$FAKE_HOME/.cua-local" ] && [ "$(printf "%s" "$OUT" | grep -c "could not remove Local.s entries from your coding agents")" = 1 ]'
+check "agents remove hangs: the program it started is stopped too" \
+    '[ -s "$WORK/child.pid" ] && ! kill -0 "$(cat "$WORK/child.pid")" 2>/dev/null'
+check "agents remove hangs: the shell prints nothing about it" '! printf "%s" "$OUT" | grep >/dev/null -e Terminated -e Killed'
+
+# The coding agents cannot be cleaned: one warning, and the uninstall goes on.
+used_local
+STUB_AGENTS_REMOVE=1 uninstall --yes
+check "agents remove fails: one warning naming what may be left, and Local is removed all the same" \
+    '[ "$RC" = 0 ] && [ "$(printf "%s" "$OUT" | grep -c "could not remove Local.s entries from your coding agents")" = 1 ] && printf "%s" "$OUT" | grep >/dev/null "MCP server and the \*-local skills" && [ ! -e "$LOCAL_APP" ] && [ ! -e "$LOCAL_CLI" ] && [ ! -e "$FAKE_HOME/.cua-local" ]'
+check "agents remove fails: the relay was still asked, and Stable files are byte-identical" \
+    'grep >/dev/null "^cua host remove" "$LOCAL_CUA_LOG" && [ "$(snap_stable)" = "$STABLE_BEFORE" ]'
+
+# Nothing installed (or the app already gone): no CLI to ask, nothing said.
+: > "$LOCAL_CUA_LOG"
+uninstall --yes
+check "no Local app: it does not try the relay or the coding agents" '[ "$RC" = 0 ] && [ ! -s "$LOCAL_CUA_LOG" ] && ! printf "%s" "$OUT" | grep >/dev/null -e "taking this Mac off" -e "could not take" -e "removing Local.s MCP server" -e warning'
+# A Local home but no app (a half-removed install): there is no Local CLI to ask,
+# and the released app's cua is never used in its place.
+reset_fixture
+mkdir -p "$FAKE_HOME/.cua-local"
+echo '{}' > "$FAKE_HOME/.cua-local/credentials.json"
+echo '{}' > "$FAKE_HOME/.cua-local/agent-setup.json"
+STABLE_BEFORE="$(snap_stable)"
+: > "$STUB_LOG"
+uninstall --yes
+check "a Local home but no app: nothing is asked of any CLI (not Stable's either), and the home is removed (status $RC)" \
+    '[ "$RC" = 0 ] && [ ! -e "$FAKE_HOME/.cua-local" ] && ! grep >/dev/null "host remove\|agents remove" "$STUB_LOG" && [ "$(snap_stable)" = "$STABLE_BEFORE" ]'
 
 echo "== install, then uninstall, leaves the HOME as it was =="
 reset_fixture

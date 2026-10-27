@@ -77,7 +77,7 @@ on:
 permissions:
   contents: write
   id-token: write
-  issues: read
+  issues: write # the rolling unresolved-attribution issue
   pull-requests: read
 
 concurrency:
@@ -1541,6 +1541,7 @@ jobs:
             --release-metadata-path libs/cua-driver/typescript/package-lock.json \
             --changelog libs/cua-driver/rust/CHANGELOG.md \
             --asset-dir release-upload \
+            --report-issue \
             --output release-metadata/release-manifest.json
 
       - name: Render release body and announcement draft

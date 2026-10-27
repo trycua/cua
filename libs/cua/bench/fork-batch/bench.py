@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Batched-fork benchmark: `Sandboxes.fork_many` through the cua SDK and a
-running `cua daemon` (the path a user or the E2B shim takes).
+running `cua daemon` (the path a user or an SDK takes).
 
 It forks a checkpoint N times (optionally baking one first from a VM image),
 streams every event, and writes what happened and how fast:

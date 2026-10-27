@@ -150,8 +150,170 @@ impl Tier {
     }
 }
 
-/// Where Spaces go in one cloud account: names only, never a secret.
+/// How a connection reaches the cloud. Never a secret: the role ARN and
+/// connection id are identifiers, useless without a token Cua's issuer
+/// signed for this account.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Auth {
+    /// The cloud CLI's own sign-in on this device (profiles, SSO, gcloud,
+    /// a stored token): every connection made before federation.
+    #[default]
+    Cli,
+    /// OIDC federation: Cua's issuer signs a short-lived token for this
+    /// account's connection `conn_id`, and the cloud trusts it: to assume
+    /// `role_arn` (AWS), through the workload identity provider
+    /// `gcp_provider` (Google Cloud), or as the managed identity
+    /// `client_id` of tenant `tenant_id` (Azure). No cloud key is stored
+    /// anywhere.
+    Oidc {
+        /// The account connection on the issuer (`conn_...`).
+        conn_id: String,
+        /// AWS: the role the token assumes
+        /// (`arn:aws:iam::<acct>:role/cua-spaces`).
+        #[serde(default)]
+        role_arn: String,
+        /// Google Cloud: the workload identity provider's full resource
+        /// name, the token's audience
+        /// (`//iam.googleapis.com/projects/<number>/locations/global/workloadIdentityPools/cua/providers/cua`).
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        gcp_provider: String,
+        /// Google Cloud: a service account to act as (empty: the federated
+        /// identity calls Google directly).
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        service_account: String,
+        /// Azure: the Entra tenant id.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        tenant_id: String,
+        /// Azure: the client id of the `cua-spaces` managed identity.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        client_id: String,
+    },
+    /// An API token sealed to the account's devices (Hetzner, Modal; not
+    /// built yet).
+    Sealed {
+        /// The account connection on the issuer.
+        conn_id: String,
+    },
+}
+
+impl Auth {
+    /// AWS OIDC: tokens for `conn_id` assume `role_arn`.
+    pub fn aws(conn_id: impl Into<String>, role_arn: impl Into<String>) -> Auth {
+        Auth::Oidc {
+            conn_id: conn_id.into(),
+            role_arn: role_arn.into(),
+            gcp_provider: String::new(),
+            service_account: String::new(),
+            tenant_id: String::new(),
+            client_id: String::new(),
+        }
+    }
+
+    /// Google Cloud OIDC: tokens for `conn_id` are exchanged through the
+    /// workload identity provider `provider` (its full resource name), and
+    /// act as `service_account` when one is given.
+    pub fn gcp(
+        conn_id: impl Into<String>,
+        provider: impl Into<String>,
+        service_account: impl Into<String>,
+    ) -> Auth {
+        Auth::Oidc {
+            conn_id: conn_id.into(),
+            role_arn: String::new(),
+            gcp_provider: provider.into(),
+            service_account: service_account.into(),
+            tenant_id: String::new(),
+            client_id: String::new(),
+        }
+    }
+
+    /// Azure OIDC: tokens for `conn_id` sign in as the managed identity
+    /// `client_id` of tenant `tenant_id`.
+    pub fn azure(
+        conn_id: impl Into<String>,
+        tenant_id: impl Into<String>,
+        client_id: impl Into<String>,
+    ) -> Auth {
+        Auth::Oidc {
+            conn_id: conn_id.into(),
+            role_arn: String::new(),
+            gcp_provider: String::new(),
+            service_account: String::new(),
+            tenant_id: tenant_id.into(),
+            client_id: client_id.into(),
+        }
+    }
+
+    /// The wire word: `cli`, `oidc`, `sealed`.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Auth::Cli => "cli",
+            Auth::Oidc { .. } => "oidc",
+            Auth::Sealed { .. } => "sealed",
+        }
+    }
+
+    /// Whether it is the CLI sign-in (the default, not written to the file).
+    pub fn is_cli(&self) -> bool {
+        matches!(self, Auth::Cli)
+    }
+
+    /// The account connection id on the issuer (empty for CLI sign-in).
+    pub fn conn_id(&self) -> &str {
+        match self {
+            Auth::Cli => "",
+            Auth::Oidc { conn_id, .. } | Auth::Sealed { conn_id } => conn_id,
+        }
+    }
+}
+
+/// The largest machine a connection may create.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MaxSize {
+    /// vCPUs.
+    pub vcpu: u32,
+    /// Memory, GiB.
+    pub mem_gib: u32,
+}
+
+impl MaxSize {
+    /// Parses `4x16` (4 vCPUs, 16 GiB).
+    pub fn parse(s: &str) -> Option<MaxSize> {
+        let (c, m) = s
+            .trim()
+            .to_ascii_lowercase()
+            .split_once('x')
+            .map(|(a, b)| {
+                (
+                    a.trim().to_string(),
+                    b.trim()
+                        .trim_end_matches("gb")
+                        .trim_end_matches("gib")
+                        .to_string(),
+                )
+            })?;
+        let m = MaxSize {
+            vcpu: c.parse().ok()?,
+            mem_gib: m.parse().ok()?,
+        };
+        (m.vcpu > 0 && m.mem_gib > 0).then_some(m)
+    }
+
+    /// Whether a machine of `vcpus` and `memory_mb` fits.
+    pub fn fits(&self, vcpus: u32, memory_mb: u64) -> bool {
+        vcpus <= self.vcpu && memory_mb <= u64::from(self.mem_gib) * 1024
+    }
+}
+
+impl std::fmt::Display for MaxSize {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}x{}", self.vcpu, self.mem_gib)
+    }
+}
+
+/// Where Spaces go in one cloud account: names only, never a secret.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Connection {
     /// `aws`, `gcp`, `modal`.
     pub provider: String,
@@ -164,14 +326,15 @@ pub struct Connection {
     /// GCP zone.
     #[serde(default)]
     pub zone: String,
-    /// GCP project.
+    /// GCP project (its id; the project number when only that is known),
+    /// or Azure resource group.
     #[serde(default)]
     pub project: String,
     /// Modal environment.
     #[serde(default)]
     pub environment: String,
     /// The account the credentials reached at connect (AWS account id,
-    /// GCP project number, Modal workspace).
+    /// GCP project number, Azure subscription id, Modal workspace).
     #[serde(default)]
     pub account: String,
     /// Hours after which a Space deletes itself (0: never).
@@ -180,6 +343,18 @@ pub struct Connection {
     /// When it was connected (RFC 3339).
     #[serde(default)]
     pub connected_at: String,
+    /// How it reaches the cloud (absent: the CLI sign-in, as every
+    /// connection made before federation).
+    #[serde(default, skip_serializing_if = "Auth::is_cli")]
+    pub auth: Auth,
+    /// The most Cua may spend here per calendar month (UTC), US dollars.
+    /// New machines are refused once it is reached; stop and delete still
+    /// work.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_usd_month: Option<f64>,
+    /// The largest machine Cua may create here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_size: Option<MaxSize>,
 }
 
 fn default_ttl() -> u32 {
@@ -290,9 +465,15 @@ impl Resource {
                 rfc3339(self.expires)
             },
             expired: self.expired(now),
+            started_by: self.extra.get(STARTED_BY).cloned().unwrap_or_default(),
+            cost_usd: crate::limits::cost_so_far(self, now),
         }
     }
 }
+
+/// The [`Resource::extra`] key that says who started it: an agent's name,
+/// or `user`. Records made before it was kept have none.
+pub const STARTED_BY: &str = "started_by";
 
 /// What one Space asks a provider for.
 #[derive(Clone, Debug, Default)]

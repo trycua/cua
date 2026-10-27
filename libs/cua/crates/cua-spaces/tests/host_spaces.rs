@@ -218,6 +218,11 @@ async fn fixture(profile: HostProfile) -> Fixture {
     let driver = dir.path().join("cua-spacesd");
     std::fs::write(&driver, b"#!/bin/sh\n").unwrap();
     let mut opts = SetupOptions::relay(&relay.url).profile(profile);
+    if profile == HostProfile::Desktop {
+        // A desktop that does not provide Spaces (`--no-provide-spaces`;
+        // a new setup provides them by default).
+        opts.provide_spaces = Some(false);
+    }
     opts.name = Some("Mac mini (spare)".into());
     opts.driver_bin = Some(driver);
     Host::new(&home)
@@ -1096,7 +1101,7 @@ async fn the_host_turns_a_provided_space_off_and_on_and_it_rejoins_the_relay() {
     assert_eq!(
         off.message,
         format!(
-            "Stopped relay:space-ada00011 (its disk is kept) ({} on Mac mini (spare))",
+            "Stopped relay:space-ada00011 (its disk is kept; its memory is free) ({} on Mac mini (spare))",
             space.local_space
         )
     );
@@ -1190,7 +1195,10 @@ async fn a_local_space_suspends_and_resumes_and_others_refuse() {
         (off.space.as_str(), off.state.as_str(), off.power.as_str()),
         (id.as_str(), "suspended", "suspend")
     );
-    assert_eq!(off.message, format!("Suspended {id} (its memory is kept)."));
+    assert_eq!(
+        off.message,
+        format!("Suspended {id} (its memory is kept, and still in use).")
+    );
     assert!(f.rt.paused.lock().unwrap().contains(&name));
     assert_eq!(
         listed(&f.spaces),
@@ -1228,6 +1236,27 @@ async fn a_local_space_suspends_and_resumes_and_others_refuse() {
         f.spaces.power_of("direct:10.0.0.5:3211"),
         (String::new(), String::new())
     );
+
+    // Suspending on purpose keeps the memory, the same way.
+    let off = f.spaces.suspend(&id).await.unwrap();
+    assert_eq!(
+        (off.state.as_str(), off.power.as_str()),
+        ("suspended", "suspend")
+    );
+    assert!(f.rt.paused.lock().unwrap().contains(&name));
+    f.spaces.start(&id).await.unwrap();
+    // Only a Space on this computer suspends or resizes.
+    let e = f.spaces.suspend("direct:10.0.0.5:3211").await.unwrap_err();
+    assert_eq!(e.tag(), "wrong_provider", "{e}");
+    let e = f
+        .spaces
+        .resize("direct:10.0.0.5:3211", None, Some(4096), None)
+        .await
+        .unwrap_err();
+    assert_eq!(e.tag(), "wrong_provider", "{e}");
+    // A resize says what to change.
+    let e = f.spaces.resize(&id, None, None, None).await.unwrap_err();
+    assert!(e.to_string().contains("cpus, memory_mb or disk_gb"), "{e}");
 }
 
 /// Your other Mac must not vanish from "Run on" while its service is down
@@ -1247,6 +1276,10 @@ async fn an_offline_machine_set_up_for_spaces_is_listed_by_name() {
         let driver = dir.path().join(format!("{name}-cua-spacesd"));
         std::fs::write(&driver, b"#!/bin/sh\n").unwrap();
         let mut opts = SetupOptions::relay(&relay.url).profile(profile);
+        if profile == HostProfile::Desktop {
+            // Its desktop only (`--no-provide-spaces`).
+            opts.provide_spaces = Some(false);
+        }
         opts.name = Some(name.into());
         opts.driver_bin = Some(driver);
         Host::new(&home)
@@ -1282,13 +1315,20 @@ struct HostSvc(Arc<HostSpacesServer>, bool, bool);
 impl pb::host_spaces_service_server::HostSpacesService for HostSvc {
     async fn get_host_spaces(
         &self,
-        _req: tonic::Request<pb::GetHostSpacesRequest>,
+        req: tonic::Request<pb::GetHostSpacesRequest>,
     ) -> Result<tonic::Response<pb::GetHostSpacesResponse>, tonic::Status> {
         let mut r = self.0.get(&ada()).await;
         if self.1
             && let Ok(r) = &mut r
         {
             r.creating.clear();
+        }
+        // As the daemon answers (an old host does not know the field).
+        if req.get_ref().disk
+            && !self.1
+            && let Ok(r) = &mut r
+        {
+            self.0.with_disks(&mut r.spaces).await;
         }
         r.map(tonic::Response::new).map_err(|e| to_status(&e))
     }
@@ -2688,4 +2728,127 @@ async fn the_host_applies_the_requested_env() {
         started.env.get(cua_mesh::policy::ENV).map(String::as_str),
         Some("hijack")
     );
+}
+
+/// [`Fixture::register`] as the client does it: the new Space's relay
+/// machine names its host.
+async fn register_on(f: &Fixture, host: &str, id: &str) -> pb::AttachRelayRequest {
+    let reg = cua_host::RelayClient::new(&f.relay.url)
+        .unwrap()
+        .register(
+            "ada-token",
+            &cua_host::relay::RegisterRequest {
+                id: id.into(),
+                name: id.into(),
+                allow: vec![],
+                host: Some(host.into()),
+                meta: Default::default(),
+            },
+        )
+        .await
+        .unwrap();
+    pb::AttachRelayRequest {
+        relay_url: f.relay.url.clone(),
+        machine_token: reg.machine_token,
+        machine_id: id.into(),
+        relay_jwks_json: reg.jwks.to_string(),
+        owner: reg.machine.owner.id,
+        owner_email: reg.machine.owner.email.unwrap_or_default(),
+    }
+}
+
+/// Gives provided Space `local` (`local:<name>`) a disk this host can
+/// measure: a QEMU VM directory with `mib` MiB in it.
+fn give_disk(f: &Fixture, local: &str, mib: usize) {
+    let name = local.trim_start_matches("local:");
+    let mut fields = serde_json::Map::new();
+    fields.insert("runtime_type".into(), "qemu".into());
+    f.spaces.sandboxes().state().update(name, fields).unwrap();
+    let dir = cua_disk::Layout::new(&f.home).qemu().join(name);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("disk.qcow2"), vec![7u8; mib << 20]).unwrap();
+}
+
+/// Sizes on disk for Spaces on your other computers (CUA-2204): the host
+/// measures what each of its Spaces takes when asked
+/// (`GetHostSpacesRequest.disk`), and another device of the account puts
+/// it in its resources under its own id for the Space; nothing for a host
+/// that predates the question, or one that is offline.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn another_device_reads_what_its_spaces_take_on_their_host() {
+    use cua_spaces::resources::Measure;
+    let f = fixture(HostProfile::Spare).await;
+    let (host, other, _dir) = client_fixture(&f).await;
+    let attach = register_on(&f, &host, "space-ada00007").await;
+    let space = f.create(&ada(), "linux", attach).await.unwrap();
+    // Not asked: the host measures nothing.
+    let listed = f.server.get(&ada()).await.unwrap();
+    assert!(listed.spaces.iter().all(|s| s.disk.is_none()));
+    // Asked: a Space it can measure says what it takes.
+    give_disk(&f, &space.local_space, 6);
+    let mut spaces = listed.spaces.clone();
+    f.server.with_disks(&mut spaces).await;
+    let d = spaces[0].disk.expect("measured");
+    assert!(d.allocated >= 6 << 20, "{d:?}");
+    assert_eq!(d.bytes, Some(d.allocated));
+
+    let ask = Measure {
+        disk: true,
+        guests: false,
+    };
+    let listed = other.list_all().await.unwrap();
+    assert!(
+        listed
+            .iter()
+            .any(|s| s.id == "relay:space-ada00007" && s.host == host)
+    );
+    let r = other.resources_now(ask).await;
+    let mine = r
+        .spaces
+        .iter()
+        .find(|s| s.id == "relay:space-ada00007")
+        .expect("keyed by this device's id for it");
+    assert_eq!(mine.disk_on_host.unwrap().bytes, d.bytes);
+    // Only its disk is known; this computer's own totals leave it out.
+    assert!(mine.usage.is_none());
+    assert_eq!(r.this_mac.spaces_count, 0);
+    // Without `disk`, nobody is asked.
+    let quick = other
+        .resources_now(Measure {
+            disk: false,
+            guests: false,
+        })
+        .await;
+    assert!(quick.spaces.is_empty());
+
+    // The host goes offline: its Spaces get no size.
+    f.relay.set_online(&host, false, "1.0.0");
+    other.list_all().await.unwrap();
+    let r = other.resources_now(ask).await;
+    assert!(r.spaces.is_empty(), "{:?}", r.spaces);
+}
+
+/// A host that predates `GetHostSpacesRequest.disk` answers without sizes:
+/// its Spaces get none.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_host_that_predates_sizes_gives_none() {
+    use cua_spaces::resources::Measure;
+    let f = fixture(HostProfile::Spare).await;
+    let (host, other, _dir) = client_fixture_of(&f, true).await;
+    let attach = register_on(&f, &host, "space-ada00008").await;
+    let space = f.create(&ada(), "linux", attach).await.unwrap();
+    give_disk(&f, &space.local_space, 2);
+    let listed = other.list_all().await.unwrap();
+    assert!(
+        listed
+            .iter()
+            .any(|s| s.id == "relay:space-ada00008" && s.host == host)
+    );
+    let r = other
+        .resources_now(Measure {
+            disk: true,
+            guests: false,
+        })
+        .await;
+    assert!(r.spaces.is_empty(), "{:?}", r.spaces);
 }

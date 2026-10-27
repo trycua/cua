@@ -59,6 +59,21 @@ pub enum HostMode {
     },
 }
 
+/// The file under `<home>/host` that keeps this computer's registrations
+/// under other accounts than the signed-in one.
+const REGISTRATIONS_FILE: &str = "registrations.json";
+
+/// A relay registration of this computer under one account.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct StoredRegistration {
+    machine_id: String,
+    machine_token: String,
+}
+
+/// Account id -> the registration of this computer under it, for accounts
+/// that signed in here before and are not signed in now.
+type Registrations = std::collections::BTreeMap<String, StoredRegistration>;
+
 /// Options for [`Host::setup`].
 #[derive(Clone, Debug)]
 pub struct SetupOptions {
@@ -77,9 +92,13 @@ pub struct SetupOptions {
     /// [`crate::HostProfile`]).
     pub share_desktop: bool,
     /// Accept Space create, list and delete requests and run them on this
-    /// machine's runtimes (default off): from the owner's enrolled devices
-    /// in relay mode, from the env token holder in direct mode.
-    pub provide_spaces: bool,
+    /// machine's runtimes: from the owner's enrolled devices in relay mode,
+    /// from the env token holder in direct mode. `None` (the default) is
+    /// [`default_provide_spaces`]: on for a new relay setup, off for a new
+    /// direct one, and what the machine already has when it was set up
+    /// before (an earlier choice, or an earlier version's default, is never
+    /// changed by setting up again).
+    pub provide_spaces: Option<bool>,
     /// Provided Spaces at once (`None`: [`crate::provided::DEFAULT_MAX_SPACES`]).
     pub max_spaces: Option<u32>,
     /// The `cua` CLI the driver starts the host's cua daemon with when it
@@ -109,6 +128,12 @@ pub struct SetupOptions {
     /// (`kind = "machine"`), where they run with its GPU and drivers as
     /// they are. Never for a computer you also use; default off.
     pub dedicated: bool,
+    /// This device's relay session, when it is enrolled for the account
+    /// (relay mode). Registering with it is the proof the relay vouches
+    /// for ("an enrolled device's signature"), so the Mac the user just
+    /// signed in on is not listed as a new, unconfirmed computer. `None`
+    /// (not enrolled, or a pairing code) leaves the relay to flag it.
+    pub device_session: Option<String>,
 }
 
 /// A relay in static-token mode ([`SetupOptions::static_relay`]).
@@ -130,7 +155,7 @@ impl SetupOptions {
             driver_bin: None,
             runner: RunnerKind::Auto,
             share_desktop: true,
-            provide_spaces: false,
+            provide_spaces: None,
             max_spaces: None,
             cua_bin: None,
             allow_any_address: false,
@@ -138,6 +163,7 @@ impl SetupOptions {
             tailnet: false,
             download_first: false,
             dedicated: false,
+            device_session: None,
         }
     }
 
@@ -156,7 +182,7 @@ impl SetupOptions {
             driver_bin: None,
             runner: RunnerKind::Auto,
             share_desktop: true,
-            provide_spaces: false,
+            provide_spaces: None,
             max_spaces: None,
             cua_bin: None,
             allow_any_address: false,
@@ -164,7 +190,23 @@ impl SetupOptions {
             tailnet: false,
             download_first: false,
             dedicated: false,
+            device_session: None,
         }
+    }
+}
+
+/// Whether a setup that does not say provides Spaces
+/// ([`SetupOptions::provide_spaces`] `None`): a machine set up before keeps
+/// what it has (`existing`: its `config.json`, else its `host.json`, as
+/// read; one that could not be read counts as off), so neither an earlier
+/// choice nor an earlier version's default (off) ever flips. A new setup
+/// provides Spaces in relay mode, where the owner's devices reach it, and
+/// not in direct mode, where it is a plaintext listener to opt into.
+pub fn default_provide_spaces(mode: &HostMode, existing: Option<Result<bool>>) -> bool {
+    match existing {
+        Some(Ok(provide)) => provide,
+        Some(Err(_)) => false,
+        None => matches!(mode, HostMode::Relay { .. }),
     }
 }
 
@@ -466,10 +508,15 @@ pub fn local_network_hint(os: &str, provide_spaces: bool, driver: &Path) -> Opti
             "macOS Spaces on this Mac need Local Network access for {d}. When \
              macOS asks \"Allow {short} to find devices on local networks?\" on this Mac's \
              screen, click Allow; or turn on {short} in System Settings → Privacy & \
-             Security → Local Network. If the cua daemon was started from Terminal or over SSH, \
-             run `cua daemon stop` so the host service starts it at the next create (over SSH \
-             nothing can grant it). Without it, macOS Space creates fail with \"No route to \
-             host\"; Linux Spaces don't need it."
+             Security → Local Network. If the {cli} daemon was started from Terminal or over SSH, \
+             run `{cli} daemon stop` so the host service starts it at the next create. If nobody sits \
+             at this Mac (it is used over SSH), nothing can click Allow: run `sudo defaults write \
+             com.apple.network.local-network AllowedEthernetLocalNetworkAddresses -array \
+             192.168.64.0/24`, the same with `AllowedWiFiLocalNetworkAddresses`, then `sudo \
+             shutdown -r now` (every app on this Mac can then reach its virtual computers). \
+             Without it, macOS Space creates fail with \"No route to host\"; Linux Spaces don't \
+             need it.",
+            cli = crate::cli()
         ),
     })
 }
@@ -1228,11 +1275,11 @@ impl Host {
                 self.helper_app()
                     .map(|app| service::app_helper_launcher(&app))
                     .ok_or_else(|| {
-                        Error::Service(
+                        Error::Service(format!(
                             "the host service runs inside the Cua Spaces app, which is not \
-                             installed; install it, or run `cua host setup --runner launchd`"
-                                .into(),
-                        )
+                             installed; install it, or run `{} host setup --runner launchd`",
+                            crate::cli()
+                        ))
                     })?,
             ),
             _ => None,
@@ -1242,7 +1289,8 @@ impl Host {
             .clone()
             .filter(|n| !n.trim().is_empty())
             .unwrap_or_else(friendly_name);
-        if !opts.share_desktop && !opts.provide_spaces {
+        let provide_spaces = self.resolve_provide_spaces(&opts);
+        if !opts.share_desktop && !provide_spaces {
             return Err(Error::InvalidArgument(
                 "with neither the desktop nor Spaces there is nothing to share; turn on \
                  --desktop or --provide-spaces"
@@ -1265,7 +1313,7 @@ impl Host {
         // Hosting Spaces on the plaintext direct listener: never on a
         // public address without --allow-any-address.
         if let HostMode::Direct { listen } = &opts.mode
-            && opts.provide_spaces
+            && provide_spaces
             && let Some(warning) = crate::direct::check_listen(*listen, opts.allow_any_address)?
         {
             tracing::warn!("{warning}");
@@ -1283,7 +1331,7 @@ impl Host {
                 .unwrap_or_else(|| self.paths.driver_bin()),
             sharing: true,
             share_desktop: opts.share_desktop,
-            provide_spaces: opts.provide_spaces,
+            provide_spaces,
             mesh: mesh_env(),
             usd_per_hour: host_usd_per_hour(),
             ..Default::default()
@@ -1295,6 +1343,9 @@ impl Host {
         match &opts.mode {
             HostMode::Relay { url } => {
                 let relay = RelayClient::new(url)?;
+                let relay_with_device = relay
+                    .clone()
+                    .with_device_session(opts.device_session.clone());
                 *stage = SetupStage::Token;
                 let token = tokens.access_token().await?;
                 *stage = SetupStage::Register;
@@ -1303,7 +1354,7 @@ impl Host {
                 // machine token; the account session is used only for this
                 // call and never stored under the host directory.
                 let current = read_secret(&self.paths.machine_token()).ok();
-                let reg = relay
+                let reg = relay_with_device
                     .register_as_machine(
                         &token,
                         current.as_deref(),
@@ -1312,7 +1363,7 @@ impl Host {
                             name: name.clone(),
                             allow: opts.allow.clone(),
                             host: None,
-                            meta: host_meta(opts.provide_spaces),
+                            meta: host_meta(provide_spaces),
                         },
                     )
                     .await?;
@@ -1332,7 +1383,7 @@ impl Host {
                         trust_relay_allowlist: true,
                         sharing: true,
                         share_desktop: opts.share_desktop,
-                        provide_spaces: opts.provide_spaces,
+                        provide_spaces,
                         max_spaces: opts
                             .max_spaces
                             .unwrap_or(crate::provided::DEFAULT_MAX_SPACES),
@@ -1361,7 +1412,7 @@ impl Host {
                     d.allow_any_address = opts.allow_any_address;
                 }
                 policy.share_desktop = opts.share_desktop;
-                policy.provide_spaces = opts.provide_spaces;
+                policy.provide_spaces = provide_spaces;
                 policy.dedicated = opts.dedicated;
                 if let Some(m) = opts.max_spaces {
                     policy.max_spaces = m;
@@ -1427,6 +1478,31 @@ impl Host {
             },
         );
         self.status().await
+    }
+
+    /// Whether a setup with `opts` provides Spaces: what it says, else
+    /// [`default_provide_spaces`] for this machine (what it already has
+    /// when it was set up before; on for a new relay setup).
+    pub fn resolve_provide_spaces(&self, opts: &SetupOptions) -> bool {
+        if let Some(p) = opts.provide_spaces {
+            return p;
+        }
+        let existing = if self.paths.config().exists() {
+            Some(
+                self.config()
+                    .and_then(|c| c.ok_or_else(|| Error::NotFound("config.json".into())))
+                    .map(|c| c.provide_spaces),
+            )
+        } else if self.paths.policy().exists() {
+            Some(
+                self.policy()
+                    .and_then(|p| p.ok_or_else(|| Error::NotFound("host.json".into())))
+                    .map(|p| p.provide_spaces),
+            )
+        } else {
+            None
+        };
+        default_provide_spaces(&opts.mode, existing)
     }
 
     /// The policy of a host in direct mode listening on `listen`: the env
@@ -1529,18 +1605,22 @@ impl Host {
     /// changed.
     pub fn enable_shares(&self) -> Result<bool> {
         let config = self.config()?.ok_or_else(|| {
-            Error::NotFound(
-                "this machine is not on your cua.ai relay; set it up with `cua host setup`".into(),
-            )
+            Error::NotFound(format!(
+                "this machine is not on your cua.ai relay; set it up with `{} host setup`",
+                crate::cli()
+            ))
         })?;
         if config.mode != "relay" {
-            return Err(Error::InvalidArgument(
-                "this machine is not on your cua.ai relay (direct mode); links need the relay: `cua host setup`"
-                    .into(),
-            ));
+            return Err(Error::InvalidArgument(format!(
+                "this machine is not on your cua.ai relay (direct mode); links need the relay: `{} host setup`",
+                crate::cli()
+            )));
         }
         let mut policy = self.policy()?.ok_or_else(|| {
-            Error::NotFound("this machine has no host policy; run `cua host setup`".into())
+            Error::NotFound(format!(
+                "this machine has no host policy; run `{} host setup`",
+                crate::cli()
+            ))
         })?;
         let gateway = self.shares_gateway();
         if policy.shares && policy.shares_gateway.as_deref() == Some(gateway.as_str()) {
@@ -1814,7 +1894,10 @@ impl Host {
 
     fn require_config(&self) -> Result<HostConfig> {
         self.config()?.ok_or_else(|| {
-            Error::NotFound("this computer is not set up for access (run `cua host setup`)".into())
+            Error::NotFound(format!(
+                "this computer is not set up for access (run `{} host setup`)",
+                crate::cli()
+            ))
         })
     }
 
@@ -1853,11 +1936,11 @@ impl Host {
     pub async fn start_sharing(&self) -> Result<HostStatus> {
         let mut config = self.require_config()?;
         if !config.share_desktop && !config.provide_spaces {
-            return Err(Error::InvalidArgument(
+            return Err(Error::InvalidArgument(format!(
                 "there is nothing to share: turn on the desktop or Spaces first \
-                 (`cua host config --desktop on` or `--provide-spaces on`)"
-                    .into(),
-            ));
+                 (`{} host config --desktop on` or `--provide-spaces on`)",
+                crate::cli()
+            )));
         }
         match (&config.relay_url, &config.machine_id) {
             (Some(url), Some(id)) => {
@@ -1920,8 +2003,9 @@ impl Host {
     /// Undoes [`Host::pause_signed_out`] once the owner is signed in again:
     /// `account` is the signed-in account's id (or email). Another account
     /// is refused: it cannot use this registration, and sharing the old
-    /// account's machine under it would be wrong; remove the host setup and
-    /// set it up again for that account. Sharing comes back as the owner
+    /// account's machine under it would be wrong
+    /// ([`Host::resume_or_switch_account`] registers it again for that
+    /// account instead). Sharing comes back as the owner
     /// left it (stopped stays stopped, but online).
     pub async fn resume_signed_in(&self, account: &str) -> Result<HostStatus> {
         let mut config = self.require_config()?;
@@ -1933,8 +2017,8 @@ impl Host {
             && !owned_by(p, account)
         {
             return Err(Error::InvalidArgument(
-                "this computer is shared with another Cua account; remove the host setup \
-                 and set it up again to share it with this one"
+                "this computer was set up for another Cua account; sign in to that \
+                 account, or register this computer again for this one"
                     .into(),
             ));
         }
@@ -1942,11 +2026,28 @@ impl Host {
             p.sharing = config.sharing;
             write_json(&self.paths.policy(), &p)?;
         }
+        // Stopped stays stopped, but online: a registration made while the
+        // owner had stopped sharing starts as sharing on the relay, so the
+        // stop is sent again (it changes nothing when the relay has it).
+        if !config.sharing
+            && let (Some(url), Some(id)) = (&config.relay_url, &config.machine_id)
+            && let Ok(token) = read_secret(&self.paths.machine_token())
+        {
+            RelayClient::new(url)?.stop_sharing(&token, id).await?;
+        }
+        let manager = self.manager_for_config(&config);
+        if let Err(e) = manager
+            .install(&self.service_spec(&config))
+            .and_then(|()| manager.start())
+        {
+            // Still paused (and refusing clients), so the next sign-in
+            // check tries again instead of finding a sharing host that is
+            // not running.
+            self.set_policy_sharing(false)?;
+            return Err(e);
+        }
         config.paused_signed_out = false;
         write_json(&self.paths.config(), &config)?;
-        let manager = self.manager_for_config(&config);
-        manager.install(&self.service_spec(&config))?;
-        manager.start()?;
         let _ = crate::provided::audit(
             &self.paths.dir,
             "config",
@@ -1955,6 +2056,203 @@ impl Host {
             "relay sharing resumed: signed in",
         );
         self.status().await
+    }
+
+    /// [`Host::resume_signed_in`] that also follows a switch of account:
+    /// when `account` is not the machine's owner, this computer is
+    /// registered again for the signed-in account (behind `tokens`), so
+    /// signing in as someone else needs no manual remove and set up. The
+    /// relay still decides: it only accepts the registration of the account
+    /// that signed in. Direct mode is left alone.
+    pub async fn resume_or_switch_account(
+        &self,
+        account: &str,
+        tokens: &dyn AccountTokens,
+    ) -> Result<HostStatus> {
+        let config = self.require_config()?;
+        if config.mode == "relay"
+            && let Some(p) = self.policy()?
+            && !owned_by(&p, account)
+        {
+            return self.switch_account(tokens).await;
+        }
+        self.resume_signed_in(account).await
+    }
+
+    /// Registers this computer again for the account behind `tokens`, which
+    /// is not the one it was set up for. The old registration belongs to
+    /// the previous account (the relay refuses its id, and the machine's
+    /// mesh key was bound to it), so this computer registers under a machine
+    /// id of the new account and takes a new mesh key; its name, what it
+    /// shares and the Provide Spaces setting stay. The previous account's
+    /// allowlist is not carried over. While it still runs Spaces for the
+    /// previous account it stays paused instead (they are not handed to
+    /// another account). The registration it leaves is kept
+    /// (see [`Registrations`]) for when that account signs in again, so
+    /// switching back reuses it: no machines pile up on the relay, and what
+    /// is tied to the machine (its provided Spaces) stays with it.
+    async fn switch_account(&self, tokens: &dyn AccountTokens) -> Result<HostStatus> {
+        let mut config = self.require_config()?;
+        if config.relay_url.is_none() || self.policy()?.is_none() {
+            return Err(Error::InvalidArgument(
+                "this computer is not set up on a relay".into(),
+            ));
+        }
+        // Off the relay first, as when signing out: if the new registration
+        // fails, the previous account's access stays closed and the next
+        // reconcile tries again (paused, with another account signed in).
+        if !config.paused_signed_out {
+            self.pause_signed_out().await?;
+            config = self.require_config()?;
+        }
+        let (Some(url), Some(mut policy)) = (config.relay_url.clone(), self.policy()?) else {
+            return Err(Error::InvalidArgument(
+                "this computer is not set up on a relay".into(),
+            ));
+        };
+        // The Spaces it provides were made for the previous account's
+        // devices and are tied to its registration: they are not handed to
+        // another account. It stays paused until they are deleted (or that
+        // account signs in again).
+        let provided = crate::provided::load_provided(&self.paths.dir)?;
+        if !provided.is_empty() {
+            return Err(Error::InvalidArgument(format!(
+                "this computer still runs {} Space{} for the account that was signed in \
+                 before; delete {} (or sign in to that account again) to share this \
+                 computer with the account you are signed in to now",
+                provided.len(),
+                if provided.len() == 1 { "" } else { "s" },
+                if provided.len() == 1 { "it" } else { "them" },
+            )));
+        }
+        let relay = RelayClient::new(&url)?;
+        let token = tokens.access_token().await?;
+        let mut kept = self.registrations();
+        // The registration being left, kept for its account.
+        if !policy.owner.is_empty()
+            && let (Some(id), Ok(machine_token)) = (
+                config.machine_id.clone(),
+                read_secret(&self.paths.machine_token()),
+            )
+        {
+            kept.insert(
+                policy.owner.clone(),
+                StoredRegistration {
+                    machine_id: id,
+                    machine_token,
+                },
+            );
+        }
+        let request = |id: String| RegisterRequest {
+            id,
+            name: config.name.clone(),
+            allow: vec![],
+            host: None,
+            meta: host_meta(config.provide_spaces),
+        };
+        // This account's earlier registration of this computer, if any (the
+        // token says whose it is); else, or when the relay no longer takes
+        // it, a new machine id. Another account's id is never tried: if its
+        // record is gone from the relay it would register here and clash
+        // with the saved one.
+        let earlier: Vec<StoredRegistration> = crate::device::token_subject(&token)
+            .and_then(|sub| kept.get(&sub).cloned())
+            .into_iter()
+            .collect();
+        let mut reg = None;
+        for r in earlier {
+            match relay
+                .register_as_machine(&token, Some(&r.machine_token), &request(r.machine_id))
+                .await
+            {
+                Ok(r) => {
+                    reg = Some(r);
+                    break;
+                }
+                Err(
+                    Error::Unauthenticated(_)
+                    | Error::PermissionDenied(_)
+                    | Error::NotFound(_)
+                    | Error::Conflict(_),
+                ) => {}
+                Err(e) => return Err(e),
+            }
+        }
+        let reg = match reg {
+            Some(r) => r,
+            None => {
+                relay
+                    .register_as_machine(&token, None, &request(random_hex(16)))
+                    .await?
+            }
+        };
+        // The new registration is kept before anything else can fail, so a
+        // retry reuses it instead of making another machine.
+        kept.insert(
+            reg.machine.owner.id.clone(),
+            StoredRegistration {
+                machine_id: reg.machine.id.clone(),
+                machine_token: reg.machine_token.clone(),
+            },
+        );
+        self.save_registrations(&kept)?;
+        // The relay's sharing state follows this computer's own choice
+        // (a reused registration keeps whatever it had under its account;
+        // a new one starts as sharing). Before anything local changes, so a
+        // failure leaves this paused with the old owner and the next check
+        // tries it all again.
+        if config.sharing {
+            relay
+                .start_sharing(&reg.machine_token, &reg.machine.id)
+                .await?;
+        } else {
+            relay
+                .stop_sharing(&reg.machine_token, &reg.machine.id)
+                .await?;
+        }
+
+        write_secret(&self.paths.machine_id, &format!("{}\n", reg.machine.id))?;
+        write_secret(&self.paths.machine_token(), &reg.machine_token)?;
+        if reg.jwks.is_null() {
+            let _ = std::fs::remove_file(self.paths.relay_jwks());
+        } else {
+            write_json(&self.paths.relay_jwks(), &reg.jwks)?;
+        }
+        // The old machine's mesh key is bound to its machine id: a new
+        // machine takes a new one, which the service makes on its start.
+        let _ = std::fs::remove_file(self.paths.driver_data.join("mesh").join("identity.json"));
+        policy.owner = reg.machine.owner.id.clone();
+        policy.owner_email = reg.machine.owner.email.clone();
+        policy.allow = vec![];
+        policy.viewers = vec![];
+        // Still paused (not sharing) until the service is up.
+        policy.sharing = false;
+        write_json(&self.paths.policy(), &policy)?;
+        config.machine_id = Some(reg.machine.id.clone());
+        write_json(&self.paths.config(), &config)?;
+        // Committed: the active registration is not kept; the others are
+        // (until here it stays kept, so a crash or a failed write retries
+        // with it instead of making another machine).
+        kept.remove(&reg.machine.owner.id);
+        self.save_registrations(&kept)?;
+        // Registered for the new account and paused: resuming installs and
+        // starts the service with the new registration (and keeps a stopped
+        // host stopped on the relay), and is what a retry does if that fails.
+        self.resume_signed_in(&reg.machine.owner.id).await
+    }
+
+    /// The registrations of this computer under accounts that are not the
+    /// signed-in one (`<home>/host/registrations.json`, 0600).
+    fn registrations(&self) -> Registrations {
+        read_secret(&self.paths.dir.join(REGISTRATIONS_FILE))
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .unwrap_or_default()
+    }
+
+    fn save_registrations(&self, kept: &Registrations) -> Result<()> {
+        let text = serde_json::to_string(kept).map_err(|e| Error::Internal(e.to_string()))?;
+        write_secret(&self.paths.dir.join(REGISTRATIONS_FILE), &text)
     }
 
     /// Renames the machine and/or replaces its allowlist (relay mode; the
@@ -2088,8 +2386,11 @@ impl Host {
             MigrationPlan::Nothing(why) => Ok(ServiceMigration::new("not-needed", why, false)),
             MigrationPlan::KeepAfterFailure => Ok(ServiceMigration::new(
                 "kept",
-                "moving into the Cua Spaces app failed before with this version; the old host \
-                 service keeps running (`cua host migrate --force` tries again)",
+                format!(
+                    "moving into the Cua Spaces app failed before with this version; the old host \
+                     service keeps running (`{} host migrate --force` tries again)",
+                    crate::cli()
+                ),
                 false,
             )),
             MigrationPlan::RemoveLeftovers => {
@@ -2300,7 +2601,7 @@ impl Host {
         let provided = crate::provided::load_provided(&self.paths.dir)?;
         if !provided.is_empty() && !uninstalling {
             return Err(Error::InvalidArgument(format!(
-                "this computer still provides {} Space{} ({}); delete {} first (`cua spaces delete <local:name>`)",
+                "this computer still provides {} Space{} ({}); delete {} first (`{} spaces delete <local:name>`)",
                 provided.len(),
                 if provided.len() == 1 { "" } else { "s" },
                 provided
@@ -2309,6 +2610,7 @@ impl Host {
                     .collect::<Vec<_>>()
                     .join(", "),
                 if provided.len() == 1 { "it" } else { "them" },
+                crate::cli(),
             )));
         }
         let mut relay_error = None;
@@ -2338,6 +2640,18 @@ impl Host {
             && let Err(e) = RelayClient::new(url)?.delete(&token, id).await
         {
             note(e);
+        }
+        // Its registrations under other accounts go too: nothing of this
+        // computer stays listed anywhere.
+        if let Some(url) = &config.relay_url {
+            for r in self.registrations().values() {
+                if let Err(e) = RelayClient::new(url)?
+                    .delete(&r.machine_token, &r.machine_id)
+                    .await
+                {
+                    note(e);
+                }
+            }
         }
         self.manager_for_config(&config).uninstall()?;
         if config.runner == RunnerKind::AppHelper.as_str() {
@@ -2449,8 +2763,9 @@ fn missing_libraries_message(missing: &[String]) -> String {
         ""
     };
     format!(
-        "cua-spacesd cannot start: this machine lacks {}.{hint} Install them and run `cua host setup` again.",
-        missing.join(", ")
+        "cua-spacesd cannot start: this machine lacks {}.{hint} Install them and run `{} host setup` again.",
+        missing.join(", "),
+        crate::cli()
     )
 }
 

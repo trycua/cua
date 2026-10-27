@@ -7,7 +7,7 @@ use cua_sdk::CuaError;
 use serde_json::{Value, json};
 use std::io::Write;
 
-use crate::util::{self, line};
+use crate::util::{self, hint_line, line};
 
 /// The catalog file, as built into this binary.
 pub const CATALOG_JSON: &str = include_str!("../../../../images/sandbox-images.json");
@@ -63,12 +63,14 @@ fn row(image: &Value, all: &[Value]) -> Value {
     }
     v["browser_tools"] = json!(browser_tools(image));
     v["variants"] = Value::Array(variants);
+    // Commands to run, for this build's CLI (`cua-local` on Local).
+    let cli = crate::util::cli();
     let mut create = vec![];
     if image["local"].is_string() {
-        create.push(format!("cua sb create {r}"));
+        create.push(format!("{cli} sb create {r}"));
     }
     if browser_tools(image) {
-        create.push(format!("cua sb create {r} --browser"));
+        create.push(format!("{cli} sb create {r} --browser"));
     }
     v["create"] = json!(create);
     v
@@ -89,6 +91,7 @@ pub fn list(f: &Filter) -> Vec<Value> {
 fn provider_rows(
     providers: &[std::sync::Arc<cua_sandbox_core::external::ExternalProvider>],
 ) -> Vec<Value> {
+    let cli = crate::util::cli();
     let mut out = vec![];
     for p in providers {
         for i in &p.manifest.images {
@@ -107,7 +110,7 @@ fn provider_rows(
                 "browsers": [],
                 "browser_tools": false,
                 "variants": [],
-                "create": [format!("cua sb create {r} --runtime {}", p.name())],
+                "create": [format!("{cli} sb create {r} --runtime {}", p.name())],
             }));
         }
     }
@@ -226,7 +229,7 @@ pub fn print_list(f: &Filter, json: bool, out: &mut dyn Write) -> Result<i32, Cu
         ],
         &table,
     );
-    line(
+    hint_line(
         out,
         "\nWeb browsing: `cua sb create linux --browser` (Chromium, driven by the cua-driver browser tools).\nTiers: `cua sb create linux --tier slim` (full is the default; Linux also has --tier docker, a VM with dockerd; macOS --tier xcode).",
     );

@@ -297,6 +297,12 @@ pub struct StartSpec {
     /// by layer.
     #[serde(default)]
     pub pull_layers: Vec<(String, u64)>,
+    /// What pulling the image writes on this host, when the caller knows
+    /// it (the image catalog's download plus unpacked size for this
+    /// platform): a Lume base pull checks the disk for this instead of
+    /// [`crate::disk::LUME_PULL_ESTIMATE`].
+    #[serde(default)]
+    pub pull_bytes: Option<u64>,
     /// Start a warm-pool member: the instance boots to readiness with no
     /// identity of its own. Its Spaces token (`CUA_ENV_TOKEN` in `env`) is
     /// the member's *pool secret*, never shown to anyone; a claim
@@ -615,6 +621,7 @@ impl StartSpec {
             container_runtime: None,
             gpu: None,
             pull_layers: vec![],
+            pull_bytes: None,
             pool_member: false,
             mounts: Vec::new(),
             forkable: false,

@@ -310,7 +310,7 @@ Response for `SystemService.Metrics`.
 | `load_average_1m` | 4 | `double` | 1-minute load average (0 on Windows). |
 | `memory_total_bytes` | 5 | `uint64` | Total guest memory in bytes. |
 | `memory_used_bytes` | 6 | `uint64` | Used guest memory in bytes (excluding reclaimable cache). |
-| `disk_total_bytes` | 7 | `uint64` | Total bytes of the filesystem named by `disk_path`. |
+| `disk_total_bytes` | 7 | `uint64` | Total bytes of the filesystem named by `disk_path`; 0 when it has no size of its own (gVisor's root overlay reports "unlimited"), never a sentinel such as 2^63. |
 | `disk_used_bytes` | 8 | `uint64` | Used bytes of that filesystem. |
 | `managed_process_count` | 9 | `uint32` | Processes currently managed by `ProcessService`. |
 | `media_session_count` | 10 | `uint32` | Open media sessions. |

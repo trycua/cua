@@ -44,6 +44,8 @@ pub const HOMES_DIR: &str = "cua-volume/agents";
 pub const BRIDGE_DIR: &str = "bridge";
 /// The MCP server name of the host bridge.
 pub const BRIDGE_SERVER: &str = "cua";
+/// The variable a copied Codex ChatGPT sign-in (`auth.json`) travels as.
+pub const CODEX_AUTH_ENV: &str = "CODEX_AUTH_JSON";
 /// Largest events page read at once.
 pub const PAGE_BYTES: u64 = 512 * 1024;
 const RS: &str = "\x1e--cua--\x1e";
@@ -871,6 +873,18 @@ impl Agents {
         }
         // Secrets: the caller's env, plus MCP header values.
         let mut secrets: BTreeMap<String, String> = opts.env.clone();
+        // A ChatGPT sign-in copied from the person's Mac becomes the guest's
+        // own `~/.codex/auth.json` (0600) when it has none; it never reaches
+        // the agent's environment.
+        if let Some(auth) = secrets.remove(CODEX_AUTH_ENV)
+            && h.id == "openai-codex"
+            && !auth.trim().is_empty()
+        {
+            let file = format!("{}/.codex/auth.json", self.home.trim_end_matches('/'));
+            if self.read(&file, 0, 1).await?.is_none_or(|b| b.is_empty()) {
+                self.write(&file, auth.into_bytes(), 0o600).await?;
+            }
+        }
         let mut mcp: Vec<Value> = vec![];
         let mut servers = opts.mcp_servers.clone();
         if opts.sandbox_mcp.unwrap_or(h.sandbox_mcp)
@@ -1004,6 +1018,21 @@ impl Agents {
             0o600,
         )
         .await?;
+        if let Some(d) = &opts.durable {
+            // A journal restored from the Cua Volume goes in before the
+            // runner starts (its fence and plan read it at start).
+            let state_dir = d.state_dir.clone().unwrap_or_else(|| rdir.clone());
+            for (name, body) in &d.restore {
+                if !crate::durable::JOURNAL_FILES.contains(&name.as_str()) {
+                    return Err(Error::Invalid(format!(
+                        "{name} is not a journal file ({})",
+                        crate::durable::JOURNAL_FILES.join(", ")
+                    )));
+                }
+                self.write(&format!("{state_dir}/{name}"), body.clone(), 0o600)
+                    .await?;
+            }
+        }
         let runner_dir = self.runner_dir().await?;
         let script = Self::launch_script(
             &self.home,
@@ -1445,7 +1474,7 @@ mod tests {
                 "{e}"
             );
             assert!(
-                e.contains("Add an Anthropic API key in Cua Spaces → Settings → Agents"),
+                e.contains("Add an Anthropic API key in Cua Spaces → Settings → Connectors"),
                 "{e}"
             );
         }
@@ -1457,7 +1486,7 @@ mod tests {
             "{e}"
         );
         assert!(
-            e.contains("Add an OpenAI API key in Cua Spaces → Settings → Agents"),
+            e.contains("Add an OpenAI API key in Cua Spaces → Settings → Connectors"),
             "{e}"
         );
         // A key in the guest environment, or a sign-in file: allowed.

@@ -6,13 +6,13 @@
 # Cua Spaces app export dylib (libcua_spaces_ffi, which carries the cua SDK;
 # staged as libs/cua/swift/lib/libcua_sdk.dylib by
 # libs/spaces-app-swift/scripts/stage-library.sh), the app icon
-# (Support/AppIcon.icns, the blue Cua key on slate; scripts/dmg-art draws it)
+# (Support/AppIcon.icns, the terracotta koala keycap; scripts/dmg-art builds it)
 # and the menu bar template the Tauri app ships (apps/cua-spaces/src-tauri/
 # icons), plus the `cua` CLI next to the executable when one is built
 # (the app installs it onto PATH on first launch, like the Tauri app's
 # sidecar), Sparkle.framework (the updater, from the pinned SwiftPM
 # artifact, with its XPC services) in Contents/Frameworks and the
-# third-party notices (Settings, About, Acknowledgements), the host
+# third-party notices (THIRD_PARTY_NOTICES.md in Resources), the host
 # service (the pinned cua-spacesd from scripts/fetch-spacesd.sh, or
 # $CUA_SPACESD_BIN, in Contents/Helpers; the app's own executable runs it as
 # its login item, whose SMAppService plist is in
@@ -122,6 +122,11 @@ app="$out/$app_name.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$app/Contents/Frameworks"
 cp "$here/Support/Info.plist" "$app/Contents/Info.plist"
+# Crash reporting (CrashReporting.swift): the public DSN from the shared
+# config. An empty or missing dsn writes an empty key, which turns it off.
+crash_dsn="$(plutil -extract dsn raw -o - "$here/../../config/spaces-crash-reporting.json" 2>/dev/null || true)"
+/usr/libexec/PlistBuddy -c "Delete :CuaCrashDSN" "$app/Contents/Info.plist" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Add :CuaCrashDSN string $crash_dsn" "$app/Contents/Info.plist"
 if [ "$channel" = local ]; then
   # Another identity, no updater, staging, its own home, helper and URL
   # scheme. Nothing here may reach an installed Cua Spaces: see
@@ -156,6 +161,20 @@ fi
 # directory), so the app finds them through ModuleResources instead.
 for b in "$bin"/*.bundle; do [ -d "$b" ] && cp -R "$b" "$app/Contents/Resources/"; done
 cp "$here/Support/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
+# macOS 26 draws icons without their own background on a grey system plate. The
+# Icon Composer source (full-bleed background + key layer, dark/tinted/clear)
+# compiles to Assets.car, found through CFBundleIconName; AppIcon.icns above is
+# the fallback for macOS 15 and older.
+icon_tmp="$(mktemp -d)"
+if xcrun actool "$here/Support/AppIcon.icon" --compile "$icon_tmp" --platform macosx \
+  --minimum-deployment-target 14.0 --app-icon AppIcon --include-all-app-icons \
+  --output-partial-info-plist "$icon_tmp/partial.plist" >/dev/null 2>&1 && [ -s "$icon_tmp/Assets.car" ]; then
+  cp "$icon_tmp/Assets.car" "$app/Contents/Resources/Assets.car"
+else
+  echo "warning: actool (Xcode 26+) could not compile Support/AppIcon.icon; macOS 26 will show the icon on a grey plate" >&2
+  [ -z "${CI:-}" ] || exit 1
+fi
+rm -rf "$icon_tmp"
 cp "$icons/tray-template.png" "$app/Contents/Resources/tray-template.png"
 cp "$icons/tray-template@2x.png" "$app/Contents/Resources/tray-template@2x.png"
 cp "$here/THIRD_PARTY_NOTICES.md" "$app/Contents/Resources/THIRD_PARTY_NOTICES.md"

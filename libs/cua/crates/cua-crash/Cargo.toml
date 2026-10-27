@@ -1,0 +1,20 @@
+[package]
+name = "cua-crash"
+description = "Opt-in crash reporting for the Cua Spaces app's Rust core and daemon: the Sentry panic handler with a consent check and privacy scrubbing on every event."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+cua-telemetry.workspace = true
+# No default features: no reqwest or native-tls transport, no log, metrics or
+# contexts integrations, no release-health sessions. The transport is ureq 3
+# with rustls (ring), the stack cua-telemetry already links.
+sentry = { version = "0.49", default-features = false, features = ["ureq", "rustls", "backtrace", "panic", "debug-images"] }
+serde_json.workspace = true
+
+[dev-dependencies]

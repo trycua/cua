@@ -191,8 +191,18 @@ jobs:
             libxfixes-dev libxdamage-dev libudev-dev
       - name: Format
         run: cargo fmt --all --check
+      - uses: ./.github/actions/nextest
+      # One retry; a test that passes only on the retry is reported and gets a
+      # `flaky` issue (see .github/flaky/). Doctests are not run by nextest.
       - name: Test
-        run: cargo test --workspace --locked
+        run: >-
+          "$GITHUB_WORKSPACE/.github/scripts/flaky/flaky.sh" run --suite "spacesd-${{ matrix.os }}" --format junit
+          --results target/nextest/ci/junit.xml --
+          cargo nextest run --workspace --locked --config-file "$GITHUB_WORKSPACE/.github/flaky/nextest.toml" --profile ci
+        env:
+          DYLD_FALLBACK_LIBRARY_PATH: /usr/lib/swift
+      - name: Doctests
+        run: cargo test --workspace --doc --locked
         env:
           DYLD_FALLBACK_LIBRARY_PATH: /usr/lib/swift
       - name: Clippy
@@ -208,10 +218,18 @@ jobs:
           rustfmt --edition 2021 --check account_erase.rs hosted.rs meter.rs org_access.rs plan_source.rs team_api.rs team_sharing.rs teams.rs
       - name: Test (cua-relay hosted features)
         run: |
-          cargo test --locked -p cua-relay --features hosted
-          cargo test --locked -p cua-spacesd-server --features relay-hosted --test mesh_metering
+          "$GITHUB_WORKSPACE/.github/scripts/flaky/flaky.sh" run --suite "spacesd-hosted-${{ matrix.os }}" --format junit \
+            --results target/nextest/ci/junit.xml -- \
+            cargo nextest run --locked --config-file "$GITHUB_WORKSPACE/.github/flaky/nextest.toml" --profile ci -p cua-relay --features hosted
+          "$GITHUB_WORKSPACE/.github/scripts/flaky/flaky.sh" run --suite "spacesd-mesh-metering-${{ matrix.os }}" --format junit \
+            --results target/nextest/ci/junit.xml -- \
+            cargo nextest run --locked --config-file "$GITHUB_WORKSPACE/.github/flaky/nextest.toml" --profile ci -p cua-spacesd-server --features relay-hosted --test mesh_metering
         env:
           DYLD_FALLBACK_LIBRARY_PATH: /usr/lib/swift
+      - uses: ./.github/actions/flaky-upload
+        if: always()
+        with:
+          suite: spacesd-${{ matrix.os }}
       - name: Clippy (cua-relay hosted features)
         run: cargo clippy --locked -p cua-relay -p cua-spacesd-server --all-targets --features cua-relay/hosted,cua-spacesd-server/relay-hosted -- -D warnings
         env:

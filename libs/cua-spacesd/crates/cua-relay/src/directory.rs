@@ -83,6 +83,11 @@ pub struct MachineRecord {
     /// characters. Shown to everyone who can see the machine.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub meta: BTreeMap<String, String>,
+    /// Account ids of team members who left this team machine
+    /// (`POST /v1/machines/{id}/leave`): the listing no longer shows it to
+    /// them through the team. A direct share still shows it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hidden_for: Vec<String>,
 }
 
 fn yes() -> bool {
@@ -112,6 +117,27 @@ impl Role {
 }
 
 impl MachineRecord {
+    /// The `allow` and `viewers` entries that name `who` (its account id,
+    /// user id or email in any case), as written.
+    pub fn entries_of(&self, who: &Identity) -> Vec<String> {
+        let email = who.email.as_deref().unwrap_or("");
+        self.allow
+            .iter()
+            .chain(&self.viewers)
+            .filter(|a| {
+                *a == &who.account
+                    || *a == &who.user
+                    || (!email.is_empty() && a.eq_ignore_ascii_case(email))
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// Whether `account` left this machine as a team member.
+    pub fn hidden_from(&self, account: &str) -> bool {
+        self.hidden_for.iter().any(|a| a == account)
+    }
+
     /// The caller's role, if any.
     pub fn role_of(&self, who: &Identity) -> Option<Role> {
         if who.account == self.owner.id {
@@ -402,6 +428,7 @@ impl Directory {
                     host: None,
                     confirmed,
                     meta: BTreeMap::new(),
+                    hidden_for: Vec::new(),
                 }
             }
         };
@@ -452,6 +479,12 @@ impl Directory {
         let record = record.clone();
         self.commit(&mut records, id, Some(changed))?;
         Ok(record)
+    }
+
+    /// Holds the directory lock, as a slow write to disk would (tests).
+    #[cfg(test)]
+    pub(crate) fn hold_lock(&self) -> impl Sized + '_ {
+        self.records.lock().expect("directory")
     }
 
     /// The machine a machine token belongs to.
@@ -564,6 +597,19 @@ impl Directory {
         let updated = changed.clone();
         self.commit(&mut records, id, Some(changed))?;
         Ok(Some(updated))
+    }
+
+    /// Hides team machine `id` from `account`'s listing (it left it). A
+    /// repeat changes nothing.
+    pub fn hide_for(&self, id: &str, account: &str) -> Result<MachineRecord, DirectoryError> {
+        let mut records = self.records.lock().expect("directory");
+        let mut changed = records.get(id).cloned().ok_or(DirectoryError::NotFound)?;
+        if !changed.hidden_from(account) {
+            changed.hidden_for.push(account.to_owned());
+        }
+        let updated = changed.clone();
+        self.commit(&mut records, id, Some(changed))?;
+        Ok(updated)
     }
 
     /// Turns sharing on or off; `by` (`machine` or `owner`) is remembered

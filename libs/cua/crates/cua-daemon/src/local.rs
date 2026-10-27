@@ -1660,6 +1660,14 @@ impl VmmLocal {
             .as_ref()
             .map(|i| i.layers.clone())
             .unwrap_or_default();
+        // What a macOS base pull writes, from the image catalog (the same
+        // sizes the app's New Space checks), so a Mac without room for it
+        // is refused before the download instead of during it.
+        if p.backend == BackendKind::Lume
+            && let ImageSource::Oci { reference } = &s.image
+        {
+            s.pull_bytes = catalog_pull_bytes(reference, cua_vmm::Arch::host().oci());
+        }
         // `auto` (or empty) is the backend's own option.
         s.gpu = spec.gpu.as_deref().map(|g| match (g.trim(), p.backend) {
             ("" | "auto" | "on", BackendKind::Lume) => cua_vmm::gpu::PARAVIRTUAL.to_string(),
@@ -1987,18 +1995,9 @@ impl LocalRuntime for VmmLocal {
     }
 
     async fn resume(&self, name: &str) -> RuntimeResult<LocalInstance> {
-        let (kind, rt) = self.owner(name).await?;
-        // QEMU resumes a paused VM over QMP; a stopped one has no process
-        // to resume and no start spec to boot from.
-        if kind == BackendKind::Qemu && rt.status(name).await.map_err(rt_err)? == Status::Stopped {
-            return Err(RuntimeError::Unsupported {
-                backend: "qemu".into(),
-                op: format!(
-                    "starting {name} again: a QEMU VM resumes from suspend only, and this one \
-                     was stopped (its disk is kept; delete it and create a new one)"
-                ),
-            });
-        }
+        // A paused QEMU VM runs again over QMP; a stopped one boots again
+        // from its own disk (`QemuRuntime::resume`).
+        let (_, rt) = self.owner(name).await?;
         let inst = rt.resume(name).await.map_err(rt_err)?;
         Ok(LocalInstance {
             backend: runtime_label(&inst),
@@ -2019,19 +2018,22 @@ impl LocalRuntime for VmmLocal {
         })
     }
 
-    /// Containers pause in memory (`docker pause`) and QEMU VMs pause over
-    /// QMP; Lume has no pause, so a Lume VM stops and boots again. On the
+    /// Containers pause in memory (`docker pause`). VMs stop and boot again
+    /// from their disk: turning a VM off gives its memory back to the
+    /// machine (a paused QEMU VM would keep all of it; `Sandboxes::suspend`
+    /// still pauses one when asked), and Lume has no pause at all. On the
     /// built-in Linux runtime containers stop too, so its VM can stop once
     /// no Linux Space runs (a paused one would hold it up).
     fn power_control(&self, runtime_type: &str) -> Option<cua_sandbox_core::PowerControl> {
         use cua_sandbox_core::PowerControl;
         match runtime_type.trim().to_ascii_lowercase().as_str() {
-            // Neither has a pause: the VM stops and boots again.
-            "lume" | "containerization" => Some(PowerControl::Stop),
+            // The VM stops (its memory goes back to the machine) and boots
+            // again from its disk.
+            "lume" | "containerization" | "qemu" => Some(PowerControl::Stop),
             "gvisor" | "runsc" | "runc" | "container" | "docker" if managed::in_use() => {
                 Some(PowerControl::Stop)
             }
-            "gvisor" | "runsc" | "runc" | "container" | "docker" | "qemu-docker" | "qemu"
+            "gvisor" | "runsc" | "runc" | "container" | "docker" | "qemu-docker"
             | "firecracker" | "vz" => Some(PowerControl::Suspend),
             _ => None,
         }
@@ -2408,6 +2410,16 @@ impl VmmLocal {
 
 // ------------------------------------------------------------------ preflight
 
+/// What pulling `reference` writes on a host of `arch` (`arm64`, `amd64`):
+/// the image catalog's download plus unpacked size. `None` for an image the
+/// catalog does not list or has not measured.
+fn catalog_pull_bytes(reference: &str, arch: &str) -> Option<u64> {
+    let bare = reference.split('@').next().unwrap_or(reference);
+    let entry = cua_image::catalog::find(bare)?;
+    let p = entry.sizes.as_ref()?.platform(arch)?;
+    Some(p.download.saturating_add(p.unpacked))
+}
+
 /// Refuses a create the machine cannot run, in plain words (the first
 /// failed check of [`cua_vmm::preflight`]), before anything is pulled. The
 /// disk is left to the guards of the create itself, which know the image's
@@ -2420,15 +2432,30 @@ async fn preflight_refusal(os: cua_vmm::GuestOs, backend: BackendKind) -> Runtim
         Runs::Vm
     };
     let req = cua_vmm::preflight::request(cua_vmm::preflight::guest_of(os), runs, None);
-    let mut facts = cua_vmm::preflight::gather(&req).await;
+    let mut facts =
+        cua_vmm::preflight::gather_waiting(&req, cua_vmm::local_network::PROMPT_PATIENCE).await;
     facts.free_bytes = None;
-    match cua_create_failure::preflight::evaluate(&req, &facts)
+    match cua_vmm::preflight::evaluate(&req, &facts)
         .into_iter()
         .next()
     {
-        Some(issue) => Err(RuntimeError::Other(issue.message)),
+        Some(issue) => Err(RuntimeError::Other(refusal_text(issue))),
         None => Ok(()),
     }
+}
+
+/// The refusal's words: a Local Network refusal names the app macOS holds
+/// responsible for this daemon (what System Settings lists: "Cua Spaces
+/// Local" for the Local build), not the generic name.
+fn refusal_text(issue: cua_create_failure::preflight::Issue) -> String {
+    use cua_create_failure::preflight::{IssueKind, local_network_denied};
+    if issue.kind == IssueKind::LocalNetwork
+        && let Some(app) = cua_vmm::local_network::ResponsibleApp::of_this_process()
+        && app.bundle
+    {
+        return local_network_denied(&app.name);
+    }
+    issue.message
 }
 
 // ------------------------------------------------------------------ doctor
@@ -3044,6 +3071,23 @@ fn claim_delivers_token(backend: BackendKind) -> bool {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn a_macos_pull_is_sized_from_the_catalog() {
+        let gib = 1u64 << 30;
+        let mac = super::catalog_pull_bytes("ghcr.io/trycua/macos:26", "arm64").unwrap();
+        // About 24 GB download plus about 35 GB unpacked, not a 30 GB guess.
+        assert!(mac > 50 * gib, "{mac}");
+        // A pinned reference is the same image.
+        assert_eq!(
+            super::catalog_pull_bytes("ghcr.io/trycua/macos:26@sha256:00", "arm64"),
+            Some(mac)
+        );
+        assert_eq!(
+            super::catalog_pull_bytes("example.com/not/listed:1", "arm64"),
+            None
+        );
+    }
+
+    #[test]
     fn only_backends_whose_claim_delivers_the_token_skip_the_pool_secret() {
         assert!(claim_delivers_token(BackendKind::Firecracker));
         assert!(claim_delivers_token(BackendKind::Vz));
@@ -3215,6 +3259,23 @@ mod tests {
         assert!(local.fork_has_own_identity("runc"));
         // A QEMU fork gets its own through cua-spacesd (memory) or its seed.
         assert!(local.fork_has_own_identity("qemu"));
+    }
+
+    /// Turning a VM off frees its memory: QEMU and Lume VMs stop (their
+    /// disk is kept) and boot again; containers still pause.
+    #[test]
+    fn vms_stop_and_free_their_memory_containers_pause() {
+        use cua_sandbox_core::{LocalRuntime, PowerControl};
+        let local = VmmLocal::default();
+        assert_eq!(local.power_control("qemu"), Some(PowerControl::Stop));
+        assert_eq!(local.power_control("lume"), Some(PowerControl::Stop));
+        if !managed::in_use() {
+            assert_eq!(local.power_control("gvisor"), Some(PowerControl::Suspend));
+        }
+        assert_eq!(
+            local.power_control("firecracker"),
+            Some(PowerControl::Suspend)
+        );
     }
 
     /// A Mac's microVMs under cua-vz: found by their label, paused when

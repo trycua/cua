@@ -92,6 +92,7 @@ pub mod perception_tools;
 pub mod pip_hook;
 pub mod pointer_shape;
 pub mod policy;
+pub mod post_action_wait;
 pub mod protocol;
 pub mod recording;
 pub mod recording_loader;

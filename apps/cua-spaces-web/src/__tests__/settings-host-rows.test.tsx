@@ -7,7 +7,7 @@
 // rows are left out.
 
 import { createMemoryHistory, createRouter, RouterProvider } from "@tanstack/react-router";
-import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { BridgeProvider, type HostSettings } from "@/bridge";
 import type { DataAdapter } from "@/bridge/adapter";
@@ -41,7 +41,7 @@ async function mountSettings(own: HostSettings | null) {
       return op === "settings.get" && own ? { ...(out as object), hostSettings: { ...settings } } : out;
     }) as DataAdapter["call"],
   };
-  const router = createRouter({ routeTree, history: createMemoryHistory({ initialEntries: ["/settings"] }) });
+  const router = createRouter({ routeTree, history: createMemoryHistory({ initialEntries: ["/settings/advanced"] }) });
   render(
     <BridgeProvider adapter={adapter} core={await testCore()} storeOptions={{ tickMs: 5 }}>
       <TooltipProvider delay={500}>
@@ -57,36 +57,39 @@ async function mountSettings(own: HostSettings | null) {
 const row = (id: string) => document.querySelector<HTMLElement>(`[data-setting-row="${id}"]`);
 
 describe.skipIf(!wasmBuilt)("the host's own settings (real routes, wasm core)", () => {
-  it("lays out Runtimes, auto-connect and the Keyvault's auto-wipe, and picks their options", async () => {
+  it("lays out which software runs Spaces and auto-connect in Advanced, in plain words, and picks their options", async () => {
     const { chosen } = await mountSettings({ lumeSource: "system", linuxSource: "auto", autoConnect: true, keyvaultAutoWipe: false });
-    const runtimes = await waitFor(() => {
-      const s = document.querySelector<HTMLElement>('[data-settings-section="runtimes"]');
-      if (!s) throw new Error("no Runtimes");
-      return s;
+    const macos = await waitFor(() => {
+      const r = row("macos-runtime");
+      if (!r) throw new Error("no runtime row");
+      return r;
     });
-    expect(within(runtimes).getByText("Runtimes")).toBeTruthy();
-    const macos = row("macos-runtime")!;
-    expect(within(macos).getByText("macOS VMs")).toBeTruthy();
-    // The note under it is the core's.
-    expect(macos.textContent).toMatch(/Built-in is Cua’s signed Lume/);
-    expect(within(row("linux-runtime")!).getByText("Linux")).toBeTruthy();
-    expect(within(row("auto-connect")!).getByText("Connect to the desktop automatically")).toBeTruthy();
-    expect(within(row("keyvault-auto-wipe")!).getByText("Wipe access from Spaces automatically")).toBeTruthy();
-    // A host that doesn't report the site icons setting gets no switch for it.
-    expect(row("keyvault-site-icons")).toBeNull();
+    expect(within(macos).getByText("Mac computers")).toBeTruthy();
+    expect(macos.textContent).toContain("Already installed");
+    expect(document.body.textContent).toContain("Which software runs Spaces on this Mac");
+    expect(document.body.textContent).not.toMatch(/Lume|gVisor|Runtimes/);
+    expect(within(row("linux-runtime")!).getByText("Linux computers")).toBeTruthy();
+    expect(within(row("auto-connect")!).getByText("Open a Space\u2019s screen right away")).toBeTruthy();
+    // The Keyvault's switches live on the Keyvault page now.
+    expect(row("keyvault-auto-wipe")).toBeNull();
 
-    fireEvent.click(within(macos).getByText("Built-in"));
-    await waitFor(() => expect(chosen).toEqual([["macos-runtime", "builtin"]]));
     fireEvent.click(within(row("auto-connect")!).getByRole("switch"));
     await waitFor(() => expect(chosen).toContainEqual(["auto-connect", "off"]));
-    fireEvent.click(within(row("keyvault-auto-wipe")!).getByRole("switch"));
-    await waitFor(() => expect(chosen).toContainEqual(["keyvault-auto-wipe", "on"]));
+    const trigger = within(macos).getByRole("combobox");
+    trigger.focus();
+    fireEvent.keyDown(trigger, { key: "ArrowDown" });
+    const option = await screen.findByRole("option", { name: "Cua\u2019s own" });
+    fireEvent.pointerMove(option, { pointerType: "mouse" });
+    fireEvent.mouseMove(option);
+    fireEvent.keyDown(option, { key: "Enter" });
+    fireEvent.keyUp(option, { key: "Enter" });
+    await waitFor(() => expect(chosen).toContainEqual(["macos-runtime", "builtin"]));
   });
 
   it("leaves the rows out on a host without them", async () => {
     await mountSettings(null);
     await waitFor(() => expect(document.querySelector("[data-setting-row]")).toBeTruthy());
-    expect(document.querySelector('[data-settings-section="runtimes"]')).toBeNull();
+    expect(row("macos-runtime")).toBeNull();
     expect(row("auto-connect")).toBeNull();
     expect(row("keyvault-auto-wipe")).toBeNull();
   });

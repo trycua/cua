@@ -87,7 +87,7 @@ describe("visibleSpaces", () => {
 describe("machineName", () => {
   it("names the machine a Space runs on", () => {
     expect(machineName(MACHINES, SPACES[1]!)).toBe("Mac mini");
-    expect(machineName(MACHINES, { id: "x", provider: "cloud" })).toBe("Cua Cloud");
+    expect(machineName(MACHINES, { id: "x", provider: "direct" })).toBe("a computer added by address");
     expect(machineName(MACHINES, { id: "x", provider: "relay", hostName: "Linux box" })).toBe("Linux box");
     expect(machineName(MACHINES, { id: "x", provider: "relay" })).toBe("Unknown computer");
   });

@@ -1131,6 +1131,7 @@ dependencies = [
 name = "cua-agent-setup"
 version = "0.9.0"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "cua-home",
  "hex",
@@ -1312,6 +1313,7 @@ dependencies = [
  "cua-home",
  "flate2",
  "hex",
+ "httpdate",
  "libc",
  "rand 0.9.5",
  "reqwest 0.12.28",

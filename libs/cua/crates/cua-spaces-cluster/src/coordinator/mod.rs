@@ -84,6 +84,9 @@ pub struct Config {
     pub default_max_attempts: u32,
     /// How often the re-driver looks at the live sessions.
     pub session_tick: Duration,
+    /// Runs a durable Space's `.cua/setup` after each placement (the first
+    /// copy and every re-placement from scratch). `None`: no setup step.
+    pub space_setup: Option<durable::SetupHook>,
 }
 
 impl Config {
@@ -100,6 +103,7 @@ impl Config {
             dispatch_batch: 256,
             default_max_attempts: 5,
             session_tick: Duration::from_secs(2),
+            space_setup: None,
         }
     }
 }
@@ -480,6 +484,8 @@ pub struct Coordinator {
     max_job: std::sync::atomic::AtomicI64,
     /// One lock per durable Space name.
     durable_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    /// Durable Space setups running now: (name, generation).
+    setups: Mutex<std::collections::HashSet<(String, u32)>>,
     /// One lock per session name.
     session_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     /// Per session: (driver job, its output size, when it last grew).
@@ -575,6 +581,7 @@ impl Coordinator {
             snapshot_seq: std::sync::atomic::AtomicU64::new(seq),
             max_job: std::sync::atomic::AtomicI64::new(max_job),
             durable_locks: Mutex::default(),
+            setups: Mutex::default(),
             session_locks: Mutex::default(),
             session_watch: Mutex::default(),
             stop: CancellationToken::new(),

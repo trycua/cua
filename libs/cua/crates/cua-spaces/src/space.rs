@@ -570,6 +570,12 @@ pub struct SpaceInfo {
     pub id: String,
     /// Display name.
     pub name: String,
+    /// The name it was given with [`crate::Spaces::rename`], which apps
+    /// show in place of [`Self::name`]; empty when it keeps the one it was
+    /// created with. A relay machine is renamed on the relay, so its
+    /// `name` changes instead.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub display_name: String,
     /// `local`, `direct` or `relay`.
     pub provider: Provider,
     /// spacesd version at the last handshake.
@@ -681,6 +687,11 @@ pub struct SpaceInfo {
     /// one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub egress_enforced: Option<crate::egress::Enforcement>,
+    /// A Space that is a machine on the relay: who owns it and who else
+    /// has it, as this account sees it ([`crate::sharing`]). `None` for
+    /// other Spaces.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sharing: Option<crate::sharing::SpaceSharing>,
 }
 
 fn is_zero(n: &u64) -> bool {
@@ -688,11 +699,22 @@ fn is_zero(n: &u64) -> bool {
 }
 
 impl SpaceInfo {
+    /// The name people see: [`Self::display_name`] when it was renamed,
+    /// else [`Self::name`].
+    pub fn shown_name(&self) -> &str {
+        if self.display_name.is_empty() {
+            &self.name
+        } else {
+            &self.display_name
+        }
+    }
+
     pub(crate) fn from_record(record: &cua_proto::daemon::v1::Space) -> Result<Self> {
         let id = SpaceId::parse(&record.id)?;
         Ok(Self {
             id: record.id.clone(),
             name: record.name.clone(),
+            display_name: record.display_name.clone(),
             provider: id.provider(),
             spacesd_version: record.spacesd_version.clone(),
             features: record.features.clone(),
@@ -734,6 +756,7 @@ impl SpaceInfo {
                 .iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect(),
+            sharing: record.sharing.clone().map(Into::into),
         })
     }
 }
@@ -751,6 +774,21 @@ pub struct SpacePower {
     pub message: String,
 }
 
+/// What [`crate::Spaces::resize`] did: the shape the Space has now.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SpaceResize {
+    /// The Space.
+    pub space: String,
+    /// vCPUs.
+    pub cpus: Option<u32>,
+    /// Memory, MiB.
+    pub memory_mb: Option<u64>,
+    /// Disk, GiB (when it was grown).
+    pub disk_gb: Option<u32>,
+    /// What happened, for people.
+    pub message: String,
+}
+
 impl SpacePower {
     /// The report for `space`, now in `state`, turned off with `control`.
     pub fn new(
@@ -762,8 +800,12 @@ impl SpacePower {
         let message = match (state, control) {
             (PowerState::Running, PowerControl::Suspend) => format!("Resumed {space}."),
             (PowerState::Running, PowerControl::Stop) => format!("Started {space}."),
-            (PowerState::Suspended, _) => format!("Suspended {space} (its memory is kept)."),
-            (PowerState::Stopped, _) => format!("Stopped {space} (its disk is kept)."),
+            (PowerState::Suspended, _) => {
+                format!("Suspended {space} (its memory is kept, and still in use).")
+            }
+            (PowerState::Stopped, _) => {
+                format!("Stopped {space} (its disk is kept; its memory is free).")
+            }
         };
         Self {
             space: space.into(),

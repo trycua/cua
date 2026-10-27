@@ -13,6 +13,10 @@ use cua_mesh::{Error, Mesh, MeshConfig, Mode, NodeKind, Path, PublicKey, static_
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
 const READY: Duration = Duration::from_secs(10);
+/// Tests that restart the coordinator must not wait out the production
+/// reconnect pacing (a jittered 1s plus up to 10s of spread after a relay
+/// drop), which can exceed `READY` on a slow runner.
+const FAST_RECONNECT: u32 = 20;
 
 async fn node(
     coord: &FakeCoordinator,
@@ -46,6 +50,7 @@ async fn node_on_media_port(
     cfg.stun = vec![coord.stun.to_string()];
     cfg.relay_only = relay_only;
     cfg.media_udp_port = media_udp_port;
+    cfg.reconnect_speedup = FAST_RECONNECT;
     cfg.approved_path = Some(dir.join(format!("{name}-approved.json")));
     let m = Mesh::start(cfg).await.expect("start");
     m.wait_ready(READY).await.expect("ready");
@@ -456,6 +461,7 @@ async fn removed_peers_are_cut() {
     );
     cfg.approved_path = Some(dir.path().join("approved.json"));
     cfg.pair_verifier = Some(Arc::new(|_, _, _| true));
+    cfg.reconnect_speedup = FAST_RECONNECT;
     let machine = Mesh::start(cfg).await.unwrap();
     machine.wait_ready(READY).await.unwrap();
     serve_echo(&machine);
@@ -789,4 +795,60 @@ async fn a_forward_carries_bulk_traffic_to_a_local_port() {
         .unwrap();
     assert_eq!(counted.await.unwrap(), N);
     println!("256 MiB in {:?}", t.elapsed());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_node_the_relay_keeps_replacing_stops_retrying_and_says_why() {
+    let dir = tempfile::tempdir().unwrap();
+    let coord = FakeCoordinator::start(Mode::Account).await;
+    coord.close_after_welcome(Some((
+        cua_mesh::proto::CLOSE_REPLACED,
+        "replaced: another connection with the same node key took over",
+    )));
+    let mut cfg = MeshConfig::new(
+        coord.url.clone(),
+        NodeKind::Client,
+        Some(dir.path().join("c.json")),
+        static_auth(vec![]),
+    );
+    cfg.reconnect_speedup = 1000;
+    let client = Mesh::start(cfg).await.unwrap();
+    let t = std::time::Instant::now();
+    let reason = loop {
+        if let Some(r) = client.control_state().denied {
+            break r;
+        }
+        assert!(t.elapsed() < Duration::from_secs(20), "it never gave up");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    assert!(reason.contains("another copy of Spaces"), "{reason}");
+    // It stopped: no connect after the third.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(coord.welcomes(), 3);
+    let last = client.control_state().last_error.unwrap();
+    assert!(last.contains("4001") && last.contains("replaced"), "{last}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_node_dropped_for_other_reasons_keeps_reconnecting() {
+    let dir = tempfile::tempdir().unwrap();
+    let coord = FakeCoordinator::start(Mode::Account).await;
+    coord.close_after_welcome(Some((
+        cua_mesh::proto::CLOSE_RELAY_CHANGED,
+        "relay changed",
+    )));
+    let mut cfg = MeshConfig::new(
+        coord.url.clone(),
+        NodeKind::Client,
+        Some(dir.path().join("c.json")),
+        static_auth(vec![]),
+    );
+    cfg.reconnect_speedup = 1000;
+    let client = Mesh::start(cfg).await.unwrap();
+    let t = std::time::Instant::now();
+    while coord.welcomes() < 5 {
+        assert!(t.elapsed() < Duration::from_secs(20), "it stopped retrying");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(client.control_state().denied.is_none());
 }

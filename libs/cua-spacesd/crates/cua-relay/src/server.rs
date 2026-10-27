@@ -77,6 +77,12 @@ pub struct RelayConfig {
     pub machine_idle_timeout: Duration,
     /// Host-mode domain: `<id>.<domain>` routes to machine `<id>`.
     pub host_domain: Option<String>,
+    /// With a host domain, keep forwarding `/m/<id>/…` on the main origin
+    /// (for clients that build path-mode URLs), except that a browser
+    /// opening a path-mode share link is redirected to the share's own
+    /// origin (see [`legacy_share_redirect`]). Off: a host domain turns
+    /// path mode off (S6).
+    pub keep_path_mode: bool,
     /// Token for `/relay/v1/machines`.
     pub admin_token: Option<String>,
     /// Refuse client requests that carry no spacesd credential
@@ -172,6 +178,7 @@ impl Default for RelayConfig {
             max_streams_per_machine: crate::mux::MAX_STREAMS as u32,
             machine_idle_timeout: Duration::from_secs(90),
             host_domain: None,
+            keep_path_mode: false,
             admin_token: None,
             require_client_credentials: true,
             oidc: None,
@@ -375,6 +382,8 @@ pub struct Relay {
     pub(crate) storage: Arc<crate::storage::Storage>,
     /// Allowance metering.
     pub(crate) meter: Arc<Meter>,
+    /// Connection outcome counters (`cua_relay_connections_total`).
+    pub(crate) conns: Arc<crate::conn_metrics::ConnMetrics>,
     /// When this relay started (the reconnect grace counts from it).
     started: Instant,
     /// Share links: browser sign-in state and public-link rate limits.
@@ -511,6 +520,7 @@ impl Relay {
             pool,
             storage,
             meter,
+            conns: Arc::default(),
             started: Instant::now(),
             share: Arc::default(),
         };
@@ -561,6 +571,10 @@ impl Relay {
             .layer(axum::middleware::from_fn_with_state(
                 self.clone(),
                 share_hosts,
+            ))
+            .layer(axum::middleware::from_fn_with_state(
+                self.clone(),
+                count_connections,
             ))
             .with_state(self.clone())
     }
@@ -971,7 +985,11 @@ pub(crate) fn account_token(headers: &HeaderMap) -> Option<&str> {
 }
 
 pub(crate) fn text(status: StatusCode, message: impl Into<String>) -> Response {
-    (status, message.into()).into_response()
+    let mut response = (status, message.into()).into_response();
+    response
+        .extensions_mut()
+        .insert(crate::conn_metrics::RelayStatus(status));
+    response
 }
 
 /// gRPC status codes the relay produces itself.
@@ -1015,6 +1033,21 @@ fn refuse(
     code: GrpcCode,
     message: impl Into<String>,
 ) -> Response {
+    refuse_as(headers, status, code, message, None)
+}
+
+/// The `ErrorInfo.metadata["kind"]` of a refused thread grant
+/// ([`thread_grant`]): clients tell it from any other refusal by it.
+pub const THREAD_GRANT_REFUSED: &str = "thread_grant_refused";
+
+/// [`refuse`], typed with `kind` (`ErrorInfo.metadata["kind"]`) when given.
+fn refuse_as(
+    headers: &HeaderMap,
+    status: StatusCode,
+    code: GrpcCode,
+    message: impl Into<String>,
+    kind: Option<&str>,
+) -> Response {
     let message = message.into();
     let content_type = headers
         .get(header::CONTENT_TYPE)
@@ -1023,10 +1056,18 @@ fn refuse(
     let Some(content_type) = content_type else {
         return text(status, message);
     };
+    // gRPC callers see HTTP 200; connection metrics keep the relay's status.
+    let mark = |mut response: Response| {
+        response
+            .extensions_mut()
+            .insert(crate::conn_metrics::RelayStatus(status));
+        response
+    };
     let encoded = percent_encode_grpc(&message);
     let details = {
         use base64::Engine as _;
-        base64::engine::general_purpose::STANDARD_NO_PAD.encode(status_details(code, &message))
+        base64::engine::general_purpose::STANDARD_NO_PAD
+            .encode(status_details(code, &message, kind))
     };
     Response::builder()
         .status(StatusCode::OK)
@@ -1035,6 +1076,7 @@ fn refuse(
         .header("grpc-message", encoded)
         .header("grpc-status-details-bin", details)
         .body(Body::empty())
+        .map(mark)
         .unwrap_or_else(|_| text(status, message))
 }
 
@@ -1059,7 +1101,7 @@ fn put_bytes(out: &mut Vec<u8>, field: u64, bytes: &[u8]) {
 /// `google.rpc.Status{code, message, details: [Any(cua.env.v1.ErrorInfo)]}`,
 /// encoded by hand so the relay needs no protobuf toolchain. `ErrorInfo`
 /// reasons follow `cua.env.v1.ErrorReason`.
-fn status_details(code: GrpcCode, message: &str) -> Vec<u8> {
+fn status_details(code: GrpcCode, message: &str, kind: Option<&str>) -> Vec<u8> {
     let reason: u64 = match code {
         GrpcCode::Unauthenticated => 1,  // ERROR_REASON_UNAUTHENTICATED
         GrpcCode::PermissionDenied => 3, // ERROR_REASON_PERMISSION_DENIED
@@ -1073,6 +1115,13 @@ fn status_details(code: GrpcCode, message: &str) -> Vec<u8> {
         put_varint(&mut info, reason);
     }
     put_bytes(&mut info, 2, message.as_bytes());
+    if let Some(kind) = kind {
+        // `map<string, string> metadata = 4`: one {key, value} entry.
+        let mut entry = Vec::new();
+        put_bytes(&mut entry, 1, b"kind");
+        put_bytes(&mut entry, 2, kind.as_bytes());
+        put_bytes(&mut info, 4, &entry);
+    }
     let mut any = Vec::new();
     put_bytes(&mut any, 1, b"type.googleapis.com/cua.env.v1.ErrorInfo");
     put_bytes(&mut any, 2, &info);
@@ -1099,6 +1148,29 @@ fn percent_encode_grpc(message: &str) -> String {
 }
 
 async fn machine_connect(
+    state: State<Relay>,
+    headers: HeaderMap,
+    upgrade: Result<WebSocketUpgrade, axum::extract::ws::rejection::WebSocketUpgradeRejection>,
+) -> Response {
+    let mut response = match upgrade {
+        Ok(upgrade) => machine_connect_inner(state, headers, upgrade).await,
+        // Not a WebSocket handshake: refused before the relay looks at it.
+        Err(rejection) => {
+            let mut response = rejection.into_response();
+            let status = response.status();
+            response
+                .extensions_mut()
+                .insert(crate::conn_metrics::RelayStatus(status));
+            response
+        }
+    };
+    response
+        .extensions_mut()
+        .insert(crate::conn_metrics::Kind::Machine);
+    response
+}
+
+async fn machine_connect_inner(
     State(relay): State<Relay>,
     headers: HeaderMap,
     upgrade: WebSocketUpgrade,
@@ -1305,6 +1377,8 @@ async fn metrics(State(relay): State<Relay>) -> Response {
     let mut text = tokio::task::spawn_blocking(move || storage.metrics())
         .await
         .unwrap_or_default();
+    text.push_str(&relay.conns.render());
+    text.push_str(&relay.mesh.metrics());
     #[cfg(feature = "hosted")]
     {
         text.push_str(&relay.org.metrics());
@@ -1410,7 +1484,7 @@ fn route_ex(relay: &Relay, uri: &Uri, headers: &HeaderMap) -> Option<Routed> {
         )
     };
     if let Some(rest) = path.strip_prefix("/m/") {
-        if domain.is_some() {
+        if domain.is_some() && !relay.config.keep_path_mode {
             return None;
         }
         let (id, tail) = match rest.find('/') {
@@ -1456,6 +1530,43 @@ fn route_ex(relay: &Relay, uri: &Uri, headers: &HeaderMap) -> Option<Routed> {
     })
 }
 
+/// Where a browser that opened a path-mode share link
+/// (`<relay>/m/<id>/share/<key>/…`, `…/share/pub/<token>/…`) on a relay that
+/// now has a host domain and keeps path mode should go instead: the same
+/// path on the share's own origin, `<s|p><key>-<id prefix>.<domain>`.
+///
+/// Only requests without an account credential header are redirected (a
+/// browser never sends one; a tool that does keeps getting path mode), and
+/// only when the label is well formed, so anything else is routed as before.
+fn legacy_share_redirect(relay: &Relay, uri: &Uri, headers: &HeaderMap) -> Option<String> {
+    let domain = relay.config.host_domain.as_deref()?;
+    if !relay.config.keep_path_mode
+        || headers.contains_key(header::AUTHORIZATION)
+        || headers.contains_key("x-cua-env-authorization")
+    {
+        return None;
+    }
+    let rest = uri.path().strip_prefix("/m/")?;
+    let (id, tail) = rest.split_once('/')?;
+    let tail = format!("/{tail}");
+    let (kind, sid) = crate::share_web::share_of_path(&tail)?;
+    let (letter, base) = match kind {
+        crate::share_web::ShareKind::Public => ('p', format!("/share/pub/{sid}")),
+        crate::share_web::ShareKind::Private => ('s', format!("/share/{sid}")),
+    };
+    let id_prefix: String = id.chars().take(16).collect();
+    let label = format!("{letter}{sid}-{id_prefix}");
+    crate::share_web::parse_label(&label)?;
+    let path = tail.strip_prefix(&base)?;
+    let path = if path.is_empty() { "/" } else { path };
+    if !path.starts_with('/') {
+        return None;
+    }
+    let query = uri.query().map(|q| format!("?{q}")).unwrap_or_default();
+    let scheme = relay.share_scheme(headers);
+    Some(format!("{scheme}://{label}.{domain}{path}{query}"))
+}
+
 /// The address a request came from, for the public-share rate limit: the
 /// socket peer, or, when the peer is a configured trusted proxy, the client
 /// address it forwarded (see [`crate::proxies`]).
@@ -1473,6 +1584,19 @@ fn client_ip(trusted: &crate::proxies::TrustedProxies, request: &Request) -> Str
         .iter()
         .filter_map(|v| v.to_str().ok());
     trusted.client_ip(peer, xff).to_string()
+}
+
+/// Counts each connection route's outcome (see `conn_metrics`).
+async fn count_connections(
+    State(relay): State<Relay>,
+    request: Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let response = next.run(request).await;
+    if let Some((kind, outcome)) = crate::conn_metrics::classify(&response) {
+        relay.conns.record(kind, outcome);
+    }
+    response
 }
 
 /// Share origins never fall through to the relay's own routes: every path
@@ -1711,14 +1835,33 @@ async fn authorize_account_client(
                     _ => {}
                 }
             }
-            let Some((role, teams)) = relay.machine_role(&record, who) else {
-                shadow(false);
-                return Err(refuse(
-                    headers,
-                    StatusCode::FORBIDDEN,
-                    GrpcCode::PermissionDenied,
-                    "this computer is not shared with your account",
-                ));
+            // Not shared with them: a person a Space this computer provides
+            // is shared with reaches that Space's thread here, and nothing
+            // else ([`thread_grant`]).
+            let (role, teams, thread_space) = match relay.machine_role(&record, who) {
+                Some((role, teams)) => (role, teams, None),
+                None => match thread_grant(relay, id, forwarded, headers, who) {
+                    ThreadGrant::NotAsked => {
+                        shadow(false);
+                        return Err(refuse(
+                            headers,
+                            StatusCode::FORBIDDEN,
+                            GrpcCode::PermissionDenied,
+                            "this computer is not shared with your account",
+                        ));
+                    }
+                    ThreadGrant::Refused(message) => {
+                        shadow(false);
+                        return Err(refuse_as(
+                            headers,
+                            StatusCode::FORBIDDEN,
+                            GrpcCode::PermissionDenied,
+                            message,
+                            Some(THREAD_GRANT_REFUSED),
+                        ));
+                    }
+                    ThreadGrant::Granted { space, role, teams } => (role, teams, Some(space)),
+                },
             };
             match device_gate {
                 Ok(g) => {
@@ -1749,7 +1892,11 @@ async fn authorize_account_client(
                         shadow(false);
                     }
                     crate::device_api::record_access(relay, &g, who, &record, role);
-                    relay.grants.record(id, who, role, authorized_at);
+                    // A thread grant mints nothing on the machine that
+                    // outlives it (its calls are limited there).
+                    if thread_space.is_none() {
+                        relay.grants.record(id, who, role, authorized_at);
+                    }
                     gate = Some(g);
                 }
                 Err(message) => {
@@ -1770,12 +1917,21 @@ async fn authorize_account_client(
                 email: who.email.clone(),
                 name: who.name.clone(),
                 mid: id.to_owned(),
-                role: role.as_str().to_owned(),
+                // A thread grant's role is one no machine that predates it
+                // accepts (it refuses the call); its share role rides in
+                // `space_role`.
+                role: if thread_space.is_some() {
+                    assertion::THREAD_ROLE.to_owned()
+                } else {
+                    role.as_str().to_owned()
+                },
                 scope: "env".into(),
                 iat: now,
                 exp: now + assertion::MAX_ASSERTION_TTL_SECS,
                 jti: uuid::Uuid::new_v4().simple().to_string(),
                 teams: teams.clone(),
+                space_role: thread_space.as_ref().map(|_| role.as_str().to_owned()),
+                space: thread_space,
             };
             Some(relay.key.sign(&claims))
         }
@@ -1833,7 +1989,117 @@ async fn authorize_account_client(
     })
 }
 
-async fn proxy(State(relay): State<Relay>, mut request: Request) -> Response {
+/// Asks a machine for the thread of a Space it provides (its relay
+/// machine id; `relay:` optional), on behalf of a person that Space is
+/// shared with but the machine is not.
+pub const THREAD_SPACE_HEADER: &str = "x-cua-thread-space";
+
+/// What a thread grant reaches on the machine: the thread call and the
+/// capability probe a client makes first.
+pub const THREAD_GRANT_PATHS: &[&str] = &[
+    "/cua.env.v1.HostThreadService/CallThreadTool",
+    "/cua.env.v1.SystemService/GetCapabilities",
+    "/cua.env.v1.SystemService/Health",
+];
+
+/// [`thread_grant`]'s answer.
+enum ThreadGrant {
+    /// No [`THREAD_SPACE_HEADER`]: not a thread call.
+    NotAsked,
+    /// Asked, and refused, saying why.
+    Refused(String),
+    /// The person's role on the Space (`Viewer` or `Shared`; owning the
+    /// Space counts as `Shared`), and the teams it came through.
+    Granted {
+        space: String,
+        role: crate::directory::Role,
+        teams: Vec<String>,
+    },
+}
+
+/// A person machine `host` is not shared with may reach the thread of a
+/// Space it provides when that Space is shared with them: only
+/// [`THREAD_GRANT_PATHS`], only that Space (the machine and its daemon
+/// check both again), with the Space's role. Read from the directory on
+/// every call, so revoking the Space's share ends it at once.
+fn thread_grant(
+    relay: &Relay,
+    host: &str,
+    forwarded: &str,
+    headers: &HeaderMap,
+    who: &crate::oidc::Identity,
+) -> ThreadGrant {
+    let Some(asked) = headers
+        .get(THREAD_SPACE_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    else {
+        return ThreadGrant::NotAsked;
+    };
+    let space = asked.strip_prefix("relay:").unwrap_or(asked);
+    let path = forwarded.split('?').next().unwrap_or(forwarded);
+    if !THREAD_GRANT_PATHS.contains(&path) {
+        return ThreadGrant::Refused(format!(
+            "this computer is not shared with your account; relay:{space} being shared with \
+             you reaches only its thread here, not {path}"
+        ));
+    }
+    let not_shared = || {
+        ThreadGrant::Refused(format!(
+            "relay:{space} is not shared with your account, so its thread is not either"
+        ))
+    };
+    let Some(record) = relay.directory.get(space) else {
+        return not_shared();
+    };
+    if record.host.as_deref() != Some(host) {
+        return ThreadGrant::Refused(format!(
+            "relay:{space} is not a Space this computer provides"
+        ));
+    }
+    if !record.sharing {
+        return ThreadGrant::Refused(format!("relay:{space} stopped sharing"));
+    }
+    use crate::directory::Role;
+    match relay.machine_role(&record, who) {
+        Some((role, teams)) => ThreadGrant::Granted {
+            space: space.to_owned(),
+            role: if role == Role::Viewer {
+                Role::Viewer
+            } else {
+                Role::Shared
+            },
+            teams,
+        },
+        None => not_shared(),
+    }
+}
+
+async fn proxy(state: State<Relay>, request: Request) -> Response {
+    let mut response = proxy_inner(state, request).await;
+    response
+        .extensions_mut()
+        .insert(crate::conn_metrics::Kind::Client);
+    response
+}
+
+async fn proxy_inner(State(relay): State<Relay>, mut request: Request) -> Response {
+    if let Some(location) = legacy_share_redirect(&relay, request.uri(), request.headers()) {
+        let mut response = Response::new(axum::body::Body::empty());
+        *response.status_mut() = StatusCode::PERMANENT_REDIRECT;
+        if let Ok(v) = HeaderValue::from_str(&location) {
+            response.headers_mut().insert(header::LOCATION, v);
+        }
+        response.headers_mut().insert(
+            header::REFERRER_POLICY,
+            HeaderValue::from_static("no-referrer"),
+        );
+        response
+            .extensions_mut()
+            .insert(crate::conn_metrics::Uncounted);
+        return response;
+    }
     let Some(Routed {
         id,
         forwarded,
@@ -1845,12 +2111,17 @@ async fn proxy(State(relay): State<Relay>, mut request: Request) -> Response {
             Some(domain) => format!("use <computer-id>.{domain}/…"),
             None => "use /m/<computer-id>/…".to_owned(),
         };
-        return refuse(
+        // Not a computer route (stray paths, scanners): not a connection.
+        let mut response = refuse(
             request.headers(),
             StatusCode::NOT_FOUND,
             GrpcCode::NotFound,
             message,
         );
+        response
+            .extensions_mut()
+            .insert(crate::conn_metrics::Uncounted);
+        return response;
     };
     use crate::share_web::{Cookie, ShareKind};
     // The session endpoint of a private share origin: trades a login code
@@ -1860,7 +2131,11 @@ async fn proxy(State(relay): State<Relay>, mut request: Request) -> Response {
             && sh.kind == ShareKind::Private
             && request.uri().path() == crate::share_web::SESSION_PATH
         {
-            return crate::share_web::session(&relay, &request);
+            let mut response = crate::share_web::session(&relay, &request);
+            response
+                .extensions_mut()
+                .insert(crate::conn_metrics::Uncounted);
+            return response;
         }
     }
     // Only the relay mints assertions; device sessions are for the relay
@@ -1956,7 +2231,11 @@ async fn proxy(State(relay): State<Relay>, mut request: Request) -> Response {
                                 .map(|p| p.as_str())
                                 .unwrap_or("/")
                         );
-                        return relay.share_login_redirect(&original);
+                        let mut response = relay.share_login_redirect(&original);
+                        response
+                            .extensions_mut()
+                            .insert(crate::conn_metrics::Uncounted);
+                        return response;
                     }
                 }
             },
@@ -2011,12 +2290,16 @@ async fn proxy(State(relay): State<Relay>, mut request: Request) -> Response {
         None => relay.await_reconnect(&id).await,
     };
     let Some(machine) = machine else {
-        return refuse(
+        let mut response = refuse(
             request.headers(),
             StatusCode::BAD_GATEWAY,
             GrpcCode::Unavailable,
             format!("computer {id:?} is not connected"),
         );
+        response
+            .extensions_mut()
+            .insert(crate::conn_metrics::Offline);
+        return response;
     };
     if machine.active.fetch_add(1, Ordering::SeqCst) >= relay.config.max_streams_per_machine {
         machine.active.fetch_sub(1, Ordering::SeqCst);
@@ -2490,6 +2773,96 @@ mod tests {
             Some(("abc123".into(), "/files?sig=x".into(), String::new()))
         );
         assert_eq!(route(&relay(None), &"/files".parse().unwrap(), &host), None);
+    }
+
+    fn kept(domain: &str) -> Relay {
+        Relay::new(RelayConfig {
+            host_domain: Some(domain.into()),
+            keep_path_mode: true,
+            public_url: Some("https://relay.example".into()),
+            ..RelayConfig::default()
+        })
+    }
+
+    #[test]
+    fn keep_path_mode_forwards_both_modes() {
+        let r = kept("m.share.example");
+        let h = HeaderMap::new();
+        assert_eq!(
+            route(
+                &r,
+                &"/m/abc123/cua.env.v1.SystemService/Health".parse().unwrap(),
+                &h
+            ),
+            Some((
+                "abc123".into(),
+                "/cua.env.v1.SystemService/Health".into(),
+                "/m/abc123".into()
+            ))
+        );
+        let mut host = HeaderMap::new();
+        host.insert(header::HOST, "abc123.m.share.example".parse().unwrap());
+        assert_eq!(
+            route(&r, &"/files".parse().unwrap(), &host),
+            Some(("abc123".into(), "/files".into(), String::new()))
+        );
+        assert_eq!(
+            r.machine_url(&h, "abc123"),
+            "https://abc123.m.share.example"
+        );
+    }
+
+    #[test]
+    fn browsers_on_old_share_links_go_to_the_share_origin() {
+        const ID: &str = "0123456789abcdef0123456789abcdef";
+        let r = kept("m.share.example");
+        let h = HeaderMap::new();
+        let token = "a".repeat(40);
+        let go = |r: &Relay, path: &str, h: &HeaderMap| {
+            legacy_share_redirect(r, &path.parse().unwrap(), h)
+        };
+        assert_eq!(
+            go(&r, &format!("/m/{ID}/share/pub/{token}/app/x.js?v=1"), &h).as_deref(),
+            Some(
+                format!("https://p{token}-0123456789abcdef.m.share.example/app/x.js?v=1").as_str()
+            )
+        );
+        assert_eq!(
+            go(&r, &format!("/m/{ID}/share/pub/{token}"), &h).as_deref(),
+            Some(format!("https://p{token}-0123456789abcdef.m.share.example/").as_str())
+        );
+        assert_eq!(
+            go(&r, &format!("/m/{ID}/share/aaaa1111bbbb2222/"), &h).as_deref(),
+            Some("https://saaaa1111bbbb2222-0123456789abcdef.m.share.example/")
+        );
+        // A tool with an account token keeps path mode.
+        let mut bearer = HeaderMap::new();
+        bearer.insert(header::AUTHORIZATION, "Bearer t".parse().unwrap());
+        assert_eq!(
+            go(&r, &format!("/m/{ID}/share/aaaa1111bbbb2222/"), &bearer),
+            None
+        );
+        // Not a share, a malformed share id, a non-hex machine id: routed as before.
+        assert_eq!(go(&r, &format!("/m/{ID}/files"), &h), None);
+        assert_eq!(go(&r, &format!("/m/{ID}/share/nothex/"), &h), None);
+        assert_eq!(
+            go(&r, "/m/my-machine-name/share/aaaa1111bbbb2222/", &h),
+            None
+        );
+        // Without keep_path_mode (or without a host domain) nothing redirects.
+        let strict = relay(Some("m.share.example"));
+        assert_eq!(
+            go(&strict, &format!("/m/{ID}/share/aaaa1111bbbb2222/"), &h),
+            None
+        );
+        assert_eq!(
+            go(
+                &relay(None),
+                &format!("/m/{ID}/share/aaaa1111bbbb2222/"),
+                &h
+            ),
+            None
+        );
     }
 
     #[test]

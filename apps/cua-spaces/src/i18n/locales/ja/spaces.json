@@ -61,7 +61,6 @@
   "spaces.window_stream.no_windows": "{name}にはまだ開いているウィンドウがありません。",
   "spaces.window_stream.close_window": "ウィンドウを閉じる",
   "spaces.create.creating": "Space を作成中…",
-  "spaces.sidebar.section.cloud": "Cua Cloud",
   "spaces.sidebar.section.this_mac": "この Mac",
   "spaces.sidebar.section.connected": "接続済み",
   "spaces.sidebar.section.my_computers": "自分のコンピュータ",

@@ -16,12 +16,12 @@ impl From<cua_host::Error> for CuaError {
             E::Unauthenticated(_) => CuaError::Unauthenticated(m),
             E::PermissionDenied(_) => CuaError::PermissionDenied(m),
             E::NotFound(_) => CuaError::NotFound(m),
-            E::Relay(_) | E::Download(_) => CuaError::Http(m),
+            E::Relay(_) | E::Download(_) | E::Throttled { .. } => CuaError::Http(m),
             // The plain sentence, then where to upgrade, as the CLI says it;
             // the Python and TypeScript SDKs read both back as `PlanLimitError`.
             E::PlanLimit(_) => {
                 let url = cua_home::plan_limit::PlanLimit::parse(&m)
-                    .map(|l| l.upgrade_url(&cua_home::env::account_app_url()));
+                    .map(|l| l.upgrade_url_from(&cua_home::env::account_app_url(), "sdk_limit"));
                 CuaError::Http(match url {
                     Some(url) => format!("{m} Upgrade: {url}"),
                     None => m,
@@ -223,6 +223,18 @@ impl Relay {
     }
 }
 
+/// This device's session on the relay at `url`, when it is enrolled there
+/// (`None` otherwise: the relay then decides what it trusts).
+async fn own_device_session(url: &str) -> Option<String> {
+    let session = Arc::new(cua_auth::Session::from_env());
+    let store = session.store().clone();
+    let tokens = Arc::new(SessionTokens(session));
+    cua_host::DeviceAuth::new(url, tokens, Arc::new(store), cua_host::device_name())
+        .ok()?
+        .try_session()
+        .await
+}
+
 #[uniffi::export]
 impl Relay {
     /// A relay (`None` = the relay `cua` uses: `CUA_RELAY_URL`, else this
@@ -342,7 +354,8 @@ pub struct HostSetupOptions {
     #[uniffi(default = None)]
     pub share_desktop: Option<bool>,
     /// Create Spaces for your enrolled devices on this machine (relay
-    /// mode).
+    /// mode). `None`: on for a machine set up for the first time through
+    /// the relay; a machine set up before keeps its setting.
     #[uniffi(default = None)]
     pub provide_spaces: Option<bool>,
 }
@@ -658,7 +671,7 @@ pub(crate) fn setup_options(o: HostSetupOptions) -> Result<cua_host::SetupOption
         opts.share_desktop = d;
     }
     if let Some(p) = o.provide_spaces {
-        opts.provide_spaces = p;
+        opts.provide_spaces = Some(p);
     }
     Ok(opts)
 }
@@ -697,15 +710,31 @@ impl Host {
         let home = self.home.clone();
         let mode = options.mode.clone().unwrap_or_else(|| "relay".into());
         let opts = setup_options(options);
+        // What the setup asks for, as resolved before it writes anything (a
+        // machine set up before keeps whether it provides Spaces).
         let (desktop, provide) = opts
             .as_ref()
-            .map(|o| (o.share_desktop, o.provide_spaces))
+            .map(|o| {
+                (
+                    o.share_desktop,
+                    cua_host::Host::new(home.clone()).resolve_provide_spaces(o),
+                )
+            })
             .unwrap_or((true, false));
         let account_token = account_token.filter(|t| !t.trim().is_empty());
         let token_state = setup_token_state(&mode, account_token.as_deref());
         let (r, failed_stage, http_status) = match opts {
             Ok(opts) => {
                 let staged = run(async move {
+                    let mut opts = opts;
+                    // The Mac the user signed in on is enrolled by that
+                    // sign-in: registering with its session is the proof
+                    // the relay needs not to flag it as a new computer.
+                    if let (cua_host::HostMode::Relay { url }, Some(_)) =
+                        (&opts.mode, account_token.as_ref())
+                    {
+                        opts.device_session = own_device_session(url).await;
+                    }
                     let host = cua_host::Host::new(home);
                     let staged = match account_token {
                         Some(t) => host.setup_staged(opts, &cua_host::StaticToken(t)).await,
@@ -796,10 +825,15 @@ impl Host {
     pub async fn resume_signed_in(&self, account: String) -> Result<HostStatus> {
         let home = self.home.clone();
         run(async move {
-            Ok(cua_host::Host::new(home)
-                .resume_signed_in(&account)
-                .await?
-                .into())
+            // Another account is not refused here: the host registers again
+            // for it (same name and Provide Spaces setting), so a different
+            // sign-in needs no manual remove and set up.
+            let tokens = SessionTokens(Arc::new(cua_auth::Session::from_env()));
+            Ok(
+                Box::pin(cua_host::Host::new(home).resume_or_switch_account(&account, &tokens))
+                    .await?
+                    .into(),
+            )
         })
         .await
     }
@@ -1109,7 +1143,13 @@ impl Devices {
     /// also deletes its key.
     pub async fn revoke(&self, id: String) -> Result<RelayDevice> {
         let auth = self.auth.clone();
-        run(async move { Ok(auth.revoke(&id).await?.into()) }).await
+        run(async move {
+            let d = auth.revoke(&id).await?;
+            // The agents that computer connected to Spaces here stop at once.
+            super::auth::revoke_connected_agents(vec![id]).await;
+            Ok(d.into())
+        })
+        .await
     }
 
     /// Makes a one-time code (link, QR, install commands) that adds another
@@ -1427,21 +1467,28 @@ mod tests {
             }
         );
         assert_eq!(o.runner, cua_host::RunnerKind::Process);
-        assert!(o.share_desktop && !o.provide_spaces, "the desktop profile");
+        assert!(o.share_desktop, "the desktop profile");
+        assert_eq!(o.provide_spaces, None, "the default: on for a new setup");
         // A spare machine, and each setting on its own.
         let o = setup_options(HostSetupOptions {
             profile: Some("spare".into()),
             ..Default::default()
         })
         .unwrap();
-        assert!(!o.share_desktop && o.provide_spaces);
+        assert!(!o.share_desktop && o.provide_spaces == Some(true));
         let o = setup_options(HostSetupOptions {
             profile: Some("spare".into()),
             share_desktop: Some(true),
             ..Default::default()
         })
         .unwrap();
-        assert!(o.share_desktop && o.provide_spaces);
+        assert!(o.share_desktop && o.provide_spaces == Some(true));
+        let o = setup_options(HostSetupOptions {
+            provide_spaces: Some(false),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(o.provide_spaces, Some(false), "an explicit off stays off");
         assert!(
             setup_options(HostSetupOptions {
                 mode: Some("carrier-pigeon".into()),

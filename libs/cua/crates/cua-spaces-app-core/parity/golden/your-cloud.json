@@ -16,28 +16,30 @@
           "connect-cloud",
           "connect-by-address"
         ],
-        "kindsOff": [],
+        "kindsOff": [
+          "microvm | MicroVM |  | off"
+        ],
         "placement": "local",
         "placementError": null,
         "placements": [
-          "local | This Mac | Container on this Mac (gVisor when installed) | on *"
+          "local | This Mac | Linux, on this Mac | on *"
         ],
         "price": null,
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.9 GB–6.9 GB initially; grows with use"
+          "Disk: 2.9–6.9 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
           "System: Ubuntu 24.04",
           "Image: ghcr.io/trycua/linux:24.04",
-          "Runs on: This Mac",
+          "Runs on: Linux, on this Mac",
           "Kind: Container",
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Disk: 2.9 GB–6.9 GB initially; grows with use",
+          "Disk: 2.9–6.9 GB initially; grows with use",
           "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
@@ -61,28 +63,30 @@
           "connect-cloud",
           "connect-by-address"
         ],
-        "kindsOff": [],
+        "kindsOff": [
+          "microvm | MicroVM |  | off"
+        ],
         "placement": "local",
         "placementError": null,
         "placements": [
-          "local | This Mac | Container on this Mac (gVisor when installed) | on *"
+          "local | This Mac | Linux, on this Mac | on *"
         ],
         "price": null,
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.9 GB–6.9 GB initially; grows with use"
+          "Disk: 2.9–6.9 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
           "System: Ubuntu 24.04",
           "Image: ghcr.io/trycua/linux:24.04",
-          "Runs on: This Mac",
+          "Runs on: Linux, on this Mac",
           "Kind: Container",
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Disk: 2.9 GB–6.9 GB initially; grows with use",
+          "Disk: 2.9–6.9 GB initially; grows with use",
           "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
@@ -696,12 +700,13 @@
           "connect-by-address"
         ],
         "kindsOff": [
-          "vm | Virtual machine | VM Spaces need a nested-virtualization machine; not offered yet. Ask your agent to deploy the Ubuntu 24.04 VM image on AWS and add it with cua spaces add. | off"
+          "vm | Virtual machine | VM Spaces need a nested-virtualization machine; not offered yet. Ask your agent to deploy the Ubuntu 24.04 VM image on AWS and add it with cua spaces add. | off",
+          "microvm | MicroVM |  | off"
         ],
         "placement": "yours",
         "placementError": null,
         "placements": [
-          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "local | This Mac | Linux, on this Mac | on",
           "---",
           "aws | AWS · us-west-2 | t4g.medium, about $0.04/hour | on *"
         ],
@@ -737,12 +742,13 @@
         "cloud": "aws",
         "fields": [],
         "kindsOff": [
-          "vm | Virtual machine | VM Spaces need a nested-virtualization machine; not offered yet. Ask your agent to deploy the Ubuntu 24.04 VM image on AWS and add it with cua spaces add. | off"
+          "vm | Virtual machine | VM Spaces need a nested-virtualization machine; not offered yet. Ask your agent to deploy the Ubuntu 24.04 VM image on AWS and add it with cua spaces add. | off",
+          "microvm | MicroVM |  | off"
         ],
         "placement": "yours",
         "placementError": null,
         "placements": [
-          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "local | This Mac | Linux, on this Mac | on",
           "---",
           "aws | AWS · us-west-2 | t4g.medium, about $0.04/hour | on *"
         ],
@@ -781,12 +787,13 @@
           "open-when-ready"
         ],
         "kindsOff": [
-          "vm | Virtual machine | VM Spaces need a nested-virtualization machine; not offered yet. Ask your agent to deploy the Ubuntu 24.04 VM image on AWS and add it with cua spaces add. | off"
+          "vm | Virtual machine | VM Spaces need a nested-virtualization machine; not offered yet. Ask your agent to deploy the Ubuntu 24.04 VM image on AWS and add it with cua spaces add. | off",
+          "microvm | MicroVM |  | off"
         ],
         "placement": "yours",
         "placementError": null,
         "placements": [
-          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "local | This Mac | Linux, on this Mac | on",
           "---",
           "aws | AWS · us-west-2 | t4g.medium, about $0.04/hour | on *"
         ],
@@ -822,12 +829,13 @@
         "cloud": "aws",
         "fields": [],
         "kindsOff": [
-          "vm | Virtual machine | VM Spaces need a nested-virtualization machine; not offered yet. Ask your agent to deploy the Ubuntu 24.04 VM image on AWS and add it with cua spaces add. | off"
+          "vm | Virtual machine | VM Spaces need a nested-virtualization machine; not offered yet. Ask your agent to deploy the Ubuntu 24.04 VM image on AWS and add it with cua spaces add. | off",
+          "microvm | MicroVM |  | off"
         ],
         "placement": "yours",
         "placementError": null,
         "placements": [
-          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "local | This Mac | Linux, on this Mac | on",
           "---",
           "aws | AWS · us-west-2 | t4g.medium, about $0.04/hour | on *"
         ],
@@ -866,12 +874,13 @@
           "open-when-ready"
         ],
         "kindsOff": [
-          "vm | Virtual machine | VM Spaces need a nested-virtualization machine; not offered yet. Ask your agent to deploy the Ubuntu 24.04 VM image on AWS and add it with cua spaces add. | off"
+          "vm | Virtual machine | VM Spaces need a nested-virtualization machine; not offered yet. Ask your agent to deploy the Ubuntu 24.04 VM image on AWS and add it with cua spaces add. | off",
+          "microvm | MicroVM |  | off"
         ],
         "placement": "yours",
         "placementError": null,
         "placements": [
-          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "local | This Mac | Linux, on this Mac | on",
           "---",
           "aws | AWS · us-west-2 | t4g.medium, about $0.04/hour | on *",
           "modal | Modal · cua-byoc | 2 CPU, 4 GiB, about $0.10/hour | on"
@@ -911,12 +920,13 @@
           "open-when-ready"
         ],
         "kindsOff": [
-          "vm | Virtual machine | Modal does not run this image. Ask your agent to deploy the Ubuntu 24.04 VM image on Modal and add it with cua spaces add. | off"
+          "vm | Virtual machine | Modal does not run this image. Ask your agent to deploy the Ubuntu 24.04 VM image on Modal and add it with cua spaces add. | off",
+          "microvm | MicroVM |  | off"
         ],
         "placement": "yours",
         "placementError": null,
         "placements": [
-          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "local | This Mac | Linux, on this Mac | on",
           "---",
           "aws | AWS · us-west-2 | t4g.medium, about $0.04/hour | on",
           "modal | Modal · cua-byoc | 2 CPU, 4 GiB, about $0.10/hour | on *"
@@ -955,11 +965,13 @@
           "name",
           "open-when-ready"
         ],
-        "kindsOff": [],
+        "kindsOff": [
+          "microvm | MicroVM |  | off"
+        ],
         "placement": "local",
         "placementError": null,
         "placements": [
-          "local | This Mac | Container on this Mac (gVisor when installed) | on *",
+          "local | This Mac | Linux, on this Mac | on *",
           "---",
           "aws | AWS · us-west-2 | t4g.medium, about $0.04/hour | on",
           "modal | Modal · cua-byoc | 2 CPU, 4 GiB, about $0.10/hour | on"
@@ -968,18 +980,18 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.9 GB–6.9 GB initially; grows with use"
+          "Disk: 2.9–6.9 GB initially; grows with use"
         ],
         "step": 2,
         "summary": [
           "System: Ubuntu 24.04",
           "Image: ghcr.io/trycua/linux:24.04",
-          "Runs on: This Mac",
+          "Runs on: Linux, on this Mac",
           "Kind: Container",
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Disk: 2.9 GB–6.9 GB initially; grows with use",
+          "Disk: 2.9–6.9 GB initially; grows with use",
           "Name: space-000000002a",
           "When ready: Open the desktop"
         ],

@@ -69,6 +69,10 @@ export class FakeAgentsTools {
       case "routine_set_enabled":
       case "routine_remove":
         return {};
+      case "agent_start":
+        return { run_id: "run-2", agent: args.agent, space: args.space, process_tag: "cua-agent-run-2", cwd: "/home/cua/run-2", notes: [], hint: "" };
+      case "agent_message":
+        return { delivered: true, run_id: args.run_id, status: "running", phase: "working", reason: "" };
       case "agent_events":
         return { run_id: args.run_id, status: "idle", phase: "idle", events: [], cursor: args.cursor, caught_up: true };
       default:
@@ -155,6 +159,37 @@ export class FixtureAgentSetup implements AgentSetupRunning {
     return out;
   }
 
+  async connectionStatusJson(_refresh: boolean) {
+    const agents = this.current.map((a) => ({
+      id: a.id,
+      name: a.name,
+      installed: a.installed,
+      version: null,
+      previous_version: null,
+      signed_in: a.signIn === undefined ? "unknown" : a.signedIn ? "yes" : "no",
+      sign_in: a.signIn === undefined ? null : `${a.signIn} sign-in`,
+      mcp: a.mcpConfig === undefined ? "unsupported" : a.cuaConfigured ? "ok" : "missing",
+      mcp_config: a.mcpConfig ?? null,
+      signin_imported: false,
+      signin_import: a.signIn === undefined ? "unsupported" : "missing",
+      state: !a.installed ? "not_installed" : !a.cuaConfigured ? "not_connected" : a.signIn !== undefined && !a.signedIn ? "attention" : "connected",
+      problem: a.installed && a.cuaConfigured && a.signIn !== undefined && !a.signedIn ? { line: `Connected. No ${a.signIn} sign-in on This Mac yet.`, action: "sign_in" } : null,
+      checked_at_ms: 0,
+    }));
+    return JSON.stringify({ agents, checked_at_ms: 0 });
+  }
+
+  async connectJson(agents: string[], signIn: boolean, skills: boolean, mcp: boolean) {
+    await this.setUp(agents, skills, mcp);
+    this.calls.push(`connect:${agents.join(",")}:${signIn}`);
+    return JSON.stringify(agents.map((agent) => ({ agent, tools_ok: true, tools_line: null, sign_in: null })));
+  }
+
+  async disconnectJson(agents: string[], _signIn: boolean) {
+    await this.remove(agents);
+    return JSON.stringify({ outcomes: [], removed_sign_ins: [] });
+  }
+
   /** The sign-in finishes at once (no browser in a fixture). */
   async signIn(agent: string) {
     this.calls.push(`sign-in:${agent}`);
@@ -175,8 +210,9 @@ export class FixtureAgentSetup implements AgentSetupRunning {
 
 /** The methods test/agents.test.ts checks (their answers need a daemon's tools, which the shared bridge test has none of). */
 export const AGENT_METHODS = [
-  "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume", "agents.setup", "agents.configure", "agents.signIn", "agents.setupDriver",
+  "agents.list", "agents.runs", "agents.events", "agents.start", "agents.message", "agents.pause", "agents.resume", "agents.setup", "agents.configure", "agents.signIn", "agents.setupDriver",
   "agents.detail", "agents.readFile", "agents.restoreFile", "agents.addRoutine", "agents.setRoutine", "agents.removeRoutine",
   "agents.allowComputer", "agents.revokeComputer",
+  "agents.status", "agents.connect", "agents.disconnect",
   "agentKeys.list", "agentKeys.set", "agentKeys.remove",
 ];

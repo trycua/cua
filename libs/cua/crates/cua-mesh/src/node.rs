@@ -34,6 +34,11 @@ use crate::{Error, Result};
 /// move it.
 pub const MEDIA_UDP_PORT: u16 = 3212;
 
+/// How long a connection to a peer the map lists online may take.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
+/// ... and to one it lists offline (only a direct path could carry it).
+const OFFLINE_CONNECT_TIMEOUT: Duration = Duration::from_millis(1500);
+
 /// How a node is set up.
 #[derive(Clone)]
 pub struct MeshConfig {
@@ -64,6 +69,10 @@ pub struct MeshConfig {
     /// [`Mesh::serve_udp`] on the same number. Default
     /// [`MEDIA_UDP_PORT`].
     pub media_udp_port: u16,
+    /// Divides the wait before reconnecting to the coordinator (tests
+    /// only; leave at 1).
+    #[doc(hidden)]
+    pub reconnect_speedup: u32,
 }
 
 impl std::fmt::Debug for MeshConfig {
@@ -96,6 +105,7 @@ impl MeshConfig {
             stun: Vec::new(),
             relay_only: std::env::var("CUA_MESH_RELAY_ONLY").is_ok_and(|v| v == "1"),
             media_udp_port: MEDIA_UDP_PORT,
+            reconnect_speedup: 1,
         }
     }
 }
@@ -251,6 +261,9 @@ struct Inner {
     control: Arc<Control>,
     endpoint: quinn::Endpoint,
     conns: tokio::sync::Mutex<HashMap<PublicKey, quinn::Connection>>,
+    /// One connect at a time per peer (callers to the same peer share it);
+    /// peers never wait on each other's connects.
+    connecting: std::sync::Mutex<HashMap<PublicKey, Arc<tokio::sync::Mutex<()>>>>,
     incoming: tokio::sync::Mutex<mpsc::Receiver<IncomingStream>>,
     stun: Vec<String>,
     shutdown: coord::tokio_util_cancel::Token,
@@ -309,6 +322,7 @@ impl Mesh {
             control: control.clone(),
             endpoint: endpoint.clone(),
             conns: tokio::sync::Mutex::new(HashMap::new()),
+            connecting: std::sync::Mutex::new(HashMap::new()),
             incoming: tokio::sync::Mutex::new(in_rx),
             stun: cfg.stun.clone(),
             shutdown: shutdown.clone(),
@@ -329,6 +343,8 @@ impl Mesh {
                 pair_verifier: cfg.pair_verifier.clone(),
                 approved,
                 ephemeral: cfg.identity_path.is_none(),
+                reconnect_speedup: cfg.reconnect_speedup.max(1),
+                identity_path: cfg.identity_path.clone(),
             },
             control,
             engine.clone(),
@@ -419,6 +435,12 @@ impl Mesh {
         self.peers()
             .into_iter()
             .find(|p| p.kind == NodeKind::Machine && p.machine_id.as_deref() == Some(machine_id))
+    }
+
+    /// Bumped on every network map (a peer joined, left, or went online or
+    /// offline): a caller that shows peers' state reads it again.
+    pub fn subscribe_peers(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.inner.engine.subscribe_peers()
     }
 
     /// Waits up to `timeout` for machine `machine_id` to be in the map.
@@ -541,21 +563,70 @@ impl Mesh {
     }
 
     async fn connection(&self, peer: &PeerInfo) -> Result<quinn::Connection> {
-        let mut conns = self.inner.conns.lock().await;
-        if let Some(c) = conns.get(&peer.node_key)
-            && c.close_reason().is_none()
-        {
-            return Ok(c.clone());
+        if let Some(c) = self.live_connection(&peer.node_key).await {
+            return Ok(c);
+        }
+        // Per peer: a peer that does not answer holds up only its own
+        // callers, never connections to the others (an offline computer
+        // used to stall every other one for the whole connect timeout).
+        let gate = self
+            .inner
+            .connecting
+            .lock()
+            .expect("connecting")
+            .entry(peer.node_key)
+            .or_default()
+            .clone();
+        let _turn = gate.lock().await;
+        if let Some(c) = self.live_connection(&peer.node_key).await {
+            return Ok(c);
         }
         self.inner.engine.want(&peer.node_key);
+        // A peer the map lists offline gets a short try (a direct path may
+        // still carry it), not the full wait.
+        let within = if peer.online {
+            CONNECT_TIMEOUT
+        } else {
+            OFFLINE_CONNECT_TIMEOUT
+        };
         let c = tokio::time::timeout(
-            Duration::from_secs(20),
+            within,
             quic::connect(&self.inner.endpoint, peer.addr(), &peer.quic_pin),
         )
         .await
-        .map_err(|_| Error::Unreachable(format!("{} did not answer on the mesh", peer.name)))??;
-        conns.insert(peer.node_key, c.clone());
+        .map_err(|_| {
+            Error::Unreachable(if peer.online {
+                format!("{} did not answer on the mesh", peer.name)
+            } else {
+                format!("{} is offline", peer.name)
+            })
+        })??;
+        // Refused, or the peer left the map, while connecting: as if the
+        // connection had been open then (`denial_loop`, `prune_loop`).
+        if let Some(reason) = self.denied() {
+            c.close(3u32.into(), b"device refused");
+            return Err(Error::Refused(reason));
+        }
+        if self.inner.engine.peer(&peer.node_key).is_none() {
+            c.close(2u32.into(), b"peer removed");
+            return Err(Error::NotFound(format!("{} left the mesh", peer.name)));
+        }
+        self.inner
+            .conns
+            .lock()
+            .await
+            .insert(peer.node_key, c.clone());
         Ok(c)
+    }
+
+    async fn live_connection(&self, peer: &PublicKey) -> Option<quinn::Connection> {
+        self.inner
+            .conns
+            .lock()
+            .await
+            .get(peer)
+            .filter(|c| c.close_reason().is_none())
+            .cloned()
     }
 
     /// Why this node can no longer use the mesh, while it holds: its
@@ -957,6 +1028,11 @@ async fn prune_loop(inner: std::sync::Weak<Inner>, mut rx: tokio::sync::watch::R
             keep
         });
         drop(conns);
+        inner
+            .connecting
+            .lock()
+            .expect("connecting")
+            .retain(|k, _| current.contains(k));
         // Connections removed peers opened to us end too (a share revoked,
         // a device removed: cut at once, not at the idle timeout).
         inner.inbound.lock().expect("inbound").retain(|(k, c)| {

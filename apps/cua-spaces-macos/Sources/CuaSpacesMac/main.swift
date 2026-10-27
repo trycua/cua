@@ -24,6 +24,20 @@ if CommandLine.arguments.dropFirst().first == "--check-launch-only" {
 // build changes nothing here.
 TargetEnvironment.pinChannel()
 
+let launchArgs = Array(CommandLine.arguments.dropFirst()).filter { !$0.hasPrefix("-psn_") }
+
+// Crash reporting, as early as the switch can be read (it lives in the
+// channel's home, settled above) and before the Rust core or the daemon start:
+// it sets the CUA_CRASH_* variables they inherit. Off without a DSN or consent.
+// The host service sets only those variables for its cua-spacesd: the Swift
+// SDK would check the windowless helper in with LaunchServices as the app,
+// and opening Cua Spaces would then fail while the service runs.
+if HelperService.isServiceCommand(launchArgs) {
+    CrashReporting.prepareService()
+} else {
+    CrashReporting.start()
+}
+
 // The host service, run by this same executable so every permission is the
 // app's ("Cua Spaces"; ServiceLauncher.swift), before anything else:
 //  * `--service-helper run`: the service itself (the login item launchd
@@ -36,13 +50,18 @@ TargetEnvironment.pinChannel()
 //    SMAppService, which only this bundle's own code may register. cua-host's
 //    app-helper runner runs it (from the app's SDK and from the `cua` CLI);
 //    prints `{"status": ...}` (and `"error"`).
-let launchArgs = Array(CommandLine.arguments.dropFirst()).filter { !$0.hasPrefix("-psn_") }
 if launchArgs.first == "--service-helper" {
     if launchArgs.dropFirst().first == "run" { ServiceLauncher.serve() }
     exit(HelperService.run(Array(launchArgs.dropFirst())))
 }
 if launchArgs.first == "check-permissions" {
     ServiceLauncher.passthrough(launchArgs)
+}
+// A new process's Screen Recording and Accessibility answers, for
+// PermissionGuide to close its panel once access is granted.
+if launchArgs.first == "preflight-permissions" {
+    print(PermissionGuide.preflightReport())
+    exit(0)
 }
 
 // `CUA_ENV=staging`: this process and the daemon use the staging home (a
@@ -54,4 +73,10 @@ TargetEnvironment.pin()
 cuaSpacesRegister()
 // `CUA_SPACES_OFFSCREEN=1` (debug): an accessory app, for captures nobody sees.
 OffscreenRun.prepare()
+// The app runs with its window here: it asks for Screen Recording and
+// Accessibility itself (its first run and Settings, PermissionGuide), so the
+// host service no longer shows macOS's own prompts (ServiceLauncher).
+if let spec = HelperService.specPath(info: Bundle.main.infoDictionary, home: NSHomeDirectory()) {
+    PermissionGuide.noteAppAsks(specPath: spec)
+}
 CuaSpacesMacApp.main()

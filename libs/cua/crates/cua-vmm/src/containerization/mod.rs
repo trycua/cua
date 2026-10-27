@@ -332,6 +332,13 @@ impl ContainerizationRuntime {
             .unwrap_or_else(|| name.to_string())
     }
 
+    /// The directory holding Space `name`'s container under this backend's
+    /// application root (`<root>/data/containers/<id>`: its own root file
+    /// system and state; the image it came from is stored apart).
+    pub fn container_dir(&self, name: &str) -> PathBuf {
+        self.app_root().join("containers").join(self.id_of(name))
+    }
+
     /// The Space name container `id` goes by.
     fn name_of(&self, id: &str, aliases: &BTreeMap<String, String>) -> String {
         aliases

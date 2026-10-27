@@ -5,7 +5,7 @@
 
 use crate::{
     shell::{self, exit_code},
-    util::{self, internal, line},
+    util::{self, hint_line, internal, line},
 };
 use clap::{Args, Subcommand};
 use cua_sandbox_core::placement::{Kind, On, Runtime};
@@ -20,7 +20,7 @@ pub fn parse_on(s: &str) -> Result<On, String> {
     On::parse(s).map_err(|e| e.message)
 }
 
-/// `--kind`: `auto`, `container` or `vm`.
+/// `--kind`: `auto`, `container`, `vm` or `microvm`.
 pub fn parse_kind(s: &str) -> Result<Kind, String> {
     Kind::parse(s).map_err(|e| e.message)
 }
@@ -51,6 +51,11 @@ pub struct Narrow {
 }
 
 impl Narrow {
+    /// Whether a flag narrows the name (`--local`, or the ended `--cloud`).
+    pub fn is_narrowed(&self) -> bool {
+        self.local || self.cloud
+    }
+
     /// NAME, qualified when the flag narrows it.
     pub fn apply(self, name: &str) -> Result<String, CuaError> {
         if self.cloud {
@@ -277,7 +282,7 @@ pub struct LaunchArgs {
     /// Deprecated: use `--kind vm`.
     #[arg(long, hide = true, conflicts_with = "kind")]
     vm: bool,
-    /// What kind of computer: auto, container or vm.
+    /// What kind of computer: auto, container, vm or microvm.
     #[arg(long, value_parser = parse_kind)]
     kind: Option<Kind>,
     /// Which engine (see `sb create --runtime`).
@@ -350,7 +355,7 @@ impl LaunchArgs {
 #[derive(Subcommand, Debug)]
 pub enum SandboxCmd {
     /// Create a sandbox: `cua sb create IMAGE [--on local|direct:<addr>]
-    /// [--kind auto|container|vm] [--runtime auto|gvisor|runc|qemu|lume]`.
+    /// [--kind auto|container|vm|microvm] [--runtime auto|gvisor|runc|qemu|lume|firecracker|vz|containerization]`.
     #[command(after_help = "Examples:
   # A Linux desktop on this computer (a gVisor container)
   cua sb create linux --name dev
@@ -1727,12 +1732,15 @@ fn kept_message(i: &SandboxInfo) -> String {
 /// `--wait desktop`, `--browser`): deletes the sandbox unless `keep`, and returns `e`.
 async fn failed_after_create(sb: &Arc<cua_sdk::Sandbox>, keep: bool, e: CuaError) -> CuaError {
     if keep {
-        eprintln!("{}", kept_message(&sb.info()));
+        eprintln!("{}", util::hint(&kept_message(&sb.info())));
     } else if let Err(d) = sb.delete().await {
         eprintln!(
-            "warning: could not delete sandbox {} after the failure: {d} (delete it with `cua sb rm {} --force`)",
-            sb.id(),
-            sb.id()
+            "{}",
+            util::hint(&format!(
+                "warning: could not delete sandbox {} after the failure: {d} (delete it with `cua sb rm {} --force`)",
+                sb.id(),
+                sb.id()
+            ))
         );
     }
     e
@@ -1898,7 +1906,7 @@ async fn create(
         && let Some(n) = &requested_name
         && let Ok(info) = cua.sandboxes().get(n.clone()).await
     {
-        eprintln!("{}", kept_message(&info));
+        eprintln!("{}", util::hint(&kept_message(&info)));
     }
     let sb = created.map_err(|e| on_backend(e, &label))?;
     let i = sb.info();
@@ -2021,7 +2029,7 @@ async fn create(
             );
             if let Some(b) = &browser {
                 let br = &b["browser"];
-                line(
+                hint_line(
                     out,
                     format!(
                         "\nBrowser ready ({}): session {}, target_id {}, tab_id {}\n\
@@ -2746,7 +2754,12 @@ pub async fn run(
         }
         SandboxCmd::View(v) => return view(cua, v, json_global, out).await,
         SandboxCmd::Vnc(v) => {
-            eprintln!("warning: `cua sb vnc` is deprecated; use `cua sb view` (the HTML5 viewer).");
+            eprintln!(
+                "{}",
+                util::hint(
+                    "warning: `cua sb vnc` is deprecated; use `cua sb view` (the HTML5 viewer)."
+                )
+            );
             return view(cua, v, json_global, out).await;
         }
         SandboxCmd::StreamProbe { args, at } => {

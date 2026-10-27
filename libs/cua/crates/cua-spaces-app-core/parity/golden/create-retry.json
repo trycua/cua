@@ -34,7 +34,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Starting… 1%",
               "System: Linux",
@@ -76,7 +75,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Setting up Linux runtime… 2%",
               "System: Linux",
@@ -118,7 +116,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Retrying… 1%",
               "System: Linux",
@@ -160,7 +157,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Retrying… 5%",
               "System: Linux",
@@ -202,7 +198,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Retrying… 5%",
               "System: Linux",
@@ -244,7 +239,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Failed",
               "System: Linux",
@@ -302,7 +296,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Starting… 1%",
               "Image: ghcr.io/trycua/macos:26 [copy ghcr.io/trycua/macos:26 doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -345,7 +338,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Failed",
               "Image: ghcr.io/trycua/macos:26 [copy ghcr.io/trycua/macos:26 doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -403,7 +395,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Starting… 1%",
               "Image: ghcr.io/trycua/macos:26 [copy ghcr.io/trycua/macos:26 doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -446,7 +437,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Failed",
               "Image: ghcr.io/trycua/macos:26 [copy ghcr.io/trycua/macos:26 doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -505,7 +495,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Starting… 1%",
               "Image: ghcr.io/trycua/macos:26 [copy ghcr.io/trycua/macos:26 doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -548,7 +537,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Ready 100%",
               "Image: ghcr.io/trycua/macos:26 [copy ghcr.io/trycua/macos:26 doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -591,7 +579,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Starting… 1%",
               "Image: ghcr.io/trycua/macos:26 [copy ghcr.io/trycua/macos:26 doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -612,7 +599,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Ready 100%",
               "Image: ghcr.io/trycua/macos:26 [copy ghcr.io/trycua/macos:26 doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -658,7 +644,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Failed",
               "Image: ghcr.io/trycua/macos:26 [copy ghcr.io/trycua/macos:26 doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -679,7 +664,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Ready 100%",
               "Image: ghcr.io/trycua/macos:26 [copy ghcr.io/trycua/macos:26 doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -725,7 +709,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Failed",
               "Image: ghcr.io/trycua/macos:26 [copy ghcr.io/trycua/macos:26 doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -746,7 +729,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Ready 100%",
               "Image: ghcr.io/trycua/macos:26 [copy ghcr.io/trycua/macos:26 doc.on.doc Copy / checkmark Copied 1500ms]",

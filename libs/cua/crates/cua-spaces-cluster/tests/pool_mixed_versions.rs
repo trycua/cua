@@ -126,6 +126,7 @@ fn cfg() -> AgentConfig {
         discover_every: Duration::from_millis(200),
         coordinator: |d| cua_spaces_cluster::coordinator::Config::new(d),
         keys_grace: Duration::from_millis(500),
+        space_setup: None,
     }
 }
 

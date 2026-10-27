@@ -336,6 +336,7 @@ impl Telemetry {
                 // Off also stops linking; the next sign-in offers it again.
                 fsutil::remove(&dir.join(link::ACCOUNT_FILE))?;
                 fsutil::remove(&dir.join(link::LINKED_FILE))?;
+                fsutil::remove(&dir.join(link::CHECKED_FILE))?;
             }
         }
         Ok(path)
@@ -348,7 +349,7 @@ impl Telemetry {
         match self.state_dir() {
             Some(dir) => {
                 let mut removed = identity::reset(&dir)?;
-                for f in [link::ACCOUNT_FILE, link::LINKED_FILE] {
+                for f in [link::ACCOUNT_FILE, link::LINKED_FILE, link::CHECKED_FILE] {
                     let p = dir.join(f);
                     if p.exists() {
                         fsutil::remove(&p)?;
@@ -448,11 +449,43 @@ impl Telemetry {
         let was_linked = dir.join(link::LINKED_FILE).exists();
         fsutil::remove(&dir.join(link::ACCOUNT_FILE))?;
         fsutil::remove(&dir.join(link::LINKED_FILE))?;
+        fsutil::remove(&dir.join(link::CHECKED_FILE))?;
         if was_linked {
             *lock(&self.inner.identity) = None;
             identity::reset(&dir)?;
         }
         Ok(())
+    }
+
+    /// Whether a client that is already signed in should ask the Spaces API
+    /// for the account id again: usage data is on and nobody on this
+    /// machine asked within `max_age` ([`Telemetry::mark_account_checked`]).
+    /// A sign-in always asks; this covers the clients that were signed in
+    /// before the server offered linking.
+    pub fn account_check_due(&self, max_age: Duration) -> bool {
+        if !self.is_enabled() {
+            return false;
+        }
+        let Some(dir) = self.state_dir() else {
+            return false;
+        };
+        match std::fs::metadata(dir.join(link::CHECKED_FILE)).and_then(|m| m.modified()) {
+            Ok(at) => SystemTime::now()
+                .duration_since(at)
+                .is_ok_and(|age| age >= max_age),
+            Err(_) => true,
+        }
+    }
+
+    /// Records that this machine just asked for the account id (whatever
+    /// the answer). Nothing is written while usage data is off.
+    pub fn mark_account_checked(&self) {
+        if !self.is_enabled() {
+            return;
+        }
+        if let Some(dir) = self.state_dir() {
+            let _ = fsutil::write_replace(&dir.join(link::CHECKED_FILE), b"1\n");
+        }
     }
 
     /// Where linking stands on this machine.

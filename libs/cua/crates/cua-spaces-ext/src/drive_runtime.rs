@@ -254,6 +254,13 @@ impl SpacesDrive for Spaces {
             return;
         };
         ext.runtime.stop_watchers();
+        // This machine's mount first: it is quick, and a daemon that is
+        // ended before the Spaces' volumes are done (a stop that waits
+        // 30 s, then signals) must not leave it behind with no server, the
+        // macOS "Server connections interrupted" dialog.
+        if let Some(svc) = ext.runtime.service.get() {
+            Box::pin(svc.release_mount()).await;
+        }
         let all: Vec<Mounted> = std::mem::take(&mut *ext.runtime.volumes.lock().await)
             .into_values()
             .collect();
@@ -591,7 +598,21 @@ async fn volume_health(spaces: &Spaces, key: &str) -> cua_spaces::reattach::Heal
         .get(key)
         .map(|m| m.attachment.is_live());
     match live {
-        None | Some(false) => Health::Down,
+        None | Some(false) => {
+            if stopped_on_its_own(spaces, key).await {
+                // Its container stopped without a `stop` (out of memory, a
+                // crash): retrying every minute only fills the log. Starting
+                // it again connects it, and that mounts the volume afresh.
+                tracing::warn!(
+                    space = %key,
+                    "the Space stopped without being asked to; its Cua Volume is mounted again when it starts"
+                );
+                ext.runtime
+                    .note_unavailable(key, Some("the Space is not running".into()));
+                return Health::Gone;
+            }
+            Health::Down
+        }
         Some(true) => match spaces.space(key).await {
             // A restarted daemon answers `detached`: it knows nothing of the
             // socket this side still holds.
@@ -601,6 +622,28 @@ async fn volume_health(spaces: &Spaces, key: &str) -> cua_spaces::reattach::Heal
             },
             Err(_) => Health::Healthy,
         },
+    }
+}
+
+/// Whether a local Space's sandbox is definitely not running (stopped, or its
+/// container gone). An engine that cannot answer counts as running, so the
+/// supervisor keeps retrying as before.
+async fn stopped_on_its_own(spaces: &Spaces, key: &str) -> bool {
+    let Some(name) = key.strip_prefix("local:") else {
+        return false;
+    };
+    match spaces.sandboxes().get(name).await {
+        Ok(info) => is_down(&info.status),
+        Err(_) => false,
+    }
+}
+
+fn is_down(status: &cua_sandbox_core::Status) -> bool {
+    use cua_sandbox_core::Status;
+    match status {
+        Status::Stopped => true,
+        Status::Unknown(word) => word == cua_sandbox_core::MISSING,
+        _ => false,
     }
 }
 
@@ -657,5 +700,21 @@ mod not_up_yet_tests {
         assert!(!not_up_yet(true, false));
         // An image that never ran cua-spacesd.
         assert!(!not_up_yet(false, false));
+    }
+}
+
+#[cfg(test)]
+mod volume_gone_tests {
+    use super::is_down;
+    use cua_sandbox_core::{MISSING, Status};
+
+    #[test]
+    fn only_a_stopped_or_missing_sandbox_ends_the_volume_watch() {
+        assert!(is_down(&Status::Stopped));
+        assert!(is_down(&Status::Unknown(MISSING.into())));
+        assert!(!is_down(&Status::Running));
+        assert!(!is_down(&Status::Suspended));
+        assert!(!is_down(&Status::Provisioning));
+        assert!(!is_down(&Status::Unknown("restarting".into())));
     }
 }

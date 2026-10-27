@@ -12,7 +12,7 @@ every event before or after it is sent, and turn it off with one switch.
 
 ## Turn it off
 
-Any of these turns usage telemetry off for every Cua program on the machine
+Any of these turns usage telemetry, and the Spaces app's crash reports, off for every Cua program on the machine
 (SDK in any language, `cua` CLI, `cua daemon`, the Spaces app, and Cua Driver):
 
 | Switch | Scope |
@@ -54,7 +54,9 @@ where people get stuck. We see which steps you reached, not what you did.
 - **A random account ID.** The Cua service gives a signed-in app or CLI an ID
   like `acct_3f9c...`, a one-way code made from your account. It is never your
   email, name or sign-in id. One PostHog `$identify` joins this install's
-  earlier events to it.
+  earlier events to it. The Spaces app asks for it when you sign in and
+  each time it starts; the CLI and the SDKs when you sign in, and at most
+  every few hours while you stay signed in.
 - **You see it first.** Nothing is linked before the notice has been shown on
   this machine. Installs that saw the older "anonymous" wording get a one-time
   notice with "Turn off usage data" right there.
@@ -62,7 +64,10 @@ where people get stuck. We see which steps you reached, not what you did.
   reset-id` unlink this machine. `cua telemetry status` shows whether it's linked.
 
 Our service also records sign-ups, checkouts and subscription changes under
-the same ID. Those are records of our service, so the switch doesn't change them.
+the same ID, and the hosted relay records your hourly relay usage (sessions and
+hours against your plan, and `relay_plan_limit_refused` when it turns down a new
+session over a plan limit). Those are records of our service, so the switch
+doesn't change them.
 
 ## How it works
 
@@ -88,6 +93,16 @@ the same ID. Those are records of our service, so the switch doesn't change them
 A fixed set of events with closed-vocabulary properties. The full list, each
 property and why it is collected: [Telemetry events](/cua-sdk/concepts/telemetry-events).
 
+The Cua Spaces app also sends **crash and error reports**, when it crashes or
+hits an unexpected error. They go to Sentry, not PostHog, and the same switch
+controls them. A report holds the app version and channel, the operating
+system and CPU type, which part of the app failed, and the call stack (names
+of Cua's own functions, never your files). It never holds the error message,
+screen content, screenshots or your Space names. The app also counts one
+anonymous session per launch, so we can tell what share of launches end in a
+crash. What is in a report, how it is cleaned, and what we use it for:
+[Crash and error reports](/cua-sdk/concepts/telemetry-events#crash-and-error-reports).
+
 ## What we use it for
 
 To answer how many people install Cua Spaces, finish the first run, sign in,
@@ -105,4 +120,6 @@ titles, URLs, clipboard, keystrokes or typed text, screenshots, screen or
 accessibility content, prompts, model output, sandbox or Space names, error
 messages, and anything stored in the Keyvault (only consent decisions are
 counted). Tests enforce this: every event builder is fed paths, emails,
-hostnames and window titles, and none may appear in a payload.
+hostnames and window titles, and none may appear in a payload. The same holds
+for crash reports: the app's crash reporting is also fed paths, emails and
+hostnames in tests, and none may leave it.

@@ -208,6 +208,7 @@ impl Rig {
                 args,
                 broker: Some(&broker),
                 pinned: None,
+                caller: Default::default(),
             })
             .await?;
         Ok(out.structured.unwrap_or_else(|| reply_json(&out.content)))

@@ -140,7 +140,7 @@ jobs:
       - name: Clippy (native)
         run: >
           cargo clippy --locked -p cua-sdk -p cua-daemon -p cua-cli -p cua-bindgen -p cua-spacesd-client
-          -p cua-cluster -p cua-spaces-cluster
+          -p cua-cluster -p cua-spaces-cluster -p cua-agent-setup
           -p cua-media-protocol -p cua-media-transport -p cua-media-client -p cua-viewer -p cua-logging
           -p cua-teleport -p cua-teleport-bundle -p cua-chromium-storage -p cua-volume
           -p cua-spaces-ext -p cua-spaces-ffi -p cua-spaces-cli
@@ -220,6 +220,17 @@ jobs:
           shared-key: libs-cua-test
       - name: Test Spaces discovery and post-create directory failures
         run: cargo test --locked -p cua-spaces --test relay --test cloud_discovery -- --test-threads=4
+      - name: Test the mesh, and its scale budgets (offline or unresponsive computers never hold up the rest)
+        # The scale scenarios run one at a time: each starts 20 nodes and
+        # asserts wall-clock budgets.
+        run: |
+          cargo test --locked -p cua-mesh --lib --test mesh -- --test-threads=4
+          cargo test --locked -p cua-mesh --test scale -- --test-threads=1 --nocapture
+      - name: Test the Space list at scale and under chaos (budgets)
+        # 20 computers x 10 Spaces with computers off, slow, lossy, hung or
+        # half-open: each scenario asserts wall-clock budgets, so they run
+        # one at a time.
+        run: cargo test --locked -p cua-spaces --test scale -- --test-threads=1 --nocapture
       - name: Test (embedded, daemon over UDS and loopback, CLI, cluster, Cua Spaces extensions)
         run: >
           cargo test --locked --no-fail-fast -p cua-sdk -p cua-daemon -p cua-cli -p cua-spacesd-client
@@ -233,6 +244,18 @@ jobs:
           # Test threads get 8 MiB, like the CLI's runtime: unoptimized
           # Windows frames are large and the CLI tests drive whole commands.
           RUST_MIN_STACK: "8388608"
+      # The agent harness crate and its runner's own node tests
+      # (runner/test/*.test.mjs through tests/runner_node.rs: durable runs,
+      # journal shipping, the 0.8.0 journal upgrade). Not on Windows: the
+      # durable tests kill runners with POSIX signals and symlink the ACP SDK.
+      # Agent onboarding: the connection-state matrix against fake harness
+      # homes (fake agent binaries, a fake `cua` MCP handshake, an in-memory
+      # Keyvault), and the telemetry vocabulary its sign-in import adds to.
+      - name: Test (cua-agent-setup and cua-telemetry)
+        run: cargo test --locked --no-fail-fast -p cua-agent-setup -p cua-telemetry -- --test-threads=4
+      - name: Test (cua-agents and its runner)
+        if: runner.os != 'Windows'
+        run: cargo test --locked --no-fail-fast -p cua-agents -- --test-threads=4
       - name: Test (shared media crates and clients)
         run: >
           cargo test --locked --no-fail-fast -p cua-media-protocol -p cua-media-transport -p cua-media-client -p cua-viewer -p cua-logging

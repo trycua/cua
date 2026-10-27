@@ -14,10 +14,12 @@ import type { AppModel } from "../model/app-model";
 import { words } from "../model/errors";
 import { bounded } from "../model/time";
 import { string } from "./args";
+import { consentMayHaveChanged } from "../crash-reporting";
 import type { BridgeContext } from "./context";
 import { Failure, type Handlers } from "./host";
 import { hostParts, type HostParts } from "./host-parts";
 import { encode } from "./value";
+import { cliSetting } from "./cli";
 
 function telemetryInput(model: AppModel): AppTelemetryInput | undefined {
   try {
@@ -38,16 +40,12 @@ export function settingsPage(model: AppModel, parts: HostParts) {
     signIn: model.signIn,
     canSignOut: model.account !== null && model.identity !== null,
     menuBar: model.settings.menuBar,
-    defaultLocation: model.settings.defaultLocation,
-    locationLockedBy: undefined,
     telemetry: telemetryInput(model),
     agents: coding.rows ?? undefined,
     agentsBusy: coding.busy,
     agentsPending: coding.pending,
     // Teams from the Spaces API (read by `settings.get`).
     teams: model.teams.input(),
-    // No Cua Cloud billing in the apps (the row stays hidden).
-    billing: undefined,
     loginItem:
       login.status === null
         ? undefined
@@ -67,6 +65,8 @@ export function settingsPage(model: AppModel, parts: HostParts) {
     lumeSource: model.lumeSource ?? undefined,
     // The built-in Linux runtime is a gVisor VM on a Mac; Docker is the runtime elsewhere, so no row.
     linuxSource: process.platform === "darwin" ? (model.linuxSource ?? undefined) : undefined,
+    // Settings, General's Show tips (the tips themselves live in `AppSettings.tips`).
+    showTips: !model.settings.tips.off,
   };
   const page = model.native.appSettingsPage(input);
   return model.native.appSettingsWithStorage(page, parts.storage.section, model.settings.experiments);
@@ -91,7 +91,25 @@ export function settingsState(model: AppModel, parts: HostParts) {
     // The account app (CUA_ENV, CUA_ACCOUNT_APP_URL): the page's core has no
     // environment, so Upgrade's billing fallback names this one.
     accountUrl: model.native.appAccountAppUrl(),
+    // The CLI this app installs and whether it is here (`cli.ts`).
+    cli: cliSetting(model),
+    // The app core's own settings the page changes (`settings.update`).
+    tips: { off: model.settings.tips.off, done: [...model.settings.tips.done] },
   };
+}
+
+/** `settings.update`'s fields, as the page sends them (each optional). */
+export function settingsUpdate(args: Record<string, unknown>): Partial<AppModel["settings"]> {
+  const patch: Partial<AppModel["settings"]> = {};
+  if ("tips" in args) {
+    const t = args.tips;
+    if (!t || typeof t !== "object" || Array.isArray(t)) throw Failure.badArgs("tips: {off, done}");
+    const { off, done } = t as { off?: unknown; done?: unknown };
+    if (typeof off !== "boolean" || !Array.isArray(done) || !done.every((d) => typeof d === "string")) throw Failure.badArgs("tips: {off: boolean, done: string[]}");
+    patch.tips = { off, done: done as string[] };
+  }
+  if (!Object.keys(patch).length) throw Failure.badArgs("tips");
+  return patch;
 }
 
 /** A switch in Settings, Experiments: saved and recorded. Off hides; nothing is undone. */
@@ -146,12 +164,21 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
         model.linuxSource = (await model.backend.linuxSource()) ?? option;
         model.changed("settings");
         return;
-      case "default-location":
-        save({ defaultLocation: model.native.AppLocation.Local }); // Cua Cloud has ended
-        return;
       case "auto-connect":
         save({ autoConnect: option === "on" });
         return;
+      case "global-shortcut": {
+        // The keys that bring the app forward from any app (Mac). The option is the accelerator.
+        const system = parts().system;
+        if (!system?.setGlobalShortcut) throw Failure.failed("This computer has no shortcut to change.");
+        try {
+          system.setGlobalShortcut(option);
+        } catch (e) {
+          throw Failure.failed(e instanceof Error ? e.message : String(e));
+        }
+        model.changed("settings");
+        return;
+      }
       case "launch-at-login": {
         const login = parts().loginItem;
         login.set(option === "on");
@@ -172,8 +199,16 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
       case "keyvault-site-icons":
         save({ keyvaultSiteIcons: option === "on" });
         return;
+      // General's Show tips and Reset tips: the core's (`settings::choose`).
+      case "tips":
+      case "reset-tips":
+        model.settings = model.native.appSettingsChoose(model.settings, row, option);
+        model.saveSettings();
+        return;
       case "telemetry":
         model.telemetry?.setEnabled(option === "on");
+        // Off also stops crash reports (crash-reporting.ts).
+        consentMayHaveChanged();
         // The switch sits beside the usage note (Welcome, Settings): the
         // notice was seen.
         model.telemetry?.acknowledgeNotice();
@@ -225,6 +260,11 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
           throw Failure.failed(words(error));
         }
       }
+      return settingsState(model, parts());
+    },
+    // The page's tips (`AppSettings.tips`), saved as given.
+    "settings.update": (args) => {
+      save(settingsUpdate(args));
       return settingsState(model, parts());
     },
   };

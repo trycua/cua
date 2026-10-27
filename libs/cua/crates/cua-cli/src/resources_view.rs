@@ -121,7 +121,11 @@ impl Columns<'_> {
     /// its published summary (this Mac's own row from this Mac), else
     /// dashes.
     pub fn cells(&self, info: &SpaceInfo) -> Cells {
-        if let Some(s) = self.resources.spaces.iter().find(|s| s.id == info.id) {
+        // The column is this Mac's disk: a Space on another computer (its
+        // size there is in `--json`) shows dashes.
+        if let Some(s) = self.resources.spaces.iter().find(|s| s.id == info.id)
+            && info.host.is_empty()
+        {
             return Cells::of_space(s);
         }
         let Some(machine) = info.id.strip_prefix("relay:") else {
@@ -228,6 +232,7 @@ mod tests {
         SpaceInfo {
             id: id.into(),
             name: id.into(),
+            display_name: String::new(),
             provider: if id.starts_with("relay:") {
                 cua_spaces::Provider::Relay
             } else {
@@ -260,6 +265,7 @@ mod tests {
             created_at_unix: 0,
             egress: Default::default(),
             egress_enforced: None,
+            sharing: None,
             volumes: Vec::new(),
         }
     }
@@ -306,6 +312,7 @@ mod tests {
                     allocated: 87 * GIB,
                     shares_space: true,
                 }),
+                base: None,
             }],
             computers: vec![ComputerResources {
                 id: "mini1234".into(),
@@ -346,6 +353,28 @@ mod tests {
         // A machine that published nothing, and a Space added by address.
         assert_eq!(c.cells(&info("relay:nobody")), Cells::none());
         assert_eq!(c.cells(&info("direct:10.0.0.5:3211")), Cells::none());
+        // One of yours on another computer: its size there is not this
+        // Mac's disk (the JSON carries it).
+        let mut r = r.clone();
+        r.spaces.push(SpaceResources {
+            id: "relay:space-qa-1234".into(),
+            disk_on_host: Some(DiskOnHost {
+                bytes: Some(19 * GIB),
+                allocated: 19 * GIB,
+                shares_space: false,
+            }),
+            ..Default::default()
+        });
+        let c = Columns {
+            resources: &r,
+            own_machine: None,
+        };
+        let mut remote = info("relay:space-qa-1234");
+        remote.host = "mini1234".into();
+        assert_eq!(c.cells(&remote), Cells::none());
+        let mut row = json!({});
+        c.annotate(&remote, &mut row);
+        assert_eq!(row["resources"]["diskOnHost"]["bytes"], 19 * GIB);
     }
 
     #[test]

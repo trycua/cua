@@ -19,10 +19,10 @@ import { createContextOf } from "./create-context";
 import { HOST_COVERAGE } from "./coverage";
 import { hostOs, THIS_MACHINE, type HostOs } from "./host-os";
 import type {
-  CloudConnectAction,
-  CloudConnectInput,
-  CloudConnectState,
-  CloudConnectView,
+  CloudSheetAction,
+  CloudSheetInput,
+  CloudSheetState,
+  CloudSheetView,
   CloudStatusWire,
   ConnectedCloud,
   CreatePlan,
@@ -34,7 +34,6 @@ import type {
   WizardState,
   WizardView,
 } from "./contracts/new-space";
-import type { SandboxImage } from "./contracts/onboarding";
 import type { Machine } from "./derive";
 import { NO_EXPERIMENTS } from "./contracts/volume";
 import type { ParityCheckpoint } from "./parity";
@@ -71,14 +70,16 @@ export const createFailedText = (core: CoreClient, error: unknown) => {
 /** The SDK's handshake errors in words a person can act on. */
 export const friendlyAddError = (core: CoreClient, raw: string) => core.tryCall<string>("wizard.friendlyAddError", { raw }) ?? raw;
 
-export const cloudConnectInitial = (core: CoreClient) => core.call<CloudConnectState>("cloudConnect.initial", {});
-export const cloudConnectReduce = (core: CoreClient, input: CloudConnectInput, state: CloudConnectState, action: CloudConnectAction) =>
-  core.call<CloudConnectState>("cloudConnect.reduce", { input, state, action });
-export const cloudConnectView = (core: CoreClient, input: CloudConnectInput, state: CloudConnectState) =>
-  core.call<CloudConnectView>("cloudConnect.view", { input, state });
+/** "Connect a cloud": the picker and one sheet per cloud (`cloudSheet.*`). */
+export const cloudSheetInitial = (core: CoreClient, input: CloudSheetInput, cloud: string | null = null, limits = false) =>
+  core.call<CloudSheetState>("cloudSheet.initial", { input, cloud, limits });
+export const cloudSheetReduce = (core: CoreClient, input: CloudSheetInput, state: CloudSheetState, action: CloudSheetAction) =>
+  core.call<CloudSheetState>("cloudSheet.reduce", { input, state, action });
+export const cloudSheetView = (core: CoreClient, input: CloudSheetInput, state: CloudSheetState) =>
+  core.call<CloudSheetView>("cloudSheet.view", { input, state });
 /** The sheet's providers from `cloud_status`. */
-export const connectInput = (core: CoreClient, status: CloudStatusWire | null) =>
-  core.call<CloudConnectInput>("cloudConnect.inputFromStatus", { status: status ?? {} });
+export const cloudSheetInput = (core: CoreClient, status: CloudStatusWire | null) =>
+  core.call<CloudSheetInput>("cloudSheet.inputFromStatus", { status: status ?? {} });
 /** The connected clouds from `cloud_status`. */
 export const connectedClouds = (core: CoreClient, status: CloudStatusWire | null) =>
   core.call<ConnectedCloud[]>("cloudConnect.cloudsFromStatus", { status: status ?? {} });
@@ -100,15 +101,13 @@ const CONTAINER_BACKENDS = ["container", "managed", "docker", "runsc"];
 export interface EnvInput {
   options: NewSpaceOptions | null;
   clouds: CloudStatusWire | null;
-  /** Settings' `defaultLocation`: `local`, `cloud`, `host:<id>` or a cloud word. */
+  /** Settings' `defaultLocation`: `local`, `host:<id>` or a cloud word. */
   defaultLocation: string | undefined;
-  cloudAvailable: boolean;
   machines: readonly (Pick<Machine, "id" | "name" | "via" | "online" | "os" | "limits" | "current"> & Pick<Partial<Machine>, "device" | "notSharing">)[] | undefined;
 }
 
 function location(core: CoreClient, on: string | undefined): WizardLocation {
   if (!on || on === "local") return "local";
-  if (on === "cloud") return "local"; // Cua Cloud has ended
   if (on.startsWith("host:")) return "host";
   return isCloudWord(core, on) ? "yours" : "local";
 }
@@ -123,14 +122,12 @@ export function wizardEnv(core: CoreClient, input: EnvInput): WizardEnv {
   const cores = globalThis.navigator?.hardwareConcurrency || 8;
   return {
     defaultLocation: location(core, input.defaultLocation),
-    cloudAvailable: input.cloudAvailable,
     localAvailable: local ? canContainer || canMacos : true,
     localReason: local?.error ?? null,
     localBackends: local ? [...local.backends] : null,
     maxCpus: input.options?.maxCpus ?? Math.max(2, Math.min(16, cores)),
     hostArch: local?.hostArch ?? null,
     storage: local?.storage ?? null,
-    cloudPricing: input.options?.cloudPricing ?? null,
     clouds: input.clouds ? connectedClouds(core, input.clouds) : [],
     // Only machines `on="host:<id>"` resolves: never a device of its own.
     // One that is online but not shared says so, as the SDK's hosts do.
@@ -151,25 +148,26 @@ export function wizardEnv(core: CoreClient, input: EnvInput): WizardEnv {
 
 /* ---- First Space: one click from an empty list ----------------------------- */
 
-/** A one-click create on this Mac with the wizard's defaults. */
+/** A one-click create on this machine with the wizard's defaults
+ * (`wizard::FirstSpaceOffer`). */
 export interface FirstSpaceOffer {
+  /** What the person picks: `linux`, `omarchy`, `macos`. */
+  id: "linux" | "omarchy" | "macos";
+  /** The guest system (its icon): `linux` for Omarchy. */
   os: "linux" | "macos";
   /** The catalog's image reference. */
   image: string;
-  /** "Ubuntu 24.04", "macOS Tahoe 26". */
+  /** "Ubuntu 24.04", "Omarchy", "macOS Tahoe 26". */
   name: string;
   /** "1.2 GB download", or "Already downloaded"; null when unknown. */
   size: string | null;
   /** "about 2 min" (a cached image is quicker). */
   time: string;
-  /** Why it can't be created here, in the core's words (no room, no runtime). */
+  /** Why it can't be created here, in the core's words. Only Linux is ever
+   * offered blocked; Omarchy and macOS are left out instead. */
   blocked: string | null;
   /** The create's arguments: the wizard's plan with its defaults. */
   args: CreateSpaceArgs;
-}
-
-interface SizedImage {
-  sizes?: { platforms: { arch: string; download: number }[] } | null;
 }
 
 /** Bytes the way the wizard shows them (binary units labeled GB). */
@@ -180,45 +178,16 @@ export function sizeText(bytes: number): string {
 }
 
 /**
- * The Spaces a first-time user can create in one click: Linux first (a
- * small download, ready in a couple of minutes), then macOS with its real
- * download size and time. Each is the wizard's own plan for that image on
- * this Mac (`wizard.view`), so the same rules apply: a Mac without room or
- * a runtime gets the core's reason instead of a create that fails later.
- * Empty without the core, or when this Mac can't run Spaces at all.
+ * The Spaces a first-time user can create in one click, the core's
+ * (`wizard.firstSpaceOffers`): Linux first, then Omarchy on an x64 machine
+ * with a VM runtime, then macOS on a Mac with Apple silicon. Omarchy and
+ * macOS are offered only where they run now and fit (the catalog's
+ * download plus the unpacked image); Linux always, with the core's reason
+ * when it can't be made. Empty without the core.
  */
-export function firstSpaceOffers(core: CoreClient, env: WizardEnv): FirstSpaceOffer[] {
-  if (core.status !== "ready" || !core.methods.includes("wizard.view")) return [];
-  const local = { ...env, defaultLocation: "local" as const };
-  const start = wizardInitial(core, local);
-  const linux = wizardView(core, start, local).image.ref;
-  // The catalog's full macOS (the slim one is about as big).
-  const mac = (core.tryCall<SandboxImage[]>("wizard.pickerImages") ?? []).filter((i) => i.published && i.os === "macos" && i.group === "canonical");
-  const macos = (mac.find((i) => i.tier !== "slim") ?? mac[0])?.ref ?? null;
-  const pulled = new Set(local.storage?.pulled ?? []);
-  const offers: FirstSpaceOffer[] = [];
-  for (const [os, ref] of [
-    ["linux", linux],
-    ["macos", macos],
-  ] as const) {
-    if (!ref) continue;
-    const plan = localPlan(core, env, ref);
-    if (!plan || plan.system.image.os !== os) continue;
-    const { system } = plan;
-    const platforms = (system.image as SizedImage).sizes?.platforms ?? [];
-    const platform = platforms.find((p) => p.arch === local.hostArch) ?? platforms[0];
-    const cached = local.storage ? pulled.has(ref) : false;
-    offers.push({
-      os,
-      image: ref,
-      name: system.image.name,
-      size: cached ? "Already downloaded" : platform ? `${sizeText(platform.download)} download` : null,
-      time: os === "linux" ? (cached ? "under a minute" : "about 2 min") : cached ? "a few minutes" : "10 to 30 min the first time",
-      blocked: plan.blocked,
-      args: wizardCreateArgs(core, system.plan),
-    });
-  }
-  return offers;
+export function firstSpaceOffers(core: CoreClient, env: WizardEnv, os: HostOs = hostOs()): FirstSpaceOffer[] {
+  if (core.status !== "ready" || !core.methods.includes("wizard.firstSpaceOffers")) return [];
+  return core.call<FirstSpaceOffer[]>("wizard.firstSpaceOffers", { env, hostOs: os });
 }
 
 /** The wizard's own plan for `ref` on this machine with its defaults, and
@@ -251,7 +220,7 @@ export interface EmptyTile {
   os: "linux" | "macos";
   /** "Linux", "macOS". */
   name: string;
-  /** "About 1 minute · 3.2–7.1 GB of disk", "About 22 GB download". */
+  /** "About 3 minutes · 3.3–7.3 GB of disk", "About 22 GB download". */
   detail: string;
 }
 
@@ -286,7 +255,10 @@ export function emptyHome(core: CoreClient, hostArch: string | null | undefined,
   if (core.status !== "ready") return null;
   const c = core.tryCall<EmptyChrome>("window.chrome", {});
   if (!c?.emptyLinuxDetail) return null;
-  const tiles: EmptyTile[] = [{ os: "linux", name: c.emptyAction, detail: c.emptyLinuxDetail }];
+  // The chrome's Linux line is for the machine the core runs on; the wasm core
+  // cannot tell, so with the host's architecture known the core words it for that.
+  const linuxDetail = hostArch ? (core.tryCall<string>("window.emptyLinuxDetail", { hostArch }) ?? c.emptyLinuxDetail) : c.emptyLinuxDetail;
+  const tiles: EmptyTile[] = [{ os: "linux", name: c.emptyAction, detail: linuxDetail }];
   const appleSilicon = !hostArch || ["arm64", "aarch64"].includes(hostArch.toLowerCase());
   if (os === "macos" && appleSilicon) tiles.push({ os: "macos", name: c.emptyMacosAction, detail: c.emptyMacosDetail });
   return { title: c.emptyTitle, detail: c.emptyDetail, tiles };
@@ -301,9 +273,9 @@ export interface NewSpaceSession {
   pinnedEnv: WizardEnv | null;
   connect: {
     open: boolean;
-    state: CloudConnectState | null;
-    /** Parity: the sheet's input, instead of the host's `cloud_status`. */
-    pinnedInput: CloudConnectInput | null;
+    state: CloudSheetState | null;
+    /** Preview and tests: the sheet's input, instead of the host's `cloud_status`. */
+    pinnedInput: CloudSheetInput | null;
   };
   options: NewSpaceOptions | null;
   clouds: CloudStatusWire | null;
@@ -387,9 +359,7 @@ function reloadWhenReady(store: BridgeStore): void {
 
 /* ---- Parity --------------------------------------------------------------- */
 
-export type NewSpaceCheckpoint =
-  | { kind: "wizard"; state: WizardState; env: WizardEnv; view: WizardView }
-  | { kind: "cloud-connect"; input: CloudConnectInput; state: CloudConnectState; view: CloudConnectView };
+export type NewSpaceCheckpoint = { kind: "wizard"; state: WizardState; env: WizardEnv; view: WizardView };
 
 /** The bridge's answer to each wizard and sheet method a parity flow calls. */
 export function newSpaceParityMethods(core: CoreClient, record: (c: ParityCheckpoint) => void): Record<string, (a: Args) => unknown> {
@@ -405,24 +375,19 @@ export function newSpaceParityMethods(core: CoreClient, record: (c: ParityCheckp
     "wizard.createArgs": (a) => wizardCreateArgs(core, a.plan),
     "wizard.creatingText": (a) => creatingText(core, a.plan),
     "wizard.createFailedText": (a) => createFailedText(core, a.error),
-    "cloudConnect.initial": () => cloudConnectInitial(core),
-    "cloudConnect.reduce": (a) => cloudConnectReduce(core, a.input, a.state, a.action),
-    "cloudConnect.view": (a) => {
-      const view = cloudConnectView(core, a.input, a.state);
-      record({ kind: "cloud-connect", input: a.input, state: a.state, view });
-      return view;
-    },
+    // The older sheet (CLI sign-ins) the native apps still draw: replayed on the core,
+    // not drawn here (the web UI draws `cloudSheet`).
+    "cloudConnect.initial": () => core.call("cloudConnect.initial", {}),
+    "cloudConnect.reduce": (a) => core.call("cloudConnect.reduce", { input: a.input, state: a.state, action: a.action }),
+    "cloudConnect.view": (a) => core.call("cloudConnect.view", { input: a.input, state: a.state }),
   };
 }
 
 export interface NewSpaceParityHandle {
   /** Opens New Space on this state, drawn with this env. */
   showWizard(state: WizardState, env: WizardEnv): void;
-  /** Opens "Connect a cloud" on this state, drawn with this input. */
-  showCloudConnect(input: CloudConnectInput, state: CloudConnectState): void;
 }
 
 export const newSpaceParityHandle: NewSpaceParityHandle = {
   showWizard: (state, env) => updateNewSpaceSession((s) => ({ ...s, open: true, state, pinnedEnv: env, connect: { ...CLOSED_NEW_SPACE.connect } })),
-  showCloudConnect: (input, state) => updateNewSpaceSession((s) => ({ ...s, open: false, connect: { open: true, state, pinnedInput: input } })),
 };

@@ -40,7 +40,7 @@ export interface DemoSettingsContext {
   update?: Partial<UpdateState>;
 }
 
-/** How many times "Add a machine" reads the codes before the demo's other
+/** How many times "Add a computer" reads the codes before the demo's other
  * computer runs the command (about ten seconds at its three-second poll). */
 export const DEMO_PAIRING_POLLS = 3;
 
@@ -209,9 +209,11 @@ export function createDemoSettings(ctx: DemoSettingsContext): Handlers {
     },
 
     "update.get": () => ({ ...update }),
-    "update.install": () => {
+    "update.install": async () => {
       // Nothing downloaded: nothing to install, and the state says so.
       if (update.status !== "downloaded") return { ...update };
+      // Installing takes a moment before the relaunch.
+      await wait(stepMs);
       // The real host relaunches into the new version.
       update = { ...update, status: "idle", currentVersion: update.version ?? update.currentVersion, version: null, notesUrl: null };
       emit({ type: "update.changed" });

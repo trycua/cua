@@ -28,6 +28,12 @@ struct Args {
     /// Host-mode domain: `<computer-id>.<domain>` routes to that computer.
     #[arg(long, env = "CUA_RELAY_HOST_DOMAIN")]
     host_domain: Option<String>,
+    /// With a host domain, keep serving `/m/<computer-id>/…` on the main
+    /// origin too (`on` / `off`): for clients that build path-mode URLs
+    /// themselves. Browsers that open a path-mode share link are sent to
+    /// the share's own origin.
+    #[arg(long, env = "CUA_RELAY_KEEP_PATH_MODE", default_value = "off")]
+    keep_path_mode: String,
     /// Maximum computers per registration token.
     #[arg(long, env = "CUA_RELAY_MAX_MACHINES_PER_TOKEN", default_value_t = 16)]
     max_machines_per_token: usize,
@@ -328,7 +334,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             .filter(|a| !a.is_empty())
             .collect();
         config.account_claim = args.account_claim.clone();
-        std::sync::Arc::new(cua_relay::oidc::OidcValidator::new(config))
+        let validator = std::sync::Arc::new(cua_relay::oidc::OidcValidator::new(config));
+        validator.spawn_refresher();
+        validator
     });
     let share_web = match args.web_client_id.clone().filter(|c| !c.is_empty()) {
         Some(client_id) => {
@@ -409,6 +417,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         machine_max_streams: args.machine_max_streams,
         machine_window_bytes: args.machine_window_bytes,
         machine_idle_timeout: Duration::from_secs(args.idle_secs.max(5)),
+        keep_path_mode: on_off("CUA_RELAY_KEEP_PATH_MODE", &args.keep_path_mode)?,
         host_domain: args.host_domain,
         admin_token: args.admin_token.filter(|t| !t.is_empty()),
         require_client_credentials: !args.allow_anonymous_clients,

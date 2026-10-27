@@ -1,27 +1,39 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-//! The first run every app shows: four short screens, agent first.
+//! The first run every app shows: a few short screens, agent first.
 //!
-//! 1. **Welcome.** "Your agents get their own computer." One button.
+//! 1. **Welcome.** "Your computers, shared by your team and its agents." One button.
 //! 2. **Pick your agent.** The agents found on this computer, in the order
 //!    [`PREFERENCE`] gives (Hermes, Claude Code, Codex, Cursor, then the
 //!    rest), one Connect each. Nothing is connected until its button is
 //!    pressed, and each row names the file Cua changes. The connected
 //!    agents' own sign-ins and keys follow, in the same order. Nothing
 //!    found: install an agent, or use the CLI.
-//! 3. **Connect your other devices** (optional). Signing in lets your other
-//!    computers and your cloud reach this computer's Spaces. "Not now" skips
+//!    Then **Install the Cua CLI**, only while the app's bundled CLI is not
+//!    on this computer (an app installed from the disk image has none on
+//!    PATH): what it installs and the exact file, Install or Not now, and
+//!    the result. It is the app's install plan ([`crate::installer`]):
+//!    nothing is written before Install, and the file is the channel's
+//!    (`cua`, or `cua-local` for Cua Spaces Local).
+//! 3. **Add your other computers** (optional). Signing in lets your other
+//!    computers and your cloud use this computer's Spaces. "Not now" skips
 //!    it: this computer works without an account.
-//! 4. **Try it in your agent.** A first request for the lead connected agent
+//! 4. **Share this Mac's screen** (only a signed-in Mac that shares its
+//!    screen). Screen Recording and Accessibility, one row each, with Allow
+//!    (the app's guide to the System Settings pane) and a check once
+//!    granted; "Not now" leaves them for Settings. macOS's own prompts never
+//!    show first: the app asks here, in its own words.
+//! 5. **Try it in your agent.** A first request for the lead connected agent
 //!    (read-only, with Copy) that makes a Space on this computer, and a line
 //!    that turns green when the agent used Cua. No agent: a one-click first
 //!    Space instead.
 //!
-//! Nothing starts or connects by itself, permissions are asked where a task
-//! needs them (not here), and no plan is shown. The words, the order and
-//! which button does what are decided here, so every app says the same
-//! thing; the page gathers the readings and draws what [`view`] returns.
+//! Nothing starts or connects by itself, permissions are asked only on a Mac
+//! that shares its screen (screen 4), and no plan is shown. The words, the
+//! order and which button does what are decided here, so every app says the
+//! same thing; the page gathers the readings and draws what [`view`]
+//! returns.
 //!
 //! What each reading is, and how real it is:
 //!
@@ -55,19 +67,28 @@ const FIRST_PROMPT_OTHER: &str = "List my computers and tell me what's on this c
 const FIRST_PROMPT_PC: &str = "List my computers and tell me what's on this PC";
 
 /// The try screen's request: the agent makes a Space on this computer.
-pub const TRY_PROMPT: &str =
-    "Make a Linux Space on this Mac and stream the desktop in a new window.";
+pub const TRY_PROMPT: &str = "Make a Linux Space on this Mac and show its desktop in a new window.";
 const TRY_PROMPT_OTHER: &str =
-    "Make a Linux Space on this computer and stream the desktop in a new window.";
-const TRY_PROMPT_PC: &str = "Make a Linux Space on this PC and stream the desktop in a new window.";
+    "Make a Linux Space on this computer and show its desktop in a new window.";
+const TRY_PROMPT_PC: &str = "Make a Linux Space on this PC and show its desktop in a new window.";
 
-/// The same first Space from a terminal (no agent found).
-pub const CLI_FIRST_SPACE: &str = "cua spaces create linux";
+/// The CLI's name when the host did not say (the released app's,
+/// `CuaChannel::cli_name`). A Local build's host passes its own.
+fn default_cli_name() -> &'static str {
+    cua_home::channel::CuaChannel::Stable.cli_name()
+}
+
+/// The same first Space from a terminal (no agent found), under the CLI
+/// name of the app's channel: `cua spaces create linux --on local`, or
+/// `cua-local spaces create linux --on local` in Cua Spaces Local.
+pub fn cli_first_space(cli: &str) -> String {
+    format!("{cli} spaces create linux --on local")
+}
 
 /// Where to get an agent (none found).
 pub const AGENTS_GUIDE_URL: &str = "https://cua.ai/docs/spaces/guides/connect-your-agent";
 
-/// The four screens. `connect` and `setup` keep their old names, so a run
+/// The screens. `connect` and `setup` keep their old names, so a run
 /// saved by an older app resumes on the matching screen.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -76,21 +97,79 @@ pub enum FirstRunStep {
     Welcome,
     /// Pick your agent.
     Connect,
-    /// Connect your other devices.
+    /// Install the Cua CLI (only while it is not installed).
+    Cli,
+    /// Add your other computers.
     Devices,
+    /// Share this Mac's screen: Screen Recording and Accessibility. Only on
+    /// a signed-in Mac that shares its screen ([`asks_permissions`]).
+    Permissions,
     /// Try it in your agent.
     Setup,
 }
 
-impl FirstRunStep {
-    fn index(self) -> u8 {
-        match self {
-            FirstRunStep::Welcome => 0,
-            FirstRunStep::Connect => 1,
-            FirstRunStep::Devices => 2,
-            FirstRunStep::Setup => 3,
-        }
+/// The app's bundled CLI, as its install plan reads it (the Command line
+/// screen, and Settings' row).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct FirstRunCli {
+    /// What installing would do (`cli.plan`; none: not read yet, or this
+    /// app can't install it).
+    pub plan: Option<crate::installer::CliInstallPlan>,
+    /// Install is running.
+    pub installing: bool,
+    /// Installed from this screen: the file written.
+    pub installed: Option<String>,
+    /// Installing failed with this.
+    pub error: Option<String>,
+}
+
+impl FirstRunCli {
+    /// The CLI is on this computer: installed here, the target is current,
+    /// or a working one of this channel was found.
+    pub fn present(&self) -> bool {
+        self.installed.is_some()
+            || self
+                .plan
+                .as_ref()
+                .is_some_and(|p| p.up_to_date || p.found.is_some())
     }
+
+    /// The app carries a CLI it can install, and none is on this computer.
+    pub fn missing(&self) -> bool {
+        !self.present() && self.plan.as_ref().is_some_and(|p| p.source.is_some())
+    }
+
+    /// Where it is (installed here, current at the target, or found).
+    fn location(&self) -> Option<String> {
+        self.installed.clone().or_else(|| {
+            let p = self.plan.as_ref()?;
+            if p.up_to_date {
+                Some(p.target.clone())
+            } else {
+                p.found.clone()
+            }
+        })
+    }
+}
+
+/// The screens this run shows, in order: Install the Cua CLI only while
+/// the app's CLI is missing (and while it is the screen shown, so its
+/// result stays until Continue); Share this Mac's screen only where
+/// [`asks_permissions`].
+pub fn steps(input: &FirstRunInput) -> Vec<FirstRunStep> {
+    let cli =
+        input.step == FirstRunStep::Cli || input.cli.installed.is_some() || input.cli.missing();
+    let mut out = vec![FirstRunStep::Welcome, FirstRunStep::Connect];
+    if cli {
+        out.push(FirstRunStep::Cli);
+    }
+    out.push(FirstRunStep::Devices);
+    if asks_permissions(input) {
+        out.push(FirstRunStep::Permissions);
+    }
+    out.push(FirstRunStep::Setup);
+    out
 }
 
 /// An agent the setup knows (`agents.setup`'s row, trimmed).
@@ -110,9 +189,13 @@ pub struct FirstRunAgent {
     /// The settings file Cua adds itself to (`~/.claude.json`), when the
     /// agent has one.
     pub mcp_config: Option<String>,
+    /// Its row of the connection status (`agents.status`, CONTRACT §4),
+    /// when the host answers it: "Connected" only when that says so.
+    pub connection: Option<crate::connection::ConnectionInput>,
 }
 
-/// A permission this computer still needs (`host.status`'s hint).
+/// A permission this computer still needs (`host.status`'s hint: the host
+/// lists only the missing ones).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct FirstRunPermission {
@@ -135,6 +218,12 @@ pub struct FirstRunHost {
     pub permissions: Vec<FirstRunPermission>,
     /// The host setup failed with this.
     pub error: Option<String>,
+    /// People it is shared with see and use its screen (none: not known,
+    /// the default for a new host: yes).
+    pub share_desktop: Option<bool>,
+    /// The name System Settings lists the app under ("Cua Spaces", "Cua
+    /// Spaces Local"; none: not known).
+    pub app_name: Option<String>,
 }
 
 /// A first Space this computer can make in one click (the Spaces page's
@@ -220,6 +309,10 @@ pub struct FirstRunInput {
     pub connecting_agent: Option<String>,
     /// Adding Cua to the agent's settings failed with this.
     pub connect_error: Option<String>,
+    /// Advanced setup on Pick your agent: paths and per-item ticks
+    /// (CUA-2267). Simple, the default, is one Connect each.
+    #[serde(default)]
+    pub advanced: bool,
     /// The agent was running when its settings changed (none: not known;
     /// no process check exists yet).
     pub agent_open_before_setup: Option<bool>,
@@ -237,6 +330,27 @@ pub struct FirstRunInput {
     pub offers: Vec<FirstRunOffer>,
     pub extra: FirstRunExtra,
     pub plan: Option<FirstRunPlan>,
+    /// The app's bundled CLI (the Command line screen).
+    pub cli: FirstRunCli,
+    /// The CLI's name (`SettingsSnapshot.cli`: `CuaChannel::cli_name`);
+    /// none: the install plan's file name, else `cua`.
+    pub cli_name: Option<String>,
+}
+
+/// The CLI's name for `input`: the host's, else the install plan's file
+/// name, else the released app's.
+pub fn cli_name(input: &FirstRunInput) -> String {
+    let given = input
+        .cli_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|n| !n.is_empty());
+    let planned = input.cli.plan.as_ref().and_then(|p| {
+        let file = p.target.rsplit(['/', '\\']).next()?;
+        let file = file.strip_suffix(".exe").unwrap_or(file);
+        (!file.is_empty()).then_some(file)
+    });
+    given.or(planned).unwrap_or(default_cli_name()).to_string()
 }
 
 /// A button: what it says and what it does (`id`).
@@ -258,7 +372,7 @@ fn button(id: &str, label: &str) -> FirstRunButton {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WelcomeView {
-    /// "Your agents get their own computer."
+    /// "Your computers, shared by your team and its agents."
     pub title: String,
     pub lede: String,
     /// "Get started" (`start`).
@@ -278,7 +392,7 @@ pub struct AgentPick {
     /// "Connect" (`connect`, with `agent`), none once connected or while
     /// it runs.
     pub action: Option<FirstRunButton>,
-    /// "Connected", "Adding Cua…".
+    /// "Connected", "Connecting…".
     pub note: Option<String>,
 }
 
@@ -340,6 +454,18 @@ pub struct ConnectView {
     /// "Skip" (none once an agent is connected).
     pub secondary: Option<FirstRunButton>,
     pub error: Option<String>,
+    /// The one line under the agents: what Connect does (Simple), or that
+    /// ticked sign-ins are copied (Advanced).
+    #[serde(default)]
+    pub consent: String,
+    /// The quiet link at the right of the buttons: "Advanced" in Simple
+    /// (`advanced`), "Simple" in Advanced (`simple`).
+    #[serde(default)]
+    pub mode: Option<FirstRunButton>,
+    /// Advanced: each agent's file and its sign-in are shown and ticked
+    /// one by one; Simple: one Connect each, no paths.
+    #[serde(default)]
+    pub advanced: bool,
 }
 
 /// A row of screen 3 (what signing in connects).
@@ -354,17 +480,17 @@ pub struct DeviceRow {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DevicesView {
-    /// "Connect your other devices.", "This Mac is in your account."
+    /// "Add your other computers.", "This Mac is in your account."
     pub title: String,
     pub lede: String,
     pub rows: Vec<DeviceRow>,
     /// The sign-in waiting, or this computer being added to the account.
     pub status: Option<CheckRow>,
-    /// "Sign in to connect" (`sign-in`), or "Continue" once signed in.
+    /// "Sign in" (`sign-in`), or "Continue" once signed in.
     pub primary: FirstRunButton,
     /// "Not now" (`not-now`) before sign-in.
     pub secondary: Option<FirstRunButton>,
-    /// "This Mac works without it."
+    /// "Not now keeps Cua on this Mac only. You can sign in later."
     pub note: Option<String>,
 }
 
@@ -497,6 +623,27 @@ pub struct ArtView {
     pub extra: String,
 }
 
+/// Screen 3b: the two permissions a shared screen needs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PermissionsView {
+    /// "Share this Mac's screen."
+    pub title: String,
+    /// "To let your team and agents see and use this Mac, allow two
+    /// permissions."
+    pub lede: String,
+    /// Screen Recording, then Accessibility (`id` the host's permission
+    /// id): `ok` once granted, `fix` with Allow (`allow`; `settings_url`
+    /// the pane), `checking` while this computer is still being added.
+    pub rows: Vec<CheckRow>,
+    /// What Allow does, naming the app as System Settings lists it.
+    pub note: String,
+    /// "Continue" once both are granted.
+    pub primary: Option<FirstRunButton>,
+    /// "Not now" (`not-now`) while one is missing: Settings has them later.
+    pub secondary: Option<FirstRunButton>,
+}
+
 /// Screen 4.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -523,11 +670,49 @@ pub struct FirstRunView {
     pub welcome: Option<WelcomeView>,
     pub connect: Option<ConnectView>,
     pub devices: Option<DevicesView>,
+    pub permissions: Option<PermissionsView>,
     pub setup: Option<SetupView>,
+    /// Install the Cua CLI.
+    pub cli: Option<CliView>,
     pub art: ArtView,
-    /// Four page marks.
+    /// The screens this run shows ([`steps`]), for Back and Continue.
+    pub steps: Vec<FirstRunStep>,
+    /// One page mark per screen.
     pub dots: u8,
     pub current: u8,
+}
+
+/// A fact on the Command line screen ("Installs", "~/.local/bin/cua").
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliFact {
+    pub label: String,
+    pub value: String,
+}
+
+/// Install the Cua CLI: the first run's screen, and Settings' row.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliView {
+    pub title: String,
+    pub lede: String,
+    /// The CLI's name (`cua`, `cua-local`).
+    pub name: String,
+    /// What Install writes: the file, and the PATH line when one is needed.
+    pub facts: Vec<CliFact>,
+    /// One plain line on where it stands (Settings' description).
+    pub status: String,
+    /// It is on this computer.
+    pub installed: bool,
+    /// Install is running.
+    pub busy: bool,
+    /// A command to try once it is installed.
+    pub try_command: Option<String>,
+    pub error: Option<String>,
+    /// `install` ("Install", "Try again"), or `continue` once installed.
+    pub primary: Option<FirstRunButton>,
+    /// `not-now` until it is installed.
+    pub secondary: Option<FirstRunButton>,
 }
 
 /// A line of Home's "Finish setting up" list.
@@ -614,7 +799,7 @@ pub fn try_prompt_tabs(os: &str) -> Vec<PromptTab> {
         .map(|(id, label, kind)| PromptTab {
             id: id.into(),
             label: label.into(),
-            text: format!("Make {kind} Space on {place} and stream the desktop in a new window."),
+            text: format!("Make {kind} Space on {place} and show its desktop in a new window."),
         })
         .collect()
 }
@@ -743,20 +928,51 @@ fn agent_picks(input: &FirstRunInput) -> Vec<AgentPick> {
         .into_iter()
         .map(|id| {
             let row = agents.iter().find(|a| a.agent == id);
-            // Connected here: Cua is in its settings. A run that pressed
-            // Connect and is waiting for the setup to say so counts too.
-            let is_connected = row.is_some_and(|a| a.configured)
-                || (connected.contains(&id) && input.agents.is_some() && !input.connecting);
+            let status = row.and_then(|a| a.connection.as_ref());
+            // Connected here: the connection status says so (Cua's entry is
+            // there and answers). Without one, Cua is in its settings, or a
+            // run pressed Connect and waits for the setup to say so.
+            let is_connected = match status {
+                // Connected and waiting for its own sign-in is still connected;
+                // a broken entry (Reconnect, Disconnect) is not.
+                Some(c) => match c.state.as_str() {
+                    "connected" => true,
+                    "attention" => !c
+                        .problem
+                        .as_ref()
+                        .is_some_and(|p| p.action == "reconnect" || p.action == "disconnect"),
+                    _ => false,
+                },
+                None => {
+                    row.is_some_and(|a| a.configured)
+                        || (connected.contains(&id) && input.agents.is_some() && !input.connecting)
+                }
+            };
+            let problem = status
+                .filter(|c| c.state == "attention")
+                .and_then(|c| c.problem.as_ref())
+                .filter(|p| p.action == "reconnect" || p.action == "disconnect");
             let busy = input.connecting
                 && input.connecting_agent.as_deref().is_none_or(|a| a == id)
                 && !row.is_some_and(|a| a.configured);
             AgentPick {
                 name: name_of(agents, &id),
-                file: row.and_then(|a| a.mcp_config.as_deref()).map(tilde),
+                // Simple shows no paths; Advanced names the file Connect changes.
+                file: input
+                    .advanced
+                    .then(|| row.and_then(|a| a.mcp_config.as_deref()).map(tilde))
+                    .flatten(),
                 connected: is_connected,
-                action: (!is_connected && !busy).then(|| button("connect", "Connect")),
+                action: (!is_connected && !busy).then(|| match problem {
+                    // Gone from This Mac: take Cua out of its settings.
+                    Some(p) if p.action == "disconnect" => button("disconnect", "Disconnect"),
+                    Some(_) => button("connect", "Reconnect"),
+                    None => button("connect", "Connect"),
+                }),
                 note: if busy {
-                    Some("Adding Cua…".into())
+                    Some("Connecting…".into())
+                } else if let Some(p) = problem {
+                    Some(p.line.clone())
                 } else if is_connected {
                     Some("Connected".into())
                 } else {
@@ -802,7 +1018,7 @@ fn credentials(input: &FirstRunInput, connected: &[String]) -> Vec<CredentialRow
             error: (!a.signed_in)
                 .then(|| input.agent_sign_in_error.clone())
                 .flatten()
-                .map(|e| format!("Couldn't start the sign-in: {e}")),
+                .map(|e| format!("Couldn't start sign-in: {e}")),
         });
     }
     let Some(keys) = input
@@ -823,7 +1039,7 @@ fn credentials(input: &FirstRunInput, connected: &[String]) -> Vec<CredentialRow
         out.push(CredentialRow {
             id: format!("key:{provider}"),
             title: format!("{} key", row.title),
-            note: format!("For {} in your Spaces", name_of(agents, id)),
+            note: format!("{} uses it in your Spaces", name_of(agents, id)),
             status: row.set.then(|| "Saved".into()),
             ok: row.set,
             action: (!row.set).then(|| button("add-key", "Add key")),
@@ -846,8 +1062,8 @@ fn default_or(name: &str, id: &str) -> String {
 fn welcome_view(input: &FirstRunInput) -> WelcomeView {
     let place = this_computer(&input.host_os);
     WelcomeView {
-        title: "Your agents get their own computer.".into(),
-        lede: format!("Spaces on {place}, away from your files and your mouse."),
+        title: "Your computers, shared by your team and its agents.".into(),
+        lede: format!("Run agents in Spaces on {place}, or on any computer your team connects."),
         primary: button("start", "Get started"),
     }
 }
@@ -880,9 +1096,9 @@ fn connect_view(input: &FirstRunInput) -> ConnectView {
         lede: if input.agents.is_none() {
             format!("Looking for agents on {place}…")
         } else if none {
-            format!("No agents found on {place}.")
+            format!("No agents found on {place}. Install one, or use Cua from a terminal.")
         } else {
-            format!("Found on {place}. You can add more later.")
+            format!("Cua found these on {place}. Connect the ones you want to use with Cua.")
         },
         agents: list,
         alternatives: if none {
@@ -896,23 +1112,40 @@ fn connect_view(input: &FirstRunInput) -> ConnectView {
                 },
                 AgentAlternative {
                     id: "cli".into(),
-                    title: "Use the CLI".into(),
-                    note: format!("Make a Space on {place} from a terminal."),
+                    title: "Use the Terminal".into(),
+                    note: format!("Make a Space on {place} from the command line."),
                     url: None,
-                    command: Some(CLI_FIRST_SPACE.into()),
+                    command: Some(cli_first_space(&cli_name(input))),
                 },
             ]
         } else {
             vec![]
         },
+        consent: if none || input.agents.is_none() {
+            String::new()
+        } else if input.advanced {
+            format!("Ticked sign-ins are copied to Keyvault on {}.", cap(place))
+        } else {
+            format!("{SIMPLE_CONSENT} on {}.", cap(place))
+        },
+        mode: (!none && input.agents.is_some()).then(|| {
+            if input.advanced {
+                button("simple", "Simple")
+            } else {
+                button("advanced", "Advanced")
+            }
+        }),
+        advanced: input.advanced,
         credentials: credentials(input, &connected),
-        credentials_note: format!("They stay on {place}."),
+        credentials_note: format!("Sign-ins and keys stay on {place}."),
         primary: button("continue", "Continue"),
-        secondary: connected.is_empty().then(|| button("skip", "Skip")),
+        // Continue works with nothing connected, and "Skip for now" stays at
+        // the top: no second Skip here (CUA-2267).
+        secondary: None,
         error: input
             .connect_error
             .as_ref()
-            .map(|e| format!("Couldn't add Cua: {e}")),
+            .map(|e| format!("Couldn't connect Cua: {e}")),
     }
 }
 
@@ -960,7 +1193,7 @@ fn account_row(input: &FirstRunInput) -> Option<CheckRow> {
             format!("Add {place} to your account"),
             host.error.as_ref().map_or_else(
                 || "It takes a few seconds.".into(),
-                |e| format!("It didn't work: {e}"),
+                |e| format!("Couldn't add it: {e}"),
             ),
             Some(button(
                 "set-up",
@@ -974,8 +1207,8 @@ fn account_row(input: &FirstRunInput) -> Option<CheckRow> {
     }
     Some(row(
         RowState::Ok,
-        format!("{} is in your account", cap(place)),
-        "Your other computers can reach its Spaces.".into(),
+        "Ready to share".into(),
+        "Its Spaces appear on every computer signed in to your account.".into(),
         None,
     ))
 }
@@ -985,7 +1218,7 @@ fn devices_view(input: &FirstRunInput) -> DevicesView {
     let rows = vec![
         DeviceRow {
             title: "Your other computers".into(),
-            note: format!("They join {place}'s pool"),
+            note: "Sign in with the same account".into(),
         },
         DeviceRow {
             title: "Your cloud".into(),
@@ -1001,7 +1234,7 @@ fn devices_view(input: &FirstRunInput) -> DevicesView {
             } else {
                 format!("Adding {place} to your account.")
             },
-            lede: "Sign in on your other computers, and they reach its Spaces.".into(),
+            lede: "Sign in on your other computers to use its Spaces.".into(),
             rows,
             status,
             primary: button("continue", "Continue"),
@@ -1010,13 +1243,129 @@ fn devices_view(input: &FirstRunInput) -> DevicesView {
         };
     }
     DevicesView {
-        title: "Connect your other devices.".into(),
-        lede: format!("Sign in once, and your other computers reach {place}'s Spaces."),
+        title: "Add your other computers.".into(),
+        lede: format!(
+            "Sign in to Cua here and on your other computers. Then they can all use {place}'s Spaces."
+        ),
         rows,
         status: account_row(input),
-        primary: button("sign-in", "Sign in to connect"),
+        primary: button("sign-in", "Sign in"),
         secondary: Some(button("not-now", "Not now")),
-        note: Some(format!("{} works without it.", cap(place))),
+        note: Some(format!(
+            "Not now keeps Cua on {place} only. You can sign in later."
+        )),
+    }
+}
+
+/// The first run asks for Screen Recording and Accessibility: on a Mac,
+/// signed in (so it is added to the account and shared), when it shares
+/// its screen. A Mac kept for Spaces only, or one not signed in, never
+/// sees the screen.
+pub fn asks_permissions(input: &FirstRunInput) -> bool {
+    input.host_os == "macos"
+        && input.signed_in
+        && input
+            .host
+            .as_ref()
+            .is_none_or(|h| h.share_desktop != Some(false))
+}
+
+/// The host's permission id for macOS Local Network access.
+pub const LOCAL_NETWORK: &str = "local-network";
+
+/// The permissions a shared screen needs (two, and Local Network where macOS
+/// Spaces run), as rows: also what Settings
+/// shows later (the same words and buttons).
+pub fn permissions_view(input: &FirstRunInput) -> PermissionsView {
+    let place = this_computer(&input.host_os);
+    let app = input
+        .host
+        .as_ref()
+        .and_then(|h| h.app_name.clone())
+        .filter(|n| !n.trim().is_empty())
+        .unwrap_or_else(|| "Cua Spaces".into());
+    // The host lists only what is missing, and only once it is set up.
+    let known = input
+        .host
+        .as_ref()
+        .filter(|h| h.configured && !input.host_setting_up);
+    // The host lists a "local-network" entry (granted or not) when macOS Spaces
+    // can run on this Mac, and the page then asks for it with the other two.
+    let local_network = input
+        .host
+        .as_ref()
+        .is_some_and(|h| h.permissions.iter().any(|p| p.id == LOCAL_NETWORK));
+    let mut wanted = vec![
+        // Plain words, not the panes' names: macOS renames them (Accessibility
+        // is "Device Control and Data Access" from macOS 27), and Allow opens
+        // the right one anyway.
+        (
+            "screen-recording",
+            format!("See {place}'s screen"),
+            "So your team and agents can see what's on it.".to_string(),
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+        ),
+        (
+            "accessibility",
+            "Use the mouse and keyboard".to_string(),
+            format!("So they can click and type on {place}."),
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+        ),
+    ];
+    if local_network {
+        wanted.push((
+            LOCAL_NETWORK,
+            "Run Spaces on this Mac".to_string(),
+            "So the macOS Spaces you create here can start and connect.".to_string(),
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork",
+        ));
+    }
+    let count = wanted.len();
+    let rows: Vec<CheckRow> = wanted
+        .into_iter()
+        .map(|(id, title, note, pane)| {
+            let (state, note, action, settings_url) = match known {
+                None => (
+                    RowState::Checking,
+                    format!("Adding {place} to your account first…"),
+                    None,
+                    None,
+                ),
+                Some(host) => match missing_permission(host, id) {
+                    Some(p) => (
+                        RowState::Fix,
+                        note,
+                        Some(button("allow", "Allow")),
+                        Some(p.settings_url.unwrap_or_else(|| pane.into())),
+                    ),
+                    None => (RowState::Ok, "Allowed".into(), None, None),
+                },
+            };
+            CheckRow {
+                id: id.into(),
+                state,
+                title,
+                note,
+                action,
+                settings_url,
+            }
+        })
+        .collect();
+    let all = rows.iter().all(|r| r.state == RowState::Ok);
+    PermissionsView {
+        title: format!("Share {place}'s screen."),
+        lede: if count == 2 {
+            format!("Allow two permissions so your team and agents can see and use {place}.")
+        } else {
+            format!(
+                "Allow three permissions so your team and agents can see and use {place}, and \
+                 so macOS Spaces can run on it."
+            )
+        },
+        rows,
+        note: format!("Allow opens System Settings, where you turn on {app}."),
+        primary: all.then(|| button("continue", "Continue")),
+        secondary: (!all).then(|| button("not-now", "Not now")),
     }
 }
 
@@ -1063,7 +1412,7 @@ fn computer_row(input: &FirstRunInput) -> CheckRow {
             format!("Set up {place}"),
             &host.error.as_ref().map_or_else(
                 || format!("Cua needs to add {place} to your account. It takes a few seconds."),
-                |e| format!("Setting it up didn't work: {e}"),
+                |e| format!("Couldn't set it up: {e}"),
             ),
             Some(button(
                 "set-up",
@@ -1079,7 +1428,7 @@ fn computer_row(input: &FirstRunInput) -> CheckRow {
         return row(
             RowState::Fix,
             format!("Start Cua on {place}"),
-            "Cua's background service isn't running.",
+            "Cua isn't running in the background.",
             Some(button("set-up", "Start")),
         );
     }
@@ -1187,7 +1536,7 @@ fn extra_view(input: &FirstRunInput) -> ExtraView {
         "creating" => ExtraView {
             action: Some(button("cancel", "Cancel")),
             fraction: e.fraction.map(|f| f.clamp(0.0, 1.0)),
-            footnote: Some("You can press Done now. We'll let you know when it's ready.".into()),
+            footnote: Some("You can press Done. We'll tell you when it's ready.".into()),
             ..base(
                 "creating",
                 format!("Making {name} in the background"),
@@ -1198,7 +1547,7 @@ fn extra_view(input: &FirstRunInput) -> ExtraView {
             "ready",
             format!("{name} is ready"),
             format!(
-                "A fresh {} computer inside {place}.",
+                "A separate {} computer on {place}.",
                 os_label(e.os.as_deref().unwrap_or(""))
             ),
         ),
@@ -1244,7 +1593,7 @@ fn extra_view(input: &FirstRunInput) -> ExtraView {
                 ..base(
                     "choose",
                     "Make a first Space".into(),
-                    format!("A fresh computer inside {place}. One click starts it."),
+                    format!("A separate computer on {place}. Pick a system to start it."),
                 )
             }
         }
@@ -1284,27 +1633,43 @@ fn setup_view(input: &FirstRunInput) -> SetupView {
             id: "agent".into(),
             state: RowState::Checking,
             title: format!("Waiting for {name}…"),
-            note: format!("If {name} was already open, restart it."),
+            note: format!("If {name} was already open, restart it so it can find Cua."),
             action: None,
             settings_url: None,
         },
     };
+    // The last button names the choice (CUA-2267): skip while the agent
+    // hasn't used Cua, continue once it has. The step id stays `done`.
+    let primary = PrimaryView {
+        label: if input.agent_used_at.is_some() {
+            "Continue to the app".into()
+        } else {
+            SKIP_TRY_LATER.into()
+        },
+        ..done
+    };
     SetupView {
         title: format!("Try it in {name}."),
-        lede: format!("Paste this. {name} makes the Space itself."),
+        lede: format!("Paste this in {name} now, or try it later from Home."),
         prompt: Some(PromptView {
             heading: format!("Paste this in {name}"),
             text: try_prompt(&input.host_os).into(),
-            note: format!("It runs on {place}."),
+            note: format!("The Space runs on {place}."),
             copy: Some("Copy".into()),
             tabs: try_prompt_tabs(&input.host_os),
             selected: Some("linux".into()),
         }),
         status: Some(status),
         extra: None,
-        primary: done,
+        primary,
     }
 }
+
+/// The try step's button while the agent hasn't used Cua yet.
+pub const SKIP_TRY_LATER: &str = "Skip, I'll try it later";
+
+/// What Simple's Connect does, in one line (the consent).
+pub const SIMPLE_CONSENT: &str = "Connect adds Cua to the agent and copies its sign-in to Keyvault";
 
 /// The plan card for a moment after the first success: Teams for someone
 /// who entered teammates' emails and isn't on Teams, else Pro for Free.
@@ -1374,17 +1739,103 @@ fn art(input: &FirstRunInput) -> ArtView {
 
 /// The first run as drawn.
 pub fn view(input: &FirstRunInput) -> FirstRunView {
-    let step = input.step;
+    let all = steps(input);
+    // The permissions screen of a Mac that no longer asks (signed out, or
+    // its screen is not shared) shows the try screen instead.
+    let step = if all.contains(&input.step) {
+        input.step
+    } else {
+        FirstRunStep::Setup
+    };
+    let steps = all;
+    let current = steps.iter().position(|s| *s == step).unwrap_or(0);
     FirstRunView {
         step,
         later: "Skip for now".into(),
         welcome: (step == FirstRunStep::Welcome).then(|| welcome_view(input)),
         connect: (step == FirstRunStep::Connect).then(|| connect_view(input)),
         devices: (step == FirstRunStep::Devices).then(|| devices_view(input)),
+        permissions: (step == FirstRunStep::Permissions).then(|| permissions_view(input)),
         setup: (step == FirstRunStep::Setup).then(|| setup_view(input)),
+        cli: (step == FirstRunStep::Cli).then(|| cli_view(input)),
         art: art(input),
-        dots: 4,
-        current: step.index(),
+        dots: steps.len() as u8,
+        current: current as u8,
+        steps,
+    }
+}
+
+/// Install the Cua CLI, as the first run and Settings show it.
+pub fn cli_view(input: &FirstRunInput) -> CliView {
+    let name = cli_name(input);
+    let cli = &input.cli;
+    let installed = cli.present();
+    let mut facts = Vec::new();
+    if let Some(at) = cli.location().filter(|_| installed) {
+        facts.push(CliFact {
+            label: "Installed at".into(),
+            value: tilde(&at),
+        });
+    } else if let Some(plan) = &cli.plan {
+        facts.push(CliFact {
+            label: "Installs".into(),
+            value: tilde(&plan.target),
+        });
+        if !plan.on_path
+            && let Some(profile) = &plan.path_profile
+        {
+            facts.push(CliFact {
+                label: "Adds to PATH".into(),
+                value: format!("{}, in {}", tilde(&plan.bin_dir), tilde(profile)),
+            });
+        }
+    }
+    let status = if cli.installing {
+        "Installing…".to_string()
+    } else if let Some(at) = cli.location().filter(|_| installed) {
+        format!("Installed at {}.", tilde(&at))
+    } else if let Some(plan) = cli.plan.as_ref().filter(|p| p.source.is_some()) {
+        format!("Not installed. Install puts it at {}.", tilde(&plan.target))
+    } else {
+        "This app can't install the command here.".to_string()
+    };
+    let can_install = !installed && cli.plan.as_ref().is_some_and(|p| p.source.is_some());
+    CliView {
+        title: if installed {
+            "Cua is ready in Terminal.".into()
+        } else {
+            "Use Cua from the Terminal.".into()
+        },
+        lede: format!(
+            "Type {name} in Terminal to make and use Spaces. Your agents can use it too."
+        ),
+        facts,
+        status,
+        installed,
+        busy: cli.installing,
+        try_command: installed.then(|| format!("{name} spaces ls")),
+        error: cli
+            .error
+            .as_ref()
+            .map(|e| format!("Couldn't install it: {e}")),
+        primary: if installed {
+            Some(button("continue", "Continue"))
+        } else if can_install {
+            Some(button(
+                "install",
+                if cli.installing {
+                    "Installing…"
+                } else if cli.error.is_some() {
+                    "Try again"
+                } else {
+                    "Install"
+                },
+            ))
+        } else {
+            Some(button("continue", "Continue"))
+        },
+        secondary: (!installed && can_install).then(|| button("not-now", "Not now")),
+        name,
     }
 }
 
@@ -1459,8 +1910,8 @@ pub fn todos(input: &FirstRunInput) -> FirstRunTodos {
     let extra_done = matches!(input.extra.phase.as_str(), "creating" | "ready");
     items.push(FirstRunTodo {
         id: "extra".into(),
-        title: "Give your agent its own Space (optional)".into(),
-        note: format!("A fresh computer inside {place}, away from your files and your mouse."),
+        title: "Make a first Space (optional)".into(),
+        note: format!("A separate computer on {place}, away from your files and your mouse."),
         done: extra_done,
         optional: true,
         action: (!extra_done).then(|| button("add", "Add a Space")),
@@ -1468,11 +1919,11 @@ pub fn todos(input: &FirstRunInput) -> FirstRunTodos {
     });
     items.push(FirstRunTodo {
         id: "sign-in".into(),
-        title: "Connect your other devices (optional)".into(),
+        title: "Add your other computers (optional)".into(),
         note: if input.signed_in {
             "Signed in to Cua.".into()
         } else {
-            format!("Sign in, and your other computers reach {place}'s Spaces.")
+            format!("Sign in to use {place}'s Spaces from your other computers.")
         },
         done: input.signed_in,
         optional: true,
@@ -1639,7 +2090,10 @@ mod tests {
             assert!(drawn[n as usize]);
         }
         let w = view(&input(FirstRunStep::Welcome, vec![])).welcome.unwrap();
-        assert_eq!(w.title, "Your agents get their own computer.");
+        assert_eq!(
+            w.title,
+            "Your computers, shared by your team and its agents."
+        );
         assert_eq!(w.primary.id, "start");
     }
 
@@ -1678,11 +2132,28 @@ mod tests {
             assert!(!a.connected, "{}", a.agent);
             assert_eq!(a.action.as_ref().unwrap().id, "connect");
         }
+        // Simple (the default) shows no paths and says what Connect does;
+        // Advanced names each file, and the link switches back.
+        assert!(c.agents.iter().all(|a| a.file.is_none()));
+        assert_eq!(
+            c.consent,
+            "Connect adds Cua to the agent and copies its sign-in to Keyvault on This Mac."
+        );
+        assert_eq!(c.mode.as_ref().unwrap().id, "advanced");
+        let c = connect(&FirstRunInput {
+            advanced: true,
+            ..i.clone()
+        });
+        assert_eq!(c.mode.as_ref().unwrap().label, "Simple");
+        assert_eq!(
+            c.consent,
+            "Ticked sign-ins are copied to Keyvault on This Mac."
+        );
         let files: Vec<Option<String>> = c.agents.iter().map(|a| a.file.clone()).collect();
         assert_eq!(files[0].as_deref(), Some("~/.hermes/config.yaml"));
         assert_eq!(files[1].as_deref(), Some("~/.claude.json"));
         assert_eq!(files[2].as_deref(), Some("~/.codex/config.toml"));
-        assert_eq!(c.secondary.as_ref().unwrap().id, "skip");
+        assert!(c.secondary.is_none());
         assert_eq!(lead_agent(i.agents.as_deref().unwrap()), "hermes");
         assert_eq!(view(&i).art.agent, "hermes");
     }
@@ -1761,7 +2232,7 @@ mod tests {
         };
         let c = connect(&i);
         let codex = c.agents.iter().find(|a| a.agent == "codex").unwrap();
-        assert_eq!(codex.note.as_deref(), Some("Adding Cua…"));
+        assert_eq!(codex.note.as_deref(), Some("Connecting…"));
         assert!(codex.action.is_none());
         let hermes = c.agents.iter().find(|a| a.agent == "hermes").unwrap();
         assert!(hermes.action.is_some());
@@ -1771,7 +2242,7 @@ mod tests {
         };
         assert_eq!(
             connect(&failed).error.as_deref(),
-            Some("Couldn't add Cua: no write access")
+            Some("Couldn't connect Cua: no write access")
         );
     }
 
@@ -1793,7 +2264,10 @@ mod tests {
             c.alternatives[0].note,
             "Hermes, Claude Code, Codex or Cursor, then come back here."
         );
-        assert_eq!(c.alternatives[1].command.as_deref(), Some(CLI_FIRST_SPACE));
+        assert_eq!(
+            c.alternatives[1].command.as_deref(),
+            Some("cua spaces create linux --on local")
+        );
         // Still looking: no alternatives yet.
         let looking = connect(&FirstRunInput {
             agents: None,
@@ -1837,19 +2311,22 @@ mod tests {
     fn signing_in_is_optional_and_says_what_it_connects() {
         let mut i = input(FirstRunStep::Devices, vec![]);
         let d = view(&i).devices.unwrap();
-        assert_eq!(d.title, "Connect your other devices.");
+        assert_eq!(d.title, "Add your other computers.");
         assert_eq!(
             d.lede,
-            "Sign in once, and your other computers reach this Mac's Spaces."
+            "Sign in to Cua here and on your other computers. Then they can all use this Mac's Spaces."
         );
         let rows: Vec<&str> = d.rows.iter().map(|r| r.title.as_str()).collect();
         assert_eq!(rows, ["Your other computers", "Your cloud"]);
         assert_eq!(
             (d.primary.id.as_str(), d.primary.label.as_str()),
-            ("sign-in", "Sign in to connect")
+            ("sign-in", "Sign in")
         );
         assert_eq!(d.secondary.as_ref().unwrap().id, "not-now");
-        assert_eq!(d.note.as_deref(), Some("This Mac works without it."));
+        assert_eq!(
+            d.note.as_deref(),
+            Some("Not now keeps Cua on this Mac only. You can sign in later.")
+        );
         assert!(d.status.is_none());
 
         i.signing_in = true;
@@ -1879,7 +2356,7 @@ mod tests {
         let ok = d.status.unwrap();
         assert_eq!(
             (ok.state, ok.title.as_str()),
-            (RowState::Ok, "This Mac is in your account")
+            (RowState::Ok, "Ready to share")
         );
 
         // No permission is asked here, even when one is missing.
@@ -1894,6 +2371,161 @@ mod tests {
         );
     }
 
+    /// Where Back and Continue go from `v`.
+    fn nav(v: &FirstRunView) -> (FirstRunStep, FirstRunStep) {
+        let at = v.current as usize;
+        (
+            v.steps[at.saturating_sub(1)],
+            v.steps[(at + 1).min(v.steps.len() - 1)],
+        )
+    }
+
+    fn missing(id: &str) -> FirstRunPermission {
+        FirstRunPermission {
+            id: id.into(),
+            granted: false,
+            settings_url: None,
+        }
+    }
+
+    #[test]
+    fn a_shared_mac_asks_for_two_permissions_after_the_account_and_never_before() {
+        let mut i = FirstRunInput {
+            step: FirstRunStep::Devices,
+            host_os: "macos".into(),
+            ..Default::default()
+        };
+        // Not signed in: Not now goes straight to the try screen.
+        let v = view(&i);
+        assert_eq!((nav(&v).1, v.dots), (FirstRunStep::Setup, 4));
+
+        i.signed_in = true;
+        i.host = Some(FirstRunHost {
+            configured: true,
+            running: true,
+            permissions: vec![missing("screen-recording"), missing("accessibility")],
+            ..Default::default()
+        });
+        let v = view(&i);
+        assert_eq!((nav(&v).1, v.dots), (FirstRunStep::Permissions, 5));
+
+        i.step = FirstRunStep::Permissions;
+        let v = view(&i);
+        assert_eq!(
+            (nav(&v).0, nav(&v).1, v.current),
+            (FirstRunStep::Devices, FirstRunStep::Setup, 3)
+        );
+        let p = v.permissions.unwrap();
+        assert_eq!(p.title, "Share this Mac's screen.");
+        assert_eq!(
+            p.lede,
+            "Allow two permissions so your team and agents can see and use this Mac."
+        );
+        assert_eq!(
+            p.rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+            ["screen-recording", "accessibility"]
+        );
+        assert!(p.rows.iter().all(|r| r.state == RowState::Fix
+            && r.action.as_ref().is_some_and(|a| a.id == "allow")
+            && r.settings_url.is_some()));
+        assert!(p.primary.is_none());
+        assert_eq!(p.secondary.unwrap().id, "not-now");
+        assert!(p.note.contains("turn on Cua Spaces."));
+
+        // Granted one by one: a check each, then Continue.
+        let host = i.host.as_mut().unwrap();
+        host.permissions = vec![missing("accessibility")];
+        host.app_name = Some("Cua Spaces Local".into());
+        let p = view(&i).permissions.unwrap();
+        assert_eq!(p.rows[0].state, RowState::Ok);
+        assert_eq!(p.rows[1].state, RowState::Fix);
+        assert!(p.note.contains("turn on Cua Spaces Local."));
+        i.host.as_mut().unwrap().permissions.clear();
+        let p = view(&i).permissions.unwrap();
+        assert!(
+            p.rows
+                .iter()
+                .all(|r| r.state == RowState::Ok && r.action.is_none())
+        );
+        assert_eq!(p.primary.unwrap().id, "continue");
+        assert!(p.secondary.is_none());
+
+        // Still being added: nothing is known yet, nothing is granted.
+        i.host_setting_up = true;
+        let p = view(&i).permissions.unwrap();
+        assert!(p.rows.iter().all(|r| r.state == RowState::Checking));
+        assert!(p.primary.is_none());
+    }
+
+    #[test]
+    fn a_mac_that_runs_macos_spaces_also_asks_for_local_network() {
+        let mut i = FirstRunInput {
+            step: FirstRunStep::Permissions,
+            host_os: "macos".into(),
+            signed_in: true,
+            host: Some(FirstRunHost {
+                configured: true,
+                running: true,
+                permissions: vec![FirstRunPermission {
+                    id: LOCAL_NETWORK.into(),
+                    granted: false,
+                    settings_url: None,
+                }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let p = view(&i).permissions.unwrap();
+        assert_eq!(
+            p.rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+            ["screen-recording", "accessibility", "local-network"]
+        );
+        // The two the host does not list are granted; Local Network is not.
+        assert_eq!(p.rows[0].state, RowState::Ok);
+        assert_eq!(p.rows[2].state, RowState::Fix);
+        assert!(
+            p.rows[2]
+                .settings_url
+                .as_deref()
+                .is_some_and(|u| u.contains("Privacy_LocalNetwork"))
+        );
+        assert!(p.lede.starts_with("Allow three permissions"));
+        assert!(p.primary.is_none());
+        // Granted: listed, and no longer in the way.
+        i.host.as_mut().unwrap().permissions[0].granted = true;
+        let p = view(&i).permissions.unwrap();
+        assert_eq!(p.rows[2].state, RowState::Ok);
+        assert_eq!(p.primary.unwrap().id, "continue");
+    }
+
+    #[test]
+    fn no_permissions_screen_without_a_shared_mac_screen() {
+        let mut i = FirstRunInput {
+            step: FirstRunStep::Permissions,
+            host_os: "macos".into(),
+            signed_in: true,
+            host: Some(FirstRunHost {
+                configured: true,
+                share_desktop: Some(false),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        // Spaces only: the saved step falls through to the try screen.
+        let v = view(&i);
+        assert_eq!(v.step, FirstRunStep::Setup);
+        assert!(v.permissions.is_none());
+        assert_eq!((nav(&v).0, v.dots), (FirstRunStep::Devices, 4));
+        // Not a Mac.
+        i.host_os = "windows".into();
+        i.host.as_mut().unwrap().share_desktop = None;
+        assert!(!asks_permissions(&i));
+        // Signed out.
+        i.host_os = "macos".into();
+        i.signed_in = false;
+        assert!(!asks_permissions(&i));
+    }
+
     #[test]
     fn the_try_screen_waits_for_the_lead_agent_and_done_is_never_blocked() {
         let mut i = FirstRunInput {
@@ -1902,14 +2534,23 @@ mod tests {
         };
         let s = view(&i).setup.unwrap();
         assert_eq!(s.title, "Try it in Hermes.");
-        assert_eq!(s.lede, "Paste this. Hermes makes the Space itself.");
-        let p = s.prompt.unwrap();
+        assert_eq!(
+            s.lede,
+            "Paste this in Hermes now, or try it later from Home."
+        );
+        let p = s.prompt.clone().unwrap();
         assert_eq!(p.text, TRY_PROMPT);
         assert_eq!(p.copy.as_deref(), Some("Copy"));
         assert_eq!(s.status.as_ref().unwrap().title, "Waiting for Hermes…");
         assert!(s.primary.enabled);
+        // The last button names the choice: skip until Hermes used Cua, then continue.
+        assert_eq!(
+            (s.primary.id.as_str(), s.primary.label.as_str()),
+            ("done", "Skip, I'll try it later")
+        );
         i.agent_used_at = Some("18:12".into());
         let s = view(&i).setup.unwrap();
+        assert_eq!(s.primary.label, "Continue to the app");
         let st = s.status.unwrap();
         assert_eq!(
             (st.state, st.title.as_str()),
@@ -1937,15 +2578,15 @@ mod tests {
             [
                 (
                     "macos",
-                    "Make a macOS Space on this Mac and stream the desktop in a new window."
+                    "Make a macOS Space on this Mac and show its desktop in a new window."
                 ),
                 (
                     "linux",
-                    "Make a Linux Space on this Mac and stream the desktop in a new window."
+                    "Make a Linux Space on this Mac and show its desktop in a new window."
                 ),
                 (
                     "omarchy",
-                    "Make an Omarchy Space on this Mac and stream the desktop in a new window."
+                    "Make an Omarchy Space on this Mac and show its desktop in a new window."
                 ),
             ]
         );
@@ -2103,5 +2744,176 @@ mod tests {
                 assert!(!all.contains(&format!(" {word}")), "{step:?}: {word}");
             }
         }
+    }
+
+    fn plan(found: Option<&str>, on_path: bool, target: &str) -> crate::installer::CliInstallPlan {
+        crate::installer::CliInstallPlan {
+            source: Some("/Applications/Cua Spaces.app/Contents/MacOS/cua".into()),
+            target: target.into(),
+            bin_dir: "/Users/ada/.local/bin".into(),
+            on_path,
+            path_profile: (!on_path).then(|| "/Users/ada/.zshrc".into()),
+            path_line: (!on_path).then(|| "export PATH=\"/Users/ada/.local/bin:$PATH\"".into()),
+            found: found.map(Into::into),
+            ..Default::default()
+        }
+    }
+
+    const STABLE_TARGET: &str = "/Users/ada/.local/bin/cua";
+    const LOCAL_TARGET: &str = "/Users/ada/.local/bin/cua-local";
+
+    #[test]
+    fn the_cli_screen_shows_only_while_the_bundled_cli_is_missing() {
+        let base = input(FirstRunStep::Connect, vec![claude(true)]);
+        // Not read yet, or no plan here: no screen.
+        assert_eq!(steps(&base).len(), 4);
+        // A disk-image install: the bundled CLI, nothing on PATH.
+        let dmg = FirstRunInput {
+            cli: FirstRunCli {
+                plan: Some(plan(None, false, STABLE_TARGET)),
+                ..Default::default()
+            },
+            ..base.clone()
+        };
+        assert_eq!(
+            steps(&dmg),
+            [
+                FirstRunStep::Welcome,
+                FirstRunStep::Connect,
+                FirstRunStep::Cli,
+                FirstRunStep::Devices,
+                FirstRunStep::Setup
+            ]
+        );
+        let v = view(&FirstRunInput {
+            step: FirstRunStep::Cli,
+            ..dmg.clone()
+        });
+        assert_eq!((v.dots, v.current), (5, 2));
+        // Already installed (or a working one found): no screen.
+        let found = FirstRunInput {
+            cli: FirstRunCli {
+                plan: Some(plan(Some(STABLE_TARGET), true, STABLE_TARGET)),
+                ..Default::default()
+            },
+            ..base.clone()
+        };
+        assert_eq!(steps(&found).len(), 4);
+        // A build without a bundled CLI can't install one: no screen.
+        let unbundled = FirstRunInput {
+            cli: FirstRunCli {
+                plan: Some(crate::installer::CliInstallPlan {
+                    source: None,
+                    ..plan(None, true, STABLE_TARGET)
+                }),
+                ..Default::default()
+            },
+            ..base
+        };
+        assert_eq!(steps(&unbundled).len(), 4);
+    }
+
+    #[test]
+    fn the_cli_screen_names_the_file_asks_first_and_shows_the_result() {
+        let mut i = FirstRunInput {
+            step: FirstRunStep::Cli,
+            cli: FirstRunCli {
+                plan: Some(plan(None, false, STABLE_TARGET)),
+                ..Default::default()
+            },
+            ..input(FirstRunStep::Cli, vec![claude(true)])
+        };
+        let c = view(&i).cli.unwrap();
+        assert_eq!(c.title, "Use Cua from the Terminal.");
+        assert_eq!(c.name, "cua");
+        assert_eq!(
+            c.facts,
+            [
+                CliFact {
+                    label: "Installs".into(),
+                    value: "~/.local/bin/cua".into()
+                },
+                CliFact {
+                    label: "Adds to PATH".into(),
+                    value: "~/.local/bin, in ~/.zshrc".into()
+                },
+            ]
+        );
+        assert_eq!(c.primary, Some(button("install", "Install")));
+        assert_eq!(c.secondary, Some(button("not-now", "Not now")));
+        assert!(!c.installed && c.try_command.is_none());
+        assert_eq!(
+            c.status,
+            "Not installed. Install puts it at ~/.local/bin/cua."
+        );
+
+        i.cli.installing = true;
+        let c = cli_view(&i);
+        assert!(c.busy);
+        assert_eq!(c.status, "Installing…");
+
+        i.cli.installing = false;
+        i.cli.error = Some("permission denied".into());
+        let c = cli_view(&i);
+        assert_eq!(
+            c.error.as_deref(),
+            Some("Couldn't install it: permission denied")
+        );
+        assert_eq!(c.primary, Some(button("install", "Try again")));
+
+        i.cli.error = None;
+        i.cli.installed = Some(STABLE_TARGET.into());
+        let v = view(&i);
+        // The result stays on its screen until Continue.
+        assert!(v.steps.contains(&FirstRunStep::Cli));
+        let c = v.cli.unwrap();
+        assert!(c.installed);
+        assert_eq!(c.title, "Cua is ready in Terminal.");
+        assert_eq!(c.status, "Installed at ~/.local/bin/cua.");
+        assert_eq!(c.try_command.as_deref(), Some("cua spaces ls"));
+        assert_eq!(c.primary, Some(button("continue", "Continue")));
+        assert_eq!(c.secondary, None);
+    }
+
+    #[test]
+    fn local_builds_name_their_own_cli() {
+        // The host names it (`SettingsSnapshot.cli`)...
+        let named = FirstRunInput {
+            cli_name: Some("cua-local".into()),
+            ..input(FirstRunStep::Connect, vec![])
+        };
+        let c = connect(&named);
+        assert_eq!(
+            c.alternatives[1].command.as_deref(),
+            Some("cua-local spaces create linux --on local")
+        );
+        // ...or its install plan's file does.
+        let planned = FirstRunInput {
+            step: FirstRunStep::Cli,
+            cli: FirstRunCli {
+                plan: Some(plan(None, true, LOCAL_TARGET)),
+                ..Default::default()
+            },
+            ..input(FirstRunStep::Cli, vec![])
+        };
+        assert_eq!(cli_name(&planned), "cua-local");
+        let c = cli_view(&planned);
+        assert_eq!(c.facts[0].value, "~/.local/bin/cua-local");
+        assert_eq!(c.facts.len(), 1, "on PATH already: no PATH line");
+        assert_eq!(
+            cli_name(&FirstRunInput {
+                cli: FirstRunCli {
+                    plan: Some(plan(None, true, "C:\\Users\\ada\\bin\\cua-local.exe")),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+            "cua-local"
+        );
+        assert_eq!(cli_name(&FirstRunInput::default()), "cua");
+        assert_eq!(
+            cli_first_space("cua-local"),
+            "cua-local spaces create linux --on local"
+        );
     }
 }

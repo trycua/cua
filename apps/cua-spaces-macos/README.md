@@ -1,18 +1,21 @@
-# Cua Spaces for macOS (SwiftUI)
+# Cua Spaces for macOS
 
-A native macOS 26 app for Spaces and the Keyvault. It is a thin SwiftUI shell
-over the same app core as the Tauri app (`apps/cua-spaces`): every product
-decision lives in `libs/cua/crates/cua-spaces-app-core`, reached through the
-cua SDK's Swift package (`libs/cua/swift`, module `CuaSDK`). The views only
-render and do platform glue.
+A macOS 26 app for Spaces and the Keyvault: a thin Swift shell that hosts the
+shared React UI (`apps/cua-spaces-web`) in a `WKWebView`, the same UI the
+Electron app shows. Every product decision lives in
+`libs/cua/crates/cua-spaces-app-core`, reached through the cua SDK's Swift
+package (`libs/cua/swift`, module `CuaSDK`). The shell keeps only what has to
+be native: the menu bar extra, the notch panel, permission (TCC) prompts and
+the PermissionFlow guide, Touch ID, the Keychain, launch at login, the Sparkle
+updater, URL schemes, notifications, video (a Space's desktop in its own
+window) and the bridge to the app core.
 
 | Surface | What it is |
 |---|---|
-| Main window | Sidebar with Spaces (one section per location; a dragged window drops on a row) and the Keyvault (All, Waiting, Access, Recent, one row per site) with the global Keyvault switch; Space detail with the live desktop, per-window streams, picture in picture, agent runs and the Teleport drop well |
-| New Space | Step-by-step sheet: System, Resources, Options, Summary; Connect by address |
-| Keyvault | Sidebar and list: categories, a site's accounts with their unattended switches, approval sheets |
-| Onboarding | The shared web onboarding (`/onboarding` in `apps/cua-spaces-web`), in the New UI window, whether or not the New UI setting is on; the app draws none of its own. The page asks and finishes it through `onboarding.get` and `onboarding.complete` (the state is `onboarding.json`); a Space it creates posts a "<Space> is ready" notification (`notifyWhenReady`) that opens the Space. With the New UI off, the window gives way to the native one when the first run ends. A launch (or a window that opens again) while it is not done opens `/onboarding?due=1`: the page goes to Spaces instead when the person chose "Skip for now" (kept in the page's storage), so the welcome does not come back at every launch; Settings → Welcome and the sidebar's "Finish setting up" open it without `due` and always show it |
-| Devices | Settings → Devices: this Mac's enrollment (enrolled until, grace ends, needs enrollment), the account's devices with Rename and Revoke, Recent Access; the Enroll sheet (sign in again, or a one-time code approved from an enrolled device), the approval sheet for a device asking to join (a notification too; Approve asks for Touch ID or the login password), and a banner in the main window when this Mac needs enrolling |
+| Main window | The shared web UI (`apps/cua-spaces-web`) in a `WKWebView` (below): Spaces, a Space's page, New Space, Machines, Agents, the Keyvault, Cua Volume, Settings. A real window dragged onto a Space tile drops on it |
+| Space window | A Space's desktop in its own native window (video stays native) |
+| Onboarding | The shared web onboarding (`/onboarding` in `apps/cua-spaces-web`), in the web UI window; the app draws none of its own. The page asks and finishes it through `onboarding.get` and `onboarding.complete` (the state is `onboarding.json`); a Space it creates posts a "<Space> is ready" notification (`notifyWhenReady`) that opens the Space. A launch (or a window that opens again) while it is not done opens `/onboarding?due=1`: the page goes to Spaces instead when the person chose "Skip for now" (kept in the page's storage), so the welcome does not come back at every launch; Settings → Welcome and the sidebar's "Finish setting up" open it without `due` and always show it |
+| Devices | Settings → Trusted devices: this Mac's enrollment (enrolled until, grace ends, needs enrollment), the account's devices with Rename and Revoke, Recent Access; the Enroll sheet (sign in again, or a one-time code approved from an enrolled device), the approval sheet for a device asking to join (a notification too, which opens this page; Approve asks for Touch ID or the login password), and a banner on every page when this Mac needs enrolling |
 | Menu bar | The Cua mark (template); status line, Open, New Space, Settings, Quit |
 | Launch at login | Settings → General: `SMAppService.mainApp`, showing what macOS reports (on, off, waiting for approval with a button to Login Items, not found); the first run's Done page (the web onboarding's) ticks it. A login launch opens without the main window, and the app's daemon (host Spaces, persistent agents, Cua Volume) starts with it |
 | Join with a code | `host.joinWithCode` runs the bundled `cua host setup --pair <code>` (3 minute limit); `cua://add/<CODE>` opens Machines at `?join=<CODE>` and the page asks before joining |
@@ -28,12 +31,12 @@ Command shortcuts back to the Mac. Shortcuts macOS reserves (⌘Tab, ⌘Space,
 event tap and the Accessibility permission. Policy: `KeyCapture` in
 `libs/spaces-app-swift`.
 
-## One core, two shells
+## One core, one UI
 
 ```
-apps/cua-spaces (Tauri)        apps/cua-spaces-macos (SwiftUI)
-  React: render only             SwiftUI: render only
-  src/model/*.ts over wasm       view models over UniFFI
+apps/cua-spaces-desktop (Electron)   apps/cua-spaces-macos (Swift shell)
+  apps/cua-spaces-web in Chromium      apps/cua-spaces-web in WKWebView
+  bridge over the Node binding         bridge over UniFFI (WebUIBridge)
           \                           /
       libs/cua/crates/cua-spaces-app-core
       (Space list, wizard, teleport, Keyvault, onboarding, notch)
@@ -92,8 +95,7 @@ UI tests (XCUITest) need Xcode: `xcodegen generate` (project.yml), then
 
 Environment (debug builds only; release builds ignore every `CUA_SPACES_*` hook):
 `CUA_SPACES_FIXTURES=1` runs on fixtures (no daemon, no Space, an in-memory login item whose status `CUA_SPACES_LOGIN_ITEM` sets: `enabled`, `notRegistered`, `requiresApproval`, `notFound`; a relay allowance `CUA_SPACES_RELAY_USAGE` sets: `reached`, `team`, `none`, default the free plan within it);
-`CUA_SPACES_START_VIEW` opens `new-space`, `keyvault`, `approval`, `settings-devices`, `settings-about`, `device-approval` (with `CUA_SPACES_APPROVE_CODE`), `device-enroll`, `device-enroll-code`,
-`onboarding`, `stream` (the Space detail at its Stream section), `window-pip` (the same, with the first window popped out), `teleport-picker` (the Space's teleport picker; set `CUA_TELEPORT_APP_ROOTS` to fixture apps for images), `run-timeline` (an agent run's conversation from the Space's Agents section; fixtures give `local:aurora` two runs) or a notch state (`notch-open`, which springs
+`CUA_SPACES_START_VIEW` opens the web UI window at a page (`new-space`, `keyvault`, `approval`, `settings`, `settings-devices`, `settings-about`, `device-approval`, `device-enroll`, `onboarding`, `space`, `this-machine`; see `AppEnvironment.applyStartView`) or a notch state (`notch-open`, which springs
 open 1.5 s after launch, `notch-hover`, `notch-permission`,
 `notch-drag-target`, `notch-drop`); `CUA_SPACES_SELECT`
 selects a Space; `CUA_SPACES_CREATE=<image>[,<name>]` creates one on this
@@ -108,28 +110,21 @@ run (with a throwaway `HOME`). State lives under `$HOME/Library/Application Supp
 `CuaSpacesMac --check-launch-only` loads the app's libraries, prints its version and exits
 (`scripts/check-launch.sh`; release builds too).
 
-## New UI
+## The web UI window
 
-The New UI (the `web_ui` experiment) makes
-`WebUIWindowController` (`Sources/CuaSpacesMacKit/WebHost`) the main window: a
-`WKWebView` with the shared React UI (`apps/cua-spaces-web`) in a window
-without a title bar. Turning it on puts that window where the native one was
-(same frame) and closes the native one; turning it off does the reverse
-(`MainWindowSwitch`). While it is on, everything that opens the main window
-opens it instead, at the matching page (`MainUIRouter`): the Dock icon, the
-menu bar item, the notch, File, New Space (⌘N), the View menu, Help, Getting
-Started and the app's notifications; the native window, opened any other way
-(the Window menu), gives way to it. The notch, the menu bar extra, Touch ID, the updater and video stay
-native; a Space's desktop opens in its native window.
+`WebUIWindowController` (`Sources/CuaSpacesMacKit/WebHost`) is the app's only
+main window: a `WKWebView` with the shared React UI (`apps/cua-spaces-web`) in
+a window without a title bar. Everything that opens the main window opens it,
+at the matching page (`MainUIRouter`): a launch (the first run at
+`/onboarding?due=1` while it is due; never at login), the Dock icon, the menu
+bar item, the notch, File, New Space (⌘N), the View menu, Help, Getting
+Started, ⌘⇧Space and the app's notifications (a Space that came up: its page;
+a device asking to join: Settings, Devices; an agent: Agents). A Space's
+desktop opens in its own native window (video stays native).
 
-It is on by default on the Beta update channel (the setting Sparkle uses)
-from the 0.8.1 betas, and on every channel from 0.8.1 (0.8.0 shipped without it)
-(`experiments::new_ui_default`). Settings, Experiments, "Use classic UI"
-(`experiment:classic_ui`) is the way back; it saves the user's choice
-(`AppSettings.new_ui`), which later launches keep. Only a choice is saved:
-an older build's saved `webUi: false` was its default, so it reads as no
-choice, and a saved `true` is kept (`settings::load`). A beta's first launch
-starts on the Beta channel (`settings::first_launch_channel`).
+There is no native main window and no switch back: the "Use classic UI"
+setting is gone. An install that had it on (`AppSettings.new_ui` false) opens
+the web UI like every other one (`settings::resolve_new_ui` is always on).
 
 - Release: `scripts/build-app.sh` copies the web build (`apps/cua-spaces-web/dist`,
   or `CUA_WEBUI_DIST`) to `Contents/Resources/WebUI`, served at
@@ -176,13 +171,13 @@ under the web bridge's operation names in `WebUIBridge+Pages.swift`, each to
 the view model or service its native screen uses. New Space runs in the
 page: `spaces.createOptions` is the env the native sheet opens with
 (`AppModel.newSpaceEnv`) and `spaces.create` runs its create
-(`AppModel.runCreate`). While the `web_ui` experiment is on, every New Space
-item (⌘N, the menu bar, the toolbar, a machine's "New Space on…") opens the
-New UI window's wizard (`spaces.newRequested`); the native sheet is the
-fallback when it is off. The app menu's Settings command (⌘,) opens the New UI's
-Settings (`settings.openRequested`) while its window is the key window (or, with no key
-window, the frontmost one), even when its web view has no focus; with any other window
-in front it opens the native Settings scene (`WebUIWindowController.openSettings`).
+(`AppModel.runCreate`). Every New Space item (⌘N, the menu bar, a machine's
+"New Space on…") opens the window's wizard (`spaces.newRequested`). Settings
+is only the page's (Account, General, Connectors, Trusted devices,
+Advanced, About): the app menu's "Settings…" (⌘,), the menu bar item, the
+notch and the command palette all open it in the web UI window
+(`MainUIRouter.openSettings`, `WebUIWindowController.openSettings`; an open
+window gets `settings.openRequested`). There is no native Settings window.
 Keyvault unlocks use the native
 prompt and the daemon's Touch ID; a passphrase never crosses the bridge.
 
@@ -379,7 +374,12 @@ not verify it puts the previous Local app back. It refuses to replace anything
 at the Local path that is not a Cua Spaces Local bundle, and it never writes to
 `/Applications/Cua Spaces.app`, `~/.local/bin/cua`, `~/.cua` or `~/.lume`.
 `cua-local` is a link to the `cua` inside the app; no shell profile is edited,
-so put `~/.local/bin` on your PATH.
+so put `~/.local/bin` on your PATH. It names itself in what it prints: its help,
+its hints and its error messages tell you to run `cua-local host setup`, never
+`cua host setup` (which would run the released CLI). The code writes each hint
+for the released CLI and `cua-cli` renames it where it is printed (`util::hint`,
+and for a message that holds a name the user chose, `util::cli`); a message
+that names a command goes through one of them.
 
 **Permissions survive a rebuild** when the app is signed with the stable local
 certificate that Cua Driver's local install uses
@@ -414,7 +414,7 @@ and removing Local's setup removes only Local's. The names come from
 Rebuilding is the same command. To remove it:
 
 ```sh
-scripts/uninstall-local.sh               # asks first; --yes to skip, --with-lume-local to include lume-local
+scripts/uninstall-local.sh               # asks first; --yes to skip, --with-lume-local to include lume-local; --keep-permissions keeps the macOS permissions (reset by default, before the app goes)
 ```
 
 It unregisters the Local helper login item and removes the app, `cua-local`,
@@ -492,11 +492,14 @@ the key was, so installing is dragging the key into its place.
 `package-dmg.sh` lays the window out with a pinned
 [dmgbuild](https://github.com/dmgbuild/dmgbuild) (`scripts/dmg-settings.py`)
 and makes the alias with `scripts/make-alias.swift`. The art in
-`Support/dmg` and the app icon `Support/AppIcon.icns` (the key with the Spaces
-mark, the Cua mark in stacked squares, on a slate tile) are drawn from the site's keycap sprites by
-`scripts/dmg-art/render.sh` (headless Chrome), which also writes the same icon
-to `apps/cua-spaces/src-tauri/icons` for the other apps; rerun it only when
-the art changes.
+`Support/dmg` is drawn from the site's keycap sprites by
+`scripts/dmg-art/render.sh` (headless Chrome). The app icon
+`Support/AppIcon.icns` (the terracotta koala keycap) is not drawn: it is built
+from the chosen PNGs in `scripts/dmg-art/src` (`app-icon-1024.png`, plus
+`app-icon-small-1024.png` with a larger print for 16 to 64 px) by
+`render.sh`, which also writes the same icon to `apps/cua-spaces/src-tauri/icons`
+for the other apps. `render.sh --app-icon-only` rebuilds just the icons; rerun
+it only when the art changes.
 
 ## Updates (Sparkle)
 

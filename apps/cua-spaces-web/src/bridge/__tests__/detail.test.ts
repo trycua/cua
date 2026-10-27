@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { HostError } from "../adapter";
 import { createDemoAdapter } from "../adapters/demo";
@@ -9,7 +11,7 @@ import { sanitizeSignals } from "../ops/telemetry";
 import { TelemetryForwarder, telemetryAllowed } from "../telemetry";
 import { toMachineRows } from "../adapters/webkit";
 import { machineIdOf, rowsToSpaces, toMachines } from "../derive";
-import { agentRunLines, desktopCover, SpaceDetailStore, spaceDetail } from "../space-detail";
+import { agentRunLines, desktopCover, PIP_CHANGED_EVENT, SpaceDetailStore, spaceDetail } from "../space-detail";
 import type { CoreClient } from "../core";
 import { parseDropped, sendFiles, splitDrop } from "../space-files";
 import type { MachineAccessNotice } from "../contracts/devices";
@@ -34,7 +36,7 @@ describe("usage events", () => {
         { type: "space-create-started", location: "local", guestOs: "linux", kind: "container", gpu: false },
         { type: "space-create", location: "local", guestOs: "linux", kind: "vm", outcome: "ok", failedPhase: "none", stalled: false, elapsedMs: -1, gpu: false },
         { type: "space-create", location: "local", guestOs: "linux", kind: "vm", outcome: "ready", failedPhase: "none", stalled: false, elapsedMs: 10, gpu: false },
-        { type: "space-create", location: "cloud", guestOs: "windows", kind: "vm", outcome: "error", failedPhase: "booting", stalled: false, elapsedMs: 10, gpu: false, errorVariant: "InsufficientDisk" },
+        { type: "space-create", location: "yours", guestOs: "windows", kind: "vm", outcome: "error", failedPhase: "booting", stalled: false, elapsedMs: 10, gpu: false, errorVariant: "InsufficientDisk" },
         { type: "space-create", location: "local", guestOs: "linux", kind: "vm", outcome: "error", failedPhase: "booting", stalled: false, elapsedMs: 10, gpu: false, errorVariant: "need 52 GB" },
         { type: "space-create", location: "local", guestOs: "linux", kind: "vm", outcome: "ok", failedPhase: "none", stalled: false, elapsedMs: 10, gpu: false, errorVariant: "", retryAttempt: 1, errorSubclass: "runtime_start" },
         { type: "space-create", location: "local", guestOs: "linux", kind: "vm", outcome: "ok", failedPhase: "none", stalled: false, elapsedMs: 10, gpu: false, errorVariant: "", retryAttempt: 2, errorSubclass: "none" },
@@ -45,7 +47,7 @@ describe("usage events", () => {
     ).toEqual([
       { type: "step", step: "app_launched", ok: true },
       { type: "space-create-started", location: "local", guestOs: "linux", kind: "container", gpu: false },
-      { type: "space-create", location: "cloud", guestOs: "windows", kind: "vm", outcome: "error", failedPhase: "booting", stalled: false, elapsedMs: 10, gpu: false, errorVariant: "InsufficientDisk" },
+      { type: "space-create", location: "yours", guestOs: "windows", kind: "vm", outcome: "error", failedPhase: "booting", stalled: false, elapsedMs: 10, gpu: false, errorVariant: "InsufficientDisk" },
       { type: "space-create", location: "local", guestOs: "linux", kind: "vm", outcome: "ok", failedPhase: "none", stalled: false, elapsedMs: 10, gpu: false, errorVariant: "", retryAttempt: 1, errorSubclass: "runtime_start" },
     ]);
   });
@@ -106,6 +108,36 @@ describe("demo host: Space detail and This machine", () => {
     stop();
     store.dispose();
     demo.dispose?.();
+  });
+
+  // Regression: a picture-in-picture panel closed by its own button left
+  // "Playing in a floating window" on the page until the next windows read
+  // (up to WINDOWS_REFRESH_MS), and the inline desktop came back late. The
+  // host says so at once (`stream.pipChanged`).
+  it("hears a panel the host closed by itself at once, without waiting for a windows read", () => {
+    const demo = createDemoAdapter({ latencyMs: 0 });
+    const core = { tryCall: () => null } as unknown as CoreClient;
+    const store = new SpaceDetailStore(demo, core);
+    const id = "local:design-review";
+    const say = (payload: unknown) => window.dispatchEvent(new CustomEvent("cua:event", { detail: { event: PIP_CHANGED_EVENT, payload } }));
+    say({ spaceId: id, open: ["desktop"] });
+    expect(store.get(id).open).toEqual(["desktop"]);
+    say({ spaceId: id, open: [] });
+    expect(store.get(id).open).toEqual([]);
+    // Malformed: ignored.
+    say({ spaceId: id, open: "desktop" });
+    say({ open: ["desktop"] });
+    expect(store.get(id).open).toEqual([]);
+    store.dispose();
+    say({ spaceId: id, open: ["desktop"] });
+    expect(store.get(id).open).toEqual([]);
+    demo.dispose?.();
+  });
+
+  // Drift guard: the SwiftUI host sends the event the page listens for.
+  it("listens for the event the SwiftUI host sends when its panels change", () => {
+    const swift = readFileSync(resolve(__dirname, "../../../../cua-spaces-macos/Sources/CuaSpacesMacKit/WebHost/WebUIBridge+Pages.swift"), "utf8");
+    expect(swift).toContain(`static let pipChangedEvent = "${PIP_CHANGED_EVENT}"`);
   });
 
   it("sets this machine up, stops sharing and removes the setup", async () => {

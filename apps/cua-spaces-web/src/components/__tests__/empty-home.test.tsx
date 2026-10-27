@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { BridgeProvider, emptyHome, type EmptyHome as EmptyHomeView } from "@/bridge";
 import type { DataAdapter } from "@/bridge/adapter";
-import { createDemoAdapter } from "@/bridge/adapters/demo";
+import { createDemoAdapter, type DemoOptions } from "@/bridge/adapters/demo";
 import type { CoreClient } from "@/bridge/core";
 import { readNewSpaceSession, resetNewSpaceSession, wizardView } from "@/bridge/new-space";
 import { noCore, testCore, wasmBuilt } from "@/bridge/__tests__/testCore";
@@ -18,7 +18,7 @@ afterEach(cleanup);
 /** The chrome's empty-home words, as `window.chrome` gives them. */
 const CHROME = {
   emptyTitle: "No Spaces yet",
-  emptyDetail: "Choose a system for your first Space.",
+  emptyDetail: "Pick a system to start it.",
   emptyAction: "Linux",
   emptyLinuxDetail: "About 4 minutes · 1.0–2.0 GB of disk",
   emptyMacosAction: "macOS",
@@ -37,8 +37,8 @@ function stubCore(asked: unknown[] = []): CoreClient {
   } as unknown as CoreClient;
 }
 
-function mount(core: CoreClient, home: EmptyHomeView) {
-  const base = createDemoAdapter({ latencyMs: 1, stepMs: 4, noSpaces: true });
+function mount(core: CoreClient, home: EmptyHomeView, cli?: DemoOptions["cli"]) {
+  const base = createDemoAdapter({ latencyMs: 1, stepMs: 4, noSpaces: true, cli });
   const created: unknown[] = [];
   // Records any create: a tile never starts one.
   const adapter = Object.assign(Object.create(base) as DataAdapter, {
@@ -68,24 +68,54 @@ describe("the empty home's words", () => {
     expect(tiles("arm64", "windows")).toEqual([linux]);
     expect(tiles("amd64", "linux")).toEqual([linux]);
     expect(asked[0]).toEqual(["window.chrome", {}]);
-    expect(emptyHome(stubCore(), null, "macos")).toMatchObject({ title: "No Spaces yet", detail: "Choose a system for your first Space." });
+    expect(emptyHome(stubCore(), null, "macos")).toMatchObject({ title: "No Spaces yet", detail: "Pick a system to start it." });
     expect(emptyHome(noCore, "arm64")).toBeNull();
   });
 
-  it("draws each tile as a button named by its system and figures, and no New Space of its own", () => {
+  it("is quiet: one heading, one line, a soft button per system with one figure, no steps and no New Space of its own", () => {
     mount(stubCore(), emptyHome(stubCore(), "arm64", "macos")!);
     expect(screen.getByRole("heading", { name: "Create your first Space" })).toBeTruthy();
-    expect(screen.getByText(/A Space is a fresh computer for you and your agents\. Choose a system for your first Space\./)).toBeTruthy();
-    expect(screen.getByText("3. Try a task with an agent")).toBeTruthy();
-    const linux = screen.getByRole("button", { name: "Linux, About 4 minutes · 1.0–2.0 GB of disk" });
-    const macos = screen.getByRole("button", { name: "macOS, About 19 GB download" });
-    // Focusable buttons with visible hover and focus states.
+    expect(screen.getByText("A separate computer on This Mac, for you and your agents.")).toBeTruthy();
+    expect(document.querySelector("[data-first-run-steps]")).toBeNull();
+    // One muted figure per row: no dot-chain.
+    const linux = screen.getByRole("button", { name: "Linux Space, About 4 minutes" });
+    const macos = screen.getByRole("button", { name: "macOS Space, About 19 GB download" });
+    expect(document.querySelector("[data-empty-home]")!.textContent).not.toContain("\u00b7");
+    // Soft tonal buttons with visible hover and focus states, no outline.
     linux.focus();
     expect(document.activeElement).toBe(linux);
     expect(linux.className).toContain("focus-visible:ring-2");
     expect(macos.className).toContain("hover:");
-    // The page header's New Space is the one.
-    expect(screen.getAllByRole("button")).toHaveLength(2);
+    expect(macos.className).not.toMatch(/\bborder\b|shadow/);
+    expect(macos.className).toContain("rounded-lg");
+    // The page header's New Space is the one; the terminal waits behind its link.
+    expect(screen.getAllByRole("button").filter((b) => !b.hasAttribute("data-cli-copy") && !b.hasAttribute("data-empty-terminal"))).toHaveLength(2);
+  });
+});
+
+describe("the empty home's terminal line", () => {
+  const commands = () => [...document.querySelectorAll("[data-cli-command]")].map((c) => c.textContent);
+
+  const openTerminal = async () => fireEvent.click(await screen.findByRole("button", { name: "Prefer the terminal?" }));
+
+  it("offers each system's create, copyable, under the released app's CLI, behind one quiet link", async () => {
+    mount(stubCore(), emptyHome(stubCore(), "arm64", "macos")!);
+    await openTerminal();
+    await waitFor(() => expect(commands()).toEqual(["cua spaces create linux --on local", "cua spaces create macos --on local"]));
+    expect(screen.getByRole("button", { name: "Copy cua spaces create linux --on local" })).toBeTruthy();
+  });
+
+  it("names a Local build's CLI, as its host reports it", async () => {
+    mount(stubCore(), emptyHome(stubCore(), "amd64", "linux")!, "local");
+    await openTerminal();
+    await waitFor(() => expect(commands()).toEqual(["cua-local spaces create linux --on local"]));
+  });
+
+  it("stays hidden while the CLI is not installed", async () => {
+    mount(stubCore(), emptyHome(stubCore(), "arm64", "macos")!, "missing");
+    await new Promise((r) => setTimeout(r, 30));
+    expect(screen.queryByText("Prefer the terminal?")).toBeNull();
+    expect(commands()).toEqual([]);
   });
 });
 
@@ -99,7 +129,7 @@ describe("a Spaces list that could not be read", () => {
       </BridgeProvider>,
     );
     expect(screen.getByRole("heading", { name: "Spaces could not be loaded" })).toBeTruthy();
-    expect(screen.queryByText(/Choose a system for your first Space/)).toBeNull();
+    expect(screen.queryByText(/Pick a system to start it/)).toBeNull();
     expect(screen.queryAllByRole("button")).toHaveLength(0);
   });
 });
@@ -108,17 +138,17 @@ describe.skipIf(!wasmBuilt)("the empty home (wasm core)", () => {
   it("shows the core's figures: Linux's measured time and disk, macOS's catalog download", async () => {
     const core = await testCore();
     expect(emptyHome(core, "arm64", "macos")!.tiles.map((t) => [t.name, t.detail])).toEqual([
-      ["Linux", "About 1 minute · 3.2–7.1 GB of disk"],
+      ["Linux", "About 3 minutes · 3.3–7.3 GB of disk"],
       ["macOS", "About 23 GB download"],
     ]);
   });
 
   it("opens New Space with the tile's system chosen, on this machine, and never creates", async () => {
     const core = await testCore();
-    const env = { defaultLocation: "local", cloudAvailable: false, localAvailable: true, maxCpus: 8 } as const;
+    const env = { defaultLocation: "local", localAvailable: true, maxCpus: 8 } as const;
     for (const [name, os] of [
-      [/^Linux, /, "linux"],
-      [/^macOS, /, "macos"],
+      [/^Linux Space, /, "linux"],
+      [/^macOS Space, /, "macos"],
     ] as const) {
       resetNewSpaceSession();
       const { created } = mount(core, emptyHome(core, "arm64", "macos")!);

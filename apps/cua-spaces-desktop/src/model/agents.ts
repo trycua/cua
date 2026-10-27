@@ -25,6 +25,7 @@ import type {
   AppAgentsView,
   AppSpaceAgentRun,
 } from "../native/generated/index";
+import { removeBackups, sweepBackupsOnce } from "./agent-backups";
 import { ToolError } from "./backend";
 import { words } from "./errors";
 import { NotStarted, type LiveGate, type LiveServices } from "./pending";
@@ -121,6 +122,29 @@ export class PersistentAgents {
     const args: Record<string, unknown> = { space, run_id: runId, cursor };
     if (max !== null) args.max = max;
     return this.call("agent_events", args);
+  }
+
+  /** Starts a coding agent in a Space (`agent_start`): its answer as is. Saved
+   * provider keys the harness reads are forwarded by the daemon unnamed. */
+  async startRun(
+    space: string,
+    agent: string,
+    prompt: string,
+    o: { repo: string | null; branch: string | null; model: string | null; envFromHost: string[] },
+  ): Promise<Json> {
+    const args: Record<string, unknown> = { space, agent, prompt };
+    if (o.repo) args.repo = o.repo;
+    if (o.branch) args.branch = o.branch;
+    if (o.model) args.model = o.model;
+    if (o.envFromHost.length) args.env_from_host = o.envFromHost;
+    return this.call("agent_start", args);
+  }
+
+  /** Sends a reply to a run (`agent_message`): queued while a turn runs, or the turn is interrupted first with `force`. */
+  async sendMessage(space: string, runId: string, text: string, force: boolean): Promise<Json> {
+    const args: Record<string, unknown> = { space, run_id: runId, text };
+    if (force) args.force = true;
+    return this.call("agent_message", args);
   }
 
   /** The selected agent's home (files only, recursively), its routines, every
@@ -283,7 +307,7 @@ export class AgentRunsModel {
 
 // MARK: Provider keys
 
-/** Settings → Agents: the provider keys agents get. The cua daemon keeps them in the system's credential store (`agent_keys.list/set/remove`, its app methods; no MCP tool reaches them) and answers only the provider, the variable, the last four characters and when each was added. A key passes through here once, in `save`, and is never kept. */
+/** Settings → Connectors: the provider keys agents get. The cua daemon keeps them in the system's credential store (`agent_keys.list/set/remove`, its app methods; no MCP tool reaches them) and answers only the provider, the variable, the last four characters and when each was added. A key passes through here once, in `save`, and is never kept. */
 export class AgentKeysModel {
   /** The daemon's last answer, as it came. */
   report: Json | null = null;
@@ -378,6 +402,14 @@ export interface AgentSetupRunning {
   remove(agents: string[]): Promise<AppAgentSetupOutcomeInput[]>;
   /** Starts `agent`'s own sign-in on this computer (`codex login`); returns once it runs. */
   signIn(agent: string): Promise<void>;
+  /** Whether each agent is really connected (CONTRACT §4), as `cua connect status --json` prints it. */
+  connectionStatusJson(refresh: boolean): Promise<string>;
+  /** Connect and Reconnect: Cua's tools and, with `signIn`, the agent's sign-in copied to Keyvault. */
+  connectJson(agents: string[], signIn: boolean, skills: boolean, mcp: boolean): Promise<string>;
+  /** Disconnect: both undone. */
+  disconnectJson(agents: string[], signIn: boolean): Promise<string>;
+  /** Deletes the config copies (`.cua-backup-*`) earlier versions left, once per install. */
+  sweepLeftovers?(): void;
 }
 
 /**
@@ -421,11 +453,39 @@ export class LiveAgentSetup implements AgentSetupRunning {
   }
 
   async remove(agents: string[]): Promise<AppAgentSetupOutcomeInput[]> {
-    return this.outcomes(await this.inner.remove(agents, true, true));
+    const configs = this.configsOf(agents);
+    const out = this.outcomes(await this.inner.remove(agents, true, true));
+    // The copies setup made of each config file are no use once Cua is out of it.
+    for (const c of configs) removeBackups(c);
+    return out;
+  }
+
+  /** The config files Cua edits for `agents` (every agent: none named). */
+  configsOf(agents?: string[]): string[] {
+    return this.inner
+      .detect()
+      .filter((i) => !agents || agents.includes(i.id))
+      .flatMap((i) => (i.mcpConfig ? [i.mcpConfig] : []));
   }
 
   async signIn(agent: string): Promise<void> {
     this.inner.signIn(agent);
+  }
+
+  async connectionStatusJson(refresh: boolean): Promise<string> {
+    return this.inner.connectionStatusJson(this.server, refresh);
+  }
+
+  async connectJson(agents: string[], signIn: boolean, skills: boolean, mcp: boolean): Promise<string> {
+    return this.inner.connectJson(agents, this.server, skills, mcp, signIn);
+  }
+
+  async disconnectJson(agents: string[], signIn: boolean): Promise<string> {
+    return this.inner.disconnectJson(agents, signIn);
+  }
+
+  sweepLeftovers(): void {
+    sweepBackupsOnce(this.configsOf());
   }
 }
 
@@ -451,6 +511,11 @@ export class PendingAgentSetup implements AgentSetupRunning {
   setUpCuaDriver = async (agents: string[]) => (await this.s()).setUpCuaDriver(agents);
   remove = async (agents: string[]) => (await this.s()).remove(agents);
   signIn = async (agent: string) => (await this.s()).signIn(agent);
+  connectionStatusJson = async (refresh: boolean) =>
+    (await this.gate.wait()).agentSetup?.connectionStatusJson(refresh) ?? '{"agents":[],"checked_at_ms":0}';
+  connectJson = async (agents: string[], signIn: boolean, skills: boolean, mcp: boolean) => (await this.s()).connectJson(agents, signIn, skills, mcp);
+  disconnectJson = async (agents: string[], signIn: boolean) => (await this.s()).disconnectJson(agents, signIn);
+  sweepLeftovers = () => this.gate.current?.agentSetup?.sweepLeftovers?.();
 }
 
 /** The Settings rows for the coding agents, and the changes made to them (the SwiftUI app's `AppModel.agentRows`, `configureAllAgents`, `agentAction`). */
@@ -462,6 +527,7 @@ export class CodingAgents {
   pending: string[] = [];
   /** Why the last change failed, per agent. */
   private readonly failures = new Map<string, string>();
+  private swept = false;
   onChange: () => void = () => {};
 
   constructor(
@@ -476,6 +542,15 @@ export class CodingAgents {
       return;
     }
     const rows = this.native.appAgentSettingsRows(await this.setup.statuses(), this.setup.skillsTotal());
+    // Once per run: the copies of config files that setup left behind in earlier versions.
+    if (!this.swept) {
+      this.swept = true;
+      try {
+        this.setup.sweepLeftovers?.();
+      } catch {
+        // Clutter, not a failure.
+      }
+    }
     this.rows = rows.map((r) => {
       const why = this.failures.get(r.agent);
       return why === undefined ? r : { ...r, configured: false, detail: why };

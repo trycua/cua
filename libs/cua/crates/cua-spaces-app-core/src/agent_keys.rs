@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-//! Settings, Agents: the provider keys agents in your Spaces get.
+//! Settings, Connectors: the provider keys agents in your Spaces get.
 //!
 //! The cua daemon keeps the keys in the Keychain (`cua_spaces::agents::keys`)
 //! and answers only what this section shows: the provider, the variable a

@@ -375,10 +375,25 @@ async fn session(
         Ok(w) => w,
         Err(r) => return r,
     };
-    match relay
-        .devices
-        .open_session(&who.account, &body.device_id, body.ts, &body.sig)
-    {
+    // Off the async workers: opening a session appends to the fsynced
+    // session journal (CUA-2323).
+    let opened = {
+        let relay = relay.clone();
+        let account = who.account.clone();
+        let (device, sig) = (body.device_id.clone(), body.sig.clone());
+        tokio::task::spawn_blocking(move || {
+            relay.devices.open_session(&account, &device, body.ts, &sig)
+        })
+        .await
+    };
+    let Ok(opened) = opened else {
+        return error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            "the session could not be opened",
+        );
+    };
+    match opened {
         Ok((token, expires)) => Json(serde_json::json!({
             "session": token,
             "expires_at": expires,

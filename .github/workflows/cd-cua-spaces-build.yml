@@ -34,6 +34,12 @@ name: "CD: Cua Spaces build (shadow)"
 # file. Every file, the manifest included, has a GitHub artifact attestation
 # (signer workflow: this file at refs/heads/main). verify-release.sh runs on
 # the produced set before it is attested.
+#
+# Nightly (CUA-1991; called by nightly-cua-spaces.yml with `channel:
+# nightly`): the same macOS build with the nightly version and
+# CFBundleVersion the caller chose, and nothing else. No Windows or Linux
+# build, no build set, attestation or marker: the caller publishes the
+# signed, notarized disk image to the nightly appcast and records the cost.
 
 on:
   push:
@@ -56,6 +62,20 @@ on:
         description: "Build even if a live build of this exact input tree exists"
         type: boolean
         default: false
+  workflow_call:
+    inputs:
+      channel:
+        description: "nightly: the macOS app only, for nightly-cua-spaces.yml"
+        type: string
+        required: true
+      version:
+        description: "The app's full version (0.17.0-nightly.20261025+1a2b3c4)"
+        type: string
+        required: true
+      bundle_version:
+        description: "Its CFBundleVersion (numbers and dots), which Sparkle compares"
+        type: string
+        required: true
 
 permissions:
   contents: read
@@ -65,7 +85,7 @@ permissions:
 # newest waits, an older pending one is replaced. The tree-hash key means the
 # newest build still covers every input.)
 concurrency:
-  group: cd-cua-spaces-build
+  group: cd-cua-spaces-build${{ inputs.channel == 'nightly' && '-nightly' || '' }}
   cancel-in-progress: false
 
 defaults:
@@ -114,20 +134,12 @@ jobs:
         run: |
           set -euo pipefail
           # Everything that can change the shipped bytes. Same list as `on.push.paths`.
-          inputs=(
-            apps/cua-spaces-macos apps/cua-spaces apps/cua-spaces-desktop apps/cua-spaces-web
-            libs/cua libs/cua-spacesd/VERSION
-            .github/actions/spaces-native .github/actions/spaces-rust-slice .github/actions/setup-protoc
-            .github/workflows/cd-cua-spaces-build.yml
-          )
-          args=()
-          for p in "${inputs[@]}"; do args+=("HEAD:$p"); done
-          tree="$(git rev-parse "${args[@]}" | git hash-object --stdin)"
+          tree="$(.github/scripts/spaces_inputs_tree.sh HEAD)"
           echo "tree=$tree" >> "$GITHUB_OUTPUT"
           echo "key=spaces-build-done-v1-${GITHUB_REPOSITORY//\//-}-$tree" >> "$GITHUB_OUTPUT"
       - name: Look for a live build of this tree
         id: marker
-        if: github.event_name != 'workflow_dispatch' || !inputs.force
+        if: inputs.channel != 'nightly' && (github.event_name != 'workflow_dispatch' || !inputs.force)
         uses: actions/cache/restore@v4
         with:
           path: marker
@@ -138,10 +150,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TREE: ${{ steps.tree.outputs.tree }}
           HIT: ${{ steps.marker.outputs.cache-hit }}
+          NIGHTLY_VERSION: ${{ inputs.channel == 'nightly' && inputs.version || '' }}
         run: |
           set -euo pipefail
-          version="$(tr -d '[:space:]' < apps/cua-spaces-macos/VERSION)"
-          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "::error::bad version: $version"; exit 1; }
+          version="${NIGHTLY_VERSION:-$(tr -d '[:space:]' < apps/cua-spaces-macos/VERSION)}"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]] || { echo "::error::bad version: $version"; exit 1; }
           skip=false; reuse_run=""
           if [ "$HIT" = true ] && [ -f marker/build ]; then
             read -r old_sha old_run < marker/build
@@ -276,6 +289,8 @@ jobs:
       CARGO_BUILD_JOBS: 4
       CARGO_TARGET_DIR: ${{ github.workspace }}/libs/cua/target
       VERSION: ${{ needs.plan.outputs.version }}
+      # A nightly's CFBundleVersion (the caller's); else X.Y.Z.<run number>.
+      BUNDLE_VERSION: ${{ inputs.channel == 'nightly' && inputs.bundle_version || '' }}
     outputs:
       signed: ${{ steps.signing.outputs.apple }}
     steps:
@@ -371,9 +386,12 @@ jobs:
           set -euo pipefail
           identity="-"
           [ "$SIGNED" = true ] && identity="Developer ID Application: $DEVELOPER_NAME ($TEAM_ID)"
-          # CFBundleVersion is X.Y.Z.<run number>: the build number of this run.
+          # CFBundleVersion is X.Y.Z.<run number>: the build number of this
+          # run; a nightly's is the caller's.
+          bundle=(--build-number "$GITHUB_RUN_NUMBER")
+          [ -n "$BUNDLE_VERSION" ] && bundle=(--bundle-version "$BUNDLE_VERSION")
           apps/cua-spaces-macos/scripts/build-release.sh --version "$VERSION" \
-            --build-number "$GITHUB_RUN_NUMBER" --arch universal --skip-cargo \
+            "${bundle[@]}" --arch universal --skip-cargo \
             --sign "$identity" --out "$RUNNER_TEMP/spaces-app" \
             --feed-url "https://github.com/$GITHUB_REPOSITORY/releases/download/cua-spaces-latest/cua-spaces-appcast.xml"
 
@@ -494,6 +512,7 @@ jobs:
   electron-native:
     name: Electron native (${{ matrix.label }})
     needs: plan
+    if: inputs.channel != 'nightly'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     permissions:
@@ -899,7 +918,7 @@ jobs:
   summary:
     name: Cost summary
     needs: [plan, assemble, verify, attest]
-    if: always() && needs.plan.result == 'success'
+    if: always() && needs.plan.result == 'success' && inputs.channel != 'nightly'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

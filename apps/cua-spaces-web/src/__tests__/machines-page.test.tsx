@@ -94,7 +94,7 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
     await screen.findByText(hooks.machines.view!.summary);
 
     const row = document.querySelector('[data-machine-id="studio"]') as HTMLElement;
-    expect(row.querySelector("[data-machine-line]")?.textContent).toBe("Not sharing · No Spaces");
+    expect(row.querySelector("[data-machine-line]")?.textContent).toBe("Not sharing");
     // No subtitle of OS and connection, and no "Not set up for access".
     expect(document.body.textContent).not.toMatch(/Not set up for access|macOS · Cua relay/);
     select("studio");
@@ -127,7 +127,7 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
     // This Mac: its switches change here.
     let detail = await detailOf("Ada's MacBook Pro");
     const switches = () => [...detail.querySelectorAll<HTMLElement>("[data-machine-toggle] [role=switch]")];
-    expect(switches().map((s) => s.getAttribute("aria-disabled") === "true" || s.hasAttribute("data-disabled"))).toEqual([false, false]);
+    expect(switches().map((s) => s.getAttribute("aria-disabled") === "true" || s.hasAttribute("data-disabled"))).toEqual([false]);
 
     // Another Mac: read-only, and where to change it.
     select("studio");
@@ -318,5 +318,208 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
     expect(rows[0]!.getAttribute("href")).toBe(`/spaces/${encodeURIComponent(studio.desktop!.id)}`);
     expect(rows[0]!.textContent).toContain("Desktop");
     expect(rows[1]!.textContent).not.toContain("Desktop");
+  });
+
+  it("draws the clouds: a group under the machines, each cloud's page, and Connect a cloud", async () => {
+    const { router, hooks } = await mountApp("/machines", { failsCreates: false, listsGhost: false, demo: { clouds: "connected" } });
+    await router.load();
+    await waitFor(() => expect(hooks.machines.view?.clouds?.group.rows.map((r) => r.id)).toEqual(["aws", "hetzner"]));
+    const group = document.querySelector("[data-cloud-group]")!;
+    expect([...group.querySelectorAll("[data-cloud-id]")].map((r) => [r.getAttribute("data-cloud-id"), r.querySelector("[data-cloud-line]")?.textContent])).toEqual([
+      ["aws", "3 running"],
+      ["hetzner", "2 running"],
+    ]);
+    // The logo is the vendor's own file, AWS's in both its inks.
+    expect(group.querySelectorAll("[data-cloud-logo=aws] img")).toHaveLength(2);
+    expect(group.querySelector("[data-cloud-logo=hetzner] img")?.getAttribute("src")).toBe("/cloud-logos/hetzner-apple-icon-180x180.png");
+
+    act(() => (group.querySelector("[data-cloud-id=aws]") as HTMLElement).click());
+    const aws = await detailOf("AWS");
+    expect(aws.querySelector("[data-cloud-status]")?.textContent).toBe("Connected");
+    expect(aws.querySelector("[data-cloud-spend-amount]")?.textContent).toBe("$42.18");
+    expect([...aws.querySelectorAll("[data-cloud-machine]")].map((m) => m.textContent)).toEqual([
+      "rl-env-0412agent eval-runner$0.08",
+      "rl-env-0413agent eval-runner$0.08",
+      "build-cacheada on Mac mini$0.05",
+    ]);
+    expect([...aws.querySelectorAll("[data-cloud-setting]")].map((s) => s.getAttribute("data-cloud-setting"))).toEqual(["region", "budget", "size", "access"]);
+    expect(aws.querySelector("[data-cloud-issues]")).toBeNull();
+
+    // Connect a cloud: the picker, five rows, a read-only prompt.
+    act(() => (document.querySelector("[data-connect-a-cloud]") as HTMLElement).click());
+    const sheet = await waitFor(() => document.querySelector("[data-connect-cloud]")!);
+    expect(sheet).not.toBeNull();
+    expect([...sheet.querySelectorAll("[data-cloud-row-title]")].map((r) => r.textContent)).toEqual(["AWS", "Google Cloud", "Microsoft Azure", "Hetzner", "Modal"]);
+    expect([...sheet.querySelectorAll("[data-cloud-row-auth]")].map((r) => r.textContent)).toEqual(["OIDC", "Coming soon", "Coming soon", "API token", "API token"]);
+    const prompt = sheet.querySelector<HTMLTextAreaElement>("[data-cloud-prompt]")!;
+    expect(prompt.readOnly).toBe(true);
+    expect(prompt.value).toContain("`cua cloud status` says connected.");
+    // The subtitle ends with the quiet link to the cloud comparison (CUA-2200).
+    const compare = sheet.querySelector<HTMLButtonElement>("[data-cloud-intro] [data-compare-clouds]")!;
+    expect(compare.textContent).toBe("Compare clouds ↗");
+  });
+
+  it("each way a cloud goes wrong is one line in the list and one fix on its page", async () => {
+    for (const [clouds, cloud, status, line, action] of [
+      ["budget", "aws", "Budget reached", "Budget reached", "raise-budget"],
+      ["untrusted", "aws", "Not trusted", "Not trusted", "set-up-again"],
+      ["token", "hetzner", "Token refused", "Token refused", "new-token"],
+      ["approval", "aws", "Waiting for approval", "Waiting for approval", "review"],
+    ] as const) {
+      const { router, hooks } = await mountApp("/machines", { failsCreates: false, listsGhost: false, demo: { clouds } });
+      await router.load();
+      await waitFor(() => expect(hooks.machines.view?.clouds?.pages.some((p) => p.id === cloud)).toBe(true));
+      act(() => (document.querySelector(`[data-cloud-id=${cloud}]`) as HTMLElement).click());
+      const page = await detailOf(cloud === "aws" ? "AWS" : "Hetzner");
+      expect(page.querySelector("[data-cloud-status]")?.textContent).toBe(status);
+      expect(document.querySelector(`[data-cloud-id=${cloud}] [data-cloud-line]`)?.textContent).toBe(line);
+      expect(page.querySelector(`[data-cloud-issue-action=${action}]`)).not.toBeNull();
+      cleanup();
+      resetNewSpaceSession();
+    }
+  });
+
+  it("approves what an agent set up from the review sheet", async () => {
+    const calls: [string, unknown][] = [];
+    const { router, hooks } = await mountApp("/machines", {
+      failsCreates: false,
+      listsGhost: false,
+      demo: { clouds: "approval" },
+      intercept: (op, args) => {
+        if (op === "clouds.approve") calls.push([op, args]);
+        return undefined;
+      },
+    });
+    await router.load();
+    await waitFor(() => expect(hooks.machines.view?.clouds?.pages[0]?.approval?.title).toBe("Approve AWS for your agent?"));
+    act(() => (document.querySelector("[data-cloud-id=aws]") as HTMLElement).click());
+    const page = await detailOf("AWS");
+    act(() => (page.querySelector("[data-cloud-issue-action=review]") as HTMLElement).click());
+    const sheet = await waitFor(() => document.querySelector("[data-cloud-approval]")!);
+    expect(sheet.textContent).toContain("Approve AWS for your agent?");
+    act(() => (sheet.querySelector("[data-cloud-approve]") as HTMLElement).click());
+    await waitFor(() => expect(calls).toEqual([["clouds.approve", { provider: "aws", approve: true }]]));
+    await waitFor(() => expect(hooks.machines.view?.clouds?.pages[0]?.status).toBe("Connected"));
+  });
+
+  it("lists the clouds above your machines, in the order the core gives", async () => {
+    const { router, hooks } = await mountApp("/machines", { failsCreates: false, listsGhost: false, demo: { clouds: "connected" } });
+    await router.load();
+    await waitFor(() => expect(hooks.machines.view?.clouds?.group.rows.length).toBe(2));
+    expect(hooks.machines.view!.order).toEqual(["clouds", "yours"]);
+    const sections = [...document.querySelectorAll("[data-cloud-group], [data-machine-group]")].map((s) => s.getAttribute("data-cloud-group") ?? s.getAttribute("data-machine-group"));
+    expect(sections).toEqual(["clouds", "yours"]);
+    // Even with no cloud connected, "Connect a cloud" is the first row.
+    cleanup();
+    resetNewSpaceSession();
+    await mountApp("/machines", { failsCreates: false, listsGhost: false }).then(async ({ router: r }) => r.load());
+    await waitFor(() => expect(document.querySelector("[data-connect-a-cloud]")).not.toBeNull());
+    const first = document.querySelector("[data-cloud-group], [data-machine-group]");
+    expect(first?.getAttribute("data-cloud-group")).toBe("clouds");
+  });
+
+  it("scrolls the list and the detail pane on their own, under a header that stays put", async () => {
+    const { router } = await mountApp("/machines", { failsCreates: false, listsGhost: false, demo: { clouds: "connected", manyMachines: true } });
+    await router.load();
+    await waitFor(() => expect(document.querySelectorAll("[data-machine-id]").length).toBeGreaterThan(15));
+    const list = document.querySelector<HTMLElement>("[data-machines-list-scroll]")!;
+    const detail = document.querySelector<HTMLElement>("[data-machines-detail-scroll]")!;
+    const split = document.querySelector<HTMLElement>("[data-machines-split]")!;
+    for (const pane of [list, detail]) {
+      expect(pane.className).toContain("overflow-y-auto");
+      expect(pane.className).toContain("min-h-0");
+    }
+    expect(list.contains(detail) || detail.contains(list)).toBe(false);
+    // Bounded: the split fills what the page leaves, and the page as a whole does not scroll.
+    expect(split.className).toContain("flex-1");
+    expect(split.className).toContain("min-h-0");
+    const page = document.querySelector<HTMLElement>("[data-page-contained]")!;
+    expect(page.className).toContain("overflow-hidden");
+    expect(page.className).not.toContain("overflow-y-auto");
+    // The header is outside both panes.
+    const header = document.querySelector("h1")!;
+    expect(list.contains(header) || detail.contains(header)).toBe(false);
+  });
+
+  it("keeps the selected row in view in the list", async () => {
+    const calls: string[] = [];
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element, arg?: boolean | ScrollIntoViewOptions) {
+      calls.push(`${this.getAttribute("data-machine-id") ?? "cloud:" + this.getAttribute("data-cloud-id")} ${JSON.stringify(arg)}`);
+    };
+    try {
+      const { router } = await mountApp("/machines", { failsCreates: false, listsGhost: false, demo: { clouds: "connected", manyMachines: true } });
+      await router.load();
+      await waitFor(() => expect(document.querySelectorAll("[data-machine-id]").length).toBeGreaterThan(15));
+      select("build-13");
+      await waitFor(() => expect(calls).toContain('build-13 {"block":"nearest"}'));
+      act(() => (document.querySelector("[data-cloud-id=aws]") as HTMLElement).click());
+      await waitFor(() => expect(calls).toContain('cloud:aws {"block":"nearest"}'));
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
+
+  it("a CLI sign-in AWS link offers Switch to OIDC, which opens AWS's sheet filled from the link", async () => {
+    const { router, hooks } = await mountApp("/machines", { failsCreates: false, listsGhost: false, demo: { clouds: "cli" } });
+    await router.load();
+    await waitFor(() => expect(hooks.machines.view?.clouds?.pages[0]?.switchAuth?.label).toBe("Switch to OIDC"));
+    act(() => (document.querySelector("[data-cloud-id=aws]") as HTMLElement).click());
+    const page = await detailOf("AWS");
+    expect(page.querySelector("[data-cloud-status]")?.textContent).toBe("Connected");
+    expect(page.querySelector("[data-cloud-issues]")).toBeNull();
+    expect(page.querySelector("[data-cloud-setting=access]")?.textContent).toContain("The AWS CLI's sign-in on this computer");
+    act(() => (page.querySelector("[data-cloud-switch=switch-oidc]") as HTMLElement).click());
+    const sheet = await waitFor(() => document.querySelector("[data-connect-cloud]")!);
+    await waitFor(() => expect(sheet.querySelector("[data-cloud-title]")?.textContent).toContain("AWS"));
+    // Filled from the CLI link: its region, budget and largest machine.
+    await waitFor(() => expect(sheet.textContent).toContain("8 vCPU, 32 GB"));
+    expect(sheet.textContent).toContain("us-west-2");
+    expect((sheet.querySelector("#cc-budget") as HTMLInputElement).value).toBe("150");
+    // An OIDC link offers nothing to switch.
+    cleanup();
+    resetNewSpaceSession();
+    const other = await mountApp("/machines", { failsCreates: false, listsGhost: false, demo: { clouds: "connected" } });
+    await other.router.load();
+    await waitFor(() => expect(other.hooks.machines.view?.clouds?.pages[0]?.id).toBe("aws"));
+    expect(other.hooks.machines.view?.clouds?.pages[0]?.switchAuth).toBeNull();
+  });
+
+  it("a link revoked elsewhere shows the host's sentence with Reconnect", async () => {
+    const { router, hooks } = await mountApp("/machines", { failsCreates: false, listsGhost: false, demo: { clouds: "revoked" } });
+    await router.load();
+    await waitFor(() => expect(hooks.machines.view?.clouds?.pages[0]?.issues[0]?.id).toBe("link"));
+    act(() => (document.querySelector("[data-cloud-id=aws]") as HTMLElement).click());
+    const page = await detailOf("AWS");
+    expect(page.querySelector("[data-cloud-issue=link]")?.textContent).toContain("disconnected on another device");
+    expect(page.querySelector("[data-cloud-issue=trust]")).toBeNull();
+    act(() => (page.querySelector("[data-cloud-issue-action=reconnect]") as HTMLElement).click());
+    await waitFor(() => expect(document.querySelector("[data-connect-cloud]")).not.toBeNull());
+  });
+
+  it("an agent's raise of the limits shows who asked and what, and Deny keeps the old limits", async () => {
+    const calls: [string, unknown][] = [];
+    const { router, hooks } = await mountApp("/machines", {
+      failsCreates: false,
+      listsGhost: false,
+      demo: { clouds: "limits" },
+      intercept: (op, args) => {
+        if (op === "clouds.approve") calls.push([op, args]);
+        return undefined;
+      },
+    });
+    await router.load();
+    await waitFor(() => expect(hooks.machines.view?.clouds?.pages[0]?.approval?.title).toBe("Approve new AWS limits?"));
+    act(() => (document.querySelector("[data-cloud-id=aws]") as HTMLElement).click());
+    const page = await detailOf("AWS");
+    act(() => (page.querySelector("[data-cloud-issue-action=review]") as HTMLElement).click());
+    const sheet = await waitFor(() => document.querySelector("[data-cloud-approval]")!);
+    expect(sheet.textContent).toContain("eval-runner asked to raise the limits on AWS");
+    expect(sheet.textContent).toContain("$500");
+    expect(sheet.textContent).toContain("8 vCPU, 32 GB");
+    act(() => (sheet.querySelector("[data-cloud-deny]") as HTMLElement).click());
+    await waitFor(() => expect(calls).toEqual([["clouds.approve", { provider: "aws", approve: false }]]));
+    await waitFor(() => expect(hooks.machines.view?.clouds?.pages[0]?.status).toBe("Connected"));
+    expect(hooks.machines.view?.clouds?.pages[0]?.settings.find((s) => s.id === "budget")?.value).toBe("$200");
   });
 });

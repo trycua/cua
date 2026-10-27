@@ -26,7 +26,9 @@
  * - Demo: no notice (`null`).
  */
 
+import { UnsupportedOperationError, type BridgeMode } from "../adapter";
 import type { OpCoverage } from "../coverage";
+import type { CrashReportingConfig } from "../contracts/host";
 
 /** One usage event (`telemetry::TelemetrySignal`): fixed words, flags and
  * durations, never names, paths, URLs, emails or anything typed. */
@@ -60,7 +62,11 @@ export type TelemetrySignal =
   | { type: "app-update"; action: string; channel: string; trigger: string }
   | { type: "device-enroll"; method: string; outcome: string }
   | { type: "experiment"; action: string; experiment: string }
-  | { type: "experiments-on"; experiments: string[] };
+  | { type: "experiments-on"; experiments: string[] }
+  /** A plan limit shown (`cua_plan_limit_shown`). */
+  | { type: "plan-limit-shown"; surface: string; kind: string; plan: string }
+  /** An upgrade or plan link opened (`cua_upgrade_link_opened`). */
+  | { type: "upgrade-link-opened"; surface: string; kind: string; plan: string };
 
 /** The one-time linking notice: the host's words, and whether it is due now. */
 export interface TelemetryLinkNotice {
@@ -86,12 +92,15 @@ export interface TelemetryOps {
   "telemetry.linkNotice": { args: Record<string, never>; result: TelemetryLinkNotice | null };
   /** The notice was closed (either button): linking may start at the next launch. */
   "telemetry.acknowledgeLinkNotice": { args: Record<string, never>; result: null };
+  /** Whether the page may report its own errors, and the settings to do it with (never null: a host that can't says `allowed: false` or is `unsupported`). */
+  "crashReporting.config": { args: Record<string, never>; result: CrashReportingConfig };
 }
 
 export const TELEMETRY_OPERATIONS = [
   "telemetry.track",
   "telemetry.linkNotice",
   "telemetry.acknowledgeLinkNotice",
+  "crashReporting.config",
 ] as const satisfies readonly (keyof TelemetryOps)[];
 
 const text = (v: unknown): v is string => typeof v === "string" && v.length > 0;
@@ -112,6 +121,28 @@ export function linkNoticeFromHost(raw: unknown): TelemetryLinkNotice | null {
   };
 }
 
+
+const OFF: CrashReportingConfig = { allowed: false, dsn: "", release: "", environment: "", shell: "", };
+
+/** A host's answer as crash settings; anything malformed, or without a DSN, reads as off. */
+export function crashConfigFromHost(raw: unknown): CrashReportingConfig {
+  const c = raw as Partial<CrashReportingConfig> | null | undefined;
+  if (!c || typeof c !== "object" || c.allowed !== true) return OFF;
+  if (!text(c.dsn) || !text(c.release) || !text(c.environment) || !text(c.shell)) return OFF;
+  return {
+    allowed: true,
+    dsn: c.dsn,
+    release: c.release,
+    environment: c.environment,
+    shell: c.shell,
+    ...(c.crashTest === "ui" && c.environment === "local" ? { crashTest: "ui" as const } : {}),
+  };
+}
+
+/** Tauri and the demo host have no crash reporting. */
+export function unsupportedCrashReportingOps(mode: BridgeMode) {
+  return { "crashReporting.config": (): Promise<never> => Promise.reject(new UnsupportedOperationError(mode, "crashReporting.config")) };
+}
 
 /* ---- What may cross the bridge ------------------------------------------------ */
 
@@ -145,6 +176,8 @@ const SHAPES: Record<TelemetrySignal["type"], Record<string, Field>> = {
   "device-enroll": { method: "word", outcome: "word" },
   experiment: { action: "word", experiment: "word" },
   "experiments-on": { experiments: "words" },
+  "plan-limit-shown": { surface: "word", kind: "word", plan: "word" },
+  "upgrade-link-opened": { surface: "word", kind: "word", plan: "word" },
 };
 
 /** A fixed word from the schema (`space_create_local`, `this_mac`). Names,
@@ -219,7 +252,7 @@ export function tauriTelemetryOps(invoke: Invoke) {
 }
 
 type WebkitRequest = <T>(
-  method: "telemetry.linkNotice" | "telemetry.acknowledgeLinkNotice",
+  method: "telemetry.linkNotice" | "telemetry.acknowledgeLinkNotice" | "crashReporting.config",
   args?: Record<string, unknown>,
   wait?: number | null,
 ) => Promise<T>;
@@ -233,6 +266,8 @@ export function webkitTelemetryNoticeOps(request: WebkitRequest) {
       await request("telemetry.acknowledgeLinkNotice", {});
       return null;
     },
+    // An older host (`unimplemented`) or any failure reads as off.
+    "crashReporting.config": () => request<unknown>("crashReporting.config", {}, 5_000).then(crashConfigFromHost, () => OFF),
   };
 }
 
@@ -248,5 +283,10 @@ export const TELEMETRY_COVERAGE = {
   "telemetry.acknowledgeLinkNotice": {
     webkit: { methods: ["telemetry.acknowledgeLinkNotice"] },
     tauri: ["telemetry_acknowledge_link_notice"],
+  },
+  "crashReporting.config": {
+    webkit: { methods: ["crashReporting.config"] },
+    tauri: [],
+    unsupported: { tauri: "the Tauri app reports crashes from its own Rust process, not the page" },
   },
 } as const satisfies Record<keyof TelemetryOps, OpCoverage>;

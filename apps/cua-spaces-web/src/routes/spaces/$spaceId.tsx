@@ -5,7 +5,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { ArrowDownCircleIcon, ChevronLeftIcon, MonitorIcon, PictureInPicture2Icon, PlayIcon, SquareIcon, Trash2Icon, UserPlusIcon } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
-import { hostResources, parseDropped, runCreateFix, spaceResources, useBridge, useResources, useDevices, useExperiments, useMachines, useSession, useShareSheet, useSpaceDetail, useSpaceFiles, useSpaces, useTeleport, type CreateReport, type Machine, type ResourcesSnapshot, type Space, type StreamRow } from "@/bridge";
+import { hostResources, parseDropped, runCreateFix, spaceResources, useBridge, useResources, useDevices, useExperiments, useMachines, useSession, useShareSheet, useSpaceDetail, useSpaceFiles, useSpaces, useSpaceThread, useTeleport, type CreateReport, type Machine, type ResourcesSnapshot, type Space, type StreamRow, type ThreadView } from "@/bridge";
 import { DiagnosticReportDialog } from "@/components/diagnostic-report-dialog";
 import { OsIcon } from "@/components/os-icon";
 import { EmptyState, Page } from "@/components/page";
@@ -13,19 +13,27 @@ import { AgentsSection } from "@/components/space-detail/agents-section";
 import { DropWell } from "@/components/space-detail/drop-well";
 import { FactList } from "@/components/space-detail/facts";
 import { SpaceResourcesPanel } from "@/components/resources/space-resources-panel";
+import { systemName } from "@/lib/resources";
 import { StreamSection } from "@/components/space-detail/stream-section";
 import { StreamSurface } from "@/components/space-detail/stream-surface";
+import { SpaceHeader } from "@/components/space-detail/space-header";
+import { SpaceCall } from "@/components/space-thread/space-call";
 import { StateLabel } from "@/components/state-dot";
+import { PageTip } from "@/components/tips";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
 import { thisComputerText } from "@/lib/host-labels";
 import { useSpaceVolumeError } from "@/lib/space-volume";
+import { cn } from "@/lib/utils";
 import { volumeUnavailableNote } from "@/lib/volume-notes";
 import { canDelete, canPower, createError, createProgress, machineName, powerLabel, powerPending, spacePlace, spaceState } from "@/lib/spaces";
+import { useFlag } from "@/bridge/flags";
+import { useSpaceLayout } from "@/components/space-thread/layout-mode";
+import { LegacySpacePage } from "@/legacy/routes/spaces/$spaceId";
 
 export const Route = createFileRoute("/spaces/$spaceId")({
-  component: SpaceDetailPage,
+  component: SpaceDetailPageSwitch,
   // Apps and files dropped on this Space's tile in the notch, by name (the host holds their paths).
   validateSearch: (s: Record<string, unknown>): { dropped?: string[] } => {
     const dropped = parseDropped(s.dropped);
@@ -62,6 +70,8 @@ function SpaceDetailPage() {
   const { data: machines = [] } = useMachines();
   const resources = useResources();
   const [confirm, setConfirm] = useState<Confirm>(null);
+  // The window the stage shows instead of the desktop (the Stream rail's pick), for this Space only.
+  const [shown, setShown] = useState<{ spaceId: string; row: string } | null>(null);
   const teleport = useTeleport();
   const sharing = useShareSheet();
   const { data: session, openExternal } = useSession();
@@ -88,7 +98,12 @@ function SpaceDetailPage() {
   const access = thisMachine?.accessNotice ?? null;
   const devices = useDevices();
   const { detail, stream, windowsUnsupported, pip, query, setQuery, agents, copy } = useSpaceDetail(space, hostArch, { experiments, access });
+  // Call view or thread view, remembered per Space.
+  const [layout, setLayout] = useSpaceLayout(space?.id ?? "");
   const volumeError = useSpaceVolumeError(space, space ? spaceState(space) === "running" : false);
+  // The Space's thread (CUA-2155). A daemon without it answers unsupported,
+  // and the page keeps its classic layout; a create still in progress has none yet.
+  const thread = useSpaceThread(space && !space.id.startsWith("pending:") ? space.id : null);
   // Open on a creating row: once the create finished and the registry lists
   // the Space, its row (and this id) goes; follow it to the Space's own id.
   // Only a page that showed the row follows: the address of a row that is
@@ -207,6 +222,11 @@ function SpaceDetailPage() {
     });
 
   const desktopRow = stream?.rows.find((r) => r.kind === "desktop");
+  // The Stream rail's pick: one of the Space's windows on the stage, or the desktop (none). A window that
+  // closes puts the desktop back.
+  const shownRow = shown && shown.spaceId === space?.id ? stream?.rows.find((r) => r.kind === "window" && r.id === shown.row) : undefined;
+  // What a post says the person is looking at: the shown window, in the core's fields (`stream.viewContext`).
+  const shownView = shownRow ? threadViewOf(core.tryCall<StreamViewContext | null>("stream.viewContext", { row: shownRow }) ?? null) : null;
   const display = desktopRow?.resolution?.split("×").map(Number);
   // The desktop plays in its picture-in-picture panel: said here, with Bring
   // it back, instead of a second stream (`SpaceScreenView`'s placeholder).
@@ -227,94 +247,75 @@ function SpaceDetailPage() {
   const showAgents = detail.sections.includes("Agents") && !agents.unsupported;
   const showTeleport = detail.sections.includes("Teleport");
 
-  return (
-    <Page>
-      <BackLink />
-      <header className="mb-5 flex items-start justify-between gap-4">
-        <div className="flex min-w-0 items-start gap-3">
-          <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg border bg-card shadow-xs">
-            <OsIcon os={space.os} className="size-4.5 text-muted-foreground" />
-          </div>
-          <div className="min-w-0">
-            <h1 data-detail-title className="truncate text-[22px] leading-tight font-semibold tracking-[-0.01em]">{detail.title}</h1>
-            <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-muted-foreground">
-              <span>{spacePlace(space, machine)}</span>
-              {pending ? <span className="text-xs">{pending}</span> : <StateLabel state={state} space={space} />}
-            </p>
-          </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          {teleportAction ? (
-            <Button variant="outline" disabled={!teleportAction.enabled} title={teleportAction.help} onClick={teleportApp}>
-              <ArrowDownCircleIcon /> {teleportAction.label}
-            </Button>
-          ) : null}
-          {shareAction ? (
-            <Button variant="outline" data-share-space="" disabled={!shareAction.enabled} title={shareAction.help} onClick={share}>
-              <UserPlusIcon /> {shareAction.label}
-            </Button>
-          ) : null}
-          {canPower(space) ? (
-            state === "stopped" ? (
-              <Button variant="outline" disabled={Boolean(pending)} onClick={start}>
-                <PlayIcon /> {turnOn}
-              </Button>
-            ) : (
-              <Button variant="outline" disabled={Boolean(pending)} onClick={() => setConfirm("stop")}>
-                <SquareIcon className="size-3.5" /> {turnOff}
-              </Button>
-            )
-          ) : null}
-          {state === "failed" ? (
-            <Button variant="outline" data-dismiss-create="" onClick={dismiss}>
-              <Trash2Icon className="text-destructive" /> Remove
-            </Button>
-          ) : null}
-          {canDelete(space) ? (
-            <Button variant="outline" aria-label={`${detail.deleteLabel} ${space.name}`} onClick={() => setConfirm("delete")}>
-              <Trash2Icon className="text-destructive" /> {detail.deleteLabel}
-            </Button>
-          ) : null}
-        </div>
-      </header>
-
-      {detail.powerError ? <p className="mb-4 text-[13px] text-destructive">{detail.powerError}</p> : null}
-
-      {detail.desktopNote ? (
-        // One of your machines that keeps its desktop private: why, in place
-        // of the desktop, then the Spaces it provides (no New Space button
-        // beside the note).
-        <MachineSpaces
-          note={detail.desktopNote}
-          listSpaces={Boolean(detail.newSpace)}
-          spaces={hostedSpaces(spaces ?? [], space.id)}
-          // This machine's own screen: its switches live on its Computers page.
-          action={
-            detail.isHost ? (
-              <Button variant="outline" size="sm" data-host-desktop-action="" render={<Link to="/machines" />}>
-                Open Computers
-              </Button>
-            ) : null
-          }
-        />
-      ) : (
-        <StreamSurface
-          spaceId={space.id}
-          os={space.os}
-          aspectRatio={aspect}
-          canStream={detail.canStream}
-          previewText={detail.previewText}
-          access={detail.access}
-          onAccessAction={enroll}
-          className="h-72"
-        >
-          {surfaceState(space, pending, turnOn, start, dismiss, retry, openReport, fix) ?? poppedOutState}
-        </StreamSurface>
-      )}
-
+  const actions = (
+    <div className="flex shrink-0 items-center gap-2">
+      {teleportAction ? (
+        <Button variant="outline" disabled={!teleportAction.enabled} title={teleportAction.help} onClick={teleportApp}>
+          <ArrowDownCircleIcon /> {teleportAction.label}
+        </Button>
+      ) : null}
+      {shareAction ? (
+        <Button variant="outline" data-share-space="" disabled={!shareAction.enabled} title={shareAction.help} onClick={share}>
+          <UserPlusIcon /> {shareAction.label}
+        </Button>
+      ) : null}
+      {canPower(space) ? (
+        state === "stopped" ? (
+          <Button variant="outline" disabled={Boolean(pending)} onClick={start}>
+            <PlayIcon /> {turnOn}
+          </Button>
+        ) : (
+          <Button variant="outline" disabled={Boolean(pending)} onClick={() => setConfirm("stop")}>
+            <SquareIcon className="size-3.5" /> {turnOff}
+          </Button>
+        )
+      ) : null}
+      {state === "failed" ? (
+        <Button variant="outline" data-dismiss-create="" onClick={dismiss}>
+          <Trash2Icon className="text-destructive" /> Remove
+        </Button>
+      ) : null}
+      {canDelete(space) ? (
+        <Button variant="outline" aria-label={`${detail.deleteLabel} ${space.name}`} onClick={() => setConfirm("delete")}>
+          <Trash2Icon className="text-destructive" /> {detail.deleteLabel}
+        </Button>
+      ) : null}
+    </div>
+  );
+  const place = (
+    <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-muted-foreground">
+      <span>{spacePlace(space, machine)}</span>
+      {pending ? <span className="text-xs">{pending}</span> : <StateLabel state={state} space={space} />}
+    </p>
+  );
+  const osMark = (
+    <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg border bg-card shadow-xs">
+      <OsIcon os={space.os} className="size-4.5 text-muted-foreground" />
+    </div>
+  );
+  const surface = (className: string, windowId?: string | null, windowName?: string | null, interactive = true) => (
+    <StreamSurface
+      interactive={interactive}
+      spaceId={space.id}
+      windowId={windowId}
+      windowName={windowName}
+      os={space.os}
+      aspectRatio={aspect}
+      canStream={detail.canStream}
+      previewText={detail.previewText}
+      access={detail.access}
+      onAccessAction={enroll}
+      className={className}
+    >
+      {surfaceState(space, pending, turnOn, start, dismiss, retry, openReport, fix) ?? poppedOutState}
+    </StreamSurface>
+  );
+  // The classic page's sections under the desktop. With the thread they open from Details, More.
+  const sections = (
+    <>
       <SpaceResources space={space} spaces={spaces ?? []} snapshot={resources} machines={machines} />
 
-      <div className="mt-8 grid items-start gap-x-6 md:grid-cols-2">
+      <div className="mt-8 grid items-start gap-x-6 first:mt-0 md:grid-cols-2">
         <div>
           <FactList title="Details" facts={detail.facts} />
           {volumeError ? (
@@ -358,7 +359,10 @@ function SpaceDetailPage() {
           ) : null}
         </div>
       </div>
-
+    </>
+  );
+  const dialogs = (
+    <>
       <ConfirmDialog
         open={confirm === "stop"}
         onOpenChange={(o) => !o && setConfirm(null)}
@@ -390,6 +394,121 @@ function SpaceDetailPage() {
         report={report}
         onSend={(subject, parts) => sendCreateReport({ subject, parts })}
       />
+    </>
+  );
+  const desktopPip = desktopRow?.actions.find((a) => a.id === "pip");
+  const powerError = detail.powerError ? <p className="mb-4 text-[13px] text-destructive">{detail.powerError}</p> : null;
+  // One tip at a time (the core's `tips.view`, place `space`).
+  const tip = <PageTip place="space" space={space} onShare={shareAction?.enabled ? share : undefined} />;
+  // In the call layout the tip sits directly on the stage and the rail: no gap under it, so the rail meets it flush.
+  const callTip = <PageTip place="space" space={space} onShare={shareAction?.enabled ? share : undefined} className="mb-0" />;
+
+  // The call layout: the desktop on top, the thread below, the people on the
+  // right. A machine's own page (no desktop to call into) and a daemon
+  // without the thread keep the classic page.
+  // A create still in progress has no thread yet: its progress shows on the classic page.
+  if (!detail.desktopNote && thread.status !== "unsupported" && !space.id.startsWith("pending:")) {
+    return (
+      <>
+        <SpaceCall
+          spaceId={space.id}
+          spaceName={space.name}
+          identity={session?.signedIn ? (session.account.identity ?? null) : null}
+          header={
+            <SpaceHeader
+              back={<BackLink inline />}
+              os={space.os}
+              title={detail.title}
+              place={place}
+              power={
+                canPower(space)
+                  ? pending
+                    ? { state: "pending", label: pending, onClick: () => {} }
+                    : state === "stopped"
+                      ? { state: "off", label: turnOn, onClick: start }
+                      : { state: "on", label: turnOff, onClick: () => setConfirm("stop") }
+                  : undefined
+              }
+              pip={
+                desktopPip
+                  ? { id: desktopRow!.id, label: desktopPip.help ?? "Pop out", help: desktopPip.help ?? undefined, enabled: true, active: desktopPip.active, onClick: () => void onPip(desktopRow!) }
+                  : undefined
+              }
+              teleport={teleportAction ? { label: teleportAction.label, help: teleportAction.help ?? undefined, enabled: teleportAction.enabled, onClick: teleportApp } : undefined}
+              share={shareAction ? { label: shareAction.label, help: shareAction.help ?? undefined, enabled: shareAction.enabled, onClick: share } : undefined}
+              remove={canDelete(space) ? { label: detail.deleteLabel, enabled: true, onClick: () => setConfirm("delete") } : undefined}
+              dismiss={state === "failed" ? { label: "Remove", enabled: true, onClick: dismiss } : undefined}
+            />
+          }
+          notice={
+            <>
+              {callTip}
+              {detail.powerError ? <p className="px-5 pb-2 text-[13px] text-destructive">{detail.powerError}</p> : null}
+            </>
+          }
+          stage={surface("h-full", shownRow?.id ?? null, shownView?.app ?? null)}
+          layout={layout}
+          onLayout={setLayout}
+          smallStage={surface("h-full", shownRow?.id ?? null, shownView?.app ?? null, false)}
+          aspect={aspect}
+          stageLabel={shownRow?.label ?? "Desktop"}
+          thread={thread}
+          facts={detail.facts}
+          more={sections}
+          windows={stream?.rows.filter((r) => r.kind === "window") ?? []}
+          desktop={desktopRow ?? null}
+          selected={shownRow?.id ?? null}
+          onSelect={(row) => setShown(row.kind === "window" ? { spaceId: space.id, row: row.id } : null)}
+          view={shownView}
+          onStream={(row) => void onPip(row)}
+          onShare={shareAction?.enabled ? share : undefined}
+        />
+        {dialogs}
+      </>
+    );
+  }
+
+  return (
+    <Page>
+      <BackLink />
+      <header className="mb-5 flex items-start justify-between gap-4">
+        <div className="flex min-w-0 items-start gap-3">
+          {osMark}
+          <div className="min-w-0">
+            <h1 data-detail-title className="truncate text-[22px] leading-tight font-semibold tracking-[-0.01em]">{detail.title}</h1>
+            {place}
+          </div>
+        </div>
+        {actions}
+      </header>
+
+      {tip}
+
+      {powerError}
+
+      {detail.desktopNote ? (
+        // One of your machines that keeps its desktop private: why, in place
+        // of the desktop, then the Spaces it provides (no New Space button
+        // beside the note).
+        <MachineSpaces
+          note={detail.desktopNote}
+          listSpaces={Boolean(detail.newSpace)}
+          spaces={hostedSpaces(spaces ?? [], space.id)}
+          // This machine's own screen: its switches live on its Computers page.
+          action={
+            detail.isHost ? (
+              <Button variant="outline" size="sm" data-host-desktop-action="" render={<Link to="/machines" />}>
+                Open Computers
+              </Button>
+            ) : null
+          }
+        />
+      ) : (
+        surface("h-72")
+      )}
+
+      {sections}
+      {dialogs}
     </Page>
   );
 }
@@ -440,11 +559,14 @@ function MachineSpaces({ note, listSpaces, spaces, action }: { note: string; lis
   );
 }
 
-function BackLink() {
+function BackLink({ inline }: { inline?: boolean }) {
   return (
     <Link
       to="/spaces"
-      className="mb-4 -ml-1 inline-flex h-6 items-center gap-0.5 rounded-md pr-1.5 text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+      className={cn(
+        "-ml-1 inline-flex h-6 shrink-0 items-center gap-0.5 rounded-md pr-1.5 text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60",
+        inline ? "mr-1" : "mb-4",
+      )}
     >
       <ChevronLeftIcon className="size-3.5" /> Spaces
     </Link>
@@ -535,14 +657,45 @@ function SpaceResources({ space, spaces, snapshot, machines }: { space: Space; s
   const state = spaceState(space);
   if (!mine || (state !== "running" && state !== "stopped")) return null;
   const local = space.provider === "local";
+  // A Space on another computer comes with only its size there: while it
+  // runs, that alone would read as stopped.
+  if (!local && mine.powerState === "running" && !mine.usage) return null;
   const machine = local ? machines.find((m) => m.current) : machines.find((m) => m.id === space.host || m.spaceIds.includes(space.id));
   const host = hostResources(snapshot, machine);
   const computer = local ? thisComputerText() : (machine?.name ?? space.hostName ?? "its computer");
-  // The Spaces on the same computer, with the numbers it sent, for the disk bar.
+  // The Spaces on the same computer, with the numbers it sent, for how it fits.
   const sameComputer = (s: Space) => (local ? s.provider === "local" : s.host === space.host);
-  const siblings = spaces.flatMap((s) => {
-    const bytes = sameComputer(s) ? spaceResources(snapshot, s.id)?.diskOnHost?.bytes : null;
-    return bytes != null ? [{ id: s.id, name: s.name, bytes }] : [];
+  const onComputer = spaces.flatMap((s) => {
+    const r = sameComputer(s) ? spaceResources(snapshot, s.id) : null;
+    return r ? [r] : [];
   });
-  return <SpaceResourcesPanel space={mine} name={space.name} host={host} computer={computer} siblings={siblings} />;
+  return (
+    <SpaceResourcesPanel
+      space={mine}
+      name={space.name}
+      host={host}
+      computer={computer}
+      spaces={onComputer}
+      baseName={systemName(space.osPrettyName)}
+    />
+  );
+}
+
+/** `stream.viewContext`'s answer (camelCase). */
+interface StreamViewContext {
+  kind: string;
+  app: string | null;
+  title: string | null;
+  windowId: string | null;
+}
+
+/** The core's view of the shown window, as `thread.post` takes it. */
+function threadViewOf(v: StreamViewContext | null): ThreadView | null {
+  if (!v || v.kind !== "window") return null;
+  return { kind: "window", app: v.app ?? null, title: v.title ?? null, windowId: v.windowId ?? null };
+}
+
+/** The redesign behind `spaces_redesign` (Settings → Advanced → Labs); off, the page as it was. */
+function SpaceDetailPageSwitch() {
+  return useFlag("spaces_redesign") ? <SpaceDetailPage /> : <LegacySpacePage />;
 }

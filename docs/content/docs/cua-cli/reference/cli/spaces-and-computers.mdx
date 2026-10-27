@@ -21,9 +21,12 @@ description: "Your Spaces and machines, unattended access on this machine, devic
 | [`cua spaces cancel`](#cua-spaces-cancel) | Cancel a create that is still running (here, in the daemon, or in another terminal): it stops and what it made is removed. |
 | [`cua spaces gpus`](#cua-spaces-gpus) | The GPU options each runtime offers on this computer (or in your own cloud account). |
 | [`cua spaces delete`](#cua-spaces-delete) | Delete a Space's sandbox (on this computer, on the computer that provides it, or in your own cloud account) and forget it (asks first). |
-| [`cua spaces stop`](#cua-spaces-stop) | Turn a Space off: a local container or QEMU VM is suspended (its memory is kept), a Lume VM or a Space one of your computers provides is stopped (its disk is kept), and so is a Space in your own cloud (`--on aws`, `gcp`: compute billing stops; `hetzner`: still billed). |
+| [`cua spaces stop`](#cua-spaces-stop) | Turn a Space off: a local VM (QEMU or Lume) or a Space one of your computers provides is stopped, keeping its disk and freeing its memory, and so is a Space in your own cloud (`--on aws`, `gcp`: compute billing stops; `hetzner`: still billed). |
+| [`cua spaces suspend`](#cua-spaces-suspend) | Suspend a local Space (a container or QEMU VM): its memory is kept, and stays in use, so it resumes where it was with `cua spaces start`. |
+| [`cua spaces resize`](#cua-spaces-resize) | Give a local VM Space more or fewer vCPUs, more or less memory, or a bigger disk. |
 | [`cua spaces start`](#cua-spaces-start) | Turn a Space back on: resume a suspended one or boot a stopped one. |
 | [`cua spaces rm`](#cua-spaces-rm) | Forget a registered Space and its stored token. |
+| [`cua spaces rename`](#cua-spaces-rename) | Give a Space a new name; its id stays the same. |
 | [`cua spaces share`](#cua-spaces-share) | Let someone in your team watch (viewer) or use (editor) a Space, through the relay. |
 | [`cua spaces unshare`](#cua-spaces-unshare) | Stop sharing a Space with one account at once, or with everyone. |
 | [`cua spaces shares`](#cua-spaces-shares) | Who a Space is shared with, and who of them is connected now. |
@@ -165,7 +168,7 @@ cua spaces create [OPTIONS] [IMAGE]
 | <span id="cua-spaces-create--on"></span>`--on` | string |  | Where: `local`, `auto` (the least-loaded of your computers), `aws`, `gcp`, `modal`, `host:<computer>`, or a computer name (`mac-mini`, "spare mac mini"). Default: your default location (`local` unless set). |
 | <span id="cua-spaces-create--count"></span>`--count` | integer | `1` | How many (1 to 8). |
 | <span id="cua-spaces-create--name"></span>`--name` | string |  | Name (with --count, `-2`, `-3`, ... are appended). |
-| <span id="cua-spaces-create--kind"></span>`--kind` | string |  | auto \| container \| vm. |
+| <span id="cua-spaces-create--kind"></span>`--kind` | string |  | auto \| container \| vm \| microvm. |
 | <span id="cua-spaces-create--runtime"></span>`--runtime` | string |  | auto, or an engine the location offers (lume, runc, gvisor, qemu). |
 | <span id="cua-spaces-create--cpus"></span>`--cpus` | integer |  | vCPUs. |
 | <span id="cua-spaces-create--memory-mb"></span>`--memory-mb` | integer |  | Memory in MiB. |
@@ -334,7 +337,7 @@ cua spaces delete local:studio --force
 
 ### `cua spaces stop`
 
-Turn a Space off: a local container or QEMU VM is suspended (its memory is kept), a Lume VM or a Space one of your computers provides is stopped (its disk is kept), and so is a Space in your own cloud (`--on aws`, `gcp`: compute billing stops; `hetzner`: still billed). Modal sandboxes and Spaces added by address cannot be turned off.
+Turn a Space off: a local VM (QEMU or Lume) or a Space one of your computers provides is stopped, keeping its disk and freeing its memory, and so is a Space in your own cloud (`--on aws`, `gcp`: compute billing stops; `hetzner`: still billed). A local container is stopped or suspended as its runtime can. `cua spaces suspend` keeps a local Space's memory instead. Modal sandboxes and Spaces added by address cannot be turned off.
 
 ```text output
 cua spaces stop [OPTIONS] <SPACE>
@@ -349,6 +352,49 @@ cua spaces stop [OPTIONS] <SPACE>
 ```bash test="cli-shape" id="ref-cua-spaces-stop"
 cua spaces stop local:studio
 cua spaces stop relay:space-0123456789abcdef --json
+```
+
+### `cua spaces suspend`
+
+Suspend a local Space (a container or QEMU VM): its memory is kept, and stays in use, so it resumes where it was with `cua spaces start`. `cua spaces stop` frees the memory instead.
+
+```text output
+cua spaces suspend [OPTIONS] <SPACE>
+```
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `<SPACE>` | string | required | Space id or name. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-spaces-suspend"
+cua spaces suspend local:studio
+```
+
+### `cua spaces resize`
+
+Give a local VM Space more or fewer vCPUs, more or less memory, or a bigger disk. It shuts down and boots again from its own disk (a stopped one boots): its files stay, its running processes do not. A disk never shrinks.
+
+```text output
+cua spaces resize [OPTIONS] <SPACE>
+```
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `<SPACE>` | string | required | Space id or name. |
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="cua-spaces-resize--cpus"></span>`--cpus` | integer |  | vCPUs. |
+| <span id="cua-spaces-resize--memory-mb"></span>`--memory-mb` | integer |  | Memory in MiB. |
+| <span id="cua-spaces-resize--disk-gb"></span>`--disk-gb` | integer |  | Grow the disk to this many GiB. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-spaces-resize"
+cua spaces resize local:builder --memory-mb 24576
+cua spaces resize builder --cpus 8 --disk-gb 200 --json
 ```
 
 ### `cua spaces start`
@@ -389,6 +435,26 @@ Alias: `cua spaces remove`.
 ```bash test="cli-shape" id="ref-cua-spaces-rm"
 cua spaces rm direct:10.0.0.5:3211
 cua spaces rm studio
+```
+
+### `cua spaces rename`
+
+Give a Space a new name; its id stays the same. Lowercase letters, digits and dashes, as at create. A Space you shared, or one of your computers provides, is renamed on the relay too, so your other devices and the people it is shared with see the new name. Only its owner can rename a Space.
+
+```text output
+cua spaces rename [OPTIONS] <SPACE> <NAME>
+```
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `<SPACE>` | string | required | Space id or name (as `cua spaces ls` shows). |
+| `<NAME>` | string | required | The new name. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-spaces-rename"
+cua spaces rename local:studio design-review
+cua spaces rename relay:space-0123456789abcdef ci-runner
 ```
 
 ### `cua spaces share`
@@ -513,7 +579,7 @@ cua host [OPTIONS] <COMMAND>
 
 ### `cua host setup`
 
-Set this computer up for unattended access: install cua-spacesd as a service that joins the cua.ai relay as your account (default) or serves on a direct ip:port. By default (the `desktop` profile) it shares this computer's desktop, also with `--provide-spaces`; `--profile spare` or `--no-desktop --provide-spaces` provides Spaces only, so it is a host in your pool (`cua run` jobs run in Spaces there) whose own desktop stays private. Running it again with the same options changes nothing (a stopped service starts again).
+Set this computer up for unattended access: install cua-spacesd as a service that joins the cua.ai relay as your account (default) or serves on a direct ip:port. By default (the `desktop` profile) it shares this computer's desktop and, on a computer set up for the first time through the relay, provides Spaces to your devices (a host in your pool: `cua run` jobs and `--on auto` Spaces can run here, within its limits); `--no-provide-spaces` leaves that off, and `cua host config --provide-spaces off` turns it off later. A computer set up before keeps what it provides. `--profile spare` or `--no-desktop` provides Spaces only, so its own desktop stays private. Running it again with the same options changes nothing (a stopped service starts again).
 
 ```text output
 cua host setup [OPTIONS]
@@ -526,20 +592,23 @@ cua host setup [OPTIONS]
 | <span id="cua-host-setup--allow"></span>`--allow` | string |  | Also allow this account (id or email). Repeatable. |
 | <span id="cua-host-setup--driver-bin"></span>`--driver-bin` | path |  | cua-spacesd binary (default $CUA_SPACESD_BIN, a bundled one, or the release download). |
 | <span id="cua-host-setup--runner"></span>`--runner` | string | `auto` | auto \| systemd \| launchd \| app-helper \| windows-task \| process. On a Mac with the Cua Spaces app, auto is app-helper: the service runs as the app's own login item ("Cua Spaces"). |
-| <span id="cua-host-setup--profile"></span>`--profile` | `desktop` \| `spare` |  | What this computer is for: `desktop` (share this desktop; the default, also with `--provide-spaces`) or `spare` (do not share the desktop; provide Spaces). |
+| <span id="cua-host-setup--profile"></span>`--profile` | `desktop` \| `spare` |  | What this computer is for: `desktop` (share this desktop, and provide Spaces on a new relay setup; the default) or `spare` (do not share the desktop; provide Spaces). |
 | <span id="cua-host-setup--max-spaces"></span>`--max-spaces` | integer |  | Provided Spaces at once (default 4; 0: no limit). |
 | <span id="cua-host-setup--remote"></span>`--remote` | boolean | `false` | When sign-in is needed, use a device code to approve it in a browser on another computer. The account session is not saved. |
 | <span id="cua-host-setup--desktop"></span>`--desktop` | boolean | `false` | Share this computer's own desktop as a Space. |
 | <span id="cua-host-setup--no-desktop"></span>`--no-desktop` | boolean | `false` | Do not share this computer's own desktop (screen, input, shell, files): relayed callers reach only the Spaces it provides. |
-| <span id="cua-host-setup--provide-spaces"></span>`--provide-spaces` | boolean | `false` | Create Spaces for your enrolled devices on this computer's runtimes (Lume macOS VMs, Docker Linux containers). On its own it keeps the default `desktop` profile, so this computer's desktop is shared too; add `--no-desktop` (or use `--profile spare`) to provide Spaces only. |
-| <span id="cua-host-setup--no-provide-spaces"></span>`--no-provide-spaces` | boolean | `false` | Do not create Spaces for other devices. |
+| <span id="cua-host-setup--provide-spaces"></span>`--provide-spaces` | boolean | `false` | Create Spaces for your enrolled devices on this computer's runtimes (Lume macOS VMs, Docker Linux containers). The default for a new relay setup; a computer set up before keeps its setting unless this (or `--no-provide-spaces`) is given. On its own it keeps the default `desktop` profile, so this computer's desktop is shared too; add `--no-desktop` (or use `--profile spare`) to provide Spaces only. |
+| <span id="cua-host-setup--no-provide-spaces"></span>`--no-provide-spaces` | boolean | `false` | Do not create Spaces for other devices (only share this desktop). |
 | <span id="cua-host-setup--dedicated"></span>`--dedicated` | boolean | `false` | This computer exists only for Cua work (a cloud instance made for it; `cua cloud add aws` sets its hosts up this way): jobs may run in its own Space (`kind = "machine"`), with its GPU and drivers as they are. Never on a computer you also use: there jobs run in macOS VMs or containers. |
 
 **Examples**
 
 ```bash test="cli-shape" id="ref-cua-host-setup"
-# Join the cua.ai relay as your account (shares this desktop)
+# Join the cua.ai relay as your account (shares this desktop and provides Spaces to your devices)
 cua host setup
+
+# Share this desktop only
+cua host setup --no-provide-spaces
 
 # A spare computer: do not share its desktop, run Spaces for your devices
 cua host setup --profile spare --name "Mac mini (spare)"

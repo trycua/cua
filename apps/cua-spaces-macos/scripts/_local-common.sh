@@ -158,7 +158,11 @@ quit_local_app() {
 retire_local_app() {
     local app="$1"
     if [ -x "$app/Contents/MacOS/CuaSpacesMac" ]; then
+        # A second try, then the state decides: a login item that is not
+        # registered or not found is gone, whatever the exit status said.
         CUA_CHANNEL=local "$app/Contents/MacOS/CuaSpacesMac" --service-helper unregister >/dev/null 2>&1 \
+            || CUA_CHANNEL=local "$app/Contents/MacOS/CuaSpacesMac" --service-helper unregister >/dev/null 2>&1 \
+            || ! local_helper_registered "$app" \
             || warn "the app could not unregister its helper; remove $LOCAL_APP_DIR_NAME from System Settings > Login Items if it stays."
     fi
     quit_local_app "$app"
@@ -190,6 +194,42 @@ local_helper_enabled() {
     local app="$1"
     [ -x "$app/Contents/MacOS/CuaSpacesMac" ] || return 1
     CUA_CHANNEL=local "$app/Contents/MacOS/CuaSpacesMac" --service-helper status 2>/dev/null | grep -q '"status":"enabled"'
+}
+
+# Succeeds when the helper login item of the Local app at `app` is still
+# registered, or waits for approval in System Settings (`--service-helper
+# status`). Not registered, not found and no answer are not.
+local_helper_registered() {
+    local app="$1"
+    [ -x "$app/Contents/MacOS/CuaSpacesMac" ] || return 1
+    CUA_CHANNEL=local "$app/Contents/MacOS/CuaSpacesMac" --service-helper status 2>/dev/null \
+        | grep -Eq '"status":"(enabled|requires-approval)"'
+}
+
+# Clears every macOS privacy permission (Screen Recording, Accessibility,
+# Automation and the rest: `tccutil reset All`) the Local bundle id holds, for
+# the Local app at `app`. `tccutil` resolves a bundle id through LaunchServices
+# and fails with "No such bundle identifier" once the app is gone, so this runs
+# while the app is still installed, after it is stopped. `id` is the Local id
+# (or the old Local id). Best effort; Stable's id is never passed.
+reset_local_permissions() {
+    local app="$1" id="$2"
+    case "$id" in
+        "$LOCAL_BUNDLE_ID"|"$LOCAL_LEGACY_BUNDLE_ID") ;;
+        *) return 0 ;;
+    esac
+    if ! command -v tccutil >/dev/null 2>&1; then
+        warn "tccutil is missing: remove $LOCAL_APP_DIR_NAME from the Privacy & Security lists in System Settings yourself."
+        return 0
+    fi
+    if [ -x "$LSREGISTER" ] && [ -d "$app" ]; then
+        "$LSREGISTER" -f "$app" >/dev/null 2>&1 || true
+    fi
+    if tccutil reset All "$id" >/dev/null 2>&1; then
+        log "reset the macOS permissions of $id (Screen Recording, Accessibility and the rest)"
+    else
+        warn "could not reset the permissions of $id; run: tccutil reset All $id"
+    fi
 }
 
 # Registers the helper login item of the Local app at `app` (the app does it

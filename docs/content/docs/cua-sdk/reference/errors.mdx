@@ -135,7 +135,7 @@ argument and what it accepts.
 
 **Message** `invalid argument: <detail>`
 
-**Raised by** [`Spaces.set_egress`](/cua-sdk/reference/spaces/lifetime#spacesset_egress), [`canonical_image_tier`](/cua-sdk/reference/image#canonical_image_tier), [`error_doc_url`](/cua-sdk/reference/cua#error_doc_url), [`qualify_sandbox_ref`](/cua-sdk/reference/sandbox/lifecycle#qualify_sandbox_ref)
+**Raised by** [`Spaces.rename`](/cua-sdk/reference/spaces#spacesrename), [`Spaces.set_egress`](/cua-sdk/reference/spaces/lifetime#spacesset_egress), [`canonical_image_tier`](/cua-sdk/reference/image#canonical_image_tier), [`error_doc_url`](/cua-sdk/reference/cua#error_doc_url), [`qualify_sandbox_ref`](/cua-sdk/reference/sandbox/lifecycle#qualify_sandbox_ref)
 
 ## `InvalidPlacement`
 
@@ -247,6 +247,8 @@ HTTP.
 permissions of the path.
 
 **Message** `permission denied: <detail>`
+
+**Raised by** [`Spaces.rename`](/cua-sdk/reference/spaces#spacesrename)
 
 ## `Transport`
 

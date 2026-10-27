@@ -7,12 +7,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createDemoAdapter } from "../adapters/demo";
 import { agentKeyForm, agentKeysView } from "../agent-keys";
 import { BridgeProvider } from "../index";
-import { Route } from "../../routes/settings/agents";
+import { AccountKeysSection } from "../../components/settings/account-keys";
+import { plainKeysIntro } from "../../lib/settings-copy";
 import { testCore, wasmBuilt } from "./testCore";
 
 afterEach(cleanup);
 
-/** What Settings → Agents says about where a saved key stays, per system. */
+/** What Settings, Connectors says about where a saved key stays, per system. */
 const WORDS = {
   macos: {
     intro: "Agents in your Spaces need a provider key to run. Keys stay on this Mac in the Keychain, and each one is only given to the agents that use it.",
@@ -29,7 +30,7 @@ const WORDS = {
   },
 } as const;
 
-describe.skipIf(!wasmBuilt)("Settings → Agents says where keys stay in the system's words", () => {
+describe.skipIf(!wasmBuilt)("Settings, Connectors says where keys stay in the system's words", () => {
   it("has the core say it for each system, and the Mac's words by default", async () => {
     const core = await testCore();
     const input = { keys: [] };
@@ -52,7 +53,7 @@ describe.skipIf(!wasmBuilt)("Settings → Agents says where keys stay in the sys
 
   it("draws the words of the shell's system (Electron reports its platform)", async () => {
     const host = window as unknown as { cuaDesktop?: { platform: string } };
-    const Page = Route.options.component as unknown as () => React.JSX.Element;
+    const Page = AccountKeysSection;
     await (Page as unknown as { preload?: () => Promise<unknown> }).preload?.();
     const core = await testCore();
     try {
@@ -69,7 +70,7 @@ describe.skipIf(!wasmBuilt)("Settings → Agents says where keys stay in the sys
             </BridgeProvider>,
           );
         });
-        await waitFor(() => expect(document.querySelector("[data-agent-keys-intro]")?.textContent).toBe(WORDS[os].intro));
+        await waitFor(() => expect(document.querySelector("[data-agent-keys-intro]")?.textContent).toBe(plainKeysIntro(WORDS[os].intro)));
         fireEvent.click(document.querySelector('[data-agent-key-provider="anthropic"] [data-agent-key-action]')!);
         await waitFor(() => expect(document.querySelector("[data-agent-key-value-help]")?.textContent).toBe(WORDS[os].help));
         view.unmount();

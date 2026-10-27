@@ -19,7 +19,10 @@
 
 import type { Page } from "@playwright/test";
 
-import { expect, test } from "./host";
+import { ELECTRON, expect, test } from "./host";
+
+// The Electron shell draws video with WebCodecs, not the SwiftUI host's native views this stands in for.
+test.skip(ELECTRON, "native video slots are the SwiftUI host's");
 
 interface Surface {
   surfaceId: string;
@@ -72,26 +75,33 @@ test("every popup on a Space's page leaves the stream drawn, the same size, with
   expect(before.holes ?? []).toEqual([]);
   expect(before.interactive).toBe(true);
 
-  /** The popup is open: the stream is still drawn at its size, with a hole over the popup. */
+  /**
+   * The popup is open: the stream is still drawn at its size and place, and
+   * where the popup floats over the picture there is a hole for it (a popup
+   * that floats elsewhere, like a menu that opens over the header, needs none).
+   */
   async function expectDrawn(name: string, popup: string, modal: boolean) {
     const el = page.locator(popup).first();
     await expect(el, name).toBeVisible();
     // Reports follow layout over a few frames.
-    await expect
-      .poll(async () => ((await viewer(page)).holes ?? []).length, { message: `${name}: a hole over the popup`, timeout: 5_000 })
-      .toBeGreaterThan(0);
-    const now = await viewer(page);
-    expect(now.occluded, `${name}: not hidden`).toBe(false);
-    expect(now.visible, `${name}: still visible`).toBe(true);
-    expect({ w: now.rect.width, h: now.rect.height }, `${name}: not resized`).toEqual({ w: before.rect.width, h: before.rect.height });
-    expect({ x: now.rect.x, y: now.rect.y }, `${name}: not moved`).toEqual({ x: before.rect.x, y: before.rect.y });
-    expect(now.interactive, `${name}: ${modal ? "takes no input under a modal dialog" : "stays interactive"}`).toBe(!modal);
-    const box = await el.boundingBox();
+    await page.waitForTimeout(400);
+    const box = (await el.boundingBox())!;
     expect(box, name).not.toBeNull();
-    expect(
-      (now.holes ?? []).some((h) => overlaps(h, { x: box!.x, y: box!.y, width: box!.width, height: box!.height })),
-      `${name}: a hole where the popup is`,
-    ).toBe(true);
+    const now = await viewer(page);
+    const over = overlaps(box, before.rect);
+    if (over) {
+      await expect
+        .poll(async () => ((await viewer(page)).holes ?? []).some((h) => overlaps(h, box)), { message: `${name}: a hole where the popup is`, timeout: 5_000 })
+        .toBe(true);
+    }
+    const drawn = await viewer(page);
+    expect(drawn.occluded, `${name}: not hidden`).toBe(false);
+    expect(drawn.visible, `${name}: still visible`).toBe(true);
+    expect({ w: drawn.rect.width, h: drawn.rect.height }, `${name}: not resized`).toEqual({ w: before.rect.width, h: before.rect.height });
+    expect({ x: drawn.rect.x, y: drawn.rect.y }, `${name}: not moved`).toEqual({ x: before.rect.x, y: before.rect.y });
+    expect(drawn.interactive, `${name}: ${modal ? "takes no input under a modal dialog" : "stays interactive"}`).toBe(!modal);
+    void now;
+    return over;
   }
 
   /** The popup is closed: no holes, interactive again, same rect. */
@@ -104,14 +114,18 @@ test("every popup on a Space's page leaves the stream drawn, the same size, with
   }
 
   // The profile card (a Popover): click a name in "In this Space".
+  const overlapped: string[] = [];
+  const track = async (name: string, popup: string, modal: boolean) => {
+    if (await expectDrawn(name, popup, modal)) overlapped.push(name);
+  };
   await page.locator("[data-profile-trigger='claude']").first().click();
-  await expectDrawn("profile card", "[data-profile-card='agent']", false);
+  await track("profile card", "[data-profile-card='agent']", false);
   // A menu opened from inside the card: the rights listbox in its Details.
   await page.locator("[data-card-details]").click();
   const rights = page.locator("[data-profile-card='agent'] [role='combobox'], [data-profile-card='agent'] button[aria-haspopup='listbox']").first();
   if (await rights.count()) {
     await rights.click();
-    await expectDrawn("member row menu", "[role='listbox']", false);
+    await track("member row menu", "[role='listbox']", false);
     await page.keyboard.press("Escape");
   }
   await page.keyboard.press("Escape");
@@ -120,25 +134,28 @@ test("every popup on a Space's page leaves the stream drawn, the same size, with
 
   // The header's ⋯ menu.
   await page.locator("[data-header-more]").click();
-  await expectDrawn("⋯ menu", "[role='menu']", false);
+  await track("⋯ menu", "[role='menu']", false);
   await page.keyboard.press("Escape");
   await expectClear("⋯ menu closed");
 
   // A tooltip (hover the picture-in-picture button).
   await page.locator("[data-pip]").first().hover();
-  await expectDrawn("tooltip", "[role='tooltip']", false);
+  await track("tooltip", "[data-video-occluder]:not([role='dialog'])", false);
   await page.mouse.move(5, 5);
   await expectClear("tooltip closed");
 
   // More (the rail's Details sheet): a modal dialog.
   await page.locator("[data-call-more]").click();
-  await expectDrawn("More", "[data-call-more-sheet]", true);
+  await track("More", "[data-call-more-sheet]", true);
   await page.keyboard.press("Escape");
   await expectClear("More closed");
 
   // Share: a modal dialog.
   await page.locator("[data-share-space]").first().click();
-  await expectDrawn("Share", "[role='dialog']:not([data-profile-card])", true);
+  await track("Share", "[role='dialog']:not([data-profile-card])", true);
   await page.keyboard.press("Escape");
   await expectClear("Share closed");
+
+  // The check means something only if popups really floated over the picture.
+  expect(overlapped, "popups that floated over the picture").toEqual(expect.arrayContaining(["profile card", "More", "Share"]));
 });

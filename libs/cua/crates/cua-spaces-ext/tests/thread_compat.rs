@@ -1095,7 +1095,9 @@ fn forwarded_hash(key: &str) -> String {
 async fn a_message_reaches_the_idle_run_while_its_credentials_are_the_ones_forwarded() {
     let fx = setup().await;
     let (p, _proc) = member_with_idle_run(&fx).await;
-    edit_record(&fx, "ada", |r| r["env"] = json!({"ANTHROPIC_API_KEY": "sk-one"}));
+    edit_record(&fx, "ada", |r| {
+        r["env"] = json!({"ANTHROPIC_API_KEY": "sk-one"})
+    });
     run_meta_with_hash(&fx, &forwarded_hash("sk-one"));
     let d = p.send("ada", "again").await.unwrap();
     assert!(!d.started, "the idle run takes it");
@@ -1109,12 +1111,19 @@ async fn a_message_reaches_the_idle_run_while_its_credentials_are_the_ones_forwa
 async fn a_changed_credential_ends_the_idle_run_instead_of_reusing_it() {
     let fx = setup().await;
     let (p, _proc) = member_with_idle_run(&fx).await;
-    edit_record(&fx, "ada", |r| r["env"] = json!({"ANTHROPIC_API_KEY": "sk-new"}));
+    edit_record(&fx, "ada", |r| {
+        r["env"] = json!({"ANTHROPIC_API_KEY": "sk-new"})
+    });
     run_meta_with_hash(&fx, &forwarded_hash("sk-old"));
     // The mock runs no shell, so the fresh start itself can't finish here;
     // what matters is that the old run did not get the message and is gone.
     let _ = p.send("ada", "again").await;
-    assert!(inbox(&fx).is_empty(), "the old run was not reused");
+    // (Stopping a run leaves a control message, not a prompt.)
+    assert!(
+        inbox(&fx).iter().all(|t| t.is_empty()),
+        "the old run was not reused: {:?}",
+        inbox(&fx)
+    );
     assert!(!run_alive(&fx).await, "the old run was ended");
 }
 
@@ -1124,20 +1133,29 @@ async fn a_changed_credential_ends_the_idle_run_instead_of_reusing_it() {
 async fn a_run_that_failed_to_authenticate_is_not_reused() {
     let fx = setup().await;
     let (p, _proc) = member_with_idle_run(&fx).await;
-    edit_record(&fx, "ada", |r| r["env"] = json!({"ANTHROPIC_API_KEY": "sk-one"}));
+    edit_record(&fx, "ada", |r| {
+        r["env"] = json!({"ANTHROPIC_API_KEY": "sk-one"})
+    });
     run_meta_with_hash(&fx, &forwarded_hash("sk-one"));
     events(
         &fx,
         &[
             ("turn_started", 2, None),
-            ("error", 2, Some("Failed to authenticate. API Error: 401 OAuth access token is invalid")),
+            (
+                "error",
+                2,
+                Some("Failed to authenticate. API Error: 401 OAuth access token is invalid"),
+            ),
             ("turn_ended", 2, None),
         ],
     );
-    run_state(&fx, json!({"status": "idle", "turn": 2, "stopReason": "error"}));
+    run_state(
+        &fx,
+        json!({"status": "idle", "turn": 2, "stopReason": "error"}),
+    );
     run_meta_with_hash(&fx, &forwarded_hash("sk-one"));
     let _ = p.send("ada", "again").await;
-    assert!(inbox(&fx).is_empty());
+    assert!(inbox(&fx).iter().all(|t| t.is_empty()), "{:?}", inbox(&fx));
     assert!(!run_alive(&fx).await);
 }
 

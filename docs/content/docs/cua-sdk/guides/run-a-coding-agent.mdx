@@ -235,7 +235,7 @@ print([h["id"] for h in json.loads(cua.agent_harnesses())])
 | `opencode` | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY` | `openai-chat` | |
 | `goose` | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `OPENROUTER_API_KEY` | `openai-chat` | |
 | `pi` | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY` | `openai-chat` | Community ACP adapter; no MCP client |
-| `hermes` | `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` | `openai-chat` | Needs git; ignores run MCP servers |
+| `hermes` | `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `OPENAI_API_KEY` | `openai-chat` | Needs git; ignores run MCP servers; reads the Claude sign-in, not the ChatGPT one |
 | `openclaw` | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY` | `openai-chat` | Starts its own loopback Gateway; no per-run MCP servers |
 
 `cua agent harnesses` (or `cua.agent_harnesses()`) prints the full record:

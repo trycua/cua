@@ -297,7 +297,9 @@ impl Harness {
     /// first is named.
     pub fn connect_provider(&self) -> Option<&'static str> {
         match self.id {
-            "claude-code" | "hermes" | "opencode" | "pi" | "openclaw" | "goose" => Some("anthropic"),
+            "claude-code" | "hermes" | "opencode" | "pi" | "openclaw" | "goose" => {
+                Some("anthropic")
+            }
             "openai-codex" => Some("openai"),
             _ => None,
         }

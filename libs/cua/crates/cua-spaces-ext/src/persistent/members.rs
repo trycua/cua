@@ -411,11 +411,7 @@ impl Persistent {
                     .iter()
                     .find(|s| s.state == "failed")
                     .and_then(|s| s.activity.clone())
-                    .or_else(|| {
-                        r.last_error
-                            .as_deref()
-                            .map(|e| failed_line(&r.harness, e))
-                    }),
+                    .or_else(|| r.last_error.as_deref().map(|e| failed_line(&r.harness, e))),
                 "idle" | "asleep" if open > 0 => Some(format!(
                     "{open} open task{}",
                     if open == 1 { "" } else { "s" }

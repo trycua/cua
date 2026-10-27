@@ -117,7 +117,7 @@ const CLAUDE_EXTRA: &str = r#"  auth)
     echo '{"authMethod":"none"}'; exit 1 ;;
   setup-token)
     if [ -f "$HOME/.fake-claude-cancel" ]; then echo "Login cancelled"; exit 1; fi
-    printf 'Your OAuth token:\r\n\r\n  sk-ant-oat01-FAKEtoken_0123456789abcdef\r\n' ; exit 0 ;;
+    printf 'Your OAuth token:\r\n\r\n  sk-ant-oat01-FAKEtoken_0123456789abcdef_ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz_0123456789_QQQQ\r\n' ; exit 0 ;;
 "#;
 
 impl World {
@@ -129,6 +129,10 @@ impl World {
         std::fs::create_dir_all(&bin).unwrap();
         let mut env = HostEnv::isolated(&home);
         env.path = vec![bin.clone()];
+        // The pre-save token check asks this address, where nothing answers
+        // (the check is then inconclusive and the token is saved).
+        env.vars
+            .insert("CUA_TOKEN_CHECK_URL".into(), "http://127.0.0.1:9".into());
         let w = World {
             _dir: dir,
             home,
@@ -419,6 +423,35 @@ fn connected_but_not_signed_in_says_so_and_offers_sign_in_where_cua_can_start_it
     assert_eq!(r.signed_in, SignedInState::Unknown);
 }
 
+/// A corrupted token gets the provider's 401 from a local stub and is never
+/// saved: Connect reports it, and the vault stays empty.
+#[test]
+fn a_token_the_provider_refuses_is_never_saved() {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = std::thread::spawn(move || {
+        let (mut c, _) = listener.accept().unwrap();
+        let mut buf = [0u8; 4096];
+        let _ = c.read(&mut buf).unwrap();
+        let body = r#"{"type":"error","error":{"type":"authentication_error","message":"OAuth token invalid"}}"#;
+        let _ = write!(
+            c,
+            "HTTP/1.1 401 Unauthorized\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        );
+    });
+    let mut w = World::new();
+    w.env.vars.insert("CUA_TOKEN_CHECK_URL".into(), url);
+    w.install("claude-code", "2.4.1");
+    w.sign_in("claude-code");
+    w.connect("claude-code", true);
+    server.join().unwrap();
+    assert_eq!(w.vault.value("claude-code"), None);
+    let r = w.row("claude-code");
+    assert_ne!(r.signin_import, ImportState::Ok, "{r:#?}");
+}
+
 #[test]
 fn sign_ins_are_made_for_cua_and_never_read_from_the_apps_own_files() {
     // Codex: its own device-code login in a folder Cua owns; your auth.json is never read.
@@ -509,7 +542,9 @@ fn sign_ins_are_made_for_cua_and_never_read_from_the_apps_own_files() {
     assert_eq!(r.signin_import, ImportState::Ok);
     assert_eq!(
         w.vault.value("claude-code").as_deref(),
-        Some("sk-ant-oat01-FAKEtoken_0123456789abcdef")
+        Some(
+            "sk-ant-oat01-FAKEtoken_0123456789abcdef_ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz_0123456789_QQQQ"
+        )
     );
 
     // Hermes: its .env is never copied; it uses the providers connected in Settings.

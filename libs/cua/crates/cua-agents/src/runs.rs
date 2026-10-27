@@ -166,8 +166,12 @@ fn codex_auth_replaces(forwarded: &str, existing: &[u8]) -> bool {
             .map(|t| t.chars().take(19).collect::<String>())
             .filter(|t| t.len() == 19)
     };
-    let new = serde_json::from_str::<Value>(forwarded).ok().and_then(|v| stamp(&v));
-    let old = serde_json::from_slice::<Value>(existing).ok().and_then(|v| stamp(&v));
+    let new = serde_json::from_str::<Value>(forwarded)
+        .ok()
+        .and_then(|v| stamp(&v));
+    let old = serde_json::from_slice::<Value>(existing)
+        .ok()
+        .and_then(|v| stamp(&v));
     match (new, old) {
         (Some(n), Some(o)) => n > o,
         (Some(_), None) => true,
@@ -1504,13 +1508,28 @@ mod tests {
     #[test]
     fn the_credential_hash_changes_with_the_credentials_only() {
         let env = |pairs: &[(&str, &str)]| -> BTreeMap<String, String> {
-            pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+            pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect()
         };
         let a = credential_hash("claude-code", &env(&[("CLAUDE_CODE_OAUTH_TOKEN", "one")]));
-        assert_eq!(a, credential_hash("claude-code", &env(&[("CLAUDE_CODE_OAUTH_TOKEN", "one")])));
-        assert_ne!(a, credential_hash("claude-code", &env(&[("CLAUDE_CODE_OAUTH_TOKEN", "two")])));
+        assert_eq!(
+            a,
+            credential_hash("claude-code", &env(&[("CLAUDE_CODE_OAUTH_TOKEN", "one")]))
+        );
+        assert_ne!(
+            a,
+            credential_hash("claude-code", &env(&[("CLAUDE_CODE_OAUTH_TOKEN", "two")]))
+        );
         // A variable the harness does not read does not count.
-        assert_eq!(a, credential_hash("claude-code", &env(&[("CLAUDE_CODE_OAUTH_TOKEN", "one"), ("HOME_X", "y")])));
+        assert_eq!(
+            a,
+            credential_hash(
+                "claude-code",
+                &env(&[("CLAUDE_CODE_OAUTH_TOKEN", "one"), ("HOME_X", "y")])
+            )
+        );
         assert!(!a.contains("one"));
     }
 
@@ -1580,9 +1599,29 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
         // A probe that could not run decides nothing.
         assert_eq!(credential_check(codex, None).unwrap(), None);
-        // A harness configurable through its own files: a note, not a refusal.
-        let goose = harness::harness("goose").unwrap();
-        let note = credential_check(goose, Some("none")).unwrap().unwrap();
+        // Every harness lists the files of its own setup, so each is refused
+        // before the install when it has neither a key nor one of them.
+        for h in harness::HARNESSES.iter().filter(|h| h.logins.is_some()) {
+            let e = credential_check(h, Some("none")).unwrap_err();
+            assert!(matches!(e, Error::NoCredential(_)), "{}", h.id);
+            let typed = crate::failure::classify(h.id, &e.to_string());
+            assert_eq!(
+                typed.class,
+                crate::failure::FailureClass::NeedsConnect,
+                "{}",
+                h.id
+            );
+        }
+        // Hermes reads the Claude sign-in too.
+        let hermes = harness::harness("hermes").unwrap();
+        assert!(hermes.keys.contains(&"CLAUDE_CODE_OAUTH_TOKEN"));
+        assert!(!hermes.keys.contains(&"CODEX_AUTH_JSON"));
+        // A harness added without a list of its own files only gets a note.
+        let open = Harness {
+            logins: None,
+            ..*harness::harness("goose").unwrap()
+        };
+        let note = credential_check(&open, Some("none")).unwrap().unwrap();
         assert!(note.contains("OPENAI_API_KEY"), "{note}");
     }
 

@@ -1034,7 +1034,10 @@ impl Persistent {
                         && st.status == RunStatus::Idle
                         && self.credentials_changed(&rec, &agents, run, &st).await =>
                 {
-                    tracing::info!(agent = name, "credentials changed or rejected: starting a fresh run");
+                    tracing::info!(
+                        agent = name,
+                        "credentials changed or rejected: starting a fresh run"
+                    );
                     if rec.k() == 1 {
                         let _ = self.save(name).await;
                     }

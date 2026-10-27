@@ -64,7 +64,11 @@ pub fn stopped_title(agent: &str, error: &str) -> String {
 /// reduced to its message.
 pub fn short_reason(error: &str) -> String {
     let r = reason(error);
-    if r == "unknown error" { r } else { clip(&r, MAX_REASON) }
+    if r == "unknown error" {
+        r
+    } else {
+        clip(&r, MAX_REASON)
+    }
 }
 
 /// [`short_reason`] without the clip: the error's first line as it is
@@ -215,16 +219,16 @@ mod tests {
     #[test]
     fn a_failure_title_names_the_agent_and_a_short_reason() {
         assert_eq!(
-            stopped_title("Claude Code", "Invalid API key · Please run /login"),
-            "Claude Code stopped: Invalid API key · Please run /login"
+            stopped_title("Claude Code", "rate limit reached for this model"),
+            "Claude Code stopped: rate limit reached for this model"
         );
-        assert_eq!(
-            stopped_title(
-                "ada",
-                r#"API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}"#
-            ),
-            "ada stopped: API Error: 401 invalid x-api-key"
-        );
+        // A rejected or missing sign-in is said in words, never as the provider's error.
+        for raw in [
+            "Invalid API key · Please run /login",
+            r#"API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}"#,
+        ] {
+            assert_eq!(stopped_title("ada", raw), "ada needs you to connect it");
+        }
         assert_eq!(
             short_reason("Authentication required.\nsee the log"),
             "Authentication required"

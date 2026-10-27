@@ -70,7 +70,8 @@ public final class AgentKeysModel {
         let keys = (report?["keys"] as? [Any] ?? []).compactMap { $0 as? [String: Any] }.map { k in
             AppAgentKeyInput(provider: k["provider"] as? String ?? "other", env: k["env"] as? String ?? "",
                              last4: k["last4"] as? String ?? "",
-                             addedMs: (k["added_ms"] as? NSNumber)?.uint64Value ?? 0)
+                             addedMs: (k["added_ms"] as? NSNumber)?.uint64Value ?? 0,
+                             expired: k["expired"] as? Bool ?? false)
         }
         let unavailable = report?["available"] as? Bool == false
             ? (report?["unavailable"] as? String ?? "this computer can't keep keys") : nil

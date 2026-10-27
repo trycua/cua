@@ -277,7 +277,7 @@ pub const SETUP_TOKEN_WAIT: Duration = Duration::from_secs(600);
 /// about 108 characters (`sk-ant-oat01-` and 95 more); a shorter run is
 /// output cut off by a wrapped line or a redraw, and Claude answers it with
 /// a 401.
-const SETUP_TOKEN_MIN: usize = 80;
+const SETUP_TOKEN_MIN: usize = 100;
 /// The longest a token is taken to be (stops a joined line from running on).
 const SETUP_TOKEN_MAX: usize = 200;
 
@@ -398,7 +398,17 @@ pub fn check_claude_token(env: &HostEnv, token: &str) -> TokenCheck {
         .filter(|b| b.starts_with("http"))
         .unwrap_or_else(|| "https://api.anthropic.com".into());
     let Ok(mut child) = std::process::Command::new("curl")
-        .args(["-sS", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "15", "-K", "-"])
+        .args([
+            "-sS",
+            "-o",
+            "/dev/null",
+            "-w",
+            "%{http_code}",
+            "--max-time",
+            "15",
+            "-K",
+            "-",
+        ])
         .arg(format!("{base}/v1/models?limit=1"))
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -437,7 +447,10 @@ fn claude_copy(env: &HostEnv, wait: Duration) -> Result<SignInCopy, CopyRefusal>
     let bin_s = bin.display().to_string();
     // A wide terminal, so the token (about 108 characters) is never wrapped
     // onto a second line.
-    let wide = format!("stty cols 1000 rows 50 2>/dev/null; exec {} setup-token", shell_quote(&bin_s));
+    let wide = format!(
+        "stty cols 1000 rows 50 2>/dev/null; exec {} setup-token",
+        shell_quote(&bin_s)
+    );
     let out = match env.os {
         crate::Os::MacOs if script.exists() => crate::connection::run_capture(
             env,
@@ -458,7 +471,8 @@ fn claude_copy(env: &HostEnv, wait: Duration) -> Result<SignInCopy, CopyRefusal>
     match find_setup_token(&stdout) {
         Some(token) if check_claude_token(env, &token) == TokenCheck::Invalid => {
             Err(CopyRefusal::Failed(
-                "Connected. Sign-in not copied: Claude didn't accept the token. Try Connect again.".into(),
+                "Connected. Sign-in not copied: Claude didn't accept the token. Try Connect again."
+                    .into(),
             ))
         }
         Some(token) => Ok(SignInCopy {
@@ -1016,9 +1030,17 @@ mod tests {
     #[test]
     fn setup_token_is_found_in_terminal_output() {
         // A realistic token: `sk-ant-oat01-` and 95 more characters (108).
-        let token = format!("sk-ant-oat01-{}", "AbC_d3f-xyZ0123456789".repeat(5).chars().take(95).collect::<String>());
+        let token = format!(
+            "sk-ant-oat01-{}",
+            "AbC_d3f-xyZ0123456789"
+                .repeat(5)
+                .chars()
+                .take(95)
+                .collect::<String>()
+        );
         assert_eq!(token.len(), 108);
-        let out = format!("\x1b[2K Your token:\r\n\r\n  \x1b[1m{token}\x1b[0m\r\n\r\nStore it safely.");
+        let out =
+            format!("\x1b[2K Your token:\r\n\r\n  \x1b[1m{token}\x1b[0m\r\n\r\nStore it safely.");
         assert_eq!(find_setup_token(&out).as_deref(), Some(token.as_str()));
         assert_eq!(find_setup_token("Login cancelled"), None);
         assert_eq!(find_setup_token("sk-ant-oat"), None);
@@ -1026,18 +1048,34 @@ mod tests {
 
     #[test]
     fn a_wrapped_token_is_joined_and_a_cut_one_refused() {
-        let token = format!("sk-ant-oat01-{}", "Qw3_rT-yUi0pAsDfGh".repeat(6).chars().take(95).collect::<String>());
+        let token = format!(
+            "sk-ant-oat01-{}",
+            "Qw3_rT-yUi0pAsDfGh"
+                .repeat(6)
+                .chars()
+                .take(95)
+                .collect::<String>()
+        );
         // Wrapped at 80 columns by the terminal.
         let (a, b) = token.split_at(80);
         let out = format!("Your OAuth token:\r\n\r\n{a}\r\n{b}\r\n\r\nStore this token securely.");
         assert_eq!(find_setup_token(&out).as_deref(), Some(token.as_str()));
         // Wrapped at 40: three pieces.
-        let out = format!("{}\r\n{}\r\n{}\r\n\r\nDone", &token[..40], &token[40..80], &token[80..]);
+        let out = format!(
+            "{}\r\n{}\r\n{}\r\n\r\nDone",
+            &token[..40],
+            &token[40..80],
+            &token[80..]
+        );
         assert_eq!(find_setup_token(&out).as_deref(), Some(token.as_str()));
         // Only the first fragment printed (a redraw cut it): refused, not saved.
         assert_eq!(find_setup_token(&format!("{a}\r\n")), None);
+        assert_eq!(find_setup_token(&format!("{}\r\n", &token[..60])), None);
         // The old 36-character fake is not a plausible token.
-        assert_eq!(find_setup_token("sk-ant-oat01-AbC_d3f-xyz0123456789AAAA"), None);
+        assert_eq!(
+            find_setup_token("sk-ant-oat01-AbC_d3f-xyz0123456789AAAA"),
+            None
+        );
     }
 
     #[test]
@@ -1047,6 +1085,54 @@ mod tests {
         assert_eq!(token_check_for(403), TokenCheck::Invalid);
         assert_eq!(token_check_for(429), TokenCheck::Unknown);
         assert_eq!(token_check_for(529), TokenCheck::Unknown);
+    }
+
+    /// A one-shot local provider answering `status`; the request it got.
+    fn stub_provider(status: &'static str) -> (String, std::thread::JoinHandle<String>) {
+        use std::io::{Read, Write};
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", l.local_addr().unwrap());
+        let h = std::thread::spawn(move || {
+            let (mut c, _) = l.accept().unwrap();
+            let mut buf = [0u8; 4096];
+            let n = c.read(&mut buf).unwrap();
+            let body = r#"{"type":"error","error":{"type":"authentication_error","message":"OAuth token invalid"}}"#;
+            let _ = write!(
+                c,
+                "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            String::from_utf8_lossy(&buf[..n]).into_owned()
+        });
+        (url, h)
+    }
+
+    /// A corrupted token gets the provider's 401 and is refused before it is
+    /// saved; the token travels in a header, never in the command line.
+    #[test]
+    fn a_token_the_provider_refuses_is_not_saved() {
+        let d = tempfile::tempdir().unwrap();
+        for (status, want) in [
+            ("401 Unauthorized", TokenCheck::Invalid),
+            ("200 OK", TokenCheck::Valid),
+            ("529 Overloaded", TokenCheck::Unknown),
+        ] {
+            let (url, server) = stub_provider(status);
+            let mut env = HostEnv::isolated(d.path());
+            env.run_agent_clis = true;
+            env.vars.insert("CUA_TOKEN_CHECK_URL".into(), url);
+            let token = "sk-ant-oat01-corrupted-0123456789";
+            assert_eq!(check_claude_token(&env, token), want, "{status}");
+            let request = server.join().unwrap();
+            assert!(request.starts_with("GET /v1/models"), "{request}");
+            assert!(request.contains(&format!("Bearer {token}")), "{request}");
+        }
+        // Nothing is asked when agent commands are off.
+        let off = HostEnv::isolated(d.path());
+        assert_eq!(
+            check_claude_token(&off, "sk-ant-oat01-x"),
+            TokenCheck::Unknown
+        );
     }
 
     #[test]

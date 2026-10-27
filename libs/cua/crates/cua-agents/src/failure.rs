@@ -68,7 +68,10 @@ pub fn is_auth_failure(text: &str) -> bool {
         return true;
     }
     // A bare 401 counts when it is the status of an API error.
-    t.contains("api error: 401") || t.contains("status 401") || t.contains("http 401") || t.contains("error 401")
+    t.contains("api error: 401")
+        || t.contains("status 401")
+        || t.contains("http 401")
+        || t.contains("error 401")
 }
 
 fn cap(text: &str) -> String {
@@ -141,11 +144,27 @@ mod tests {
     #[test]
     fn auth_failures_in_every_wording_need_a_connect() {
         for (h, t, p) in [
-            ("claude-code", "Internal error: Failed to authenticate. API Error: 401 OAuth access token is invalid", "anthropic"),
+            (
+                "claude-code",
+                "Internal error: Failed to authenticate. API Error: 401 OAuth access token is invalid",
+                "anthropic",
+            ),
             ("claude-code", "Authentication required", "anthropic"),
-            ("openai-codex", "Internal error (code -32000) {\"details\":\"x\"}", "openai"),
-            ("hermes", "Internal error (code -32603) {\"details\":\"Hermes is not connected to any AI provider\"}", "anthropic"),
-            ("hermes", "not connected to any AI provider; add an OpenAI key", "openai"),
+            (
+                "openai-codex",
+                "Internal error (code -32000) {\"details\":\"x\"}",
+                "openai",
+            ),
+            (
+                "hermes",
+                "Internal error (code -32603) {\"details\":\"Hermes is not connected to any AI provider\"}",
+                "anthropic",
+            ),
+            (
+                "hermes",
+                "not connected to any AI provider; add an OpenAI key",
+                "openai",
+            ),
         ] {
             let f = classify(h, t);
             assert_eq!(f.class, FailureClass::NeedsConnect, "{t}");

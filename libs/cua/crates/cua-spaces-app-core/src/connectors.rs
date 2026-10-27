@@ -102,7 +102,7 @@ const PROVIDERS: &[Provider] = &[
         label: "OpenAI",
         env: "OPENAI_API_KEY",
         also: &["CODEX_AUTH_JSON"],
-        used_by: "Codex, and Hermes and other apps that use OpenAI models when you add an API key.",
+        used_by: "Codex. Hermes and other apps that use OpenAI models need an API key.",
         key_help: "Create a key at platform.openai.com. Every app that uses OpenAI can use it.",
         placeholder: "sk-…",
         ways: &[CODEX_DEVICE, Way::Key, Way::Shell],
@@ -267,14 +267,11 @@ impl ConnectorsInput {
 /// The saved credential that connects a provider, first match wins: the
 /// pasted key, then a sign-in token.
 fn provider_credential<'a>(input: &'a ConnectorsInput, p: &Provider) -> Option<&'a AgentKeyInput> {
-    input
-        .key(p.env)
-        .filter(|k| !k.expired)
-        .or_else(|| {
-            p.also
-                .iter()
-                .find_map(|e| input.key(e).filter(|k| !k.expired))
-        })
+    input.key(p.env).filter(|k| !k.expired).or_else(|| {
+        p.also
+            .iter()
+            .find_map(|e| input.key(e).filter(|k| !k.expired))
+    })
 }
 
 /// A sign-in saved for the provider has expired (and none that works is).
@@ -1070,7 +1067,11 @@ mod tests {
     /// (`cua_agents::harness`), so "connected" never outruns what a run gets.
     #[test]
     fn what_an_app_reads_is_what_its_harness_reads() {
-        for (app, harness) in [("claude-code", "claude-code"), ("codex", "openai-codex"), ("hermes", "hermes")] {
+        for (app, harness) in [
+            ("claude-code", "claude-code"),
+            ("codex", "openai-codex"),
+            ("hermes", "hermes"),
+        ] {
             let a = app_sign_in(app).unwrap();
             let h = cua_agents::harness::harness(harness).unwrap();
             assert_eq!(a.reads, h.keys, "{app}");

@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import importlib.util
 import json
@@ -209,6 +210,180 @@ def write_run(root: Path, *, arm: str = "cc-cua-driver", recorder: str = "none",
 
 
 @unittest.skipUnless(sys.platform.startswith("linux"), "Linux doctor")
+class SpawnOwnershipTest(unittest.TestCase):
+    """An unwritable ledger must fail the launch and leave no live child."""
+
+    def setUp(self) -> None:
+        if sys.platform != "linux":
+            self.skipTest("Linux only")
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.made: list[subprocess.Popen] = []
+        real = subprocess.Popen
+
+        def spy(*a, **k):
+            self.made.append(real(*a, **k))
+            return self.made[-1]
+
+        self.spy = spy
+        self.addCleanup(self._tmp.cleanup)
+        self.addCleanup(self._reap)
+
+    def _reap(self) -> None:
+        for child in self.made:
+            if child.poll() is None:
+                with contextlib.suppress(OSError):
+                    os.killpg(child.pid, signal.SIGKILL)
+            with contextlib.suppress(Exception):
+                child.wait(5)
+
+    def ledger(self, writable: bool = False) -> dict[str, str]:
+        if writable:
+            return {"CDB_BENCH_PID_LOG": str(self.tmp / "pids.jsonl")}
+        return {"CDB_BENCH_PID_LOG": str(self.tmp / "missing" / "pids.jsonl")}
+
+    def check(self, count: int = 1) -> None:
+        self.assertEqual(len(self.made), count)
+        for child in self.made:
+            self.assertIsNotNone(child.poll())
+
+    def test_agent_launch(self) -> None:
+        import claude_driver
+
+        with (
+            mock.patch.dict(os.environ, self.ledger()),
+            mock.patch.object(claude_driver.ca, "open_token_fd", return_value=None),
+            mock.patch.object(claude_driver.subprocess, "Popen", self.spy),
+            self.assertRaises(OSError),
+        ):
+            claude_driver.run_claude(
+                ["sleep", "30"],
+                dict(os.environ),
+                self.tmp,
+                "p",
+                set(),
+                5.0,
+                self.tmp / "s",
+                self.tmp / "e",
+                self.tmp / "l",
+            )
+        self.check()
+
+    def test_app_server_launch(self) -> None:
+        import codex_native
+
+        with (
+            mock.patch.dict(os.environ, self.ledger()),
+            mock.patch.object(codex_native.subprocess, "Popen", self.spy),
+            self.assertRaises(OSError),
+        ):
+            codex_native.run_codex(
+                ["sleep", "30"],
+                dict(os.environ),
+                self.tmp,
+                "p",
+                5.0,
+                1,
+                self.tmp / "r",
+                self.tmp / "s",
+                self.tmp / "e",
+            )
+        self.check()
+
+    def test_pilot_run_agent(self) -> None:
+        import run_pilot
+
+        with (
+            mock.patch.dict(os.environ, self.ledger()),
+            mock.patch.object(run_pilot.arms, "render_home", return_value=dict(os.environ)),
+            mock.patch.object(run_pilot.arms, "codex_argv", return_value=["sleep", "30"]),
+            mock.patch.object(run_pilot.subprocess, "Popen", self.spy),
+            self.assertRaises(OSError),
+        ):
+            (self.tmp / "t").mkdir()
+            run_pilot.run_agent("a", "p", self.tmp, self.tmp / "t", 5, "m", "low")
+        self.check()
+
+    def launch_apps(self, apps: list[dict]) -> None:
+        import run_pilot
+
+        compare = mock.Mock()
+        compare.expand_placeholders = lambda raw, variables: raw
+        compare._resolve_executable = lambda command: command
+        with mock.patch.object(run_pilot.subprocess, "Popen", self.spy):
+            run_pilot.launch_apps(
+                compare,
+                {"apps": apps},
+                {"bundle": str(self.tmp)},
+                dict(os.environ),
+                self.tmp / "logs",
+            )
+
+    def test_launch_apps_first_registration_fails(self) -> None:
+        with mock.patch.dict(os.environ, self.ledger()), self.assertRaises(OSError):
+            self.launch_apps([{"id": "a", "command": ["sleep", "30"]}])
+        self.check()
+
+    def test_launch_apps_later_registration_fails(self) -> None:
+        real = desktop.record_pid
+        calls = [0]
+
+        def once(pid: int, role: str) -> None:
+            calls[0] += 1
+            if calls[0] > 1:
+                raise OSError("ledger")
+            real(pid, role)
+
+        apps = [{"id": "a", "command": ["sleep", "30"]}, {"id": "b", "command": ["sleep", "30"]}]
+        with (
+            mock.patch.dict(os.environ, self.ledger(True)),
+            mock.patch.object(desktop, "record_pid", once),
+            self.assertRaises(OSError),
+        ):
+            self.launch_apps(apps)
+        self.check(2)
+
+    def test_launch_apps_readiness_fails(self) -> None:
+        apps = [
+            {"id": "a", "command": ["sleep", "30"]},
+            {
+                "id": "b",
+                "command": ["sleep", "30"],
+                "ready": {"http": "http://127.0.0.1:9/", "timeout_seconds": 1},
+            },
+        ]
+        with mock.patch.dict(os.environ, self.ledger(True)), self.assertRaises(TimeoutError):
+            self.launch_apps(apps)
+        self.check(2)
+
+    def test_record_or_reap_disabled_and_enabled(self) -> None:
+        proc = subprocess.Popen(["sleep", "30"], start_new_session=True)
+        self.made.append(proc)
+        with mock.patch.dict(os.environ, self.ledger(True)):
+            desktop.record_or_reap(proc, "sleep")
+        self.assertIsNone(proc.poll())
+        self.assertEqual(len((self.tmp / "pids.jsonl").read_text().splitlines()), 1)
+        env = {k: v for k, v in os.environ.items() if k != "CDB_BENCH_PID_LOG"}
+        with mock.patch.dict(os.environ, env, clear=True):
+            desktop.record_or_reap(proc, "sleep")
+        self.assertEqual(len((self.tmp / "pids.jsonl").read_text().splitlines()), 1)
+
+    def test_record_or_reap_reraises_same_exception_and_reaps_group(self) -> None:
+        proc = subprocess.Popen(["sh", "-c", "sleep 30 & wait"], start_new_session=True)
+        self.made.append(proc)
+        time.sleep(0.3)
+        boom = KeyboardInterrupt()
+        with (
+            mock.patch.object(desktop, "record_pid", side_effect=boom),
+            self.assertRaises(KeyboardInterrupt) as caught,
+        ):
+            desktop.record_or_reap(proc, "x")
+        self.assertIs(caught.exception, boom)
+        self.assertIsNotNone(proc.poll())
+        with self.assertRaises(ProcessLookupError):
+            os.killpg(proc.pid, 0)
+
+
 class DoctorStartupLogTest(unittest.TestCase):
     def test_failed_start_keeps_driver_log(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -125,6 +126,17 @@ def record_pid(pid: int, role: str) -> None:
     # would otherwise certify an incomplete ownership record.
     with open(path, "a", encoding="utf-8") as handle:
         handle.write(json.dumps({"pid": pid, "pgid": pgid, "role": role}) + "\n")
+
+
+def record_or_reap(proc: subprocess.Popen, role: str) -> None:
+    """Record a new process group; on any failure stop and reap it, then re-raise."""
+    try:
+        record_pid(proc.pid, role)
+    except BaseException:
+        stop_group(proc.pid)
+        with contextlib.suppress(OSError):
+            proc.wait()
+        raise
 
 
 def start_app(

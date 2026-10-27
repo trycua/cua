@@ -52,7 +52,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 import arms
-from desktop_runtime import record_pid
+from desktop_runtime import record_or_reap, record_pid
 from browser_use_cli import Invocation
 
 ARM = "cx-codex-cu"
@@ -546,7 +546,7 @@ def run_codex(
             bufsize=1,
             start_new_session=True,
         )
-        record_pid(proc.pid, "codex")
+        record_or_reap(proc, "codex")
         lock = threading.Lock()
         next_id = [0]
 

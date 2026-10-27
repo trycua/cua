@@ -1912,6 +1912,34 @@ pub async fn run_host(
     json: bool,
     out: &mut dyn Write,
 ) -> Result<i32, CuaError> {
+    run_host_to(
+        cmd,
+        home,
+        tokens,
+        device,
+        manager,
+        json,
+        out,
+        &mut std::io::stderr(),
+        RunnerKind::detect(),
+    )
+    .await
+}
+
+/// [`run_host`] with an explicit stderr stream (warnings under `--json`) and
+/// the runner `auto` detects on this machine.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_host_to(
+    cmd: HostCmd,
+    home: &Path,
+    tokens: &dyn AccountTokens,
+    device: Option<&DeviceAuth>,
+    manager: Option<Arc<dyn ServiceManager>>,
+    json: bool,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+    detected: RunnerKind,
+) -> Result<i32, CuaError> {
     let mut host = Host::new(home);
     if let Some(m) = manager {
         host = host.with_service_manager(m);
@@ -2017,7 +2045,7 @@ pub async fn run_host(
                 if state.is_up(&want) || state.is_down(&want) {
                     let code =
                         setup_unchanged(&host, state, &want, pair.is_some(), json, out).await?;
-                    warn_setup_runner(&host, requested_runner, json, out, &mut std::io::stderr())?;
+                    warn_setup_runner(&host, requested_runner, detected, json, out, err)?;
                     return Ok(code);
                 }
             }
@@ -2045,7 +2073,7 @@ pub async fn run_host(
                     host_error(e, message)
                 })?;
             emit(&s, json, out)?;
-            warn_setup_runner(&host, requested_runner, json, out, &mut std::io::stderr())?;
+            warn_setup_runner(&host, requested_runner, detected, json, out, err)?;
             if s.provide_spaces && !json {
                 line(
                     out,
@@ -2307,11 +2335,14 @@ pub async fn run_host(
 fn warn_setup_runner(
     host: &Host,
     requested: RunnerKind,
+    detected: RunnerKind,
     json: bool,
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<(), CuaError> {
-    if requested != RunnerKind::Auto {
+    // Warn only when auto detection here really finds no systemd: a process
+    // runner kept from an explicit choice (or another OS) is not a fallback.
+    if requested != RunnerKind::Auto || detected != RunnerKind::Process {
         return Ok(());
     }
     let Some(config) = host.config().map_err(host_err)? else {
@@ -4425,21 +4456,40 @@ mod tests {
         assert!(text.contains("direct http://127.0.0.1:3299"), "{text}");
     }
 
-    /// Runs `cua host <args>` against the fake manager; returns stdout.
-    async fn run_fake(home: &Path, manager: &Arc<FakeServiceManager>, args: &[&str]) -> String {
-        let mut out = Vec::new();
-        run_host(
+    /// Runs `cua host <args>` against the fake manager on a machine where
+    /// `auto` finds no systemd; returns (stdout, stderr).
+    async fn run_fake_io(
+        home: &Path,
+        manager: &Arc<FakeServiceManager>,
+        args: &[&str],
+        json: bool,
+        detected: RunnerKind,
+    ) -> (String, String) {
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        run_host_to(
             parse(args),
             home,
             &StaticToken("acct".into()),
             None,
             Some(manager.clone()),
-            false,
+            json,
             &mut out,
+            &mut err,
+            detected,
         )
         .await
         .unwrap();
-        String::from_utf8(out).unwrap()
+        (
+            String::from_utf8(out).unwrap(),
+            String::from_utf8(err).unwrap(),
+        )
+    }
+
+    /// Runs `cua host <args>` against the fake manager; returns stdout.
+    async fn run_fake(home: &Path, manager: &Arc<FakeServiceManager>, args: &[&str]) -> String {
+        run_fake_io(home, manager, args, false, RunnerKind::Process)
+            .await
+            .0
     }
 
     fn direct_args<'a>(driver: &'a str, extra: &[&'a str]) -> Vec<&'a str> {
@@ -4513,29 +4563,55 @@ mod tests {
         let host = Host::new(&home).with_service_manager(manager.clone());
         for json in [true, false] {
             let (mut o, mut e) = (Vec::new(), Vec::new());
-            warn_setup_runner(&host, RunnerKind::Auto, json, &mut o, &mut e).unwrap();
+            warn_setup_runner(
+                &host,
+                RunnerKind::Auto,
+                RunnerKind::Process,
+                json,
+                &mut o,
+                &mut e,
+            )
+            .unwrap();
             let (o, e) = (String::from_utf8(o).unwrap(), String::from_utf8(e).unwrap());
             let (warned, quiet) = if json { (e, o) } else { (o, e) };
             assert!(warned.contains("will not come back"), "{warned}");
             assert!(quiet.is_empty(), "{quiet}");
         }
-        // A full --json auto setup keeps stdout as JSON.
+        // A full --json auto setup keeps stdout as JSON; the warning is on stderr.
         let dir2 = tempfile::tempdir().unwrap();
-        let mut out = Vec::new();
-        run_host(
-            parse(&direct_args(driver.to_str().unwrap(), &[])),
-            &dir2.path().join(".cua"),
-            &StaticToken("acct".into()),
-            None,
-            Some(Arc::new(FakeServiceManager::default())),
-            true,
-            &mut out,
-        )
-        .await
-        .unwrap();
-        let text = String::from_utf8(out).unwrap();
-        assert!(!text.contains("warning:"), "{text}");
-        serde_json::from_str::<serde_json::Value>(text.trim()).unwrap();
+        let home2 = dir2.path().join(".cua");
+        let m2 = Arc::new(FakeServiceManager::default());
+        let args = direct_args(driver.to_str().unwrap(), &[]);
+        let (o, e) = run_fake_io(&home2, &m2, &args, true, RunnerKind::Process).await;
+        assert!(!o.contains("warning:"), "{o}");
+        serde_json::from_str::<serde_json::Value>(o.trim()).unwrap();
+        assert_eq!(e.matches("will not come back").count(), 1, "{e}");
+        // Re-running (unchanged path) keeps JSON on stdout, warning on stderr.
+        let relay = FakeRelay::start().await;
+        relay.add_account("acct", "user-1", Some("ada@example.com"));
+        let m3 = Arc::new(FakeServiceManager::default());
+        let home3 = dir2.path().join(".cua3");
+        let setup = ["setup", "--relay", relay.url.as_str(), "--name", "lab-box"];
+        let first = [&setup[..], &["--driver-bin", driver.to_str().unwrap()]].concat();
+        run_fake_io(&home3, &m3, &first, true, RunnerKind::Process).await;
+        let (o, e) = run_fake_io(&home3, &m3, &setup, true, RunnerKind::Process).await;
+        serde_json::from_str::<serde_json::Value>(o.trim()).unwrap();
+        assert_eq!(e.matches("will not come back").count(), 1, "{e}");
+    }
+
+    #[tokio::test]
+    async fn retained_process_runner_without_auto_detection_does_not_warn() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join(".cua");
+        let driver = dir.path().join("drv");
+        std::fs::write(&driver, b"x").unwrap();
+        let manager = Arc::new(FakeServiceManager::default());
+        let args = direct_args(driver.to_str().unwrap(), &["--runner", "process"]);
+        run_fake(&home, &manager, &args).await;
+        // Default setup on a machine where auto would pick systemd.
+        let args = direct_args(driver.to_str().unwrap(), &[]);
+        let (o, e) = run_fake_io(&home, &manager, &args, false, RunnerKind::Systemd).await;
+        assert!(!o.contains("will not come back") && e.is_empty(), "{o}{e}");
     }
 
     #[tokio::test]

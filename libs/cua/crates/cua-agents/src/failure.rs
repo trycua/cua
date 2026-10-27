@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: FSL-1.1-MIT
-// Copyright (c) 2026 Cua AI, Inc.
-
 //! A failed turn or start, in one typed shape every surface reads.
 //!
 //! Providers and harnesses each word an authentication failure differently

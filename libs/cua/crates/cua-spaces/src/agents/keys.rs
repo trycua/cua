@@ -263,6 +263,8 @@ pub struct KeyInfo {
     /// When a copied sign-in stops working (Unix ms), when known.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_ms: Option<u64>,
+    /// It has stopped working (`expires_ms` has passed): runs no longer get it.
+    pub expired: bool,
 }
 
 /// `agent_keys.list`: the stored keys and whether this machine can store
@@ -303,6 +305,11 @@ impl std::fmt::Debug for Stored {
 }
 
 impl Stored {
+    /// Past its `expires_ms` (a copied sign-in that stopped working).
+    fn expired(&self) -> bool {
+        self.expires_ms.is_some_and(|e| e <= now_ms())
+    }
+
     fn info(&self) -> KeyInfo {
         let n = self.value.chars().count();
         let last4 = if n >= 12 {
@@ -318,6 +325,7 @@ impl Stored {
             label: self.label.clone(),
             source: self.source.clone(),
             expires_ms: self.expires_ms,
+            expired: self.expired(),
         }
     }
 }
@@ -596,7 +604,11 @@ impl AgentKeys {
     pub fn names(&self) -> Vec<String> {
         let mut g = self.lock();
         match self.read(&mut g, false) {
-            Ok(keys) => keys.into_iter().map(|k| k.env).collect(),
+            Ok(keys) => keys
+                .into_iter()
+                .filter(|k| !k.expired())
+                .map(|k| k.env)
+                .collect(),
             Err(e) => {
                 tracing::warn!(error = %e, "agent keys: the store can't be read");
                 vec![]
@@ -614,7 +626,9 @@ impl AgentKeys {
         match self.read(&mut g, false) {
             Ok(keys) => keys
                 .into_iter()
-                .filter(|k| names.contains(&k.env.as_str()))
+                // A sign-in past its expiry is not forwarded: the run would
+                // only be told 401 by the provider.
+                .filter(|k| names.contains(&k.env.as_str()) && !k.expired())
                 .map(|k| (k.env, k.value))
                 .collect(),
             Err(e) => {
@@ -839,6 +853,38 @@ mod tests {
                 .contains_key("CODEX_AUTH_JSON")
         );
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// An expired sign-in is listed as expired, and no run gets it.
+    #[test]
+    fn an_expired_sign_in_reaches_no_run() {
+        let (keys, dir) = temp_keys();
+        let long_ago = now_ms() - 1_000;
+        keys.import(
+            "claude-code",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "Claude Code · Claude sign-in",
+            "sk-ant-oat01-test",
+            Some(long_ago),
+        )
+        .unwrap();
+        let listed = keys.list().unwrap();
+        assert!(listed[0].expired && listed[0].expires_ms == Some(long_ago));
+        assert!(keys.names().is_empty());
+        assert!(keys.values(&["CLAUDE_CODE_OAUTH_TOKEN"]).is_empty());
+        // One that has time left still goes.
+        keys.import(
+            "claude-code",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "Claude Code · Claude sign-in",
+            "sk-ant-oat01-test",
+            Some(now_ms() + 3_600_000),
+        )
+        .unwrap();
+        assert!(!keys.list().unwrap()[0].expired);
+        assert_eq!(keys.names(), ["CLAUDE_CODE_OAUTH_TOKEN"]);
+        assert_eq!(keys.values(&["CLAUDE_CODE_OAUTH_TOKEN"]).len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

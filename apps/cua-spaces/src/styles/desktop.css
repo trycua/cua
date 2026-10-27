@@ -2941,6 +2941,12 @@ html.is-teleport-picker .hp-panel {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.dw .ssr-resolution {
+  flex: 0 0 auto;
+  color: var(--dw-text-3);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
 .dw .ssr-status {
   margin: 0;
   padding: 8px 12px;

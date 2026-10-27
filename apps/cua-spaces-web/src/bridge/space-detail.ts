@@ -139,13 +139,15 @@ function fallbackSection(input: StreamSectionInput): StreamSection {
     const on = (input.open ?? []).includes(id);
     return [{ id: "pip" as const, symbol: on ? "pip.exit" : "pip.enter", help: on ? "Close picture in picture" : "Picture in picture", active: on }];
   };
-  const desktop = res ? `Desktop (${res})` : "Desktop";
+  // The resolution shows once, as the row's detail; the tooltip has both.
+  const desktop = "Desktop";
+  const desktopHelp = res ? `Desktop (${res})` : "Desktop";
   const windows = (input.windows ?? []).map((w) => {
     const label = w.title.trim() || w.appName.trim() || w.appId;
     return { id: w.id, kind: "window" as const, label, help: label, icon: { kind: "app" as const, appName: w.appName, appId: w.appId, pid: w.pid ?? 0 }, actions: pip(w.id) };
   });
   return {
-    rows: [{ id: "desktop", kind: "desktop", label: desktop, help: desktop, resolution: res, icon: { kind: "os", id: `os-${input.os}` }, actions: pip("desktop") }, ...windows],
+    rows: [{ id: "desktop", kind: "desktop", label: desktop, help: desktopHelp, resolution: res, icon: { kind: "os", id: `os-${input.os}` }, actions: pip("desktop") }, ...windows],
     statusText: input.windows === null ? "Looking for this Space’s windows…" : windows.length ? null : input.failed ? "No windows: the Space’s window host is not up." : "No open windows in this Space yet.",
   };
 }

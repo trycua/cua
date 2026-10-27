@@ -17924,9 +17924,11 @@ public struct AppGuestUsage: Equatable, Hashable {
      */
     public var diskUsed: UInt64
     /**
-     * Disk size, bytes.
+     * Disk size, bytes; none when the guest's file system has no size of
+     * its own. A sentinel (`i64::MAX`, `u64::MAX`, -1) or 0 reads as none
+     * ([`known_size`]), so no shell ever shows one.
      */
-    public var diskTotal: UInt64
+    public var diskTotal: UInt64?
     /**
      * `disk_total` is the guest's own disk.
      */
@@ -17957,8 +17959,10 @@ public struct AppGuestUsage: Equatable, Hashable {
          * Disk in use, bytes.
          */diskUsed: UInt64,
         /**
-         * Disk size, bytes.
-         */diskTotal: UInt64,
+         * Disk size, bytes; none when the guest's file system has no size of
+         * its own. A sentinel (`i64::MAX`, `u64::MAX`, -1) or 0 reads as none
+         * ([`known_size`]), so no shell ever shows one.
+         */diskTotal: UInt64?,
         /**
          * `disk_total` is the guest's own disk.
          */diskLimited: Bool) {
@@ -17996,7 +18000,7 @@ public struct FfiConverterTypeAppGuestUsage: FfiConverterRustBuffer {
                 memoryTotal: FfiConverterUInt64.read(from: &buf),
                 memoryLimited: FfiConverterBool.read(from: &buf),
                 diskUsed: FfiConverterUInt64.read(from: &buf),
-                diskTotal: FfiConverterUInt64.read(from: &buf),
+                diskTotal: FfiConverterOptionUInt64.read(from: &buf),
                 diskLimited: FfiConverterBool.read(from: &buf)
         )
     }
@@ -18009,7 +18013,7 @@ public struct FfiConverterTypeAppGuestUsage: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.memoryTotal, into: &buf)
         FfiConverterBool.write(value.memoryLimited, into: &buf)
         FfiConverterUInt64.write(value.diskUsed, into: &buf)
-        FfiConverterUInt64.write(value.diskTotal, into: &buf)
+        FfiConverterOptionUInt64.write(value.diskTotal, into: &buf)
         FfiConverterBool.write(value.diskLimited, into: &buf)
     }
 }
@@ -36688,6 +36692,94 @@ public func FfiConverterTypeAppShareSheetView_lower(_ value: AppShareSheetView) 
 }
 
 
+public struct AppSharedBase: Equatable, Hashable {
+    /**
+     * Spaces with the same key share the same blocks.
+     */
+    public var key: String
+    /**
+     * The image reference it came from (`ghcr.io/trycua/linux:24.04`).
+     */
+    public var image: String
+    /**
+     * What it takes on this Mac, once; none when the runtime cannot tell
+     * it apart from the Spaces' own data.
+     */
+    public var bytes: UInt64?
+    /**
+     * Local Spaces that use it, this one included.
+     */
+    public var sharedWith: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Spaces with the same key share the same blocks.
+         */key: String,
+        /**
+         * The image reference it came from (`ghcr.io/trycua/linux:24.04`).
+         */image: String,
+        /**
+         * What it takes on this Mac, once; none when the runtime cannot tell
+         * it apart from the Spaces' own data.
+         */bytes: UInt64?,
+        /**
+         * Local Spaces that use it, this one included.
+         */sharedWith: UInt32) {
+        self.key = key
+        self.image = image
+        self.bytes = bytes
+        self.sharedWith = sharedWith
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppSharedBase: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppSharedBase: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppSharedBase {
+        return
+            try AppSharedBase(
+                key: FfiConverterString.read(from: &buf),
+                image: FfiConverterString.read(from: &buf),
+                bytes: FfiConverterOptionUInt64.read(from: &buf),
+                sharedWith: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppSharedBase, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.key, into: &buf)
+        FfiConverterString.write(value.image, into: &buf)
+        FfiConverterOptionUInt64.write(value.bytes, into: &buf)
+        FfiConverterUInt32.write(value.sharedWith, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppSharedBase_lift(_ buf: RustBuffer) throws -> AppSharedBase {
+    return try FfiConverterTypeAppSharedBase.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppSharedBase_lower(_ value: AppSharedBase) -> RustBuffer {
+    return FfiConverterTypeAppSharedBase.lower(value)
+}
+
+
 public struct AppSidebarRow: Equatable, Hashable {
     /**
      * Space id.
@@ -38960,9 +39052,13 @@ public struct AppSpaceResources: Equatable, Hashable {
      */
     public var usage: AppGuestUsage?
     /**
-     * What it costs this Mac; none for a container.
+     * What it costs this Mac: its own data only, never the base it shares.
      */
     public var diskOnHost: AppDiskOnHost?
+    /**
+     * The base image it is a copy-on-write copy of, counted once.
+     */
+    public var base: AppSharedBase?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -38986,8 +39082,11 @@ public struct AppSpaceResources: Equatable, Hashable {
          * The guest's own numbers; none while it is off or unreachable.
          */usage: AppGuestUsage?,
         /**
-         * What it costs this Mac; none for a container.
-         */diskOnHost: AppDiskOnHost?) {
+         * What it costs this Mac: its own data only, never the base it shares.
+         */diskOnHost: AppDiskOnHost?,
+        /**
+         * The base image it is a copy-on-write copy of, counted once.
+         */base: AppSharedBase?) {
         self.id = id
         self.powerState = powerState
         self.cpuAllocated = cpuAllocated
@@ -38995,6 +39094,7 @@ public struct AppSpaceResources: Equatable, Hashable {
         self.diskAllocated = diskAllocated
         self.usage = usage
         self.diskOnHost = diskOnHost
+        self.base = base
     }
 
 
@@ -39019,7 +39119,8 @@ public struct FfiConverterTypeAppSpaceResources: FfiConverterRustBuffer {
                 memoryAllocated: FfiConverterUInt64.read(from: &buf),
                 diskAllocated: FfiConverterUInt64.read(from: &buf),
                 usage: FfiConverterOptionTypeAppGuestUsage.read(from: &buf),
-                diskOnHost: FfiConverterOptionTypeAppDiskOnHost.read(from: &buf)
+                diskOnHost: FfiConverterOptionTypeAppDiskOnHost.read(from: &buf),
+                base: FfiConverterOptionTypeAppSharedBase.read(from: &buf)
         )
     }
 
@@ -39031,6 +39132,7 @@ public struct FfiConverterTypeAppSpaceResources: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.diskAllocated, into: &buf)
         FfiConverterOptionTypeAppGuestUsage.write(value.usage, into: &buf)
         FfiConverterOptionTypeAppDiskOnHost.write(value.diskOnHost, into: &buf)
+        FfiConverterOptionTypeAppSharedBase.write(value.base, into: &buf)
     }
 }
 
@@ -40532,7 +40634,7 @@ public struct AppStreamRow: Equatable, Hashable {
      */
     public var kind: AppStreamRowKind
     /**
-     * The one line ("Desktop (1280×800)", a window's title).
+     * The one line ("Desktop", a window's title).
      */
     public var label: String
     /**
@@ -40562,7 +40664,7 @@ public struct AppStreamRow: Equatable, Hashable {
          * Desktop or window.
          */kind: AppStreamRowKind,
         /**
-         * The one line ("Desktop (1280×800)", a window's title).
+         * The one line ("Desktop", a window's title).
          */label: String,
         /**
          * The full label, for the tooltip when it is truncated.
@@ -70531,6 +70633,30 @@ fileprivate struct FfiConverterOptionTypeAppShareRemovalNote: FfiConverterRustBu
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeAppShareRemovalNote.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeAppSharedBase: FfiConverterRustBuffer {
+    typealias SwiftType = AppSharedBase?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAppSharedBase.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAppSharedBase.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }

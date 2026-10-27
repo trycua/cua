@@ -174,10 +174,11 @@ export interface StreamRow {
   /** "desktop" or the window's handle. */
   id: string;
   kind: "desktop" | "window";
-  /** One line: "Desktop (1280×800)" or the window's title. */
+  /** One line: "Desktop" or the window's title. */
   label: string;
   /** The full label, for the tooltip. */
   help: string;
+  /** The Desktop row's display resolution ("1280×800"), its quiet right-hand detail. */
   resolution: string | null;
   icon: StreamRowIcon;
   actions: { id: "pip"; symbol: string; help: string; active: boolean }[];

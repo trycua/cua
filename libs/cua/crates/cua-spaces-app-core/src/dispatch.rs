@@ -577,6 +577,9 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         "resources.view" => out(resources::view(&a.get("snapshot")?, a.get("nowMs")?)),
         "resources.thisMac" => out(resources::this_mac_view(&a.get("computer")?)),
         "resources.space" => out(resources::space_view(&a.get("space")?)),
+        // A Space's resources dialog: its three cards and how it fits on
+        // its computer, each base image counted once.
+        "resources.spacePanel" => out(resources::space_panel(&a.get("input")?)),
         "resources.computer" => out(resources::computer_view(
             &a.get("computer")?,
             a.get("nowMs")?,

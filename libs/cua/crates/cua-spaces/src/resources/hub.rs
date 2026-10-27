@@ -6,7 +6,7 @@
 //! task samples every [`VISIBLE_TICK`] (a visible window) or [`HIDDEN_TICK`]
 //! (only hidden watchers, for the menu bar warning), then ends.
 
-use super::disk::{self, Footprint, LumeFacts};
+use super::disk::{self, BaseMeasure, Footprint, LumeFacts};
 use super::host::{self, HostSampler};
 use super::{
     ComputerResources, DISK_MEASURE_EVERY, DiskLevel, DiskOnHost, DiskWarning, GuestUsage,
@@ -104,6 +104,7 @@ struct Measured {
     at: Instant,
     power_state: String,
     value: Option<DiskOnHost>,
+    base: Option<BaseMeasure>,
 }
 
 impl Hub {
@@ -408,12 +409,19 @@ impl Spaces {
                 .map(GuestUsage::from)
         }))
         .await;
-        let spaces: Vec<SpaceResources> = infos
+        let mut bases = Vec::with_capacity(infos.len());
+        let mut spaces: Vec<SpaceResources> = infos
             .iter()
             .zip(usages)
             .map(|(info, usage)| {
                 let name = info.id.trim_start_matches("local:");
                 let fp = facts.iter().find(|f| f.name == name);
+                let measured = st.disks.get(&info.id);
+                bases.push((
+                    fp.map(|f| f.image.clone()).unwrap_or_default(),
+                    measured.and_then(|m| m.base.clone()),
+                ));
+
                 // A guest that reports its own limits fills what the state
                 // file did not record.
                 let own = usage.filter(|u| u.memory_limited || u.disk_limited);
@@ -433,13 +441,17 @@ impl Spaces {
                     disk_allocated: fp
                         .map(|f| f.disk)
                         .filter(|d| *d > 0)
-                        .or(own.filter(|u| u.disk_limited).map(|u| u.disk_total))
+                        .or(own.filter(|u| u.disk_limited).and_then(|u| u.disk_total))
                         .unwrap_or(0),
                     usage,
-                    disk_on_host: st.disks.get(&info.id).and_then(|m| m.value),
+                    disk_on_host: measured.and_then(|m| m.value),
+                    base: None,
                 }
             })
             .collect();
+        for (s, base) in spaces.iter_mut().zip(disk::shared_bases(&bases)) {
+            s.base = base;
+        }
 
         let mut this_mac = ComputerResources {
             id: THIS_MAC.into(),
@@ -460,7 +472,6 @@ impl Spaces {
         // Your Spaces on your other computers: only what each takes on its
         // computer's disk, asked of that computer (cached; never measured
         // here).
-        let mut spaces = spaces;
         if ask.disk {
             spaces.extend(self.remote_space_disks(wait_remote).await);
         }
@@ -525,10 +536,10 @@ impl Spaces {
             due.into_iter().partition(|(_, fp, _)| fp.engine);
         let mut measured =
             futures_util::future::join_all(on_disk.into_iter().map(|(id, fp, power)| async move {
-                let value = tokio::task::spawn_blocking(move || measure_footprint(&fp))
+                let (value, base) = tokio::task::spawn_blocking(move || measure_footprint(&fp))
                     .await
-                    .unwrap_or(None);
-                (id, power, value)
+                    .unwrap_or((None, None));
+                (id, power, value, base)
             }))
             .await;
         // Containers: the engine's own count of each one's layer, asked once
@@ -537,19 +548,19 @@ impl Spaces {
         if !in_engine.is_empty()
             && let Some(sizes) = engine_disks(&home, &in_engine).await
         {
-            measured.extend(
-                in_engine
-                    .into_iter()
-                    .map(|(id, fp, power)| (id, power, sizes.get(&fp.name).copied())),
-            );
+            measured.extend(in_engine.into_iter().map(|(id, fp, power)| {
+                let (value, base) = sizes.get(&fp.name).cloned().unwrap_or((None, None));
+                (id, power, value, base)
+            }));
         }
-        for (id, power_state, value) in measured {
+        for (id, power_state, value, base) in measured {
             st.disks.insert(
                 id,
                 Measured {
                     at: Instant::now(),
                     power_state,
                     value,
+                    base,
                 },
             );
         }
@@ -621,7 +632,7 @@ const ENGINE_TIMEOUT: Duration = Duration::from_secs(20);
 async fn engine_disks(
     home: &std::path::Path,
     due: &[(String, Footprint, String)],
-) -> Option<HashMap<String, DiskOnHost>> {
+) -> Option<HashMap<String, (Option<DiskOnHost>, Option<BaseMeasure>)>> {
     let engine = cua_disk::docker::connect().await?;
     let tag = cua_vmm::container::home_tag_for(home);
     let ask = async {
@@ -635,11 +646,18 @@ async fn engine_disks(
         } else {
             engine.volume_sizes(&volumes).await.unwrap_or_default()
         };
+        // The image each runs: its layers are the base its Spaces share.
+        let images = engine.images().await.unwrap_or_default();
         Some(
             due.iter()
                 .filter_map(|(_, fp, _)| {
                     let d = disk::container_disk(&fp.name, &tag, &containers, &sizes)?;
-                    Some((fp.name.clone(), d))
+                    let base =
+                        disk::container_image(&fp.name, &tag, &containers).map(|id| BaseMeasure {
+                            key: id.to_string(),
+                            bytes: images.iter().find(|i| i.id == id).map(|i| i.size),
+                        });
+                    Some((fp.name.clone(), (Some(d), base)))
                 })
                 .collect(),
         )
@@ -650,10 +668,13 @@ async fn engine_disks(
         .flatten()
 }
 
-/// What the Space with `fp` costs this computer's disk.
-fn measure_footprint(fp: &Footprint) -> Option<DiskOnHost> {
-    let dir = fp.dir.as_deref()?;
-    disk::measure(dir).or_else(|| {
+/// What the Space with `fp` costs this computer's disk (its own data), and
+/// the base it shares.
+fn measure_footprint(fp: &Footprint) -> (Option<DiskOnHost>, Option<BaseMeasure>) {
+    let Some(dir) = fp.dir.as_deref() else {
+        return (None, None);
+    };
+    let value = disk::measure(dir).or_else(|| {
         // Lume's directory is somewhere else: only Lume's own count, which
         // clones count in full.
         (fp.reported > 0).then_some(DiskOnHost {
@@ -661,6 +682,31 @@ fn measure_footprint(fp: &Footprint) -> Option<DiskOnHost> {
             allocated: fp.reported,
             shares_space: true,
         })
+    });
+    (value, base_of(fp, value.as_ref()))
+}
+
+/// The base a VM's disk shares: an APFS clone's shared blocks (Lume), a
+/// qcow2 overlay's backing image (QEMU). Other runtimes keep their base
+/// apart and are not counted.
+fn base_of(fp: &Footprint, own: Option<&DiskOnHost>) -> Option<BaseMeasure> {
+    if fp.image_key.is_empty() {
+        return None;
+    }
+    let bytes = match fp.runtime.as_str() {
+        "lume" => own.and_then(disk::shared_blocks),
+        "qemu" => {
+            let dir = fp.dir.as_deref()?;
+            let state: cua_vmm::qemu::QemuState =
+                serde_json::from_slice(&std::fs::read(dir.join("state.json")).ok()?).ok()?;
+            let backing = disk::qcow2_backing_file(&state.disk)?;
+            Some(cua_vmm::disk::allocated_size(&backing))
+        }
+        _ => return None,
+    };
+    Some(BaseMeasure {
+        key: fp.image_key.clone(),
+        bytes,
     })
 }
 

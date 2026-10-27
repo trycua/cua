@@ -4515,7 +4515,10 @@
               "type": "number"
             },
             "diskTotal": {
-              "type": "number"
+              "type": [
+                "number",
+                "null"
+              ]
             },
             "diskLimited": {
               "type": "boolean"
@@ -4556,6 +4559,35 @@
             "bytes",
             "allocated",
             "sharesSpace"
+          ]
+        },
+        "base": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "key": {
+              "type": "string"
+            },
+            "image": {
+              "type": "string"
+            },
+            "bytes": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "sharedWith": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "key",
+            "image",
+            "bytes",
+            "sharedWith"
           ]
         }
       },

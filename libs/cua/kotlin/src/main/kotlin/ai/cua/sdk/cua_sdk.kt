@@ -35973,9 +35973,10 @@ data class GuestUsage (
     var `diskUsed`: kotlin.ULong
     ,
     /**
-     * Disk size, bytes.
+     * Disk size, bytes; absent when the guest's file system has no size
+     * of its own (gVisor's root overlay) or did not say. Never a sentinel.
      */
-    var `diskTotal`: kotlin.ULong
+    var `diskTotal`: kotlin.ULong?
     ,
     /**
      * `disk_total` is the guest's own disk.
@@ -36004,7 +36005,7 @@ public object FfiConverterTypeGuestUsage: FfiConverterRustBuffer<GuestUsage> {
             FfiConverterULong.read(buf),
             FfiConverterBoolean.read(buf),
             FfiConverterULong.read(buf),
-            FfiConverterULong.read(buf),
+            FfiConverterOptionalULong.read(buf),
             FfiConverterBoolean.read(buf),
         )
     }
@@ -36017,7 +36018,7 @@ public object FfiConverterTypeGuestUsage: FfiConverterRustBuffer<GuestUsage> {
             FfiConverterULong.allocationSize(value.`memoryTotal`) +
             FfiConverterBoolean.allocationSize(value.`memoryLimited`) +
             FfiConverterULong.allocationSize(value.`diskUsed`) +
-            FfiConverterULong.allocationSize(value.`diskTotal`) +
+            FfiConverterOptionalULong.allocationSize(value.`diskTotal`) +
             FfiConverterBoolean.allocationSize(value.`diskLimited`)
     )
 
@@ -36029,7 +36030,7 @@ public object FfiConverterTypeGuestUsage: FfiConverterRustBuffer<GuestUsage> {
             FfiConverterULong.write(value.`memoryTotal`, buf)
             FfiConverterBoolean.write(value.`memoryLimited`, buf)
             FfiConverterULong.write(value.`diskUsed`, buf)
-            FfiConverterULong.write(value.`diskTotal`, buf)
+            FfiConverterOptionalULong.write(value.`diskTotal`, buf)
             FfiConverterBoolean.write(value.`diskLimited`, buf)
     }
 }
@@ -41683,6 +41684,71 @@ public object FfiConverterTypeShareCheck: FfiConverterRustBuffer<ShareCheck> {
 
 
 /**
+ * A base image several Spaces share copy-on-write (a container image's
+ * layers, the image a VM disk was cloned from).
+ */
+data class SharedBase (
+    /**
+     * Which base: Spaces with the same key share the same blocks.
+     */
+    var `key`: kotlin.String
+    ,
+    /**
+     * The image reference it came from (`ghcr.io/trycua/linux:24.04`).
+     */
+    var `image`: kotlin.String
+    ,
+    /**
+     * What it takes on this computer, once for all its Spaces; absent when
+     * the runtime cannot tell it apart from the Spaces' own data.
+     */
+    var `bytes`: kotlin.ULong?
+    ,
+    /**
+     * Local Spaces that use it, this one included.
+     */
+    var `sharedWith`: kotlin.UInt
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSharedBase: FfiConverterRustBuffer<SharedBase> {
+    override fun read(buf: ByteBuffer): SharedBase {
+        return SharedBase(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalULong.read(buf),
+            FfiConverterUInt.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: SharedBase) = (
+            FfiConverterString.allocationSize(value.`key`) +
+            FfiConverterString.allocationSize(value.`image`) +
+            FfiConverterOptionalULong.allocationSize(value.`bytes`) +
+            FfiConverterUInt.allocationSize(value.`sharedWith`)
+    )
+
+    override fun write(value: SharedBase, buf: ByteBuffer) {
+            FfiConverterString.write(value.`key`, buf)
+            FfiConverterString.write(value.`image`, buf)
+            FfiConverterOptionalULong.write(value.`bytes`, buf)
+            FfiConverterUInt.write(value.`sharedWith`, buf)
+    }
+}
+
+
+
+/**
  * Options for [`Space::request_site_login`].
  */
 data class SiteLoginOptions (
@@ -43753,9 +43819,17 @@ data class SpaceResources (
     var `usage`: GuestUsage?
     ,
     /**
-     * What it costs this Mac; absent for a container.
+     * What it costs this Mac: its own data only, never the base it
+     * shares; absent when there is nothing to measure.
      */
     var `diskOnHost`: DiskOnHost?
+    ,
+    /**
+     * The base image it is a copy-on-write copy of, counted once for all
+     * the Spaces that share it; absent when it has none or the runtime
+     * cannot tell it apart.
+     */
+    var `base`: SharedBase?
 
 ){
 
@@ -43779,6 +43853,7 @@ public object FfiConverterTypeSpaceResources: FfiConverterRustBuffer<SpaceResour
             FfiConverterULong.read(buf),
             FfiConverterOptionalTypeGuestUsage.read(buf),
             FfiConverterOptionalTypeDiskOnHost.read(buf),
+            FfiConverterOptionalTypeSharedBase.read(buf),
         )
     }
 
@@ -43789,7 +43864,8 @@ public object FfiConverterTypeSpaceResources: FfiConverterRustBuffer<SpaceResour
             FfiConverterULong.allocationSize(value.`memoryAllocated`) +
             FfiConverterULong.allocationSize(value.`diskAllocated`) +
             FfiConverterOptionalTypeGuestUsage.allocationSize(value.`usage`) +
-            FfiConverterOptionalTypeDiskOnHost.allocationSize(value.`diskOnHost`)
+            FfiConverterOptionalTypeDiskOnHost.allocationSize(value.`diskOnHost`) +
+            FfiConverterOptionalTypeSharedBase.allocationSize(value.`base`)
     )
 
     override fun write(value: SpaceResources, buf: ByteBuffer) {
@@ -43800,6 +43876,7 @@ public object FfiConverterTypeSpaceResources: FfiConverterRustBuffer<SpaceResour
             FfiConverterULong.write(value.`diskAllocated`, buf)
             FfiConverterOptionalTypeGuestUsage.write(value.`usage`, buf)
             FfiConverterOptionalTypeDiskOnHost.write(value.`diskOnHost`, buf)
+            FfiConverterOptionalTypeSharedBase.write(value.`base`, buf)
     }
 }
 
@@ -50663,6 +50740,38 @@ public object FfiConverterOptionalTypeScreenshotOptions: FfiConverterRustBuffer<
         } else {
             buf.put(1)
             FfiConverterTypeScreenshotOptions.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeSharedBase: FfiConverterRustBuffer<SharedBase?> {
+    override fun read(buf: ByteBuffer): SharedBase? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeSharedBase.read(buf)
+    }
+
+    override fun allocationSize(value: SharedBase?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeSharedBase.allocationSize(value)
+        }
+    }
+
+    override fun write(value: SharedBase?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeSharedBase.write(value, buf)
         }
     }
 }

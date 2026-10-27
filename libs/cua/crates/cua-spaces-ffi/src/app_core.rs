@@ -3475,6 +3475,7 @@ mod resources_tests {
                     allocated: 87 * GIB,
                     shares_space: true,
                 }),
+                base: None,
             }],
             computers: vec![rt::ComputerResources {
                 id: "mini".into(),

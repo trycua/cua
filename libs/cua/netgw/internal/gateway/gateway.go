@@ -89,7 +89,7 @@ func New(cfg *config.Config, rules *policy.Store, sink *events.Sink) (*Gateway, 
 		hostIP = netip.MustParseAddr(cfg.HostIP)
 		virtualIPs = append(virtualIPs, cfg.HostIP)
 		// Never leased: it stands for the host.
-		if err := pool.Reserve(cfg.HostIP, "5a:94:ef:e4:0c:ee"); err != nil {
+		if err := pool.Reserve(cfg.HostIP, "reserved:host"); err != nil {
 			return nil, fmt.Errorf("host address: %w", err)
 		}
 	}

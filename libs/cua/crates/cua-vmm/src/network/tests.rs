@@ -772,3 +772,22 @@ fn net_helpers() {
     assert_eq!(Net::host(IpAddr::V6(Ipv6Addr::LOCALHOST)), net("::1/128"));
     assert!(Net::parse("all").is_err());
 }
+
+#[test]
+fn vms_forward_listed_localhost_ports_only() {
+    if Mode::from_env() == Mode::Legacy {
+        return;
+    }
+    assert_eq!(vm_localhost_ports(None).unwrap(), Vec::<u16>::new());
+    assert_eq!(
+        vm_localhost_ports(Some(&NetworkSettings::internet())).unwrap(),
+        Vec::<u16>::new()
+    );
+    let mut s = localhost(&[5432, 3000, 5432]);
+    assert_eq!(vm_localhost_ports(Some(&s)).unwrap(), [3000, 5432]);
+    s.all_localhost_ports = true;
+    let e = vm_localhost_ports(Some(&s)).unwrap_err();
+    assert!(e.0.contains("list them"), "{e}");
+    assert_eq!(pasta_out_spec(&[]), "none");
+    assert_eq!(pasta_out_spec(&[3000, 5432]), "3000,5432");
+}

@@ -226,6 +226,10 @@ pub struct QemuState {
     /// inherit it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub egress: Option<crate::egress::EgressPolicy>,
+    /// Its network settings ([`crate::network`]); `None`: kept from before
+    /// them (its egress policy is migrated at start). Forks inherit them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<crate::network::NetworkSettings>,
     /// The current run is inside its own network namespace (pasta), where
     /// the egress policy is enforced.
     #[serde(default)]
@@ -803,6 +807,7 @@ impl QemuRuntime {
                 ssh: spec_like.ssh.clone(),
                 restrict_network: spec_like.restrict_network,
                 egress: None,
+                network: None,
                 netns: false,
                 pasta_pid: None,
                 extra_args: spec_like.extra_args.clone(),
@@ -1164,10 +1169,30 @@ impl QemuRuntime {
         // An egress policy that blocks anything: the VM runs inside its
         // own network namespace, where the policy is enforced
         // ([`netns_script`]).
-        let netns_rules = match st.egress.as_ref() {
-            Some(p) => Some(crate::egress::check(BackendKind::Qemu, p)?)
-                .filter(crate::egress::Rules::blocks_anything),
-            None => None,
+        //
+        // Under the secure default ([`crate::network`]) every VM on Linux
+        // runs in that namespace, policy or not: its network settings are
+        // compiled there (the host's own addresses closed, pasta's resolver
+        // open on 53) and the host's loopback is out of reach (`--no-map-gw`;
+        // `10.0.2.2` is the namespace's own loopback). Elsewhere QEMU has no
+        // such point: a runtime above refuses or starts it without network.
+        let secure = secure_netns();
+        let netns_rules = if secure {
+            Some(
+                crate::network::vm_rules(
+                    st.network.as_ref(),
+                    st.egress.as_ref(),
+                    st.restrict_network || spec.restrict_network,
+                    &netns_context(),
+                )
+                .map_err(VmmError::from)?,
+            )
+        } else {
+            match st.egress.as_ref() {
+                Some(p) => Some(crate::egress::check(BackendKind::Qemu, p)?)
+                    .filter(crate::egress::Rules::blocks_anything),
+                None => None,
+            }
         };
         st.accel = if force_tcg {
             "tcg".into()
@@ -1317,11 +1342,12 @@ impl QemuRuntime {
                     let pasta = host::which("pasta").ok_or_else(|| {
                         VmmError::missing(
                             "pasta",
-                            "install passt (Ubuntu: sudo apt-get install passt): a QEMU VM with \
-                             an egress policy runs in a network namespace pasta creates",
+                            "install passt (Ubuntu: sudo apt-get install passt): a QEMU VM runs \
+                             in a network namespace pasta creates, which keeps it off this \
+                             computer and your local network",
                         )
                     })?;
-                    std::fs::write(dir.join(NETNS_SCRIPT), netns_script(rules))?;
+                    std::fs::write(dir.join(NETNS_SCRIPT), netns_script(rules, !secure))?;
                     let mut ports: Vec<u16> = st.ports.values().copied().collect();
                     if st.qmp_socket.is_none() {
                         ports.push(qmp_port);
@@ -1329,7 +1355,13 @@ impl QemuRuntime {
                     if let Some(d) = st.vnc_display {
                         ports.push(5900 + d);
                     }
-                    let mut a = netns_pasta_args(&ports);
+                    let localhost = if secure {
+                        crate::network::vm_localhost_ports(st.network.as_ref())
+                            .map_err(VmmError::from)?
+                    } else {
+                        Vec::new()
+                    };
+                    let mut a = netns_pasta_args(&ports, &localhost);
                     a.push(NETNS_SCRIPT.into());
                     a.push(bin.display().to_string());
                     a.extend(argv.iter().cloned());
@@ -2073,7 +2105,10 @@ const SLIRP_DNS: std::net::Ipv4Addr = std::net::Ipv4Addr::new(10, 0, 2, 3);
 /// host's resolver through [`DNS_FWD`], no way to the host's own loopback,
 /// then the script.
 #[cfg_attr(not(unix), allow(dead_code))]
-fn netns_pasta_args(ports: &[u16]) -> Vec<String> {
+fn netns_pasta_args(ports: &[u16], localhost: &[u16]) -> Vec<String> {
+    // The `localhost` preset's ports only: the guest reaches them as
+    // `10.0.2.2:<port>` (the namespace's loopback, forwarded to the host's).
+    let out = crate::network::pasta_out_spec(localhost);
     let mut a: Vec<String> = [
         "--config-net",
         "-q",
@@ -2081,7 +2116,7 @@ fn netns_pasta_args(ports: &[u16]) -> Vec<String> {
         "-u",
         "none",
         "-T",
-        "none",
+        out.as_str(),
         "-U",
         "none",
         "--dns-forward",
@@ -2106,28 +2141,25 @@ fn netns_pasta_args(ports: &[u16]) -> Vec<String> {
 
 /// The script run in a VM's namespace before QEMU: the egress rules on
 /// `OUTPUT` (QEMU's user-mode network opens the guest's connections from
-/// QEMU itself), a private `/etc/resolv.conf` naming pasta's DNS forward
-/// (whose verdict is the policy's for the guest's resolver, `10.0.2.3`),
-/// then QEMU (`$@`).
+/// QEMU itself), a private `/etc/resolv.conf` naming pasta's DNS forward,
+/// then QEMU (`$@`). `legacy`: an old policy's rules, where the forward
+/// gets the verdict of the guest's resolver (`10.0.2.3`); compiled network
+/// settings name the forward themselves ([`netns_context`]).
 #[cfg_attr(not(unix), allow(dead_code))]
-fn netns_script(rules: &crate::egress::Rules) -> String {
-    let resolver = crate::egress::Resolver {
-        guest: SLIRP_DNS,
-        forward: DNS_FWD,
-    };
+fn netns_script(rules: &crate::egress::Rules, legacy: bool) -> String {
     format!(
         "{rules}printf 'nameserver {DNS_FWD}\\n' > \"$PWD/resolv.conf\"\n\
          exec unshare -m sh -c 'mount --bind \"$0\" /etc/resolv.conf && exec \"$@\"' \"$PWD/resolv.conf\" \"$@\"\n",
-        rules = crate::egress::ns_script(rules, crate::egress::NsHook::Output, Some(resolver)),
+        rules = netns_rules_script(rules, legacy),
     )
 }
 
 /// The rules of a running namespaced VM, refilled ([`netns_script`]'s).
-fn netns_rules_script(rules: &crate::egress::Rules) -> String {
+fn netns_rules_script(rules: &crate::egress::Rules, legacy: bool) -> String {
     crate::egress::ns_script(
         rules,
         crate::egress::NsHook::Output,
-        Some(crate::egress::Resolver {
+        legacy.then_some(crate::egress::Resolver {
             guest: SLIRP_DNS,
             forward: DNS_FWD,
         }),
@@ -2210,6 +2242,29 @@ fn random_token(n: usize) -> String {
 /// A VNC password for one run (VNC passwords are 8 characters at most).
 fn vnc_password() -> String {
     random_token(8)
+}
+
+/// Whether VMs run in a pasta namespace with compiled network settings:
+/// on Linux, under the secure default.
+fn secure_netns() -> bool {
+    cfg!(target_os = "linux") && crate::network::Mode::from_env() == crate::network::Mode::Secure
+}
+
+/// What a VM's namespace knows for [`crate::network::compile`]: pasta's DNS
+/// forward is the resolver (open on 53); the host's own addresses (pasta
+/// would reach them) and the daemon's ports are closed. The host's loopback
+/// is not mapped at all (`--no-map-gw`), and `10.0.2.2` is the namespace's
+/// own loopback, where only this VM's forwards listen (QMP is a unix
+/// socket).
+fn netns_context() -> crate::network::NetworkContext {
+    crate::network::NetworkContext {
+        resolvers: vec![std::net::IpAddr::V4(DNS_FWD)],
+        host_aliases: vec![],
+        host_addrs: crate::network::host_addresses(),
+        tree: vec![],
+        other_trees: vec![],
+        daemon_ports: crate::network::daemon_ports(),
+    }
 }
 
 /// The first child of process `pid` (pasta's command).
@@ -2470,6 +2525,7 @@ impl Runtime for QemuRuntime {
             ssh: None,
             restrict_network: false,
             egress: None,
+            network: None,
             netns: false,
             pasta_pid: None,
             extra_args: vec![],
@@ -2588,6 +2644,19 @@ impl Runtime for QemuRuntime {
         // kept one wins (`set_egress` changed it since).
         if st.egress.is_none() && !spec.egress.is_empty() {
             st.egress = Some(spec.egress.clone());
+        }
+        // Network settings: the same (a VM from before them takes the
+        // spec's, else its policy is migrated at launch).
+        if st.network.is_none() {
+            st.network = spec.network.clone();
+        }
+        // A VM asked to have no network gets QEMU's `restrict=on` too.
+        if spec
+            .network
+            .as_ref()
+            .is_some_and(|n| n.preset == crate::network::NetworkPreset::None)
+        {
+            st.restrict_network = true;
         }
         // A new VM of a configuration with a golden snapshot restores it
         // (recording it first if needed) instead of booting.
@@ -3146,7 +3215,7 @@ impl Runtime for QemuRuntime {
         name: &str,
         policy: &crate::egress::EgressPolicy,
     ) -> Result<crate::egress::Enforcement> {
-        let rules = crate::egress::check(BackendKind::Qemu, policy)?;
+        let legacy_rules = crate::egress::check(BackendKind::Qemu, policy)?;
         let _owner = self.own(name).await;
         let _g = self.lock.lock().await;
         let mut st = self.load(name)?;
@@ -3157,10 +3226,28 @@ impl Runtime for QemuRuntime {
             refuse_tpm(&st, "a move into a new network namespace")?;
         }
         let previous = st.egress.replace(policy.clone());
+        let previous_network = st.network.clone();
+        // The lists are its network settings' own lists too.
+        st.network = Some(crate::network::NetworkSettings::with_lists(
+            st.network.take(),
+            policy,
+        ));
+        let secure = secure_netns();
+        let rules = if secure {
+            crate::network::vm_rules(
+                st.network.as_ref(),
+                None,
+                st.restrict_network,
+                &netns_context(),
+            )
+            .map_err(VmmError::from)?
+        } else {
+            legacy_rules
+        };
         if Self::is_running(&st) {
             let applied = if st.netns {
                 let pid = st.pid.expect("running");
-                crate::egress::ns_apply(pid, &netns_rules_script(&rules)).await
+                crate::egress::ns_apply(pid, &netns_rules_script(&rules, !secure)).await
             } else if rules.blocks_anything() {
                 self.relaunch(&mut st).await
             } else {
@@ -3170,6 +3257,7 @@ impl Runtime for QemuRuntime {
                 if Self::is_running(&st) {
                     // Still in its old process: keep what it had.
                     st.egress = previous;
+                    st.network = previous_network;
                 }
                 let _ = self.save(&st);
                 return Err(e);
@@ -3964,6 +4052,41 @@ mod tests {
     }
 
     #[test]
+    fn the_secure_default_namespace_closes_the_host_and_opens_dns() {
+        let mut ctx = netns_context();
+        ctx.host_addrs = vec!["10.0.1.5".parse().unwrap()];
+        ctx.daemon_ports = vec![4100];
+        let rules = crate::network::compile_mode(
+            &crate::network::NetworkSettings::internet(),
+            &ctx,
+            crate::network::Mode::Secure,
+        )
+        .unwrap();
+        let s = netns_script(&rules, false);
+        // pasta's DNS forward is open on 53 (no legacy verdict line).
+        assert!(
+            s.contains(
+                "-p udp -m conntrack --ctorigdst 169.254.1.53/32 --ctorigdstport 53 -j ACCEPT"
+            ),
+            "{s}"
+        );
+        assert!(!s.contains("-d 169.254.1.53/32 -p udp --dport 53"), "{s}");
+        // The host's own addresses, every address local to the namespace,
+        // metadata and the private ranges are closed.
+        assert!(s.contains("--ctorigdst 10.0.1.5/32 -j DROP"), "{s}");
+        assert!(s.contains("-m addrtype --dst-type LOCAL -j DROP"), "{s}");
+        assert!(s.contains("--ctorigdst 169.254.169.254/32 -j DROP"), "{s}");
+        assert!(s.contains("--ctorigdst 10.0.0.0/8 -j DROP"), "{s}");
+        // The daemon's port on every local address.
+        assert!(
+            s.contains(
+                "-p tcp -m addrtype --dst-type LOCAL -m conntrack --ctorigdstport 4100 -j DROP"
+            ),
+            "{s}"
+        );
+    }
+
+    #[test]
     fn qmp_never_listens_where_the_guest_can_reach_it() {
         assert_eq!(
             qmp_addr_of(Some("unix:/s/vm1/qmp.sock"), Some(4444)).unwrap(),
@@ -4006,7 +4129,7 @@ mod tests {
         }
         .parse()
         .unwrap();
-        let s = netns_script(&rules);
+        let s = netns_script(&rules, true);
         // The rules, on OUTPUT (QEMU itself opens the guest's
         // connections), then QEMU: never the other way round.
         let rules_at = s.find("iptables-restore --noflush").expect("rules");
@@ -4036,8 +4159,16 @@ mod tests {
         }
         .parse()
         .unwrap();
-        assert!(netns_script(&allowed).contains("-d 169.254.1.53/32 -p udp --dport 53 -j ACCEPT"));
-        let a = netns_pasta_args(&[4000, 5901]);
+        assert!(
+            netns_script(&allowed, true).contains("-d 169.254.1.53/32 -p udp --dport 53 -j ACCEPT")
+        );
+        let a = netns_pasta_args(&[4000, 5901], &[]);
+        assert!(a.windows(2).any(|w| w[0] == "-T" && w[1] == "none"));
+        let open = netns_pasta_args(&[4000], &[5432, 3000]);
+        assert!(
+            open.windows(2).any(|w| w[0] == "-T" && w[1] == "5432,3000"),
+            "{open:?}"
+        );
         let has = |pair: [&str; 2]| a.windows(2).any(|w| w[0] == pair[0] && w[1] == pair[1]);
         assert!(has(["-t", "127.0.0.1/4000:4000"]) && has(["-t", "127.0.0.1/5901:5901"]));
         assert!(has(["--dns-forward", "169.254.1.53"]));

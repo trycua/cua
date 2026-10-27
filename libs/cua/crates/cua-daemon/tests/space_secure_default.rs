@@ -20,7 +20,10 @@
 //! ```
 //!
 //! Needs internet and, per test, what `space_egress.rs` says (a Docker
-//! engine on Linux with nftables; gVisor: `runsc`). Image
+//! engine on Linux with nftables; gVisor: `runsc`; QEMU: KVM, pasta and
+//! `CUA_EGRESS_TEST_DISK`; Firecracker: KVM, pasta and the microVM assets).
+//! VMs reach the members of their tree through cua-mesh, not yet through
+//! these tests' address probes. Image
 //! `CUA_EGRESS_TEST_IMAGE` (default `ghcr.io/trycua/linux:24.04-slim`; it
 //! needs python3). Everything is created under the test's `CUA_HOME` and
 //! deleted on every path, and the host listeners close with the test.
@@ -384,5 +387,176 @@ mod container {
     #[ignore = "needs a Docker engine on Linux with runsc and nftables; run with --ignored"]
     async fn container_gvisor_secure_default() {
         run("gvisor").await;
+    }
+}
+
+/// The negatives every VM kind shares: the host's own addresses, the
+/// host's loopback (`alias`, the guest's address for it), its LAN gateway,
+/// metadata, and rebinding names for them.
+fn vm_negatives(host: &HostListeners, alias: &str) -> Vec<String> {
+    let (addrs, lan_gw) = host_facts();
+    let mut no: Vec<String> = vec![
+        format!("{alias}:{}", host.any),
+        format!("{alias}:{}", host.loopback),
+        "169.254.169.254:80".into(),
+        rebinding("169.254.169.254".parse().unwrap(), 80),
+    ];
+    for addr in &addrs {
+        no.push(format!("{addr}:{}", host.any));
+        no.push(format!("{addr}:{}", host.loopback));
+        no.push(rebinding(IpAddr::V4(*addr), host.any));
+    }
+    if let Some(gw) = lan_gw {
+        no.push(format!("{gw}:53"));
+        no.push(format!("{gw}:80"));
+    }
+    no
+}
+
+async fn vm_checks(g: &Guest, what: &str, host: &HostListeners, alias: &str) {
+    g.wait_internet().await;
+    let dns = g
+        .sh("getent hosts example.com >/dev/null && echo resolved")
+        .await;
+    assert_eq!(dns, "resolved", "{what}: DNS: {dns}");
+    let got = g.probe(&vm_negatives(host, alias)).await;
+    eprintln!("  {what}: host, LAN, metadata, rebinding: {got:?}");
+    for (t, v) in &got {
+        assert_eq!(v, "blocked", "{what}: reached {t} ({v})");
+    }
+}
+
+// --------------------------------------------------------------------- QEMU
+
+mod qemu {
+    use super::*;
+    use cua_vmm::Probe;
+    use cua_vmm::exec::SshExec;
+    use cua_vmm::qemu::{QemuConfig, QemuRuntime};
+
+    async fn guest(rt: &QemuRuntime, name: &str) -> Guest {
+        let ep = rt.endpoints(name).await.unwrap();
+        assert!(ep.qmp.is_none(), "QMP must not be a TCP port: {:?}", ep.qmp);
+        let ssh = ep.ssh.expect("SSH endpoint");
+        let exec =
+            SshExec::new(&ssh.host, ssh.port, &ssh.user).key(ssh.private_key.expect("managed key"));
+        let g = Guest {
+            exec: std::sync::Arc::new(exec),
+            root: "sudo -n",
+        };
+        for _ in 0..60 {
+            if g.sh("id -u").await == "0" {
+                break;
+            }
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        }
+        g.upload().await;
+        g
+    }
+
+    #[tokio::test]
+    #[ignore = "boots a QEMU VM under KVM in a pasta namespace; run with --ignored"]
+    async fn qemu_secure_default() {
+        let disk = std::env::var("CUA_EGRESS_TEST_DISK").expect("CUA_EGRESS_TEST_DISK");
+        let root = tempfile::tempdir().unwrap();
+        let rt = QemuRuntime::new(QemuConfig {
+            root: root.path().to_path_buf(),
+            vnc: false,
+            warm: false,
+            graceful_stop: Duration::from_secs(5),
+            ..QemuConfig::default()
+        });
+        let host = HostListeners::start().await;
+        let name = format!("cua-sd-qemu-{}", suffix());
+        let mut spec = StartSpec::new(&name, ImageSource::Disk { path: disk.into() })
+            .cpus(2)
+            .memory_mb(2048)
+            .probe(Probe::Tcp { port: 22 })
+            .ready_timeout(Duration::from_secs(600));
+        spec.network = Some(NetworkSettings::internet());
+        let result = futures_util::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(async {
+            rt.start(&spec).await.expect("start");
+            let g = guest(&rt, &name).await;
+            vm_checks(&g, "qemu", &host, "10.0.2.2").await;
+            // `localhost` with one port: that one answers through 10.0.2.2,
+            // nothing else of the host's does.
+            eprintln!("qemu: localhost (port {})", host.loopback);
+            rt.stop(&name).await.unwrap();
+            let mut lh = NetworkSettings::preset(NetworkPreset::Localhost);
+            lh.localhost_ports = vec![host.loopback];
+            // A kept setting wins; set it through the lists' owner.
+            let st = root.path().join(&name).join("state.json");
+            let mut v: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&st).unwrap()).unwrap();
+            v["network"] = serde_json::to_value(&lh).unwrap();
+            std::fs::write(&st, serde_json::to_vec(&v).unwrap()).unwrap();
+            let mut again = spec.clone();
+            again.image = ImageSource::Existing;
+            rt.start(&again).await.expect("restart");
+            let g = guest(&rt, &name).await;
+            g.wait_internet().await;
+            g.expect_all(
+                "the listed localhost port",
+                &[format!("10.0.2.2:{}", host.loopback)],
+                "open",
+            )
+            .await;
+            g.expect_all(
+                "another host port",
+                &[format!("10.0.2.2:{}", host.any)],
+                "blocked",
+            )
+            .await;
+        }))
+        .await;
+        let _ = rt.delete(&name).await;
+        if let Err(p) = result {
+            std::panic::resume_unwind(p);
+        }
+    }
+}
+
+// -------------------------------------------------------------- Firecracker
+
+mod firecracker {
+    use super::*;
+    use cua_vmm::microvm::{MicroVmConfig, MicroVmRuntime};
+
+    #[tokio::test]
+    #[ignore = "boots a Firecracker microVM under KVM in a pasta namespace; run with --ignored"]
+    async fn firecracker_secure_default() {
+        let image = std::env::var("CUA_EGRESS_TEST_IMAGE")
+            .unwrap_or_else(|_| "ghcr.io/trycua/linux:24.04-slim".into());
+        if cua_vmm::microvm::assets::firecracker_bin().is_none() {
+            cua_vmm::microvm::assets::install_firecracker()
+                .await
+                .expect("install firecracker");
+        }
+        let rt = MicroVmRuntime::new(MicroVmConfig {
+            resolver: Some(cua_image::RootfsLayerResolver::shared()),
+            ..MicroVmConfig::default()
+        });
+        let host = HostListeners::start().await;
+        let name = format!("cua-sd-fc-{}", suffix());
+        let mut spec = StartSpec::new(&name, ImageSource::oci(image))
+            .cpus(1)
+            .memory_mb(1024)
+            .command(["sleep", "infinity"])
+            .ready_timeout(Duration::from_secs(300));
+        spec.network = Some(NetworkSettings::internet());
+        let result = futures_util::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(async {
+            rt.start(&spec).await.expect("start");
+            let g = Guest {
+                exec: rt.guest_exec(&name).await.unwrap().unwrap(),
+                root: "",
+            };
+            g.upload().await;
+            vm_checks(&g, "firecracker", &host, "172.16.0.1").await;
+        }))
+        .await;
+        let _ = rt.delete(&name).await;
+        if let Err(p) = result {
+            std::panic::resume_unwind(p);
+        }
     }
 }

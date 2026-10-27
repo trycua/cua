@@ -487,6 +487,14 @@ pub fn reject_restricted_network(backend: BackendKind, spec: &StartSpec) -> crat
     if !spec.restrict_network {
         return Ok(());
     }
+    // Under the secure default a container's network is cut by its rules
+    // on the engine host (`none` drops everything), its published ports
+    // still answering.
+    if matches!(backend, BackendKind::Container | BackendKind::Managed)
+        && crate::network::Mode::from_env() == crate::network::Mode::Secure
+    {
+        return Ok(());
+    }
     Err(crate::VmmError::Unsupported {
         backend: backend.as_str(),
         op: match backend {
@@ -917,9 +925,14 @@ mod tests {
             assert!(reject_restricted_network(b, &spec).is_ok());
         }
         spec.restrict_network = true;
-        for b in [BackendKind::Container, BackendKind::Lume] {
-            let e = reject_restricted_network(b, &spec).unwrap_err().to_string();
-            assert!(e.contains("network=\"none\""), "{e}");
+        let e = reject_restricted_network(BackendKind::Lume, &spec)
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("network=\"none\""), "{e}");
+        // A container cuts it with its engine-host rules under the secure
+        // default (the test process runs with it unless told otherwise).
+        if crate::network::Mode::from_env() == crate::network::Mode::Secure {
+            assert!(reject_restricted_network(BackendKind::Container, &spec).is_ok());
         }
     }
 

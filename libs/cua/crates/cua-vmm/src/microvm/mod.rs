@@ -280,6 +280,10 @@ pub struct VmState {
     /// the VM's network namespace from its first instruction.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub egress: Option<crate::egress::EgressPolicy>,
+    /// Its network settings ([`crate::network`]); `None`: kept from before
+    /// them (its policy is migrated at boot).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<crate::network::NetworkSettings>,
     /// The network's process: `pasta` (Linux) or gvproxy (macOS).
     #[serde(default)]
     pub pasta_pid: Option<u32>,
@@ -373,6 +377,9 @@ pub struct SnapshotMeta {
     /// The source's egress policy: forks inherit it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub egress: Option<crate::egress::EgressPolicy>,
+    /// The source's network settings: forks inherit them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<crate::network::NetworkSettings>,
     /// Memory and device state were saved (else only the disk: a fork
     /// boots it cold).
     pub memory: bool,
@@ -500,6 +507,37 @@ fn boot_args() -> String {
     )
 }
 
+/// The rules a Firecracker VM's namespace enforces: under the secure
+/// default ([`crate::network`]) its settings compiled with
+/// [`fc_context`], else its old policy alone.
+fn fc_rules(st: &VmState) -> Result<crate::egress::Rules> {
+    crate::network::vm_rules(
+        st.network.as_ref(),
+        st.egress.as_ref(),
+        st.restrict_network,
+        &fc_context(),
+    )
+    .map_err(VmmError::from)
+}
+
+/// What a Firecracker VM's namespace knows: the guest's resolver is its
+/// gateway on 53 (the namespace sends it on to pasta's DNS forward; rules
+/// judge the address the guest sent), which is otherwise closed like the
+/// host's own addresses (pasta would reach them) and the daemon's ports.
+/// The host's loopback is not mapped (`--no-map-gw`).
+fn fc_context() -> crate::network::NetworkContext {
+    use cua_microvm_init::GATEWAY_IP;
+    let gw: std::net::IpAddr = GATEWAY_IP.parse().expect("a valid gateway");
+    crate::network::NetworkContext {
+        resolvers: vec![gw],
+        host_aliases: vec![gw],
+        host_addrs: crate::network::host_addresses(),
+        tree: vec![],
+        other_trees: vec![],
+        daemon_ports: crate::network::daemon_ports(),
+    }
+}
+
 /// The script run inside the VM's namespace (by `pasta`): the tap device,
 /// NAT, port forwards and DNS, then `exec firecracker`.
 fn net_script(
@@ -507,12 +545,20 @@ fn net_script(
     restrict: bool,
     config: bool,
     egress: &crate::egress::Rules,
+    localhost: &[u16],
 ) -> String {
     use cua_microvm_init::{GATEWAY_IP, GUEST_IP, PREFIX_LEN};
     let mut nat = String::from("*nat\n");
     for p in ports {
         nat.push_str(&format!(
             "-A OUTPUT -d 127.0.0.1/32 -p tcp --dport {p} -j DNAT --to-destination {GUEST_IP}:{p}\n"
+        ));
+    }
+    // The `localhost` preset's ports: the guest's gateway on them is the
+    // namespace's loopback, which pasta forwards to the host's (`-T`).
+    for p in localhost {
+        nat.push_str(&format!(
+            "-A PREROUTING -d {GATEWAY_IP}/32 -p tcp --dport {p} -j DNAT --to-destination 127.0.0.1:{p}\n"
         ));
     }
     nat.push_str(&format!(
@@ -1118,17 +1164,16 @@ impl MicroVmRuntime {
         if let Some(c) = &config {
             std::fs::write(dir.join("vm.json"), serde_json::to_vec_pretty(c)?)?;
         }
+        let localhost =
+            crate::network::vm_localhost_ports(st.network.as_ref()).map_err(VmmError::from)?;
         std::fs::write(
             dir.join("net.sh"),
             net_script(
                 &st.ports,
                 st.restrict_network,
                 config.is_some(),
-                &st.egress
-                    .as_ref()
-                    .map(|p| p.parse())
-                    .transpose()?
-                    .unwrap_or_default(),
+                &fc_rules(&st)?,
+                &localhost,
             ),
         )?;
         let host_ports = self.pick_ports(st.ports.len())?;
@@ -1140,7 +1185,7 @@ impl MicroVmRuntime {
             "-u".into(),
             "none".into(),
             "-T".into(),
-            "none".into(),
+            crate::network::pasta_out_spec(&localhost),
             "-U".into(),
             "none".into(),
             "--dns-forward".into(),
@@ -1935,6 +1980,7 @@ impl MicroVmRuntime {
             probes: st.probes.clone(),
             restrict_network: st.restrict_network,
             egress: st.egress.clone(),
+            network: st.network.clone(),
             memory: true,
             created_at: host::now_secs(),
             pinned: false,
@@ -2132,6 +2178,7 @@ impl MicroVmRuntime {
             probes: meta.probes.clone(),
             restrict_network: meta.restrict_network,
             egress: meta.egress.clone(),
+            network: meta.network.clone(),
             pasta_pid: None,
             fc_pid: None,
             sock_id: None,
@@ -2161,6 +2208,7 @@ impl MicroVmRuntime {
             probes: st.probes.clone(),
             restrict_network: st.restrict_network,
             egress: st.egress.clone(),
+            network: st.network.clone(),
             memory,
             created_at: host::now_secs(),
             pinned: false,
@@ -2270,6 +2318,7 @@ impl Runtime for MicroVmRuntime {
                 probes: vec![],
                 restrict_network: false,
                 egress: None,
+                network: None,
                 memory: false,
                 created_at: host::now_secs(),
                 pinned: false,
@@ -2335,6 +2384,10 @@ impl Runtime for MicroVmRuntime {
             if st.egress.is_none() && !spec.egress.is_empty() {
                 st.egress = Some(spec.egress.clone());
             }
+            // Network settings too (one from before them takes the spec's).
+            if st.network.is_none() {
+                st.network = spec.network.clone();
+            }
             self.kill(&mut st);
             let _vcpus = self.reserve_vcpus(st.cpus)?;
             if let Err(e) = self.boot(&mut st, false, spec.ready_timeout).await {
@@ -2378,6 +2431,7 @@ impl Runtime for MicroVmRuntime {
             probes: spec.probes.clone(),
             restrict_network: spec.restrict_network,
             egress: (!spec.egress.is_empty()).then(|| spec.egress.clone()),
+            network: spec.network.clone(),
             pasta_pid: None,
             fc_pid: None,
             sock_id: None,
@@ -2628,13 +2682,21 @@ impl Runtime for MicroVmRuntime {
         name: &str,
         policy: &crate::egress::EgressPolicy,
     ) -> Result<crate::egress::Enforcement> {
-        let rules = crate::egress::check(self.cfg.vmm.backend(), policy)?;
+        crate::egress::check(self.cfg.vmm.backend(), policy)?;
         let lock = self.lock_for(name);
         let _g = lock.lock().await;
         let mut st = self.load(name)?;
         if st.kind != EntryKind::Instance {
             return Err(VmmError::invalid(format!("{name} is not a VM")));
         }
+        // The lists are its network settings' own lists too.
+        let network = crate::network::NetworkSettings::with_lists(st.network.clone(), policy);
+        let candidate = VmState {
+            egress: Some(policy.clone()),
+            network: Some(network.clone()),
+            ..st.clone()
+        };
+        let rules = fc_rules(&candidate)?;
         if self.running(&st) {
             let pid = st
                 .fc_pid
@@ -2646,6 +2708,7 @@ impl Runtime for MicroVmRuntime {
             .await?;
         }
         st.egress = Some(policy.clone());
+        st.network = Some(network);
         self.save(&st)?;
         Ok(crate::egress::Enforcement::Host)
     }
@@ -2889,7 +2952,7 @@ mod tests {
     #[test]
     fn the_namespace_script_forwards_ports_and_nats_egress() {
         let none = crate::egress::Rules::default();
-        let s = net_script(&[3211, 8080], false, true, &none);
+        let s = net_script(&[3211, 8080], false, true, &none, &[]);
         assert!(s.contains("--dport 3211 -j DNAT --to-destination 172.16.0.2:3211"));
         assert!(s.contains("--dport 8080 -j DNAT"));
         assert!(s.contains("-s 172.16.0.2/32 ! -d 172.16.0.1/30 -j MASQUERADE"));
@@ -2902,7 +2965,7 @@ mod tests {
         assert!(s.contains(":CUA_EGRESS - [0:0]\n"), "{s}");
         assert!(s.contains("-A FORWARD -i tap0 -j CUA_EGRESS\n-A INPUT -i tap0 -j CUA_EGRESS\n"));
         assert!(!s.contains("-A CUA_EGRESS"), "{s}");
-        let r = net_script(&[], true, false, &none);
+        let r = net_script(&[], true, false, &none, &[]);
         assert!(!r.contains("-s 172.16.0.2/32 ! -d"), "no egress NAT");
         assert!(r.contains("-A FORWARD -s 172.16.0.2/32 -j DROP"));
         // network=none drops before the egress chain could accept.
@@ -2916,7 +2979,7 @@ mod tests {
             allow: vec!["1.1.1.1".into()],
             deny: vec!["all".into()],
         };
-        let e = net_script(&[3211], false, true, &p.parse().unwrap());
+        let e = net_script(&[3211], false, true, &p.parse().unwrap(), &[]);
         assert!(
             e.contains("-A CUA_EGRESS -m conntrack --ctdir REPLY -j ACCEPT"),
             "{e}"
@@ -2932,6 +2995,41 @@ mod tests {
         assert!(e.find("CUA_EGRESS").unwrap() < e.find("exec \"$CUA_FIRECRACKER_BIN\"").unwrap());
         assert!(!r.contains("--config-file"));
         assert!(r.contains("exec \"$CUA_FIRECRACKER_BIN\" --api-sock api.sock\n"));
+    }
+
+    #[test]
+    fn the_secure_default_closes_the_host_and_keeps_dns_through_the_gateway() {
+        let mut ctx = fc_context();
+        ctx.host_addrs = vec!["10.0.1.5".parse().unwrap()];
+        ctx.daemon_ports = vec![4100];
+        let mut lh =
+            crate::network::NetworkSettings::preset(crate::network::NetworkPreset::Localhost);
+        lh.localhost_ports = vec![5432];
+        let rules = crate::network::compile_mode(&lh, &ctx, crate::network::Mode::Secure).unwrap();
+        let s = net_script(&[3211], false, true, &rules, &[5432]);
+        // DNS to the gateway is open; the gateway otherwise is closed, but
+        // for the localhost port, which goes to the host's loopback.
+        assert!(
+            s.contains(
+                "-p udp -m conntrack --ctorigdst 172.16.0.1/32 --ctorigdstport 53 -j ACCEPT"
+            ),
+            "{s}"
+        );
+        assert!(
+            s.contains(
+                "-p tcp -m conntrack --ctorigdst 172.16.0.1/32 --ctorigdstport 5432 -j ACCEPT"
+            ),
+            "{s}"
+        );
+        assert!(s.contains("--ctorigdst 172.16.0.1/32 -j DROP"), "{s}");
+        assert!(
+            s.contains("-A PREROUTING -d 172.16.0.1/32 -p tcp --dport 5432 -j DNAT --to-destination 127.0.0.1:5432"),
+            "{s}"
+        );
+        // The host's own address and every namespace-local one are closed.
+        assert!(s.contains("--ctorigdst 10.0.1.5/32 -j DROP"), "{s}");
+        assert!(s.contains("-m addrtype --dst-type LOCAL -j DROP"), "{s}");
+        assert!(s.contains("--ctorigdst 169.254.169.254/32 -j DROP"), "{s}");
     }
 
     #[test]
@@ -3075,6 +3173,7 @@ mod tests {
             probes: vec![Probe::tcp(3211)],
             restrict_network: false,
             egress: None,
+            network: None,
             memory: false,
             created_at: 0,
             pinned: false,
@@ -3124,6 +3223,7 @@ mod tests {
                 probes: vec![],
                 restrict_network: false,
                 egress: None,
+                network: None,
                 memory: false,
                 created_at: 0,
                 pinned: false,
@@ -3176,6 +3276,7 @@ mod tests {
             probes: vec![],
             restrict_network: false,
             egress: None,
+            network: None,
             memory: false,
             created_at: 0,
             pinned: false,

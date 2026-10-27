@@ -1173,7 +1173,9 @@ impl Sandboxes {
             container_runtime: o.container_runtime.clone(),
             kind: (o.kind != Kind::Auto).then(|| o.kind.to_string()),
             runtime: (o.runtime != Runtime::Auto).then(|| o.runtime.to_string()),
-            restrict_network: o.network == NetworkMode::None,
+            // `none` settings cut the network the way every runtime knows.
+            restrict_network: o.network == NetworkMode::None
+                || o.effective_network().preset == cua_vmm::network::NetworkPreset::None,
             headless: o.headless,
             spacesd: o.spacesd,
             egress: o.egress.clone(),

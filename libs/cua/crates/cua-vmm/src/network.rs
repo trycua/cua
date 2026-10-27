@@ -551,6 +551,123 @@ pub fn daemon_ports() -> Vec<u16> {
         .collect()
 }
 
+/// This host's own interface addresses (loopback left out): what a guest
+/// must not reach through a runtime that maps them to the host (pasta).
+/// Enumerated at each start.
+pub fn host_addresses() -> Vec<IpAddr> {
+    #[cfg(unix)]
+    {
+        let mut out: Vec<IpAddr> = Vec::new();
+        // SAFETY: getifaddrs fills a list we only read and then free.
+        unsafe {
+            let mut head: *mut libc::ifaddrs = std::ptr::null_mut();
+            if libc::getifaddrs(&mut head) != 0 {
+                return out;
+            }
+            let mut cur = head;
+            while !cur.is_null() {
+                let a = (*cur).ifa_addr;
+                if !a.is_null() {
+                    let ip = match i32::from((*a).sa_family) {
+                        libc::AF_INET => {
+                            let v4 = &*(a as *const libc::sockaddr_in);
+                            Some(IpAddr::V4(std::net::Ipv4Addr::from(u32::from_be(
+                                v4.sin_addr.s_addr,
+                            ))))
+                        }
+                        libc::AF_INET6 => {
+                            let v6 = &*(a as *const libc::sockaddr_in6);
+                            Some(IpAddr::V6(std::net::Ipv6Addr::from(v6.sin6_addr.s6_addr)))
+                        }
+                        _ => None,
+                    };
+                    if let Some(ip) = ip.filter(|i| !i.is_loopback())
+                        && !out.contains(&ip)
+                    {
+                        out.push(ip);
+                    }
+                }
+                cur = (*cur).ifa_next;
+            }
+            libc::freeifaddrs(head);
+        }
+        out
+    }
+    #[cfg(not(unix))]
+    {
+        Vec::new()
+    }
+}
+
+/// The rules a VM runtime enforces: its network settings compiled with
+/// `ctx` under the secure default (an old egress policy migrated when it
+/// has none), or the old policy alone under `CUA_SECURE_DEFAULT=0`.
+pub fn vm_rules(
+    settings: Option<&NetworkSettings>,
+    legacy: Option<&EgressPolicy>,
+    restrict_network: bool,
+    ctx: &NetworkContext,
+) -> Result<Rules, PolicyError> {
+    match Mode::from_env() {
+        Mode::Secure => {
+            let s = match settings {
+                Some(s) => s.clone(),
+                None => {
+                    NetworkSettings::migrate(&legacy.cloned().unwrap_or_default(), restrict_network)
+                }
+            };
+            compile_mode(&s, ctx, Mode::Secure)
+        }
+        Mode::Legacy => match legacy {
+            Some(p) => p.parse(),
+            None => Ok(Rules::default()),
+        },
+    }
+}
+
+/// The host loopback ports a VM's network namespace forwards to the host
+/// (pasta `-T`) for the `localhost` preset: its listed ports, never the
+/// daemon's. Every port is refused for VMs: a namespace forwards listed
+/// ports only. Empty for any other preset or under the old default.
+pub fn vm_localhost_ports(settings: Option<&NetworkSettings>) -> Result<Vec<u16>, PolicyError> {
+    let Some(s) = settings.filter(|s| s.preset == NetworkPreset::Localhost) else {
+        return Ok(Vec::new());
+    };
+    if Mode::from_env() == Mode::Legacy {
+        return Ok(Vec::new());
+    }
+    if s.all_localhost_ports {
+        return Err(PolicyError(
+            "a VM opens the localhost ports you list, not all of them: list them \
+             (localhost:5432,3000)"
+                .into(),
+        ));
+    }
+    let daemon = daemon_ports();
+    let mut out: Vec<u16> = s
+        .localhost_ports
+        .iter()
+        .copied()
+        .filter(|p| !daemon.contains(p))
+        .collect();
+    out.sort_unstable();
+    out.dedup();
+    Ok(out)
+}
+
+/// pasta's `-T` argument for `ports` (`none` without any).
+pub fn pasta_out_spec(ports: &[u16]) -> String {
+    if ports.is_empty() {
+        "none".into()
+    } else {
+        ports
+            .iter()
+            .map(u16::to_string)
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+}
+
 /// Whether the secure default applies, or the old open one
 /// (`CUA_SECURE_DEFAULT=0`, for one release).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -920,3 +1037,13 @@ pub fn support_table_markdown() -> String {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod host_tests {
+    #[cfg(unix)]
+    #[test]
+    fn host_addresses_leave_out_loopback() {
+        let a = super::host_addresses();
+        assert!(a.iter().all(|i| !i.is_loopback()), "{a:?}");
+    }
+}

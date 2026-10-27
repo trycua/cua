@@ -106,7 +106,7 @@ class RecordPidTest(unittest.TestCase):
                 entry = json.loads(ledger.read_text())
                 self.assertEqual(entry["pid"], proc.pid)
                 self.assertEqual(entry["pgid"], proc.pid)
-                self.assertEqual(set(entry), {"pid", "pgid", "role"})
+                self.assertEqual(set(entry), {"pid", "pgid", "role", "start"})
                 self.assertEqual(entry["role"], "sleep")
             finally:
                 desktop.stop_group(proc.pid)
@@ -162,6 +162,33 @@ class RecordPidTest(unittest.TestCase):
                     proc.kill()
 
     @unittest.skipUnless(sys.platform == "linux", "Linux only")
+    def test_doctor_sigterm_at_startup_handoff_reaps_daemon(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            pidfile = Path(tmp) / "pid"
+            fake = Path(tmp) / "driver"
+            fake.write_text(
+                f'#!/bin/sh\n[ "$1" = serve ] && {{ echo $$ > {pidfile}; exec sleep 300; }}\n'
+                "exit 1\n"
+            )
+            fake.chmod(0o755)
+            real = desktop.start_app
+
+            def start_then_term(*a, **k):
+                proc = real(*a, **k)
+                os.kill(os.getpid(), signal.SIGTERM)  # lands before the caller owns proc
+                return proc
+
+            with mock.patch.object(desktop, "start_app", start_then_term), self.assertRaises(
+                SystemExit
+            ) as raised:
+                desktop.main(["doctor", "--cua-bin", str(fake), "--out", str(Path(tmp) / "out")])
+            self.assertEqual(raised.exception.code, 143)
+            daemon = int(pidfile.read_text())
+            time.sleep(0.5)
+            with self.assertRaises(ProcessLookupError):
+                os.kill(daemon, 0)
+
+    @unittest.skipUnless(sys.platform == "linux", "Linux only")
     def test_doctor_second_sigterm_during_teardown_still_reaps_daemon(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             pidfile, termed = Path(tmp) / "pid", Path(tmp) / "termed"
@@ -199,8 +226,7 @@ class RecordPidTest(unittest.TestCase):
     def test_noop_without_variable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ):
             os.environ.pop("CDB_BENCH_PID_LOG", None)
-            desktop.record_pid(os.getpid(), "x")
-            self.assertEqual(list(Path(tmp).iterdir()), [])
+            self.assertIsNone(desktop.record_pid(os.getpid(), "x"))
 
     @unittest.skipUnless(sys.platform == "linux", "Linux only")
     def test_cdb_start_apps_records_before_readiness_failure(self) -> None:
@@ -430,6 +456,19 @@ class DoctorStartupLogTest(unittest.TestCase):
             report = json.loads((out / "doctor.json").read_text())
             self.assertTrue(any(c["name"] == "driver-start" for c in report["checks"]))
             self.assertIn("startup-boom", (out / "driver.log").read_text())
+
+
+class LedgerReuseTest(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == "linux", "Linux only")
+    def test_recycled_pid_is_not_the_recorded_child(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "pids.jsonl"
+            stale = {"pid": os.getpid(), "pgid": os.getpid(), "role": "old", "start": 1}
+            ledger.write_text(json.dumps(stale) + "\n")
+            self.assertEqual(evidence.check_ledger(ledger), [])
+            live = dict(stale, start=desktop.proc_start(os.getpid()))
+            ledger.write_text(json.dumps(live) + "\n")
+            self.assertTrue(any("still alive" in p for p in evidence.check_ledger(ledger)))
 
 
 class EvidenceTest(unittest.TestCase):

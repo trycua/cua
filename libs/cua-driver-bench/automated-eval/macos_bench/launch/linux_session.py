@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import contextlib
+import math
 import os
 import secrets
 import select
@@ -68,11 +69,20 @@ def _start_group(argv, *, log, env, stdin=subprocess.DEVNULL, pass_fds=()):
         )  # fmt: skip
 
 
+def _start_ticks(pid: int):
+    try:
+        with open(f"/proc/{pid}/stat") as f:
+            return int(f.read().rsplit(")", 1)[1].split()[19])
+    except (OSError, IndexError, ValueError):
+        return None
+
+
 def _ledger(path, pid: int, role: str) -> None:
     import json
 
+    entry = {"pid": pid, "pgid": pid, "role": role, "start": _start_ticks(pid)}
     with open(path, "a") as f:
-        f.write(json.dumps({"pid": pid, "pgid": pid, "role": role}) + "\n")
+        f.write(json.dumps(entry) + "\n")
 
 
 def _group_gone(pid: int) -> bool:
@@ -233,7 +243,7 @@ def _env_float(name: str, default: float, *, positive: bool) -> float:
         v = float(raw)
     except ValueError:
         v = -1.0
-    if v < 0 or (positive and v <= 0):
+    if not math.isfinite(v) or v < 0 or (positive and v <= 0):
         print(f"invalid {name}: {raw}", file=sys.stderr)
         sys.exit(2)
     return v

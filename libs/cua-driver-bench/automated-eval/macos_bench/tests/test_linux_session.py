@@ -480,7 +480,14 @@ class LinuxSessionSupervisorTest(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertTrue((self.ev / "launch.log").read_text().startswith(first))
         self.assertGreater(len((self.ev / "pids.jsonl").read_text().splitlines()), lines)
-        for kw in ({"CDB_SESSION_GRACE": "0"}, {"CDB_SESSION_TIMEOUT": "x"}):
+        for kw in (
+            {"CDB_SESSION_GRACE": "0"},
+            {"CDB_SESSION_TIMEOUT": "x"},
+            {"CDB_SESSION_TIMEOUT": "nan"},
+            {"CDB_SESSION_TIMEOUT": "inf"},
+            {"CDB_SESSION_GRACE": "inf"},
+            {"CDB_SESSION_GRACE": "nan"},
+        ):
             code, _ = self._run("true", **kw)
             self.assertEqual(code, 2)
         done = subprocess.run(

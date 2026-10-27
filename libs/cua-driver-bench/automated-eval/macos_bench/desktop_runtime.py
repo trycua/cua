@@ -103,6 +103,25 @@ def bench_app_argv(name: str, build_dir: Path | None = None) -> list[str]:
     return [str(next(p for p in exes if p.is_file() and os.access(p, os.X_OK)))]
 
 
+# SIGTERM cancels a doctor run, but never between creating a daemon and owning it.
+_cancel: dict = {"defer": 0, "pending": None}
+
+
+def check_cancel() -> None:
+    """Raise the cancellation deferred by `deferred_cancel`, at a point where cleanup owns everything."""
+    if _cancel["pending"] is not None:
+        raise SystemExit(_cancel["pending"])
+
+
+@contextlib.contextmanager
+def deferred_cancel():
+    _cancel["defer"] += 1
+    try:
+        yield
+    finally:
+        _cancel["defer"] -= 1
+
+
 def stop_group(pid: int) -> None:
     for sig in (signal.SIGTERM, signal.SIGKILL):
         try:
@@ -111,6 +130,14 @@ def stop_group(pid: int) -> None:
             return
         if sig == signal.SIGTERM:
             time.sleep(0.3)
+
+
+def proc_start(pid: int) -> int | None:
+    """Kernel start time of a process (Linux), which tells a recycled pid from the original."""
+    try:
+        return int(Path(f"/proc/{pid}/stat").read_text("utf-8").rsplit(")", 1)[1].split()[19])
+    except (OSError, IndexError, ValueError):
+        return None
 
 
 def record_pid(pid: int, role: str) -> None:
@@ -125,7 +152,8 @@ def record_pid(pid: int, role: str) -> None:
     # An enabled ledger that cannot be written must fail the caller: the cleanup proof
     # would otherwise certify an incomplete ownership record.
     with open(path, "a", encoding="utf-8") as handle:
-        handle.write(json.dumps({"pid": pid, "pgid": pgid, "role": role}) + "\n")
+        entry = {"pid": pid, "pgid": pgid, "role": role, "start": proc_start(pid)}
+        handle.write(json.dumps(entry) + "\n")
 
 
 def record_or_reap(proc: subprocess.Popen, role: str) -> None:
@@ -182,6 +210,7 @@ def start_driver(
     try:
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
+            check_cancel()
             if proc.poll() is not None:
                 raise RuntimeError(f"driver exited ({proc.returncode}); see {state / log_name}")
             done = subprocess.run(
@@ -354,9 +383,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     def terminate(signum: int, _frame: object) -> None:
         # Only the first signal unwinds; later ones must not interrupt teardown.
         nonlocal fired
-        if not fired:
-            fired = True
-            raise SystemExit(128 + signum)
+        if fired:
+            return
+        if _cancel["defer"]:
+            _cancel["pending"] = 128 + signum
+            return
+        fired = True
+        raise SystemExit(128 + signum)
 
     # SIGTERM must unwind through the cleanup below instead of killing the process outright.
     previous = signal.signal(signal.SIGTERM, terminate)
@@ -379,7 +412,9 @@ def _doctor(args: argparse.Namespace) -> int:
         socket = args.socket or str(state / "d.sock")
         if not args.socket:
             try:
-                proc = start_driver(binary, socket, state, overlay=False, log_name="driver.log")
+                with deferred_cancel():
+                    proc = start_driver(binary, socket, state, overlay=False, log_name="driver.log")
+                check_cancel()
             except (OSError, RuntimeError, TimeoutError, subprocess.SubprocessError) as error:
                 checks.append(Check("driver-start", "fail", f"{type(error).__name__}: {error}"))
         if not checks:

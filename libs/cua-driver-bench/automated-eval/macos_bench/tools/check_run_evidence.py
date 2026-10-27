@@ -53,6 +53,19 @@ def _group_has_live_member(pgid: int) -> bool:
     return not found
 
 
+def _start_ticks(pid: int) -> int | None:
+    try:
+        return int(Path(f"/proc/{pid}/stat").read_text("utf-8").rsplit(")", 1)[1].split()[19])
+    except (OSError, IndexError, ValueError):
+        return None
+
+
+def _recycled(pid: int, start: object) -> bool:
+    """True when a live process has this pid but is not the one the ledger recorded."""
+    current = _start_ticks(pid)
+    return isinstance(start, int) and current is not None and current != start
+
+
 def _alive(pid: int, group: bool) -> bool:
     try:
         (os.killpg if group else os.kill)(pid, 0)
@@ -86,6 +99,8 @@ def check_ledger(path: Path) -> list[str]:
             problems.append(f"{path.name}:{number} malformed ledger line: {error}")
             continue
         role = entry.get("role")
+        if _recycled(pid, entry.get("start")):
+            continue  # the recorded process is gone; its pid now belongs to another one
         if _alive(pid, False):
             problems.append(f"process still alive: pid {pid} ({role})")
         elif pgid is not None and _alive(pgid, True):

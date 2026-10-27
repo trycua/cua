@@ -326,7 +326,7 @@ export interface MachinesViewMachine {
 
 /** A group of the list (`machines_view::MachinesViewGroup`). */
 export interface MachinesViewGroup {
-  /** `yours`, `old` or `team`. */
+  /** `yours`, `devices`, `old` or `team`. */
   id: string;
   title: string;
   collapsed: boolean;

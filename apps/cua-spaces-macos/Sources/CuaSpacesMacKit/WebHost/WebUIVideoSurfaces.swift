@@ -184,8 +184,10 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
         surface.view.input.showsCursorOverlay = u.interactive && surface.view.presence?.presenceView == nil
         surface.view.apply(surface.layout)
         show(surface)
-        // Keys never stay with a viewer that page UI covers or that left the screen.
-        if focusedId == surface.id, surface.view.isHidden { focus(nil) }
+        // Keys never stay with a viewer that page UI covers or that left the
+        // screen, nor with one the page made non-interactive (a modal dialog
+        // is open over it: the video keeps playing, the dialog takes the keys).
+        if focusedId == surface.id, surface.view.isHidden || !u.interactive { focus(nil) }
     }
 
     private func attach(_ u: VideoSurfaceUpdate, in webView: WKWebView) -> Surface {

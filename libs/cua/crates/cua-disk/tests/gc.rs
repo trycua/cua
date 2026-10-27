@@ -80,6 +80,8 @@ fn qemu_sandbox(l: &Layout, name: &str, backing: &Path) {
         ports: Default::default(),
         vnc_display: None,
         qmp_port: None,
+        qmp_socket: None,
+        vnc_password: None,
         pid: None,
         accel: String::new(),
         ssh: None,

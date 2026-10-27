@@ -202,6 +202,18 @@ pub struct QemuState {
     pub vnc_display: Option<u16>,
     #[serde(default)]
     pub qmp_port: Option<u16>,
+    /// Where QMP listens when not on `qmp_port`: `unix:<path>` (a unix
+    /// socket in a private directory) or `pipe:<name>` (a Windows named
+    /// pipe). Never a TCP port: the guest's user-mode network maps its
+    /// host alias (`10.0.2.2`) to the host's loopback. `None`: `qmp_port`
+    /// (a VM started by an older cua).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub qmp_socket: Option<String>,
+    /// The VNC password of the current run: the display listens on the
+    /// host's loopback, which the guest can reach, so it never opens
+    /// without one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vnc_password: Option<String>,
     #[serde(default)]
     pub pid: Option<u32>,
     #[serde(default)]
@@ -784,6 +796,8 @@ impl QemuRuntime {
                 ports: BTreeMap::new(),
                 vnc_display: None,
                 qmp_port: None,
+                qmp_socket: None,
+                vnc_password: None,
                 pid: None,
                 accel: String::new(),
                 ssh: spec_like.ssh.clone(),
@@ -1144,6 +1158,9 @@ impl QemuRuntime {
             };
             qmp_port
         };
+        // QMP and the display only for this process (see `qmp_socket`).
+        st.qmp_socket = Some(qmp_listen(&dir, &st.name));
+        st.vnc_password = st.vnc_display.map(|_| vnc_password());
         // An egress policy that blocks anything: the VM runs inside its
         // own network namespace, where the policy is enforced
         // ([`netns_script`]).
@@ -1246,6 +1263,8 @@ impl QemuRuntime {
             restrict_network: st.restrict_network,
             vnc_display: st.vnc_display,
             qmp_port,
+            qmp_listen: st.qmp_socket.clone(),
+            vnc_password: st.vnc_password.is_some(),
             serial_log: Some(dir.join("serial.log")),
             pidfile: Some(pidfile.clone()),
             daemonize: false,
@@ -1304,7 +1323,9 @@ impl QemuRuntime {
                     })?;
                     std::fs::write(dir.join(NETNS_SCRIPT), netns_script(rules))?;
                     let mut ports: Vec<u16> = st.ports.values().copied().collect();
-                    ports.push(qmp_port);
+                    if st.qmp_socket.is_none() {
+                        ports.push(qmp_port);
+                    }
                     if let Some(d) = st.vnc_display {
                         ports.push(5900 + d);
                     }
@@ -1409,7 +1430,7 @@ impl QemuRuntime {
                     ),
                 });
             }
-            match QmpClient::connect(&format!("127.0.0.1:{qmp_port}")).await {
+            match QmpClient::connect(&qmp_addr(st)?).await {
                 Ok(q) => {
                     if st.netns {
                         // QEMU is pasta's child: that is the VM's process.
@@ -1439,6 +1460,15 @@ impl QemuRuntime {
                 "qemu started but VM status is '{status}'"
             )));
         }
+        // The display opens only with its password (QEMU refuses every
+        // VNC login until one is set).
+        if let Some(pw) = &st.vnc_password {
+            q.execute(
+                "set_password",
+                Some(serde_json::json!({"protocol": "vnc", "password": pw})),
+            )
+            .await?;
+        }
         launch_guard.disarm();
         Ok(())
     }
@@ -1464,12 +1494,16 @@ impl QemuRuntime {
             vnc: st.vnc_display.map(|d| VncEndpoint {
                 host: host.clone(),
                 port: 5900 + d,
-                password: None,
+                password: st.vnc_password.clone(),
             }),
-            qmp: st.qmp_port.map(|p| HostPort {
-                host: host.clone(),
-                port: p,
-            }),
+            // A unix socket or named pipe is no host port.
+            qmp: st
+                .qmp_port
+                .filter(|_| st.qmp_socket.is_none())
+                .map(|p| HostPort {
+                    host: host.clone(),
+                    port: p,
+                }),
             serial_log: Some(self.dir(&st.name).join("serial.log")),
             bulk: st.bulk.then(|| self.dir(&st.name).join(crate::bulk::FILE)),
             ssh: match (&st.ssh, st.ports.get(&22)) {
@@ -1494,10 +1528,7 @@ impl QemuRuntime {
                 "sandbox '{name}' is not running"
             )));
         }
-        let port = st
-            .qmp_port
-            .ok_or_else(|| VmmError::other("no QMP port recorded"))?;
-        QmpClient::connect(&format!("127.0.0.1:{port}")).await
+        QmpClient::connect(&qmp_addr(&st)?).await
     }
 
     /// Restore an internal snapshot taken by [`Runtime::checkpoint`] on a
@@ -1887,10 +1918,7 @@ impl QemuRuntime {
         // While our connection is open, slirp lists the guest leg of every
         // accepted forward as `TCP[<state>] … 127.0.0.1 <host_port> … <guest_port>`;
         // it only reaches ESTABLISHED once the guest accepted.
-        let port = st
-            .qmp_port
-            .ok_or_else(|| VmmError::other("no QMP port recorded"))?;
-        let mut q = QmpClient::connect(&format!("127.0.0.1:{port}")).await?;
+        let mut q = QmpClient::connect(&qmp_addr(st)?).await?;
         // The guest leg is up within a round trip or two when the guest
         // listens; when it refuses, slirp closes the host side.
         let mut buf = [0u8; 1];
@@ -2104,6 +2132,84 @@ fn netns_rules_script(rules: &crate::egress::Rules) -> String {
             forward: DNS_FWD,
         }),
     )
+}
+
+/// Where a VM's QMP listens: its unix socket or named pipe, else (a VM
+/// an older cua started) its loopback port.
+pub(crate) fn qmp_addr(st: &QemuState) -> Result<String> {
+    qmp_addr_of(st.qmp_socket.as_deref(), st.qmp_port)
+}
+
+fn qmp_addr_of(listen: Option<&str>, port: Option<u16>) -> Result<String> {
+    match (listen, port) {
+        (Some(a), _) => Ok(a.to_string()),
+        (None, Some(port)) => Ok(format!("127.0.0.1:{port}")),
+        (None, None) => Err(VmmError::other("no QMP port recorded")),
+    }
+}
+
+/// Where VM `name`'s QMP listens: on Unix a socket with a random name in a
+/// private (0700) directory of this user, never under the VM's own
+/// directory (a warm-pool member's directory is renamed when a Space claims
+/// it, and the recorded path must stay valid); on Windows a named pipe with
+/// a random name.
+fn qmp_listen(dir: &Path, name: &str) -> String {
+    let _ = (dir, name);
+    #[cfg(unix)]
+    {
+        format!("unix:{}", qmp_socket_path().display())
+    }
+    #[cfg(not(unix))]
+    {
+        format!("pipe:cua-qmp-{}", random_token(16))
+    }
+}
+
+/// `<tmp>/cua-qmp-<uid>/<random>.sock`. The directory is created 0700; one
+/// that already exists must be ours and 0700, or the socket goes in a fresh
+/// random directory instead (another user could otherwise have made it
+/// first, in a shared `/tmp`).
+#[cfg(unix)]
+fn qmp_socket_path() -> PathBuf {
+    use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+    // SAFETY: getuid has no preconditions.
+    let uid = unsafe { libc::getuid() };
+    let ours = |p: &Path| {
+        std::fs::symlink_metadata(p)
+            .is_ok_and(|m| m.is_dir() && m.uid() == uid && m.permissions().mode() & 0o077 == 0)
+    };
+    let mut private = std::env::temp_dir().join(format!("cua-qmp-{uid}"));
+    if !private.exists() {
+        let _ = std::fs::create_dir(&private);
+        let _ = std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o700));
+    }
+    if !ours(&private) {
+        private = std::env::temp_dir().join(format!("cua-qmp-{uid}-{}", random_token(12)));
+        let _ = std::fs::create_dir(&private);
+        let _ = std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o700));
+    }
+    private.join(format!("{}.sock", random_token(16)))
+}
+
+/// `n` random lowercase hex characters, from the OS's randomness on every
+/// host (the standard library seeds its hasher keys from it).
+fn random_token(n: usize) -> String {
+    use std::hash::{BuildHasher as _, Hasher as _};
+    let mut out = String::new();
+    let mut i = 0u64;
+    while out.len() < n {
+        let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+        h.write_u64(i);
+        out.push_str(&format!("{:016x}", h.finish()));
+        i += 1;
+    }
+    out.truncate(n);
+    out
+}
+
+/// A VNC password for one run (VNC passwords are 8 characters at most).
+fn vnc_password() -> String {
+    random_token(8)
 }
 
 /// The first child of process `pid` (pasta's command).
@@ -2357,6 +2463,8 @@ impl Runtime for QemuRuntime {
             ports: BTreeMap::new(),
             vnc_display: None,
             qmp_port: None,
+            qmp_socket: None,
+            vnc_password: None,
             pid: None,
             accel: String::new(),
             ssh: None,
@@ -2781,6 +2889,8 @@ impl Runtime for QemuRuntime {
                 ports: BTreeMap::new(),
                 vnc_display: None,
                 qmp_port: None,
+                qmp_socket: None,
+                vnc_password: None,
                 pid: None,
                 snapshots: vec![],
                 paused: false,
@@ -2862,6 +2972,8 @@ impl Runtime for QemuRuntime {
             ports: BTreeMap::new(),
             vnc_display: None,
             qmp_port: None,
+            qmp_socket: None,
+            vnc_password: None,
             pid: None,
             snapshots: vec![],
             paused: false,
@@ -2918,6 +3030,8 @@ impl Runtime for QemuRuntime {
                 ports: BTreeMap::new(),
                 pid: None,
                 qmp_port: None,
+                qmp_socket: None,
+                vnc_password: None,
                 vnc_display: None,
                 snapshots: vec![],
                 paused: false,
@@ -2999,6 +3113,8 @@ impl Runtime for QemuRuntime {
             ports: BTreeMap::new(),
             pid: None,
             qmp_port: None,
+            qmp_socket: None,
+            vnc_password: None,
             vnc_display: None,
             snapshots: vec![],
             paused: false,
@@ -3845,6 +3961,41 @@ mod tests {
             .unwrap_or(0);
         assert_eq!(left, 0, "unreferenced layers should be garbage-collected");
         assert!(image.exists(), "the source image is never deleted");
+    }
+
+    #[test]
+    fn qmp_never_listens_where_the_guest_can_reach_it() {
+        assert_eq!(
+            qmp_addr_of(Some("unix:/s/vm1/qmp.sock"), Some(4444)).unwrap(),
+            "unix:/s/vm1/qmp.sock"
+        );
+        assert_eq!(qmp_addr_of(None, Some(4444)).unwrap(), "127.0.0.1:4444");
+        assert!(qmp_addr_of(None, None).is_err());
+        let a = qmp_listen(Path::new("/s/vm1"), "vm1");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let path = PathBuf::from(a.strip_prefix("unix:").unwrap());
+            assert!(
+                !path.starts_with("/s/vm1"),
+                "never under the VM's renamable folder"
+            );
+            assert!(path.as_os_str().len() < 104, "{}", path.display());
+            let dir = path.parent().unwrap();
+            let mode = std::fs::metadata(dir).unwrap().permissions().mode();
+            assert_eq!(mode & 0o077, 0, "private folder");
+            assert_ne!(
+                a,
+                qmp_listen(Path::new("/s/vm1"), "vm1"),
+                "a fresh name each run"
+            );
+        }
+        #[cfg(windows)]
+        assert!(a.starts_with("pipe:cua-qmp-"), "{a}");
+        let (p, q) = (vnc_password(), vnc_password());
+        assert_eq!(p.len(), 8);
+        assert_ne!(p, q, "a password per run");
+        assert_ne!(random_token(16), random_token(16));
     }
 
     #[test]

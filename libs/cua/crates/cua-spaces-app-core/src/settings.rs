@@ -121,7 +121,10 @@ impl Default for AppSettings {
     }
 }
 
-/// Reads settings; a missing or damaged file gives the defaults.
+/// Reads settings; a missing or damaged file gives the defaults. A damaged
+/// file (not valid settings JSON) is kept beside it as
+/// `<name>.damaged` before the shell saves the defaults over it, so a
+/// person's settings are never lost without a copy.
 ///
 /// The New UI: a file with no choice yet ([`AppSettings::new_ui`]) takes an
 /// older build's `experiments.webUi: true` as the choice and its `false`
@@ -129,16 +132,36 @@ impl Default for AppSettings {
 /// it). Until [`resolve_new_ui`] runs with the app's version, the New UI
 /// is on only by choice.
 pub fn load(path: &Path) -> AppSettings {
-    let mut s: AppSettings = std::fs::read_to_string(path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default();
+    let text = std::fs::read_to_string(path).ok();
+    let parsed = text.as_deref().map(serde_json::from_str::<AppSettings>);
+    if let Some(Err(e)) = &parsed {
+        let kept = damaged_path(path);
+        match std::fs::copy(path, &kept) {
+            Ok(_) => eprintln!(
+                "{} is damaged ({e}); using the defaults, the damaged file is kept as {}",
+                path.display(),
+                kept.display()
+            ),
+            Err(c) => eprintln!(
+                "{} is damaged ({e}); using the defaults (could not keep a copy: {c})",
+                path.display()
+            ),
+        }
+    }
+    let mut s: AppSettings = parsed.and_then(Result::ok).unwrap_or_default();
     migrate_defaults(path, &mut s);
     if s.new_ui.is_none() && s.experiments.web_ui {
         s.new_ui = Some(true);
     }
     s.experiments.web_ui = s.new_ui == Some(true);
     s
+}
+
+/// Where a damaged settings file is kept (`settings.json.damaged`).
+pub fn damaged_path(path: &Path) -> std::path::PathBuf {
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(".damaged");
+    path.with_file_name(name)
 }
 
 /// The migration marker next to the settings file. The shells round-trip
@@ -1183,6 +1206,24 @@ mod tests {
                 .iter()
                 .all(|s| s.id != "runtimes")
         );
+    }
+
+    #[test]
+    fn a_damaged_settings_file_gives_the_defaults_and_is_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, "{\"updateChannel\": \"beta\", \"theme\": ").unwrap();
+        let s = load(&path);
+        assert_eq!(s, load(&dir.path().join("missing.json")), "the defaults");
+        assert_eq!(
+            std::fs::read_to_string(damaged_path(&path)).unwrap(),
+            "{\"updateChannel\": \"beta\", \"theme\": "
+        );
+        // A valid file is read as is and leaves no copy.
+        let ok = dir.path().join("ok.json");
+        std::fs::write(&ok, "{}").unwrap();
+        load(&ok);
+        assert!(!damaged_path(&ok).exists());
     }
 
     #[test]

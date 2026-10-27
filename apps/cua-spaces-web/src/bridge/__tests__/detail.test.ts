@@ -10,7 +10,7 @@ import type { TelemetryView } from "../contracts/host";
 import { sanitizeSignals } from "../ops/telemetry";
 import { TelemetryForwarder, telemetryAllowed } from "../telemetry";
 import { toMachineRows } from "../adapters/webkit";
-import { machineIdOf, rowsToSpaces, toMachines } from "../derive";
+import { machineIdOf, machinesView, rowsToSpaces, toMachines } from "../derive";
 import { agentRunLines, desktopCover, PIP_CHANGED_EVENT, SpaceDetailStore, spaceDetail } from "../space-detail";
 import type { CoreClient } from "../core";
 import { parseDropped, sendFiles, splitDrop } from "../space-files";
@@ -309,5 +309,34 @@ describe("the Machines page's rows from the host (machines.pageRows)", () => {
       ["Not sharing", "No Spaces"],
       ["Offline", ""],
     ]);
+  });
+});
+
+describe("the Machines rows listed here for an older host (machinesView)", () => {
+  const desktop = (id: string, over: object = {}) =>
+    ({ id: `relay:${id}`, name: id, os: "macos", status: "running", provider: "relay", sdk: { features: ["desktop_stream"], reachable: true }, ...over }) as never;
+  const hosted = (id: string, n: number) => ({ id: `relay:${id}/space-${n}`, name: `s${n}`, status: "running", provider: "relay", host: id }) as never;
+  const machine = (id: string, over: object = {}) => ({ id, name: id, os: "macos", via: "relay", connection: "relay", online: true, current: false, spaceIds: [], limits: [], ...over }) as never;
+
+  /** The rows the core is asked to draw. */
+  function rowsFor(machines: never[], spaces: never[]) {
+    let rows: { id: string; spacesLabel: string }[] = [];
+    const core = {
+      tryCall: (op: string, args: { input: { rows: typeof rows } }) => {
+        if (op !== "machines.view") return null;
+        rows = args.input.rows;
+        return {};
+      },
+    } as unknown as CoreClient;
+    machinesView(core, { hostView: null, machines, spaces, host: null });
+    return Object.fromEntries(rows.map((r) => [r.id, r.spacesLabel]));
+  }
+
+  it("says a shared desktop, a desktop with Spaces, Spaces only, and a machine that stopped sharing", () => {
+    const labels = rowsFor(
+      [machine("solo"), machine("both"), machine("box"), machine("stopped", { notSharing: "stopped sharing" })],
+      [desktop("solo"), desktop("both"), hosted("both", 1), hosted("box", 1), hosted("box", 2), desktop("stopped", { sdk: { features: [], reachable: false, error: "stopped sharing" } })],
+    );
+    expect(labels).toEqual({ solo: "Desktop shared", both: "Desktop · 1 Space", box: "2 Spaces", stopped: "No Spaces" });
   });
 });

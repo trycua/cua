@@ -70,6 +70,14 @@ describe("machines", () => {
     expect(spacesLabel(machine({}), 1)).toBe("1 Space");
   });
 
+  it("counts a shared desktop in the words (machines::desktop_spaces_label)", () => {
+    expect(spacesLabel(machine({}), 0, true)).toBe("Desktop shared");
+    expect(spacesLabel(machine({}), 2, true)).toBe("Desktop · 2 Spaces");
+    // A label the core sent still wins.
+    expect(spacesLabel(machine({ spacesLabel: "No Spaces" }), 0, true)).toBe("No Spaces");
+    expect(spacesLabel(machine({ device: true, spacesLabel: "" }), 0, true)).toBe("");
+  });
+
   it("counts Spaces and keeps a valid selection", () => {
     expect([0, 1, 3].map(spaceCount)).toEqual(["No Spaces", "1 Space", "3 Spaces"]);
     const list = [machine({ id: "a" }), machine({ id: "b" })];

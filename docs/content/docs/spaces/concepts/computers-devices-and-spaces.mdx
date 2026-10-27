@@ -1,0 +1,33 @@
+---
+title: Computers, devices and Spaces
+description: 'The difference between a signed-in device, a machine, its shared desktop and a sandbox Space, and why one computer can show up twice.'
+---
+
+One computer can be both a device you connect from and a machine that runs
+Spaces. These names describe different roles:
+
+| Name | What it is | Where you see or use it |
+| --- | --- | --- |
+| Signed-in device | A computer enrolled to reach your account's machines, once, with a second factor. Signing in does not make it a host. | **Settings > Devices** or `cua devices ls`, with an id such as `dev_…`. |
+| Machine | A computer set up with **Add a computer** or `cua host setup` to share its desktop, provide Spaces, or both. | The **Computers** page. When **Provide Spaces** is on, `--on host:<machine-id>` creates new Spaces on it. |
+| The machine's shared desktop | The computer's own screen, input, shell and files as a Space, while **Share this desktop** is on. It is not a sandbox. | `relay:<machine-id>` for a computer set up on the relay. A direct host (set up with `--direct`, no relay record) is its own `direct:<host:port>` Space, added with `cua spaces add <host:port> --host`. For a relay computer, its row on **Computers** says **Desktop shared**, or **Desktop · 2 Spaces** when it also runs Spaces; the desktop is not counted among them. |
+| Sandbox Space | A container, VM or microVM created for work, on this computer or on a machine that provides Spaces. See [Space kinds](/spaces/concepts/space-kinds). | `local:<name>` on this computer. On a relay machine that provides Spaces it has its own `relay:` id, with `host` naming the computer that runs it. On a direct host (set up with `--direct`, no relay) it has a `direct:<host:port>` id, whether created on that host or added by address. |
+
+**Share this desktop** and **Provide Spaces** are separate settings. Hosting
+alone never enrolls a computer as a device: a computer that only hosts joins
+with its own token and can't reach your other computers.
+
+## Why one computer can show up twice
+
+A computer set up with `cua host setup` on the relay has a machine record. (A direct host, set up with `--direct` and no relay, has no relay record and is listed from your laptop's own host list.) Signing in on
+that computer, in the app or with `cua auth login`, also gives it a device
+record. The relay keeps the two apart and doesn't link them: they are one
+computer in two roles, not two computers.
+
+The **Computers** page joins them into one row when it can match them safely,
+for example by the same id or matching names. If the match is unclear, such as
+two Macs with the same name, they stay as separate rows. A row that is only a
+device is not a host, so **Run on** in **New Space** never offers it.
+
+See [Add a computer](/spaces/guides/add-a-computer) for the two settings and
+[How Spaces works](/spaces/concepts/how-spaces-works#space-ids) for Space ids.

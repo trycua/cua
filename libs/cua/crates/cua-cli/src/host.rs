@@ -1666,7 +1666,7 @@ fn render(s: &HostStatus, out: &mut dyn Write) {
     line(
         out,
         format!(
-            "  service: {} {}{}",
+            "  runner: {} {}{}",
             s.service.kind,
             if s.service.running {
                 "running"
@@ -1682,6 +1682,9 @@ fn render(s: &HostStatus, out: &mut dyn Write) {
             }
         ),
     );
+    if s.service.kind == "process" {
+        hint_line(out, cua_host::service::PROCESS_RUNNER_NOTE);
+    }
     if s.service.kind == "app-helper" && s.legacy_service {
         hint_line(
             out,
@@ -1967,6 +1970,7 @@ pub async fn run_host(
             opts.allow = allow;
             opts.driver_bin = driver_bin;
             opts.runner = RunnerKind::parse(&runner).map_err(host_err)?;
+            let requested_runner = opts.runner;
             opts = opts.profile(
                 cua_host::HostProfile::parse(profile.as_deref().unwrap_or("desktop"))
                     .map_err(host_err)?,
@@ -2011,7 +2015,10 @@ pub async fn run_host(
                 };
                 let state = crate::onboard::HostState::read(&host).await;
                 if state.is_up(&want) || state.is_down(&want) {
-                    return setup_unchanged(&host, state, &want, pair.is_some(), json, out).await;
+                    let code =
+                        setup_unchanged(&host, state, &want, pair.is_some(), json, out).await?;
+                    warn_setup_runner(&host, requested_runner, json, out, &mut std::io::stderr())?;
+                    return Ok(code);
                 }
             }
             // A pairing code stands in for the account: nothing to sign in.
@@ -2038,6 +2045,7 @@ pub async fn run_host(
                     host_error(e, message)
                 })?;
             emit(&s, json, out)?;
+            warn_setup_runner(&host, requested_runner, json, out, &mut std::io::stderr())?;
             if s.provide_spaces && !json {
                 line(
                     out,
@@ -2291,6 +2299,28 @@ pub async fn run_host(
         }
     }
     Ok(0)
+}
+
+/// Warns after `cua host setup --runner auto` fell back to a plain process:
+/// to `out`, or to `err` with `--json` so stdout stays JSON. Reads the
+/// stored runner (the resolved name), not the live service kind.
+fn warn_setup_runner(
+    host: &Host,
+    requested: RunnerKind,
+    json: bool,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> Result<(), CuaError> {
+    if requested != RunnerKind::Auto {
+        return Ok(());
+    }
+    let Some(config) = host.config().map_err(host_err)? else {
+        return Ok(());
+    };
+    if let Some(text) = cua_host::service::auto_fallback_warning(requested, &config.runner) {
+        hint_line(if json { err } else { out }, text);
+    }
+    Ok(())
 }
 
 /// `cua host setup` on a machine that already is the host asked for: says
@@ -4395,6 +4425,182 @@ mod tests {
         assert!(text.contains("direct http://127.0.0.1:3299"), "{text}");
     }
 
+    /// Runs `cua host <args>` against the fake manager; returns stdout.
+    async fn run_fake(home: &Path, manager: &Arc<FakeServiceManager>, args: &[&str]) -> String {
+        let mut out = Vec::new();
+        run_host(
+            parse(args),
+            home,
+            &StaticToken("acct".into()),
+            None,
+            Some(manager.clone()),
+            false,
+            &mut out,
+        )
+        .await
+        .unwrap();
+        String::from_utf8(out).unwrap()
+    }
+
+    fn direct_args<'a>(driver: &'a str, extra: &[&'a str]) -> Vec<&'a str> {
+        let mut v = vec![
+            "setup",
+            "--direct",
+            "127.0.0.1:3299",
+            "--driver-bin",
+            driver,
+        ];
+        v.extend_from_slice(extra);
+        v
+    }
+
+    #[tokio::test]
+    async fn auto_setup_that_falls_back_to_a_process_warns() {
+        let dir = tempfile::tempdir().unwrap();
+        let driver = dir.path().join("drv");
+        std::fs::write(&driver, b"x").unwrap();
+        let manager = Arc::new(FakeServiceManager::default());
+        let text = run_fake(
+            &dir.path().join(".cua"),
+            &manager,
+            &direct_args(driver.to_str().unwrap(), &[]),
+        )
+        .await;
+        assert_eq!(
+            text.matches("will not come back after a reboot").count(),
+            1,
+            "{text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn explicit_process_runner_setup_does_not_warn() {
+        let dir = tempfile::tempdir().unwrap();
+        let driver = dir.path().join("drv");
+        std::fs::write(&driver, b"x").unwrap();
+        let manager = Arc::new(FakeServiceManager::default());
+        let text = run_fake(
+            &dir.path().join(".cua"),
+            &manager,
+            &direct_args(driver.to_str().unwrap(), &["--runner", "process"]),
+        )
+        .await;
+        assert!(!text.contains("will not come back"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn setup_runner_warning_goes_to_stderr_with_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join(".cua");
+        let driver = dir.path().join("drv");
+        std::fs::write(&driver, b"x").unwrap();
+        let manager = Arc::new(FakeServiceManager::default());
+        let mut out = Vec::new();
+        run_host(
+            parse(&direct_args(
+                driver.to_str().unwrap(),
+                &["--runner", "process"],
+            )),
+            &home,
+            &StaticToken("acct".into()),
+            None,
+            Some(manager.clone()),
+            true,
+            &mut out,
+        )
+        .await
+        .unwrap();
+        let host = Host::new(&home).with_service_manager(manager.clone());
+        for json in [true, false] {
+            let (mut o, mut e) = (Vec::new(), Vec::new());
+            warn_setup_runner(&host, RunnerKind::Auto, json, &mut o, &mut e).unwrap();
+            let (o, e) = (String::from_utf8(o).unwrap(), String::from_utf8(e).unwrap());
+            let (warned, quiet) = if json { (e, o) } else { (o, e) };
+            assert!(warned.contains("will not come back"), "{warned}");
+            assert!(quiet.is_empty(), "{quiet}");
+        }
+        // A full --json auto setup keeps stdout as JSON.
+        let dir2 = tempfile::tempdir().unwrap();
+        let mut out = Vec::new();
+        run_host(
+            parse(&direct_args(driver.to_str().unwrap(), &[])),
+            &dir2.path().join(".cua"),
+            &StaticToken("acct".into()),
+            None,
+            Some(Arc::new(FakeServiceManager::default())),
+            true,
+            &mut out,
+        )
+        .await
+        .unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(!text.contains("warning:"), "{text}");
+        serde_json::from_str::<serde_json::Value>(text.trim()).unwrap();
+    }
+
+    #[tokio::test]
+    async fn auto_setup_rerun_on_a_process_host_warns() {
+        let relay = FakeRelay::start().await;
+        relay.add_account("acct", "user-1", Some("ada@example.com"));
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join(".cua");
+        let driver = dir.path().join("drv");
+        std::fs::write(&driver, b"x").unwrap();
+        let manager = Arc::new(FakeServiceManager::default());
+        let setup = ["setup", "--relay", relay.url.as_str(), "--name", "lab-box"];
+        let first = run_fake(
+            &home,
+            &manager,
+            &[&setup[..], &["--driver-bin", driver.to_str().unwrap()]].concat(),
+        )
+        .await;
+        assert_eq!(first.matches("will not come back").count(), 1, "{first}");
+        let again = run_fake(&home, &manager, &setup).await;
+        assert_eq!(again.matches("will not come back").count(), 1, "{again}");
+        manager.stop().unwrap();
+        let restarted = run_fake(&home, &manager, &setup).await;
+        assert!(
+            restarted.contains("Started the host service again"),
+            "{restarted}"
+        );
+        assert_eq!(
+            restarted.matches("will not come back").count(),
+            1,
+            "{restarted}"
+        );
+    }
+
+    #[test]
+    fn status_names_the_runner_and_notes_a_process_runner() {
+        let text = |kind: &str, running: bool, detail: &str| {
+            let s = HostStatus {
+                configured: true,
+                mode: Some("relay".into()),
+                service: cua_host::ServiceState {
+                    installed: true,
+                    running,
+                    kind: kind.into(),
+                    detail: detail.into(),
+                },
+                ..Default::default()
+            };
+            let mut out = Vec::new();
+            render(&s, &mut out);
+            String::from_utf8(out).unwrap()
+        };
+        let p = text("process", true, "pid 42");
+        assert!(p.contains("\n  runner: process running (pid 42)\n"), "{p}");
+        assert!(
+            p.contains("does not start the host again after a reboot"),
+            "{p}"
+        );
+        let s = text("systemd", false, "");
+        assert!(
+            s.contains("  runner: systemd installed, not running"),
+            "{s}"
+        );
+        assert!(!s.contains("does not start the host again"), "{s}");
+    }
     #[test]
     fn relay_and_direct_conflict() {
         #[derive(clap::Parser)]

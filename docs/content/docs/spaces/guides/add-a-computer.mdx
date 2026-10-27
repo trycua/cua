@@ -88,7 +88,7 @@ and rotates the token.
 | `--relay URL` | Use a different relay (`CUA_RELAY_URL`). The default is `https://relay.cua.ai`. |
 | `--name NAME` | Display name (default: host name). |
 | `--allow ACCOUNT` | Also allow this account (id or email). Repeatable. |
-| `--runner KIND` | `auto`, `systemd`, `launchd`, `windows-task` or `process`. |
+| `--runner KIND` | `auto`, `systemd`, `launchd`, `windows-task` or `process`. On Linux, `auto` uses systemd when it is running, otherwise `process`. |
 | `--profile spare` | A spare computer: do not share its desktop, create Spaces for your devices (`--no-desktop --provide-spaces`). See [Use a spare Mac to host Spaces](#use-a-spare-mac-to-host-spaces). |
 | `--no-desktop` / `--provide-spaces` | Each of the two settings on its own. `cua host config` changes them later. |
 | `--no-provide-spaces` | Share this desktop only. A computer set up for the first time provides Spaces to your devices by default; a computer set up before keeps its setting. |
@@ -99,7 +99,9 @@ and rotates the token.
 |---|---|---|
 | macOS | LaunchAgent `com.trycua.spacesd.host` in your GUI session | Grant cua-spacesd **Screen Recording** and **Accessibility** in System Settings, and [Cua Driver](/cua-driver/quickstart) its own permissions. Setup can't do it for you. |
 | Windows | Scheduled task `Cua\SpacesdHost` at logon, in your interactive session | Stay signed in and unlocked. After a restart, sign in once. |
-| Linux | systemd unit `cua-spacesd-host.service` (user unit; system unit as root) | Nothing more. |
+| Linux | systemd unit `cua-spacesd-host.service` (user unit; system unit as root). Without systemd (a container, or WSL without systemd): a plain process, and setup warns about it. | With systemd, nothing more. A plain process does not come back after a reboot or a crash: turn on systemd and run `cua host setup --runner systemd` again with the same options, or run `cua host start` after each boot. |
+
+`cua host status` shows the runner in use.
 
 On Windows the host runs in your signed-in session, so your devices reach the
 desktop only while it is signed in, unlocked and on screen:

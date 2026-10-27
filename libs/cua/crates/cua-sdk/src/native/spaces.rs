@@ -1223,6 +1223,23 @@ pub struct SpaceWriteReport {
     pub sha256: String,
 }
 
+/// A child Space whose parent is gone or out of reach ([`Spaces::orphans`]).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SpaceOrphan {
+    /// The child.
+    pub space: String,
+    /// Its parent's id.
+    pub parent: String,
+    /// `ending` (its parent is provably gone: it ends after the grace) or
+    /// `listed` (not this machine's to judge: it stays until deleted or its
+    /// own lifetime ends).
+    pub state: String,
+    /// Why.
+    pub why: String,
+    /// Seconds until it ends (`ending` only).
+    pub ends_in_secs: i64,
+}
+
 /// Result of [`Space::upload`] / [`Space::download`].
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, Deserialize)]
 pub struct SpaceTransferReport {
@@ -4016,6 +4033,39 @@ impl Spaces {
                 }
             }
             Ok(())
+        })
+        .await
+    }
+
+    /// Child Spaces whose parent is gone or out of reach. The cua daemon
+    /// ends a child only on proof its parent is gone (after a grace period);
+    /// the rest are listed here and never ended by it.
+    pub async fn orphans(&self) -> Result<Vec<SpaceOrphan>> {
+        let host = self.host.clone();
+        run(async move {
+            match &host {
+                Host::Embedded(_) => Err(CuaError::Unsupported(
+                    "orphaned children are judged by the cua daemon; start it with `cua daemon \
+                     start`"
+                        .into(),
+                )),
+                Host::Daemon(d) => Ok(d
+                    .spaces()
+                    .list_orphans(dpb::ListOrphansRequest {})
+                    .await
+                    .map_err(daemon_err)?
+                    .into_inner()
+                    .orphans
+                    .into_iter()
+                    .map(|o| SpaceOrphan {
+                        space: o.space,
+                        parent: o.parent,
+                        state: o.state,
+                        why: o.why,
+                        ends_in_secs: o.ends_in_secs,
+                    })
+                    .collect()),
+            }
         })
         .await
     }

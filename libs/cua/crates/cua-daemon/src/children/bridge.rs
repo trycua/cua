@@ -25,6 +25,82 @@ const RETRY: Duration = Duration::from_secs(5);
 /// cua-spacesd).
 const NO_FEATURE_RETRY: Duration = Duration::from_secs(60);
 
+/// How often orphaned children are judged.
+const REAP_EVERY: Duration = Duration::from_secs(60);
+
+/// What the reaper sees of this machine's registry, or `None` when it can
+/// not be read (then nothing is decided).
+pub(crate) fn seen(shared: &Shared) -> Option<Vec<super::reaper::Seen>> {
+    let spaces = shared.runtime.spaces();
+    let records = spaces.registry().list().ok()?;
+    let meta = spaces.registry().all_meta();
+    Some(
+        records
+            .into_iter()
+            .map(|r| {
+                let m = meta.get(&r.id);
+                super::reaper::Seen {
+                    parent: m.and_then(|m| m.labels.get(super::api::LABEL_PARENT).cloned()),
+                    created_at: m.map(|m| m.created_at_unix).unwrap_or(0),
+                    id: r.id,
+                }
+            })
+            .collect(),
+    )
+}
+
+/// Judges the children of this machine and ends the ones whose parent is
+/// provably gone for the grace period (each with everything below it).
+pub(crate) fn reap(shared: &Arc<Shared>) {
+    use super::reaper::{Memory, Verdict, judge};
+    let Some(seen) = seen(shared) else {
+        return;
+    };
+    let home = shared.runtime.spaces().home_dir().to_path_buf();
+    let mut memory = Memory::load(&home);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let verdicts = judge(&seen, &mut memory, now);
+    if let Err(e) = memory.save(&home) {
+        tracing::warn!(error = %e, "could not save the orphan records");
+    }
+    let links = super::api::links_of(shared.runtime.spaces());
+    for (id, verdict) in verdicts {
+        let Verdict::End { why } = verdict else {
+            continue;
+        };
+        let mut order = super::tree::subtree(&links, &id);
+        order.push(id.clone());
+        tracing::warn!(space = %id, below = order.len() - 1, %why, "ending an orphaned child Space");
+        let shared = shared.clone();
+        tokio::spawn(async move {
+            use cua_proto::daemon::v1::space_service_server::SpaceService as _;
+            for victim in order {
+                let owner = crate::server::Svc(shared.clone());
+                let r = owner
+                    .delete_space(tonic::Request::new(
+                        cua_proto::daemon::v1::DeleteSpaceRequest {
+                            space: victim.clone(),
+                        },
+                    ))
+                    .await;
+                if let Some(a) = shared.spawn_authority() {
+                    a.revoke(&victim);
+                }
+                match r {
+                    Ok(_) => tracing::info!(space = %victim, "orphaned child Space ended"),
+                    Err(e) if e.code() == tonic::Code::NotFound => {}
+                    Err(e) => {
+                        tracing::warn!(space = %victim, error = %e, "could not end an orphaned child Space")
+                    }
+                }
+            }
+        });
+    }
+}
+
 /// Only Spaces this machine runs itself hold a channel to it.
 fn runs_here(id: &str) -> bool {
     id.starts_with("local:")
@@ -37,8 +113,13 @@ pub(crate) fn spawn(shared: Arc<Shared>, mut shutdown: watch::Receiver<bool>) ->
             return;
         }
         let mut bridges: BTreeMap<String, JoinHandle<()>> = BTreeMap::new();
+        let mut last_reap = std::time::Instant::now() - REAP_EVERY;
         loop {
             reconcile(&shared, &mut bridges);
+            if last_reap.elapsed() >= REAP_EVERY {
+                last_reap = std::time::Instant::now();
+                reap(&shared);
+            }
             tokio::select! {
                 _ = shutdown.changed() => break,
                 _ = cua_spaces::children::CHANGED.notified() => {}

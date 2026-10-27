@@ -625,6 +625,10 @@ impl SpaceService for Scoped {
         ))
     }
 
+    async fn list_orphans(&self, _: Request<pb::ListOrphansRequest>) -> R<pb::ListOrphansResponse> {
+        deny()
+    }
+
     async fn set_space_children(
         &self,
         req: Request<pb::SetSpaceChildrenRequest>,

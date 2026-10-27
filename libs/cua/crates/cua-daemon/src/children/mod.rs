@@ -16,6 +16,7 @@
 pub mod api;
 pub mod bridge;
 pub mod capability;
+pub mod reaper;
 #[cfg(test)]
 mod tests;
 pub mod tree;
@@ -68,6 +69,47 @@ impl Children {
             authority: capability::Authority::open(home)?,
         })
     }
+}
+
+/// The orphans of this machine as the reaper judges them now (without
+/// changing what it remembers).
+pub(crate) fn orphans(shared: &Shared) -> Vec<cua_proto::daemon::v1::Orphan> {
+    use reaper::Verdict;
+    let Some(seen) = bridge::seen(shared) else {
+        return Vec::new();
+    };
+    let mut memory = reaper::Memory::load(shared.runtime.spaces().home_dir());
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let parents: std::collections::BTreeMap<String, String> = seen
+        .iter()
+        .filter_map(|s| Some((s.id.clone(), s.parent.clone()?)))
+        .collect();
+    reaper::judge(&seen, &mut memory, now)
+        .into_iter()
+        .filter_map(|(space, v)| {
+            let parent = parents.get(&space).cloned().unwrap_or_default();
+            let (state, why, ends_in_secs) = match v {
+                Verdict::Keep => return None,
+                Verdict::Waiting { left } => (
+                    "ending",
+                    format!("its parent {parent} is gone; it ends after the grace period"),
+                    i64::try_from(left).unwrap_or(i64::MAX),
+                ),
+                Verdict::End { why } => ("ending", why, 0),
+                Verdict::Orphan { why } => ("listed", why, 0),
+            };
+            Some(cua_proto::daemon::v1::Orphan {
+                space,
+                parent,
+                state: state.into(),
+                why,
+                ends_in_secs,
+            })
+        })
+        .collect()
 }
 
 impl Shared {

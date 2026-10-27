@@ -55,6 +55,7 @@ without touching it.
 | [`SetSpaceLifetime`](#spaceservicesetspacelifetime) | [`SetSpaceLifetimeRequest`](#setspacelifetimerequest) | [`SetSpaceLifetimeResponse`](#setspacelifetimeresponse) | unary |
 | [`SetSpaceEgress`](#spaceservicesetspaceegress) | [`SetSpaceEgressRequest`](/cua-sdk/reference/protocol/daemon-egress#setspaceegressrequest) | [`SetSpaceEgressResponse`](/cua-sdk/reference/protocol/daemon-egress#setspaceegressresponse) | unary |
 | [`SetSpaceChildren`](#spaceservicesetspacechildren) | [`SetSpaceChildrenRequest`](#setspacechildrenrequest) | [`SetSpaceChildrenResponse`](#setspacechildrenresponse) | unary |
+| [`ListOrphans`](#spaceservicelistorphans) | [`ListOrphansRequest`](#listorphansrequest) | [`ListOrphansResponse`](#listorphansresponse) | unary |
 | [`ConnectSpace`](#spaceserviceconnectspace) | [`ConnectSpaceRequest`](#connectspacerequest) | [`ConnectSpaceResponse`](#connectspaceresponse) | unary |
 | [`ListSpaceTools`](#spaceservicelistspacetools) | [`ListSpaceToolsRequest`](#listspacetoolsrequest) | [`ListSpaceToolsResponse`](#listspacetoolsresponse) | unary |
 | [`CallSpaceTool`](#spaceservicecallspacetool) | [`CallSpaceToolRequest`](#callspacetoolrequest) | [`CallSpaceToolResponse`](#callspacetoolresponse) | unary |
@@ -247,6 +248,14 @@ Replaces a Space's egress policy (empty removes it).
 Lets a Space make child Spaces of its own, or stops it. Turning it off
 ends the Space's spawn capability at once; children it already made
 keep running until they are deleted or their lifetime ends.
+
+### SpaceService.ListOrphans
+
+`/cua.daemon.v1.SpaceService/ListOrphans`, unary: [`ListOrphansRequest`](#listorphansrequest) to [`ListOrphansResponse`](#listorphansresponse).
+
+Child Spaces whose parent is gone, or not this machine's to judge: the
+ones it ends after a grace period (only on proof the parent is gone)
+and the ones it only lists.
 
 ### SpaceService.ConnectSpace
 
@@ -1081,6 +1090,32 @@ Response for `SpaceService.GetGpuSupport`.
 | Field | # | Type | Description |
 | --- | --- | --- | --- |
 | `runtimes` | 1 | repeated [`GpuSupport`](#gpusupport) | One entry per runtime of the location. |
+
+### ListOrphansRequest
+
+Request for `SpaceService.ListOrphans`.
+
+No fields.
+
+### Orphan
+
+A child Space whose parent is gone or out of reach.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `space` | 1 | `string` | The child. |
+| `parent` | 2 | `string` | Its parent's id. |
+| `state` | 3 | `string` | "ending": its parent is provably gone and it ends after the grace; "listed": its parent is not this machine's to judge, so it stays until deleted or its own lifetime ends. |
+| `why` | 4 | `string` | Why, in words. |
+| `ends_in_secs` | 5 | `int64` | Seconds until it ends ("ending" only). |
+
+### ListOrphansResponse
+
+Response for `SpaceService.ListOrphans`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `orphans` | 1 | repeated [`Orphan`](#orphan) | By child id. |
 
 ## Types in `cua/daemon/v1/daemon.proto`
 

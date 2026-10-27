@@ -813,6 +813,15 @@ pub(crate) mod imp {
             ok(pb::SetSpaceEgressResponse {})
         }
 
+        async fn list_orphans(
+            &self,
+            _: tonic::Request<pb::ListOrphansRequest>,
+        ) -> R<pb::ListOrphansResponse> {
+            ok(pb::ListOrphansResponse {
+                orphans: crate::children::orphans(&self.0),
+            })
+        }
+
         async fn set_space_children(
             &self,
             req: tonic::Request<pb::SetSpaceChildrenRequest>,
@@ -1343,6 +1352,12 @@ mod imp {
             &self,
             _: tonic::Request<pb::SetSpaceChildrenRequest>,
         ) -> R<pb::SetSpaceChildrenResponse> {
+            off()
+        }
+        async fn list_orphans(
+            &self,
+            _: tonic::Request<pb::ListOrphansRequest>,
+        ) -> R<pb::ListOrphansResponse> {
             off()
         }
 

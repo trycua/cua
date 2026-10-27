@@ -25,7 +25,10 @@ Returned by [`Cua.agent_setup`](/cua-sdk/reference/cua#cua).
 | [`configure_mcp`](#agentsetupconfigure_mcp) | Configures the MCP server (default: `cua mcp`, `cua` resolved on PATH; `cua-local mcp` named `cua-local` for the Local app) for `agents`. |
 | [`connect_json`](#agentsetupconnect_json) | Connect (and Reconnect) for `agents`: Cua's skills and MCP entry (`server`, default this channel's cua), and with `sign_in` the agent's sign-in copied into Keyvault on This Mac (Claude Code waits for its one browser approval). |
 | [`connection_status_json`](#agentsetupconnection_status_json) | Whether each agent is really connected (CONTRACT §4: `{agents, checked_at_ms}`), as JSON, the same JSON `cua connect status --json` prints and the `connect_status` MCP tool answers. |
+| [`device_sign_in_start_json`](#agentsetupdevice_sign_in_start_json) | Starts `agent`'s device-code sign-in made for Cua (Codex: `codex login --device-auth` in a folder Cua owns). |
+| [`device_sign_in_wait_json`](#agentsetupdevice_sign_in_wait_json) | Waits for a device sign-in to be approved and saves it into Keyvault on This Mac. |
 | [`disconnect_json`](#agentsetupdisconnect_json) | Disconnect: what Connect did, undone (the previous config entry back from Cua's record, the skills, and with `sign_in` the copy in Keyvault). |
+| [`disconnect_parts_json`](#agentsetupdisconnect_parts_json) | Disconnect of some parts only (an app's page's switches): Cua's skills and/or its MCP entry, and with `sign_in` the copy in Keyvault. |
 | [`install_skills`](#agentsetupinstall_skills) | Installs `skills` (empty: all bundled) for `agents`. |
 | [`remove`](#agentsetupremove) | Removes what cua added for `agents` (skills and/or MCP). |
 | [`select`](#agentsetupselect) | Resolves `all` (installed agents), `none` or `claude,codex` to ids. |
@@ -202,6 +205,107 @@ pub fn connection_status_json(&self, expected: Option<AgentMcpServer>, refresh: 
 
 **Returns** `String`
 
+### `AgentSetup.device_sign_in_start_json`
+
+Starts `agent`'s device-code sign-in made for Cua (Codex: `codex login
+--device-auth` in a folder Cua owns). JSON `&#123;id, url, code&#125;`: show the
+link and the code, then wait with `Self.device_sign_in_wait_json`.
+
+<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Python">
+
+```python
+async def device_sign_in_start_json(self, agent: str) -> str
+```
+
+</Tab>
+<Tab value="TypeScript">
+
+```ts
+deviceSignInStartJson(agent: string, asyncOpts_?: { signal: AbortSignal }): Promise<string>
+```
+
+</Tab>
+<Tab value="Swift">
+
+```swift
+func deviceSignInStartJson(agent: String) async throws -> String
+```
+
+</Tab>
+<Tab value="Kotlin">
+
+```kotlin
+@Throws(CuaException::class)
+suspend fun deviceSignInStartJson(agent: String): String
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub async fn device_sign_in_start_json(&self, agent: String) -> Result<String, CuaError>
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `agent` | `String` | required |
+
+**Returns** `String` · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
+
+### `AgentSetup.device_sign_in_wait_json`
+
+Waits for a device sign-in to be approved and saves it into Keyvault on
+This Mac. JSON: `{imported, refused, line}` (as Connect's `sign_in`).
+
+<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Python">
+
+```python
+async def device_sign_in_wait_json(self, id: str) -> str
+```
+
+</Tab>
+<Tab value="TypeScript">
+
+```ts
+deviceSignInWaitJson(id: string, asyncOpts_?: { signal: AbortSignal }): Promise<string>
+```
+
+</Tab>
+<Tab value="Swift">
+
+```swift
+func deviceSignInWaitJson(id: String) async throws -> String
+```
+
+</Tab>
+<Tab value="Kotlin">
+
+```kotlin
+@Throws(CuaException::class)
+suspend fun deviceSignInWaitJson(id: String): String
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub async fn device_sign_in_wait_json(&self, id: String) -> Result<String, CuaError>
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `id` | `String` | required |
+
+**Returns** `String` · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
+
 ### `AgentSetup.disconnect_json`
 
 Disconnect: what Connect did, undone (the previous config entry back
@@ -250,6 +354,60 @@ pub async fn disconnect_json(&self, agents: Vec<String>, sign_in: bool) -> Resul
 | Parameter | Type | Default |
 | --- | --- | --- |
 | `agents` | `Vec<String>` | required |
+| `sign_in` | `bool` | required |
+
+**Returns** `String` · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
+
+### `AgentSetup.disconnect_parts_json`
+
+Disconnect of some parts only (an app's page's switches): Cua's skills
+and/or its MCP entry, and with `sign_in` the copy in Keyvault. JSON
+`{outcomes, removed_sign_ins}`.
+
+<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Python">
+
+```python
+async def disconnect_parts_json(self, agents: List[str], skills: bool, mcp: bool, sign_in: bool) -> str
+```
+
+</Tab>
+<Tab value="TypeScript">
+
+```ts
+disconnectPartsJson(agents: Array<string>, skills: boolean, mcp: boolean, signIn: boolean, asyncOpts_?: { signal: AbortSignal }): Promise<string>
+```
+
+</Tab>
+<Tab value="Swift">
+
+```swift
+func disconnectPartsJson(agents: [String], skills: Bool, mcp: Bool, signIn: Bool) async throws -> String
+```
+
+</Tab>
+<Tab value="Kotlin">
+
+```kotlin
+@Throws(CuaException::class)
+suspend fun disconnectPartsJson(agents: List<String>, skills: Boolean, mcp: Boolean, signIn: Boolean): String
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub async fn disconnect_parts_json(&self, agents: Vec<String>, skills: bool, mcp: bool, sign_in: bool) -> Result<String, CuaError>
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `agents` | `Vec<String>` | required |
+| `skills` | `bool` | required |
+| `mcp` | `bool` | required |
 | `sign_in` | `bool` | required |
 
 **Returns** `String` · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)

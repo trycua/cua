@@ -6,7 +6,7 @@ description: 'Run Cua Spaces on computers you already have: this Mac, a Mac mini
 import { Callout } from 'fumadocs-ui/components/callout';
 
 Cua Spaces runs on hardware you bring. You don't rent a computer from Cua. You
-add one you already have, and your agents and your other devices use it from
+add one you already have, and your agents and your other machines use it from
 there. This page shows four ways to do that. Pick the one that matches what you
 have.
 
@@ -17,7 +17,7 @@ have.
 | A Linux machine, or a VPS you rent somewhere | [A Linux box or VPS](#a-linux-box-or-vps) |
 | A VM in your own cloud account | [A VM in your cloud account](#a-vm-in-your-cloud-account) |
 
-Every route ends the same way. The computer shows up in **Computers** in the
+Every route ends the same way. The computer shows up in **Machines** in the
 app and in `cua spaces ls`. Nothing connects inward to it: the computer calls
 out to the cua.ai relay, so you don't open ports or set up a VPN.
 
@@ -119,14 +119,14 @@ Spaces. A Mac or Windows Space needs a Mac or a Windows computer.
    cua host status
    ```
 
-The server now appears in **Computers**. Setup installs it as a background
+The server now appears in **Machines**. Setup installs it as a background
 service, so it comes back after a restart.
 
 If the server only runs Spaces and you don't want to share its own desktop,
 add `--profile spare` to the setup command.
 
-Already on the Cua Spaces app? You can skip the code. Open **Computers**, press
-**Add a computer**, and run the install command it shows on the server. See
+Already on the Cua Spaces app? You can skip the code. Open **Machines**, press
+**Add a machine**, and run the install command it shows on the server. See
 [Add a computer](/spaces/guides/add-a-computer#add-a-computer-from-the-app).
 
 ## A VM in your cloud account

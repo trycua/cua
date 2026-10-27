@@ -178,11 +178,37 @@ struct Reservation {
     at: Instant,
 }
 
+/// What one child was made with, for its tree's use and spend.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Cost {
+    /// Its tree.
+    pub root: String,
+    /// vCPUs.
+    pub vcpus: u32,
+    /// Memory (MiB).
+    pub memory_mb: u64,
+    /// $ per hour while it lives.
+    pub usd_per_hour: f64,
+    /// Since when (unix seconds).
+    pub since: u64,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+struct Costs {
+    /// Live children.
+    #[serde(default)]
+    children: BTreeMap<String, Cost>,
+    /// $ spent by children that are gone, per tree.
+    #[serde(default)]
+    spent: BTreeMap<String, f64>,
+}
+
 /// The owner's budgets and the reservations of creates in flight.
 pub struct Ledger {
     path: PathBuf,
     budgets: Mutex<BTreeMap<String, Budget>>,
     reservations: Mutex<(u64, Vec<Reservation>)>,
+    costs: Mutex<Costs>,
 }
 
 /// A reservation; [`Ledger::settle`] or [`Ledger::release`] it.
@@ -198,11 +224,79 @@ impl Ledger {
             .ok()
             .and_then(|b| serde_json::from_slice(&b).ok())
             .unwrap_or_default();
+        let costs = std::fs::read(path.with_file_name("costs.json"))
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default();
         Self {
             path,
             budgets: Mutex::new(budgets),
             reservations: Mutex::new((1, Vec::new())),
+            costs: Mutex::new(costs),
         }
+    }
+
+    fn save_costs(&self, costs: &Costs) {
+        let p = self.path.with_file_name("costs.json");
+        if let Some(d) = p.parent() {
+            let _ = std::fs::create_dir_all(d);
+        }
+        let tmp = p.with_extension("json.tmp");
+        if std::fs::write(&tmp, serde_json::to_vec_pretty(costs).unwrap_or_default()).is_ok() {
+            let _ = std::fs::rename(&tmp, &p);
+        }
+    }
+
+    /// Records a child made in `root`'s tree with `ask`, from `now`.
+    pub fn record(&self, root: &str, child: &str, ask: &Ask, now: u64) {
+        let mut c = self.costs.lock().unwrap();
+        c.children.insert(
+            child.to_owned(),
+            Cost {
+                root: root.to_owned(),
+                vcpus: ask.vcpus,
+                memory_mb: ask.memory_mb,
+                usd_per_hour: ask.usd_per_hour,
+                since: now,
+            },
+        );
+        self.save_costs(&c);
+    }
+
+    /// What `child` was made with, if recorded.
+    pub fn cost(&self, child: &str) -> Option<Cost> {
+        self.costs.lock().unwrap().children.get(child).cloned()
+    }
+
+    /// Closes the records of children not in `live`: what they cost goes to
+    /// their tree's spend.
+    pub fn close_gone(&self, live: &std::collections::BTreeSet<String>, now: u64) {
+        let mut c = self.costs.lock().unwrap();
+        let gone: Vec<String> = c
+            .children
+            .keys()
+            .filter(|k| !live.contains(*k))
+            .cloned()
+            .collect();
+        if gone.is_empty() {
+            return;
+        }
+        for id in gone {
+            if let Some(x) = c.children.remove(&id) {
+                *c.spent.entry(x.root.clone()).or_default() += cost_so_far(&x, now);
+            }
+        }
+        self.save_costs(&c);
+    }
+
+    /// `root`'s tree: $ per hour of its live children, and $ spent in all.
+    pub fn spend(&self, root: &str, now: u64) -> (f64, f64) {
+        let c = self.costs.lock().unwrap();
+        let live = c.children.values().filter(|x| x.root == root);
+        let per_hour = live.clone().map(|x| x.usd_per_hour).sum();
+        let spent = c.spent.get(root).copied().unwrap_or(0.0)
+            + live.map(|x| cost_so_far(x, now)).sum::<f64>();
+        (per_hour, spent)
     }
 
     /// The budget of `root`'s tree.
@@ -277,6 +371,10 @@ impl Ledger {
             .1
             .retain(|x| x.id != ticket.0);
     }
+}
+
+fn cost_so_far(c: &Cost, now: u64) -> f64 {
+    c.usd_per_hour * now.saturating_sub(c.since) as f64 / 3600.0
 }
 
 #[cfg(test)]
@@ -420,5 +518,25 @@ mod tests {
         assert_eq!(Ledger::open(dir.path()).budget("r"), b);
         ledger.set_budget("r", Budget::default()).unwrap();
         assert_eq!(Ledger::open(dir.path()).budget("r"), Budget::default());
+    }
+
+    #[test]
+    fn spend_is_live_cost_plus_what_gone_children_cost() {
+        let dir = tempfile::tempdir().unwrap();
+        let l = Ledger::open(dir.path());
+        l.record("r", "c1", &ask(2, 1024, 0.5), 1000);
+        l.record("r", "c2", &ask(2, 1024, 1.0), 1000);
+        l.record("other", "o1", &ask(2, 1024, 9.0), 1000);
+        let (h, spent) = l.spend("r", 1000 + 3600);
+        assert!((h - 1.5).abs() < 1e-9 && (spent - 1.5).abs() < 1e-9);
+        // c2 is deleted: it stops costing per hour, and what it cost stays.
+        l.close_gone(&["c1".to_string(), "o1".to_string()].into(), 1000 + 3600);
+        let (h, spent) = l.spend("r", 1000 + 7200);
+        assert!((h - 0.5).abs() < 1e-9, "{h}");
+        assert!((spent - (1.0 + 1.0)).abs() < 1e-9, "{spent}");
+        // And it survives a restart.
+        let back = Ledger::open(dir.path());
+        assert!((back.spend("r", 1000 + 7200).1 - 2.0).abs() < 1e-9);
+        assert_eq!(back.cost("c1").unwrap().vcpus, 2);
     }
 }

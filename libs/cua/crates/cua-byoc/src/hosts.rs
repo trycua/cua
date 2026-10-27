@@ -175,6 +175,8 @@ pub struct HostBoot<'a> {
     /// The cloud it runs in (`hetzner`): its relay machine says so, so the
     /// pool knows it whichever machine coordinates.
     pub provider: &'a str,
+    /// Install a local QEMU runtime for nested Spaces on this host.
+    pub nested_virtualization: bool,
     /// Extra environment (`CUA_ENV=staging`), as `K=V` words.
     pub env: &'a [String],
     /// Its cost per hour (shown in the pool).
@@ -188,6 +190,34 @@ pub struct HostBoot<'a> {
     pub expires: u64,
     /// Images pulled right after it joined.
     pub prepull: &'a [String],
+}
+
+/// Whether this EC2 instance type documents nested virtualization, so a
+/// host of it can run QEMU with KVM. Lives here, not in `aws`, because the
+/// `aws` module is behind a feature and the host launch code is not.
+pub fn supports_nested_virtualization(instance_type: &str) -> bool {
+    let family = instance_type.split('.').next().unwrap_or_default();
+    matches!(
+        family,
+        "c7i"
+            | "c7i-flex"
+            | "c8i"
+            | "c8i-flex"
+            | "c8id"
+            | "m7i"
+            | "m7i-flex"
+            | "m8i"
+            | "m8i-flex"
+            | "m8id"
+            | "r7i"
+            | "r7iz"
+            | "r8i"
+            | "r8i-flex"
+            | "r8id"
+            | "x8i"
+            | "i7i"
+            | "i7ie"
+    )
 }
 
 fn sh_quote(s: &str) -> String {
@@ -218,13 +248,19 @@ pub fn user_data(b: &HostBoot<'_>) -> String {
         .filter(|kv| kv.contains('=') && !kv.contains('\'') && !kv.contains('\n'))
         .map(|kv| format!("export {kv}\n"))
         .collect();
+    let qemu = if b.nested_virtualization {
+        " qemu-system-x86 qemu-utils ovmf"
+    } else {
+        ""
+    };
     let idle = if b.idle_poweroff_secs > 0 {
         format!(
             "# Backstop: power off after {secs} s with no Spaces (the scaler removes it sooner).\n\
              cat > /usr/local/bin/cua-idle-poweroff <<'IDLE'\n\
              #!/bin/bash\n\
              # Spaces are containers (Docker, runc or gVisor) or VMs (QEMU).\n\
-             busy() {{ [ \"$(docker ps -q 2>/dev/null | wc -l)\" -gt 0 ] || pgrep -x qemu-system-x86_64 >/dev/null || pgrep -x qemu-system-aarch64 >/dev/null; }}\n\
+             # Linux truncates long /proc comm names, so match QEMU command lines.\n\
+             busy() {{ [ \"$(docker ps -q 2>/dev/null | wc -l)\" -gt 0 ] || pgrep -f '[q]emu-system-(x86_64|aarch64)([[:space:]]|$)' >/dev/null; }}\n\
              idle=0\n\
              while sleep 60; do\n\
                if busy; then idle=0; else idle=$((idle+60)); fi\n\
@@ -277,7 +313,7 @@ pub fn user_data(b: &HostBoot<'_>) -> String {
          export HOME=/root DEBIAN_FRONTEND=noninteractive PATH=/usr/local/bin:$PATH\n\
          # cua-spacesd links the X11 client libraries, a cua built where libopus\n\
          # is installed links it; Docker runs container Spaces.\n\
-         pkgs='libx11-6 libxext6 libxi6 libopus0'\n\
+         pkgs='libx11-6 libxext6 libxi6 libopus0{qemu}'\n\
          command -v docker >/dev/null || pkgs=\"$pkgs docker.io\"\n\
          for i in 1 2 3 4 5; do apt-get update -qq && apt-get install -y -qq $pkgs && break; sleep 5; done\n\
          systemctl enable --now docker\n\
@@ -305,6 +341,7 @@ pub fn user_data(b: &HostBoot<'_>) -> String {
          {prepull}\
          echo 'cua: host ready'\n",
         runsc_args = RUNSC_ARGS,
+        qemu = qemu,
         expires = b.expires,
         usd = b.usd_per_hour,
         code = sh_quote(b.code),
@@ -938,6 +975,8 @@ impl Hosts {
                 name: &name,
                 relay: &relay.url,
                 provider: &req.provider,
+                nested_virtualization: api.name() == "aws"
+                    && supports_nested_virtualization(&t.name),
                 env: &opts.env,
                 usd_per_hour: t.usd_per_hour,
                 ttl_secs: ttl,
@@ -957,6 +996,7 @@ impl Hosts {
             ttl_secs: ttl,
             image_parameter: opts.image_parameter.clone(),
             peer_ports: opts.peer_ports,
+            nested_virtualization: api.name() == "aws" && supports_nested_virtualization(&t.name),
             role: ROLE_HOST.into(),
             region: region.clone(),
             ..Default::default()
@@ -1272,6 +1312,7 @@ mod tests {
             name: "hetzner-1",
             relay: "https://relay.cua.ai",
             provider: "hetzner",
+            nested_virtualization: false,
             env,
             usd_per_hour: 0.0684,
             ttl_secs: 3600,
@@ -1300,6 +1341,10 @@ mod tests {
         assert!(ud.contains("shutdown -h now 'cua: this host reached its TTL'"));
         assert!(ud.contains("echo 1800000000 > /etc/cua/expires"));
         assert!(ud.contains("cua-idle-poweroff"), "idle backstop");
+        assert!(
+            ud.contains("pgrep -f '[q]emu-system-(x86_64|aarch64)"),
+            "idle guard must match QEMU command lines"
+        );
         assert!(ud.contains("[ \"$idle\" -ge 1200 ]"));
         assert!(ud.contains("export CUA_ENV=staging"));
         // The mesh is on before setup, so the service keeps it; a person's

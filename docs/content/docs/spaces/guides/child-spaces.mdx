@@ -56,9 +56,18 @@ An agent gets the same as tools in its Space's own MCP server:
 
 ## What a child gets
 
-- **This machine.** A child runs on the same machine as its parent.
+- **Where.** A child runs on the same machine as its parent unless it asks
+  for `--on auto` (the least-loaded of your machines and linked clouds),
+  `--on host:<name>` or a linked cloud (`--on aws`). This machine's cua daemon
+  creates it with your own sign-in and cloud links. The Space asking never
+  holds them. A Windows child needs a machine with virtualization: a Windows
+  PC of yours, or a cloud host that offers it. Hetzner Cloud servers can't
+  run VMs, so Windows children don't go there.
 - **No wider network.** It keeps its parent's egress rules. A request for
   wider ones is refused.
+- **Cost counted.** A child in a linked cloud counts what it adds per hour
+  against its tree's budget and your account's cloud budget. The stricter
+  one wins.
 - **No longer life.** It ends when its parent would, and after 4 hours at
   most unless you give it longer.
 - **Limited depth.** A child may make children of its own, two levels

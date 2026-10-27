@@ -658,6 +658,10 @@ Examples:
         #[arg(long, conflicts_with_all = ["spaces", "cpus", "memory", "usd_per_hour", "usd_total"])]
         clear: bool,
     },
+    /// List child Spaces whose parent is gone or out of reach. The daemon
+    /// ends a child only on proof its parent is gone, after a grace period;
+    /// the others stay until you delete them or their lifetime ends.
+    Orphans,
     /// Cancel a create that is still running (here, in the daemon, or in
     /// another terminal): it stops and what it made is removed. Finished
     /// image downloads stay cached. Ctrl-C during `cua spaces create` does
@@ -1428,6 +1432,30 @@ pub async fn run_spaces_sdk(
                 match b.usd_total {
                     Some(t) => line(out, format!("  Spent    ${:.2} of ${t:.2}", b.usd_spent)),
                     None => line(out, format!("  Spent    ${:.2}", b.usd_spent)),
+                }
+            }
+        }
+        SpacesCmd::Orphans => {
+            let list = spaces.orphans().await?;
+            if json {
+                let rows: Vec<serde_json::Value> = list
+                    .iter()
+                    .map(|o| {
+                        serde_json::json!({"space": o.space, "parent": o.parent,
+                            "state": o.state, "why": o.why, "ends_in_secs": o.ends_in_secs})
+                    })
+                    .collect();
+                line(out, serde_json::json!({ "orphans": rows }).to_string());
+            } else if list.is_empty() {
+                line(out, "No orphaned child Spaces.");
+            } else {
+                for o in &list {
+                    let when = if o.state == "ending" {
+                        format!("ends in {}s", o.ends_in_secs)
+                    } else {
+                        "kept".into()
+                    };
+                    line(out, format!("{:<32} {:<10} {}", o.space, when, o.why));
                 }
             }
         }

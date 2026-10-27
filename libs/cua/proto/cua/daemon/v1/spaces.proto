@@ -120,6 +120,10 @@ service SpaceService {
   // children may hold at once, and what they may cost. Unset limits take
   // the defaults; all unset removes the budget.
   rpc SetTreeBudget(SetTreeBudgetRequest) returns (SetTreeBudgetResponse);
+  // Child Spaces whose parent is gone, or not this machine's to judge: the
+  // ones it ends after a grace period (only on proof the parent is gone)
+  // and the ones it only lists.
+  rpc ListOrphans(ListOrphansRequest) returns (ListOrphansResponse);
   // Connects to a registered Space and returns a loopback env passthrough
   // (`<loopback>/v1/spaces/<key>/env`) that carries the Space's credentials,
   // so a client runs every `cua.env.v1` call and media WebSocket through the
@@ -1104,4 +1108,29 @@ message TreeBudget {
   double usd_per_hour_used = 11;
   // What its children have cost so far.
   double usd_spent = 12;
+}
+
+// Request for `SpaceService.ListOrphans`.
+message ListOrphansRequest {}
+
+// A child Space whose parent is gone or out of reach.
+message Orphan {
+  // The child.
+  string space = 1;
+  // Its parent's id.
+  string parent = 2;
+  // "ending": its parent is provably gone and it ends after the grace;
+  // "listed": its parent is not this machine's to judge, so it stays until
+  // deleted or its own lifetime ends.
+  string state = 3;
+  // Why, in words.
+  string why = 4;
+  // Seconds until it ends ("ending" only).
+  int64 ends_in_secs = 5;
+}
+
+// Response for `SpaceService.ListOrphans`.
+message ListOrphansResponse {
+  // By child id.
+  repeated Orphan orphans = 1;
 }

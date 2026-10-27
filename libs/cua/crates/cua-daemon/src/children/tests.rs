@@ -545,3 +545,51 @@ fn a_trees_use_counts_its_children_and_their_size() {
     assert_eq!(super::tree_usage(&w.shared, "local:a").spaces, 1);
     assert_eq!(super::tree_usage(&w.shared, "local:owner-dup").spaces, 0);
 }
+
+#[test]
+fn orphans_are_listed_and_only_provable_ones_will_end() {
+    let w = world();
+    let spaces = w.shared.runtime.spaces();
+    for (id, parent) in [
+        ("local:lost", "local:gone"),
+        ("local:far", "relay:abcdefgh"),
+    ] {
+        spaces
+            .registry()
+            .upsert(
+                pb::Space {
+                    id: id.into(),
+                    name: id.trim_start_matches("local:").into(),
+                    ..Default::default()
+                },
+                Credential::default(),
+            )
+            .unwrap();
+        spaces
+            .registry()
+            .update_meta(id, |m| {
+                m.labels.insert(LABEL_PARENT.into(), parent.into());
+            })
+            .unwrap();
+    }
+    let mut orphans = super::orphans(&w.shared);
+    orphans.sort_by(|a, b| a.space.cmp(&b.space));
+    let rows: Vec<(&str, &str, &str)> = orphans
+        .iter()
+        .map(|o| (o.space.as_str(), o.parent.as_str(), o.state.as_str()))
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            ("local:far", "relay:abcdefgh", "listed"),
+            ("local:lost", "local:gone", "ending"),
+        ]
+    );
+    assert_eq!(
+        orphans[1].ends_in_secs,
+        super::reaper::GRACE_SECS as i64,
+        "the grace starts now"
+    );
+    // Children whose parents are here are not orphans.
+    assert!(orphans.iter().all(|o| !o.space.starts_with("local:a")));
+}

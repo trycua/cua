@@ -470,3 +470,78 @@ async fn a_childs_env_is_reachable_only_below_and_never_its_spawn_channel() {
         .unwrap();
     assert_eq!(status(r).as_deref(), Some("7"));
 }
+
+#[tokio::test]
+async fn a_child_past_the_trees_budget_gets_a_plain_refusal() {
+    let w = world();
+    // root's tree holds a, a1 and b.
+    w.shared
+        .children
+        .as_deref()
+        .unwrap()
+        .budget
+        .set_budget(
+            "local:root",
+            super::budget::Budget {
+                max_spaces: Some(3),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let cap = mint(&w.shared, "local:a", "local:root", 1);
+    let mut c = SpaceServiceClient::new(channel(&w.shared, "local:a").await);
+    let e = c
+        .create_space(with(&cap, pb::CreateSpaceRequest::default()))
+        .await
+        .unwrap_err();
+    assert_eq!(e.code(), Code::ResourceExhausted);
+    assert!(e.message().contains("3 child Spaces"), "{}", e.message());
+    // Nothing was created, and nothing stays reserved.
+    assert_eq!(
+        w.shared.runtime.spaces().registry().list().unwrap().len(),
+        7
+    );
+
+    // The Space reads its own tree's budget and use; it can't change it.
+    let b = c
+        .get_tree_budget(with(&cap, pb::GetTreeBudgetRequest::default()))
+        .await
+        .unwrap()
+        .into_inner()
+        .budget
+        .unwrap();
+    assert_eq!(
+        (b.root.as_str(), b.max_spaces, b.spaces),
+        ("local:root", 3, 3)
+    );
+    assert_eq!(b.max_vcpus, super::budget::DEFAULT_MAX_VCPUS);
+    let e = c
+        .set_tree_budget(with(&cap, pb::SetTreeBudgetRequest::default()))
+        .await
+        .unwrap_err();
+    assert_eq!(e.code(), Code::PermissionDenied);
+    // Another tree's budget is not its to read: it only ever sees its own.
+    let other = mint(&w.shared, "local:o1", "local:other", 1);
+    let mut o = SpaceServiceClient::new(channel(&w.shared, "local:o1").await);
+    let b = o
+        .get_tree_budget(with(&other, pb::GetTreeBudgetRequest::default()))
+        .await
+        .unwrap()
+        .into_inner()
+        .budget
+        .unwrap();
+    assert_eq!(
+        (b.root.as_str(), b.spaces, b.max_spaces),
+        ("local:other", 1, 16)
+    );
+}
+
+#[test]
+fn a_trees_use_counts_its_children_and_their_size() {
+    let w = world();
+    let u = super::tree_usage(&w.shared, "local:root");
+    // a, a1 and b, with no recorded size: the create defaults.
+    assert_eq!((u.spaces, u.vcpus, u.memory_mb), (3, 6, 3 * 4096));
+    assert_eq!(super::tree_usage(&w.shared, "local:a").spaces, 1);
+    assert_eq!(super::tree_usage(&w.shared, "local:owner-dup").spaces, 0);
+}

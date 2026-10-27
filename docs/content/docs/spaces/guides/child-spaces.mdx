@@ -64,6 +64,24 @@ An agent gets the same as tools in its Space's own MCP server:
 - **Limited depth.** A child may make children of its own, two levels
   below the Space you made. Deeper requests are refused.
 
+## A budget per tree
+
+Each tree has a budget: how many child Spaces, vCPUs and memory its
+children may hold at once, and what they may cost. The defaults are 16
+Spaces, 16 vCPUs, 32 GiB and $2 an hour, so a runaway loop stays cheap.
+A child that does not fit is refused with what is left, in words an agent
+can act on. Creates in flight reserve their share first, so two at once
+can't pass the budget together.
+
+```bash test="cli-shape" id="children-budget"
+cua spaces budget studio
+cua spaces budget studio --spaces 32 --cpus 64 --memory 131072
+cua spaces budget studio --clear
+```
+
+Inside a Space, `cua spaces budget` shows its own tree's budget and use.
+Only you can change it.
+
 ## What a Space can't do
 
 The channel a Space uses answers for its own children and nothing else.

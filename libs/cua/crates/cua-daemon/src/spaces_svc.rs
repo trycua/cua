@@ -51,6 +51,12 @@ pub(crate) mod imp {
     use cua_sandbox_core::placement::{Kind, On, Runtime};
     use prost::Message;
 
+    /// The top-level Space of `space`'s tree.
+    fn tree_root(spaces: &cua_spaces::Spaces, space: &str) -> Result<String, tonic::Status> {
+        let id = spaces.resolve(space).map_err(|e| st(e.into()))?.to_string();
+        Ok(crate::children::api::position(spaces, &id).0)
+    }
+
     /// Sets `Space.children` from the setting.
     pub(crate) fn mark_children(spaces: &cua_spaces::Spaces, records: &mut [pb::Space]) {
         let on: std::collections::BTreeSet<String> =
@@ -813,6 +819,50 @@ pub(crate) mod imp {
             ok(pb::SetSpaceEgressResponse {})
         }
 
+        async fn get_tree_budget(
+            &self,
+            req: tonic::Request<pb::GetTreeBudgetRequest>,
+        ) -> R<pb::GetTreeBudgetResponse> {
+            let root = tree_root(self.spaces(), &req.into_inner().space)?;
+            ok(pb::GetTreeBudgetResponse {
+                budget: Some(crate::children::api::tree_budget(&self.0, &root)),
+            })
+        }
+
+        async fn set_tree_budget(
+            &self,
+            req: tonic::Request<pb::SetTreeBudgetRequest>,
+        ) -> R<pb::SetTreeBudgetResponse> {
+            let r = req.into_inner();
+            let root = tree_root(self.spaces(), &r.space)?;
+            let l = r.limits.unwrap_or_default();
+            for (what, v) in [("usd_per_hour", l.usd_per_hour), ("usd_total", l.usd_total)] {
+                if v.is_some_and(|v| !v.is_finite() || v < 0.0) {
+                    return Err(tonic::Status::invalid_argument(format!(
+                        "{what} must be a number of dollars, 0 or more"
+                    )));
+                }
+            }
+            let budget = crate::children::budget::Budget {
+                max_spaces: l.max_spaces,
+                max_vcpus: l.max_vcpus,
+                max_memory_mb: l.max_memory_mb,
+                usd_per_hour: l.usd_per_hour,
+                usd_total: l.usd_total,
+            };
+            let Some(c) = self.0.children.as_deref() else {
+                return Err(tonic::Status::failed_precondition(
+                    "child Spaces are unavailable in this daemon",
+                ));
+            };
+            c.budget
+                .set_budget(&root, budget)
+                .map_err(|e| tonic::Status::internal(format!("save the budget: {e}")))?;
+            ok(pb::SetTreeBudgetResponse {
+                budget: Some(crate::children::api::tree_budget(&self.0, &root)),
+            })
+        }
+
         async fn set_space_children(
             &self,
             req: tonic::Request<pb::SetSpaceChildrenRequest>,
@@ -1343,6 +1393,18 @@ mod imp {
             &self,
             _: tonic::Request<pb::SetSpaceChildrenRequest>,
         ) -> R<pb::SetSpaceChildrenResponse> {
+            off()
+        }
+        async fn get_tree_budget(
+            &self,
+            _: tonic::Request<pb::GetTreeBudgetRequest>,
+        ) -> R<pb::GetTreeBudgetResponse> {
+            off()
+        }
+        async fn set_tree_budget(
+            &self,
+            _: tonic::Request<pb::SetTreeBudgetRequest>,
+        ) -> R<pb::SetTreeBudgetResponse> {
             off()
         }
 

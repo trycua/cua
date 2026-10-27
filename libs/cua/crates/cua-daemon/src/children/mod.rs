@@ -15,6 +15,7 @@
 
 pub mod api;
 pub mod bridge;
+pub mod budget;
 pub mod capability;
 #[cfg(test)]
 mod tests;
@@ -59,6 +60,8 @@ fn origin<B>(req: &Request<B>) -> String {
 pub struct Children {
     /// Mints and checks capabilities.
     pub authority: capability::Authority,
+    /// Trees' budgets and the reservations of creates in flight.
+    pub budget: budget::Ledger,
 }
 
 impl Children {
@@ -66,8 +69,79 @@ impl Children {
     pub fn open(home: &Path) -> std::io::Result<Self> {
         Ok(Self {
             authority: capability::Authority::open(home)?,
+            budget: budget::Ledger::open(home),
         })
     }
+}
+
+/// A reservation in a tree's budget, released when dropped (the create is
+/// over: its child now counts as used, or it failed).
+pub(crate) struct Held {
+    shared: Arc<Shared>,
+    ticket: Option<budget::Ticket>,
+}
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        if let (Some(t), Some(c)) = (self.ticket.take(), self.shared.children.as_deref()) {
+            c.budget.release(t);
+        }
+    }
+}
+
+/// What the children of `root`'s tree hold now: each counts as a Space;
+/// the ones not stopped hold their vCPUs and memory.
+pub(crate) fn tree_usage(shared: &Shared, root: &str) -> budget::Usage {
+    let spaces = shared.runtime.spaces();
+    let links = api::links_of(spaces);
+    let mut u = budget::Usage::default();
+    for id in tree::subtree(&links, root) {
+        u.spaces += 1;
+        let (power, _) = spaces.power_of(&id);
+        if power == "stopped" {
+            continue;
+        }
+        let (cpus, mem) = local_size(shared, &id);
+        u.vcpus += cpus;
+        u.memory_mb += mem;
+    }
+    u
+}
+
+/// A local Space's vCPUs and memory (MiB) as recorded, else the create
+/// defaults (2, 4096).
+pub(crate) fn local_size(shared: &Shared, id: &str) -> (u32, u64) {
+    let recorded = id.strip_prefix("local:").and_then(|name| {
+        let cua_sandbox_core::SandboxState::Local(l) =
+            shared.runtime.sandboxes().state().load(name)?;
+        Some((l.cpu_count, l.memory_mb))
+    });
+    let (cpus, mem) = recorded.unwrap_or((None, None));
+    (cpus.unwrap_or(2), mem.unwrap_or(4096))
+}
+
+/// Reserves `ask` in `root`'s tree, or says plainly why it does not fit.
+pub(crate) fn admit(
+    shared: &Arc<Shared>,
+    root: &str,
+    ask: budget::Ask,
+) -> Result<Held, tonic::Status> {
+    let Some(c) = shared.children.as_deref() else {
+        return Ok(Held {
+            shared: shared.clone(),
+            ticket: None,
+        });
+    };
+    let limits = c.budget.budget(root).effective();
+    let used = tree_usage(shared, root);
+    let ticket = c
+        .budget
+        .reserve(root, &limits, &used, ask)
+        .map_err(|r| tonic::Status::resource_exhausted(r.0))?;
+    Ok(Held {
+        shared: shared.clone(),
+        ticket: Some(ticket),
+    })
 }
 
 impl Shared {

@@ -1223,6 +1223,82 @@ pub struct SpaceWriteReport {
     pub sha256: String,
 }
 
+/// What a tree's children may hold and cost ([`Spaces::set_tree_budget`]).
+/// `None`: the default.
+#[derive(Debug, Clone, Default, PartialEq, uniffi::Record)]
+pub struct TreeBudgetLimits {
+    /// Child Spaces at once (default 16).
+    #[uniffi(default = None)]
+    pub max_spaces: Option<u32>,
+    /// vCPUs at once (default 16).
+    #[uniffi(default = None)]
+    pub max_vcpus: Option<u32>,
+    /// Memory at once, MiB (default 32768).
+    #[uniffi(default = None)]
+    pub max_memory_mb: Option<u64>,
+    /// Cost per hour, in linked clouds (default 2.0).
+    #[uniffi(default = None)]
+    pub usd_per_hour: Option<f64>,
+    /// Cost in total (default: none).
+    #[uniffi(default = None)]
+    pub usd_total: Option<f64>,
+}
+
+/// A tree's budget and what its children use ([`Spaces::tree_budget`]).
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct TreeBudget {
+    /// The tree's top-level Space.
+    pub root: String,
+    /// What the owner set.
+    pub set: TreeBudgetLimits,
+    /// Child Spaces it may hold at once.
+    pub max_spaces: u32,
+    /// vCPUs it may hold at once.
+    pub max_vcpus: u32,
+    /// Memory it may hold at once (MiB).
+    pub max_memory_mb: u64,
+    /// Cost per hour it may run at.
+    pub usd_per_hour: f64,
+    /// Cost in total it may reach, when capped.
+    pub usd_total: Option<f64>,
+    /// Child Spaces now.
+    pub spaces: u32,
+    /// vCPUs they hold.
+    pub vcpus: u32,
+    /// Memory they hold (MiB).
+    pub memory_mb: u64,
+    /// Cost per hour they run at.
+    pub usd_per_hour_used: f64,
+    /// What they have cost so far.
+    pub usd_spent: f64,
+}
+
+impl From<dpb::TreeBudget> for TreeBudget {
+    fn from(b: dpb::TreeBudget) -> Self {
+        let set = b.set.unwrap_or_default();
+        Self {
+            root: b.root,
+            set: TreeBudgetLimits {
+                max_spaces: set.max_spaces,
+                max_vcpus: set.max_vcpus,
+                max_memory_mb: set.max_memory_mb,
+                usd_per_hour: set.usd_per_hour,
+                usd_total: set.usd_total,
+            },
+            max_spaces: b.max_spaces,
+            max_vcpus: b.max_vcpus,
+            max_memory_mb: b.max_memory_mb,
+            usd_per_hour: b.usd_per_hour,
+            usd_total: b.usd_total,
+            spaces: b.spaces,
+            vcpus: b.vcpus,
+            memory_mb: b.memory_mb,
+            usd_per_hour_used: b.usd_per_hour_used,
+            usd_spent: b.usd_spent,
+        }
+    }
+}
+
 /// Result of [`Space::upload`] / [`Space::download`].
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, Deserialize)]
 pub struct SpaceTransferReport {
@@ -4016,6 +4092,68 @@ impl Spaces {
                 }
             }
             Ok(())
+        })
+        .await
+    }
+
+    /// The budget of `space`'s tree (any Space of it) and what its
+    /// children use now. Kept by the cua daemon.
+    pub async fn tree_budget(&self, space: String) -> Result<TreeBudget> {
+        let host = self.host.clone();
+        run(async move {
+            match &host {
+                Host::Embedded(_) => Err(CuaError::Unsupported(
+                    "tree budgets are kept by the cua daemon; start it with `cua daemon start`"
+                        .into(),
+                )),
+                Host::Daemon(d) => Ok(d
+                    .spaces()
+                    .get_tree_budget(dpb::GetTreeBudgetRequest { space })
+                    .await
+                    .map_err(daemon_err)?
+                    .into_inner()
+                    .budget
+                    .unwrap_or_default()
+                    .into()),
+            }
+        })
+        .await
+    }
+
+    /// Sets the budget of `space`'s tree: how many child Spaces, vCPUs and
+    /// memory its children may hold at once, and what they may cost. A child
+    /// that does not fit is refused with what is left. All `None` removes it.
+    pub async fn set_tree_budget(
+        &self,
+        space: String,
+        limits: TreeBudgetLimits,
+    ) -> Result<TreeBudget> {
+        let host = self.host.clone();
+        run(async move {
+            match &host {
+                Host::Embedded(_) => Err(CuaError::Unsupported(
+                    "tree budgets are kept by the cua daemon; start it with `cua daemon start`"
+                        .into(),
+                )),
+                Host::Daemon(d) => Ok(d
+                    .spaces()
+                    .set_tree_budget(dpb::SetTreeBudgetRequest {
+                        space,
+                        limits: Some(dpb::TreeBudgetLimits {
+                            max_spaces: limits.max_spaces,
+                            max_vcpus: limits.max_vcpus,
+                            max_memory_mb: limits.max_memory_mb,
+                            usd_per_hour: limits.usd_per_hour,
+                            usd_total: limits.usd_total,
+                        }),
+                    })
+                    .await
+                    .map_err(daemon_err)?
+                    .into_inner()
+                    .budget
+                    .unwrap_or_default()
+                    .into()),
+            }
         })
         .await
     }

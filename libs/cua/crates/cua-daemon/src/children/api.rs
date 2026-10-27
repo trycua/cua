@@ -326,6 +326,50 @@ impl Scoped {
     }
 }
 
+/// What a create of a child asks of its tree's budget (a child on this
+/// machine costs nothing per hour).
+fn ask_of(r: &pb::CreateSpaceRequest) -> super::budget::Ask {
+    super::budget::Ask {
+        vcpus: if r.cpus == 0 { 2 } else { r.cpus },
+        memory_mb: if r.memory_mb == 0 { 4096 } else { r.memory_mb },
+        usd_per_hour: 0.0,
+    }
+}
+
+/// A tree's budget and use, as the API reports it.
+pub(crate) fn tree_budget(shared: &Shared, root: &str) -> pb::TreeBudget {
+    let Some(c) = shared.children.as_deref() else {
+        return pb::TreeBudget {
+            root: root.to_owned(),
+            ..Default::default()
+        };
+    };
+    let set = c.budget.budget(root);
+    let l = set.effective();
+    let used = super::tree_usage(shared, root);
+    let reserved = c.budget.reserved(root);
+    pb::TreeBudget {
+        root: root.to_owned(),
+        set: Some(pb::TreeBudgetLimits {
+            max_spaces: set.max_spaces,
+            max_vcpus: set.max_vcpus,
+            max_memory_mb: set.max_memory_mb,
+            usd_per_hour: set.usd_per_hour,
+            usd_total: set.usd_total,
+        }),
+        max_spaces: l.max_spaces,
+        max_vcpus: l.max_vcpus,
+        max_memory_mb: l.max_memory_mb,
+        usd_per_hour: l.usd_per_hour,
+        usd_total: l.usd_total,
+        spaces: used.spaces + reserved.spaces,
+        vcpus: used.vcpus + reserved.vcpus,
+        memory_mb: used.memory_mb + reserved.memory_mb,
+        usd_per_hour_used: used.usd_per_hour + reserved.usd_per_hour,
+        usd_spent: used.usd_spent,
+    }
+}
+
 /// Parent links from the registry's records.
 pub(crate) fn links_of(spaces: &cua_spaces::Spaces) -> tree::Links {
     let meta = spaces.registry().all_meta();
@@ -427,6 +471,7 @@ impl SpaceService for Scoped {
     ) -> R<pb::CreateSpaceResponse> {
         let claims = claims(&req)?;
         let child = self.child_request(&claims, req.into_inner())?;
+        let _held = super::admit(&self.shared, &claims.root, ask_of(&child))?;
         let resp = self.owner().create_space(Request::new(child)).await?;
         if let Some(s) = &resp.get_ref().space {
             self.adopt(&claims, &s.id);
@@ -444,6 +489,7 @@ impl SpaceService for Scoped {
         let claims = claims(&req)?;
         let inner = req.into_inner();
         let child = self.child_request(&claims, inner.create.unwrap_or_default())?;
+        let held = super::admit(&self.shared, &claims.root, ask_of(&child))?;
         let stream = self
             .owner()
             .create_space_stream(Request::new(pb::CreateSpaceStreamRequest {
@@ -452,7 +498,9 @@ impl SpaceService for Scoped {
             .await?
             .into_inner();
         let me = self.clone();
+        // The reservation lasts as long as the create's stream.
         let adopted = stream.map(move |item| {
+            let _ = &held;
             if let Ok(pb::CreateSpaceStreamResponse {
                 event: Some(pb::create_space_stream_response::Event::Result(r)),
             }) = &item
@@ -560,6 +608,16 @@ impl SpaceService for Scoped {
         } else {
             r.name
         };
+        let (vcpus, memory_mb) = super::local_size(&self.shared, &source);
+        let _held = super::admit(
+            &self.shared,
+            &claims.root,
+            super::budget::Ask {
+                vcpus,
+                memory_mb,
+                usd_per_hour: 0.0,
+            },
+        )?;
         let resp = self
             .owner()
             .fork_space(Request::new(pb::ForkSpaceRequest { source, name }))
@@ -623,6 +681,24 @@ impl SpaceService for Scoped {
         Err(refused(
             "give children its own egress rules (set them on the parent)",
         ))
+    }
+
+    async fn get_tree_budget(
+        &self,
+        req: Request<pb::GetTreeBudgetRequest>,
+    ) -> R<pb::GetTreeBudgetResponse> {
+        // Its own tree's budget, and nothing about another tree.
+        let claims = claims(&req)?;
+        Ok(Response::new(pb::GetTreeBudgetResponse {
+            budget: Some(tree_budget(&self.shared, &claims.root)),
+        }))
+    }
+
+    async fn set_tree_budget(
+        &self,
+        _: Request<pb::SetTreeBudgetRequest>,
+    ) -> R<pb::SetTreeBudgetResponse> {
+        Err(refused("spend within its tree's budget; the owner sets it"))
     }
 
     async fn set_space_children(

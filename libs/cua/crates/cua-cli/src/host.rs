@@ -518,6 +518,37 @@ Examples:
         #[arg(value_parser = ["on", "off"])]
         state: String,
     },
+    /// Show or set a tree's budget: how many child Spaces, vCPUs and memory
+    /// its children may hold at once, and what they may cost. A child that
+    /// does not fit is refused with what is left. Without flags it shows the
+    /// budget and what the children use.
+    #[command(after_help = "Examples:
+  cua spaces budget studio
+  cua spaces budget studio --spaces 32 --cpus 64 --memory 131072
+  cua spaces budget studio --usd-per-hour 5 --usd-total 50
+  cua spaces budget studio --clear")]
+    Budget {
+        /// Any Space of the tree (id or name).
+        space: String,
+        /// Child Spaces at once (default 16).
+        #[arg(long)]
+        spaces: Option<u32>,
+        /// vCPUs at once (default 16).
+        #[arg(long)]
+        cpus: Option<u32>,
+        /// Memory at once, in MiB (default 32768).
+        #[arg(long, value_name = "MIB")]
+        memory: Option<u64>,
+        /// Cost per hour in linked clouds, in dollars (default 2).
+        #[arg(long, value_name = "USD")]
+        usd_per_hour: Option<f64>,
+        /// Cost in total, in dollars (default: none).
+        #[arg(long, value_name = "USD")]
+        usd_total: Option<f64>,
+        /// Back to the defaults.
+        #[arg(long, conflicts_with_all = ["spaces", "cpus", "memory", "usd_per_hour", "usd_total"])]
+        clear: bool,
+    },
     /// Cancel a create that is still running (here, in the daemon, or in
     /// another terminal): it stops and what it made is removed. Finished
     /// image downloads stay cached. Ctrl-C during `cua spaces create` does
@@ -1181,6 +1212,75 @@ pub async fn run_spaces_sdk(
                     line(out, row(&p).to_string());
                 } else {
                     line(out, fmt(&p));
+                }
+            }
+        }
+        SpacesCmd::Budget {
+            space,
+            spaces: max_spaces,
+            cpus,
+            memory,
+            usd_per_hour,
+            usd_total,
+            clear,
+        } => {
+            let setting = clear
+                || max_spaces.is_some()
+                || cpus.is_some()
+                || memory.is_some()
+                || usd_per_hour.is_some()
+                || usd_total.is_some();
+            let b = if setting {
+                let current = if clear {
+                    cua_sdk::TreeBudgetLimits::default()
+                } else {
+                    let now = spaces.tree_budget(space.clone()).await?.set;
+                    cua_sdk::TreeBudgetLimits {
+                        max_spaces: max_spaces.or(now.max_spaces),
+                        max_vcpus: cpus.or(now.max_vcpus),
+                        max_memory_mb: memory.or(now.max_memory_mb),
+                        usd_per_hour: usd_per_hour.or(now.usd_per_hour),
+                        usd_total: usd_total.or(now.usd_total),
+                    }
+                };
+                spaces.set_tree_budget(space, current).await?
+            } else {
+                spaces.tree_budget(space).await?
+            };
+            if json {
+                line(
+                    out,
+                    serde_json::json!({
+                        "root": b.root,
+                        "limits": {"spaces": b.max_spaces, "cpus": b.max_vcpus,
+                                   "memory_mb": b.max_memory_mb,
+                                   "usd_per_hour": b.usd_per_hour, "usd_total": b.usd_total},
+                        "used": {"spaces": b.spaces, "cpus": b.vcpus, "memory_mb": b.memory_mb,
+                                 "usd_per_hour": b.usd_per_hour_used, "usd_spent": b.usd_spent},
+                    })
+                    .to_string(),
+                );
+            } else {
+                line(out, format!("Tree of {}:", b.root));
+                line(
+                    out,
+                    format!("  Spaces   {:>6} of {}", b.spaces, b.max_spaces),
+                );
+                line(out, format!("  vCPUs    {:>6} of {}", b.vcpus, b.max_vcpus));
+                line(
+                    out,
+                    format!("  Memory   {:>6} of {} MiB", b.memory_mb, b.max_memory_mb),
+                );
+                line(
+                    out,
+                    format!(
+                        "  Cost     ${:.2}/h of ${:.2}/h",
+                        b.usd_per_hour_used, b.usd_per_hour
+                    ),
+                );
+                match b.usd_total {
+                    Some(t) => line(out, format!("  Spent    ${:.2} of ${t:.2}", b.usd_spent)),
+                    None => line(out, format!("  Spent    ${:.2}", b.usd_spent)),
                 }
             }
         }

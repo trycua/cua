@@ -106,6 +106,13 @@ service SpaceService {
   // ends the Space's spawn capability at once; children it already made
   // keep running until they are deleted or their lifetime ends.
   rpc SetSpaceChildren(SetSpaceChildrenRequest) returns (SetSpaceChildrenResponse);
+  // A tree's budget (kept on its top-level Space) and what its children
+  // use now. `space` may be any Space of the tree.
+  rpc GetTreeBudget(GetTreeBudgetRequest) returns (GetTreeBudgetResponse);
+  // Sets a tree's budget: how many child Spaces, vCPUs and memory its
+  // children may hold at once, and what they may cost. Unset limits take
+  // the defaults; all unset removes the budget.
+  rpc SetTreeBudget(SetTreeBudgetRequest) returns (SetTreeBudgetResponse);
   // Connects to a registered Space and returns a loopback env passthrough
   // (`<loopback>/v1/spaces/<key>/env`) that carries the Space's credentials,
   // so a client runs every `cua.env.v1` call and media WebSocket through the
@@ -990,4 +997,72 @@ message GpuSupport {
 message GetGpuSupportResponse {
   // One entry per runtime of the location.
   repeated GpuSupport runtimes = 1;
+}
+
+// What a tree's children may hold and cost. Unset: the default.
+message TreeBudgetLimits {
+  // Child Spaces at once (default 16).
+  optional uint32 max_spaces = 1;
+  // vCPUs at once (default 16).
+  optional uint32 max_vcpus = 2;
+  // Memory at once, MiB (default 32768).
+  optional uint64 max_memory_mb = 3;
+  // Cost per hour of what runs at once, in linked clouds (default 2.0).
+  optional double usd_per_hour = 4;
+  // Cost in total (default: no total cap).
+  optional double usd_total = 5;
+}
+
+// Request for `SpaceService.GetTreeBudget`.
+message GetTreeBudgetRequest {
+  // Any Space of the tree (id or name).
+  string space = 1;
+}
+
+// Request for `SpaceService.SetTreeBudget`.
+message SetTreeBudgetRequest {
+  // Any Space of the tree (id or name); the budget is kept on its root.
+  string space = 1;
+  // The limits.
+  TreeBudgetLimits limits = 2;
+}
+
+// Response for `SpaceService.GetTreeBudget`.
+message GetTreeBudgetResponse {
+  // The budget and use.
+  TreeBudget budget = 1;
+}
+
+// Response for `SpaceService.SetTreeBudget`.
+message SetTreeBudgetResponse {
+  // The budget and use.
+  TreeBudget budget = 1;
+}
+
+// A tree's budget and use.
+message TreeBudget {
+  // The tree's top-level Space.
+  string root = 1;
+  // What the owner set (unset fields take the default).
+  TreeBudgetLimits set = 2;
+  // Child Spaces it may hold at once.
+  uint32 max_spaces = 3;
+  // vCPUs it may hold at once.
+  uint32 max_vcpus = 4;
+  // Memory it may hold at once (MiB).
+  uint64 max_memory_mb = 5;
+  // Cost per hour it may run at.
+  double usd_per_hour = 6;
+  // Cost in total it may reach, when capped.
+  optional double usd_total = 7;
+  // Child Spaces now (creates in flight included).
+  uint32 spaces = 8;
+  // vCPUs they hold.
+  uint32 vcpus = 9;
+  // Memory they hold (MiB).
+  uint64 memory_mb = 10;
+  // Cost per hour they run at.
+  double usd_per_hour_used = 11;
+  // What its children have cost so far.
+  double usd_spent = 12;
 }

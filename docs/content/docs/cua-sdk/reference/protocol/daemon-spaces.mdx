@@ -55,6 +55,8 @@ without touching it.
 | [`SetSpaceLifetime`](#spaceservicesetspacelifetime) | [`SetSpaceLifetimeRequest`](#setspacelifetimerequest) | [`SetSpaceLifetimeResponse`](#setspacelifetimeresponse) | unary |
 | [`SetSpaceEgress`](#spaceservicesetspaceegress) | [`SetSpaceEgressRequest`](/cua-sdk/reference/protocol/daemon-egress#setspaceegressrequest) | [`SetSpaceEgressResponse`](/cua-sdk/reference/protocol/daemon-egress#setspaceegressresponse) | unary |
 | [`SetSpaceChildren`](#spaceservicesetspacechildren) | [`SetSpaceChildrenRequest`](#setspacechildrenrequest) | [`SetSpaceChildrenResponse`](#setspacechildrenresponse) | unary |
+| [`GetTreeBudget`](#spaceservicegettreebudget) | [`GetTreeBudgetRequest`](#gettreebudgetrequest) | [`GetTreeBudgetResponse`](#gettreebudgetresponse) | unary |
+| [`SetTreeBudget`](#spaceservicesettreebudget) | [`SetTreeBudgetRequest`](#settreebudgetrequest) | [`SetTreeBudgetResponse`](#settreebudgetresponse) | unary |
 | [`ConnectSpace`](#spaceserviceconnectspace) | [`ConnectSpaceRequest`](#connectspacerequest) | [`ConnectSpaceResponse`](#connectspaceresponse) | unary |
 | [`ListSpaceTools`](#spaceservicelistspacetools) | [`ListSpaceToolsRequest`](#listspacetoolsrequest) | [`ListSpaceToolsResponse`](#listspacetoolsresponse) | unary |
 | [`CallSpaceTool`](#spaceservicecallspacetool) | [`CallSpaceToolRequest`](#callspacetoolrequest) | [`CallSpaceToolResponse`](#callspacetoolresponse) | unary |
@@ -247,6 +249,21 @@ Replaces a Space's egress policy (empty removes it).
 Lets a Space make child Spaces of its own, or stops it. Turning it off
 ends the Space's spawn capability at once; children it already made
 keep running until they are deleted or their lifetime ends.
+
+### SpaceService.GetTreeBudget
+
+`/cua.daemon.v1.SpaceService/GetTreeBudget`, unary: [`GetTreeBudgetRequest`](#gettreebudgetrequest) to [`GetTreeBudgetResponse`](#gettreebudgetresponse).
+
+A tree's budget (kept on its top-level Space) and what its children
+use now. `space` may be any Space of the tree.
+
+### SpaceService.SetTreeBudget
+
+`/cua.daemon.v1.SpaceService/SetTreeBudget`, unary: [`SetTreeBudgetRequest`](#settreebudgetrequest) to [`SetTreeBudgetResponse`](#settreebudgetresponse).
+
+Sets a tree's budget: how many child Spaces, vCPUs and memory its
+children may hold at once, and what they may cost. Unset limits take
+the defaults; all unset removes the budget.
 
 ### SpaceService.ConnectSpace
 
@@ -1081,6 +1098,70 @@ Response for `SpaceService.GetGpuSupport`.
 | Field | # | Type | Description |
 | --- | --- | --- | --- |
 | `runtimes` | 1 | repeated [`GpuSupport`](#gpusupport) | One entry per runtime of the location. |
+
+### TreeBudgetLimits
+
+What a tree's children may hold and cost. Unset: the default.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `max_spaces` | 1 | optional `uint32` | Child Spaces at once (default 16). |
+| `max_vcpus` | 2 | optional `uint32` | vCPUs at once (default 16). |
+| `max_memory_mb` | 3 | optional `uint64` | Memory at once, MiB (default 32768). |
+| `usd_per_hour` | 4 | optional `double` | Cost per hour of what runs at once, in linked clouds (default 2.0). |
+| `usd_total` | 5 | optional `double` | Cost in total (default: no total cap). |
+
+### GetTreeBudgetRequest
+
+Request for `SpaceService.GetTreeBudget`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `space` | 1 | `string` | Any Space of the tree (id or name). |
+
+### SetTreeBudgetRequest
+
+Request for `SpaceService.SetTreeBudget`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `space` | 1 | `string` | Any Space of the tree (id or name); the budget is kept on its root. |
+| `limits` | 2 | [`TreeBudgetLimits`](#treebudgetlimits) | The limits. |
+
+### GetTreeBudgetResponse
+
+Response for `SpaceService.GetTreeBudget`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `budget` | 1 | [`TreeBudget`](#treebudget) | The budget and use. |
+
+### SetTreeBudgetResponse
+
+Response for `SpaceService.SetTreeBudget`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `budget` | 1 | [`TreeBudget`](#treebudget) | The budget and use. |
+
+### TreeBudget
+
+A tree's budget and use.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `root` | 1 | `string` | The tree's top-level Space. |
+| `set` | 2 | [`TreeBudgetLimits`](#treebudgetlimits) | What the owner set (unset fields take the default). |
+| `max_spaces` | 3 | `uint32` | Child Spaces it may hold at once. |
+| `max_vcpus` | 4 | `uint32` | vCPUs it may hold at once. |
+| `max_memory_mb` | 5 | `uint64` | Memory it may hold at once (MiB). |
+| `usd_per_hour` | 6 | `double` | Cost per hour it may run at. |
+| `usd_total` | 7 | optional `double` | Cost in total it may reach, when capped. |
+| `spaces` | 8 | `uint32` | Child Spaces now (creates in flight included). |
+| `vcpus` | 9 | `uint32` | vCPUs they hold. |
+| `memory_mb` | 10 | `uint64` | Memory they hold (MiB). |
+| `usd_per_hour_used` | 11 | `double` | Cost per hour they run at. |
+| `usd_spent` | 12 | `double` | What its children have cost so far. |
 
 ## Types in `cua/daemon/v1/daemon.proto`
 

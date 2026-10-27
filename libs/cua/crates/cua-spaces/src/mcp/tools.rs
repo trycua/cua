@@ -254,7 +254,23 @@ async fn dispatch(
                     "count {count}: create 1 to {MAX_CREATE_COUNT} Spaces at a time"
                 )));
             }
+            // The network: tightening only (anything opening more than
+            // Internet only is the user's to choose).
+            let network_settings = match (&a.network, &a.allow, &a.deny) {
+                (None, None, None) => None,
+                _ => {
+                    let s = crate::network::parse_network(
+                        a.network.as_deref().unwrap_or("internet"),
+                        a.allow.as_deref().unwrap_or_default(),
+                        a.deny.as_deref().unwrap_or_default(),
+                    )?;
+                    crate::network::refuse_widening_by_agent(&s, None)?;
+                    Some(s)
+                }
+            };
             let one = |name: Option<String>| SpaceCreate {
+                network_settings: network_settings.clone(),
+                parent: a.parent.clone(),
                 image: a.image.clone(),
                 on: on.clone(),
                 kind,
@@ -325,6 +341,29 @@ async fn dispatch(
         "delete_space" => {
             let a: i::SpaceOnly = args(tool, a)?;
             Ok(ToolOutcome::text(spaces.delete(&a.space).await?))
+        }
+        "network_show" => {
+            let a: i::SpaceOnly = args(tool, a)?;
+            Ok(ToolOutcome::json(&spaces.network_info(&a.space).await?))
+        }
+        "network_set" => {
+            let a: i::NetworkSet = args(tool, a)?;
+            let s = crate::network::parse_network(
+                &a.network,
+                a.allow.as_deref().unwrap_or_default(),
+                a.deny.as_deref().unwrap_or_default(),
+            )?;
+            let current = spaces.network_info(&a.space).await?.settings;
+            crate::network::refuse_widening_by_agent(&s, Some(&current))?;
+            let tree = a.tree.unwrap_or(false);
+            let applied = spaces.set_network(&a.space, &s, false, tree).await?;
+            Ok(ToolOutcome::json(&json!({
+                "applied": match applied {
+                    crate::network::Applied::Now => "now",
+                    crate::network::Applied::NextStart => "next_start",
+                },
+                "network": spaces.network_info(&a.space).await?,
+            })))
         }
         "stop_space" => {
             let a: i::StopSpace = args(tool, a)?;

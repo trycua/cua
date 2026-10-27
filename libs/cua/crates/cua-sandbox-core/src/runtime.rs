@@ -683,6 +683,20 @@ pub trait LocalRuntime: Send + Sync {
         Ok(Default::default())
     }
 
+    /// Replaces instance `name`'s network settings ([`cua_vmm::network`]),
+    /// kept with it; says whether they hold now or from its next start.
+    async fn set_network(
+        &self,
+        name: &str,
+        settings: &cua_vmm::network::NetworkSettings,
+    ) -> RuntimeResult<cua_vmm::network::Applied> {
+        let _ = (name, settings);
+        Err(RuntimeError::Unsupported {
+            backend: self.backend(),
+            op: "changing network settings (this runtime keeps none)".into(),
+        })
+    }
+
     /// Builds `spec` (image layers on the container image `spec.from`)
     /// into this machine's container engine and returns the reference to
     /// run (`container:<ref>`). Cached by the same content hash as remote

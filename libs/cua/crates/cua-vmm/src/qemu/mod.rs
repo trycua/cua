@@ -3301,6 +3301,49 @@ impl Runtime for QemuRuntime {
         Ok(self.load(name)?.egress.unwrap_or_default())
     }
 
+    /// Kept with the VM. In its namespace (Linux) the rules are refilled at
+    /// once, except what pasta fixes at launch (the localhost ports), which
+    /// changes at its next start; elsewhere at its next start.
+    async fn set_network(
+        &self,
+        name: &str,
+        settings: &crate::network::NetworkSettings,
+    ) -> Result<crate::network::Applied> {
+        settings.validate()?;
+        let _g = self.lock.lock().await;
+        let mut st = self.load(name)?;
+        if st.kind != EntryKind::Instance {
+            return Err(VmmError::invalid(format!("'{name}' is not a VM instance")));
+        }
+        let before = st.network.clone();
+        st.network = Some(settings.clone());
+        st.egress = Some(settings.custom.clone());
+        let ports_change = crate::network::vm_localhost_ports(before.as_ref()).ok()
+            != crate::network::vm_localhost_ports(Some(settings)).ok();
+        let restrict_change = (settings.preset == crate::network::NetworkPreset::None)
+            != st.restrict_network;
+        let applied = if Self::is_running(&st) && st.netns && secure_netns() {
+            let rules = crate::network::vm_rules(
+                st.network.as_ref(),
+                None,
+                st.restrict_network,
+                &netns_context(),
+            )
+            .map_err(VmmError::from)?;
+            let pid = st.pid.expect("running");
+            crate::egress::ns_apply(pid, &netns_rules_script(&rules, false)).await?;
+            if ports_change || restrict_change {
+                crate::network::Applied::NextStart
+            } else {
+                crate::network::Applied::Now
+            }
+        } else {
+            crate::network::Applied::NextStart
+        };
+        self.save(&st)?;
+        Ok(applied)
+    }
+
     async fn delete_checkpoint(&self, checkpoint: &str) -> Result<()> {
         if let Some((vm, snap)) = checkpoint.split_once('@') {
             let mut st = self.load(vm)?;

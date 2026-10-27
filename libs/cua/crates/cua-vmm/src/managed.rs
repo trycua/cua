@@ -1726,6 +1726,15 @@ mod engine_impl {
             self.engine().await?.set_egress(name, policy).await
         }
 
+        async fn set_network(
+            &self,
+            name: &str,
+            settings: &crate::network::NetworkSettings,
+        ) -> Result<crate::network::Applied> {
+            let _busy = self.busy();
+            self.engine().await?.set_network(name, settings).await
+        }
+
         async fn egress(&self, name: &str) -> Result<crate::egress::EgressPolicy> {
             Ok(crate::container::egress::kept(name)
                 .map(|k| k.policy)

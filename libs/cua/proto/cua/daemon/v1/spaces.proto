@@ -103,6 +103,12 @@ service SpaceService {
   rpc SetSpaceLifetime(SetSpaceLifetimeRequest) returns (SetSpaceLifetimeResponse);
   // Replaces a Space's egress policy (empty removes it).
   rpc SetSpaceEgress(SetSpaceEgressRequest) returns (SetSpaceEgressResponse);
+  // A Space's network: its settings, what they open, where they are
+  // enforced (or why its network is cut), and what is always blocked.
+  rpc GetSpaceNetwork(GetSpaceNetworkRequest) returns (GetSpaceNetworkResponse);
+  // Replaces a Space's network settings (a child's stay within its
+  // parent's unless `widen`).
+  rpc SetSpaceNetwork(SetSpaceNetworkRequest) returns (SetSpaceNetworkResponse);
   // Connects to a registered Space and returns a loopback env passthrough
   // (`<loopback>/v1/spaces/<key>/env`) that carries the Space's credentials,
   // so a client runs every `cua.env.v1` call and media WebSocket through the

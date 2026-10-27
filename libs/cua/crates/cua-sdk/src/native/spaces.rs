@@ -378,6 +378,59 @@ impl NetworkSettings {
     }
 }
 
+/// A Space's network as `cua network show` says it ([`Spaces::network`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
+pub struct SpaceNetworkInfo {
+    /// Its settings.
+    pub settings: NetworkSettings,
+    /// One plain line ("Internet only").
+    pub summary: String,
+    /// What the settings open beyond `internet`, one plain line each.
+    pub widenings: Vec<String>,
+    /// `enforced` (rules on the host, outside the guest), `no_network`
+    /// (its runtime can't protect it yet), `open` (No protection) or
+    /// `refused`; empty when unknown (a Space another machine runs).
+    pub enforcement: String,
+    /// Where the rules are enforced, or why its network is cut.
+    pub point: String,
+    /// Why its network is not what was asked; `None` otherwise.
+    pub note: Option<String>,
+    /// Its parent and its tree's top-level Space; `None` for a top-level
+    /// Space.
+    pub parent: Option<String>,
+    pub root: Option<String>,
+    /// What no setting opens, in plain words.
+    pub always_blocked: Vec<String>,
+    /// An update changed its settings: say so once.
+    pub notice_pending: bool,
+}
+
+impl From<dpb::SpaceNetworkInfo> for SpaceNetworkInfo {
+    fn from(i: dpb::SpaceNetworkInfo) -> Self {
+        SpaceNetworkInfo {
+            settings: i.settings.unwrap_or_default().into(),
+            summary: i.summary,
+            widenings: i.widenings,
+            enforcement: i.enforcement,
+            point: i.point,
+            note: (!i.note.is_empty()).then_some(i.note),
+            parent: (!i.parent.is_empty()).then_some(i.parent),
+            root: (!i.root.is_empty()).then_some(i.root),
+            always_blocked: i.always_blocked,
+            notice_pending: i.notice_pending,
+        }
+    }
+}
+
+/// What [`Spaces::set_network`] did.
+#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
+pub struct SetNetworkResult {
+    /// `now` (the running guest is under them) or `next_start`.
+    pub applied: String,
+    /// The Space's network after the change.
+    pub network: SpaceNetworkInfo,
+}
+
 /// What carries a connected Space's calls ([`Space::transport`]), for a
 /// badge: whether the relay can read them.
 #[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
@@ -3641,15 +3694,25 @@ impl Spaces {
         if let Some(on) = &on {
             cua_sandbox_core::placement::validate(on, kind, &runtime).map_err(place)?;
         }
-        let network =
-            cua_sandbox_core::NetworkMode::parse(options.network.as_deref().unwrap_or_default())
-                .map_err(|e| CuaError::InvalidArgument(e.to_string()))?;
+        // `network` takes a preset word too (`lan`, `localhost:5432`,
+        // `unprotected`): it becomes the settings when none are given.
+        let network_word = options.network.as_deref().map(str::trim).unwrap_or_default();
+        let legacy_word = matches!(network_word.to_ascii_lowercase().as_str(), "" | "default" | "none");
+        let network = cua_sandbox_core::NetworkMode::parse(if legacy_word { network_word } else { "" })
+            .map_err(|e| CuaError::InvalidArgument(e.to_string()))?;
         cua_spaces::registry::validate_labels(&options.labels).map_err(refused)?;
-        let network_settings = options
-            .network_settings
-            .as_ref()
-            .map(NetworkSettings::checked)
-            .transpose()?;
+        let network_settings = match &options.network_settings {
+            Some(n) => Some(n.checked()?),
+            None if !legacy_word => Some(
+                cua_spaces::network::parse_network(
+                    network_word,
+                    &options.egress.as_ref().map(|e| e.allow.clone()).unwrap_or_default(),
+                    &options.egress.as_ref().map(|e| e.deny.clone()).unwrap_or_default(),
+                )
+                .map_err(|e| CuaError::InvalidArgument(e.to_string()))?,
+            ),
+            None => None,
+        };
         if let Some(e) = &options.egress {
             cua_spaces::egress::EgressPolicy::from(e.clone())
                 .parse()
@@ -3807,6 +3870,18 @@ impl Spaces {
             }
         })
         .await
+    }
+}
+
+/// A daemon that predates network settings: nothing was read or changed.
+fn too_old_for_network(e: tonic::Status) -> CuaError {
+    match e.code() {
+        tonic::Code::Unimplemented => CuaError::CapabilityMissing(
+            "network settings: the cua daemon is too old for them; update cua and restart its \
+             daemon"
+                .into(),
+        ),
+        _ => daemon_err(e),
     }
 }
 
@@ -4108,6 +4183,102 @@ impl Spaces {
                     .expires_at
                     .map(|t| t.seconds)
                     .unwrap_or(0)),
+            }
+        })
+        .await
+    }
+
+    /// A Space's network: its settings, what they open, where they are
+    /// enforced (or why its network is cut), and what is always blocked.
+    pub async fn network(&self, space: String) -> Result<SpaceNetworkInfo> {
+        let host = self.host.clone();
+        run(async move {
+            match &host {
+                Host::Embedded(s) => Ok(cua_spaces::network::info_to_pb(&s.network_info(&space).await?).into()),
+                Host::Daemon(d) => Ok(d
+                    .spaces()
+                    .get_space_network(dpb::GetSpaceNetworkRequest {
+                        space,
+                        ack_notice: false,
+                    })
+                    .await
+                    .map_err(too_old_for_network)?
+                    .into_inner()
+                    .network
+                    .unwrap_or_default()
+                    .into()),
+            }
+        })
+        .await
+    }
+
+    /// Marks the one-time notice about the new network defaults as shown
+    /// for `space` ([`SpaceNetworkInfo::notice_pending`]).
+    pub async fn ack_network_notice(&self, space: String) -> Result<()> {
+        let host = self.host.clone();
+        run(async move {
+            match &host {
+                Host::Embedded(s) => Ok(s.ack_network_notice(&space)?),
+                Host::Daemon(d) => {
+                    d.spaces()
+                        .get_space_network(dpb::GetSpaceNetworkRequest {
+                            space,
+                            ack_notice: true,
+                        })
+                        .await
+                        .map_err(too_old_for_network)?;
+                    Ok(())
+                }
+            }
+        })
+        .await
+    }
+
+    /// Replaces a Space's network settings (see [`NetworkSettings`]). A
+    /// child stays within its parent's unless `widen`; `tree` gives its
+    /// children the same settings. They hold at once where the runtime can
+    /// change a running guest's network, else from its next start
+    /// (`applied`). A Space another machine runs is `Unsupported`.
+    pub async fn set_network(
+        &self,
+        space: String,
+        settings: NetworkSettings,
+        widen: bool,
+        tree: bool,
+    ) -> Result<SetNetworkResult> {
+        let checked = settings.checked()?;
+        let host = self.host.clone();
+        run(async move {
+            match &host {
+                Host::Embedded(s) => {
+                    let applied = s.set_network(&space, &checked, widen, tree).await?;
+                    let info = s.network_info(&space).await?;
+                    Ok(SetNetworkResult {
+                        applied: match applied {
+                            cua_spaces::network::Applied::Now => "now",
+                            cua_spaces::network::Applied::NextStart => "next_start",
+                        }
+                        .into(),
+                        network: cua_spaces::network::info_to_pb(&info).into(),
+                    })
+                }
+                Host::Daemon(d) => {
+                    let r = d
+                        .spaces()
+                        .set_space_network(dpb::SetSpaceNetworkRequest {
+                            space,
+                            settings: Some(cua_spaces::network::to_pb(&checked)),
+                            widen,
+                            tree,
+                        })
+                        .await
+                        .map_err(too_old_for_network)?
+                        .into_inner();
+                    Ok(SetNetworkResult {
+                        applied: r.applied,
+                        network: r.network.unwrap_or_default().into(),
+                    })
+                }
             }
         })
         .await

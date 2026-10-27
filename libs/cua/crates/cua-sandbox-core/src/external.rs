@@ -1447,6 +1447,17 @@ impl LocalRuntime for WithExternal {
         }
     }
 
+    async fn set_network(
+        &self,
+        name: &str,
+        settings: &cua_vmm::network::NetworkSettings,
+    ) -> RuntimeResult<cua_vmm::network::Applied> {
+        match self.owner(name).await {
+            Some(rt) => rt.set_network(name, settings).await,
+            None => self.inner.set_network(name, settings).await,
+        }
+    }
+
     async fn suspend(&self, name: &str) -> RuntimeResult<()> {
         match self.owner(name).await {
             Some(rt) => rt.suspend(name).await,

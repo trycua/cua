@@ -22,8 +22,10 @@ use crate::{Error, Result, Spaces};
 use cua_proto::daemon::v1 as dpb;
 use cua_proto::env::v1 as epb;
 
+use cua_vmm::network::compile_mode;
+
 pub use cua_vmm::network::{
-    Mode, NO_NETWORK_NOTE, NetworkContext, NetworkPlan, NetworkPreset, NetworkSettings,
+    Applied, Mode, NO_NETWORK_NOTE, NetworkContext, NetworkPlan, NetworkPreset, NetworkSettings,
     NetworkSupport, Placement, UNPROTECTED_NOTE, network_support,
 };
 
@@ -78,6 +80,81 @@ pub fn refuse_on_provider(settings: &NetworkSettings) -> Result<()> {
         NetworkSupport::Refuse { why } => Err(Error::invalid(why)),
         NetworkSupport::Enforced { .. } | NetworkSupport::NoNetworkOnly { .. } => Ok(()),
     }
+}
+
+/// What no setting opens, in plain words (`cua network show`).
+pub const ALWAYS_BLOCKED: [&str; 4] = [
+    "Cloud metadata (169.254.169.254 and the other clouds' endpoints)",
+    "Spaces in other trees",
+    "The Cua daemon on this computer",
+    "This computer's own addresses (only \"localhost\" opens listed ports)",
+];
+
+/// A Space's network as `cua network show` says it.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct NetworkInfo {
+    /// Its settings.
+    pub settings: NetworkSettings,
+    /// One plain line.
+    pub summary: String,
+    /// What the settings open beyond "internet".
+    pub widenings: Vec<String>,
+    /// `enforced`, `no_network`, `open`, `refused`; empty when unknown.
+    pub enforcement: String,
+    /// Where it is enforced, or why its network is cut.
+    pub point: String,
+    /// Why its network is not what was asked.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    /// Its parent and tree root.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub root: Option<String>,
+    /// What no setting opens.
+    pub always_blocked: Vec<String>,
+    /// An update changed its settings; say so once.
+    pub notice_pending: bool,
+}
+
+/// [`NetworkInfo`] in the daemon's wire form.
+pub fn info_to_pb(i: &NetworkInfo) -> dpb::SpaceNetworkInfo {
+    dpb::SpaceNetworkInfo {
+        settings: Some(to_pb(&i.settings)),
+        summary: i.summary.clone(),
+        widenings: i.widenings.clone(),
+        enforcement: i.enforcement.clone(),
+        point: i.point.clone(),
+        note: i.note.clone().unwrap_or_default(),
+        parent: i.parent.clone().unwrap_or_default(),
+        root: i.root.clone().unwrap_or_default(),
+        always_blocked: i.always_blocked.clone(),
+        notice_pending: i.notice_pending,
+    }
+}
+
+/// How `settings` fare on `backend` here: (`enforcement`, `point`).
+pub fn enforcement_of(backend: &str, settings: &NetworkSettings) -> (String, String) {
+    let Some(kind) = backend_kind(backend) else {
+        return (String::new(), String::new());
+    };
+    let support = network_support(kind, std::env::consts::OS, Placement::Local);
+    let point = match support {
+        NetworkSupport::Enforced { point } => point,
+        NetworkSupport::NoNetworkOnly { why } | NetworkSupport::Refuse { why } => why,
+    };
+    let word = match cua_vmm::network::plan(
+        settings,
+        support,
+        &NetworkContext::default(),
+        Mode::from_env(),
+    ) {
+        Ok(NetworkPlan::Enforce(_)) => "enforced",
+        Ok(NetworkPlan::NoNetwork { .. }) => "no_network",
+        Ok(NetworkPlan::Open { .. }) => "open",
+        Ok(NetworkPlan::Refuse(_)) | Err(_) => "refused",
+    };
+    (word.into(), point.into())
 }
 
 /// What a Space's listing shows of its network.
@@ -228,6 +305,90 @@ pub(crate) struct CreateNetwork {
     pub depth: u32,
 }
 
+/// Settings from one word as the CLI, SDK and MCP take it: `internet`
+/// (`default` and empty too), `none`, `lan`, `unprotected`, `custom` (from
+/// `internet`), `custom:none`, `localhost:5432,3000` or `localhost:all`,
+/// with `allow` and `deny` lists on top.
+pub fn parse_network(word: &str, allow: &[String], deny: &[String]) -> Result<NetworkSettings> {
+    let w = word.trim();
+    let (head, rest) = match w.split_once(':') {
+        Some((h, r)) => (h, Some(r)),
+        None => (w, None),
+    };
+    let preset = if head.is_empty() {
+        NetworkPreset::Internet
+    } else {
+        NetworkPreset::parse(head).map_err(|e| Error::invalid(e.0))?
+    };
+    let mut s = NetworkSettings::preset(preset);
+    match (preset, rest) {
+        (_, None) => {}
+        (NetworkPreset::Localhost, Some(r)) if r.trim().eq_ignore_ascii_case("all") => {
+            s.all_localhost_ports = true
+        }
+        (NetworkPreset::Localhost, Some(r)) => {
+            for p in r.split(',').map(str::trim).filter(|p| !p.is_empty()) {
+                let port = p.parse::<u16>().ok().filter(|p| *p > 0).ok_or_else(|| {
+                    Error::invalid(format!("localhost port {p:?} is not a port"))
+                })?;
+                if !s.localhost_ports.contains(&port) {
+                    s.localhost_ports.push(port);
+                }
+            }
+        }
+        (NetworkPreset::Custom, Some(base)) => {
+            s.custom_base = NetworkPreset::parse(base).map_err(|e| Error::invalid(e.0))?;
+        }
+        (_, Some(_)) => {
+            return Err(Error::invalid(format!(
+                "network {w:?}: only localhost takes ports (localhost:5432,3000) and only \
+                 custom a base (custom:none)"
+            )));
+        }
+    }
+    s.custom = crate::egress::EgressPolicy {
+        allow: allow.to_vec(),
+        deny: deny.to_vec(),
+    };
+    // Lists on internet or none make it custom from that base.
+    if !s.custom.is_empty() && matches!(preset, NetworkPreset::Internet | NetworkPreset::None) {
+        s.custom_base = preset;
+        s.preset = NetworkPreset::Custom;
+    }
+    s.validate().map_err(|e| Error::invalid(e.0))?;
+    Ok(s)
+}
+
+/// Refuses settings an agent (an MCP call) may not choose: anything that
+/// opens more than Internet only (`localhost`, `lan`, `unprotected`, an
+/// allow past the default blocks), or, with `current`, more than the Space
+/// has now. Opening more is the user's to do, in the app or the CLI.
+pub fn refuse_widening_by_agent(
+    settings: &NetworkSettings,
+    current: Option<&NetworkSettings>,
+) -> Result<()> {
+    let user_only = |what: &str| {
+        Err(Error::invalid(format!(
+            "{what} is the user's to choose: ask them to run `cua network set` (or use the app)"
+        )))
+    };
+    if !settings.widenings().is_empty() {
+        return user_only("Opening more than Internet only");
+    }
+    if let Some(current) = current {
+        // No more open than now: cutting it down to what the Space has now
+        // changes nothing.
+        let ctx = NetworkContext::default();
+        let want = compile_mode(settings, &ctx, Mode::Secure).map_err(|e| Error::invalid(e.0))?;
+        let within = compile_mode(&settings.intersect(current), &ctx, Mode::Secure)
+            .map_err(|e| Error::invalid(e.0))?;
+        if want != within {
+            return user_only("Opening more than the Space has now");
+        }
+    }
+    Ok(())
+}
+
 /// The settings a parent Space has: its own, or what it would migrate to.
 pub(crate) fn settings_of(meta: Option<&SpaceMeta>) -> NetworkSettings {
     match meta {
@@ -369,6 +530,120 @@ impl Spaces {
         Ok(s)
     }
 
+    /// Replaces a Space's network settings. A child's are intersected with
+    /// its parent's (no more open) unless `widen`, which records who widened
+    /// it. With `tree`, its children get the new settings too (each
+    /// intersected with its own parent's). Says whether they hold now or
+    /// from its next start. A Space on this machine only: a Space another
+    /// machine runs keeps its settings there.
+    pub async fn set_network(
+        &self,
+        space: &str,
+        settings: &NetworkSettings,
+        widen: bool,
+        tree: bool,
+    ) -> Result<cua_vmm::network::Applied> {
+        settings.validate().map_err(|e| Error::invalid(e.0))?;
+        let id = self.resolve(space)?;
+        let crate::SpaceId::Local { name } = &id else {
+            return Err(Error::WrongProvider {
+                op: "Changing network settings".into(),
+                provider: format!(
+                    "{} (only a Space on this computer; change it on the machine that runs it)",
+                    id.provider()
+                ),
+            });
+        };
+        let key = id.to_string();
+        let meta = self.inner.registry.meta(&key).unwrap_or_default();
+        let parent = meta
+            .parent
+            .clone()
+            .map(|p| {
+                let m = self.inner.registry.meta(&p);
+                (p, m)
+            });
+        let resolved = resolve_create(settings.clone(), parent, widen && meta.parent.is_some())?;
+        if widen && meta.parent.is_none() {
+            return Err(Error::invalid(
+                "widen goes with a child Space: a top-level Space has no parent to stay within",
+            ));
+        }
+        let applied = self
+            .inner
+            .sandboxes
+            .set_network(name, &resolved.settings)
+            .await
+            .map_err(crate::egress::sandbox_error)?;
+        let backend = self
+            .inner
+            .sandboxes
+            .connect(name)
+            .await
+            .ok()
+            .map(|sb| sb.runtime_type().to_string());
+        let note = backend.and_then(|b| note_for(&b, &resolved.settings));
+        self.inner.registry.update_meta(&key, |m| {
+            m.network = Some(resolved.settings.clone());
+            m.network_generation = m.network_generation.saturating_add(1);
+            m.network_note = note;
+            m.network_notice_pending = false;
+            m.egress = resolved.settings.custom.clone();
+        })?;
+        // Its children stay within it: each keeps its own settings, intersected
+        // with the new ones (a child someone widened keeps that), or with
+        // `tree` takes the new ones.
+        for child in crate::tree::children_of(&self.inner.registry.all_meta(), &key) {
+            let current = self.inner.registry.meta(&child);
+            let widened = current
+                .as_ref()
+                .and_then(|m| m.network.as_ref())
+                .is_some_and(|n| n.widened_by.is_some());
+            if widened && !tree {
+                continue;
+            }
+            let child_settings = if tree {
+                settings.clone()
+            } else {
+                settings_of(current.as_ref())
+            };
+            Box::pin(self.set_network(&child, &child_settings, false, tree)).await?;
+        }
+        Ok(applied)
+    }
+
+    /// A Space's network as `cua network show` says it.
+    pub async fn network_info(&self, space: &str) -> Result<NetworkInfo> {
+        let id = self.resolve(space)?;
+        let key = id.to_string();
+        let meta = self.inner.registry.meta(&key);
+        let settings = settings_of(meta.as_ref());
+        let (enforcement, point) = match &id {
+            crate::SpaceId::Local { name } => match self.inner.sandboxes.connect(name).await {
+                Ok(sb) => enforcement_of(sb.runtime_type(), &settings),
+                Err(_) => (String::new(), String::new()),
+            },
+            _ => (
+                String::new(),
+                "kept by the machine that runs it".to_string(),
+            ),
+        };
+        Ok(NetworkInfo {
+            summary: settings.summary(),
+            widenings: settings.widenings(),
+            enforcement,
+            point,
+            note: meta.as_ref().and_then(|m| m.network_note.clone()),
+            parent: meta.as_ref().and_then(|m| m.parent.clone()),
+            root: meta.as_ref().and_then(|m| m.root.clone()),
+            always_blocked: ALWAYS_BLOCKED.iter().map(|s| s.to_string()).collect(),
+            notice_pending: meta
+                .as_ref()
+                .is_some_and(|m| m.network_notice_pending || m.network.is_none()),
+            settings,
+        })
+    }
+
     /// Clears a Space's one-time notice (the CLI or app showed it).
     pub fn ack_network_notice(&self, space: &str) -> Result<()> {
         let id = self.resolve(space)?.to_string();
@@ -381,6 +656,46 @@ impl Spaces {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn one_word_networks() {
+        let p = |w: &str| parse_network(w, &[], &[]);
+        assert_eq!(p("").unwrap(), NetworkSettings::internet());
+        assert_eq!(p("default").unwrap(), NetworkSettings::internet());
+        assert_eq!(p("none").unwrap(), NetworkSettings::none());
+        let l = p("localhost:5432, 3000").unwrap();
+        assert_eq!(l.localhost_ports, [5432, 3000]);
+        assert!(p("localhost:all").unwrap().all_localhost_ports);
+        assert!(p("localhost").is_err(), "ports are needed");
+        assert!(p("localhost:0").is_err());
+        assert_eq!(p("custom:none").unwrap().custom_base, NetworkPreset::None);
+        assert!(p("lan:5432").is_err());
+        assert!(p("open").is_err());
+        let c = parse_network("internet", &["10.0.5.0/24".into()], &[]).unwrap();
+        assert_eq!((c.preset, c.custom_base), (NetworkPreset::Custom, NetworkPreset::Internet));
+        let c = parse_network("none", &["1.1.1.1".into()], &[]).unwrap();
+        assert_eq!((c.preset, c.custom_base), (NetworkPreset::Custom, NetworkPreset::None));
+        let e = parse_network("internet", &["pypi.org".into()], &[]).unwrap_err();
+        assert!(e.to_string().contains("by IP/CIDR"), "{e}");
+    }
+
+    #[test]
+    fn agents_only_tighten() {
+        let internet = NetworkSettings::internet();
+        assert!(refuse_widening_by_agent(&internet, None).is_ok());
+        assert!(refuse_widening_by_agent(&NetworkSettings::none(), Some(&internet)).is_ok());
+        let lan = NetworkSettings::preset(NetworkPreset::Lan);
+        let e = refuse_widening_by_agent(&lan, None).unwrap_err();
+        assert!(e.to_string().contains("cua network set"), "{e}");
+        assert!(refuse_widening_by_agent(&NetworkSettings::preset(NetworkPreset::Unprotected), None).is_err());
+        let one = parse_network("custom", &["1.1.1.1".into()], &["all".into()]).unwrap();
+        assert!(refuse_widening_by_agent(&one, Some(&internet)).is_ok(), "tighter");
+        assert!(refuse_widening_by_agent(&internet, Some(&one)).is_err(), "wider than now");
+        let deny = parse_network("internet", &[], &["8.8.8.8".into()]).unwrap();
+        assert!(refuse_widening_by_agent(&deny, Some(&internet)).is_ok());
+        let private = parse_network("internet", &["10.0.5.0/24".into()], &[]).unwrap();
+        assert!(refuse_widening_by_agent(&private, None).is_err(), "a LAN allow");
+    }
 
     #[test]
     fn notes_and_provider_refusals_in_plain_words() {

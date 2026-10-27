@@ -213,9 +213,47 @@ pub struct CreateSpace {
     /// values up to 256. Not with `durable` or `reuse`.
     #[serde(default)]
     pub labels: Option<std::collections::BTreeMap<String, String>>,
+    /// Its network: `internet` (default: the internet and its own tree;
+    /// this computer, the local network, cloud metadata and other trees are
+    /// blocked), `none`, or `custom` / `custom:none` with `allow` and
+    /// `deny`. Presets that open more (`localhost:<ports>`, `lan`,
+    /// `unprotected`) are the user's to choose: refused here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<String>,
+    /// Destinations to allow (addresses or CIDRs) on top of `network`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow: Option<Vec<String>>,
+    /// Destinations to block (addresses, CIDRs or `all`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deny: Option<Vec<String>>,
+    /// Create it as a child of this Space (id or name): it joins the
+    /// parent's tree, and its network is no more open than the parent's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
     /// Command, environment and services (see [`SpaceWorkload`]).
     #[serde(flatten)]
     pub workload: SpaceWorkload,
+}
+
+/// `network_set`: change a Space's network.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NetworkSet {
+    /// Space id or name.
+    pub space: SpaceArg,
+    /// `internet`, `none`, or `custom` / `custom:none` with `allow` and
+    /// `deny`. Opening more than the Space has now is the user's to do
+    /// (`cua network set`, or the app): refused here.
+    pub network: String,
+    /// Destinations to allow (addresses or CIDRs).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow: Option<Vec<String>>,
+    /// Destinations to block (addresses, CIDRs or `all`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deny: Option<Vec<String>>,
+    /// Its child Spaces take the same settings (each within its parent's).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tree: Option<bool>,
 }
 
 /// A tool whose only argument is the Space.

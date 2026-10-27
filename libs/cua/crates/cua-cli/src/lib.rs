@@ -52,6 +52,7 @@ mod image_release;
 mod jobs_cmd;
 pub mod keyvault_cmd;
 mod mcp;
+mod network_cmd;
 mod member_cmd;
 pub mod onboard;
 mod persistent_cmd;
@@ -253,6 +254,10 @@ enum Command {
     /// that Spaces fork from in under a second. Works in any directory;
     /// layers already built are reused.
     Build(build_cmd::BuildArgs),
+    /// What a Space can reach on the network, and changing it: `show`,
+    /// `set`, `log`.
+    #[command(subcommand)]
+    Network(network_cmd::NetworkCmd),
     /// Images: local OCI pull/build/push.
     #[command(subcommand, visible_alias = "img")]
     Image(ImageCmd),
@@ -1857,6 +1862,19 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
             let res = host::run_spaces_sdk(&cua, cmd, json, out).await;
             res.map_err(host::explain_share_presence_failure)
         }
+        Command::Network(cmd) => {
+            let rest = Cli {
+                command: Command::Spaces(host::SpacesCmd::Ls {
+                    relay: None,
+                    label: vec![],
+                    no_size: false,
+                    tree: false,
+                }),
+                ..cli
+            };
+            let cua = open(&rest, false).await?;
+            return network_cmd::run(&cua, cmd, json, out).await;
+        }
         Command::Build(a) => {
             let rest = Cli {
                 command: Command::Spaces(host::SpacesCmd::Ls {
@@ -2275,6 +2293,7 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         | Command::Host(_)
         | Command::Run(_)
         | Command::Build(_)
+        | Command::Network(_)
         | Command::Jobs(_)
         | Command::Computers
         | Command::Machines(_)

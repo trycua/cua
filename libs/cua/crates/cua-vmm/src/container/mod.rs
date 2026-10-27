@@ -1826,6 +1826,40 @@ impl Runtime for ContainerRuntime {
         Ok(egress::kept(name).map(|k| k.policy).unwrap_or_default())
     }
 
+    /// Kept with the container; on the engine host at once while it runs
+    /// (a container not yet on its tree's network gets them at its next
+    /// start, recreated first).
+    async fn set_network(
+        &self,
+        name: &str,
+        settings: &crate::network::NetworkSettings,
+    ) -> Result<crate::network::Applied> {
+        settings.validate()?;
+        let i = self
+            .inspect(name)
+            .await?
+            .ok_or_else(|| VmmError::NotFound(name.into()))?;
+        let previous = egress::kept(name);
+        let k = egress::Kept {
+            policy: settings.custom.clone(),
+            network: Some(settings.clone()),
+            ..previous.clone().unwrap_or_default()
+        };
+        egress::keep(name, &k)?;
+        let running = matches!(Self::status_from(&i), Status::Running | Status::Paused);
+        if !running || self.needs_recreate(name, &i) {
+            return Ok(crate::network::Applied::NextStart);
+        }
+        if let Err(e) = self.police(name, &k.policy).await {
+            match previous {
+                Some(p) => egress::keep(name, &p)?,
+                None => egress::forget(name),
+            }
+            return Err(e);
+        }
+        Ok(crate::network::Applied::Now)
+    }
+
     async fn delete(&self, name: &str) -> Result<()> {
         let opts = RemoveContainerOptions {
             force: true,

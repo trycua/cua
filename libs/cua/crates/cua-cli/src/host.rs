@@ -488,14 +488,33 @@ Examples:
         /// with `--durable`.
         #[arg(long, value_name = "KEY=VALUE")]
         label: Vec<String>,
-        /// Block this destination from the guest's first instruction (IP,
-        /// CIDR or `all`; repeat for more). Enforced by the host, outside
-        /// the guest. See `cua spaces egress`.
-        #[arg(long, value_name = "ADDR|CIDR|all")]
+        /// Its network: `internet` (the default: the internet and its own
+        /// tree; this computer, your local network, cloud metadata and other
+        /// trees are blocked), `none`, `localhost:5432,3000` (also this
+        /// computer's localhost on those ports), `lan` (also your local
+        /// network), `custom` / `custom:none` (with --allow/--deny), or
+        /// `unprotected` (No protection). Enforced by the host, outside the
+        /// guest. See `cua network`.
+        #[arg(long, value_name = "PRESET")]
+        network: Option<String>,
+        /// Block this destination (IP, CIDR or `all`; repeat for more).
+        #[arg(long = "deny", visible_alias = "egress-deny", value_name = "ADDR|CIDR|all")]
         egress_deny: Vec<String>,
-        /// Keep this destination reachable where --egress-deny blocks it.
-        #[arg(long, value_name = "ADDR|CIDR|all")]
+        /// Allow this destination, also where a block covers it (IP or CIDR;
+        /// repeat for more). This computer itself opens only with
+        /// `--network localhost:<ports>`.
+        #[arg(long = "allow", visible_alias = "egress-allow", value_name = "ADDR|CIDR")]
         egress_allow: Vec<String>,
+        /// Create it as a child of this Space: it joins the parent's tree
+        /// (they reach each other) and its network is no more open than the
+        /// parent's. With `--parent`, the children are deleted, stopped and
+        /// suspended with it.
+        #[arg(long, value_name = "SPACE")]
+        parent: Option<String>,
+        /// With --parent: let its network be more open than its parent's
+        /// (recorded on the Space).
+        #[arg(long, requires = "parent")]
+        widen: bool,
     },
     /// Keep Spaces of one image ready where the elastic pool puts them, so
     /// the next creates of that shape start in a fraction of a second
@@ -1391,17 +1410,28 @@ pub async fn run_spaces_sdk(
             region,
             volumes,
             label,
+            network,
             egress_deny,
             egress_allow,
+            parent,
+            widen,
         } => {
             let volumes = parse_volumes(&volumes)?;
             let labels = parse_labels(&label)?;
-            let egress = (!egress_deny.is_empty() || !egress_allow.is_empty()).then(|| {
-                cua_sdk::EgressPolicy {
-                    allow: egress_allow.clone(),
-                    deny: egress_deny.clone(),
-                }
-            });
+            // One shape for the network: a preset and the lists.
+            let network_settings = (network.is_some()
+                || !egress_deny.is_empty()
+                || !egress_allow.is_empty())
+            .then(|| {
+                cua_spaces::network::parse_network(
+                    network.as_deref().unwrap_or("internet"),
+                    &egress_allow,
+                    &egress_deny,
+                )
+                .map(|s| cua_sdk::NetworkSettings::from(s))
+                .map_err(CuaError::from)
+            })
+            .transpose()?;
             if !(1..=8).contains(&count) {
                 return Err(CuaError::InvalidArgument(format!(
                     "--count {count}: create 1 to 8 Spaces at a time"
@@ -1434,7 +1464,9 @@ pub async fn run_spaces_sdk(
                 region: region.clone(),
                 volumes: volumes.clone(),
                 labels: labels.clone(),
-                egress: egress.clone(),
+                network_settings: network_settings.clone(),
+                parent: parent.clone(),
+                widen: widen.then_some(true),
                 ..Default::default()
             };
             // Durable Spaces are kept by the coordinator of your machines,
@@ -3985,6 +4017,38 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+        // The network flags: a preset, the lists, a parent and --widen.
+        match parse(&[
+            "create",
+            "linux",
+            "--network",
+            "localhost:5432",
+            "--allow",
+            "10.0.5.0/24",
+            "--deny",
+            "8.8.8.8",
+            "--parent",
+            "studio",
+            "--widen",
+        ]) {
+            SpacesCmd::Create {
+                network,
+                egress_deny,
+                egress_allow,
+                parent,
+                widen,
+                ..
+            } => {
+                assert_eq!(network.as_deref(), Some("localhost:5432"));
+                assert_eq!(egress_allow, ["10.0.5.0/24"]);
+                assert_eq!(egress_deny, ["8.8.8.8"]);
+                assert_eq!(parent.as_deref(), Some("studio"));
+                assert!(widen);
+            }
+            other => panic!("{other:?}"),
+        }
+        // --widen only goes with --parent.
+        assert!(parse_spaces(&["create", "linux", "--widen"]).is_err());
     }
 
     #[test]

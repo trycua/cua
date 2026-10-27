@@ -1074,6 +1074,17 @@ pub fn local_plan_for(
     }
 }
 
+/// When a runtime applies new network settings ([`crate::Runtime::set_network`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Applied {
+    /// At once: the running guest is under them now.
+    Now,
+    /// At its next start (it is stopped, or its runtime can't change a
+    /// running guest's network).
+    NextStart,
+}
+
 /// The support table as a Markdown table (for the docs; a test keeps them
 /// in step).
 pub fn support_table_markdown() -> String {

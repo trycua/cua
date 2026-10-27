@@ -1995,6 +1995,25 @@ impl Sandboxes {
         }
     }
 
+    /// Replaces sandbox `name`'s network settings ([`cua_vmm::network`]) on
+    /// its local runtime; says whether they hold now or from its next start.
+    pub async fn set_network(
+        &self,
+        name: &str,
+        settings: &cua_vmm::network::NetworkSettings,
+    ) -> Result<cua_vmm::network::Applied> {
+        settings
+            .validate()
+            .map_err(|e| Error::InvalidArgument(e.0))?;
+        match self.kind_of(name)? {
+            (ProviderKind::Local, _) => Ok(self.local()?.set_network(name, settings).await?),
+            (kind, _) => Err(Error::Unsupported {
+                provider: kind,
+                op: "network settings (they are kept by the machine a sandbox runs on)".into(),
+            }),
+        }
+    }
+
     /// The egress policy kept with sandbox `name` (empty: none, or a
     /// sandbox that is not local).
     pub async fn egress(&self, name: &str) -> Result<cua_vmm::egress::EgressPolicy> {

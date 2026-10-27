@@ -2762,6 +2762,46 @@ impl Runtime for MicroVmRuntime {
         Ok(self.load(name)?.egress.unwrap_or_default())
     }
 
+    /// Kept with the VM. A running Firecracker VM's namespace rules are
+    /// refilled at once (its localhost ports change at its next start); a
+    /// Vz microVM gets them at its next start.
+    async fn set_network(
+        &self,
+        name: &str,
+        settings: &crate::network::NetworkSettings,
+    ) -> Result<crate::network::Applied> {
+        settings.validate()?;
+        let lock = self.lock_for(name);
+        let _g = lock.lock().await;
+        let mut st = self.load(name)?;
+        if st.kind != EntryKind::Instance {
+            return Err(VmmError::invalid(format!("{name} is not a VM")));
+        }
+        let ports_change = crate::network::vm_localhost_ports(st.network.as_ref()).ok()
+            != crate::network::vm_localhost_ports(Some(settings)).ok();
+        st.network = Some(settings.clone());
+        st.egress = Some(settings.custom.clone());
+        let applied = if self.cfg.vmm == Vmm::Firecracker && self.running(&st) {
+            let pid = st
+                .fc_pid
+                .ok_or_else(|| VmmError::other(format!("{name}: no firecracker process")))?;
+            crate::egress::ns_apply(
+                pid,
+                &crate::egress::ns_script(&fc_rules(&st)?, crate::egress::NsHook::Tap(TAP), None),
+            )
+            .await?;
+            if ports_change {
+                crate::network::Applied::NextStart
+            } else {
+                crate::network::Applied::Now
+            }
+        } else {
+            crate::network::Applied::NextStart
+        };
+        self.save(&st)?;
+        Ok(applied)
+    }
+
     async fn checkpoint(&self, name: &str, checkpoint: &str) -> Result<CheckpointInfo> {
         validate_name(checkpoint)?;
         let target = self.checkpoint_dir(checkpoint);

@@ -2069,6 +2069,15 @@ impl LocalRuntime for VmmLocal {
         rt.egress(name).await.map_err(rt_err)
     }
 
+    async fn set_network(
+        &self,
+        name: &str,
+        settings: &cua_vmm::network::NetworkSettings,
+    ) -> RuntimeResult<cua_vmm::network::Applied> {
+        let (_, rt) = self.owner(name).await?;
+        rt.set_network(name, settings).await.map_err(rt_err)
+    }
+
     async fn suspend(&self, name: &str) -> RuntimeResult<()> {
         let (_, rt) = self.owner(name).await?;
         rt.suspend(name).await.map_err(rt_err)

@@ -201,7 +201,7 @@ mod imp {
                 .as_ref()
                 .map(cua_spaces::network::from_pb)
                 .transpose()
-                .map_err(st)?,
+                .map_err(|e| st(e.into()))?,
             parent: opt(r.parent),
             widen: r.widen,
         })
@@ -803,6 +803,53 @@ mod imp {
             ok(pb::SetSpaceEgressResponse {})
         }
 
+        async fn get_space_network(
+            &self,
+            req: tonic::Request<pb::GetSpaceNetworkRequest>,
+        ) -> R<pb::GetSpaceNetworkResponse> {
+            let r = req.into_inner();
+            let info = self
+                .spaces()
+                .network_info(&r.space)
+                .await
+                .map_err(|e| st(e.into()))?;
+            if r.ack_notice {
+                self.spaces()
+                    .ack_network_notice(&r.space)
+                    .map_err(|e| st(e.into()))?;
+            }
+            ok(pb::GetSpaceNetworkResponse {
+                network: Some(cua_spaces::network::info_to_pb(&info)),
+            })
+        }
+
+        async fn set_space_network(
+            &self,
+            req: tonic::Request<pb::SetSpaceNetworkRequest>,
+        ) -> R<pb::SetSpaceNetworkResponse> {
+            let r = req.into_inner();
+            let settings = cua_spaces::network::from_pb(&r.settings.unwrap_or_default())
+                .map_err(|e| st(e.into()))?;
+            let applied = self
+                .spaces()
+                .set_network(&r.space, &settings, r.widen, r.tree)
+                .await
+                .map_err(|e| st(e.into()))?;
+            let info = self
+                .spaces()
+                .network_info(&r.space)
+                .await
+                .map_err(|e| st(e.into()))?;
+            ok(pb::SetSpaceNetworkResponse {
+                applied: match applied {
+                    cua_vmm::network::Applied::Now => "now",
+                    cua_vmm::network::Applied::NextStart => "next_start",
+                }
+                .into(),
+                network: Some(cua_spaces::network::info_to_pb(&info)),
+            })
+        }
+
         async fn rename_space(
             &self,
             req: tonic::Request<pb::RenameSpaceRequest>,
@@ -1308,6 +1355,20 @@ mod imp {
             &self,
             _: tonic::Request<pb::SetSpaceEgressRequest>,
         ) -> R<pb::SetSpaceEgressResponse> {
+            off()
+        }
+
+        async fn get_space_network(
+            &self,
+            _: tonic::Request<pb::GetSpaceNetworkRequest>,
+        ) -> R<pb::GetSpaceNetworkResponse> {
+            off()
+        }
+
+        async fn set_space_network(
+            &self,
+            _: tonic::Request<pb::SetSpaceNetworkRequest>,
+        ) -> R<pb::SetSpaceNetworkResponse> {
             off()
         }
 

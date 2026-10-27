@@ -797,6 +797,30 @@ pub fn tools() -> Vec<Tool> {
         .with::<i::CreateSpace>(),
         Spec {
             category: Category::Lifecycle,
+            result: "JSON: `settings` (preset, lists), `summary`, `widenings` (what it opens beyond internet), `enforcement` (`enforced`, `no_network`, `open`, `refused`), `point`, `note`, `parent`, `root`, `always_blocked`, `notice_pending`.",
+            errors: &["invalid_argument", "not_found"],
+            instructions: "Shows a Space's network: its preset (`internet` by default: the internet and its own tree, with this computer, the local network, cloud metadata and other trees blocked), what it opens beyond that, where the rules are enforced (outside the guest), or why it has no network (a runtime that can't protect it yet starts it without network), and what is always blocked. When a connection fails, check here before retrying: a blocked destination stays blocked.",
+            capabilities: &["space.network.read"],
+            annotations: Annotations::reading(),
+            sdk_symbol: "Spaces.network(space)",
+            rust_symbol: "Spaces::network_info",
+            ..Spec::new("network_show", "Show a Space's network: preset, what it opens, where it is enforced, what is always blocked.")
+        }
+        .with::<i::SpaceOnly>(),
+        Spec {
+            category: Category::Lifecycle,
+            result: "JSON: `applied` (`now` or `next_start`) and `network` (as network_show).",
+            errors: &["invalid_argument", "wrong_provider", "not_found", "sandbox"],
+            instructions: "Changes a Space's network to `internet`, `none`, or `custom` (from internet) / `custom:none` with `allow` and `deny` (addresses or CIDRs). It can only tighten: anything that opens more than the Space has now (this computer's localhost, the local network, No protection, an allow beyond its preset) is refused; the user does that with `cua network set` or the app. A child stays within its parent's. tree=true gives its children the same settings. Applies at once where the runtime can, else at the Space's next start (`applied`).",
+            capabilities: &["space.network.write"],
+            annotations: Annotations::mutating_idempotent(),
+            sdk_symbol: "Spaces.set_network(space, settings, widen, tree)",
+            rust_symbol: "Spaces::set_network",
+            ..Spec::new("network_set", "Tighten a Space's network: internet, none or custom lists. Opening more is the user's to do.")
+        }
+        .with::<i::NetworkSet>(),
+        Spec {
+            category: Category::Lifecycle,
             result: "Text: what was deleted (`Deleted <id> (...)`), or `Removed <id> (...)` for a Space added by address.",
             errors: &["sandbox"],
             instructions: "Deletes the sandbox of a Space that create_space made (cloud: metering stops; local: the instance is deleted; on one of your computers, on=\"host:...\": that computer deletes it and it leaves the relay) and forgets it. A Space in your cloud (list_spaces: cloud, cloud_place, cloud_delete) is deleted permanently through the records of the device that created it: cloud_delete \"here\" deletes it from this device; \"host:<computer>\" asks that host (it must be online, and only its owner may); \"elsewhere\" is refused with where it was created: delete it there, or remove_space. Another Space added by address (direct:, relay:) is only forgotten: cua did not create it. Any hotspot on the Space is stopped first. To forget a Space without deleting anything, use remove_space.",

@@ -19,11 +19,10 @@ use cua_driver_core::browser::types::{
     NativeOwnershipProof, NativeWindowInfo, OwnedEndpoint, ProcessFingerprint, Rect,
 };
 use cua_driver_core::browser::{
-    existing_profile_setup_descriptor, is_firefox, loopback_websocket_port,
-    parse_devtools_active_port, BrowserCursorTracker,
+    existing_profile_setup_descriptor, fetch_json_version_ws_url, is_firefox,
+    loopback_websocket_port, parse_devtools_active_port, BrowserCursorTracker,
 };
 use serde::Serialize;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const CONSENT_CLEANUP_PASSES: usize = 20;
 
@@ -817,47 +816,8 @@ async fn active_port_endpoint_with_relative_fallback(
 }
 
 async fn browser_websocket_url(port: u16) -> Option<String> {
-    tokio::time::timeout(Duration::from_secs(2), async move {
-        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
-            .await
-            .ok()?;
-        let request = format!(
-            "GET /json/version HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
-        );
-        stream.write_all(request.as_bytes()).await.ok()?;
-        let mut bytes = Vec::new();
-        let mut chunk = [0u8; 4096];
-        loop {
-            let read = stream.read(&mut chunk).await.ok()?;
-            if read == 0 {
-                break;
-            }
-            bytes.extend_from_slice(&chunk[..read]);
-            if bytes.len() > 256 * 1024 {
-                return None;
-            }
-            if let Some(header_end) = bytes.windows(4).position(|part| part == b"\r\n\r\n") {
-                let headers = String::from_utf8_lossy(&bytes[..header_end]);
-                if let Some(length) = headers.lines().find_map(|line| {
-                    let (name, value) = line.split_once(':')?;
-                    name.eq_ignore_ascii_case("content-length")
-                        .then(|| value.trim().parse::<usize>().ok())
-                        .flatten()
-                }) {
-                    if bytes.len() >= header_end + 4 + length {
-                        break;
-                    }
-                }
-            }
-        }
-        let body_start = bytes.windows(4).position(|part| part == b"\r\n\r\n")? + 4;
-        let value: serde_json::Value = serde_json::from_slice(&bytes[body_start..]).ok()?;
-        let url = value.get("webSocketDebuggerUrl")?.as_str()?.to_owned();
-        (loopback_websocket_port(&url) == Some(port)).then_some(url)
-    })
-    .await
-    .ok()
-    .flatten()
+    let url = fetch_json_version_ws_url(port).await?;
+    (loopback_websocket_port(&url) == Some(port)).then_some(url)
 }
 
 #[async_trait]
@@ -1508,6 +1468,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     fn consent_surface(window_id: u32) -> ConsentSurfaceEvidence {
         ConsentSurfaceEvidence {

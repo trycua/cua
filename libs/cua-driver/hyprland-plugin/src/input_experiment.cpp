@@ -14,6 +14,7 @@
 #include <src/Compositor.hpp>
 #include <src/devices/IKeyboard.hpp>
 #include <src/event/EventBus.hpp>
+#include <atomic>
 #include <src/managers/SeatManager.hpp>
 #include <src/output/Monitor.hpp>
 #include <src/protocols/core/Compositor.hpp>
@@ -77,6 +78,8 @@ std::uint64_t unix_ms() {
                std::chrono::system_clock::now().time_since_epoch()).count();
 }
 #endif
+std::atomic<bool> g_primary_seat_fallback{false};
+
 std::uint32_t event_ms() {
     return static_cast<std::uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
                Clock::now().time_since_epoch()).count());
@@ -198,6 +201,12 @@ struct InputExperiment::Impl {
     std::vector<std::unique_ptr<Seat>> seats;
     std::vector<std::unique_ptr<Pointer>> pointers;
     std::vector<std::unique_ptr<Keyboard>> keyboards;
+    // Primary-seat fallback (RFC 3550 "direct wl_pointer delivery"): the target
+    // client's own pointer resources on the person's seat, entered for one
+    // action without moving compositor pointer focus or the cursor.
+    std::vector<WP<CWLPointerResource>> primary_pointers;
+    WP<CWLSurfaceResource> primary_surface;
+    std::uint64_t primary_dispatches = 0;
     std::vector<std::unique_ptr<Touch>> touches;
     Client* lease = nullptr;
     // Pointer presence is not input authority. Keep the same live surface
@@ -666,6 +675,7 @@ struct InputExperiment::Impl {
                 refusal(foreground_started ? "foreground_partial_unknown" : reason, failure));
         drag.reset();
         finish_foreground();
+        primary_leave();
         if (retain_pointer) release_pointer_button(); else leave_pointer();
         leave_keyboard(); retire_grant();
     }
@@ -1036,6 +1046,7 @@ struct InputExperiment::Impl {
             if (p->wl->version() >= 5) p->wl->sendFrame();
             ++count;
         }
+        if (!count && primary_enter(root, local)) count = 1;
         if (count && !pointer_target.matches(c.window.lock(), root, c.geometry)) {
             pointer_unmap.reset(); pointer_destroy.reset();
             pointer_target.capture(c.window.lock(), root, c.geometry);
@@ -1046,11 +1057,58 @@ struct InputExperiment::Impl {
         }
         return count > 0;
     }
+    bool primary_enter(const SP<CWLSurfaceResource>& root, const Vector2D& local) {
+        if (!g_primary_seat_fallback.load()) return false;
+        // Never share a client with the person's own pointer.
+        const auto focus = g_pSeatManager->m_state.pointerFocus.lock();
+        if (focus && focus->client() == root->client()) return false;
+        const auto seat = g_pSeatManager->seatResourceForClient(root->client());
+        if (!seat || !seat->good()) return false;
+        primary_pointers.clear();
+        for (const auto& p : seat->m_pointers) {
+            if (!p || !p->good()) continue;
+            // Hyprland's resource keeps serials, pressed buttons and the entered
+            // surface consistent; enter always precedes a button.
+            p->sendEnter(root, local);
+            p->sendMotion(event_ms(), local);
+            p->sendFrame();
+            primary_pointers.push_back(p);
+        }
+        primary_surface = root;
+        return !primary_pointers.empty();
+    }
+    bool primary_bound(const SP<CWLSurfaceResource>& surface) const {
+        return surface && primary_surface.lock() == surface &&
+            std::ranges::any_of(primary_pointers, [](const auto& weak) { const auto p = weak.lock(); return p && p->good(); });
+    }
+    void primary_leave() {
+        if (primary_pointers.empty()) return;
+        for (const auto& weak : primary_pointers) {
+            const auto p = weak.lock();
+            if (!p || !p->good()) continue;
+            p->sendLeave(); // also releases any button still held
+            p->sendFrame();
+        }
+        primary_pointers.clear();
+        primary_surface.reset();
+        // The target was entered only on the primary seat: nothing remains to guard.
+        if (std::ranges::none_of(pointers, [](const auto& p) { return !p->dead && bool(p->focus); })) {
+            pointer_target.reset();
+            pointer_unmap.reset(); pointer_destroy.reset();
+        }
+        ++primary_dispatches;
+    }
     void button(std::uint32_t value, bool pressed) {
         for (auto& p : pointers) {
             if (p->dead || !p->wl->resource() || !p->focus) continue;
             p->wl->sendButton(serial(), event_ms(), value, pressed ? WL_POINTER_BUTTON_STATE_PRESSED : WL_POINTER_BUTTON_STATE_RELEASED);
             if (p->wl->version() >= 5) p->wl->sendFrame();
+        }
+        for (const auto& weak : primary_pointers) {
+            const auto p = weak.lock();
+            if (!p || !p->good()) continue;
+            p->sendButton(event_ms(), value, pressed ? WL_POINTER_BUTTON_STATE_PRESSED : WL_POINTER_BUTTON_STATE_RELEASED);
+            p->sendFrame();
         }
         held_button = pressed ? value : 0;
     }
@@ -1246,6 +1304,7 @@ struct InputExperiment::Impl {
                 if (!consume_grant(c, cap)) return;
                 if (!pointer_enter(c, x, y)) { send(c, refusal("client_not_bound")); return; }
                 for (unsigned i = 0; i < clicks; ++i) { button(btn, true); button(btn, false); }
+                primary_leave();
             } else if (command == "SCROLL") {
                 const auto axis = number(f[6]); const auto value = real(f[7]);
                 if (axis > 1 || value == 0 || std::abs(value) > 1000) { send(c, refusal("invalid_request")); return; }
@@ -1257,6 +1316,14 @@ struct InputExperiment::Impl {
                     p->wl->sendAxis(event_ms(), static_cast<wl_pointer_axis>(axis), wl_fixed_from_double(value));
                     if (p->wl->version() >= 5) p->wl->sendFrame();
                 }
+                for (const auto& weak : primary_pointers) {
+                    const auto p = weak.lock();
+                    if (!p || !p->good()) continue;
+                    p->sendAxisSource(WL_POINTER_AXIS_SOURCE_WHEEL);
+                    p->sendAxis(event_ms(), static_cast<wl_pointer_axis>(axis), value);
+                    p->sendFrame();
+                }
+                primary_leave();
             } else {
                 const auto x2 = real(f[6]), y2 = real(f[7]); const auto duration = number(f[8]);
                 if (!point(c, x2, y2) || duration < 50 || duration > 2000) { send(c, refusal("invalid_request")); return; }
@@ -1363,7 +1430,7 @@ struct InputExperiment::Impl {
             const auto geometry = target_geometry(pointer_target.window(), surface);
             const bool bound = std::ranges::any_of(pointers, [&](const auto& p) {
                 return !p->dead && p->wl->resource() && surface && p->focus == surface;
-            });
+            }) || primary_bound(surface);
             // Availability controls admission, not passive pointer presence.
             // Retention never excuses a changed target, binding, or conflict.
             if (!geometry || *geometry != pointer_target.geometry() ||
@@ -1386,7 +1453,7 @@ struct InputExperiment::Impl {
                 }
             } else if (!pointer_enter(*d.client, d.x1 + (d.x2 - d.x1) * progress, d.y1 + (d.y2 - d.y1) * progress)) revoke("client_not_bound");
             else if (progress >= 1) {
-                button(272, false); drag.reset(); ++dispatches;
+                button(272, false); primary_leave(); drag.reset(); ++dispatches;
                 if (trace) trace->mark("agent_drag_end", lane + 1);
                 if (kProduction) complete_action();
                 send(*d.client, kDelivered);
@@ -1517,14 +1584,15 @@ std::string InputExperiment::status_json() const {
         if (!states.empty()) states += ',';
         const bool pointer_focus = std::ranges::any_of(lane->pointers, [](const auto& p) { return !p->dead && bool(p->focus); });
         const bool keyboard_focus = std::ranges::any_of(lane->keyboards, [](const auto& k) { return !k->dead && bool(k->focus); });
-        states += std::format(R"({{"lane":{},"epoch":"{}","desktop_generation":{},"reserved":{},"socket_cleanup":"{}","lease_active":{},"seat_resources":{},"pointer_resources":{},"keyboard_resources":{},"dispatches":{},"held_button":{},"held_keys":{},"drag_active":{},"pointer_focus":{},"keyboard_focus":{}}})",
+        states += std::format(R"({{"lane":{},"epoch":"{}","desktop_generation":{},"reserved":{},"socket_cleanup":"{}","lease_active":{},"seat_resources":{},"pointer_resources":{},"keyboard_resources":{},"dispatches":{},"held_button":{},"held_keys":{},"drag_active":{},"pointer_focus":{},"keyboard_focus":{},"primary_seat_dispatches":{}}})",
             lane->lane, lane->epoch, lane->desktop_generation, lane->reservation != nullptr, lane->socket_cleanup, lane->lease != nullptr, lane->seats.size(), lane->pointers.size(), lane->keyboards.size(), lane->dispatches,
-            lane->held_button, lane->held_keys.size(), lane->drag.has_value(), pointer_focus, keyboard_focus);
+            lane->held_button, lane->held_keys.size(), lane->drag.has_value(), pointer_focus, keyboard_focus, lane->primary_dispatches);
     }
     // Aggregate legacy fields remain available to existing test probes.
-    return std::format(R"({{"protocol":{},"test_only":{},"seat_lifetime":"compositor","upgrade":"desktop_restart","transport_ready":{},"epoch":"{}","lease_active":{},"seat_resources":{},"pointer_resources":{},"keyboard_resources":{},"dispatches":{},"lanes":[{}]}})",
+    return std::format(R"({{"protocol":{},"test_only":{},"seat_lifetime":"compositor","upgrade":"desktop_restart","transport_ready":{},"epoch":"{}","lease_active":{},"seat_resources":{},"pointer_resources":{},"keyboard_resources":{},"dispatches":{},"primary_seat_fallback":{},"lanes":[{}]}})",
         kProduction ? 3 : 0, !kProduction, !lanes_[0]->suspended && !lanes_[1]->suspended, lanes_[0]->epoch, lanes_[0]->lease != nullptr || lanes_[1]->lease != nullptr,
         lanes_[0]->seats.size() + lanes_[1]->seats.size(), lanes_[0]->pointers.size() + lanes_[1]->pointers.size(),
-        lanes_[0]->keyboards.size() + lanes_[1]->keyboards.size(), lanes_[0]->dispatches + lanes_[1]->dispatches, states);
+        lanes_[0]->keyboards.size() + lanes_[1]->keyboards.size(), lanes_[0]->dispatches + lanes_[1]->dispatches, g_primary_seat_fallback.load(), states);
 }
+void InputExperiment::set_primary_seat_fallback(bool enabled) { g_primary_seat_fallback.store(enabled); }
 } // namespace cua::hyprland

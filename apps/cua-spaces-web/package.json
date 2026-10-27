@@ -18,7 +18,8 @@
     "parity": "node scripts/build-core-wasm.mjs && playwright test -c e2e/playwright.config.ts",
     "parity:electron": "node scripts/build-core-wasm.mjs && VITE_CUA_FLAG_SPACES_REDESIGN=${VITE_CUA_FLAG_SPACES_REDESIGN:-1} vite build && (cd ../cua-spaces-desktop && rm -rf dist-electron && npx tsdown && node scripts/check-channels.mjs) && PARITY_HOST=electron playwright test -c e2e/playwright.config.ts",
     "screenshots": "node scripts/screenshots.mjs",
-    "perf": "node scripts/perf.mjs"
+    "perf": "node scripts/perf.mjs",
+    "scale": "node scripts/scale-bench.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",

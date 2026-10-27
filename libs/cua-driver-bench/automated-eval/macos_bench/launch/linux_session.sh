@@ -61,8 +61,17 @@ cleanup() {
   for p in "${owned[@]}"; do wait "$p" 2>/dev/null || true; done
 }
 trap cleanup EXIT
-trap "exit 143" TERM
-trap "exit 130" INT
+cmd=""
+# Cancellation reaches the command group and waits for its own teardown to finish.
+relay() {
+  if [ -n "$cmd" ]; then
+    kill -TERM -- "-$cmd" 2>/dev/null || true
+    while kill -0 "$cmd" 2>/dev/null; do wait "$cmd" 2>/dev/null || true; done
+  fi
+  exit "$1"
+}
+trap "relay 143" TERM
+trap "relay 130" INT
 openbox >> "$CDB_SESSION_DIR/openbox.log" 2>&1 &
 owned+=("$!")
 printf "{\"pid\":%s,\"role\":\"openbox\"}\n" "$!" >> "$CDB_BENCH_PID_LOG"
@@ -72,12 +81,23 @@ printf "{\"pid\":%s,\"role\":\"picom\"}\n" "$!" >> "$CDB_BENCH_PID_LOG"
 timeout 15 bash -c "until xprop -root _NET_SUPPORTING_WM_CHECK | grep -q \"window id\"; do sleep 0.2; done"
 for p in "${owned[@]}"; do kill -0 "$p" 2>/dev/null || { echo "session component $p exited early" >&2; exit 1; }; done
 timeout 15 gdbus call --session --dest org.a11y.Bus --object-path /org/a11y/bus --method org.a11y.Bus.GetAddress > "$CDB_SESSION_DIR/at-spi-address.txt"
-"$@"
+# The command runs in its own session so its whole group is recorded and checked.
+setsid "$@" <&0 &
+cmd=$!
+printf "{\"pid\":%s,\"pgid\":%s,\"role\":\"command\"}\n" "$cmd" "$cmd" >> "$CDB_BENCH_PID_LOG"
+echo "$cmd" > "$CDB_SESSION_DIR/command.pid"
+rc=0
+while :; do
+  wait "$cmd" && rc=0 || rc=$?
+  kill -0 "$cmd" 2>/dev/null || break
+done
+exit "$rc"
 '
 
 # Output goes straight to the log file, not through a pipe: a descendant that outlives the
 # command would otherwise hold the pipe open and block the launcher before its checks run.
 log="$CDB_SESSION_DIR/launch.log"
+rm -f "$CDB_SESSION_DIR/command.pid"
 offset=$(stat -c %s "$log" 2>/dev/null || echo 0)
 # The session runs in the background so cancellation of this script is forwarded to it and
 # the teardown, ledger check and exit file still happen.
@@ -85,8 +105,16 @@ timeout "${CDB_SESSION_TIMEOUT:-0}" xvfb-run -a --server-args='-screen 0 1920x10
   dbus-run-session -- bash -euo pipefail -c "$inner" linux-session "$@" >> "$log" 2>&1 &
 session=$!
 cancelled=0
-trap 'cancelled=143; kill -TERM "$session" 2>/dev/null' TERM
-trap 'cancelled=130; kill -TERM "$session" 2>/dev/null' INT
+# Forward cancellation to the command group only: the session wrappers must stay up until
+# the command and its teardown finish. Before the command exists, stop the session itself.
+cancel() {
+  cancelled=$1
+  local c
+  c=$(cat "$CDB_SESSION_DIR/command.pid" 2>/dev/null)
+  if [ -n "$c" ]; then kill -TERM -- "-$c" 2>/dev/null; else kill -TERM "$session" 2>/dev/null; fi
+}
+trap 'cancel 143' TERM
+trap 'cancel 130' INT
 while :; do
   wait "$session"
   status=$?
@@ -102,6 +130,11 @@ python3 "$BENCH/tools/check_run_evidence.py" --ledger-only "$CDB_BENCH_PID_LOG" 
 for run in "${checks[@]}"; do
   python3 "$BENCH/tools/check_run_evidence.py" "$run" || evidence_status=1
 done
+# Stop a leaked command group now that the check has recorded it.
+c=$(cat "$CDB_SESSION_DIR/command.pid" 2>/dev/null)
+if [ -n "$c" ]; then
+  kill -KILL -- "-$c" 2>/dev/null || true
+fi
 if [ "$evidence_status" -ne 0 ] && [ "$status" -eq 0 ]; then
   status=1
 fi

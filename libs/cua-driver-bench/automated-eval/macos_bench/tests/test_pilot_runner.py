@@ -1030,7 +1030,7 @@ class LinuxLauncherTest(unittest.TestCase):
             address = (ev / "at-spi-address.txt").read_text()
             self.assertTrue("unix:path=" in address or "unix:abstract=" in address, address)
             entries = [json.loads(x) for x in (ev / "pids.jsonl").read_text().splitlines()]
-            self.assertEqual({e["role"] for e in entries}, {"openbox", "picom"})
+            self.assertEqual({e["role"] for e in entries}, {"openbox", "picom", "command"})
             for entry in entries:
                 with self.assertRaises(ProcessLookupError):
                     os.kill(entry["pid"], 0)
@@ -1073,6 +1073,56 @@ class LinuxLauncherTest(unittest.TestCase):
                         os.kill(pid, signal.SIGKILL)
                     except OSError:
                         pass
+
+    def test_unregistered_background_child_fails_the_check(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ev = Path(tmp) / "ev"
+            done = self.launch(ev, "bash", "-c", 'sleep 300 & echo $! > "$CDB_SESSION_DIR/bg.pid"')
+            try:
+                self.assertEqual(done.returncode, 1, done.stderr + done.stdout)
+                self.assertIn("command=0 evidence=1", (ev / "exit").read_text())
+            finally:
+                try:
+                    os.kill(int((ev / "bg.pid").read_text()), signal.SIGKILL)
+                except (OSError, ValueError):
+                    pass
+
+    def test_sigterm_waits_for_delayed_cleanup(self) -> None:
+        script = (
+            "import os,signal,subprocess,sys,time\n"
+            "d=os.environ['CDB_SESSION_DIR']\n"
+            "c=subprocess.Popen(['sleep','300'],start_new_session=True)\n"
+            "open(d+'/child.pid','w').write(str(c.pid))\n"
+            "open(d+'/pids.jsonl','a').write('{\"pid\":%d,\"pgid\":%d,\"role\":\"child\"}\\n'%(c.pid,c.pid))\n"
+            "def h(*a):\n"
+            "    time.sleep(2); c.kill(); c.wait(); open(d+'/cleaned','w').write('1'); sys.exit(143)\n"
+            "signal.signal(signal.SIGTERM,h)\n"
+            "open(d+'/ready','w').write('1')\n"
+            "time.sleep(300)\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            ev = Path(tmp) / "ev"
+            env = {k: v for k, v in os.environ.items() if k != "CDB_BENCH_PID_LOG"}
+            proc = subprocess.Popen(
+                ["bash", str(self.script), "--evidence", str(ev), "--", sys.executable, "-c", script],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env,
+            )  # fmt: skip
+            try:
+                deadline = time.monotonic() + 60
+                while not (ev / "ready").exists() and time.monotonic() < deadline:
+                    time.sleep(0.2)
+                self.assertTrue((ev / "ready").exists())
+                proc.send_signal(signal.SIGTERM)
+                self.assertNotEqual(proc.wait(60), 0)
+                self.assertTrue((ev / "cleaned").exists())
+                self.assertIn("command=143 evidence=0", (ev / "exit").read_text())
+            finally:
+                if proc.poll() is None:
+                    proc.kill()
+                try:
+                    os.kill(int((ev / "child.pid").read_text()), signal.SIGKILL)
+                except (OSError, ValueError):
+                    pass
 
     def test_sigterm_to_launcher_tears_down_and_reports(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

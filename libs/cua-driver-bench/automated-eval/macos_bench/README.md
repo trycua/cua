@@ -39,7 +39,7 @@ Keep results, streams and recordings out of git.
 ## Linux desktop setup
 
 Install `xvfb dbus-x11 at-spi2-core openbox picom python3-gi gir1.2-gtk-3.0
- gir1.2-atspi-2.0 xdotool x11-utils libxss1 ffmpeg lsof`, plus the applications
+ gir1.2-atspi-2.0 xdotool x11-utils libxss1 ffmpeg lsof libglib2.0-bin`, plus the applications
 required by each pack task's `platform/launch.linux.json` prerequisites. Use system
 Python for GTK/AT-SPI; no Swift build is required. Older non-v2 BenchLab modes are
 explicitly unsupported on Linux. Codex Sky and Claude Desktop arms are skipped
@@ -53,7 +53,7 @@ as `CDB_SESSION_DIR`. It stops only the processes it started, fails if any recor
 process outlives the session, and passes the command's exit status through.
 
 ```sh
-export CDB_BENCH_WORK="$PWD/local-work"
+export CDB_BENCH_WORK="$HOME/cua-bench-work"
 bash launch/linux_session.sh --evidence "$HOME/cua-session" \
   --check-run "$HOME/cua-session/runs/RUN_ID" -- bash -c '
   python3 desktop_runtime.py doctor --cua-bin "$CUA_DRIVER_BIN" --out "$CDB_SESSION_DIR" --json &&
@@ -61,7 +61,7 @@ bash launch/linux_session.sh --evidence "$HOME/cua-session" \
     --doctor-json "$CDB_SESSION_DIR/doctor.json" --out "$CDB_SESSION_DIR/pins.json" &&
   python3 run_bench.py preflight --bench-v2 --arms cc-cua-driver \
     --cua-bin "$CUA_DRIVER_BIN" --cua-skills "$CUA_SKILLS" --pins "$CDB_SESSION_DIR/pins.json" &&
-  python3 run_bench.py run --bench-v2 --run-id RUN_ID --runs-dir "$CDB_SESSION_DIR/runs" \
+  python3 run_bench.py run --bench-v2 --arms cc-cua-driver --run-id RUN_ID --runs-dir "$CDB_SESSION_DIR/runs" \
     --cua-bin "$CUA_DRIVER_BIN" --cua-skills "$CUA_SKILLS" --pins "$CDB_SESSION_DIR/pins.json"'
 ```
 

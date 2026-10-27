@@ -16,6 +16,7 @@ import secrets
 import select
 import shutil
 import signal
+import stat
 import struct
 import subprocess
 import sys
@@ -99,7 +100,8 @@ def _stop(proc, grace: float, role: str = "process", log=None) -> None:
 
 
 def _log(path, msg: str) -> None:
-    with open(path, "a") as f:
+    # Diagnostics are best-effort: a full or unwritable log must never skip cleanup.
+    with contextlib.suppress(OSError), open(path, "a") as f:
         f.write(msg + "\n")
 
 
@@ -146,7 +148,12 @@ def _probe(argv, timeout: float, env, log) -> bytes | None:
                 if not chunk:
                     break
                 out += chunk
-        proc.wait()
+        # EOF on stdout does not mean the probe exited: keep polling so cancel and timeout win.
+        while proc.poll() is None:
+            if stopping() or time.monotonic() > end:
+                _stop(proc, 0)
+                return None
+            time.sleep(0.05)
         _stop(proc, 0)
         return out if proc.returncode == 0 else None
     finally:
@@ -296,9 +303,11 @@ def _run_session(ev, ledger, log, runtime, command, grace, components) -> int:
         _ledger(ledger, cmd.pid, "command")
         (ev / "command.pid").write_text(f"{cmd.pid}\n")
     except OSError as e:
-        _log(log, f"command publication failed: {e}")
-        os.killpg(cmd.pid, signal.SIGKILL)
-        cmd.wait()
+        try:
+            os.killpg(cmd.pid, signal.SIGKILL)
+            cmd.wait()
+        finally:
+            _log(log, f"command publication failed: {e}")
         return 1
     while True:
         try:
@@ -410,6 +419,8 @@ def _start_components(ev, ledger, log, runtime, components):
 
 def _finish(ev, ledger, log, offset, checks, status) -> int:
     with contextlib.suppress(OSError), open(log, "rb") as f:
+        if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
+            raise OSError("launch.log is not a regular file")
         f.seek(offset)
         sys.stdout.write(f.read().decode(errors="replace"))
         sys.stdout.flush()

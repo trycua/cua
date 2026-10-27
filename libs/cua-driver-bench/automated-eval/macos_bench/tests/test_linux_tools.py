@@ -161,6 +161,41 @@ class RecordPidTest(unittest.TestCase):
                 if proc.poll() is None:
                     proc.kill()
 
+    @unittest.skipUnless(sys.platform == "linux", "Linux only")
+    def test_doctor_second_sigterm_during_teardown_still_reaps_daemon(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            pidfile, termed = Path(tmp) / "pid", Path(tmp) / "termed"
+            fake = Path(tmp) / "driver"
+            fake.write_text(
+                "#!/bin/sh\n"
+                f'[ "$1" = serve ] && {{ echo $$ > {pidfile}; '
+                f"trap 'touch {termed}' TERM; while :; do sleep 0.1; done; }}\n"
+                "exit 1\n"
+            )
+            fake.chmod(0o755)
+            proc = subprocess.Popen(
+                [sys.executable, str(BENCH / "desktop_runtime.py"), "doctor",
+                 "--cua-bin", str(fake), "--out", str(Path(tmp) / "out")]
+            )  # fmt: skip
+            try:
+                deadline = time.monotonic() + 10
+                while not pidfile.exists() and time.monotonic() < deadline:
+                    time.sleep(0.1)
+                time.sleep(0.5)
+                daemon = int(pidfile.read_text())
+                proc.send_signal(signal.SIGTERM)
+                deadline = time.monotonic() + 10
+                while not termed.exists() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                proc.send_signal(signal.SIGTERM)
+                proc.wait(20)
+                time.sleep(0.5)
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(daemon, 0)
+            finally:
+                if proc.poll() is None:
+                    proc.kill()
+
     def test_noop_without_variable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ):
             os.environ.pop("CDB_BENCH_PID_LOG", None)

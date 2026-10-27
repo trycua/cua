@@ -349,8 +349,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     doc.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
+    fired = False
+
     def terminate(signum: int, _frame: object) -> None:
-        raise SystemExit(128 + signum)
+        # Only the first signal unwinds; later ones must not interrupt teardown.
+        nonlocal fired
+        if not fired:
+            fired = True
+            raise SystemExit(128 + signum)
 
     # SIGTERM must unwind through the cleanup below instead of killing the process outright.
     previous = signal.signal(signal.SIGTERM, terminate)
@@ -403,6 +409,7 @@ def _doctor(args: argparse.Namespace) -> int:
             "ok": bool(checks) and all(c.status != "fail" for c in checks),
         }
     finally:
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
         if proc is not None:
             stop_group(proc.pid)
             try:

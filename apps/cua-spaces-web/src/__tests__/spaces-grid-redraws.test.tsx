@@ -41,4 +41,13 @@ describe.skipIf(!wasmBuilt)("the Spaces grid", () => {
     expect(redrawn).toContain("local:scale-7");
     expect(redrawn.length, `redrew ${redrawn.length} tiles: ${redrawn.slice(0, 8).join(", ")}…`).toBeLessThanOrEqual(3);
   });
+
+  it("draws one screen of a long grid, not every Space (jsdom has no width, so the grid draws its first rows)", { timeout: 30_000 }, async () => {
+    await mountApp("/spaces", { failsCreates: false, listsGhost: false, demo: { extraSpaces: 400 } });
+    await waitFor(() => expect(document.querySelectorAll("[data-space-id]").length).toBeGreaterThan(0));
+    const drawn = document.querySelectorAll("[data-space-id]").length;
+    expect(drawn, `${drawn} of 410 tiles drawn`).toBeLessThanOrEqual(24);
+    // The page still counts all of them.
+    expect(document.body.textContent).toMatch(/4\d\d Spaces/);
+  });
 });

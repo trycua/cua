@@ -131,6 +131,7 @@ pub(crate) mod imp {
                 .unwrap_or_default(),
             volumes: info.volumes.iter().map(Into::into).collect(),
             sharing: info.sharing.as_ref().map(Into::into),
+            children: false,
         }
     }
 

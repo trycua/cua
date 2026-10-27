@@ -26,7 +26,7 @@ use serde_json::Value;
 use tonic::{Request, Response, Status};
 
 use super::capability::Claims;
-use super::tree::{self, Tree};
+use super::tree;
 use crate::server::{Shared, Svc};
 
 type R<T> = std::result::Result<Response<T>, Status>;

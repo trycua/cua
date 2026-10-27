@@ -45,5 +45,7 @@ base64.workspace = true
 cua-keyvault.workspace = true
 # Drift guard: the first run lists every agent the setup's registry knows.
 cua-agent-setup.workspace = true
+# Drift guard: every agent the @ picker offers to start is a real harness.
+cua-agents.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tempfile.workspace = true

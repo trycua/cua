@@ -86,6 +86,9 @@ extension WebUIBridge {
             if let env = args["env"] as? String, !env.isEmpty { keyArgs["env"] = env }
             return try await model.agentKeys.call("agent_keys.set", keyArgs)
         case "agentKeys.remove": return try await model.agentKeys.call("agent_keys.remove", ["env": try string(args, "env")])
+        // Which provider keys your login shell has (names only), and one saved from it (the value never crosses the bridge).
+        case "agentKeys.shell": return try await model.agentKeys.call("agent_keys.shell")
+        case "agentKeys.fromShell": return try await model.agentKeys.call("agent_keys.from_shell", ["env": try string(args, "env")])
 
         // Cua Volume
         case "volume.overview": return try await volumeOverview()

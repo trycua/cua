@@ -10,8 +10,6 @@
  * those two as checked by Cua.
  */
 
-import { Popover } from "@base-ui/react/popover";
-import { useNavigate } from "@tanstack/react-router";
 import { ShieldCheckIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
@@ -22,6 +20,7 @@ import { cn } from "@/lib/utils";
 
 import { AgentTile, PersonDot, type AvatarSurface } from "./avatar";
 import { harnessLabel } from "./harness-marks";
+import { ProfileTrigger } from "./profile-card";
 import { RIGHT_ROWS } from "./rights";
 import type { Roster, RosterAgent, RosterAuthor } from "./roster";
 
@@ -214,38 +213,12 @@ export function ProvenanceCard({
 export function AgentName({ who, roster, onRemove, size = "md" }: { who: RosterAuthor; roster: Roster; onRemove?: (handle: string) => Promise<void>; size?: "md" | "sm" }) {
   const i = who.identity;
   const text = cn("min-w-0 truncate font-semibold", size === "md" ? "text-[13px]" : "text-[12.5px]");
-  const may = !!onRemove && !!i && !!who.agent && roster.canRemove(i);
-  const [open, setOpen] = useState(false);
-  const navigate = useNavigate();
   return (
     <span className="flex min-w-0 items-center gap-1.5">
       {i ? (
-        <Popover.Root open={open} onOpenChange={setOpen}>
-          <Popover.Trigger
-            openOnHover
-            delay={350}
-            data-author-name={who.handle}
-            className={cn(text, "cursor-default rounded-[4px] outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/60")}
-          >
-            {who.label}
-          </Popover.Trigger>
-          <Popover.Portal>
-            <Popover.Positioner side="bottom" align="start" sideOffset={6} className="z-[70]">
-              <Popover.Popup data-video-occluder="" className="w-[300px] rounded-lg bg-popover text-popover-foreground shadow-float outline-none">
-                <ProvenanceCard
-                  identity={i}
-                  agent={who.agent}
-                  roster={roster}
-                  onRemove={may ? () => onRemove(i.handle).then(() => setOpen(false)) : undefined}
-                  onActivity={() => {
-                    setOpen(false);
-                    void navigate({ to: "/agents", search: { agent: identityKey(i) } });
-                  }}
-                />
-              </Popover.Popup>
-            </Popover.Positioner>
-          </Popover.Portal>
-        </Popover.Root>
+        <ProfileTrigger identity={i} agent={who.agent} roster={roster} onRemove={onRemove} className={cn(text, "hover:underline")} data={{ "data-author-name": who.handle ?? i.handle }}>
+          {who.label}
+        </ProfileTrigger>
       ) : (
         <span className={text}>{who.label}</span>
       )}

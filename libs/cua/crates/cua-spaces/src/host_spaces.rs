@@ -2441,8 +2441,8 @@ fn stopped_sharing_reason(e: &Error) -> Option<String> {
 /// local Space (2 vCPUs, 4 GiB).
 /// How this machine's daemon reaches the machine's own cua-spacesd (the
 /// host service): where it listens (the direct listener, `CUA_ENV_LISTEN`,
-/// else loopback on `CUA_ENV_PORT` or the channel's port, 3211 or 3221 for
-/// Cua Spaces Local) and its local env token.
+/// else loopback on `CUA_ENV_PORT`, the port setup chose, or the channel's
+/// port, 3211 or 3221 for Cua Spaces Local) and its local env token.
 fn host_spacesd(host: &Host) -> std::result::Result<cua_cluster::machine::HostSpacesd, String> {
     host_spacesd_on(host, cua_home::channel::CuaChannel::current())
 }
@@ -2451,11 +2451,10 @@ fn host_spacesd_on(
     host: &Host,
     channel: cua_home::channel::CuaChannel,
 ) -> std::result::Result<cua_cluster::machine::HostSpacesd, String> {
-    let listen = host
-        .config()
-        .ok()
-        .flatten()
-        .and_then(|c| c.listen)
+    let config = host.config().ok().flatten();
+    let listen = config
+        .as_ref()
+        .and_then(|c| c.listen.clone())
         .filter(|l| !l.is_empty())
         .or_else(|| {
             std::env::var("CUA_ENV_LISTEN")
@@ -2466,7 +2465,14 @@ fn host_spacesd_on(
             let port = std::env::var("CUA_ENV_PORT")
                 .ok()
                 .and_then(|p| p.trim().parse::<u16>().ok())
-                .unwrap_or(channel.ports().tcp);
+                // The port setup chose (another macOS user's host held
+                // the channel's), else the channel's.
+                .unwrap_or_else(|| {
+                    config
+                        .as_ref()
+                        .map_or(channel.ports(), |c| c.service_ports(channel))
+                        .tcp
+                });
             format!("127.0.0.1:{port}")
         });
     // A listener on every interface is reached on loopback.
@@ -4588,6 +4594,14 @@ mod tests {
         assert_eq!(on(CuaChannel::Stable).url, "http://127.0.0.1:3211");
         assert_eq!(on(CuaChannel::Local).url, "http://127.0.0.1:3221");
         assert_eq!(on(CuaChannel::Local).token, "secret");
+        // A host set up beside another macOS user's: the port setup chose.
+        let config = cua_host::HostConfig {
+            mode: "relay".into(),
+            port: Some(3231),
+            ..Default::default()
+        };
+        std::fs::write(host.paths().config(), serde_json::to_vec(&config).unwrap()).unwrap();
+        assert_eq!(on(CuaChannel::Stable).url, "http://127.0.0.1:3231");
         // The mesh media port is every channel's, by design: guest Spaces
         // and older cua-spacesd serve it there, and it is not an OS port.
         for channel in CuaChannel::ALL {

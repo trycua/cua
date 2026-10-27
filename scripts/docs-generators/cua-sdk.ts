@@ -483,6 +483,15 @@ export const PAGES: PageSpec[] = [
     python: [['`cua_sandbox` runtimes', `${PY}/runtimes`]],
   },
   {
+    slug: 'runtime-kinds',
+    title: 'Runtime per kind',
+    description: 'Which program runs containers, virtual machines and microVMs on this machine, and what a given binary is.',
+    intro:
+      'Each kind of Space has its own setting, `runtime.container`, `runtime.vm` and `runtime.microvm` (`auto`, `builtin` or `system`), and with `system` a `runtime.<kind>_path` naming the program to use. `runtime_kinds` reads them with what is installed for each kind; `runtime_check_path` tells what a binary is before it is saved. The Cua app\'s Settings, Advanced shows the same, and `cua` and the daemon use the same program.',
+    members: [{ object: 'Local', title: 'Runtime per kind methods', methods: ['runtime_kinds', 'runtime_check_path'] }],
+    items: ['RuntimeKindState', 'RuntimeDetected', 'RuntimePathProbe'],
+  },
+  {
     slug: 'spaces',
     title: 'Spaces',
     description: 'The Spaces registry: create, add, resolve, delete and remove Spaces, their create options, and agent runs in a Space.',
@@ -991,7 +1000,7 @@ const TELEMETRY_CONCEPTS = ['../concepts/telemetry', '../concepts/telemetry-even
 
 /** Groups of the reference sidebar; folders other generators own are listed by name. */
 const NAV: Array<[label: string, pages: string[]]> = [
-  ['Sandboxes', ['cua', 'sandbox', 'share', 'image', 'os-image-catalog', 'image-software', 'services', 'runtime-support']],
+  ['Sandboxes', ['cua', 'runtime-kinds', 'sandbox', 'share', 'image', 'os-image-catalog', 'image-software', 'services', 'runtime-support']],
   ['Inside a sandbox', ['spacesd', 'agents', 'agent-setup']],
   ['Spaces', ['spaces']],
   ['Account', ['auth']],

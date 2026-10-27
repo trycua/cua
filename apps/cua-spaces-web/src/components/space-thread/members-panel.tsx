@@ -13,9 +13,10 @@ import { cn } from "@/lib/utils";
 
 import { MemberAvatar } from "./avatar";
 import { AiTag, OwnerSuffix } from "./identity";
+import { ProfileTrigger } from "./profile-card";
 import { RAIL_WINDOWS, railStreams } from "./rail";
 import { holderChoice, holdersLabel, RIGHT_ROWS, type HolderChoice } from "./rights";
-import type { Roster, RosterAgent } from "./roster";
+import type { Roster, RosterAgent, RosterPerson } from "./roster";
 
 /** Who is here right now (P2: relay presence and session states). Without
  * it no dot is drawn: P1 never guesses. */
@@ -38,17 +39,11 @@ export function MembersPanel({
   onStream,
   folded,
   onFold,
-  onSetRights,
-  onRemoveAgent,
   onAddAgent,
 }: {
   roster: Roster;
   /** Opens Add an agent (absent for guests). */
   onAddAgent?: () => void;
-  /** Removes an agent member (absent: the host can't); shown only to who may. */
-  onRemoveAgent?: (name: string) => Promise<void>;
-  /** Changes an agent's rights; absent when you can't (only the owner and admins can). */
-  onSetRights?: (name: string, rights: Partial<AgentRights>) => Promise<void>;
   presence?: MemberPresence;
   /** The first few of the core's facts; More opens the rest. */
   facts: SpaceFact[];
@@ -66,7 +61,6 @@ export function MembersPanel({
   folded: boolean;
   onFold: (folded: boolean) => void;
 }) {
-  const [opened, setOpened] = useState<string | null>(null);
   if (folded) {
     return (
       <aside data-members-panel="folded" className="flex w-12 shrink-0 flex-col items-center gap-2.5 bg-chrome py-3">
@@ -111,11 +105,13 @@ export function MembersPanel({
       </div>
       <ul className="min-h-0 flex-1 overflow-y-auto px-3 pb-3" data-members="">
         {roster.people.map((p) => (
-          <Row key={p.id} member={p.id} mark={<MemberAvatar kind="person" name={p.label} size={24} presence={presence?.[p.id] ?? null} />} label={p.label} caption={p.me ? "You" : null} />
+          <ProfileRow key={p.id} person={p}>
+            <Row member={p.id} mark={<MemberAvatar kind="person" name={p.label} size={24} presence={presence?.[p.id] ?? null} />} label={p.label} caption={p.me ? "You" : null} />
+          </ProfileRow>
         ))}
         {roster.agents.map((a) => (
+          <ProfileRow key={a.id} agent={a}>
           <Row
-            key={a.id}
             member={a.id}
             mark={<MemberAvatar kind="agent" name={a.name} harness={a.harness} identity={a.identity} surface="chrome" size={24} dim={a.dim} presence={presence?.[a.id] ?? null} />}
             label={
@@ -128,11 +124,9 @@ export function MembersPanel({
             caption={a.caption}
             dim={a.dim}
             status={a.status}
-            open={opened === a.id}
-            onToggle={() => setOpened(opened === a.id ? null : a.id)}
-          >
-            {opened === a.id ? <AgentRightsRows agent={a} onSetRights={onSetRights} onRemove={onRemoveAgent && roster.canRemove(a) ? () => onRemoveAgent(a.name) : undefined} /> : null}
-          </Row>
+            chevron
+          />
+          </ProfileRow>
         ))}
       </ul>
       {windows.length || desktop ? (
@@ -245,6 +239,7 @@ function Row({
   open,
   onToggle,
   children,
+  chevron,
 }: {
   member: string;
   mark: ReactNode;
@@ -256,6 +251,8 @@ function Row({
   open?: boolean;
   onToggle?: () => void;
   children?: ReactNode;
+  /** Opens a card (the row is inside its trigger). */
+  chevron?: boolean;
 }) {
   const body = (
     <>
@@ -268,9 +265,10 @@ function Row({
   );
   if (!onToggle) {
     return (
-      <li data-member={member} data-member-status={status} className="flex min-h-10 items-center gap-2.5 rounded-lg px-2 py-1.5">
+      <span data-member={member} data-member-status={status} className="flex min-h-10 w-full items-center gap-2.5 rounded-lg px-2 py-1.5 hover:bg-accent">
         {body}
-      </li>
+        {chevron ? <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground" /> : null}
+      </span>
     );
   }
   return (
@@ -290,6 +288,22 @@ function Row({
   );
 }
 
+/** A row in "In this space" that opens its person's or agent's card. */
+function ProfileRow({ person, agent, children }: { person?: RosterPerson; agent?: RosterAgent; children: ReactNode }) {
+  return (
+    <li>
+      <ProfileTrigger person={person} agent={agent} side="left" className="block w-full rounded-lg">
+        {children}
+      </ProfileTrigger>
+    </li>
+  );
+}
+
+/** Who can task, stop and approve: the selects alone, for the agent card's Details. */
+export function RightsEditor({ agent, onSetRights }: { agent: RosterAgent; onSetRights: (name: string, rights: Partial<AgentRights>) => Promise<void> }) {
+  return <AgentRightsRows agent={agent} onSetRights={onSetRights} bare />;
+}
+
 const CHOICES: readonly { value: HolderChoice; label: string }[] = [
   { value: "owner", label: "Owner" },
   { value: "admins", label: "Admins" },
@@ -298,7 +312,7 @@ const CHOICES: readonly { value: HolderChoice; label: string }[] = [
 
 /** Who can task, stop and approve an agent: three plain rows under its name.
  * The owner and admins change them; everyone else reads them. */
-function AgentRightsRows({ agent, onSetRights, onRemove }: { agent: RosterAgent; onSetRights?: (name: string, rights: Partial<AgentRights>) => Promise<void>; onRemove?: () => Promise<void> }) {
+function AgentRightsRows({ agent, onSetRights, onRemove, bare }: { agent: RosterAgent; onSetRights?: (name: string, rights: Partial<AgentRights>) => Promise<void>; onRemove?: () => Promise<void>; bare?: boolean }) {
   const [busy, setBusy] = useState(false);
   const remove = () => {
     if (!onRemove) return;
@@ -312,7 +326,7 @@ function AgentRightsRows({ agent, onSetRights, onRemove }: { agent: RosterAgent;
     );
   };
   return (
-    <div data-agent-rights={agent.name} className="mb-1 ml-9 divide-y divide-border/60 border-y border-border/60">
+    <div data-agent-rights={agent.name} className={bare ? "" : "mb-1 ml-9 divide-y divide-border/60 border-y border-border/60"}>
       {RIGHT_ROWS.map(({ right, label }) => {
         const value = agent.rights[right];
         const choice = holderChoice(value);

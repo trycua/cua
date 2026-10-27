@@ -17,6 +17,7 @@ import { SpaceContextMenu, SpaceMoreMenu, type MenuActions } from "@/components/
 import { SelectAllBox, SelectBox, SelectionBar, stoppedDeletable, useSelection } from "@/components/spaces/selection";
 import { SpaceTile, TILE_CELL } from "@/components/spaces/space-tile";
 import { CreatingElsewhereTile } from "@/components/spaces/creating-elsewhere-tile";
+import { WindowedGrid, type WindowedGridHandle } from "@/components/spaces/windowed-grid";
 import { SpacesToolbar } from "@/components/spaces/spaces-toolbar";
 import { PageTip, useTipsLoaded } from "@/components/tips";
 import { useNewSpace } from "@/hooks/use-new-space";
@@ -70,14 +71,21 @@ function SpacesPage() {
     [spaces, machines, resources],
   );
   const item = (s: Space) => items.get(s.id)!;
-  const shown = shownSpaces({
-    spaces,
-    search,
-    mine: (s) => item(s).mine,
-    machineOf: (s) => spaceMachineId(s, machines),
-    bytes: (s) => item(s).bytes,
-    matches: (s) => matchesQuery(core, s, item(s).machine, query),
-  }).map(item);
+  // Only when the list, the filters or the numbers change: a pick or a menu redraws the page without
+  // filtering and sorting thousands of Spaces again.
+  const shown = useMemo(
+    () =>
+      shownSpaces({
+        spaces,
+        search,
+        mine: (s) => item(s).mine,
+        machineOf: (s) => spaceMachineId(s, machines),
+        bytes: (s) => item(s).bytes,
+        matches: (s) => matchesQuery(core, s, item(s).machine, query),
+      }).map(item),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `item` reads `items`
+    [spaces, search, items, machines, query, core],
+  );
   const filter = search.state ?? "all";
   // Spaces your other computers are creating (CUA-2349): first in the grid, until they are ready.
   const elsewhere =
@@ -120,6 +128,7 @@ function SpacesPage() {
   // The grid's tiles read the selection and the menus' actions through this,
   // so a tile redraws only when its own Space, pick or state changes (picking
   // one of 3,000 Spaces redrew all 3,000).
+  const grid = useRef<WindowedGridHandle>(null);
   const live = useRef<GridLive>({ selection, actions });
   live.current = { selection, actions };
   // `?select=stopped` (the cleanup tip, a link): every stopped Space shown of yours, once the list is in.
@@ -127,6 +136,9 @@ function SpacesPage() {
   useEffect(() => {
     if (search.select !== "stopped" || !ready) return;
     selection.selectStopped();
+    // The first one picked, on screen (a long grid draws only what is on screen).
+    const first = shown.findIndex(stoppedDeletable);
+    if (first >= 0) grid.current?.scrollToIndex(elsewhereTiles.length + first);
     setSearch({ select: undefined });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once, when the list is in
   }, [search.select, ready]);
@@ -250,19 +262,25 @@ function SpacesPage() {
               />
               </>
             ) : (
-              <ul data-picking={selection.ids.size > 0 || undefined} className="group/grid grid grid-cols-[repeat(auto-fill,minmax(232px,1fr))] gap-x-5 gap-y-7">
-                {elsewhereTiles}
-                {shown.map((it) => (
-                  <GridTile
-                    key={it.space.id}
-                    item={it}
-                    selected={selection.has(it.space.id)}
-                    busy={bulk.running.has(it.space.id)}
-                    accessKey={keyvault.signedIn.has(it.space.id) ? keyvault.accessKey(it.space.id) : undefined}
-                    live={live}
-                  />
-                ))}
-              </ul>
+              <WindowedGrid
+                ref={grid}
+                picking={selection.ids.size > 0}
+                count={elsewhereTiles.length + shown.length}
+                renderAt={(i) => {
+                  if (i < elsewhereTiles.length) return elsewhereTiles[i];
+                  const it = shown[i - elsewhereTiles.length]!;
+                  return (
+                    <GridTile
+                      key={it.space.id}
+                      item={it}
+                      selected={selection.has(it.space.id)}
+                      busy={bulk.running.has(it.space.id)}
+                      accessKey={keyvault.signedIn.has(it.space.id) ? keyvault.accessKey(it.space.id) : undefined}
+                      live={live}
+                    />
+                  );
+                }}
+              />
             );
         }
       })()}

@@ -9,7 +9,7 @@
 // words, with Try again and Change computer in the card.
 
 import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { setFlagOverride } from "@/bridge";
 import { wasmBuilt } from "@/bridge/__tests__/testCore";
@@ -22,12 +22,17 @@ const CORE_NOT_FOUND = 'Space "this-mac" (use its id, such as local:<name> or cl
 const HOST_SPACE = "relay:this-mac";
 const HOST = { failsCreates: false, listsGhost: false };
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllEnvs();
+});
 stubBrowserApis();
 beforeEach(() => {
   localStorage.clear();
   resetAskTasks();
   setFlagOverride("spaces_ask_first_home", true);
+  // Ask first on its own: its task page (with the redesign too, see ask-first-in-space.test.tsx).
+  vi.stubEnv("VITE_CUA_FLAG_SPACES_REDESIGN", "0");
 });
 
 async function pickThisMac() {

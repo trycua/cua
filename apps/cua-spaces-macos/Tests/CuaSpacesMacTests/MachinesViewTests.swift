@@ -143,6 +143,8 @@ struct MachinesViewTests {
         let work = view.machines.first { $0.name == "Work laptop" }
         #expect(work?.remove?.device == "dev_work")
         #expect(work?.remove?.label == "Remove from account")
+        #expect(work?.line == "Signed-in device, not shared")
+        #expect(view.groups.first { $0.id == "devices" }?.ids.contains("dev_work") == true)
         // No Space actions on a machine: its Spaces only lead to the Space.
         #expect(view.machines.allSatisfy { $0.newSpace.label == "New Space here" })
 

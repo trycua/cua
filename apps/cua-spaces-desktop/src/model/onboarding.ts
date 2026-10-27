@@ -10,6 +10,8 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import * as path from "node:path";
 
+import { keepDamaged } from "../damaged";
+
 export type OnboardingMode = "client" | "host";
 
 export interface OnboardingState {
@@ -23,12 +25,21 @@ export class OnboardingStore {
 
   constructor(readonly file: string) {}
 
-  /** What the file says (a missing or damaged file: the first run is due). */
+  /** What the file says (a missing or damaged file: the first run is due; a damaged one is kept as `.damaged`). */
   read(): OnboardingState {
+    let text: string;
     try {
-      const raw = JSON.parse(readFileSync(this.file, "utf8")) as { completed?: unknown; mode?: unknown };
-      return { completed: raw.completed === true && !this.shownAgain, mode: raw.mode === "host" ? "host" : "client" };
+      text = readFileSync(this.file, "utf8");
     } catch {
+      return { completed: false, mode: "client" };
+    }
+    try {
+      const raw: unknown = JSON.parse(text);
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("not an object");
+      const { completed, mode } = raw as { completed?: unknown; mode?: unknown };
+      return { completed: completed === true && !this.shownAgain, mode: mode === "host" ? "host" : "client" };
+    } catch {
+      keepDamaged(this.file);
       return { completed: false, mode: "client" };
     }
   }

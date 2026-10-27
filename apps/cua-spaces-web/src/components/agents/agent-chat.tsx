@@ -36,6 +36,9 @@ const TONE: Record<AgentChat["tone"], string> = {
   failed: "bg-destructive",
   idle: "bg-muted-foreground/40",
   asleep: "bg-muted-foreground/40",
+  "not-connected": "bg-warning",
+  creating: "bg-brand",
+  stopped: "bg-muted-foreground/40",
 };
 
 /** The owner as the list says it: nothing for your own agents, "Grace's" for a teammate's. */
@@ -66,6 +69,8 @@ export function AgentList({
   me,
   selected,
   onSelect,
+  onOpenRun,
+  onAction,
   onNew,
   now,
 }: {
@@ -73,12 +78,18 @@ export function AgentList({
   me: string | null;
   selected: string | null;
   onSelect: (key: string, space?: string) => void;
+  /** A run that hasn't started: its Space's thread. */
+  onOpenRun?: (chat: AgentChat) => void;
+  /** Its Connect or Try again. */
+  onAction?: (chat: AgentChat) => void;
   onNew: () => void;
   now: number;
 }) {
   const needs = chats.flatMap((c) => c.needsYou.map((n) => ({ n, c }))).sort((a, b) => b.n.tsMs - a.n.tsMs);
-  const running = chats.filter((c) => c.tone === "you" || c.tone === "working");
-  const others = chats.filter((c) => c.tone !== "you" && c.tone !== "working");
+  // Runs that haven't started (being made, not connected, failed): their own section, in the core's order.
+  const runs = chats.filter((c) => c.kind === "attempt");
+  const running = chats.filter((c) => c.kind === "agent" && (c.tone === "you" || c.tone === "working"));
+  const others = chats.filter((c) => c.kind === "agent" && c.tone !== "you" && c.tone !== "working");
   return (
     <aside data-agent-list="" className="flex w-72 shrink-0 flex-col bg-chrome">
       <div className="flex h-14 items-center justify-between pr-3 pl-5">
@@ -110,17 +121,24 @@ export function AgentList({
             ))}
           </Section>
         ) : null}
+        {runs.length ? (
+          <Section title="Not started" count={runs.length}>
+            {runs.map((c) => (
+              <AgentRow key={c.key} chat={c} me={me} selected={false} onSelect={() => onOpenRun?.(c)} onAction={onAction ? () => onAction(c) : undefined} now={now} />
+            ))}
+          </Section>
+        ) : null}
         {running.length ? (
           <Section title="Running" count={running.length}>
             {running.map((c) => (
-              <AgentRow key={c.key} chat={c} me={me} selected={selected === c.key} onSelect={() => onSelect(c.key)} now={now} />
+              <AgentRow key={c.key} chat={c} me={me} selected={selected === c.key} onSelect={() => (c.kind === "attempt" ? onOpenRun?.(c) : onSelect(c.key))} onAction={onAction ? () => onAction(c) : undefined} now={now} />
             ))}
           </Section>
         ) : null}
         {others.length ? (
           <Section title={running.length ? "Others" : "Agents"} count={others.length}>
             {others.map((c) => (
-              <AgentRow key={c.key} chat={c} me={me} selected={selected === c.key} onSelect={() => onSelect(c.key)} now={now} />
+              <AgentRow key={c.key} chat={c} me={me} selected={selected === c.key} onSelect={() => (c.kind === "attempt" ? onOpenRun?.(c) : onSelect(c.key))} onAction={onAction ? () => onAction(c) : undefined} now={now} />
             ))}
           </Section>
         ) : null}
@@ -145,8 +163,35 @@ function Section({ title, count, children }: { title: string; count: number; chi
   );
 }
 
-function AgentRow({ chat: c, me, selected, onSelect, now }: { chat: AgentChat; me: string | null; selected: boolean; onSelect: () => void; now: number }) {
+function AgentRow({ chat: c, me, selected, onSelect, onAction, now }: { chat: AgentChat; me: string | null; selected: boolean; onSelect: () => void; onAction?: () => void; now: number }) {
   const owner = ownerWord(c, me);
+  if (c.kind === "attempt") {
+    // A run that hasn't started: its job and why, the step that moves it on, and its Space's thread on click.
+    return (
+      <div data-chat={c.key} data-chat-tone={c.tone} data-chat-run="" className="flex w-full items-center gap-2 rounded-lg px-2 py-2 hover:bg-accent">
+        <button type="button" onClick={onSelect} className="flex min-w-0 flex-1 cursor-default items-center gap-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/60">
+          <AgentTile harness={c.harness} name={c.label} px={28} surface="chrome" />
+          <span className="min-w-0 flex-1">
+            <span className="flex items-center gap-1.5">
+              <span className="truncate text-[13px] font-semibold">{c.job ?? c.label}</span>
+              <span className="ml-auto shrink-0 text-[11px] text-muted-foreground tabular-nums">{ago(c.lastMs, now)}</span>
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", TONE[c.tone])} />
+              <span data-chat-line="" className="min-w-0 flex-1 truncate text-[11.5px] text-muted-foreground">
+                {c.line}
+              </span>
+            </span>
+          </span>
+        </button>
+        {c.action && onAction ? (
+          <Button size="sm" variant="outline" className="h-7 shrink-0 px-2 text-xs" data-chat-action={c.action.id} onClick={onAction}>
+            {c.action.id === "connect" ? "Connect" : c.action.label}
+          </Button>
+        ) : null}
+      </div>
+    );
+  }
   return (
     <button
       type="button"

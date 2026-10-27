@@ -54,8 +54,12 @@ public final class ChecklistModel {
     ]
 
     private static func read(_ path: String) -> AppChecklistState? {
-        guard let data = FileManager.default.contents(atPath: path),
-              let s = try? JSONDecoder().decode(Stored.self, from: data) else { return nil }
+        guard let data = FileManager.default.contents(atPath: path) else { return nil }
+        guard let s = try? JSONDecoder().decode(Stored.self, from: data) else {
+            // Truncated or garbage: the defaults, and the file kept as `.damaged`.
+            DamagedFile.keep(path)
+            return nil
+        }
         return state(done: s.done, dismissed: s.dismissed, shown: s.shown, skipped: s.skipped ?? [])
     }
 

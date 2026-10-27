@@ -276,11 +276,17 @@ pub async fn resolve_placement_for(
             Runtime::Firecracker => BackendKind::Firecracker,
             Runtime::Vz => BackendKind::Vz,
             Runtime::Containerization => BackendKind::Containerization,
+            // `runtime.microvm`: Cua's own monitor, Apple's container
+            // already on this Mac, or (auto) the monitor when it runs here.
             _ if cfg!(target_os = "macos") => {
-                if cua_sandbox_core::placement::HostFacts::current().vz {
-                    BackendKind::Vz
-                } else {
-                    BackendKind::Containerization
+                use cua_vmm::kinds::{KindSource, RuntimeKind, source};
+                match source(RuntimeKind::Microvm) {
+                    KindSource::Builtin => BackendKind::Vz,
+                    KindSource::System => BackendKind::Containerization,
+                    KindSource::Auto if cua_sandbox_core::placement::HostFacts::current().vz => {
+                        BackendKind::Vz
+                    }
+                    KindSource::Auto => BackendKind::Containerization,
                 }
             }
             _ => BackendKind::Firecracker,

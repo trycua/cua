@@ -36,6 +36,10 @@ import type {
   SpacePowerReport,
   TelemetryView,
   CrashReportingConfig,
+  DetectedRuntime,
+  RuntimeKindInput,
+  RuntimePathCheck,
+  RuntimesInput,
 } from "./host";
 import type { KeyvaultOverview, KvGrant } from "./keyvault";
 import type {
@@ -318,6 +322,45 @@ const SessionShape = ref(
 /** `AppSettings.tips` (`tips::TipsState`). */
 const TipsStateShape = obj<TipsState>()({ off: bool, done: strings });
 
+const RuntimePathCheckShape = ref(
+  "RuntimePathCheck",
+  obj<RuntimePathCheck>()({
+    path: str,
+    exists: bool,
+    executable: bool,
+    tool: optNull(str),
+    name: optNull(str),
+    version: optNull(str),
+    minVersion: optNull(str),
+    expected: strings,
+    guests: optNull(str),
+  }),
+);
+
+const RuntimesInputShape = ref(
+  "RuntimesInput",
+  obj<RuntimesInput>()({
+    os: optNull(os),
+    hostArch: optNull(str),
+    localBackends: optNull(strings),
+    localDetails: optNull(any),
+    kinds: optNull(
+      list(
+        obj<RuntimeKindInput>()({
+          kind: str,
+          source: optNull(str),
+          path: optNull(str),
+          detected: optNull(
+            list(obj<DetectedRuntime>()({ tool: str, name: str, path: str, version: optNull(str), guests: optNull(str) })),
+          ),
+          check: optNull(RuntimePathCheckShape),
+          expected: opt(strings),
+        }),
+      ),
+    ),
+  }),
+);
+
 const SettingsShape = ref(
   "SettingsSnapshot",
   obj<SettingsSnapshot>()({
@@ -338,9 +381,9 @@ const SettingsShape = ref(
     ),
     hostSettings: opt(
       obj<HostSettings>()({
-        lumeSource: optNull(str),
-        linuxSource: optNull(str),
+        runtimes: optNull(RuntimesInputShape),
         autoConnect: optNull(bool),
+        overflow: optNull(bool),
         keyvaultAutoWipe: optNull(bool),
         keyvaultUnlockPrompt: optNull(bool),
         keyvaultSiteIcons: optNull(bool),
@@ -805,6 +848,8 @@ const ConnectResultsShape = list(
   ),
 );
 const DisconnectShape = object({ removed_sign_ins: list(str) });
+const SignInStartShape = object({ id: str, url: str, code: str });
+const SignInWaitShape = object({ imported: any, refused: any, line: any });
 const AgentDetailShape = ref(
   "AgentDetailInput",
   obj<AgentDetailInput>()({
@@ -1187,6 +1232,8 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "agents.status": ConnectionReportShape,
   "agents.connect": ConnectResultsShape,
   "agents.disconnect": DisconnectShape,
+  "agents.signInStart": SignInStartShape,
+  "agents.signInWait": SignInWaitShape,
   "agents.detail": AgentDetailShape,
   "agents.readFile": AgentOpenFileShape,
   "agents.restoreFile": nul,
@@ -1268,6 +1315,8 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "agentKeys.list": AgentKeysShape,
   "agentKeys.set": AgentKeysShape,
   "agentKeys.remove": AgentKeysShape,
+  "agentKeys.shell": object({ names: list(str) }),
+  "agentKeys.fromShell": AgentKeysShape,
 
   "volume.overview": VolumeShape,
   "volume.storage": nullable(DriveStorageShape),
@@ -1377,6 +1426,8 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "loginItem.get": LoginItemShape,
   "loginItem.set": LoginItemShape,
   "loginItem.openSettings": nul,
+  "runtimes.check": RuntimePathCheckShape,
+  "runtimes.browse": object({ path: nullable(str) }),
   "devices.get": DevicesShape,
   "devices.enroll": obj<EnrollResult>()({ enrolled: bool, code: nullable(str) }),
   "devices.checkEnrolled": bool,
@@ -1533,6 +1584,7 @@ const WkSettingsShape = ref(
     accountUrl: optNull(str),
     cli: optNull(object({ name: str, installed: bool })),
     tips: opt(TipsStateShape),
+    runtimes: optNull(RuntimesInputShape),
   }),
 );
 
@@ -1673,6 +1725,8 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "agents.status": ConnectionReportShape,
   "agents.connect": ConnectResultsShape,
   "agents.disconnect": DisconnectShape,
+  "agents.signInStart": SignInStartShape,
+  "agents.signInWait": SignInWaitShape,
   "agents.setupDriver": OP_SHAPES["agents.setupDriver"],
   "agents.detail": AgentDetailShape,
   "agents.readFile": AgentOpenFileShape,
@@ -1685,6 +1739,8 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "agentKeys.list": AgentKeysWire,
   "agentKeys.set": AgentKeysWire,
   "agentKeys.remove": AgentKeysWire,
+  "agentKeys.shell": object({ names: list(str) }),
+  "agentKeys.fromShell": AgentKeysWire,
   "clouds.status": nullable(OP_SHAPES["clouds.status"]),
   "clouds.test": OP_SHAPES["clouds.test"],
   "clouds.connect": OP_SHAPES["clouds.connect"],
@@ -1724,6 +1780,8 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "loginItem.get": LoginItemShape,
   "loginItem.set": LoginItemShape,
   "loginItem.openSettings": nul,
+  "runtimes.check": RuntimePathCheckShape,
+  "runtimes.browse": object({ path: nullable(str) }),
   "devices.get": DevicesShape,
   "devices.enroll": OP_SHAPES["devices.enroll"],
   "devices.checkEnrolled": bool,

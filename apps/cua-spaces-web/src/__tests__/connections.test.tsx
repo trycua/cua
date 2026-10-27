@@ -106,10 +106,11 @@ describe.skipIf(!wasmBuilt)("the Agents page, On This Mac", () => {
     await waitFor(() => expect(router.state.location.pathname).toBe("/settings/connectors"));
     expect((router.state.location.search as { app?: string }).app).toBe("hermes");
     const appRow = await waitFor(() => {
-      const r = document.querySelector<HTMLElement>('[data-connected-app="hermes"]');
+      const r = document.querySelector<HTMLElement>('[data-connector-app="hermes"]');
       expect(r).not.toBeNull();
       return r!;
     }, { timeout: 8000 });
-    expect(appRow.dataset.on).toBe("false");
+    // The redesign's row: still Connect, nothing connected on the spot.
+    expect(appRow.dataset.state).toBe("not-connected");
   });
 });

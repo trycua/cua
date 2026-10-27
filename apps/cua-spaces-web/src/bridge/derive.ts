@@ -364,12 +364,23 @@ export interface Machine {
   accessNotice?: MachineAccessNotice;
 }
 
+/** The words for a machine's Spaces, as the core says them
+ * (`machines::spaces_label`, and `machines::desktop_spaces_label` when the
+ * machine shares its own desktop). */
+export function machineSpacesLabel(desktop: boolean, n: number): string {
+  const count = n === 0 ? "No Spaces" : `${n} Space${n === 1 ? "" : "s"}`;
+  if (!desktop) return count;
+  return n === 0 ? "Desktop shared" : `Desktop \u00b7 ${count}`;
+}
+
 /** One Machines row as the core lists it, from the page's own machine
  * (an older host's rows, merged here): the core draws the page from it. */
-function pageRowOf(m: Machine, spaces: readonly Space[]): MachinePageRow {
+function pageRowOf(m: Machine, spaces: readonly Space[], core?: CoreClient): MachinePageRow {
   const own = m.current ? spaces.find((s) => s.id === "this-mac") : spaces.find((s) => s.id === `relay:${m.id}`);
   // The Spaces on it, never its own desktop (`machines::page_rows`).
   const n = spaces.filter((s) => (m.current ? s.provider === "local" && s.id !== "this-mac" : s.host === m.id)).length;
+  // Its own desktop is shared (`machines::page_rows`).
+  const desktop = Boolean(own && m.online && !m.notSharing && (m.current ? own.status === "local" : sharesDesktop(core, own) !== false));
   return {
     id: m.id,
     name: m.name,
@@ -384,7 +395,7 @@ function pageRowOf(m: Machine, spaces: readonly Space[]): MachinePageRow {
     lastSeen: m.lastSeen ?? null,
     status: m.status ?? (!m.online ? "Offline" : m.notSharing ? "Not sharing" : "Online"),
     spaces: n,
-    spacesLabel: m.spacesLabel ?? (m.device ? "" : n === 0 ? "No Spaces" : `${n} Space${n === 1 ? "" : "s"}`),
+    spacesLabel: m.spacesLabel ?? (m.device ? "" : machineSpacesLabel(desktop, n)),
   };
 }
 
@@ -412,7 +423,7 @@ export function machinesView(
     core?.tryCall<MachinesView>("machines.view", {
       input: {
         page: { hostOs, spaces: input.spaces, now: input.nowSecs ?? Math.floor(Date.now() / 1000) },
-        rows: input.machines.map((m) => pageRowOf(m, input.spaces)),
+        rows: input.machines.map((m) => pageRowOf(m, input.spaces, core)),
         host: input.host,
         clouds: input.clouds ?? null,
       },
@@ -690,8 +701,9 @@ export function settingsPage(
     keyvaultSiteIcons: settings.hostSettings?.keyvaultSiteIcons ?? true,
     keyvaultProtection: settings.hostSettings?.keyvaultProtection ?? [],
     autoConnect: settings.hostSettings?.autoConnect ?? null,
-    lumeSource: settings.hostSettings?.lumeSource ?? null,
-    linuxSource: settings.hostSettings?.linuxSource ?? null,
+    overflow: settings.hostSettings?.overflow ?? null,
+    // Every host's runtimes section; what the host read fills it in.
+    runtimes: settings.hostSettings?.runtimes ?? null,
     agents: agents?.agents ?? null,
     agentsBusy: agents?.agentsBusy ?? false,
     agentsPending: agents?.agentsPending ?? [],

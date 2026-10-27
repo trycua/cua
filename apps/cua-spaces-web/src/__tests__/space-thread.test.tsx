@@ -18,6 +18,26 @@ const q = (s: string) => document.querySelector<HTMLElement>(s);
 const qa = (s: string) => [...document.querySelectorAll<HTMLElement>(s)];
 const path = `/spaces/${encodeURIComponent(DEMO_THREAD_SPACE)}`;
 
+/** Opens an agent's card from its row in In this space, with Details open. */
+async function openRailCard(handle: string) {
+  const row = await waitFor(() => {
+    const el = q(`[data-profile-trigger='${handle}'] [data-member='agent:${handle}']`)?.closest<HTMLElement>("[data-profile-trigger]");
+    expect(el).toBeTruthy();
+    return el!;
+  });
+  await act(async () => {
+    fireEvent.click(row);
+  });
+  const details = await waitFor(() => {
+    const el = q(`[data-profile-card='agent'][data-profile='${handle}'] [data-card-details]`);
+    expect(el).not.toBeNull();
+    return el!;
+  });
+  await act(async () => {
+    fireEvent.click(details);
+  });
+}
+
 describe("a Space's thread", () => {
   it("draws the call layout: tasks with their state, a reply under its task, notes, an approval, the divider and the members", async () => {
     await mountApp(path, { failsCreates: false, listsGhost: false });
@@ -48,7 +68,7 @@ describe("a Space's thread", () => {
     });
     fireEvent.change(box, { target: { value: "@", selectionStart: 1 } });
     await waitFor(() => expect(q("[data-mention-picker]")).not.toBeNull());
-    expect(qa("[data-mention-option]").map((o) => o.dataset.mentionOption)).toEqual(["claude", "hermes", "cursor", "grace", "linus"]);
+    expect(qa("[data-mention-option]").map((o) => o.dataset.mentionOption)).toEqual(["claude", "hermes", "cursor", "codex", "openclaw", "grace", "linus"]);
     fireEvent.keyDown(box, { key: "ArrowDown" });
     fireEvent.keyDown(box, { key: "Enter" });
     expect(box.value).toBe("@hermes ");
@@ -171,7 +191,7 @@ describe("a Space's thread", () => {
     });
     // Grace's Claude Code: its approvals go to Grace (CUA-2262).
     expect(card.textContent).toBe("Waiting for Grace");
-    expect(qa('[data-approval-state="open"] button:not([data-author-name])')).toHaveLength(0);
+    expect(qa('[data-approval-state="open"] button:not([data-author-name]):not([data-profile-trigger])')).toHaveLength(0);
   });
 
   it("says whose keys a task runs on, and shows rights read-only to a member", async () => {
@@ -179,25 +199,17 @@ describe("a Space's thread", () => {
     await waitFor(() => expect(qa("[data-entry-footnote]").length).toBeGreaterThan(0), { timeout: 4000 });
     // Grace owns the Space here: Linus's task runs on her keys, hers on nobody else's.
     expect(qa("[data-entry-footnote]").map((f) => f.textContent)).toContain("Runs on Grace's keys");
-    const hermes = await waitFor(() => {
-      const el = q("[data-member='agent:hermes'] [data-member-toggle]");
-      expect(el).not.toBeNull();
-      return el!;
-    });
-    fireEvent.click(hermes);
-    await waitFor(() => expect(q("[data-agent-rights='hermes']")).not.toBeNull());
-    expect(qa("[data-agent-rights='hermes'] [data-agent-right]").map((r) => r.textContent)).toEqual(["Can taskOwner", "Can stopAdmins", "Can approveAdmins"]);
-    expect(q("[data-agent-rights='hermes'] button")).toBeNull();
+    // Its row in In this space opens its card; who may task, stop and approve it is under Details, read-only.
+    await openRailCard("hermes");
+    expect(qa("[data-card-details-open] dt").map((d) => `${d.textContent}: ${d.nextElementSibling?.textContent}`)).toEqual(
+      expect.arrayContaining(["Can give it tasks: Owner", "Can stop it: Admins", "Can approve its steps: Admins"]),
+    );
+    expect(q("[data-agent-right]")).toBeNull();
   });
 
   it("lets the owner change who can task an agent", async () => {
     await mountApp(path, { failsCreates: false, listsGhost: false });
-    const hermes = await waitFor(() => {
-      const el = q("[data-member='agent:hermes'] [data-member-toggle]");
-      expect(el).not.toBeNull();
-      return el!;
-    });
-    fireEvent.click(hermes);
+    await openRailCard("hermes");
     await waitFor(() => expect(q("[data-agent-rights='hermes'] [data-agent-right='task'] button")).not.toBeNull());
     expect(q("[data-agent-rights='hermes'] [data-agent-right='task']")?.textContent).toContain("Owner");
     expect(qa("[data-agent-rights='hermes'] [data-agent-right] button")).toHaveLength(3);

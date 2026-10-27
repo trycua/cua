@@ -116,7 +116,12 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
 
     // Groups, with the old machines collapsed.
     const groups = [...document.querySelectorAll("[data-machine-group]")].map((g) => g.getAttribute("data-machine-group"));
-    expect(groups).toEqual(["yours", "old", "team"]);
+    expect(groups).toEqual(["yours", "devices", "old", "team"]);
+    const devices = document.querySelector<HTMLElement>('[data-machine-group="devices"]')!;
+    expect(devices.textContent).toContain("Your devices");
+    const lap = devices.querySelector<HTMLElement>('[data-machine-id="dev_lap"]')!;
+    expect(lap.hidden).toBe(false);
+    expect(lap.querySelector("[data-machine-line]")?.textContent).toBe("Signed-in device, not shared");
     const old = document.querySelector<HTMLElement>('[data-machine-id="old1"]')!;
     expect(old.hidden).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: /Offline for 30\+ days/ }));
@@ -318,6 +323,19 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
     expect(rows[0]!.getAttribute("href")).toBe(`/spaces/${encodeURIComponent(studio.desktop!.id)}`);
     expect(rows[0]!.textContent).toContain("Desktop");
     expect(rows[1]!.textContent).not.toContain("Desktop");
+  });
+
+  it("reads a shared desktop in the row: desktop only, desktop with Spaces, Spaces only", async () => {
+    const view = await issuesView("a machine sharing only its desktop");
+    const { router } = await mountApp("/machines", hostDrawn(view, []));
+    await router.load();
+    await screen.findByText(view.summary);
+    const line = (id: string) => document.querySelector(`[data-machine-id="${id}"] [data-machine-line]`)?.textContent;
+    expect([line("solo"), line("both"), line("spaces")]).toEqual(["Desktop shared", "Desktop \u00b7 2 Spaces", "1 Space running"]);
+    select("solo");
+    const detail = await detailOf("solo");
+    const rows = [...detail.querySelectorAll<HTMLElement>("[data-machine-spaces] [data-space-row]")];
+    expect(rows.map((r) => r.dataset.spaceRow)).toEqual(["relay:solo"]);
   });
 
   it("draws the clouds: a group under the machines, each cloud's page, and Connect a cloud", async () => {

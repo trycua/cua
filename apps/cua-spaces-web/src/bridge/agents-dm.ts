@@ -16,8 +16,10 @@
  *   answers approvals.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
+import type { CoreClient } from "./core";
+import { chatsPollMs, jittered, mapLimit, MissCache } from "../lib/poll-plan";
 import { useBridge, useSpaces } from "./hooks";
 import type { Space } from "./contracts/spaces";
 import { foldThread, readSeqFrom, type ThreadItem } from "./thread";
@@ -41,7 +43,22 @@ export interface ChatNeed extends NeedsYou {
   spaceName: string;
 }
 
-export type ChatTone = "you" | "working" | "idle" | "asleep" | "failed";
+export type ChatTone = "you" | "working" | "idle" | "asleep" | "failed" | "not-connected" | "creating" | "stopped";
+
+/** A run of this device's that isn't an agent in a Space (yet): its job waiting for a Space being made, an agent not connected, a start that failed. */
+export interface ChatAttempt {
+  id: string;
+  spaceId: string;
+  spaceName: string;
+  harness: string;
+  label: string;
+  job: string;
+  atMs: number;
+  state: "creating" | "not-connected" | "failed" | "stopped";
+  note: string | null;
+  connectLabel: string | null;
+  app: string | null;
+}
 
 /** One agent, across its Spaces. */
 export interface AgentChat {
@@ -59,6 +76,16 @@ export interface AgentChat {
   line: string;
   /** The last thing said in its DM, for ordering and the age. */
   lastMs: number;
+  /** `agent` (in a Space's thread) or `attempt` (a run of this device's). */
+  kind: "agent" | "attempt";
+  /** What it was asked to do, or is doing. */
+  job: string | null;
+  /** Where it is (an attempt has no member there yet). */
+  places: { spaceId: string; spaceName: string }[];
+  /** The step that moves it on: Connect or Try again. */
+  action: { id: "connect" | "retry"; label: string } | null;
+  app: string | null;
+  attempt: string | null;
 }
 
 /** One agent across Spaces: the same owner, harness and name. Without an identity, its handle in its Space. */
@@ -69,62 +96,89 @@ export function chatKey(spaceId: string, m: AgentMember): string {
   return `${i.owner.id}/${i.harness.id || "other"}/${i.displayName.trim().toLowerCase()}`;
 }
 
-const WORKING = new Set(["working", "claimed"]);
+/**
+ * Each Space's members (with `overview`) and this device's unfinished runs as
+ * one list: the app core's `agentList.view` (`agent_list.rs`) decides the
+ * rows, their order and every word; this only hangs each Space's member
+ * records back on the rows. The Agents page and Home both use it.
+ */
+export function mergeChats(core: CoreClient, perSpace: readonly { space: Space; role: ThreadRole | null; members: readonly AgentMember[] }[], attempts: readonly ChatAttempt[] = []): AgentChat[] {
+  const input = {
+    spaces: perSpace.map(({ space, members }) => ({
+      spaceId: space.id,
+      spaceName: space.name,
+      members: members.map((m) => ({
+        handle: m.name,
+        harness: m.identity?.harness.id || m.harness,
+        displayName: m.identity?.displayName ?? "",
+        ownerId: m.identity?.owner.id ?? "",
+        status: m.status,
+        activity: m.activity,
+        unread: m.dm?.unread ?? 0,
+        lastMs: m.dm?.last?.tsMs ?? 0,
+        needsMs: (m.needsYou ?? []).map((n) => n.tsMs),
+        pending: m.identity?.state === "pending",
+      })),
+    })),
+    attempts,
+  };
+  const view = core.tryCall<{ rows: AgentListRow[] }>("agentList.view", { input: input as unknown as Record<string, unknown> });
+  if (!view) return [];
 
-/** Merges each Space's members (with `overview`) into one row per agent. */
-export function mergeChats(perSpace: readonly { space: Space; role: ThreadRole | null; members: readonly AgentMember[] }[]): AgentChat[] {
-  const by = new Map<string, AgentChat>();
-  for (const { space, role, members } of perSpace) {
-    for (const m of members) {
-      if (m.identity?.state === "pending") continue;
-      const key = chatKey(space.id, m);
-      let c = by.get(key);
-      if (!c) {
-        c = { key, label: m.identity?.displayName || m.name, identity: m.identity, harness: m.identity?.harness.id || m.harness, spaces: [], unread: 0, needsYou: [], tone: "idle", line: "", lastMs: 0 };
-        by.set(key, c);
-      }
-      c.spaces.push({ spaceId: space.id, spaceName: space.name, os: space.os, handle: m.name, member: m, role });
-      c.unread += m.dm?.unread ?? 0;
-      c.lastMs = Math.max(c.lastMs, m.dm?.last?.tsMs ?? 0);
-      for (const n of m.needsYou ?? []) c.needsYou.push({ ...n, spaceId: space.id, spaceName: space.name });
-    }
-  }
-  const out = [...by.values()];
-  for (const c of out) {
-    c.needsYou.sort((a, b) => b.tsMs - a.tsMs);
-    c.lastMs = Math.max(c.lastMs, ...c.needsYou.map((n) => n.tsMs));
-    const working = c.spaces.find((s) => WORKING.has(s.member.status));
-    const failed = c.spaces.find((s) => s.member.status === "failed");
-    if (c.needsYou.length) {
-      c.tone = "you";
-      c.line = `Waiting for you in ${c.needsYou[0]!.spaceName}`;
-    } else if (working) {
-      c.tone = "working";
-      c.line = `${sentence(working.member.activity) ?? "Working"} in ${working.spaceName}`;
-    } else if (failed) {
-      c.tone = "failed";
-      c.line = `Failed in ${failed.spaceName}`;
-    } else if (c.spaces.every((s) => s.member.status === "asleep" || s.member.status === "paused")) {
-      c.tone = "asleep";
-      c.line = c.spaces.length > 1 ? `Asleep in ${c.spaces.length} Spaces` : `Asleep in ${c.spaces[0]!.spaceName}`;
-    } else {
-      c.tone = "idle";
-      c.line = c.spaces.length > 1 ? `In ${c.spaces.length} Spaces` : `In ${c.spaces[0]!.spaceName}`;
-    }
-  }
-  // Waiting for you, then working, then the most recent.
-  const rank = (c: AgentChat) => (c.tone === "you" ? 0 : c.tone === "working" ? 1 : 2);
-  return out.sort((a, b) => rank(a) - rank(b) || b.lastMs - a.lastMs || a.label.localeCompare(b.label));
+  return view.rows.map((r) => {
+    const spaces: AgentChatSpace[] = r.kind === "agent"
+      ? r.places.flatMap((pl) => {
+          // A Space may come in more than one part: the one that has this member.
+          const p = perSpace.find((x) => x.space.id === pl.spaceId && x.members.some((m) => m.name === pl.handle));
+          const member = p?.members.find((m) => m.name === pl.handle);
+          return p && member ? [{ spaceId: p.space.id, spaceName: p.space.name, os: p.space.os, handle: pl.handle, member, role: p.role }] : [];
+        })
+      : [];
+    const needsYou: ChatNeed[] = spaces.flatMap((sp) => (sp.member.needsYou ?? []).map((n) => ({ ...n, spaceId: sp.spaceId, spaceName: sp.spaceName }))).sort((a, b) => b.tsMs - a.tsMs);
+    return {
+      key: r.key,
+      label: r.label,
+      identity: spaces[0]?.member.identity ?? null,
+      harness: r.harness,
+      spaces,
+      unread: r.unread,
+      needsYou,
+      tone: r.tone,
+      line: r.line,
+      lastMs: r.lastMs,
+      kind: r.kind,
+      job: r.job,
+      places: r.places.map((p) => ({ spaceId: p.spaceId, spaceName: p.spaceName })),
+      action: r.action,
+      app: r.app,
+      attempt: r.attempt,
+    };
+  });
 }
 
-/** "bumping the retry timeout" reads "Bumping the retry timeout"; a line that names its own Space keeps only the action. */
-function sentence(s: string | null): string | null {
-  if (!s) return null;
-  const t = s.replace(/\s+in\s+\S+$/i, "").replace(/^waiting for you$/i, "Waiting");
-  return t.charAt(0).toUpperCase() + t.slice(1);
+/** A row of the core's list (`agent_list::AgentListRow`). */
+interface AgentListRow {
+  key: string;
+  kind: "agent" | "attempt";
+  label: string;
+  harness: string;
+  tone: ChatTone;
+  line: string;
+  job: string | null;
+  lastMs: number;
+  unread: number;
+  places: { spaceId: string; spaceName: string; handle: string }[];
+  action: { id: "connect" | "retry"; label: string } | null;
+  app: string | null;
+  attempt: string | null;
 }
 
+/** The Agents tab's base poll; it slows as the account's Spaces grow (`chatsPollMs`). */
 export const CHATS_POLL_MS = 5_000;
+/** Spaces' threads read at once, at most. */
+const CHATS_PARALLEL = 8;
+/** How long a Space with no thread is left alone. */
+const MISS_TTL_MS = 60_000;
 
 export interface AgentChats {
   /** null while the first read is under way. */
@@ -138,46 +192,65 @@ export interface AgentChats {
 }
 
 /** Every agent in every Space you can see, as the Agents tab's list. */
-export function useAgentChats(): AgentChats {
-  const { data } = useBridge();
+export function useAgentChats(attempts: readonly ChatAttempt[] = []): AgentChats {
+  const { data, core } = useBridge();
   const { data: spaces } = useSpaces();
-  const [chats, setChats] = useState<AgentChat[] | null>(null);
+  const [read, setRead] = useState<{ space: Space; role: ThreadRole | null; members: AgentMember[] }[] | null>(null);
   const [withThread, setWithThread] = useState<Space[]>([]);
   const [me, setMe] = useState<string | null>(null);
   const [round, setRound] = useState(0);
   const list = (spaces ?? []).filter((s) => !s.id.startsWith("pending:"));
   const ids = list.map((s) => s.id).join("\n");
+  // Not asked again for a minute: a Space with no thread (a stopped machine, an old daemon) stays that way.
+  const misses = useRef(new MissCache(MISS_TTL_MS));
   useEffect(() => {
     if (!data || spaces === undefined) return;
     let alive = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    misses.current.prune(new Set(list.map((s) => s.id)));
     const read = async () => {
-      const got = await Promise.all(
-        list.map(async (space) => {
-          try {
-            const [{ members }, page] = await Promise.all([data.call("thread.members", { spaceId: space.id, overview: true }), data.call("thread.read", { spaceId: space.id, limit: 1 })]);
-            return { space, role: page.role, members, me: page.me };
-          } catch (e) {
-            // No thread there (an old daemon, a stopped machine): not in the list.
-            if (!isMissingThreadTool(e)) console.debug("agents: couldn't read", space.id, e);
-            return null;
-          }
-        }),
-      );
+      const asked = list.filter((s) => !misses.current.has(s.id));
+      const got = await mapLimit(asked, CHATS_PARALLEL, async (space) => {
+        try {
+          const [{ members }, page] = await Promise.all([data.call("thread.members", { spaceId: space.id, overview: true }), data.call("thread.read", { spaceId: space.id, limit: 1 })]);
+          return { space, role: page.role, members, me: page.me };
+        } catch (e) {
+          // No thread there (an old daemon, a stopped machine): not in the list, and not asked again for a while.
+          if (isMissingThreadTool(e)) misses.current.add(space.id);
+          else console.debug("agents: couldn't read", space.id, e);
+          return null;
+        }
+      });
       if (!alive) return;
       const ok = got.filter((g): g is NonNullable<typeof g> => g !== null);
       setWithThread(ok.map((g) => g.space));
       setMe(ok.find((g) => g.me)?.me ?? null);
-      setChats(mergeChats(ok));
+      setRead(ok);
     };
-    void read();
-    const t = setInterval(() => void read(), CHATS_POLL_MS);
+    // One read at a time, the next after the last one ends: slower as the
+    // account grows (`chatsPollMs`), spread so pages don't ask together, and
+    // paused while the page is hidden (it reads at once on coming back).
+    const loop = async () => {
+      if (visible()) await read();
+      if (alive) timer = setTimeout(() => void loop(), jittered(chatsPollMs(list.length)));
+    };
+    const onVisible = () => {
+      if (!visible() || !alive) return;
+      clearTimeout(timer);
+      void loop();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    void loop();
     return () => {
       alive = false;
-      clearInterval(t);
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisible);
     };
     // `list` follows `ids`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, ids, round, spaces === undefined]);
+  // One list, with this device's unfinished runs (the core's order and words).
+  const chats = read === null ? null : mergeChats(core, read, attempts);
   return { chats, spaces: withThread, me, refresh: useCallback(() => setRound((r) => r + 1), []) };
 }
 

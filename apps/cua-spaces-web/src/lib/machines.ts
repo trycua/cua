@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import type { Machine, SpaceOs } from "@/bridge";
+import { machineSpacesLabel } from "@/bridge/derive";
 import { OS_NAME } from "@/components/os-icon";
 import { plural } from "@/lib/plural";
 import { relativeTime } from "@/lib/utils";
@@ -26,10 +27,14 @@ export const CONNECTION_LABEL: Record<"relay" | "direct", string> = {
   direct: "Direct",
 };
 
+/** A row that is only a signed-in device (`machines_view::DEVICE_LINE`). */
+export const DEVICE_LINE = "Signed-in device, not shared";
+
 /** How other devices reach it, in words. */
 export function connectionLabel(m: Pick<Machine, "connection" | "current"> & Pick<Partial<Machine>, "device">): string {
   if (m.connection) return CONNECTION_LABEL[m.connection];
-  return m.current || m.device ? "Not set up for access" : "Unknown";
+  if (m.device) return DEVICE_LINE;
+  return m.current ? "Not set up for access" : "Unknown";
 }
 
 /** The list row's second line: OS, then how it is reached. */
@@ -63,15 +68,15 @@ export function presenceWord(m: Pick<Machine, "online" | "notSharing" | "status"
 
 /** "1 Space", "3 Spaces", "No Spaces". */
 export function spaceCount(n: number): string {
-  if (n === 0) return "No Spaces";
-  return `${n} ${n === 1 ? "Space" : "Spaces"}`;
+  return machineSpacesLabel(false, n);
 }
 
 /** The row's Spaces count: the core's (`machines::spaces_label`, the same
  * the SwiftUI Machines list shows), else `n` counted here. Empty for a
- * device of its own (it runs no Spaces). */
-export function spacesLabel(m: Pick<Machine, "spacesLabel">, n: number): string {
-  return m.spacesLabel ?? spaceCount(n);
+ * device of its own (it runs no Spaces). `desktop`: the machine shares its
+ * own desktop ("Desktop shared", "Desktop · 2 Spaces"). */
+export function spacesLabel(m: Pick<Machine, "spacesLabel">, n: number, desktop = false): string {
+  return m.spacesLabel ?? machineSpacesLabel(desktop, n);
 }
 
 /** The selected machine: the chosen one if it is still listed, else the first. */

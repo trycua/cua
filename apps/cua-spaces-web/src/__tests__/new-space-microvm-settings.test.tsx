@@ -3,7 +3,7 @@
 
 // New Space's Kind row has no line under it: a MicroVM this computer can't
 // run is greyed out with no words there. Why it can't is told in Settings,
-// Advanced, beside the runtimes (`settings::microvm_rows`), from the same
+// Advanced, on the MicroVMs row (`runtimes::section`), from the same
 // runtime doctor the tile follows.
 
 import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
@@ -44,7 +44,7 @@ describe.skipIf(!wasmBuilt)("MicroVM: greyed out in New Space, explained in Sett
     await mountApp("/settings/advanced", { failsCreates: false, listsGhost: false });
     const row = await waitFor(
       () => {
-        const r = document.querySelector<HTMLElement>("[data-microvm-runtime]");
+        const r = document.querySelector<HTMLElement>("[data-setting-row='runtime:microvm']");
         expect(r).not.toBeNull();
         return r!;
       },
@@ -52,7 +52,7 @@ describe.skipIf(!wasmBuilt)("MicroVM: greyed out in New Space, explained in Sett
     );
     expect(row.querySelector("[data-row-label]")?.textContent).toBe("MicroVMs");
     expect(row.querySelector("[data-row-value]")?.textContent).toBe("Not available");
-    expect(row.querySelector("[data-row-description]")?.textContent).toBe("MicroVM needs macOS 26.");
-    expect(row.getAttribute("data-microvm-problem")).toBe("true");
+    expect(row.querySelector("[data-row-description]")?.textContent).toBe("MicroVMs need macOS 26");
+    expect(row.getAttribute("data-enabled")).toBe("false");
   });
 });

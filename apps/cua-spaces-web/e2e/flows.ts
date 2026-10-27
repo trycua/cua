@@ -78,6 +78,10 @@ export const FLOW_PLAN: Record<string, FlowPlan> = {
   notifications: { status: "run", screen: "notifications" },
   about: { status: "run", screen: "settings/about" },
   "agent-keys": { status: "run", screen: "settings/connected-apps" },
+  connectors: {
+    status: "skip",
+    reason: "The redesign's Connectors page, an app's page, the @ picker and the agent list draw connectors.*, summon.* and agentList.view as is; the webview parity test replays this flow on the wasm core, and src/__tests__/connectors-redesign.test.tsx, ask-first-in-space.test.tsx and home-agents.test.tsx drive the screens",
+  },
   "your-cloud": { status: "run", screen: "new-space" },
   "telemetry-funnel": { status: "run", screen: "spaces" },
   "launch-at-login": { status: "run", screen: "settings/general" },

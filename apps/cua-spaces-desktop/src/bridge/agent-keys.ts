@@ -18,5 +18,8 @@ export function agentKeysMethods({ model }: BridgeContext): Handlers {
       return model.agents.keys.call("agent_keys.set", call);
     },
     "agentKeys.remove": (args) => model.agents.keys.call("agent_keys.remove", { env: string(args, "env") }),
+    // Which provider keys your login shell has (names only), and one saved from it (the value never crosses the bridge).
+    "agentKeys.shell": () => model.agents.keys.call("agent_keys.shell"),
+    "agentKeys.fromShell": (args) => model.agents.keys.call("agent_keys.from_shell", { env: string(args, "env") }),
   };
 }

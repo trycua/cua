@@ -1513,6 +1513,9 @@ impl ServiceManager for AsLaunchd {
     fn state(&self) -> ServiceState {
         self.0.state()
     }
+    fn port_free(&self, addr: std::net::SocketAddr, t: crate::ports::Transport) -> bool {
+        self.0.port_free(addr, t)
+    }
 }
 
 /// A [`SessionProbe`] that just answers whether a GUI session exists.
@@ -2526,4 +2529,230 @@ fn the_default_for_providing_spaces() {
         &relay,
         Some(Err(Error::NotFound("x".into())))
     ));
+}
+
+/// The ports setup chose (another macOS user's host held the channel's)
+/// reach the service on the command line and in its environment, so it and
+/// everything it starts listen there and find each other.
+#[test]
+fn a_host_moved_off_the_channels_ports_is_told_its_own() {
+    let home = tempfile::tempdir().unwrap();
+    let host = Host::new(home.path());
+    let config = crate::HostConfig {
+        mode: "relay".into(),
+        relay_url: Some("https://relay.example".into()),
+        machine_id: Some("machine-0001".into()),
+        port: Some(3231),
+        quic_port: Some(3232),
+        ..Default::default()
+    };
+    let spec = host.service_spec_for(&config, cua_home::channel::CuaChannel::Stable);
+    let flag = |name: &str| {
+        spec.args
+            .iter()
+            .position(|a| a == name)
+            .map(|i| spec.args[i + 1].clone())
+    };
+    assert_eq!(flag("--port").as_deref(), Some("3231"));
+    assert_eq!(flag("--quic-port").as_deref(), Some("3232"));
+    let var = |k: &str, v: &str| (k.to_string(), v.to_string());
+    assert!(spec.env.contains(&var("CUA_ENV_PORT", "3231")));
+    assert!(spec.env.contains(&var("CUA_ENV_QUIC_PORT", "3232")));
+    assert!(spec.env.iter().all(|(k, _)| k != "CUA_CHANNEL"));
+    let plist = crate::service::launchd_plist(&spec);
+    assert!(
+        plist.contains("<key>CUA_ENV_PORT</key>\n    <string>3231</string>"),
+        "{plist}"
+    );
+    assert!(
+        plist.contains("<key>CUA_ENV_QUIC_PORT</key>\n    <string>3232</string>"),
+        "{plist}"
+    );
+    let back: crate::HostConfig =
+        serde_json::from_str(&serde_json::to_string(&config).unwrap()).unwrap();
+    assert_eq!((back.port, back.quic_port), (Some(3231), Some(3232)));
+    // Unset, nothing is written: a config from before reads the same.
+    let json = serde_json::to_string(&crate::HostConfig::default()).unwrap();
+    assert!(!json.contains("port"), "{json}");
+}
+
+/// The credential store and home `cua host setup` ran with reach the
+/// service (LaunchAgent, systemd unit), so the service and the daemon it
+/// starts read the session the CLI signed in with (`file` over SSH, where
+/// the keychain cannot be used). Without them, nothing is added.
+#[test]
+fn the_service_keeps_the_credential_store_and_home_setup_ran_with() {
+    let home = tempfile::tempdir().unwrap();
+    let host = Host::new(home.path());
+    let config = crate::HostConfig {
+        mode: "relay".into(),
+        relay_url: Some("https://relay.example".into()),
+        machine_id: Some("machine-0001".into()),
+        ..Default::default()
+    };
+    let spec = host.service_spec(&config);
+    assert!(
+        spec.env
+            .iter()
+            .all(|(k, _)| k != "CUA_CREDENTIAL_STORE" && k != "CUA_HOME"),
+        "{:?}",
+        spec.env
+    );
+    let json = serde_json::to_string(&config).unwrap();
+    assert!(
+        !json.contains("credential_store") && !json.contains("cua_home"),
+        "{json}"
+    );
+
+    let config = crate::HostConfig {
+        credential_store: Some("file".into()),
+        cua_home: Some("/Users/ada/.cua-spare".into()),
+        ..config
+    };
+    let spec = host.service_spec(&config);
+    let var = |k: &str, v: &str| (k.to_string(), v.to_string());
+    assert!(spec.env.contains(&var("CUA_CREDENTIAL_STORE", "file")));
+    assert!(spec.env.contains(&var("CUA_HOME", "/Users/ada/.cua-spare")));
+    let plist = crate::service::launchd_plist(&spec);
+    assert!(
+        plist.contains("<key>CUA_CREDENTIAL_STORE</key>\n    <string>file</string>"),
+        "{plist}"
+    );
+    assert!(
+        plist.contains("<key>CUA_HOME</key>\n    <string>/Users/ada/.cua-spare</string>"),
+        "{plist}"
+    );
+    let unit = crate::service::systemd_unit(&spec, false);
+    assert!(
+        unit.contains("Environment=CUA_CREDENTIAL_STORE=file\n"),
+        "{unit}"
+    );
+    let back: crate::HostConfig =
+        serde_json::from_str(&serde_json::to_string(&config).unwrap()).unwrap();
+    assert_eq!(back.credential_store.as_deref(), Some("file"));
+    assert_eq!(back.cua_home.as_deref(), Some("/Users/ada/.cua-spare"));
+}
+
+/// The ports a setup in relay mode left in the config.
+fn chosen_ports(host: &Host) -> (Option<u16>, Option<u16>) {
+    let c = host.config().unwrap().unwrap();
+    (c.port, c.quic_port)
+}
+
+/// Another program (another macOS user's host service) holds the channel's
+/// ports: setup moves this user's service to a per-user pair, tells it, and
+/// keeps that pair on every later setup, even once the channel's are free.
+#[tokio::test]
+async fn setup_moves_off_ports_another_user_holds_and_keeps_its_own() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct-token", "user-1", Some("ada@example.com"));
+    let f = fixture();
+    let host = f.host();
+    let ch = cua_home::channel::CuaChannel::current().ports();
+    *f.manager.held_by_others.lock().unwrap() = vec![ch.tcp, ch.quic];
+
+    host.setup(f.relay_opts(&relay.url), &StaticToken("acct-token".into()))
+        .await
+        .unwrap();
+    let (tcp, quic) = chosen_ports(&host);
+    let (tcp, quic) = (tcp.unwrap(), quic.unwrap());
+    assert_eq!(quic, tcp + 1);
+    assert!((3231..=3991).contains(&tcp) && tcp % 10 == 1, "{tcp}");
+    let spec = f.manager.spec.lock().unwrap().clone().unwrap();
+    let port = tcp.to_string();
+    assert!(
+        spec.args
+            .windows(2)
+            .any(|w| w[0] == "--port" && w[1] == port),
+        "{:?}",
+        spec.args
+    );
+    assert!(
+        spec.env
+            .contains(&("CUA_ENV_QUIC_PORT".to_string(), quic.to_string()))
+    );
+
+    // Again, with the service running on its pair: it stays there.
+    *f.manager.held_while_running.lock().unwrap() = vec![tcp, quic];
+    host.setup(f.relay_opts(&relay.url), &StaticToken("acct-token".into()))
+        .await
+        .unwrap();
+    assert_eq!(chosen_ports(&host), (Some(tcp), Some(quic)));
+
+    // The other user leaves: still this pair (nothing moves under the
+    // clients that know it).
+    f.manager.held_by_others.lock().unwrap().clear();
+    host.setup(f.relay_opts(&relay.url), &StaticToken("acct-token".into()))
+        .await
+        .unwrap();
+    assert_eq!(chosen_ports(&host), (Some(tcp), Some(quic)));
+}
+
+/// This user's own running service holding the channel's ports is not
+/// another program: setup again stops it and keeps them (nothing is passed,
+/// as for every single-user host).
+#[tokio::test]
+async fn setup_again_keeps_the_ports_its_own_service_holds() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct-token", "user-1", Some("ada@example.com"));
+    let f = fixture();
+    let host = f.host();
+    let ch = cua_home::channel::CuaChannel::current().ports();
+    host.setup(f.relay_opts(&relay.url), &StaticToken("acct-token".into()))
+        .await
+        .unwrap();
+    assert_eq!(chosen_ports(&host), (None, None));
+    assert_eq!(
+        f.manager.calls.lock().unwrap().clone(),
+        vec!["install".to_string(), "start".to_string()],
+        "free ports: the service is not stopped first"
+    );
+
+    *f.manager.held_while_running.lock().unwrap() = vec![ch.tcp, ch.quic];
+    f.manager.calls.lock().unwrap().clear();
+    host.setup(f.relay_opts(&relay.url), &StaticToken("acct-token".into()))
+        .await
+        .unwrap();
+    assert_eq!(chosen_ports(&host), (None, None));
+    assert_eq!(
+        f.manager.calls.lock().unwrap().first().map(String::as_str),
+        Some("stop")
+    );
+    let spec = f.manager.spec.lock().unwrap().clone().unwrap();
+    assert!(
+        spec.args
+            .iter()
+            .all(|a| a != "--port" && a != "--quic-port"),
+        "{:?}",
+        spec.args
+    );
+}
+
+/// With the channel's ports and every per-user pair held, setup fails at
+/// the service stage, says so in plain words, and installs nothing.
+#[tokio::test]
+async fn setup_says_so_when_no_port_is_free() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct-token", "user-1", Some("ada@example.com"));
+    let f = fixture();
+    let host = f.host();
+    let ch = cua_home::channel::CuaChannel::current().ports();
+    *f.manager.held_by_others.lock().unwrap() = std::iter::once(ch.tcp)
+        .chain((2..=78).map(|k| 3211 + 10 * k))
+        .collect();
+
+    let (stage, err) = host
+        .setup_staged(f.relay_opts(&relay.url), &StaticToken("acct-token".into()))
+        .await
+        .unwrap_err();
+    assert_eq!(stage, SetupStage::Service);
+    let msg = err.to_string();
+    assert!(
+        msg.contains(&format!(
+            "no free port for the host service: {}/{} (TCP/UDP) and the per-user ports 3231-3992 are all in use",
+            ch.tcp, ch.quic
+        )),
+        "{msg}"
+    );
+    assert!(f.manager.calls.lock().unwrap().is_empty());
 }

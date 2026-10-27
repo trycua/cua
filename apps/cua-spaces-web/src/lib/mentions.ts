@@ -15,6 +15,10 @@ export interface MentionCandidate {
   /** How the picker shows it (`Claude Code`, `Grace`). */
   label: string;
   kind: "agent" | "person";
+  /** An agent's kind (`claude-code`), for its mark when it isn't in the Space yet. */
+  harness?: string;
+  /** Under the name for an agent not in the Space yet ("Starts in this Space", "Not connected yet"). */
+  detail?: string;
 }
 
 /** `@` starts a mention at the start or after a space or an opening

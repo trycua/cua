@@ -2,7 +2,9 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 //! The Machines page as every UI draws it: the list in groups ("Your
-//! machines", a collapsed "Offline for 30+ days", "Team machines"), one
+//! machines", "Your devices" (signed-in devices that are none of the
+//! machines, whatever their age), a collapsed "Offline for 30+ days", "Team
+//! machines"), one
 //! muted line per row, and each machine's page (its name and rename, the
 //! one "Let my other devices use this computer" switch, the Spaces on it as
 //! links, New Space here, Details, and Remove from account).
@@ -356,6 +358,12 @@ pub struct MachinesView {
 pub const DESKTOP_LABEL: &str = "Desktop";
 /// "Your machines".
 pub const YOURS_TITLE: &str = "Your machines";
+/// "Your devices": the group of signed-in devices that are none of your
+/// machines, whatever their age.
+pub const DEVICES_TITLE: &str = "Your devices";
+/// The line of a row that is only a signed-in device: it can't run Spaces
+/// and nothing is shared from it.
+pub const DEVICE_LINE: &str = "Signed-in device, not shared";
 /// "Team machines".
 pub const TEAM_TITLE: &str = "Team machines";
 /// The button that removes a machine.
@@ -573,6 +581,7 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
     let host = input.host.as_ref();
     let mut list = Vec::with_capacity(rows.len());
     let mut yours = vec![];
+    let mut devices = vec![];
     let mut old = vec![];
     let mut team_ids = vec![];
     let mut old_removes = vec![];
@@ -630,13 +639,16 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
         };
 
         // The row's one line.
-        // One short label: no "a · b" chains (the switches show the rest).
-        let line = if !row.online {
+        // One short label: no "a · b" chains (the switches show the rest),
+        // except a shared desktop's "Desktop · N Spaces".
+        let line = if row.device_only {
+            DEVICE_LINE.into()
+        } else if !row.online {
             machines::OFFLINE.into()
         } else if row.stopped_sharing {
             machines::NOT_SHARING.into()
-        } else if row.device_only {
-            machines::ONLINE.into()
+        } else if has_desktop {
+            machines::desktop_spaces_label(u32::try_from(on.len()).unwrap_or(u32::MAX))
         } else {
             let mut parts = vec![];
             if n_running > 0 {
@@ -878,7 +890,9 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
             && row
                 .last_seen
                 .is_some_and(|t| t > 0 && now.saturating_sub(t) >= OLD_AFTER_SECS);
-        if team {
+        if row.device_only {
+            devices.push(row.id.clone());
+        } else if team {
             team_ids.push(row.id.clone());
         } else if is_old {
             old.push(row.id.clone());
@@ -969,6 +983,15 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
             title: YOURS_TITLE.into(),
             collapsed: false,
             ids: yours,
+            remove_all: None,
+        });
+    }
+    if !devices.is_empty() {
+        groups.push(MachinesViewGroup {
+            id: "devices".into(),
+            title: DEVICES_TITLE.into(),
+            collapsed: false,
+            ids: devices,
             remove_all: None,
         });
     }
@@ -1086,6 +1109,13 @@ mod tests {
             last_seen: Some(seen),
             state: "enrolled".into(),
             ..Default::default()
+        }
+    }
+
+    fn device_never_seen(id: &str, name: &str) -> DeviceIn {
+        DeviceIn {
+            last_seen: None,
+            ..device(id, name, 0)
         }
     }
 
@@ -1217,11 +1247,15 @@ mod tests {
         assert_eq!(
             lines,
             [
-                ("Ada's MacBook Pro", "2 Spaces running", Some("This Mac")),
-                ("cua's Mac Studio", "1 Space running", None),
+                (
+                    "Ada's MacBook Pro",
+                    "Desktop \u{b7} 2 Spaces",
+                    Some("This Mac")
+                ),
+                ("cua's Mac Studio", "Desktop \u{b7} 1 Space", None),
                 ("Cua BYOC tests", "Offline", None),
                 ("mac-mini-staging", "Offline", None),
-                ("build-mini-01", "Ready for Spaces", None),
+                ("build-mini-01", "Desktop shared", None),
             ]
         );
         assert_eq!(v.summary, "5 machines, 3 online");
@@ -1229,6 +1263,99 @@ mod tests {
         assert_eq!(all.label, "Remove old machines");
         assert_eq!(all.removes[0].machine.as_deref(), Some("old1"));
         assert_eq!(all.removes[0].device.as_deref(), Some("dev_old1"));
+    }
+
+    fn with_devices() -> MachinesViewInput {
+        let mut input = mockup();
+        input.page.devices.extend([
+            device("dev_lap", "Ana's laptop", NOW - 120),
+            device("dev_away", "Away laptop", NOW - 3 * DAY),
+            device("dev_stale", "Stale laptop", NOW - 41 * DAY),
+        ]);
+        input
+    }
+
+    #[test]
+    fn a_device_that_is_only_signed_in_is_under_your_devices() {
+        let base = with_devices();
+        let shell = MachinesViewInput {
+            rows: Some(machines::page_rows(&base.page)),
+            ..base.clone()
+        };
+        for input in [base, shell] {
+            let v = view(&input);
+            let groups: Vec<(&str, &str, bool, Vec<&str>)> = v
+                .groups
+                .iter()
+                .map(|g| {
+                    (
+                        g.id.as_str(),
+                        g.title.as_str(),
+                        g.collapsed,
+                        g.ids.iter().map(String::as_str).collect(),
+                    )
+                })
+                .collect();
+            assert_eq!(
+                groups,
+                [
+                    (
+                        "yours",
+                        "Your machines",
+                        false,
+                        vec!["this-mac", "studio", "byoc"]
+                    ),
+                    (
+                        "devices",
+                        "Your devices",
+                        false,
+                        vec!["dev_lap", "dev_away", "dev_stale"]
+                    ),
+                    ("old", "Offline for 30+ days (1)", true, vec!["old1"]),
+                    ("team", "Team machines", false, vec!["team"]),
+                ]
+            );
+            assert!(v.groups[1].remove_all.is_none());
+            let flat: Vec<&str> = v
+                .groups
+                .iter()
+                .flat_map(|g| g.ids.iter().map(String::as_str))
+                .collect();
+            assert_eq!(
+                flat,
+                v.machines.iter().map(|m| m.id.as_str()).collect::<Vec<_>>()
+            );
+            let all = v.groups[2].remove_all.as_ref().unwrap();
+            assert_eq!(all.removes.len(), 1);
+            assert_eq!(all.removes[0].machine.as_deref(), Some("old1"));
+            assert_eq!(all.removes[0].device.as_deref(), Some("dev_old1"));
+        }
+    }
+
+    #[test]
+    fn a_device_of_its_own_reads_signed_in_device_not_shared() {
+        let mut input = with_devices();
+        input
+            .page
+            .devices
+            .push(device_never_seen("dev_never", "Never seen"));
+        let v = view(&input);
+        let devs = ["dev_lap", "dev_away", "dev_stale", "dev_never"];
+        for id in devs {
+            let m = by_id(&v, id);
+            assert_eq!(m.line, "Signed-in device, not shared", "{id}");
+            assert_eq!(m.online, id == "dev_lap", "{id}");
+            assert_eq!(
+                m.status,
+                if id == "dev_lap" { "Online" } else { "Offline" },
+                "{id}"
+            );
+            let rm = m.remove.as_ref().unwrap();
+            assert!(rm.enabled, "{id}");
+            assert!(rm.device.is_some() && rm.machine.is_none(), "{id}");
+        }
+        assert_eq!(by_id(&v, "byoc").line, "Offline");
+        assert!(v.machines.iter().all(|m| m.line != "Not set up for access"));
     }
 
     #[test]
@@ -1394,14 +1521,125 @@ mod tests {
         assert!(studio.line.contains("1 Space"), "{}", studio.line);
         // Offline machines show none.
         assert!(by_id(&v, "byoc").desktop.is_none());
-        // With no provided Spaces the empty line says "other".
-        if let Some(m) = v
-            .machines
-            .iter()
-            .find(|m| m.desktop.is_some() && m.spaces.is_empty() && m.online)
-        {
-            assert_eq!(m.spaces_empty.as_deref(), Some("No other Spaces yet."));
-        }
+    }
+
+    fn view_of(
+        spaces: Vec<serde_json::Value>,
+        relay_rows: Vec<MachinesViewRelay>,
+        host: Option<HostState>,
+    ) -> MachinesView {
+        view(&MachinesViewInput {
+            page: MachinesPageInput {
+                spaces: spaces.into_iter().map(space).collect(),
+                now: NOW,
+                ..Default::default()
+            },
+            relay: relay_rows,
+            host,
+            ..Default::default()
+        })
+    }
+
+    fn relay_desktop(id: &str, features: &[&str]) -> serde_json::Value {
+        serde_json::json!({
+            "id": format!("relay:{id}"), "name": id, "os": "macos",
+            "status": "running", "provider": "relay",
+            "sdk": {"features": features, "spacesdVersion": "", "reachable": true}
+        })
+    }
+
+    fn relay_hosted(id: &str, n: u32, status: &str) -> serde_json::Value {
+        serde_json::json!({
+            "id": format!("relay:{id}/space-{n}"), "name": format!("s{n}"),
+            "status": status, "provider": "relay", "host": id
+        })
+    }
+
+    fn this_mac(status: &str) -> serde_json::Value {
+        serde_json::json!({"id": "this-mac", "name": "This Mac", "os": "macos", "status": status})
+    }
+
+    fn local(n: u32, status: &str) -> serde_json::Value {
+        serde_json::json!({"id": format!("local:s{n}"), "name": format!("s{n}"), "status": status, "provider": "local"})
+    }
+
+    #[test]
+    fn a_machine_sharing_only_its_desktop_lists_it_alone() {
+        let v = view_of(
+            vec![relay_desktop("m1", &["desktop_stream"])],
+            vec![relay("m1", "owner", Some(true))],
+            None,
+        );
+        let m = by_id(&v, "m1");
+        assert_eq!(m.line, "Desktop shared");
+        let d = m.desktop.as_ref().unwrap();
+        assert_eq!((d.label.as_str(), d.id.as_str()), ("Desktop", "relay:m1"));
+        assert!(m.spaces.is_empty());
+        assert_eq!(m.spaces_empty.as_deref(), Some("No other Spaces yet."));
+    }
+
+    #[test]
+    fn a_machine_sharing_its_desktop_and_spaces_counts_all_of_them() {
+        let v = view_of(
+            vec![
+                relay_desktop("m1", &["desktop_stream"]),
+                relay_hosted("m1", 1, "running"),
+            ],
+            vec![relay("m1", "owner", Some(true))],
+            None,
+        );
+        let m = by_id(&v, "m1");
+        assert_eq!(m.line, "Desktop \u{b7} 1 Space");
+        assert!(m.desktop.is_some());
+        assert_eq!(m.spaces.len(), 1);
+        let v = view_of(
+            vec![
+                this_mac("local"),
+                local(1, "running"),
+                local(2, "suspended"),
+            ],
+            vec![],
+            Some(host(true, true)),
+        );
+        assert_eq!(by_id(&v, "this-mac").line, "Desktop \u{b7} 2 Spaces");
+    }
+
+    #[test]
+    fn a_machine_providing_only_spaces_keeps_the_sandbox_line() {
+        let v = view_of(
+            vec![
+                relay_desktop("m1", &["host_spaces"]),
+                relay_hosted("m1", 1, "running"),
+            ],
+            vec![relay("m1", "owner", Some(true))],
+            None,
+        );
+        let m = by_id(&v, "m1");
+        assert_eq!(m.line, "1 Space running");
+        assert!(m.desktop.is_none() && m.spaces_empty.is_none());
+        let v = view_of(vec![this_mac("local")], vec![], Some(host(true, false)));
+        assert_eq!(by_id(&v, "this-mac").line, "Ready for Spaces");
+    }
+
+    /// The page rows get no host settings, so for this machine a host set
+    /// to provide Spaces only still reads "Desktop shared" in the row
+    /// label while the view's line follows the host.
+    #[test]
+    fn this_machines_row_label_is_weaker_than_the_view_line() {
+        let input = MachinesViewInput {
+            page: MachinesPageInput {
+                spaces: vec![space(this_mac("local"))],
+                now: NOW,
+                ..Default::default()
+            },
+            host: Some(host(true, false)),
+            ..Default::default()
+        };
+        assert_eq!(
+            machines::page_rows(&input.page)[0].spaces_label,
+            "Desktop shared"
+        );
+        assert_eq!(by_id(&view(&input), "this-mac").line, "Ready for Spaces");
     }
 
     #[test]

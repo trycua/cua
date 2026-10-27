@@ -39,7 +39,7 @@ import { demoNewSpaceState, newSpaceDemoHandlers, type DemoClouds, type DemoNewS
 import { demoShareHandlers } from "./demo/share";
 import { demoThreadHandlers } from "./demo/thread";
 import { demoAgentDetailHandlers } from "./demo/agent-detail";
-import { demoAgentKeysHandlers } from "./demo/agent-keys";
+import { demoAgentKeysHandlers, demoKeyStore, type DemoKeyStore } from "./demo/agent-keys";
 import { demoKeyvaultManageHandlers, demoKeyvaultManageState, withDemoCopies, type DemoKeyvaultManageState } from "./demo/keyvault-manage";
 import { demoKeyvaultSetupHandlers, demoKeyvaultSetupState, demoNoVaultOverview, type DemoKeyvaultSetupState } from "./demo/keyvault-setup";
 import { unsupportedStreamOps } from "../ops/stream";
@@ -49,6 +49,7 @@ import type { CliInstallPlan } from "../contracts/first-run";
 import { unsupportedChecklistOps } from "../ops/checklist";
 import { demoTeleportHandlers } from "./demo/teleport";
 import { createDemoSettings } from "./demo/settings";
+import { demoChooseRuntime, demoRuntimesInput, demoRuntimesState, type DemoRuntimes } from "./demo/runtimes";
 import { demoAgentSetup, demoConnections, demoPersistentAgents, demoReply, demoRunRecords, demoStartedRun, runAt, writtenEvents, type DemoRunRecord } from "./demo-agents";
 import { demoVolumeHandlers, demoVolumeState, type DemoVolumeState } from "./demo/volume";
 import { demoHostSetupHandlers, demoHostSetupState, type DemoHostSetupState } from "./demo/host-setup";
@@ -310,6 +311,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     // A named allowance is for showing the prompts, which wait for no agent run.
     runs: options.usage ? [] : demoRunRecords(now()),
     imported: [],
+    keyStore: demoKeyStore(now),
     readOnlyAgents: options.agentsReadOnly ?? [],
     agentSetup: demoAgentSetup(options.onboarded === false || options.agents === "unset", options.agents === "none" ? [] : options.agents === "codex" ? ["codex"] : null),
     platform: options.platform ?? MAC_DEMO_PLATFORM,
@@ -317,6 +319,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     renamed: {},
     removed: [],
     hostSettings: options.macHost ? DEMO_MAC_HOST_SETTINGS : undefined,
+    runtimes: demoRuntimesState(),
     volume: demoVolumeState(now(), options.onboarded !== false, options.platform),
     ...demoTelemetryState(),
     ...demoRelayUsageState(),
@@ -389,7 +392,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     values: { ...state.settings },
     defaultLocation: { value: state.settings.defaultLocation, source: "config", path: "~/.cua/config.toml" },
     telemetry: demoTelemetry(state.settings.telemetry),
-    ...(state.hostSettings ? { hostSettings: { ...state.hostSettings } } : {}),
+    hostSettings: { ...state.hostSettings, runtimes: demoRuntimesInput(state.runtimes) },
     // The macOS hosts register ⌘⇧Space; the Windows and Linux shells have none.
     globalShortcut: state.platform.os === "macos" ? { label: state.settings.hotkey, registered: true } : null,
     // What a host's CLI install plan names (`CuaChannel::cli_name`): Local's is `cua-local`.
@@ -609,6 +612,8 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     "settings.choose": async ({ row, option }) => {
       const key = DEMO_KEYVAULT_ROWS[row];
       if (key && state.hostSettings) state.hostSettings = { ...state.hostSettings, [key]: option === "on" };
+      // Settings, Advanced's runtime rows: the kind's source or its path.
+      if (demoChooseRuntime(state.runtimes, row, option)) await wait(step);
       // An AI agents row's button (the SwiftUI host's `press`): set it up, or remove what cua added.
       const agent = row.startsWith("agent:") ? state.agentSetup.find((r) => `agent:${r.agent}` === row && r.installed) : undefined;
       if (agent) {
@@ -770,16 +775,29 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     },
     "agents.setup": () => state.agentSetup.map((r) => ({ ...r })),
     "agents.status": () => options.connections ?? demoConnections(state.agentSetup, state.imported, now()),
-    "agents.connect": async ({ agents, signIn }) => {
+    "agents.connect": async ({ agents, signIn, skills, mcp }) => {
       await wait(step);
+      // Only Cua's skills or only its MCP server (an app's page's switches).
+      const part = skills === false || mcp === false;
       // `?demo=agents-readonly`: an app whose config Cua can't write fails, as with `agents.configure`.
       state.agentSetup = state.agentSetup.map((r) =>
         r.installed && agents.includes(r.agent)
           ? state.readOnlyAgents.includes(r.agent)
             ? { ...r, configured: false, skillsInstalled: 0, detail: "Permission denied (os error 13)" }
-            : { ...r, configured: true, skillsInstalled: r.skillsTotal, detail: "Skills and MCP server set up" }
+            : part
+              ? { ...r, configured: false, skillsInstalled: skills === false ? 0 : r.skillsTotal, detail: skills === false ? "MCP server set up" : "Skills set up" }
+              : { ...r, configured: true, skillsInstalled: r.skillsTotal, detail: "Skills and MCP server set up" }
           : r,
       );
+      // Claude Code's own token command: one browser approval, then its token is saved with the keys.
+      if (signIn && agents.includes("claude-code")) {
+        await wait(step * 14);
+        state.keyStore.keys = [
+          ...state.keyStore.keys.filter((k) => k.env !== "CLAUDE_CODE_OAUTH_TOKEN"),
+          { provider: "other", env: "CLAUDE_CODE_OAUTH_TOKEN", last4: "", addedMs: now() },
+        ];
+        emit({ type: "agents.changed" });
+      }
       return agents.map((agent) => {
         const row = state.agentSetup.find((r) => r.agent === agent);
         if (row && state.readOnlyAgents.includes(agent)) {
@@ -799,10 +817,31 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
         };
       });
     },
-    "agents.disconnect": async ({ agents, signIn }) => {
+    // Codex's device-code sign-in made for Cua: a code to show, then approved a moment later.
+    "agents.signInStart": async ({ agent }) => {
       await wait(step);
-      state.agentSetup = state.agentSetup.map((r) => (agents.includes(r.agent) ? { ...r, configured: false, skillsInstalled: 0, detail: "Not set up" } : r));
+      if (agent !== "codex") throw new HostError(`${agent} has no device sign-in`);
+      return { id: `codex-${now()}`, url: "https://auth.openai.com/codex/device", code: "QX7P-4M2KD" };
+    },
+    "agents.signInWait": async () => {
+      await wait(step * 20);
+      state.keyStore.keys = [...state.keyStore.keys.filter((k) => k.env !== "CODEX_AUTH_JSON"), { provider: "other", env: "CODEX_AUTH_JSON", last4: "", addedMs: now() }];
+      emit({ type: "agents.changed" });
+      return { imported: { source: "codex", env: "CODEX_AUTH_JSON", label: "Codex · ChatGPT sign-in", expires_ms: null, added_ms: now() }, refused: null, line: null };
+    },
+    "agents.disconnect": async ({ agents, signIn, skills, mcp }) => {
+      await wait(step);
+      // Some parts only (an app's page's switches): what stays keeps its state.
+      const part = skills !== undefined || mcp !== undefined;
+      state.agentSetup = state.agentSetup.map((r) => {
+        if (!agents.includes(r.agent)) return r;
+        if (!part) return { ...r, configured: false, skillsInstalled: 0, detail: "Not set up" };
+        const hasSkills = skills ? false : r.skillsInstalled > 0;
+        const hasMcp = mcp ? false : r.configured || /MCP/.test(r.detail);
+        return { ...r, configured: false, skillsInstalled: hasSkills ? r.skillsTotal : 0, detail: hasSkills && hasMcp ? "Skills and MCP server set up" : hasSkills ? "Skills set up" : hasMcp ? "MCP server set up" : "Not set up" };
+      });
       const removed = signIn ? state.imported.filter((a) => agents.includes(a)) : [];
+      if (signIn && agents.includes("claude-code")) state.keyStore.keys = state.keyStore.keys.filter((k) => k.env !== "CLAUDE_CODE_OAUTH_TOKEN");
       state.imported = state.imported.filter((a) => !removed.includes(a));
       return { removed_sign_ins: removed };
     },
@@ -840,7 +879,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     ...demoTeleportHandlers({ wait, emit, now, stepMs: step }),
     ...demoShareHandlers({ wait, stepMs: step, teamFull: options.teamFull }),
     ...demoAgentDetailHandlers({ wait, stepMs: step, now }),
-    ...demoAgentKeysHandlers({ wait, stepMs: step, now }),
+    ...demoAgentKeysHandlers({ wait, stepMs: step, now, store: state.keyStore }),
     ...demoVolumeHandlers({ state: state.volume, now, wait, step, emit, platform: state.platform }),
     ...createDemoSettings({ now, wait, emit, stepMs: step, platform: state.platform, unenrolled: options.unenrolled, update: options.update, experiments: state.volume.experiments, signedIn: () => Boolean(state.identity), settings: () => state.settings, setSettings: (p) => ((state.settings = { ...state.settings, ...p }), emit({ type: "settings.changed" })), addMachine: (m) => ((state.paired = [...state.paired, m]), emit({ type: "machines.changed" })) }),
     ...demoTelemetryHandlers(ctx),
@@ -914,6 +953,8 @@ export interface DemoState extends DemoLinksStateField, DemoTelemetryState, Demo
   agentSetup: AgentSetupRow[];
   /** Agents whose sign-in the demo "copied" to Keyvault. */
   imported: string[];
+  /** Saved keys and sign-ins (Settings, Connectors; Claude Code's Connect adds its token here). */
+  keyStore: DemoKeyStore;
   readOnlyAgents: string[];
   volume: DemoVolumeState;
   platform: DemoPlatform;
@@ -925,4 +966,6 @@ export interface DemoState extends DemoLinksStateField, DemoTelemetryState, Demo
   removed: string[];
   /** `?demo=mac-host`: the Keyvault's switches the SwiftUI host lays out in Settings. */
   hostSettings?: HostSettings;
+  /** Settings, Advanced's runtimes (every demo host has them). */
+  runtimes: DemoRuntimes;
 }

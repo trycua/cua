@@ -7,13 +7,14 @@
 // the audit put it.
 
 import { act, cleanup, fireEvent, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { useUiStore } from "@/stores/ui";
 import { wasmBuilt } from "@/bridge/__tests__/testCore";
 import { mountApp, stubBrowserApis, type TestHost } from "./app-harness";
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   cleanup();
   localStorage.clear();
 });
@@ -65,6 +66,8 @@ describe.skipIf(!wasmBuilt)("Settings tabs (real routes, wasm core)", () => {
   });
 
   it("puts Connectors where Agents was, with the account keys and Terminal", async () => {
+    // The page as it was (the redesign's Providers: connectors-redesign.test.tsx).
+    vi.stubEnv("VITE_CUA_FLAG_SPACES_REDESIGN", "0");
     await mountApp("/settings/connectors", host);
     await waitFor(() => expect(document.querySelector("[data-agent-keys]")).not.toBeNull(), { timeout: 8000 });
     const text = tab("connectors")!.textContent!;

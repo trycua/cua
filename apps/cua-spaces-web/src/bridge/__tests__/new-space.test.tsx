@@ -453,7 +453,7 @@ describe.skipIf(!wasmBuilt)("On the SwiftUI host's answer (wasm core)", () => {
 
     await act(() => hooks.wizard.applyRuntimeSwitch(change));
     // Settings, Runtimes' own row, then this Mac's runtimes read again.
-    expect(chosen).toEqual([{ row: "macos-runtime", option: "builtin" }]);
+    expect(chosen).toEqual([{ row: "runtime:vm", option: "builtin" }]);
     await waitFor(() => expect(hooks.wizard.view?.runtimeSwitch ?? null).toBeNull());
     expect(hooks.wizard.view?.placementError ?? null).toBeNull();
   });

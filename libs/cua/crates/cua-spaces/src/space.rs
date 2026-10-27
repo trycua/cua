@@ -148,6 +148,8 @@ pub(crate) struct SpaceInner {
     /// Why no cua-spacesd answered when this connected (`endpoint`,
     /// `reason`), for a Space connected without one.
     pub(crate) spacesd_unavailable: std::sync::OnceLock<(String, String)>,
+    /// When that was noted ([`Space::spacesd_retry_due`]).
+    pub(crate) spacesd_unavailable_at: std::sync::OnceLock<std::time::Instant>,
 }
 
 /// A connected Space. Cheap to clone; every clone shares one spacesd
@@ -204,6 +206,7 @@ impl Space {
                 keepalive: Default::default(),
                 image_config: Default::default(),
                 spacesd_unavailable: Default::default(),
+                spacesd_unavailable_at: Default::default(),
             }),
         }
     }
@@ -432,6 +435,24 @@ impl Space {
 
     pub(crate) fn set_spacesd_unavailable(&self, endpoint: String, reason: String) {
         let _ = self.inner.spacesd_unavailable.set((endpoint, reason));
+        let _ = self
+            .inner
+            .spacesd_unavailable_at
+            .set(std::time::Instant::now());
+    }
+
+    /// Whether this connection was made without the cua-spacesd its image
+    /// publishes (it didn't answer then: the Space or its runtime was still
+    /// waking, as after a daemon restart) at least `after` ago, so a new
+    /// connection may find it. A Space whose image runs no cua-spacesd is
+    /// never due.
+    pub(crate) fn spacesd_retry_due(&self, after: std::time::Duration) -> bool {
+        self.inner.env.is_none()
+            && self
+                .inner
+                .spacesd_unavailable_at
+                .get()
+                .is_some_and(|at| at.elapsed() >= after)
     }
 
     /// When no cua-spacesd answered because this host has no route to a
@@ -823,6 +844,32 @@ fn humantime_rfc3339(at: std::time::SystemTime) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn no_spacesd() -> Space {
+        Space::new(
+            SpaceId::Local {
+                name: "pipbox".into(),
+            },
+            "pipbox".into(),
+            None,
+            Default::default(),
+            None,
+            None,
+            BTreeMap::new(),
+        )
+    }
+
+    #[test]
+    fn a_space_connected_while_its_spacesd_was_waking_is_dialed_again() {
+        // Its image publishes cua-spacesd, which didn't answer then (the
+        // daemon restarted while the Space was still waking).
+        let s = no_spacesd();
+        s.set_spacesd_unavailable("127.0.0.1:7000".into(), "connection refused".into());
+        assert!(s.spacesd_retry_due(std::time::Duration::ZERO));
+        assert!(!s.spacesd_retry_due(std::time::Duration::from_secs(3600)));
+        // An image that runs no cua-spacesd is never dialed again for it.
+        assert!(!no_spacesd().spacesd_retry_due(std::time::Duration::ZERO));
+    }
 
     #[test]
     fn versions_compare_against_a_floor() {

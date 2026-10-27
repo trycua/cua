@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { CheckIcon, FileTextIcon, ImageIcon, XIcon } from "lucide-react";
-import { memo, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, memo, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { useBridge, type TaskState, type ThreadAttachment, type ThreadEntry, type ThreadItem, type ThreadView } from "@/bridge";
 import { Inlines } from "@/components/markdown";
@@ -13,8 +13,22 @@ import { cn } from "@/lib/utils";
 
 import { AgentTile, MemberAvatar } from "./avatar";
 import { AgentName, AiTag, holderNames, MemberEventNote } from "./identity";
+import { MentionChip, ProfileTrigger } from "./profile-card";
 import { waitingFor } from "./rights";
 import type { Roster } from "./roster";
+
+/**
+ * Keeps `scroller` at its end while `content` grows, as long as `atEnd()`
+ * (you hadn't scrolled up). Returns the stop.
+ */
+export function followGrowth(scroller: HTMLElement, content: HTMLElement, atEnd: () => boolean): () => void {
+  if (typeof ResizeObserver === "undefined") return () => {};
+  const ro = new ResizeObserver(() => {
+    if (atEnd()) scroller.scrollTop = scroller.scrollHeight;
+  });
+  ro.observe(content);
+  return () => ro.disconnect();
+}
 
 /**
  * The Space thread under the desktop: messages, tasks with their status and
@@ -32,10 +46,16 @@ export function ThreadView({
   empty,
   className,
   endInset = 0,
+  after,
+  tail,
 }: {
   items: ThreadItem[];
   /** Room kept clear at the end (px): thread mode's mini-player sits there, never over the newest message. */
   endInset?: number;
+  /** Drawn under the item that posted entry `seq` (a summon's "can't be woken" note). */
+  after?: (seq: number) => ReactNode;
+  /** Drawn after the last item. */
+  tail?: ReactNode;
   /** Removes an agent member from its card (absent: the host can't). */
   onRemoveAgent?: (handle: string) => Promise<void>;
   /** Scrolled to the top: read the page before (when there is one). */
@@ -82,6 +102,16 @@ export function ThreadView({
     const el = ref.current;
     if (el && atEnd.current) el.scrollTop = el.scrollHeight;
   }, [endInset]);
+  // Something under the last entry grew (a note only you see, a status line):
+  // when you were at the end, stay there.
+  const body = useRef<HTMLDivElement | null>(null);
+  const hasItems = items.length > 0;
+  useEffect(() => {
+    const el = ref.current;
+    const inner = body.current;
+    if (!el || !inner) return;
+    return followGrowth(el, inner, () => atEnd.current && keep.current === null);
+  }, [hasItems]);
   return (
     <div
       ref={ref}
@@ -105,10 +135,14 @@ export function ThreadView({
       {items.length === 0 ? (
         <div className="flex h-full items-end px-8 pb-4">{empty}</div>
       ) : (
-        <div className="flex min-h-full flex-col justify-end gap-1 px-8 pt-5 pb-4" style={endInset ? { paddingBottom: endInset + 16 } : undefined}>
+        <div ref={body} className="flex min-h-full flex-col justify-end gap-1 px-8 pt-5 pb-4" style={endInset ? { paddingBottom: endInset + 16 } : undefined}>
           {items.map((item) => (
-            <ThreadItemView key={item.key} item={item} roster={roster} onAnswer={onAnswer} onOpenAttachment={onOpenAttachment} onRemoveAgent={onRemoveAgent} />
+            <Fragment key={item.key}>
+              <ThreadItemView item={item} roster={roster} onAnswer={onAnswer} onOpenAttachment={onOpenAttachment} onRemoveAgent={onRemoveAgent} />
+              {after && "entry" in item ? after(item.entry.seq) : null}
+            </Fragment>
           ))}
+          {tail}
         </div>
       )}
     </div>
@@ -230,20 +264,41 @@ function Message({
   nested?: boolean;
 }) {
   const who = roster.author(entry.author);
+  // A person's card: the roster's entry for this author (by id, else by name).
+  const person = who.kind === "person" ? (roster.people.find((p) => p.id === entry.author.id) ?? roster.people.find((p) => p.label === who.label)) : undefined;
+  const avatar = (
+    <MemberAvatar
+      kind={who.kind === "agent" ? "agent" : "person"}
+      name={who.kind === "agent" ? (who.handle ?? who.label) : who.label}
+      harness={who.harness}
+      identity={who.identity}
+      surface={surface}
+      size={nested ? 24 : 28}
+      className="mt-0.5"
+    />
+  );
   return (
     <div data-entry={entry.seq} className={cn("flex gap-3", nested ? "py-1.5" : "py-2")}>
-      <MemberAvatar
-        kind={who.kind === "agent" ? "agent" : "person"}
-        name={who.kind === "agent" ? (who.handle ?? who.label) : who.label}
-        harness={who.harness}
-        identity={who.identity}
-        surface={surface}
-        size={nested ? 24 : 28}
-        className="mt-0.5"
-      />
+      {who.kind === "agent" && who.identity ? (
+        <ProfileTrigger identity={who.identity} agent={who.agent} roster={roster} onRemove={onRemoveAgent} className="self-start rounded-full">
+          {avatar}
+        </ProfileTrigger>
+      ) : person ? (
+        <ProfileTrigger person={person} className="self-start rounded-full">
+          {avatar}
+        </ProfileTrigger>
+      ) : (
+        avatar
+      )}
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          {who.kind === "agent" ? <AgentName who={who} roster={roster} onRemove={onRemoveAgent} /> : <span className="truncate text-[13px] font-semibold">{who.label}</span>}
+          {who.kind === "agent" ? <AgentName who={who} roster={roster} onRemove={onRemoveAgent} /> : person ? (
+            <ProfileTrigger person={person} className="truncate text-[13px] font-semibold hover:underline" data={{ "data-person-name": person.label }}>
+              {who.label}
+            </ProfileTrigger>
+          ) : (
+            <span className="truncate text-[13px] font-semibold">{who.label}</span>
+          )}
           <time className="shrink-0 text-[11px] text-muted-foreground tabular-nums" dateTime={new Date(entry.tsMs).toISOString()} title={new Date(entry.tsMs).toLocaleString()}>
             {clock(entry.tsMs)}
           </time>
@@ -286,9 +341,9 @@ export function ThreadText({ text, handles }: { text: string; handles: ReadonlyS
   const chips = (t: string, key: number) =>
     mentionSegments(t, handles).map((s, i) =>
       s.mention ? (
-        <span key={`${key}-${i}`} data-mention={s.handle} className="font-medium text-brand-strong">
+        <MentionChip key={`${key}-${i}`} handle={s.handle}>
           {s.text}
-        </span>
+        </MentionChip>
       ) : (
         s.text
       ),

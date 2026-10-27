@@ -10,11 +10,13 @@
 
 import { Link, useNavigate } from "@tanstack/react-router";
 import { ArrowDownIcon, ArrowUpIcon, LoaderCircleIcon } from "lucide-react";
-import type { MouseEvent, ReactNode } from "react";
+import type { MouseEvent, ReactNode, RefObject } from "react";
 
 import { OsIcon } from "@/components/os-icon";
 import { StateLabel } from "@/components/state-dot";
+import { useWindowedRows } from "@/hooks/use-windowed-rows";
 import { lastUsedText, sizeCell, type SpacesSort } from "@/lib/spaces-page";
+import { WINDOW_FROM } from "@/lib/windowing";
 import { cn } from "@/lib/utils";
 
 import { PeopleStack, SpaceMark } from "./avatars";
@@ -39,7 +41,13 @@ export interface SpaceListProps {
   more?: (item: SpaceItem) => ReactNode;
 }
 
+/** A list row's height (`h-10`), and nothing between rows. */
+const ROW_PITCH = 40;
+
 export function SpaceList({ items, sort, onSort, now, selection, menu, more }: SpaceListProps) {
+  // A long list draws only the rows on screen (`lib/windowing.ts`).
+  const windowed = useWindowedRows({ enabled: items.length >= WINDOW_FROM, rows: items.length, perRow: 1, gap: 0, estimatePitch: () => ROW_PITCH });
+  const { start: from, end: to } = windowed.window;
   const cols = cn("grid items-center gap-x-3", selection ? "grid-cols-[20px_minmax(0,1fr)_100px_140px_72px_100px_28px]" : "grid-cols-[minmax(0,1fr)_100px_140px_72px_100px_28px]");
   const head = (key: SpacesSort | null, label: string, right = false) =>
     key ? (
@@ -66,10 +74,12 @@ export function SpaceList({ items, sort, onSort, now, selection, menu, more }: S
         <span role="columnheader">{head("used", "Last used")}</span>
         <span />
       </div>
-      {items.map((item) => {
-        const row = <ListRow key={item.space.id} item={item} cols={cols} now={now} selection={selection} more={more?.(item)} />;
-        return menu ? <div key={item.space.id}>{menu(item, row)}</div> : row;
-      })}
+      <div role="rowgroup" ref={windowed.ref as RefObject<HTMLDivElement>} style={windowed.style}>
+        {items.slice(from, to).map((item) => {
+          const row = <ListRow key={item.space.id} item={item} cols={cols} now={now} selection={selection} more={more?.(item)} />;
+          return menu ? <div key={item.space.id}>{menu(item, row)}</div> : row;
+        })}
+      </div>
     </div>
   );
 }

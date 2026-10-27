@@ -171,6 +171,8 @@ pub(crate) struct CreateNetwork {
     pub parent: Option<String>,
     /// Its tree's root's canonical id.
     pub root: Option<String>,
+    /// Its depth below the root (0: top-level).
+    pub depth: u32,
 }
 
 /// The settings a parent Space has: its own, or what it would migrate to.
@@ -199,6 +201,7 @@ pub(crate) fn resolve_create(
             settings: asked,
             parent: None,
             root: None,
+            depth: 0,
         });
     };
     let root = parent_meta
@@ -216,6 +219,7 @@ pub(crate) fn resolve_create(
     };
     Ok(CreateNetwork {
         settings,
+        depth: parent_meta.as_ref().map_or(0, |m| m.depth) + 1,
         parent: Some(parent_id),
         root: Some(root),
     })
@@ -240,6 +244,16 @@ impl Spaces {
                     return Err(Error::NotFound(format!("parent {p}")));
                 }
                 let meta = self.inner.registry.meta(&id);
+                // Not deeper than its tree allows.
+                let root_meta = match meta.as_ref().and_then(|m| m.root.clone()) {
+                    Some(r) => self.inner.registry.meta(&r),
+                    None => meta.clone(),
+                };
+                crate::tree::child_depth(
+                    p,
+                    meta.as_ref().map_or(0, |m| m.depth),
+                    crate::tree::depth_limit(root_meta.as_ref()),
+                )?;
                 Some((id, meta))
             }
         };
@@ -253,6 +267,11 @@ impl Spaces {
             m.network_generation = m.network_generation.saturating_add(1).max(1);
             m.parent = net.parent.clone();
             m.root = net.root.clone();
+            m.depth = net.depth;
+            if let Some(p) = &net.parent {
+                m.origin = Some(crate::tree::ORIGIN_CHILD.into());
+                m.labels.insert(crate::tree::PARENT_LABEL.into(), p.clone());
+            }
         })
     }
 
@@ -447,6 +466,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(g.root.as_deref(), Some("local:p"));
+        assert_eq!(g.depth, 1, "the parent record says depth 0 here");
         // Widened: what it asked, stamped.
         let w = resolve_create(
             NetworkSettings::preset(NetworkPreset::Lan),

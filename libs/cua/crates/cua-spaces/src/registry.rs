@@ -86,6 +86,23 @@ pub struct SpaceMeta {
     /// top-level Space, which is its own root).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub root: Option<String>,
+    /// How far below its tree's top-level Space it is ([`crate::tree`]): 0
+    /// for a top-level Space, 1 for its children, ...
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub depth: u32,
+    /// How it was made: `user`, `child` or `fork-batch:<id>`; `None` is
+    /// `user` for a top-level Space and `child` for one with a parent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
+    /// On a top-level Space: how deep its tree may go
+    /// ([`crate::tree::DEFAULT_DEPTH_LIMIT`] when unset, never more than
+    /// [`crate::tree::MAX_DEPTH`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub depth_limit: Option<u32>,
+}
+
+fn is_zero_u32(n: &u32) -> bool {
+    *n == 0
 }
 
 fn is_zero(n: &u64) -> bool {
@@ -272,6 +289,21 @@ impl Registry {
         self.write_meta(&all)
     }
 
+    /// Changes what is kept about every Space at once (atomic; empty
+    /// records are dropped), returning what `change` returns.
+    pub fn update_all_meta<R>(
+        &self,
+        change: impl FnOnce(&mut BTreeMap<String, SpaceMeta>) -> R,
+    ) -> Result<R> {
+        let _g = self.lock.lock().expect("registry lock");
+        let _file = self.exclusive()?;
+        let mut all = self.read_meta();
+        let out = change(&mut all);
+        all.retain(|_, m| *m != SpaceMeta::default());
+        self.write_meta(&all)?;
+        Ok(out)
+    }
+
     /// Gives Space `to` the labels and egress policy of Space `from` (a
     /// fork starts as its source was; its creation time and lifetime are
     /// its own). Returns whether `from` had any.
@@ -293,6 +325,10 @@ impl Registry {
         }
         kept.parent = source.parent;
         kept.root = source.root;
+        kept.depth = source.depth;
+        if kept.parent.is_some() {
+            kept.origin = source.origin;
+        }
         self.write_meta(&all)?;
         Ok(true)
     }
@@ -701,6 +737,7 @@ mod tests {
             m.network_generation = 3;
             m.parent = Some("local:p".into());
             m.root = Some("local:p".into());
+            m.depth = 1;
         })
         .unwrap();
         reg.update_meta("local:fork", |m| m.created_at_unix = 200)
@@ -717,6 +754,7 @@ mod tests {
             "it stays in the tree"
         );
         assert_eq!(fork.root.as_deref(), Some("local:p"));
+        assert_eq!(fork.depth, 1);
         assert_eq!(fork.created_at_unix, 200, "its own creation time");
         // The source is untouched, and a source with nothing gives nothing.
         assert_eq!(reg.meta("local:src").unwrap().created_at_unix, 100);

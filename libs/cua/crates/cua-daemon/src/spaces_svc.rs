@@ -112,9 +112,22 @@ mod imp {
                 .and_then(|n| n.note.clone())
                 .unwrap_or_default(),
             network_notice_pending: info.network.as_ref().is_some_and(|n| n.notice_pending),
-            // The tree is the record's (`fill_records`).
-            parent: String::new(),
-            root: String::new(),
+            parent: info
+                .tree
+                .as_ref()
+                .and_then(|t| t.parent.clone())
+                .unwrap_or_default(),
+            root: info
+                .tree
+                .as_ref()
+                .and_then(|t| t.root.clone())
+                .unwrap_or_default(),
+            depth: info.tree.as_ref().map_or(0, |t| t.depth),
+            origin: info
+                .tree
+                .as_ref()
+                .map(|t| t.origin.clone())
+                .unwrap_or_default(),
         }
     }
 
@@ -808,12 +821,22 @@ mod imp {
             &self,
             req: tonic::Request<pb::DeleteSpaceRequest>,
         ) -> R<pb::DeleteSpaceResponse> {
-            let space = req.into_inner().space;
+            let req = req.into_inner();
+            let space = req.space;
+            // Its child Spaces go first, unless it keeps them.
+            let gone = if req.keep_children {
+                vec![]
+            } else {
+                self.spaces().descendants(&space).unwrap_or_default()
+            };
             let message = self
                 .spaces()
-                .delete(&space)
+                .delete_tree(&space, req.keep_children)
                 .await
                 .map_err(|e| st(e.into()))?;
+            for child in &gone {
+                self.rt().detach(child).await;
+            }
             // Drop the connection an exec or a call cached for it: a new
             // Space of the same name must not reach the deleted one.
             self.rt().detach(&space).await;

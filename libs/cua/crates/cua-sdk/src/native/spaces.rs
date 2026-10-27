@@ -565,6 +565,16 @@ pub struct SpaceInfo {
     /// new defaults): say so once.
     #[serde(default)]
     pub network_notice_pending: bool,
+    /// The Space it was created from, by id; `None` for a top-level Space.
+    #[serde(default)]
+    pub parent: Option<String>,
+    /// The top-level Space of its tree, by id; `None` for a top-level
+    /// Space.
+    #[serde(default)]
+    pub root: Option<String>,
+    /// How far below its tree's top-level Space it is (0: top-level).
+    #[serde(default)]
+    pub depth: u32,
     /// Named volumes mounted in the Space (see
     /// [`SpaceCreateOptions::volumes`]).
     #[serde(default)]
@@ -822,6 +832,9 @@ impl From<dpb::Space> for SpaceInfo {
             network: s.network_settings.map(Into::into),
             network_note: (!s.network_note.is_empty()).then_some(s.network_note),
             network_notice_pending: s.network_notice_pending,
+            parent: (!s.parent.is_empty()).then_some(s.parent),
+            root: (!s.root.is_empty()).then_some(s.root),
+            depth: s.depth,
             sharing: s.sharing.map(Into::into),
         }
     }
@@ -864,6 +877,9 @@ impl From<cua_spaces::SpaceInfo> for SpaceInfo {
             network: s.network.as_ref().map(|n| n.settings.clone().into()),
             network_note: s.network.as_ref().and_then(|n| n.note.clone()),
             network_notice_pending: s.network.as_ref().is_some_and(|n| n.notice_pending),
+            parent: s.tree.as_ref().and_then(|t| t.parent.clone()),
+            root: s.tree.as_ref().and_then(|t| t.root.clone()),
+            depth: s.tree.as_ref().map_or(0, |t| t.depth),
             sharing: s.sharing.map(Into::into),
         }
     }
@@ -3839,7 +3855,10 @@ async fn refuse_daemon_create(
         }
         let _ = d
             .spaces()
-            .delete_space(dpb::DeleteSpaceRequest { space: id.clone() })
+            .delete_space(dpb::DeleteSpaceRequest {
+                space: id.clone(),
+                keep_children: false,
+            })
             .await;
         format!(", so the Space it made ({id}) was deleted")
     };
@@ -4152,15 +4171,25 @@ impl Spaces {
     }
 
     /// Deletes a Space's sandbox and forgets it (a Space added by address
-    /// is only forgotten). Returns what happened.
+    /// is only forgotten). Its child Spaces are deleted first. Returns what
+    /// happened.
     pub async fn delete(&self, space: String) -> Result<String> {
+        self.delete_tree(space, false).await
+    }
+
+    /// [`Spaces::delete`], with `keep_children`: its child Spaces become
+    /// top-level Spaces and keep running instead of being deleted first.
+    pub async fn delete_tree(&self, space: String, keep_children: bool) -> Result<String> {
         let host = self.host.clone();
         run(async move {
             match &host {
-                Host::Embedded(s) => Ok(s.delete(&space).await?),
+                Host::Embedded(s) => Ok(s.delete_tree(&space, keep_children).await?),
                 Host::Daemon(d) => Ok(d
                     .spaces()
-                    .delete_space(dpb::DeleteSpaceRequest { space })
+                    .delete_space(dpb::DeleteSpaceRequest {
+                        space,
+                        keep_children,
+                    })
                     .await
                     .map_err(daemon_err)?
                     .into_inner()

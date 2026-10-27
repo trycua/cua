@@ -101,6 +101,7 @@ pub mod snapshots;
 mod space;
 mod spaces;
 pub mod thumbnails;
+pub mod tree;
 
 #[cfg(feature = "spaces-agents")]
 pub mod agents;

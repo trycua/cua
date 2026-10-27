@@ -468,6 +468,7 @@ pub(crate) fn relay_info(m: &crate::relay::RelayMachine) -> SpaceInfo {
         egress: Default::default(),
         egress_enforced: None,
         network: None,
+        tree: None,
         sharing: None,
     }
 }
@@ -1305,6 +1306,7 @@ impl Spaces {
             egress: Default::default(),
             egress_enforced: None,
             network: None,
+            tree: None,
             sharing: None,
         }))
     }
@@ -1356,6 +1358,7 @@ impl Spaces {
                     note: m.network_note.clone(),
                     notice_pending: m.network_notice_pending,
                 });
+                info.tree = Some(crate::tree::TreeLink::of(m));
             }
             if let Some(l) = self.lifetime_of(&info.id, &lifetimes) {
                 info.expires_at_unix = l.expires_at_unix;
@@ -1410,6 +1413,8 @@ impl Spaces {
                 r.network_notice_pending = m.network_notice_pending;
                 r.parent = m.parent.clone().unwrap_or_default();
                 r.root = m.root.clone().unwrap_or_default();
+                r.depth = m.depth;
+                r.origin = crate::tree::TreeLink::of(m).origin;
             }
             if let Some(l) = self.lifetime_of(&r.id, &lifetimes) {
                 r.expires_at_unix = i64::try_from(l.expires_at_unix).unwrap_or(0);
@@ -2474,6 +2479,7 @@ impl Spaces {
                 .and_then(|p| self.resolve(p).ok())
                 .map(|i| i.to_string()),
             root: None,
+            depth: 0,
         };
         let journal =
             crate::creating::JournalHandle::start(self.home_dir(), &key, kind, expect_env);
@@ -2609,10 +2615,14 @@ impl Spaces {
                         .and_then(|m| m.root)
                         .unwrap_or_else(|| p.clone())
                 });
+                let depth = network.parent.as_ref().map_or(0, |p| {
+                    self.inner.registry.meta(p).map_or(0, |m| m.depth) + 1
+                });
                 self.record_network(
                     &id,
                     &crate::network::CreateNetwork {
                         root,
+                        depth,
                         ..network.clone()
                     },
                 )
@@ -3170,7 +3180,16 @@ impl Spaces {
     /// the relay (`relay_register`, or a share) leaves the relay directory
     /// with it, and deleting such a Space's `relay:<machine>` removes that
     /// record (as its owner) even when the Space itself is already gone.
+    ///
+    /// Its child Spaces ([`crate::tree`]) go first: see
+    /// [`Spaces::delete_tree`], which can keep them instead.
     pub async fn delete(&self, space: &str) -> Result<String> {
+        self.delete_tree(space, false).await
+    }
+
+    /// [`Spaces::delete`] of this Space alone (its children, if any, are
+    /// the caller's).
+    pub(crate) async fn delete_one(&self, space: &str) -> Result<String> {
         // A durable Space goes for good (deleting only its current copy
         // would have it created again).
         if self.inner.pool.read().expect("pool").is_some() {
@@ -3539,6 +3558,8 @@ impl Spaces {
     /// and a legacy `cloud:` Space fails with
     /// [`cua_sandbox_core::CLOUD_ENDED`].
     pub async fn stop(&self, space: &str) -> Result<SpacePower> {
+        // Its child Spaces first ([`crate::tree`]).
+        self.power_off_children(space, false).await;
         self.set_power(space, false).await
     }
 
@@ -3555,7 +3576,10 @@ impl Spaces {
         {
             tracing::warn!(space, error = %e, "could not record the Space's network settings");
         }
-        self.set_power(space, true).await
+        let power = self.set_power(space, true).await?;
+        // Its child Spaces after it ([`crate::tree`]).
+        self.power_on_children(space).await;
+        Ok(power)
     }
 
     /// Suspends a local Space, keeping its memory (it resumes where it
@@ -3563,6 +3587,13 @@ impl Spaces {
     /// VM. [`Self::stop`] stops it instead and frees its memory. Other
     /// Spaces are refused.
     pub async fn suspend(&self, space: &str) -> Result<SpacePower> {
+        // Its child Spaces first ([`crate::tree`]).
+        self.power_off_children(space, true).await;
+        self.suspend_one(space).await
+    }
+
+    /// [`Spaces::suspend`] of this Space alone.
+    pub(crate) async fn suspend_one(&self, space: &str) -> Result<SpacePower> {
         let id = self.resolve(space)?;
         let SpaceId::Local { name } = &id else {
             return Err(Error::WrongProvider {

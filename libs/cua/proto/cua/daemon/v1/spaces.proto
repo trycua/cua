@@ -68,7 +68,8 @@ service SpaceService {
   // wizard's GPU row; `gpu` of `CreateSpace`).
   rpc GetGpuSupport(GetGpuSupportRequest) returns (GetGpuSupportResponse);
   // Deletes a Space's sandbox and forgets it. A Space added by address
-  // (`direct:`, `relay:`) is only forgotten: cua did not create it.
+  // (`direct:`, `relay:`) is only forgotten: cua did not create it. Its
+  // child Spaces are deleted first, unless `keep_children`.
   rpc DeleteSpace(DeleteSpaceRequest) returns (DeleteSpaceResponse);
   // Deletes several Spaces (at most 3 at a time), turning running ones off
   // first. One result per Space, in order; one failure never stops the
@@ -289,6 +290,11 @@ message Space {
   // Its network settings changed by an update (an old Space moved to the
   // new defaults); apps and the CLI say so once.
   bool network_notice_pending = 38;
+  // How far below its tree's top-level Space it is: 0 for a top-level
+  // Space, 1 for its children, ...
+  uint32 depth = 39;
+  // How it was made: "user", "child" or "fork-batch:<id>".
+  string origin = 40;
 }
 
 // Who a Space belongs to and who else has it (`Space.sharing`).
@@ -661,6 +667,9 @@ message SetSpaceLifetimeResponse {
 message DeleteSpaceRequest {
   // Space.
   string space = 1;
+  // Keep its child Spaces: they become top-level Spaces and keep running.
+  // Unset: they are deleted first.
+  bool keep_children = 2;
 }
 
 // Response for `SpaceService.DeleteSpace`.

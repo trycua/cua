@@ -371,6 +371,10 @@ Examples:
         /// (that walk can take a moment with many Spaces).
         #[arg(long)]
         no_size: bool,
+        /// List child Spaces under their parent, indented (otherwise the
+        /// parent's row counts them).
+        #[arg(long)]
+        tree: bool,
     },
     /// Register a Space after a capabilities handshake with its cua-spacesd
     /// (or, for another URL, an MCP initialize). Re-adding an address
@@ -607,6 +611,10 @@ Examples:
         /// Skip the confirmation (required without a terminal).
         #[arg(long, short)]
         force: bool,
+        /// Keep its child Spaces: they become top-level Spaces and keep
+        /// running (otherwise they are deleted first).
+        #[arg(long)]
+        keep_children: bool,
     },
     /// Turn a Space off: a local VM (QEMU or Lume) or a Space one of your
     /// computers provides is stopped, keeping its disk and freeing its
@@ -1561,7 +1569,11 @@ pub async fn run_spaces_sdk(
                 return Ok(first_failure);
             }
         }
-        SpacesCmd::Delete { space, force } => {
+        SpacesCmd::Delete {
+            space,
+            force,
+            keep_children,
+        } => {
             use crate::sandbox::{DeleteConfirmation, confirm_delete};
             use std::io::IsTerminal as _;
             match confirm_delete(force, std::io::stdin().is_terminal(), || {
@@ -1593,7 +1605,7 @@ pub async fn run_spaces_sdk(
                     .await?;
                     format!("Deleted the durable Space {name} (it is not created again).")
                 }
-                _ => spaces.delete(space.clone()).await?,
+                _ => spaces.delete_tree(space.clone(), keep_children).await?,
             };
             if json {
                 line(
@@ -3307,7 +3319,7 @@ pub(crate) fn grouped_lines_for_tests(
     list: &[cua_spaces::SpaceInfo],
     columns: Option<&crate::resources_view::Columns<'_>>,
 ) -> Vec<String> {
-    grouped_lines_with(list, columns, &Default::default())
+    grouped_lines_with(list, columns, &Default::default(), false)
 }
 
 #[cfg(test)]
@@ -3315,16 +3327,21 @@ fn grouped_lines(
     list: &[cua_spaces::SpaceInfo],
     load: &std::collections::HashMap<String, String>,
 ) -> Vec<String> {
-    grouped_lines_with(list, None, load)
+    grouped_lines_with(list, None, load, false)
 }
 
 /// [`grouped_lines`] with the CPU, MEMORY and DISK ON THIS MAC columns (and
 /// their header) when `columns` is given; their `own_machine` (this
 /// install's relay machine id) is the row tagged "(this computer)".
+///
+/// Child Spaces ([`cua_spaces::tree`]) are not rows of their own: their
+/// parent's row counts them (`+2 children`). `tree` lists them instead,
+/// indented under their parent.
 fn grouped_lines_with(
     list: &[cua_spaces::SpaceInfo],
     columns: Option<&crate::resources_view::Columns<'_>>,
     load: &std::collections::HashMap<String, String>,
+    tree: bool,
 ) -> Vec<String> {
     use crate::resources_view::{CPU_WIDTH, MEMORY_WIDTH};
     let this_computer = columns.and_then(|c| c.own_machine.as_deref());
@@ -3389,12 +3406,33 @@ fn grouped_lines_with(
     if columns.is_some() && !list.is_empty() {
         out.push(crate::resources_view::header(48));
     }
-    for s in list.iter().filter(|s| s.host.is_empty()) {
+    let listed_child =
+        |s: &cua_spaces::SpaceInfo| parent_of(s).is_some_and(|p| list.iter().any(|o| o.id == p));
+    for s in list
+        .iter()
+        .filter(|s| s.host.is_empty() && !listed_child(s))
+    {
+        let below = space_subtree(list, &s.id);
+        let first = if tree || below.is_empty() {
+            row(s, "")
+        } else {
+            format!(
+                "{} (+{} child{})",
+                row(s, "").trim_end(),
+                below.len(),
+                if below.len() == 1 { "" } else { "ren" }
+            )
+        };
         // A Space in your cloud names its cloud ("AWS · us-west-2").
         if s.host_name.is_empty() {
-            out.push(row(s, ""));
+            out.push(first);
         } else {
-            out.push(format!("{} (on {})", row(s, ""), s.host_name));
+            out.push(format!("{first} (on {})", s.host_name));
+        }
+        if tree {
+            for (c, depth) in &below {
+                out.push(row(c, &format!("{}└ ", "  ".repeat(*depth - 1))));
+            }
         }
         // A relay host's Spaces name its machine id; a direct host's name
         // its Space id.
@@ -3407,6 +3445,7 @@ fn grouped_lines_with(
     }
     for c in list.iter().filter(|c| {
         !c.host.is_empty()
+            && !listed_child(c)
             && !list
                 .iter()
                 .any(|s| s.id == format!("relay:{}", c.host) || s.id == c.host)
@@ -3421,6 +3460,37 @@ fn grouped_lines_with(
             }
         ));
     }
+    out
+}
+
+/// The parent a listed Space was created from, if any.
+fn parent_of(s: &cua_spaces::SpaceInfo) -> Option<&str> {
+    s.tree.as_ref().and_then(|t| t.parent.as_deref())
+}
+
+/// The listed Spaces below `id`, depth first, with their depth under it
+/// (1: a child). Safe against a cycle.
+fn space_subtree<'a>(
+    list: &'a [cua_spaces::SpaceInfo],
+    id: &str,
+) -> Vec<(&'a cua_spaces::SpaceInfo, usize)> {
+    fn walk<'a>(
+        list: &'a [cua_spaces::SpaceInfo],
+        id: &str,
+        depth: usize,
+        seen: &mut std::collections::BTreeSet<String>,
+        out: &mut Vec<(&'a cua_spaces::SpaceInfo, usize)>,
+    ) {
+        for c in list.iter().filter(|c| parent_of(c) == Some(id)) {
+            if seen.insert(c.id.clone()) {
+                out.push((c, depth));
+                walk(list, &c.id, depth + 1, seen, out);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    let mut seen = std::collections::BTreeSet::from([id.to_string()]);
+    walk(list, id, 1, &mut seen, &mut out);
     out
 }
 
@@ -3539,6 +3609,7 @@ pub async fn run_spaces(
         relay,
         label,
         no_size,
+        tree,
     } = cmd
     else {
         return Err(CuaError::Internal(
@@ -3613,7 +3684,7 @@ pub async fn run_spaces(
     if list.is_empty() {
         line(out, "No Spaces.");
     }
-    for l in grouped_lines_with(&list, Some(&columns), &load) {
+    for l in grouped_lines_with(&list, Some(&columns), &load, tree) {
         line(out, l);
     }
     for d in durable
@@ -3967,6 +4038,7 @@ mod tests {
             egress: Default::default(),
             egress_enforced: None,
             network: None,
+            tree: None,
             sharing: None,
         };
         let mut list = vec![
@@ -4030,6 +4102,7 @@ mod tests {
             egress: Default::default(),
             egress_enforced: None,
             network: None,
+            tree: None,
             sharing: None,
             stop_reason: String::new(),
         };
@@ -4100,6 +4173,7 @@ mod tests {
             egress: Default::default(),
             egress_enforced: None,
             network: None,
+            tree: None,
             sharing: None,
             stop_reason: String::new(),
         }
@@ -4162,6 +4236,34 @@ mod tests {
             lines[0].ends_with("· 2 running · 40% CPU · 55% memory"),
             "{lines:?}"
         );
+        // Child Spaces: counted on their parent's row, or listed under it
+        // with `--tree`.
+        let child = |id: &str, parent: &str, depth: u32| {
+            let mut s = space(id, "");
+            s.provider = cua_spaces::Provider::Local;
+            s.tree = Some(cua_spaces::tree::TreeLink {
+                parent: Some(parent.into()),
+                root: Some("local:root".into()),
+                depth,
+                origin: "child".into(),
+            });
+            s
+        };
+        let list = [
+            space("local:root", ""),
+            child("local:kid", "local:root", 1),
+            child("local:grandkid", "local:kid", 2),
+            space("local:alone", ""),
+        ];
+        let lines = grouped_lines(&list, &none);
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(lines[0].ends_with("(+2 children)"), "{lines:?}");
+        assert!(!lines[1].contains("child"), "{lines:?}");
+        let lines = grouped_lines_with(&list, None, &none, true);
+        assert_eq!(lines.len(), 4, "{lines:?}");
+        assert!(lines[1].starts_with("└ local:kid"), "{lines:?}");
+        assert!(lines[2].starts_with("  └ local:grandkid"), "{lines:?}");
+        assert!(lines[3].starts_with("local:alone"), "{lines:?}");
     }
 
     #[test]
@@ -4298,6 +4400,7 @@ mod tests {
             egress: Default::default(),
             egress_enforced: None,
             network: None,
+            tree: None,
             sharing: None,
             stop_reason: String::new(),
         };
@@ -4595,6 +4698,7 @@ mod tests {
                 relay: None,
                 label: vec![],
                 no_size: false,
+                tree: false,
             },
             &home,
             Some(Arc::new(StaticToken("acct".into()))),
@@ -4653,6 +4757,7 @@ mod tests {
                 relay: None,
                 no_size: true,
                 label: vec![],
+                tree: false,
             },
             &home,
             Some(Arc::new(StaticToken("acct".into()))),

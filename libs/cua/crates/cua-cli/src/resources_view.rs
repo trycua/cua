@@ -266,6 +266,7 @@ mod tests {
             egress: Default::default(),
             egress_enforced: None,
             network: None,
+            tree: None,
             sharing: None,
             volumes: Vec::new(),
         }

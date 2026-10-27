@@ -1732,6 +1732,7 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
                         relay: None,
                         label: vec![],
                         no_size: false,
+                        tree: false,
                     }),
                     ..cli
                 };
@@ -1824,6 +1825,7 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
                     relay: None,
                     label: vec![],
                     no_size: false,
+                    tree: false,
                 }),
                 ..cli
             };
@@ -1861,6 +1863,7 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
                     relay: None,
                     label: vec![],
                     no_size: false,
+                    tree: false,
                 }),
                 ..cli
             };
@@ -1879,6 +1882,7 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
                     relay: None,
                     label: vec![],
                     no_size: false,
+                    tree: false,
                 }),
                 ..cli
             };

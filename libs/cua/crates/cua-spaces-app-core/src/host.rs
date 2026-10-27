@@ -348,11 +348,6 @@ pub const DESKTOP_SWITCH: &str = "Let other machines control this desktop";
 /// One line under [`DESKTOP_SWITCH`].
 pub const DESKTOP_HELP: &str = "Your other machines can see and control this screen.";
 
-/// The page title: "This Mac" on a Mac.
-fn os_title() -> &'static str {
-    SpaceOs::this_host().this_machine()
-}
-
 /// The production relay. Host setup joins [`default_relay_url`] unless the
 /// form names another.
 pub const DEFAULT_RELAY_URL: &str = "https://relay.cua.ai";
@@ -1149,7 +1144,7 @@ pub const OPEN_SETTINGS_LABEL: &str = "Open Settings";
 pub fn panel(state: Option<&HostState>) -> HostPanelView {
     use crate::spaces::sidebar::Fact;
     let mut v = HostPanelView {
-        title: os_title().into(),
+        title: "This machine".into(),
         summary: "Checking\u{2026}".into(),
         notice: None,
         notice_action: None,

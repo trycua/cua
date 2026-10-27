@@ -287,6 +287,10 @@ pub struct CreateOptions {
     /// the guest, from its first instruction (local runtimes that can;
     /// everything else refuses a non-empty one).
     pub egress: cua_vmm::egress::EgressPolicy,
+    /// Network settings ([`cua_vmm::network`]): a preset and the user's
+    /// lists. `None`: what `network` and `egress` say
+    /// ([`cua_vmm::network::NetworkSettings::from_legacy`]).
+    pub network_settings: Option<cua_vmm::network::NetworkSettings>,
     /// The process that owns an ephemeral local sandbox (recorded in its
     /// lease; the sandbox is reaped once that process is gone). `None`:
     /// this process. A daemon passes its client's pid.
@@ -348,6 +352,7 @@ impl CreateOptions {
             headless: false,
             spacesd: None,
             egress: Default::default(),
+            network_settings: None,
             owner_pid: None,
             contrib: None,
             keep_on_failure: false,
@@ -356,6 +361,18 @@ impl CreateOptions {
             ephemeral_name: None,
             forkable: false,
         }
+    }
+
+    /// The network settings this create asks for: `network_settings`, else
+    /// what `network` and `egress` say (`internet` when neither says
+    /// anything).
+    pub fn effective_network(&self) -> cua_vmm::network::NetworkSettings {
+        self.network_settings.clone().unwrap_or_else(|| {
+            cua_vmm::network::NetworkSettings::from_legacy(
+                &self.egress,
+                self.network == NetworkMode::None,
+            )
+        })
     }
 
     /// Adds a sidecar.
@@ -1157,6 +1174,7 @@ impl Sandboxes {
             headless: o.headless,
             spacesd: o.spacesd,
             egress: o.egress.clone(),
+            network: Some(o.effective_network()),
             gpu: o.gpu.clone().filter(|g| !g.trim().is_empty()),
             probes: o
                 .wait_for

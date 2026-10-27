@@ -1821,6 +1821,7 @@ mod tests {
             headless: false,
             spacesd: None,
             egress: Default::default(),
+            network: None,
             gpu: None,
             probes: vec![],
             ephemeral: false,

@@ -267,6 +267,12 @@ pub struct StartSpec {
     /// forks apply it again, and [`crate::Runtime::set_egress`] replaces it.
     #[serde(default, skip_serializing_if = "crate::egress::EgressPolicy::is_empty")]
     pub egress: crate::egress::EgressPolicy,
+    /// The Space's network settings ([`crate::network`]): its preset and
+    /// lists, compiled by the runtime with what only it knows (resolver,
+    /// host aliases, tree). `None`: a caller from before network settings;
+    /// the runtime keeps to `restrict_network` and `egress`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<crate::network::NetworkSettings>,
     #[serde(default)]
     pub labels: BTreeMap<String, String>,
     /// Backend-specific extra arguments (appended to the qemu command line).
@@ -614,6 +620,7 @@ impl StartSpec {
             cloud_init_user_data: None,
             restrict_network: false,
             egress: Default::default(),
+            network: None,
             labels: BTreeMap::new(),
             extra_args: Vec::new(),
             sidecars: Vec::new(),

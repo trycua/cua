@@ -3966,6 +3966,7 @@ mod tests {
             created_at_unix: 0,
             egress: Default::default(),
             egress_enforced: None,
+            network: None,
             sharing: None,
         };
         let mut list = vec![
@@ -4028,6 +4029,7 @@ mod tests {
             created_at_unix: 0,
             egress: Default::default(),
             egress_enforced: None,
+            network: None,
             sharing: None,
             stop_reason: String::new(),
         };
@@ -4097,6 +4099,7 @@ mod tests {
             created_at_unix: 0,
             egress: Default::default(),
             egress_enforced: None,
+            network: None,
             sharing: None,
             stop_reason: String::new(),
         }
@@ -4294,6 +4297,7 @@ mod tests {
             created_at_unix: 0,
             egress: Default::default(),
             egress_enforced: None,
+            network: None,
             sharing: None,
             stop_reason: String::new(),
         };

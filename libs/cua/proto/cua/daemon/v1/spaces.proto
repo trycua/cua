@@ -275,6 +275,20 @@ message Space {
   // Space that is a machine on the relay is renamed there, so its `name`
   // changes instead.
   string display_name = 33;
+  // Its network settings. Unset for a Space created before they existed
+  // (it gets them on its next start).
+  NetworkSettings network_settings = 34;
+  // Why its network is not what was asked, in plain words (a runtime that
+  // can't protect it yet started it without network). Empty otherwise.
+  string network_note = 35;
+  // The Space it was created from (a child), by id; empty for a top-level
+  // Space.
+  string parent = 36;
+  // The top-level Space of its tree, by id; empty for a top-level Space.
+  string root = 37;
+  // Its network settings changed by an update (an old Space moved to the
+  // new defaults); apps and the CLI say so once.
+  bool network_notice_pending = 38;
 }
 
 // Who a Space belongs to and who else has it (`Space.sharing`).
@@ -898,6 +912,16 @@ message CreateSpaceRequest {
   string instance_type = 26;
   // Cloud host region (a pin).
   string region = 27;
+  // Network settings. Unset: what `network` and `egress` say ("internet"
+  // when neither says anything).
+  NetworkSettings network_settings = 28;
+  // Create it as a child of this Space (id or name): its network is no
+  // more open than the parent's.
+  string parent = 29;
+  // With `parent`: let it be more open than its parent (recorded on the
+  // Space).
+  // (30 and 31 are kept for other create options.)
+  bool widen = 32;
 }
 
 // Request for `SpaceService.CreateSpaceStream`.

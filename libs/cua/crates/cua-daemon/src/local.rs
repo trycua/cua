@@ -1711,6 +1711,7 @@ impl VmmLocal {
         s.restrict_network = spec.restrict_network;
         s.forkable = spec.forkable;
         s.egress = spec.egress.clone();
+        s.network = spec.network.clone();
         s.disk_size_gb = spec.disk_size_gb;
         s.mounts = spec.mounts.clone();
         if let Some(m) = self.repo_cache_mount(p.backend, &spec.os).await

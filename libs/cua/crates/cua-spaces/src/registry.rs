@@ -63,6 +63,29 @@ pub struct SpaceMeta {
     /// keeps the one it was created with. Its id never changes.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub display_name: String,
+    /// Its network settings ([`crate::network`]). `None`: a Space created
+    /// before they existed; it gets them, migrated from `egress`, on its
+    /// next start.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<crate::network::NetworkSettings>,
+    /// How many times `network` was set (0: never).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub network_generation: u64,
+    /// Why its network is not what was asked, in plain words (a runtime
+    /// that can't protect it yet started it without network).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network_note: Option<String>,
+    /// Its settings were changed by an update (an old Space moved to the
+    /// new defaults): the CLI and apps say so once.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub network_notice_pending: bool,
+    /// The Space it was created from (a child), by canonical id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+    /// The top-level Space of its tree, by canonical id (`None` for a
+    /// top-level Space, which is its own root).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root: Option<String>,
 }
 
 fn is_zero(n: &u64) -> bool {
@@ -263,6 +286,13 @@ impl Registry {
         let kept = all.entry(to).or_default();
         kept.labels = source.labels;
         kept.egress = source.egress;
+        // A fork has its source's network and stays in its source's tree.
+        if source.network.is_some() {
+            kept.network = source.network;
+            kept.network_generation = kept.network_generation.max(1);
+        }
+        kept.parent = source.parent;
+        kept.root = source.root;
         self.write_meta(&all)?;
         Ok(true)
     }
@@ -667,6 +697,10 @@ mod tests {
             m.labels.insert("team".into(), "research".into());
             m.created_at_unix = 100;
             m.egress.deny.push("all".into());
+            m.network = Some(crate::network::NetworkSettings::none());
+            m.network_generation = 3;
+            m.parent = Some("local:p".into());
+            m.root = Some("local:p".into());
         })
         .unwrap();
         reg.update_meta("local:fork", |m| m.created_at_unix = 200)
@@ -675,6 +709,14 @@ mod tests {
         let fork = reg.meta("local:fork").unwrap();
         assert_eq!(fork.labels["team"], "research");
         assert_eq!(fork.egress.deny, ["all"]);
+        assert_eq!(fork.network, Some(crate::network::NetworkSettings::none()));
+        assert_eq!(fork.network_generation, 1, "its own generation");
+        assert_eq!(
+            fork.parent.as_deref(),
+            Some("local:p"),
+            "it stays in the tree"
+        );
+        assert_eq!(fork.root.as_deref(), Some("local:p"));
         assert_eq!(fork.created_at_unix, 200, "its own creation time");
         // The source is untouched, and a source with nothing gives nothing.
         assert_eq!(reg.meta("local:src").unwrap().created_at_unix, 100);

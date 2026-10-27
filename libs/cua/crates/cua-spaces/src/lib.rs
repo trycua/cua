@@ -85,6 +85,7 @@ pub mod listing;
 mod local_load;
 pub mod mesh;
 pub mod named_volumes;
+pub mod network;
 pub mod operator;
 pub mod pool_checkpoints;
 pub mod prewarm;

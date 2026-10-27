@@ -102,6 +102,19 @@ mod imp {
                 .unwrap_or_default(),
             volumes: info.volumes.iter().map(Into::into).collect(),
             sharing: info.sharing.as_ref().map(Into::into),
+            network_settings: info
+                .network
+                .as_ref()
+                .map(|n| cua_spaces::network::to_pb(&n.settings)),
+            network_note: info
+                .network
+                .as_ref()
+                .and_then(|n| n.note.clone())
+                .unwrap_or_default(),
+            network_notice_pending: info.network.as_ref().is_some_and(|n| n.notice_pending),
+            // The tree is the record's (`fill_records`).
+            parent: String::new(),
+            root: String::new(),
         }
     }
 
@@ -170,6 +183,14 @@ mod imp {
                     deny: e.deny,
                 })
                 .unwrap_or_default(),
+            network_settings: r
+                .network_settings
+                .as_ref()
+                .map(cua_spaces::network::from_pb)
+                .transpose()
+                .map_err(st)?,
+            parent: opt(r.parent),
+            widen: r.widen,
         })
     }
 

@@ -140,6 +140,11 @@ pub struct LocalStartSpec {
         skip_serializing_if = "cua_vmm::egress::EgressPolicy::is_empty"
     )]
     pub egress: cua_vmm::egress::EgressPolicy,
+    /// The sandbox's network settings ([`cua_vmm::network`]), compiled by
+    /// the runtime. `None`: a caller from before network settings (the
+    /// runtime keeps to `restrict_network` and `egress`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<cua_vmm::network::NetworkSettings>,
     /// A GPU option of the runtime (see [`crate::gpu`]); `None`: no GPU.
     #[serde(default)]
     pub gpu: Option<String>,

@@ -273,6 +273,111 @@ impl EgressEnforcement {
     }
 }
 
+/// A Space's network settings: a preset and the user's own lists. The host
+/// the Space runs on compiles them to rules it enforces outside the guest.
+///
+/// - `internet` (the default): the public internet and the Space's own
+///   tree; this computer, your local network, cloud metadata, other trees
+///   and the cua daemon are blocked;
+/// - `none`: no network;
+/// - `localhost`: `internet`, plus this computer's localhost on
+///   `localhost_ports` (every port only with `all_localhost_ports`);
+/// - `lan`: `internet`, plus your local network (not this computer);
+/// - `custom`: `custom_base` (`internet` or `none`) plus `allow` and `deny`;
+/// - `unprotected`: everything but cloud metadata, other trees and the
+///   daemon.
+///
+/// A runtime that can't protect a Space yet starts it without network and
+/// says so (`SpaceInfo.network_note`); it never starts it open unless the
+/// preset is `unprotected`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record, Deserialize)]
+pub struct NetworkSettings {
+    /// `internet`, `none`, `localhost`, `lan`, `custom` or `unprotected`;
+    /// empty is `internet`.
+    #[uniffi(default)]
+    #[serde(default)]
+    pub preset: String,
+    /// `localhost`: the ports of this computer's localhost the Space may
+    /// reach.
+    #[uniffi(default)]
+    #[serde(default)]
+    pub localhost_ports: Vec<u16>,
+    /// `localhost`: every port (the daemon's stay blocked).
+    #[uniffi(default)]
+    #[serde(default)]
+    pub all_localhost_ports: bool,
+    /// Destinations that stay reachable (addresses or CIDRs).
+    #[uniffi(default)]
+    #[serde(default)]
+    pub allow: Vec<String>,
+    /// Destinations that are blocked (addresses, CIDRs or `all`).
+    #[uniffi(default)]
+    #[serde(default)]
+    pub deny: Vec<String>,
+    /// `custom`: what it starts from, `internet` (empty) or `none`.
+    #[uniffi(default)]
+    #[serde(default)]
+    pub custom_base: String,
+    /// Set when the Space was allowed more than its parent: who and when.
+    #[uniffi(default = None)]
+    #[serde(default)]
+    pub widened_by: Option<String>,
+}
+
+impl From<NetworkSettings> for dpb::NetworkSettings {
+    fn from(n: NetworkSettings) -> Self {
+        dpb::NetworkSettings {
+            preset: n.preset,
+            localhost_ports: n.localhost_ports.into_iter().map(u32::from).collect(),
+            all_localhost_ports: n.all_localhost_ports,
+            allow: n.allow,
+            deny: n.deny,
+            custom_base: n.custom_base,
+            widened_by: n.widened_by.unwrap_or_default(),
+        }
+    }
+}
+
+impl From<dpb::NetworkSettings> for NetworkSettings {
+    fn from(n: dpb::NetworkSettings) -> Self {
+        NetworkSettings {
+            preset: if n.preset.is_empty() {
+                "internet".into()
+            } else {
+                n.preset
+            },
+            localhost_ports: n
+                .localhost_ports
+                .into_iter()
+                .filter_map(|p| u16::try_from(p).ok())
+                .collect(),
+            all_localhost_ports: n.all_localhost_ports,
+            allow: n.allow,
+            deny: n.deny,
+            custom_base: if n.custom_base.is_empty() {
+                "internet".into()
+            } else {
+                n.custom_base
+            },
+            widened_by: (!n.widened_by.is_empty()).then_some(n.widened_by),
+        }
+    }
+}
+
+impl From<cua_spaces::network::NetworkSettings> for NetworkSettings {
+    fn from(n: cua_spaces::network::NetworkSettings) -> Self {
+        cua_spaces::network::to_pb(&n).into()
+    }
+}
+
+impl NetworkSettings {
+    /// The checked model of these settings.
+    fn checked(&self) -> Result<cua_spaces::network::NetworkSettings> {
+        cua_spaces::network::from_pb(&self.clone().into())
+            .map_err(|e| CuaError::InvalidArgument(e.to_string()))
+    }
+}
+
 /// What carries a connected Space's calls ([`Space::transport`]), for a
 /// badge: whether the relay can read them.
 #[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
@@ -446,6 +551,20 @@ pub struct SpaceInfo {
     /// Where `egress` is enforced; `None` without one.
     #[serde(default)]
     pub egress_enforced: Option<EgressEnforcement>,
+    /// Its network settings; `None` for a Space this machine keeps no
+    /// record of, or one created before they existed (it gets them on its
+    /// next start).
+    #[serde(default)]
+    pub network: Option<NetworkSettings>,
+    /// Why its network is not what was asked, in plain words (a runtime
+    /// that can't protect it yet started it without network); `None`
+    /// otherwise.
+    #[serde(default)]
+    pub network_note: Option<String>,
+    /// An update changed its network settings (an old Space moved to the
+    /// new defaults): say so once.
+    #[serde(default)]
+    pub network_notice_pending: bool,
     /// Named volumes mounted in the Space (see
     /// [`SpaceCreateOptions::volumes`]).
     #[serde(default)]
@@ -700,6 +819,9 @@ impl From<dpb::Space> for SpaceInfo {
                 })
                 .unwrap_or_default(),
             egress_enforced: EgressEnforcement::from_word(&s.egress_enforced),
+            network: s.network_settings.map(Into::into),
+            network_note: (!s.network_note.is_empty()).then_some(s.network_note),
+            network_notice_pending: s.network_notice_pending,
             sharing: s.sharing.map(Into::into),
         }
     }
@@ -739,6 +861,9 @@ impl From<cua_spaces::SpaceInfo> for SpaceInfo {
             created_at_unix: i64::try_from(s.created_at_unix).unwrap_or(0),
             egress: s.egress.into(),
             egress_enforced: s.egress_enforced.map(Into::into),
+            network: s.network.as_ref().map(|n| n.settings.clone().into()),
+            network_note: s.network.as_ref().and_then(|n| n.note.clone()),
+            network_notice_pending: s.network.as_ref().is_some_and(|n| n.notice_pending),
             sharing: s.sharing.map(Into::into),
         }
     }
@@ -900,6 +1025,19 @@ pub struct SpaceCreateOptions {
     /// to enforce it makes the create fail.
     #[uniffi(default = None)]
     pub egress: Option<EgressPolicy>,
+    /// Network settings (see [`NetworkSettings`]). `None`: what `network`
+    /// and `egress` say (`internet` when neither says anything). A daemon
+    /// too old to keep them makes the create fail.
+    #[uniffi(default = None)]
+    pub network_settings: Option<NetworkSettings>,
+    /// Create it as a child of this Space (id or name): its network is no
+    /// more open than its parent's, and it joins the parent's tree.
+    #[uniffi(default = None)]
+    pub parent: Option<String>,
+    /// With `parent`: let its network be more open than its parent's
+    /// (recorded on the Space).
+    #[uniffi(default = None)]
+    pub widen: Option<bool>,
     /// With `on` a linked cloud (`aws`, `hetzner`, ...): the machine type
     /// its host must be (`c7g.xlarge`, `cax41`), a pin of the elastic
     /// pool's solve. `None`: the pool picks the cheapest that fits.
@@ -3491,6 +3629,11 @@ impl Spaces {
             cua_sandbox_core::NetworkMode::parse(options.network.as_deref().unwrap_or_default())
                 .map_err(|e| CuaError::InvalidArgument(e.to_string()))?;
         cua_spaces::registry::validate_labels(&options.labels).map_err(refused)?;
+        let network_settings = options
+            .network_settings
+            .as_ref()
+            .map(NetworkSettings::checked)
+            .transpose()?;
         if let Some(e) = &options.egress {
             cua_spaces::egress::EgressPolicy::from(e.clone())
                 .parse()
@@ -3551,6 +3694,9 @@ impl Spaces {
                             network,
                             labels: options.labels.into_iter().collect(),
                             egress: options.egress.map(Into::into).unwrap_or_default(),
+                            network_settings: network_settings.clone(),
+                            parent: text(&options.parent),
+                            widen: options.widen.unwrap_or(false),
                             instance_type: text(&options.instance_type),
                             region: text(&options.region),
                         })
@@ -3601,6 +3747,9 @@ impl Spaces {
                         network: options.network.clone().unwrap_or_default(),
                         labels: options.labels,
                         egress: options.egress.map(Into::into),
+                        network_settings: network_settings.as_ref().map(cua_spaces::network::to_pb),
+                        parent: options.parent.clone().unwrap_or_default(),
+                        widen: options.widen.unwrap_or(false),
                         instance_type: options.instance_type.clone().unwrap_or_default(),
                         region: options.region.clone().unwrap_or_default(),
                     };
@@ -3613,7 +3762,16 @@ impl Spaces {
                             .map_err(daemon_err)?
                             .into_inner(),
                     };
-                    if let Err(what) = daemon_applied(network, asked_egress, &r) {
+                    if let Err(what) = daemon_applied(network, asked_egress, &r).and_then(|()| {
+                        // A daemon from before network settings never reads
+                        // them: only its answer proves they hold.
+                        match (&network_settings, r.space.as_ref()) {
+                            (Some(_), Some(s)) if !r.reused && s.network_settings.is_none() => {
+                                Err("network settings")
+                            }
+                            _ => Ok(()),
+                        }
+                    }) {
                         return Err(refuse_daemon_create(d, &r, what).await);
                     }
                     Ok(if r.phase == "starting" {

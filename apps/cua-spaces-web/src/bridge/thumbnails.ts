@@ -19,12 +19,17 @@ import { BridgeContext } from "./BridgeProvider";
 import type { Space } from "./contracts/spaces";
 import type { SpaceThumbnail } from "./ops/space-detail";
 import type { BridgeStore } from "./store";
+import { JobQueue } from "../lib/poll-plan";
 
 /** The most images held (thumbnails are about 320 px on the long edge). */
 export const THUMBNAIL_CAP = 32;
 /** How fresh a shown thumbnail is kept: the core's `thumbnail_policy`
  * background interval (a Space is asked again no sooner). */
 export const THUMBNAIL_REFRESH_MS = 90_000;
+/** Thumbnails asked of the host at once, at most: a screenful of tiles drawing
+ * together (a scroll through a long grid) is a few calls at a time, not one
+ * per tile. */
+export const THUMBNAIL_PARALLEL = 4;
 
 export class ThumbnailStore {
   /** By Space id, least recently used first. */
@@ -32,6 +37,7 @@ export class ThumbnailStore {
   private asked = new Map<string, number>();
   private inflight = new Set<string>();
   private unsupported = false;
+  private readonly queue = new JobQueue(THUMBNAIL_PARALLEL);
   private listeners = new Set<() => void>();
 
   constructor(
@@ -84,7 +90,7 @@ export class ThumbnailStore {
     this.asked.set(spaceId, this.now());
     this.inflight.add(spaceId);
     try {
-      const t = await this.adapter.call("spaces.thumbnail", { spaceId });
+      const t = await this.queue.run(() => this.adapter.call("spaces.thumbnail", { spaceId }));
       if (t?.url) this.set(spaceId, t);
     } catch (e) {
       if (isUnsupported(e)) this.unsupported = true;

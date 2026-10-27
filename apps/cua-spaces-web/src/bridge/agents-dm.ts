@@ -16,9 +16,10 @@
  *   answers approvals.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { CoreClient } from "./core";
+import { chatsPollMs, jittered, mapLimit, MissCache } from "../lib/poll-plan";
 import { useBridge, useSpaces } from "./hooks";
 import type { Space } from "./contracts/spaces";
 import { foldThread, readSeqFrom, type ThreadItem } from "./thread";
@@ -172,7 +173,12 @@ interface AgentListRow {
   attempt: string | null;
 }
 
+/** The Agents tab's base poll; it slows as the account's Spaces grow (`chatsPollMs`). */
 export const CHATS_POLL_MS = 5_000;
+/** Spaces' threads read at once, at most. */
+const CHATS_PARALLEL = 8;
+/** How long a Space with no thread is left alone. */
+const MISS_TTL_MS = 60_000;
 
 export interface AgentChats {
   /** null while the first read is under way. */
@@ -195,33 +201,50 @@ export function useAgentChats(attempts: readonly ChatAttempt[] = []): AgentChats
   const [round, setRound] = useState(0);
   const list = (spaces ?? []).filter((s) => !s.id.startsWith("pending:"));
   const ids = list.map((s) => s.id).join("\n");
+  // Not asked again for a minute: a Space with no thread (a stopped machine, an old daemon) stays that way.
+  const misses = useRef(new MissCache(MISS_TTL_MS));
   useEffect(() => {
     if (!data || spaces === undefined) return;
     let alive = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    misses.current.prune(new Set(list.map((s) => s.id)));
     const read = async () => {
-      const got = await Promise.all(
-        list.map(async (space) => {
-          try {
-            const [{ members }, page] = await Promise.all([data.call("thread.members", { spaceId: space.id, overview: true }), data.call("thread.read", { spaceId: space.id, limit: 1 })]);
-            return { space, role: page.role, members, me: page.me };
-          } catch (e) {
-            // No thread there (an old daemon, a stopped machine): not in the list.
-            if (!isMissingThreadTool(e)) console.debug("agents: couldn't read", space.id, e);
-            return null;
-          }
-        }),
-      );
+      const asked = list.filter((s) => !misses.current.has(s.id));
+      const got = await mapLimit(asked, CHATS_PARALLEL, async (space) => {
+        try {
+          const [{ members }, page] = await Promise.all([data.call("thread.members", { spaceId: space.id, overview: true }), data.call("thread.read", { spaceId: space.id, limit: 1 })]);
+          return { space, role: page.role, members, me: page.me };
+        } catch (e) {
+          // No thread there (an old daemon, a stopped machine): not in the list, and not asked again for a while.
+          if (isMissingThreadTool(e)) misses.current.add(space.id);
+          else console.debug("agents: couldn't read", space.id, e);
+          return null;
+        }
+      });
       if (!alive) return;
       const ok = got.filter((g): g is NonNullable<typeof g> => g !== null);
       setWithThread(ok.map((g) => g.space));
       setMe(ok.find((g) => g.me)?.me ?? null);
       setRead(ok);
     };
-    void read();
-    const t = setInterval(() => void read(), CHATS_POLL_MS);
+    // One read at a time, the next after the last one ends: slower as the
+    // account grows (`chatsPollMs`), spread so pages don't ask together, and
+    // paused while the page is hidden (it reads at once on coming back).
+    const loop = async () => {
+      if (visible()) await read();
+      if (alive) timer = setTimeout(() => void loop(), jittered(chatsPollMs(list.length)));
+    };
+    const onVisible = () => {
+      if (!visible() || !alive) return;
+      clearTimeout(timer);
+      void loop();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    void loop();
     return () => {
       alive = false;
-      clearInterval(t);
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisible);
     };
     // `list` follows `ids`.
     // eslint-disable-next-line react-hooks/exhaustive-deps

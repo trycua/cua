@@ -43,6 +43,7 @@ fi
 evidence="$(cd "$evidence" && pwd -P)" || exit 2
 if git -C "$evidence" rev-parse --show-toplevel >/dev/null 2>&1; then
   echo "evidence directory must be outside a git checkout: $evidence" >&2
+  [ "$new" = 1 ] && rmdir "$evidence" 2>/dev/null
   exit 2
 fi
 chmod 0700 "$evidence"

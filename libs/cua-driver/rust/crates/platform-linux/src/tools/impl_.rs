@@ -2291,6 +2291,32 @@ fn process_exited(pid: u32) -> bool {
     }
 }
 
+/// Whether `pid` descends from `ancestor`, as `soffice.bin` does from the
+/// `oosplash` launcher that stays alive while it draws the window.
+fn descends_from(pid: u32, ancestor: u32) -> bool {
+    let mut current = pid;
+    for _ in 0..32 {
+        let Some(parent) = std::fs::read_to_string(format!("/proc/{current}/stat"))
+            .ok()
+            .and_then(|stat| {
+                stat.rsplit_once(')')
+                    .and_then(|(_, rest)| rest.split_whitespace().nth(1))
+                    .and_then(|ppid| ppid.parse::<u32>().ok())
+            })
+        else {
+            return false;
+        };
+        if parent == ancestor {
+            return true;
+        }
+        if parent <= 1 {
+            return false;
+        }
+        current = parent;
+    }
+    false
+}
+
 /// Case-insensitive identity match between a launch query
 /// (`nautilus`, `org.gnome.Nautilus`, `gnome-control-center`, a display
 /// name) and a window's WM_CLASS / app id.
@@ -2307,22 +2333,15 @@ fn window_matches_launch_key(window: &crate::x11::WindowInfo, query: &str) -> bo
         return false;
     }
     let query = query.to_ascii_lowercase();
-    let stem = query
+    let program = query.split_whitespace().next().unwrap_or_default();
+    let stem = program
         .rsplit('/')
         .next()
-        .unwrap_or(&query)
-        .trim_end_matches(".desktop")
-        .to_owned();
-    let last = stem.rsplit('.').next().unwrap_or(&stem).to_owned();
-    let class_last = class.rsplit('.').next().unwrap_or(&class).to_owned();
-    class == stem
-        || class_last == last
-        || class.contains(&last)
-        || last.contains(&class_last)
-        || stem
-            .split_whitespace()
-            .next()
-            .is_some_and(|word| class.contains(word))
+        .unwrap_or(program)
+        .trim_end_matches(".desktop");
+    let last = stem.rsplit('.').next().unwrap_or(stem);
+    let class_last = class.rsplit('.').next().unwrap_or(&class);
+    class == stem || class_last == last || class.contains(last) || last.contains(class_last)
 }
 
 /// How long a launch may take to show a window while the launcher process is
@@ -2332,8 +2351,8 @@ fn window_matches_launch_key(window: &crate::x11::WindowInfo, query: &str) -> bo
 const LAUNCH_STARTING_BUDGET: std::time::Duration = std::time::Duration::from_secs(20);
 const LAUNCH_HANDOFF_BUDGET: std::time::Duration = std::time::Duration::from_secs(8);
 
-/// Resolve the window(s) of a launch. Prefers the launcher's own window;
-/// otherwise adopts a newly mapped top-level whose WM_CLASS matches the
+/// Resolve the window(s) of a launch. Prefers the launcher's own window,
+/// then one of a process it forked; otherwise adopts a newly mapped top-level whose WM_CLASS matches the
 /// launch, whoever owns it: a wrapper script that exec'd the real binary
 /// (`libreoffice` → `soffice.bin`), or the running D-Bus service GNOME apps
 /// hand their request to.
@@ -2345,9 +2364,14 @@ fn resolve_launched_windows(
     let started = std::time::Instant::now();
     loop {
         let all = crate::wayland::list_windows_dispatch(None);
-        if let Some(launched) = settle_launch(&all, launcher_pid, query, before, |w| {
-            crate::x11::window_is_splash(w.xid)
-        }) {
+        if let Some(launched) = settle_launch(
+            &all,
+            launcher_pid,
+            query,
+            before,
+            |w| crate::x11::window_is_splash(w.xid),
+            |pid| descends_from(pid, launcher_pid),
+        ) {
             return launched;
         }
         let launcher_exited = process_exited(launcher_pid);
@@ -2373,6 +2397,7 @@ fn settle_launch(
     query: &str,
     before: &std::collections::HashSet<u64>,
     is_splash: impl Fn(&crate::x11::WindowInfo) -> bool,
+    descends: impl Fn(u32) -> bool,
 ) -> Option<LaunchedWindows> {
     let own: Vec<_> = all
         .iter()
@@ -2386,10 +2411,27 @@ fn settle_launch(
             handed_off: false,
         });
     }
+    let new = |w: &&crate::x11::WindowInfo| !before.contains(&w.xid) && !is_splash(w);
+    if let Some(pid) = all
+        .iter()
+        .filter(new)
+        .find_map(|w| w.pid.filter(|&pid| descends(pid)))
+    {
+        return Some(LaunchedWindows {
+            pid: Some(pid),
+            windows: all
+                .iter()
+                .filter(new)
+                .filter(|w| w.pid == Some(pid))
+                .cloned()
+                .collect(),
+            handed_off: true,
+        });
+    }
     let fresh: Vec<_> = all
         .iter()
-        .filter(|w| !before.contains(&w.xid) && w.pid.is_some())
-        .filter(|w| window_matches_launch(w, query) && !is_splash(w))
+        .filter(new)
+        .filter(|w| w.pid.is_some() && window_matches_launch(w, query))
         .cloned()
         .collect();
     let pid = fresh.first()?.pid?;

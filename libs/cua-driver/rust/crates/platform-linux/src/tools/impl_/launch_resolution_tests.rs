@@ -45,7 +45,23 @@ fn launch_queries_match_window_classes() {
         &window("Gnome-control-center"),
         "Settings\u{0}Settings\u{0}gnome-control-center"
     ));
+    assert!(window_matches_launch(
+        &window("libreoffice-calc"),
+        "libreoffice --calc /tmp/x.ods"
+    ));
+    assert!(window_matches_launch(
+        &window("Evince"),
+        "evince /tmp/a.pdf"
+    ));
+    assert!(window_matches_launch(
+        &window("Gedit"),
+        "/usr/bin/gedit --new-window"
+    ));
     assert!(!window_matches_launch(&window("Gedit"), "nautilus"));
+    assert!(!window_matches_launch(
+        &window("Gedit"),
+        "evince /tmp/gedit"
+    ));
     assert!(!window_matches_launch(&window(""), "nautilus"));
 }
 
@@ -64,9 +80,25 @@ fn a_launcher_splash_waits_for_the_app_window() {
     let none = std::collections::HashSet::new();
     let is_splash = |w: &crate::x11::WindowInfo| w.xid == 10;
 
-    assert!(settle_launch(&[splash.clone()], 377, "libreoffice", &none, is_splash).is_none());
+    assert!(settle_launch(
+        &[splash.clone()],
+        377,
+        "libreoffice",
+        &none,
+        is_splash,
+        |_| false
+    )
+    .is_none());
 
-    let launched = settle_launch(&[splash, calc], 377, "libreoffice", &none, is_splash).unwrap();
+    let launched = settle_launch(
+        &[splash, calc],
+        377,
+        "libreoffice",
+        &none,
+        is_splash,
+        |_| false,
+    )
+    .unwrap();
     assert_eq!(launched.pid, Some(398));
     assert_eq!(
         launched.windows.iter().map(|w| w.xid).collect::<Vec<_>>(),
@@ -74,8 +106,44 @@ fn a_launcher_splash_waits_for_the_app_window() {
     );
 
     let gimp = owned(30, 377, "gimp");
-    let launched = settle_launch(&[gimp], 377, "gimp", &none, is_splash).unwrap();
+    let launched = settle_launch(&[gimp], 377, "gimp", &none, is_splash, |_| false).unwrap();
     assert_eq!((launched.pid, launched.handed_off), (Some(377), false));
+}
+
+#[test]
+fn a_window_of_a_process_the_launcher_forked_is_the_launch() {
+    let splash = owned(10, 377, "libreoffice");
+    let calc = owned(20, 398, "libreoffice-calc");
+    let other = owned(30, 512, "localc");
+    let none = std::collections::HashSet::new();
+    let is_splash = |w: &crate::x11::WindowInfo| w.xid == 10;
+    let all = [other, splash, calc];
+
+    assert_eq!(
+        settle_launch(&all, 377, "localc", &none, is_splash, |_| false)
+            .unwrap()
+            .pid,
+        Some(512)
+    );
+    let launched = settle_launch(&all, 377, "localc", &none, is_splash, |pid| pid == 398).unwrap();
+    assert_eq!((launched.pid, launched.handed_off), (Some(398), true));
+    assert_eq!(
+        launched.windows.iter().map(|w| w.xid).collect::<Vec<_>>(),
+        [20]
+    );
+}
+
+#[test]
+fn a_child_process_descends_from_this_one_and_not_the_reverse() {
+    let mut child = std::process::Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .unwrap();
+    assert!(descends_from(child.id(), std::process::id()));
+    assert!(!descends_from(std::process::id(), child.id()));
+    assert!(!descends_from(u32::MAX - 1, std::process::id()));
+    child.kill().unwrap();
+    child.wait().unwrap();
 }
 
 #[test]

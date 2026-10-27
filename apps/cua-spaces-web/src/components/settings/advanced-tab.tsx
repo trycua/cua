@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { setFlagOverride, useAbout, useBridge, useExperiments, useFlag, useMachines, useSession, useSettings, useThisMachine, type SettingsOption, type SettingsRow as CoreRow } from "@/bridge";
+import { setFlagOverride, useAbout, useBridge, useExperiments, useFlag, useMachines, useMicrovmRows, useSession, useSettings, useThisMachine, type SettingsOption, type SettingsRow as CoreRow } from "@/bridge";
 import { aboutView } from "@/bridge/settings-derive";
 import { SettingsGroup } from "@/components/settings-group";
+import { SettingRow } from "@/components/ui/grouped";
 import { CoreSettingsRow } from "@/components/settings/core-section";
 import { HostSetupForm } from "@/components/this-machine";
 import { Button } from "@/components/ui/button";
@@ -40,15 +41,24 @@ export function AdvancedTab() {
   const runtimes = page?.sections.find((s) => s.id === "runtimes");
   const autoConnect = general?.rows.find((r) => r.id === "auto-connect");
   const overflow = general?.rows.find((r) => r.id === "placement-overflow");
+  // Whether this computer runs microVMs, and why not (New Space only greys MicroVM out).
+  const microvm = useMicrovmRows();
+  const microvmStatus = microvm.find((r) => r.id === "microvm-runtime");
+  const microvmNote = microvm.find((r) => r.id === "microvm-runtime-note");
   const choose = (row: CoreRow, option: string) => void chooseSetting(row.id, option).catch(toastError(`Couldn't change ${row.label}`));
 
   return (
     <div data-settings-tab="advanced">
       <EarlyReleases />
       <Labs />
-      {runtimes || autoConnect || overflow ? (
+      {runtimes || autoConnect || overflow || microvmStatus ? (
         <SettingsGroup title="Which software runs Spaces on this Mac">
           {runtimes?.rows.filter((r) => r.kind === "choice").map((r) => <CoreSettingsRow key={r.id} row={runtimeRow(r)} asSelect onChoose={choose} />)}
+          {microvmStatus ? (
+            <div data-microvm-runtime="" data-microvm-problem={microvmNote?.kind === "error" || undefined}>
+              <CoreSettingsRow row={{ ...microvmStatus, label: "MicroVMs" }} description={microvmNote?.label} />
+            </div>
+          ) : null}
           {autoConnect ? <CoreSettingsRow row={{ ...autoConnect, label: "Open a Space’s screen right away" }} onChoose={choose} /> : null}
           {overflow ? (
             <CoreSettingsRow
@@ -102,12 +112,12 @@ function EarlyReleases() {
   );
 }
 
-/** The "Ask first" Home (`spaces_ask_first_home`): a switch for this device only. */
-function askFirstRow(on: boolean): CoreRow {
+/** A Labs flag's switch, for this device only. */
+function flagRow(id: string, label: string, on: boolean): CoreRow {
   return {
-    id: "flag:spaces_ask_first_home",
+    id: `flag:${id}`,
     kind: "toggle",
-    label: "Try the new Home",
+    label,
     value: null,
     button: null,
     options: [
@@ -124,7 +134,7 @@ function askFirstRow(on: boolean): CoreRow {
 
 /** Whether a task asks before it works on this Mac itself (the answer to "Work on this Mac?" is kept per device). */
 function thisMacAskRow(asks: boolean): CoreRow {
-  return { ...askFirstRow(asks), id: "ask-first:this-mac", label: "Ask before a task uses this Mac", options: [
+  return { ...flagRow("spaces_ask_first_home", "", asks), id: "ask-first:this-mac", label: "Ask before a task uses this Mac", options: [
     { id: "on", label: "On", active: asks },
     { id: "off", label: "Off", active: !asks },
   ] };
@@ -134,6 +144,7 @@ function thisMacAskRow(asks: boolean): CoreRow {
 function Labs() {
   const { data, chooseExperiment } = useExperiments();
   const askFirst = useFlag("spaces_ask_first_home");
+  const redesign = useFlag("spaces_redesign");
   const thisMacOk = useThisMacConfirmed();
   const rows = (data?.page?.sections.flatMap((s) => s.rows) ?? []).filter((r) => LABS.has(r.id));
   const note: Record<string, string> = {
@@ -142,7 +153,12 @@ function Labs() {
   return (
     <SettingsGroup title="Labs">
       <CoreSettingsRow
-        row={askFirstRow(askFirst)}
+        row={flagRow("spaces_redesign", "Try the new design", redesign)}
+        description="The new Spaces page, Space page and Agents tab. On this device only."
+        onChoose={(_, option) => setFlagOverride("spaces_redesign", option === "on")}
+      />
+      <CoreSettingsRow
+        row={flagRow("spaces_ask_first_home", "Try the new Home", askFirst)}
         description="Home asks what you want done, then does it on a fresh computer you can watch. On this device only."
         onChoose={(_, option) => setFlagOverride("spaces_ask_first_home", option === "on")}
       />
@@ -176,15 +192,16 @@ function OwnConnection() {
       {form ? (
         <HostSetupForm view={form} host={host} failure={host.setupError} progress={machines?.find((m) => m.current)?.hostProgress} onRetry={() => void host.retrySetUp()} />
       ) : (
-        <div className="flex min-h-12 items-center justify-between gap-6 px-4 py-2.5" data-self-hosting="">
-          <div className="min-w-0">
-            <div className="text-[13px]">Use your own connection server</div>
-            <p className="mt-0.5 text-xs text-muted-foreground">For teams that run their own.</p>
-          </div>
-          <Button size="sm" variant="outline" disabled={host.busy} onClick={() => host.openForm(SELF_HOSTED)}>
-            Set up…
-          </Button>
-        </div>
+        <SettingRow
+          data-self-hosting=""
+          label="Use your own connection server"
+          help="For teams that run their own."
+          control={
+            <Button size="sm" variant="outline" disabled={host.busy} onClick={() => host.openForm(SELF_HOSTED)}>
+              Set up…
+            </Button>
+          }
+        />
       )}
     </SettingsGroup>
   );

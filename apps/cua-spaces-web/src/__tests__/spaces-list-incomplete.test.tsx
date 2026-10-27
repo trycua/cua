@@ -70,11 +70,11 @@ describe("the Spaces page while the list is incomplete", { timeout: 30_000 }, ()
     expect(emptyHome()).toBeNull();
   });
 
-  it("puts the empty home in the grid's place, under the filters", async () => {
+  it("puts the empty home in the grid's place, with no filters while there is nothing to filter", async () => {
     await mount({ current: { loaded: true, incomplete: false, reaching: 0, stale: false } }, true);
     await waitFor(() => expect(emptyHome()).not.toBeNull(), WAIT);
-    const filters = document.querySelector('[aria-label="Filter by state"]')!;
-    expect(filters.compareDocumentPosition(emptyHome()!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(document.querySelector('[aria-label="Filter by state"]')).toBeNull();
+    expect(document.querySelector("[data-spaces-toolbar]")).toBeNull();
   });
 });
 

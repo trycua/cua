@@ -23,6 +23,9 @@ Returned by [`Cua.agent_setup`](/cua-sdk/reference/cua#cua).
 | Method | Description |
 | --- | --- |
 | [`configure_mcp`](#agentsetupconfigure_mcp) | Configures the MCP server (default: `cua mcp`, `cua` resolved on PATH; `cua-local mcp` named `cua-local` for the Local app) for `agents`. |
+| [`connect_json`](#agentsetupconnect_json) | Connect (and Reconnect) for `agents`: Cua's skills and MCP entry (`server`, default this channel's cua), and with `sign_in` the agent's sign-in copied into Keyvault on This Mac (Claude Code waits for its one browser approval). |
+| [`connection_status_json`](#agentsetupconnection_status_json) | Whether each agent is really connected (CONTRACT §4: `{agents, checked_at_ms}`), as JSON, the same JSON `cua connect status --json` prints and the `connect_status` MCP tool answers. |
+| [`disconnect_json`](#agentsetupdisconnect_json) | Disconnect: what Connect did, undone (the previous config entry back from Cua's record, the skills, and with `sign_in` the copy in Keyvault). |
 | [`install_skills`](#agentsetupinstall_skills) | Installs `skills` (empty: all bundled) for `agents`. |
 | [`remove`](#agentsetupremove) | Removes what cua added for `agents` (skills and/or MCP). |
 | [`select`](#agentsetupselect) | Resolves `all` (installed agents), `none` or `claude,codex` to ids. |
@@ -89,6 +92,167 @@ pub async fn configure_mcp(&self, agents: Vec<String>, server: Option<AgentMcpSe
 | `server` | [`Option<AgentMcpServer>`](#agentmcpserver-record) | required |
 
 **Returns** [`Vec<AgentSetupOutcome>`](#agentsetupoutcome-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
+
+### `AgentSetup.connect_json`
+
+Connect (and Reconnect) for `agents`: Cua's skills and MCP entry
+(`server`, default this channel's cua), and with `sign_in` the
+agent's sign-in copied into Keyvault on This Mac (Claude Code waits
+for its one browser approval). JSON: one result per agent.
+
+<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Python">
+
+```python
+async def connect_json(self, agents: List[str], server: Optional[AgentMcpServer], skills: bool, mcp: bool, sign_in: bool) -> str
+```
+
+</Tab>
+<Tab value="TypeScript">
+
+```ts
+connectJson(agents: Array<string>, server: AgentMcpServer | undefined, skills: boolean, mcp: boolean, signIn: boolean, asyncOpts_?: { signal: AbortSignal }): Promise<string>
+```
+
+</Tab>
+<Tab value="Swift">
+
+```swift
+func connectJson(agents: [String], server: AgentMcpServer?, skills: Bool, mcp: Bool, signIn: Bool) async throws -> String
+```
+
+</Tab>
+<Tab value="Kotlin">
+
+```kotlin
+@Throws(CuaException::class)
+suspend fun connectJson(agents: List<String>, server: AgentMcpServer?, skills: Boolean, mcp: Boolean, signIn: Boolean): String
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub async fn connect_json(&self, agents: Vec<String>, server: Option<AgentMcpServer>, skills: bool, mcp: bool, sign_in: bool) -> Result<String, CuaError>
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `agents` | `Vec<String>` | required |
+| `server` | [`Option<AgentMcpServer>`](#agentmcpserver-record) | required |
+| `skills` | `bool` | required |
+| `mcp` | `bool` | required |
+| `sign_in` | `bool` | required |
+
+**Returns** `String` · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
+
+### `AgentSetup.connection_status_json`
+
+Whether each agent is really connected (CONTRACT §4: `&#123;agents,
+checked_at_ms&#125;`), as JSON, the same JSON `cua connect status --json`
+prints and the `connect_status` MCP tool answers. `expected` is the
+MCP server this app writes (an entry launching another cua is
+`stale`); `refresh` skips the few-second cache (window focus).
+
+<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Python">
+
+```python
+def connection_status_json(self, expected: Optional[AgentMcpServer], refresh: bool) -> str
+```
+
+</Tab>
+<Tab value="TypeScript">
+
+```ts
+connectionStatusJson(expected: AgentMcpServer | undefined, refresh: boolean): string
+```
+
+</Tab>
+<Tab value="Swift">
+
+```swift
+func connectionStatusJson(expected: AgentMcpServer?, refresh: Bool) -> String
+```
+
+</Tab>
+<Tab value="Kotlin">
+
+```kotlin
+fun connectionStatusJson(expected: AgentMcpServer?, refresh: Boolean): String
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub fn connection_status_json(&self, expected: Option<AgentMcpServer>, refresh: bool) -> String
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `expected` | [`Option<AgentMcpServer>`](#agentmcpserver-record) | required |
+| `refresh` | `bool` | required |
+
+**Returns** `String`
+
+### `AgentSetup.disconnect_json`
+
+Disconnect: what Connect did, undone (the previous config entry back
+from Cua's record, the skills, and with `sign_in` the copy in
+Keyvault). JSON `{outcomes, removed_sign_ins}`.
+
+<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Python">
+
+```python
+async def disconnect_json(self, agents: List[str], sign_in: bool) -> str
+```
+
+</Tab>
+<Tab value="TypeScript">
+
+```ts
+disconnectJson(agents: Array<string>, signIn: boolean, asyncOpts_?: { signal: AbortSignal }): Promise<string>
+```
+
+</Tab>
+<Tab value="Swift">
+
+```swift
+func disconnectJson(agents: [String], signIn: Bool) async throws -> String
+```
+
+</Tab>
+<Tab value="Kotlin">
+
+```kotlin
+@Throws(CuaException::class)
+suspend fun disconnectJson(agents: List<String>, signIn: Boolean): String
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub async fn disconnect_json(&self, agents: Vec<String>, sign_in: bool) -> Result<String, CuaError>
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `agents` | `Vec<String>` | required |
+| `sign_in` | `bool` | required |
+
+**Returns** `String` · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
 
 ### `AgentSetup.install_skills`
 

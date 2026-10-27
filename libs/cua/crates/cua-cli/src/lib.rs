@@ -30,6 +30,7 @@ mod agent_keys_cmd;
 mod agent_session_cmd;
 mod agents;
 mod auth;
+mod bench_cmd;
 mod browse;
 mod build_cmd;
 mod cache;
@@ -50,6 +51,7 @@ mod image_release;
 mod jobs_cmd;
 pub mod keyvault_cmd;
 mod mcp;
+mod member_cmd;
 pub mod onboard;
 mod persistent_cmd;
 pub mod prewarm;
@@ -68,6 +70,8 @@ mod telemetry_cmd;
 pub mod teleport;
 pub mod teleport_session;
 mod trajectory;
+#[cfg(test)]
+mod upgrade_070_tests;
 mod usage_cmd;
 pub mod util;
 
@@ -129,19 +133,34 @@ struct Cli {
     command: Command,
 }
 
+/// Former command names that still work, and the command each is now
+/// (`cua dump-docs` marks them `deprecated` with `replaced_by`).
+pub(crate) const DEPRECATED_COMMANDS: &[(&str, &str)] = &[
+    ("cua agents", "cua connect"),
+    ("cua agent create", "cua agent add"),
+    ("cua agent persistent", "cua agent ls"),
+    ("cua agent tell", "cua agent send"),
+    ("cua agent forget", "cua agent rm"),
+    ("cua agent routine", "cua agent schedule"),
+];
+
 #[derive(Subcommand, Debug)]
 enum Command {
     /// Log in to Cua and manage the signed-in session.
     #[command(subcommand)]
     Auth(AuthCmd),
-    /// AI coding agents on this computer: install cua skills and configure the cua MCP server.
+    /// Connect the AI agents on this computer to Cua: install the cua skills
+    /// and configure the cua MCP server.
+    #[command(subcommand)]
+    Connect(agents::AgentsCmd),
+    /// Deprecated alias of `connect`.
     #[command(subcommand)]
     Agents(agents::AgentsCmd),
     /// Share a link to a port, a file or a folder that opens on your other
     /// signed-in devices (never localhost): `cua share 3000`, `cua share
     /// ./report.html`, `cua share ls`, `cua share stop ID`.
     Share(share_cmd::ShareArgs),
-    /// Run coding agents inside a sandbox: run, ls, logs, send, interrupt, stop.
+    /// Agents in a Space: add, send, ls, rm, schedule; run, logs, stop.
     #[command(subcommand)]
     Agent(agent_cmd::AgentCmd),
     /// Sandboxes: local or an existing computer (direct).
@@ -188,7 +207,9 @@ enum Command {
   # Serve every tool over stdio (what MCP clients launch)
   cua mcp
   # Read-only sandbox tools, computer tools on the sandbox dev
-  cua mcp --permissions sandbox:readonly,computer:all --sandbox dev"
+  cua mcp --permissions sandbox:readonly,computer:all --sandbox dev
+  # An agent that joined a Space with cua join: its thread tools only
+  cua mcp --member ubuntu-build/codex"
     )]
     Mcp {
         /// Comma-separated permissions or groups (default: all).
@@ -197,7 +218,20 @@ enum Command {
         /// Default sandbox for computer tools.
         #[arg(long, env = "CUA_SANDBOX", default_value = "")]
         sandbox: String,
+        /// Serve only the Space thread tools (thread_join, thread_inbox,
+        /// thread_read, thread_post, agent_members) as the agent this
+        /// computer joined with `cua join` (`<space>/<handle>`). Its key
+        /// stays in the keychain.
+        #[arg(long, conflicts_with_all = ["permissions", "sandbox"])]
+        member: Option<String>,
     },
+    /// Join a Space as an agent on this computer, with the code from a
+    /// "Join my Cua Space" link. Needs your Cua sign-in; the code works once.
+    Join(member_cmd::JoinArgs),
+    /// A Space's thread, as the agent this computer joined with `cua join`:
+    /// say who you are, read your inbox, post.
+    #[command(subcommand)]
+    Thread(member_cmd::ThreadCmd),
     /// Recorded demonstrations (skills) for agents.
     #[command(subcommand)]
     Skills(SkillsCmd),
@@ -376,6 +410,17 @@ enum Command {
   cua telemetry show-last"
     )]
     Telemetry(telemetry_cmd::TelemetryCmd),
+    /// Spaces performance benchmarks: list them, run one in Spaces of its
+    /// own (writes result.json and samples.csv in the bench-result v1
+    /// format), and check a run against a committed baseline.
+    #[command(
+        subcommand,
+        after_help = "Examples:
+  cua bench list
+  cua bench run microvm-fork --n 5 --out ./mf
+  cua bench check ./mf/result.json --baseline microvm-fork/baseline.json"
+    )]
+    Bench(bench_cmd::BenchCmd),
     /// (internal) The CLI and MCP surface as JSON, for the generated docs.
     #[command(name = "dump-docs", hide = true)]
     DumpDocs {
@@ -1509,7 +1554,7 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
                 AuthCmd::Provider(ProviderCmd::Rm { name }) => providers::remove(name, out),
             };
         }
-        Command::Agents(a) => {
+        Command::Connect(a) | Command::Agents(a) => {
             return match a {
                 agents::AgentsCmd::Detect => agents::cmd_detect(json, out),
                 agents::AgentsCmd::Setup(args) => agents::cmd_setup(args, json, out),
@@ -1589,6 +1634,7 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         }
         Command::Config(cmd) => return config_cmd::run(cmd.clone(), json, out),
         Command::Telemetry(cmd) => return telemetry_cmd::run(cmd.clone(), json, out),
+        Command::Bench(cmd) => return bench_cmd::run(cmd.clone(), json, out),
         Command::Keyvault(cmd) => return extension::keyvault(cmd.clone(), json, out).await,
         Command::Share(args) => return share_cmd::run(args.clone(), json, out).await,
         Command::Compat(cmd) => return compat_cmd::run(cmd.clone(), json, out).await,
@@ -1798,6 +1844,9 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         Command::Cloud(cloud_cmd::CloudCmd::Add {
             cloud: cloud_cmd::AddCloud::Aws(a),
         }) => return add_aws(a, json, out).await,
+        Command::Cloud(cloud_cmd::CloudCmd::Trust { cloud }) => {
+            return cloud_trust(&cloud, out).await;
+        }
         Command::Cloud(cmd) => {
             let rest = Cli {
                 command: Command::Spaces(host::SpacesCmd::Ls {
@@ -1883,8 +1932,17 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         Command::Doctor(cmd) => return doctor::dispatch(&cua, *cmd, json, out).await,
         Command::DoHostConsent => return do_cmd::host_consent(&cua, out).await,
         Command::Mcp {
+            member: Some(member),
+            ..
+        } => {
+            return mcp::serve_stdio(member_cmd::member_server(cua, &member)?).await;
+        }
+        Command::Join(args) => return member_cmd::join(&cua, args, json, out).await,
+        Command::Thread(cmd) => return member_cmd::thread(&cua, cmd, json, out).await,
+        Command::Mcp {
             permissions,
             sandbox,
+            member: None,
         }
         | Command::Daemon(DaemonCmd::Mcp {
             permissions,
@@ -2149,6 +2207,7 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
             }
         }
         Command::Auth(_)
+        | Command::Connect(_)
         | Command::Agents(_)
         | Command::WifToken(_)
         | Command::Trajectory(_)
@@ -2172,6 +2231,7 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         | Command::Compat(_)
         | Command::Config(_)
         | Command::Telemetry(_)
+        | Command::Bench(_)
         | Command::Keyvault(_)
         | Command::Images(_)
         | Command::DumpDocs { .. } => unreachable!("handled above"),
@@ -2183,6 +2243,28 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
 #[cfg(feature = "byoc")]
 async fn add_aws(a: onboard::AwsArgs, json: bool, out: &mut dyn Write) -> Result<i32, CuaError> {
     add_aws::run(a, json, out).await
+}
+
+/// `cua cloud trust <cloud>`: the trust setup file this cua ships.
+#[cfg(feature = "byoc")]
+async fn cloud_trust(cloud: &str, out: &mut dyn Write) -> Result<i32, CuaError> {
+    let cloud = cloud.trim().to_ascii_lowercase();
+    let file = cua_byoc::trust::file(&cloud).ok_or_else(|| {
+        CuaError::InvalidArgument(format!(
+            "{cloud:?} has no trust file: aws, gcp or azure (Hetzner and Modal take an API token)"
+        ))
+    })?;
+    out.write_all(file.as_bytes())
+        .map_err(|e| CuaError::Internal(e.to_string()))?;
+    Ok(0)
+}
+
+#[cfg(not(feature = "byoc"))]
+async fn cloud_trust(_cloud: &str, _out: &mut dyn Write) -> Result<i32, CuaError> {
+    Err(CuaError::Unsupported(
+        "this cua was built without your own clouds (the byoc feature); install the Cua Spaces cua"
+            .into(),
+    ))
 }
 
 #[cfg(not(feature = "byoc"))]
@@ -2890,7 +2972,14 @@ pub fn main() {
         .enable_all()
         .build()
         .expect("tokio runtime");
+    // A signed-in machine links usage data even when it signed in before
+    // the server offered linking (CUA-1881): at most every few hours, in
+    // the background. Not around `cua auth`, which links or unlinks itself.
+    let refresh_link = record && !matches!(cli.command, Command::Auth(_) | Command::Config(_));
     let code = rt.block_on(async {
+        if refresh_link {
+            tokio::spawn(auth::refresh_usage_link());
+        }
         let mut out = std::io::stdout();
         let result = run(cli, &mut out).await;
         if record && !daemon_process {
@@ -2902,6 +2991,13 @@ pub fn main() {
                 Ok(_) => (Outcome::Error, None),
                 Err(e) => (Outcome::Error, Some(e.variant())),
             };
+            // A command turned down over a plan limit prints the sentence and
+            // the upgrade link: `cua_plan_limit_shown` (CUA-1881).
+            if let Err(e) = &result
+                && let Some(ev) = plan_limit_shown(&e.to_string())
+            {
+                telemetry.capture(ev);
+            }
             telemetry.capture(events::cli_command(
                 &command,
                 outcome,
@@ -2931,6 +3027,18 @@ pub fn main() {
     // agents run commands back to back: every one used to wait out 400 ms.
     telemetry.shutdown(EXIT_TELEMETRY_BUDGET);
     std::process::exit(code);
+}
+
+/// `cua_plan_limit_shown` for an error that is the relay's plan-limit
+/// refusal (the sentence the CLI prints, with its upgrade link); none for
+/// any other error.
+fn plan_limit_shown(error: &str) -> Option<cua_telemetry::Event> {
+    let l = cua_home::plan_limit::PlanLimit::parse(error)?;
+    Some(cua_telemetry::events::plan_limit_shown(
+        "cli_limit",
+        l.kind.word(),
+        &l.plan,
+    ))
 }
 
 /// The longest a command waits at exit to send its telemetry.
@@ -3036,6 +3144,23 @@ fn runtime_setup_output(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// CUA-1881: a command turned down over a plan limit is
+    /// `cua_plan_limit_shown` (`cli_limit`, its cap and plan); other errors
+    /// are not.
+    #[test]
+    fn a_plan_limit_error_is_a_plan_limit_shown() {
+        let e = crate::host::host_err(cua_host::Error::PlanLimit(
+            "You've used 20 of 20 remote hours this month on the free plan. Upgrade to Pro for more.".into(),
+        ));
+        let ev = plan_limit_shown(&e.to_string()).unwrap();
+        assert_eq!(ev.name, "cua_plan_limit_shown");
+        assert_eq!(ev.props["surface"], "cli_limit");
+        assert_eq!(ev.props["kind"], "hours");
+        assert_eq!(ev.props["plan"], "free");
+        assert!(e.to_string().contains("/buy/pro?from=cli_limit"), "{e}");
+        assert!(plan_limit_shown("relay: timed out").is_none());
+    }
 
     /// The WireGuard library's retry/expiry messages stay out of the log
     /// (also with `CUA_LOG=info`, as a service sets), unless

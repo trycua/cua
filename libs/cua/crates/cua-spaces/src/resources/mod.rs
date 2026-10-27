@@ -15,6 +15,11 @@
 //! * Other computers publish [`summary`] numbers through the relay
 //!   machine record (`meta`); reading them costs nothing extra because the
 //!   machine list is already fetched.
+//! * Your Spaces on your other computers get a [`SpaceResources`] too,
+//!   with only [`SpaceResources::disk_on_host`]: what each takes on its
+//!   computer, asked of that computer (`GetHostSpacesRequest.disk`) at most
+//!   every [`REMOTE_DISK_EVERY`] while somebody reads the numbers. An
+//!   offline computer's Spaces get none.
 //!
 //! Numbers only: counts, bytes and percentages. Never file names, paths,
 //! process names or window titles.
@@ -27,6 +32,7 @@ pub mod disk;
 pub mod host;
 mod hub;
 pub mod publish;
+mod remote;
 pub mod summary;
 mod wire;
 pub mod words;
@@ -51,6 +57,10 @@ pub const MAX_AGE: Duration = Duration::from_secs(5);
 /// One Space's disk is measured at most this often (and again after it is
 /// created, deleted or changes power state).
 pub const DISK_MEASURE_EVERY: Duration = Duration::from_secs(300);
+
+/// Your other computers are asked what your Spaces take on their disks at
+/// most this often.
+pub const REMOTE_DISK_EVERY: Duration = Duration::from_secs(60);
 
 /// An update carries an entry only when a percentage moved by more than
 /// this many points ...
@@ -248,11 +258,15 @@ pub struct DiskOnHost {
     pub shares_space: bool,
 }
 
-/// One extra Space on this Mac.
+/// One extra Space on this Mac, or one of yours on another of your
+/// computers (then only [`SpaceResources::disk_on_host`], on that computer,
+/// and its power state are known).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SpaceResources {
-    /// `local:<name>`.
+    /// The Space's id on this device: `local:<name>`, or for one on
+    /// another computer the id it is reached by here (`relay:<machine>`,
+    /// `direct:<addr>:<port>`).
     pub id: String,
     /// `running`, `stopped`, `suspended`, or empty when unknown.
     pub power_state: String,

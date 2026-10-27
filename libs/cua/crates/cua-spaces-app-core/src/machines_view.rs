@@ -96,6 +96,10 @@ pub struct MachinesViewInput {
     /// That update is downloaded and ready to restart into.
     #[serde(default)]
     pub app_update_ready: bool,
+    /// The user's clouds (`cloud_status`, [`crate::cloud_page::input_from_status`]);
+    /// `None`: not read (no Clouds group).
+    #[serde(default)]
+    pub clouds: Option<crate::cloud_page::CloudsInput>,
 }
 
 /// One of the two switches on a machine's page.
@@ -235,7 +239,7 @@ pub struct MachinesViewMachine {
     #[serde(default)]
     pub badge: Option<String>,
     /// The row's one muted line ("2 Spaces running", "Ready for Spaces",
-    /// "Offline · last seen 9 days ago").
+    /// "Offline").
     pub line: String,
     /// Usable now (the green dot): online and sharing.
     pub online: bool,
@@ -253,7 +257,7 @@ pub struct MachinesViewMachine {
     pub current: bool,
     /// Someone shares it with you (a team machine).
     pub team: bool,
-    /// The page's status line ("Online", "Offline · last seen 9 days ago").
+    /// The page's status line ("Online", "Offline").
     pub status: String,
     /// After the status: who shares it ("Shared by your team").
     #[serde(default)]
@@ -339,6 +343,13 @@ pub struct MachinesView {
     pub groups: Vec<MachinesViewGroup>,
     /// Every machine, in list order.
     pub machines: Vec<MachinesViewMachine>,
+    /// The Clouds group and each cloud's page.
+    #[serde(default)]
+    pub clouds: crate::cloud_page::CloudsView,
+    /// The list's sections, top to bottom: `clouds` (always first, so it
+    /// stays in view above a long machine list), then each of `groups` by id.
+    #[serde(default)]
+    pub order: Vec<String>,
 }
 
 /// The quiet label on a machine's own desktop among its Spaces.
@@ -416,12 +427,10 @@ fn os_label(os: &str) -> String {
     SpaceOs::parse(os).map_or_else(String::new, |o| o.label().to_string())
 }
 
-/// The offline line: "Offline · last seen 9 days ago", or "Offline".
-fn offline_line(last_seen: Option<u64>, now: u64) -> String {
-    match last_seen {
-        Some(t) if t > 0 => format!("{} \u{b7} last seen {}", machines::OFFLINE, ago(t, now)),
-        _ => machines::OFFLINE.into(),
-    }
+/// When an offline machine was last seen ("9 days ago"), for its Details;
+/// the row and status line say only "Offline".
+fn last_seen_text(last_seen: Option<u64>, now: u64) -> Option<String> {
+    last_seen.filter(|t| *t > 0).map(|t| ago(t, now))
 }
 
 /// What a machine's switches show and do.
@@ -621,10 +630,11 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
         };
 
         // The row's one line.
+        // One short label: no "a · b" chains (the switches show the rest).
         let line = if !row.online {
-            offline_line(row.last_seen, now)
+            machines::OFFLINE.into()
         } else if row.stopped_sharing {
-            format!("{} \u{b7} {}", machines::NOT_SHARING, row.spaces_label)
+            machines::NOT_SHARING.into()
         } else if row.device_only {
             machines::ONLINE.into()
         } else {
@@ -634,21 +644,17 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
             } else if !on.is_empty() {
                 parts.push(spaces_n(on.len()));
             }
-            if sw.provide {
-                if parts.is_empty() {
-                    parts.push("Ready for Spaces".into());
-                } else {
-                    parts.push("Provides Spaces".into());
-                }
+            if parts.is_empty() && sw.provide {
+                parts.push("Ready for Spaces".into());
             }
             if parts.is_empty() {
                 parts.push(machines::spaces_label(0));
             }
-            parts.join(" \u{b7} ")
+            parts.remove(0)
         };
 
         let status = if !row.online {
-            offline_line(row.last_seen, now)
+            machines::OFFLINE.into()
         } else if row.stopped_sharing {
             machines::NOT_SHARING.into()
         } else {
@@ -754,6 +760,11 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
                 });
             }
         };
+        if !row.online
+            && let Some(seen) = last_seen_text(row.last_seen, now)
+        {
+            fact("Last seen", seen);
+        }
         if row.current {
             fact(
                 "OS",
@@ -1010,8 +1021,16 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
             "{total} machine{}, {online} online",
             if total == 1 { "" } else { "s" }
         ),
+        order: std::iter::once("clouds".to_string())
+            .chain(groups.iter().map(|g| g.id.clone()))
+            .collect(),
         groups,
         machines: list,
+        clouds: input
+            .clouds
+            .as_ref()
+            .map(crate::cloud_page::view)
+            .unwrap_or_default(),
     }
 }
 
@@ -1087,6 +1106,7 @@ mod tests {
             health: vec![],
             app_update: String::new(),
             app_update_ready: false,
+            clouds: None,
             page: MachinesPageInput {
                 spaces: vec![
                     space(
@@ -1198,21 +1218,9 @@ mod tests {
             lines,
             [
                 ("Ada's MacBook Pro", "2 Spaces running", Some("This Mac")),
-                (
-                    "cua's Mac Studio",
-                    "1 Space running \u{b7} Provides Spaces",
-                    None
-                ),
-                (
-                    "Cua BYOC tests",
-                    "Offline \u{b7} last seen 9 days ago",
-                    None
-                ),
-                (
-                    "mac-mini-staging",
-                    "Offline \u{b7} last seen 41 days ago",
-                    None
-                ),
+                ("cua's Mac Studio", "1 Space running", None),
+                ("Cua BYOC tests", "Offline", None),
+                ("mac-mini-staging", "Offline", None),
                 ("build-mini-01", "Ready for Spaces", None),
             ]
         );
@@ -1261,7 +1269,13 @@ mod tests {
         let byoc = by_id(&v, "byoc");
         assert_eq!(byoc.notice.as_deref(), Some(OFFLINE_NOTICE));
         assert_eq!(byoc.toggles_note, None);
-        assert_eq!(byoc.status, "Offline \u{b7} last seen 9 days ago");
+        assert_eq!(byoc.status, "Offline");
+        assert_eq!(
+            byoc.details
+                .first()
+                .map(|f| (f.label.as_str(), f.value.as_str())),
+            Some(("Last seen", "9 days ago"))
+        );
     }
 
     #[test]
@@ -1413,6 +1427,7 @@ mod tests {
         assert_eq!(
             facts("byoc"),
             [
+                pair("Last seen", "9 days ago"),
                 pair("OS", "macOS"),
                 pair("Connection", "via Cua relay"),
                 pair("Service", "Not reachable"),
@@ -1472,7 +1487,7 @@ mod tests {
         };
         let v = view(&input);
         let m = by_id(&v, "b695");
-        assert_eq!(m.line, "Not sharing \u{b7} No Spaces");
+        assert_eq!(m.line, "Not sharing");
         assert_eq!(m.status, "Not sharing");
         assert!(!m.online);
         assert!(!m.new_space.enabled);
@@ -1484,5 +1499,13 @@ mod tests {
         assert_eq!(ago(NOW - 60, NOW), "1 minute ago");
         assert_eq!(ago(NOW - 2 * 3600, NOW), "2 hours ago");
         assert_eq!(ago(NOW - DAY, NOW), "1 day ago");
+    }
+
+    #[test]
+    fn the_clouds_come_first_in_the_list_so_a_long_machine_list_never_hides_them() {
+        let v = view(&mockup());
+        let groups: Vec<&str> = v.groups.iter().map(|g| g.id.as_str()).collect();
+        assert_eq!(v.order[0], "clouds");
+        assert_eq!(v.order[1..], groups);
     }
 }

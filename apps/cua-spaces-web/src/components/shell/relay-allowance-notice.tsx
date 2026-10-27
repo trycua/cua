@@ -4,7 +4,7 @@
 import { XIcon } from "lucide-react";
 import { useSyncExternalStore } from "react";
 
-import { useRelayUsage, useRelayUsageView, useSession, useUpsellCardAvailable, useUpsellGate } from "@/bridge";
+import { usePlanLimitTelemetry, useRelayUsage, useRelayUsageView, useSession, useUpsellCardAvailable, useUpsellGate } from "@/bridge";
 import { Button } from "@/components/ui/button";
 import { UpgradeCard } from "@/components/upgrade-card";
 
@@ -46,7 +46,9 @@ export function RelayAllowanceNotice() {
   // Only where there is a card to show; otherwise the notice stays as it was.
   const cardAvailable = useUpsellCardAvailable(notice?.level === "limit" ? reason : null, usage);
   const asCard = cardAvailable;
-  const gate = useUpsellGate("meter", !hidden && !asCard, notice?.level === "warn");
+  // Past a limit, its cap and plan make it `cua_plan_limit_shown` too.
+  const gate = useUpsellGate("meter", !hidden && !asCard, notice?.level === "warn", { kind: notice?.kind, plan: notice?.plan });
+  const plans = usePlanLimitTelemetry();
   if (notice && !hidden && asCard) {
     const remember = () => {
       try {
@@ -74,16 +76,16 @@ export function RelayAllowanceNotice() {
   };
   const upgradeUrl = notice.upgradeUrl;
   return (
-    <div role="status" data-relay-allowance={notice.level} className="flex shrink-0 items-center gap-3 border-b px-4 py-2 text-xs text-muted-foreground">
+    <div role="status" data-relay-allowance={notice.level} className="flex shrink-0 items-center gap-3 bg-muted/60 px-4 py-2 text-xs text-muted-foreground">
       <span className="min-w-0 flex-1">{notice.text}</span>
       {upgradeUrl ? (
         <Button
           size="sm"
-          variant="outline"
+          variant="secondary"
           data-relay-upgrade=""
           onClick={() => {
             gate.click();
-            void openExternal(upgradeUrl).catch(() => {});
+            void openExternal(plans.link(upgradeUrl, "app_meter")).catch(() => {});
           }}
         >
           {notice.upgrade}

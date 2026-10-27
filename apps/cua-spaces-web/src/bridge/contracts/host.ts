@@ -334,11 +334,86 @@ export interface MachinesViewGroup {
   removeAll?: { label: string; confirm: HostConfirm; removes: MachinesViewRemove[] } | null;
 }
 
+/** The clouds, as the page reads `cloud_status` (`cloud_page::CloudsInput`). */
+export interface CloudsInput {
+  providers: Record<string, unknown>[];
+  machines: Record<string, unknown>[];
+  canApprove: boolean;
+  now: number;
+}
+
+/** A button on a cloud's page (`cloud_page::CloudAction`). */
+export interface CloudAction {
+  /** `raise-budget`, `set-up-again`, `new-token`, `review`, `open`, `reconnect`, `switch-oidc` or `change-limits`. */
+  id: string;
+  label: string;
+  url: string | null;
+}
+
+export interface CloudIssue {
+  id: string;
+  level: "fail" | "warn";
+  text: string;
+  action: CloudAction | null;
+}
+
+/** One cloud's page (`cloud_page::CloudPage`). */
+export interface CloudPage {
+  id: string;
+  name: string;
+  logo: string;
+  status: string;
+  health: "ok" | "warn" | "fail";
+  issuesTitle: string;
+  issues: CloudIssue[];
+  spend: { amount: string; ofBudget: string; resets: string; percent: number; tone: "ok" | "warn"; note: string } | null;
+  running: { title: string; machines: { id: string; name: string; by: string; cost: string }[] } | null;
+  token: {
+    title: string;
+    lock: string;
+    note: string;
+    holdersLabel: string;
+    holders: string;
+    revokeLabel: string;
+    revokeHelp: string;
+    replace: CloudAction;
+  } | null;
+  settingsTitle: string;
+  settings: { id: string; label: string; help: string; value: string }[];
+  /** "Change limits…". */
+  limits: CloudAction | null;
+  /** "Switch to OIDC" on a CLI sign-in link that could link without a stored key. */
+  switchAuth: CloudAction | null;
+  approval: {
+    title: string;
+    intro: string;
+    rows: { label: string; value: string }[];
+    note: string;
+    approveLabel: string;
+    denyLabel: string;
+  } | null;
+  disconnect: { label: string; confirm: HostConfirm; delete: boolean } | null;
+}
+
+/** The Clouds group and each cloud's page (`cloud_page::CloudsView`). */
+export interface CloudsView {
+  group: {
+    title: string;
+    rows: { id: string; name: string; logo: string; line: string; health: "ok" | "warn" | "fail" }[];
+    connectLabel: string;
+  };
+  pages: CloudPage[];
+}
+
 /** The Machines page as every UI draws it (`machines_view::MachinesView`). */
 export interface MachinesView {
   summary: string;
   groups: MachinesViewGroup[];
   machines: MachinesViewMachine[];
+  /** The Clouds group under the machines; a host that predates it sends none. */
+  clouds?: CloudsView;
+  /** The list's sections, top to bottom (`clouds`, then each group's id); a host that predates it sends none. */
+  order?: string[];
 }
 
 export interface ServiceState {
@@ -675,6 +750,8 @@ export interface SettingsInput {
   agentsBusy?: boolean;
   /** The agents with a change running ("working…"). */
   agentsPending?: string[];
+  /** Settings, General's Show tips (`!AppSettings.tips.off`; the core's default: on). */
+  showTips?: boolean;
 }
 
 export type SettingsRowKind =

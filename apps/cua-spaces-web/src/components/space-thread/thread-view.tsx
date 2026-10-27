@@ -1,0 +1,512 @@
+// SPDX-License-Identifier: FSL-1.1-MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
+import { CheckIcon, FileTextIcon, ImageIcon, XIcon } from "lucide-react";
+import { memo, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+
+import { useBridge, type TaskState, type ThreadAttachment, type ThreadEntry, type ThreadItem, type ThreadView } from "@/bridge";
+import { Inlines } from "@/components/markdown";
+import { Button } from "@/components/ui/button";
+import { parseInline } from "@/lib/markdown";
+import { mentionSegments } from "@/lib/mentions";
+import { cn } from "@/lib/utils";
+
+import { AgentTile, MemberAvatar } from "./avatar";
+import { AgentName, AiTag, holderNames, MemberEventNote } from "./identity";
+import { waitingFor } from "./rights";
+import type { Roster } from "./roster";
+
+/**
+ * The Space thread under the desktop: messages, tasks with their status and
+ * the agent's replies nested under them, approvals, one-line notes and the
+ * unread divider (`foldThread`). It opens at the divider when there is
+ * one, else at the end, and follows new entries while you are at the end.
+ */
+export function ThreadView({
+  items,
+  roster,
+  onAnswer,
+  onOpenAttachment,
+  onReachTop,
+  onRemoveAgent,
+  empty,
+  className,
+  endInset = 0,
+}: {
+  items: ThreadItem[];
+  /** Room kept clear at the end (px): thread mode's mini-player sits there, never over the newest message. */
+  endInset?: number;
+  /** Removes an agent member from its card (absent: the host can't). */
+  onRemoveAgent?: (handle: string) => Promise<void>;
+  /** Scrolled to the top: read the page before (when there is one). */
+  onReachTop?: () => Promise<void>;
+  roster: Roster;
+  onAnswer: (approval: number, approve: boolean) => Promise<void>;
+  onOpenAttachment: (a: ThreadAttachment) => void;
+  /** What shows before anyone has written. */
+  empty: ReactNode;
+  className?: string;
+}) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const atEnd = useRef(true);
+  const opened = useRef(false);
+  // Older entries read in above: keep what you were looking at in place.
+  const keep = useRef<number | null>(null);
+  const first = items.length ? items[0]!.key : "";
+  const last = items.length ? items[items.length - 1]!.key : "";
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || !items.length) return;
+    if (keep.current !== null) {
+      el.scrollTop += el.scrollHeight - keep.current;
+      keep.current = null;
+      return;
+    }
+    if (!opened.current) {
+      opened.current = true;
+      // Opens with the unread divider about a third of the way down, so what
+      // you read last is just above it and the new entries follow.
+      const divider = el.querySelector<HTMLElement>("[data-unread]");
+      if (divider) {
+        el.scrollTop = Math.max(0, divider.offsetTop - el.clientHeight / 3);
+        atEnd.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+        return;
+      }
+    }
+    if (atEnd.current) el.scrollTop = el.scrollHeight;
+    // Follows the first and last items, not every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [first, last, items.length]);
+  // The mini-player moved to (or grew at) the bottom: keep the newest entry in view above it.
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (el && atEnd.current) el.scrollTop = el.scrollHeight;
+  }, [endInset]);
+  return (
+    <div
+      ref={ref}
+      data-thread=""
+      role="log"
+      aria-label="Thread"
+      onScroll={(e) => {
+        const el = e.currentTarget;
+        atEnd.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+        if (el.scrollTop < 80 && onReachTop && keep.current === null) {
+          keep.current = el.scrollHeight;
+          void onReachTop().then(() => {
+            // Nothing came in: the next scroll to the top may ask again.
+            if (ref.current && keep.current === ref.current.scrollHeight) keep.current = null;
+          });
+        }
+      }}
+      // Soft fades at the edges: an entry cut off there reads as scrolled, not broken.
+      className={cn("relative overflow-y-auto overscroll-contain [mask-image:linear-gradient(to_bottom,transparent_0,black_28px,black_calc(100%-16px),transparent_100%)]", className)}
+    >
+      {items.length === 0 ? (
+        <div className="flex h-full items-end px-8 pb-4">{empty}</div>
+      ) : (
+        <div className="flex min-h-full flex-col justify-end gap-1 px-8 pt-5 pb-4" style={endInset ? { paddingBottom: endInset + 16 } : undefined}>
+          {items.map((item) => (
+            <ThreadItemView key={item.key} item={item} roster={roster} onAnswer={onAnswer} onOpenAttachment={onOpenAttachment} onRemoveAgent={onRemoveAgent} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** One folded thread item as the thread draws it; the Agents tab's DM draws the same, labelled with its Space. */
+export const ThreadItemView = memo(function Item({
+  item,
+  roster,
+  onAnswer,
+  onOpenAttachment,
+  onRemoveAgent,
+  label,
+}: {
+  item: ThreadItem;
+  roster: Roster;
+  onAnswer: (approval: number, approve: boolean) => Promise<void>;
+  onOpenAttachment: (a: ThreadAttachment) => void;
+  onRemoveAgent?: (handle: string) => Promise<void>;
+  /** Beside each message's time (the DM's Space). */
+  label?: ReactNode;
+}) {
+  const m = { roster, onOpenAttachment, onRemoveAgent, label };
+  switch (item.type) {
+    case "unread":
+      return (
+        <div data-unread="" className="my-2 flex items-center gap-2 text-[11px] font-medium text-brand-strong">
+          <span className="h-px flex-1 bg-brand/40" />
+          New
+        </div>
+      );
+    case "system":
+      // A join or a removal with who it was: drawn with its mark; anything else is its line of text.
+      if (item.entry.event?.member) return <MemberEventNote event={item.entry.event} text={item.text} tsMs={item.entry.tsMs} />;
+      return (
+        <p data-thread-note={item.entry.seq} className="my-1 truncate text-center text-xs text-muted-foreground">
+          {item.text}
+        </p>
+      );
+    case "message":
+      return <Message entry={item.entry} {...m} />;
+    case "task":
+      return (
+        <div data-task={item.entry.seq} data-task-state={item.state}>
+          <Message entry={item.entry} {...m} status={<TaskChip state={item.state} />} footnote={keysLine(item.entry, roster)} />
+          {item.replies.length || item.notes.length ? (
+            <div data-task-replies="" className="pl-10">
+              {[...item.notes.map((n) => ({ seq: n.entry.seq, note: n.text, entry: n.entry })), ...item.replies.map((r) => ({ seq: r.seq, note: null, entry: r }))]
+                .sort((a, b) => a.seq - b.seq)
+                .map((x) =>
+                  x.note !== null ? (
+                    <p key={x.seq} data-thread-note={x.seq} className="py-1 pl-10 text-xs text-muted-foreground">
+                      {x.note}
+                    </p>
+                  ) : (
+                    <Message key={x.seq} entry={x.entry} {...m} nested />
+                  ),
+                )}
+            </div>
+          ) : null}
+        </div>
+      );
+    case "join_request":
+      return <JoinRequestCard item={item} roster={roster} onAnswer={onAnswer} />;
+    case "approval":
+      return <Approval item={item} roster={roster} onAnswer={onAnswer} onOpenAttachment={onOpenAttachment} onRemoveAgent={onRemoveAgent} label={label} />;
+  }
+});
+
+const TASK_STATUS: Record<TaskState, { label: string; dot: string; text: string }> = {
+  queued: { label: "Queued", dot: "bg-muted-foreground/50", text: "text-muted-foreground" },
+  claimed: { label: "Working", dot: "bg-success", text: "text-muted-foreground" },
+  working: { label: "Working", dot: "bg-success", text: "text-muted-foreground" },
+  done: { label: "Done", dot: "bg-success/60", text: "text-muted-foreground" },
+  failed: { label: "Failed", dot: "bg-destructive", text: "text-destructive" },
+};
+
+/** "Runs on Ada's keys" under a task someone else gave an agent that uses the owner's provider keys. */
+function keysLine(entry: ThreadEntry, roster: Roster): string | null {
+  const k = entry.runsOnKeysOf;
+  if (!k) return null;
+  return roster.people.some((p) => p.me && p.id === k.id) ? "Runs on your keys" : `Runs on ${k.name}'s keys`;
+}
+
+/** A task's state: a dot and a word beside the name and time. */
+export function TaskChip({ state }: { state: TaskState }) {
+  const c = TASK_STATUS[state];
+  return (
+    <span data-task-chip={state} className={cn("inline-flex items-center gap-1.5 text-[11px]", c.text)}>
+      <span aria-hidden className={cn("size-1.5 rounded-full", c.dot)} />
+      {c.label}
+    </span>
+  );
+}
+
+function Message({
+  entry,
+  roster,
+  onOpenAttachment,
+  onRemoveAgent,
+  label,
+  status,
+  footnote,
+  nested,
+  surface = "background",
+}: {
+  entry: ThreadEntry;
+  roster: Roster;
+  onOpenAttachment: (a: ThreadAttachment) => void;
+  onRemoveAgent?: (handle: string) => Promise<void>;
+  label?: ReactNode;
+  /** What the avatar sits on (the owner badge is cut out of it). */
+  surface?: "background" | "muted";
+  /** Beside the name and time (a task's state, an approval's). */
+  status?: ReactNode;
+  /** A muted line under the text ("Runs on Ada's keys"). */
+  footnote?: string | null;
+  nested?: boolean;
+}) {
+  const who = roster.author(entry.author);
+  return (
+    <div data-entry={entry.seq} className={cn("flex gap-3", nested ? "py-1.5" : "py-2")}>
+      <MemberAvatar
+        kind={who.kind === "agent" ? "agent" : "person"}
+        name={who.kind === "agent" ? (who.handle ?? who.label) : who.label}
+        harness={who.harness}
+        identity={who.identity}
+        surface={surface}
+        size={nested ? 24 : 28}
+        className="mt-0.5"
+      />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          {who.kind === "agent" ? <AgentName who={who} roster={roster} onRemove={onRemoveAgent} /> : <span className="truncate text-[13px] font-semibold">{who.label}</span>}
+          <time className="shrink-0 text-[11px] text-muted-foreground tabular-nums" dateTime={new Date(entry.tsMs).toISOString()} title={new Date(entry.tsMs).toLocaleString()}>
+            {clock(entry.tsMs)}
+          </time>
+          {label ? <span className="shrink-0">{label}</span> : null}
+          {status ? <span className="shrink-0">{status}</span> : null}
+        </div>
+        {entry.text ? <ThreadText text={entry.text} handles={roster.handles} /> : null}
+        {entry.view ? <ViewLine view={entry.view} /> : null}
+        {footnote ? (
+          <p data-entry-footnote="" className="mt-0.5 text-[11px] text-muted-foreground">
+            {footnote}
+          </p>
+        ) : null}
+        {entry.attachments.length ? (
+          <div className="mt-2 flex flex-wrap gap-2">
+            {entry.attachments.map((a) => (
+              <AttachmentTile key={a.path} a={a} onOpen={() => onOpenAttachment(a)} />
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+/** What the person was looking at as they posted, one quiet line ("Sent from Firefox"); the core's words (`stream.viewLine`). */
+function ViewLine({ view }: { view: ThreadView }) {
+  const { core } = useBridge();
+  const line = core.tryCall<string>("stream.viewLine", { kind: view.kind, app: view.app, title: view.title }) ?? null;
+  if (!line) return null;
+  return (
+    <p data-entry-view={view.kind} title={view.title ?? undefined} className="mt-0.5 truncate text-[11px] text-muted-foreground">
+      {line}
+    </p>
+  );
+}
+
+/** A message's text: inline Markdown, `@name` of a member as a chip. */
+export function ThreadText({ text, handles }: { text: string; handles: ReadonlySet<string> }) {
+  const chips = (t: string, key: number) =>
+    mentionSegments(t, handles).map((s, i) =>
+      s.mention ? (
+        <span key={`${key}-${i}`} data-mention={s.handle} className="font-medium text-brand-strong">
+          {s.text}
+        </span>
+      ) : (
+        s.text
+      ),
+    );
+  return (
+    <div className="text-[13px] leading-[1.55] break-words text-foreground select-text">
+      {text.split("\n").map((line, i) => (
+        <p key={i} className="min-h-[1.55em]">
+          <Inlines nodes={parseInline(line)} renderText={chips} />
+        </p>
+      ))}
+    </div>
+  );
+}
+
+function AttachmentTile({ a, onOpen }: { a: ThreadAttachment; onOpen: () => void }) {
+  const image = a.mime?.startsWith("image/") ?? false;
+  const Icon = image ? ImageIcon : FileTextIcon;
+  return (
+    <button
+      type="button"
+      data-attachment={a.name}
+      title={a.path}
+      onClick={onOpen}
+      className="flex min-w-36 cursor-default items-center gap-2.5 rounded-lg bg-muted/70 px-3 py-2 text-left outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/60"
+    >
+      <Icon className="size-4 shrink-0 text-muted-foreground" />
+      <span className="min-w-0">
+        <span className="block max-w-48 truncate text-[12.5px] font-medium">{a.name}</span>
+        <span className="block text-[11px] text-muted-foreground">{a.size != null ? bytes(a.size) : image ? "Image" : fileKind(a)}</span>
+      </span>
+    </button>
+  );
+}
+
+function Approval({
+  item,
+  roster,
+  onAnswer,
+  onOpenAttachment,
+  onRemoveAgent,
+  label,
+}: {
+  item: Extract<ThreadItem, { type: "approval" }>;
+  roster: Roster;
+  onAnswer: (approval: number, approve: boolean) => Promise<void>;
+  onOpenAttachment: (a: ThreadAttachment) => void;
+  onRemoveAgent?: (handle: string) => Promise<void>;
+  label?: ReactNode;
+}) {
+  const [busy, setBusy] = useState<boolean | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const { entry, answer } = item;
+  const closed = answer !== null || (entry.approval?.state ?? "open") !== "open";
+  // Only who holds the asking agent's `approve` right answers (the daemon refuses anyone else).
+  const asker = entry.author.kind === "agent" ? roster.agents.find((a) => a.id === entry.author.id) : undefined;
+  const canAnswer = asker ? asker.youCan.approve : true;
+  const press = (approve: boolean) => {
+    setBusy(approve);
+    setError(null);
+    onAnswer(entry.seq, approve).then(
+      () => setBusy(null),
+      (e: unknown) => {
+        setBusy(null);
+        setError(e instanceof Error ? e.message : String(e));
+      },
+    );
+  };
+  return (
+    <div data-approval={entry.seq} data-approval-state={answer ? (answer.approve ? "approved" : "denied") : (entry.approval?.state ?? "open")} className="-mx-3 my-1.5 rounded-lg bg-muted/50 px-3 pb-3">
+      <Message
+        entry={entry}
+        roster={roster}
+        onOpenAttachment={onOpenAttachment}
+        onRemoveAgent={onRemoveAgent}
+        label={label}
+        surface="muted"
+        status={
+          closed ? null : (
+            <span className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
+              <span aria-hidden className="size-1.5 rounded-full bg-warning" />
+              Needs approval
+            </span>
+          )
+        }
+      />
+      <div className="ml-10">
+        <p className="text-[13px] font-medium">{entry.approval?.action}</p>
+        {entry.approval?.details ? <p className="mt-0.5 text-xs text-muted-foreground">{entry.approval.details}</p> : null}
+      </div>
+      <div className="mt-2.5 ml-10 flex items-center gap-2">
+        {answer ? (
+          <p data-approval-answer="" className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            {answer.approve ? <CheckIcon className="size-3.5 text-success" /> : <XIcon className="size-3.5 text-destructive" />}
+            <span title={new Date(answer.tsMs).toLocaleString()}>
+              {answer.approve ? "Approved" : "Denied"} by {roster.author(answer.by).label}
+            </span>
+          </p>
+        ) : closed ? (
+          <p className="text-xs text-muted-foreground">{capital(entry.approval?.state ?? "")}</p>
+        ) : !canAnswer && asker ? (
+          <p data-approval-waiting="" className="text-xs text-muted-foreground">
+            {Array.isArray(asker.rights.approve) && holderNames(asker.rights.approve, asker.identity, roster)
+              ? `Waiting for ${holderNames(asker.rights.approve, asker.identity, roster)}`
+              : waitingFor(asker.rights.approve)}
+          </p>
+        ) : (
+          <>
+            <Button size="sm" disabled={busy !== null} onClick={() => press(true)}>
+              Approve
+            </Button>
+            <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => press(false)}>
+              Deny
+            </Button>
+            {error ? <span className="text-xs text-destructive">{error}</span> : null}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Someone's agent redeemed a code and asks to join (p. 18): who connected
+ * it and from where, what it will do, and Let it join / Deny for the owner
+ * and admins. Answered like an approval.
+ */
+function JoinRequestCard({ item, roster, onAnswer }: { item: Extract<ThreadItem, { type: "join_request" }>; roster: Roster; onAnswer: (approval: number, approve: boolean) => Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const { entry, answer } = item;
+  const req = entry.joinRequest!;
+  const i = req.member;
+  const state = answer ? (answer.approve ? "approved" : "denied") : req.state;
+  // The daemon says who may answer; an older one doesn't, and then the owner and admins may.
+  const canAnswer = req.youCanAnswer ?? roster.admin;
+  const press = (approve: boolean) => {
+    setBusy(true);
+    setError(null);
+    onAnswer(entry.seq, approve).then(
+      () => setBusy(false),
+      (e: unknown) => {
+        setBusy(false);
+        setError(e instanceof Error ? e.message : String(e));
+      },
+    );
+  };
+  const name = i?.displayName ?? entry.author.name;
+  return (
+    <div data-join-request={entry.seq} data-join-request-state={state} className="-mx-3 my-1.5 flex gap-3 rounded-lg bg-muted/50 px-3 py-2.5">
+      {i ? <AgentTile harness={i.harness.id} icon={i.icon} owner={i.owner} name={i.handle} px={28} surface="muted" className="mt-0.5" /> : <MemberAvatar kind="agent" name={name} size={28} className="mt-0.5" />}
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="truncate text-[13px] font-semibold">{name}</span>
+          <AiTag />
+          <time className="shrink-0 text-[11px] text-muted-foreground tabular-nums" dateTime={new Date(entry.tsMs).toISOString()} title={new Date(entry.tsMs).toLocaleString()}>
+            {clock(entry.tsMs)}
+          </time>
+          {state === "open" ? (
+            <span className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
+              <span aria-hidden className="size-1.5 rounded-full bg-warning" />
+              Wants to join
+            </span>
+          ) : null}
+        </div>
+        <p className="text-[13px] leading-[1.55]">
+          {i
+            ? `${i.owner.name} connected ${i.displayName}${i.device ? ` from ${i.device.name}` : ""}. It will read this thread and take tasks from ${req.canTask === "owner" ? i.owner.name : "members"}.`
+            : entry.text}
+        </p>
+        <div className="mt-2.5 flex items-center gap-2">
+          {answer ? (
+            <p data-join-request-answer="" className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              {answer.approve ? <CheckIcon className="size-3.5 text-success" /> : <XIcon className="size-3.5 text-destructive" />}
+              {answer.approve ? `${roster.author(answer.by).label} let it join` : `${roster.author(answer.by).label} said no`}
+            </p>
+          ) : state !== "open" ? (
+            <p className="text-xs text-muted-foreground">{state === "expired" ? "The request was withdrawn" : capital(state)}</p>
+          ) : canAnswer ? (
+            <>
+              <Button size="sm" data-join-request-allow="" disabled={busy} onClick={() => press(true)}>
+                Let it join
+              </Button>
+              <Button size="sm" variant="secondary" data-join-request-deny="" disabled={busy} onClick={() => press(false)}>
+                Deny
+              </Button>
+              {error ? <span className="text-xs text-destructive">{error}</span> : null}
+            </>
+          ) : (
+            <p className="text-xs text-muted-foreground">Waiting for the owner or an admin</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/** `10:41` today; `Yesterday`, a weekday or a date before that (hover shows the full time). */
+export function clock(tsMs: number, now = Date.now()): string {
+  const d = new Date(tsMs);
+  const today = new Date(now);
+  const day = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const days = Math.round((day(today) - day(d)) / 86_400_000);
+  if (days <= 0) return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  if (days === 1) return "Yesterday";
+  if (days < 7) return d.toLocaleDateString([], { weekday: "long" });
+  return d.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+function fileKind(a: ThreadAttachment): string {
+  const ext = a.name.includes(".") ? a.name.slice(a.name.lastIndexOf(".") + 1).toUpperCase() : "";
+  return ext || "File";
+}
+
+function bytes(n: number): string {
+  if (n < 1000) return `${n} B`;
+  if (n < 1_000_000) return `${Math.round(n / 1000)} KB`;
+  return `${(n / 1_000_000).toFixed(1)} MB`;
+}

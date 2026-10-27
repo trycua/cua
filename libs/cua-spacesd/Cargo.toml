@@ -12,6 +12,7 @@ members = [
     "crates/cua-spacesd-server",
     "crates/cua-spacesd-supervise",
     "crates/cua-relay",
+    "crates/cua-oidc",
 ]
 
 [workspace.package]

@@ -36,7 +36,7 @@ await spaces.set_egress(space.id, cua.EgressPolicy(deny=["10.0.0.0/8"]))
 | Firecracker microVM (Linux) | iptables in the network namespace pasta creates around the VM |
 | QEMU VM (Linux) | iptables in the network namespace pasta creates around QEMU |
 | A Space one of your machines provides (`on="host:..."`, `on="auto"`) | that machine, as above |
-| macOS VM, Apple Containerization microVM, QEMU on macOS or Windows | refused (`Unsupported`): filtering them needs root (pf, WFP) |
+| macOS VM, `vz` or Apple Containerization microVM, QEMU on macOS or Windows | refused (`Unsupported`): filtering them needs root (pf, WFP) |
 | Cua Cloud, your own cloud account (AWS, Google Cloud, Modal), a Space added by address | refused (`Unsupported`): no host-side point cua controls |
 
 `SpaceInfo.egress_enforced` is `host` for a Space with a policy. A machine whose cua predates egress policies never gets a Space with one: the create fails and the Space it made is deleted.

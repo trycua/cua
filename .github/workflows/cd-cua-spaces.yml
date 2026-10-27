@@ -2005,8 +2005,11 @@ jobs:
     name: Staging smoke is green
     if: startsWith(github.ref, 'refs/tags/cua-spaces-v')
     runs-on: ubuntu-latest
-    # Waits up to 30 minutes for the smoke that request-staging-smoke starts.
-    timeout-minutes: 40
+    # Waits up to 2 hours for the smoke that request-staging-smoke starts:
+    # the smoke can sit in trycua/cloud's queue for half an hour before it
+    # runs (v0.17.0-beta.2's posted 35 minutes after the request, after a
+    # 30-minute wait had given up), and the release builds take longer still.
+    timeout-minutes: 130
     defaults:
       run:
         working-directory: .
@@ -2020,7 +2023,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SKIP_STAGING_GATE: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_staging_gate }}
           SKIP_REASON: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_staging_reason || '' }}
-          WAIT_MINUTES: "30"
+          WAIT_MINUTES: "120"
         run: .github/scripts/require_staging_smoke.sh cua-spaces "$GITHUB_SHA"
 
   verify-release:

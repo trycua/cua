@@ -118,9 +118,13 @@ fn print(u: &RelayUsage, out: &mut dyn Write) {
             .filter(|l| u.hours_used >= *l)
             .map(|l| (cua_home::plan_limit::Kind::Hours, u.hours_used, l)),
     ];
+    // The link says it came from `cua usage` (`?from=cli_usage`).
     let upgrade = |fallback: String| {
         let url = u.upgrade_url.clone().unwrap_or(fallback);
-        format!(" Upgrade: {url}")
+        format!(
+            " Upgrade: {}",
+            cua_home::plan_limit::with_from(&url, "cli_usage")
+        )
     };
     let mut said = false;
     for (kind, used, limit) in caps.into_iter().flatten() {
@@ -135,6 +139,12 @@ fn print(u: &RelayUsage, out: &mut dyn Write) {
             out,
             format!("{}{}", p.sentence(), upgrade(p.upgrade_url(&account_app))),
         );
+        // Usage data (CUA-1881): a plan limit shown, which cap, which plan.
+        cua_telemetry::capture(cua_telemetry::events::plan_limit_shown(
+            "cli_usage",
+            kind.word(),
+            &p.plan,
+        ));
         said = true;
     }
     if u.soft_limit_reached || said {
@@ -143,7 +153,12 @@ fn print(u: &RelayUsage, out: &mut dyn Write) {
         } else {
             u.upgrade_url
                 .as_deref()
-                .map(|url| format!(" Upgrade: {url}"))
+                .map(|url| {
+                    format!(
+                        " Upgrade: {}",
+                        cua_home::plan_limit::with_from(url, "cli_usage")
+                    )
+                })
                 .unwrap_or_default()
         };
         line(
@@ -256,7 +271,8 @@ mod tests {
             m.contains("You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams. Upgrade: https://"),
             "{m}"
         );
-        assert!(m.contains("/buy/teams?from=plan_limit"), "{m}");
+        // The link says the CLI showed it.
+        assert!(m.contains("/buy/teams?from=cli_limit"), "{m}");
     }
 
     #[test]

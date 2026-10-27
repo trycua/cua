@@ -94,7 +94,7 @@ export function DiagnosticReportDialog({
                 </label>
                 <FitTextarea
                   aria-label={p.label}
-                  className="mt-1.5 max-h-60 min-h-[4.5rem] w-full resize-y overflow-y-auto rounded-md border bg-background px-2.5 py-2 font-mono text-xs leading-relaxed disabled:opacity-50"
+                  className="mt-1.5 max-h-60 min-h-[4.5rem] w-full resize-y overflow-y-auto rounded-lg bg-muted px-2.5 py-2 font-mono text-xs leading-relaxed disabled:opacity-50"
                   value={p.text}
                   disabled={!p.kept || busy}
                   spellCheck={false}
@@ -109,7 +109,7 @@ export function DiagnosticReportDialog({
             </p>
           ) : null}
           <div className="mt-4 flex justify-end gap-2">
-            <Button variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>
+            <Button variant="secondary" disabled={busy} onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
             <Button data-report-send="" disabled={busy || !report || kept.length === 0} onClick={() => void send()}>

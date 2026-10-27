@@ -711,8 +711,9 @@ pub fn containerization_backend(r: &ContainerizationReport) -> BackendStatus {
 }
 
 /// The microVM backend on a Linux host: ready when KVM, Firecracker, the
-/// guest init and the host tools are there (the kernel downloads on first
-/// use); `cua runtime setup firecracker` installs Firecracker.
+/// guest init and the host tools are there. Firecracker and the kernel
+/// install on the first create (provisionable), as `cua runtime setup
+/// firecracker` does; passt is the host's to install ([`crate::microvm::assets::PASTA_HINT`]).
 #[cfg(feature = "microvm")]
 async fn microvm_status() -> Option<(BackendStatus, MicroVmReport)> {
     if HostOs::current() != HostOs::Linux {
@@ -753,6 +754,8 @@ async fn microvm_status() -> Option<(BackendStatus, MicroVmReport)> {
                     "; guest kernel downloads on first use"
                 }
             )
+        } else if r.pasta.is_none() {
+            crate::microvm::assets::PASTA_HINT.to_string()
         } else {
             "Firecracker microVMs are not set up".into()
         },

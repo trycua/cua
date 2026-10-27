@@ -103,6 +103,9 @@ export class PendingSpacesBackend implements SpacesBackend {
   reportedHostname = (id: string) => this.current?.reportedHostname(id) ?? null;
   add = async (url: string, token: string | null, name: string | null) => (await this.b()).add(url, token, name);
   remove = async (id: string, removeOnly: boolean) => (await this.b()).remove(id, removeOnly);
+  deleteMany = async (ids: string[]) => (await this.b()).deleteMany(ids);
+  leave = async (ids: string[]) => (await this.b()).leave(ids);
+  rename = async (id: string, name: string) => (await this.b()).rename(id, name);
   relayUnregister = async (machineId: string) => (await this.b()).relayUnregister(machineId);
   machineHealth = async (machine: string | null) => (await this.b()).machineHealth(machine);
   setPower = async (id: string, on: boolean) => (await this.b()).setPower(id, on);
@@ -115,6 +118,9 @@ export class PendingSpacesBackend implements SpacesBackend {
   loggedIn = async () => (await this.b()).loggedIn();
   runningMacosVms = async () => (await this.b()).runningMacosVms();
   usage = async (id: string) => (await this.b()).usage(id);
+  // Never waits for the SDK: until it is in, the page shows this
+  // computer's own numbers.
+  resources = async (visible: boolean) => (await this.current?.resources?.(visible)) ?? null;
   agentRuns = async (id: string) => (await this.b()).agentRuns(id);
   windows = async (id: string) => (await this.b()).windows(id);
   primaryDisplay = async (id: string) => (await this.b()).primaryDisplay(id);

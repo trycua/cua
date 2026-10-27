@@ -61,23 +61,40 @@ pub const SPACES_TOOL_METHODS: &[(&str, &str)] = &[
     ("agent_stop", "Space.agent_stop"),
     ("agent_list", "Space.agent_list"),
     ("agent_capabilities", "Spaces.agent_capabilities"),
-    ("persistent_agent_create", "Spaces.persistent_agent_create"),
+    ("agent_add", "Spaces.persistent_agent_create"),
     ("persistent_agent_list", "Spaces.persistent_agents"),
-    ("persistent_agent_remove", "Spaces.persistent_agent_remove"),
-    ("persistent_agent_send", "Spaces.persistent_agent_send"),
+    ("agent_remove", "Spaces.persistent_agent_remove"),
+    ("agent_send", "Spaces.persistent_agent_send"),
     ("persistent_agent_save", "Spaces.persistent_agent_save"),
     ("agent_pause", "Spaces.agent_pause"),
     ("agent_resume", "Spaces.agent_resume"),
-    ("routine_add", "Spaces.routine_add"),
-    ("routine_list", "Spaces.routines"),
-    ("routine_remove", "Spaces.routine_remove"),
-    ("routine_set_enabled", "Spaces.routine_set_enabled"),
+    ("agent_schedule_add", "Spaces.routine_add"),
+    ("agent_schedule_list", "Spaces.routines"),
+    ("agent_schedule_remove", "Spaces.routine_remove"),
+    ("agent_schedule_set_enabled", "Spaces.routine_set_enabled"),
     ("notify_user", "Spaces.notify_user"),
     ("notifications_list", "Spaces.notifications"),
     ("notifications_ack", "Spaces.notifications_ack"),
     ("computer_access_grant", "Spaces.computer_access_grant"),
     ("computer_access_revoke", "Spaces.computer_access_revoke"),
     ("computer_access_list", "Spaces.computer_access"),
+    // The Space thread and agent members: typed methods (`space.thread()`,
+    // `space.agents()`) come next; until then, the generic call.
+    ("thread_read", "Spaces.call_tool_json"),
+    ("thread_post", "Spaces.call_tool_json"),
+    ("thread_inbox", "Spaces.call_tool_json"),
+    ("thread_claim", "Spaces.call_tool_json"),
+    ("thread_reply", "Spaces.call_tool_json"),
+    ("thread_import", "Spaces.call_tool_json"),
+    ("agent_members", "Spaces.call_tool_json"),
+    ("agent_set_rights", "Spaces.call_tool_json"),
+    ("thread_join", "Spaces.call_tool_json"),
+    ("thread_join_code_create", "Spaces.call_tool_json"),
+    ("thread_join_code_list", "Spaces.call_tool_json"),
+    ("thread_join_code_cancel", "Spaces.call_tool_json"),
+    ("thread_join_redeem", "Spaces.call_tool_json"),
+    ("thread_settings", "Spaces.call_tool_json"),
+    ("thread_device_revoke", "Spaces.call_tool_json"),
     ("teleport_manifest", "Space.teleport_manifest"),
     ("teleport_app", "Space.teleport"),
     ("request_site_login", "Space.request_site_login"),
@@ -118,6 +135,7 @@ pub const SPACES_TOOL_METHODS: &[(&str, &str)] = &[
     ("cloud_connect", "Spaces.cloud_connect"),
     ("cloud_test", "Spaces.cloud_test"),
     ("cloud_disconnect", "Spaces.cloud_disconnect"),
+    ("cloud_approve", "Spaces.cloud_approve"),
     ("cloud_sweep", "Spaces.cloud_sweep"),
     ("cloud_plan", "Spaces.cloud_plan"),
     ("cloud_hosts", "Spaces.cloud_hosts"),
@@ -129,6 +147,7 @@ pub const SPACES_TOOL_METHODS: &[(&str, &str)] = &[
     ("prewarm_list", "Spaces.prewarms"),
     ("prewarm_remove", "Spaces.remove_prewarm"),
     ("cloud_audit", "Spaces.cloud_audit"),
+    ("cloud_cost", "Spaces.cloud_cost"),
 ];
 
 /// SDK methods that have no contract tool (SDK-only surface).
@@ -317,6 +336,13 @@ pub struct SpaceInfo {
     pub id: String,
     /// Display name.
     pub name: String,
+    /// The name it was given with [`Spaces::rename`], which apps show in
+    /// place of `name`; empty when it keeps the one it was created with. A
+    /// Space that is a machine on the relay is renamed there, so its `name`
+    /// changes instead.
+    #[serde(default)]
+    #[uniffi(default)]
+    pub display_name: String,
     /// `cloud`, `local`, `direct` or `relay` (the location words).
     pub provider: String,
     /// spacesd version at the last handshake.
@@ -342,7 +368,7 @@ pub struct SpaceInfo {
     /// The digest of the variant that runs ("sha256:..."), or empty.
     #[serde(default)]
     pub image_digest: String,
-    /// `container` or `vm`, or empty when unknown.
+    /// `container`, `vm` or `microvm`, or empty when unknown.
     #[serde(default)]
     pub kind: String,
     /// The guest's CPU architecture (`arm64`, `amd64`), or empty when
@@ -424,6 +450,126 @@ pub struct SpaceInfo {
     /// [`SpaceCreateOptions::volumes`]).
     #[serde(default)]
     pub volumes: Vec<VolumeMount>,
+    /// A Space that is a machine on the relay: who owns it and who else
+    /// has it, as this account sees it. `None` for other Spaces.
+    #[serde(default)]
+    #[uniffi(default)]
+    pub sharing: Option<SpaceSharing>,
+}
+
+/// Who a Space belongs to and who else has it, as this account sees it
+/// ([`SpaceInfo::sharing`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record, Deserialize)]
+pub struct SpaceSharing {
+    /// The owner's account id.
+    #[serde(default)]
+    pub owner_id: String,
+    /// The owner's email, when known.
+    #[serde(default)]
+    #[uniffi(default)]
+    pub owner_email: String,
+    /// The owner's display name, when known.
+    #[serde(default)]
+    #[uniffi(default)]
+    pub owner_name: String,
+    /// What this account may do: `owner`, `editor` or `viewer`.
+    #[serde(default)]
+    pub role: String,
+    /// The team this account reaches it through (its key), when it is a
+    /// team's and not shared with this account directly.
+    #[serde(default)]
+    #[uniffi(default)]
+    pub team: String,
+    /// That team's display name (its key when the name is not known).
+    #[serde(default)]
+    #[uniffi(default)]
+    pub team_name: String,
+    /// Owner view: accounts (emails or ids) that may use it.
+    #[serde(default)]
+    #[uniffi(default)]
+    pub editors: Vec<String>,
+    /// Owner view: accounts that may only watch.
+    #[serde(default)]
+    #[uniffi(default)]
+    pub viewers: Vec<String>,
+    /// Owner view: the teams it is a machine of.
+    #[serde(default)]
+    #[uniffi(default)]
+    pub teams: Vec<SpaceTeamShare>,
+}
+
+/// A team a Space is shared with ([`SpaceSharing::teams`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record, Deserialize)]
+pub struct SpaceTeamShare {
+    /// The team's key (org id).
+    pub key: String,
+    /// Its display name.
+    pub name: String,
+    /// `editor` or `viewer`.
+    pub role: String,
+}
+
+impl From<cua_spaces::SpaceSharing> for SpaceSharing {
+    fn from(s: cua_spaces::SpaceSharing) -> Self {
+        SpaceSharing {
+            owner_id: s.owner_id,
+            owner_email: s.owner_email,
+            owner_name: s.owner_name,
+            role: s.role,
+            team: s.team,
+            team_name: s.team_name,
+            editors: s.editors,
+            viewers: s.viewers,
+            teams: s
+                .teams
+                .into_iter()
+                .map(|t| SpaceTeamShare {
+                    key: t.key,
+                    name: t.name,
+                    role: t.role,
+                })
+                .collect(),
+        }
+    }
+}
+
+impl From<dpb::SpaceSharing> for SpaceSharing {
+    fn from(s: dpb::SpaceSharing) -> Self {
+        cua_spaces::SpaceSharing::from(s).into()
+    }
+}
+
+/// The outcome for one Space of [`Spaces::delete_many`] or
+/// [`Spaces::leave_many`].
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, Deserialize)]
+pub struct BulkResult {
+    /// The Space as asked.
+    pub id: String,
+    /// It went through.
+    pub ok: bool,
+    /// Why not, in plain words.
+    #[serde(default)]
+    pub error: Option<String>,
+    /// What happened, for people.
+    #[serde(default)]
+    pub message: String,
+}
+
+impl From<cua_spaces::BulkResult> for BulkResult {
+    fn from(r: cua_spaces::BulkResult) -> Self {
+        BulkResult {
+            id: r.id,
+            ok: r.ok,
+            error: r.error,
+            message: r.message,
+        }
+    }
+}
+
+impl From<dpb::SpaceBulkResult> for BulkResult {
+    fn from(r: dpb::SpaceBulkResult) -> Self {
+        cua_spaces::BulkResult::from(r).into()
+    }
 }
 
 /// A named volume of Cua Volume mounted in a Space: the folder
@@ -520,6 +666,7 @@ impl From<dpb::Space> for SpaceInfo {
             }),
             id: s.id,
             name: s.name,
+            display_name: s.display_name,
             provider,
             spacesd_version: s.spacesd_version,
             features: s.features,
@@ -553,6 +700,7 @@ impl From<dpb::Space> for SpaceInfo {
                 })
                 .unwrap_or_default(),
             egress_enforced: EgressEnforcement::from_word(&s.egress_enforced),
+            sharing: s.sharing.map(Into::into),
         }
     }
 }
@@ -562,6 +710,7 @@ impl From<cua_spaces::SpaceInfo> for SpaceInfo {
         SpaceInfo {
             id: s.id,
             name: s.name,
+            display_name: s.display_name,
             provider: s.provider.as_str().into(),
             spacesd_version: s.spacesd_version,
             features: s.features,
@@ -590,6 +739,7 @@ impl From<cua_spaces::SpaceInfo> for SpaceInfo {
             created_at_unix: i64::try_from(s.created_at_unix).unwrap_or(0),
             egress: s.egress.into(),
             egress_enforced: s.egress_enforced.map(Into::into),
+            sharing: s.sharing.map(Into::into),
         }
     }
 }
@@ -637,7 +787,7 @@ pub struct SpaceCreateOptions {
     /// `auto`, copied there first when that machine lacks it.
     #[uniffi(default = None)]
     pub on: Option<String>,
-    /// `auto` (default), `container` or `vm`.
+    /// `auto` (default), `container`, `vm` or `microvm`.
     #[uniffi(default = None)]
     pub kind: Option<String>,
     /// `auto` (default) or an engine the location offers for the kind.
@@ -843,6 +993,9 @@ pub struct SpacesHostLoad {
     pub spaces: u32,
     /// Why it takes nothing now (empty: it does).
     pub problem: String,
+    /// The kinds it creates (`container`, `vm`, `microvm`), as it reports
+    /// them; empty when it does not say.
+    pub kinds: Vec<String>,
 }
 
 impl From<cua_spaces::host_spaces::HostOffer> for SpacesHost {
@@ -870,6 +1023,7 @@ impl From<cua_spaces::host_spaces::HostOffer> for SpacesHost {
                 memory_free_mb: n.memory_free_mb,
                 spaces: n.running.values().sum(),
                 problem: n.problem,
+                kinds: n.kinds,
             }),
         }
     }
@@ -900,6 +1054,7 @@ impl From<dpb::SpacesHost> for SpacesHost {
                 memory_free_mb: l.memory_free_mb,
                 spaces: l.spaces,
                 problem: l.problem,
+                kinds: l.kinds,
             }),
         }
     }
@@ -2752,6 +2907,103 @@ impl SpacesToolCaller {
     pub(super) async fn tool_value(&self, name: &str, arguments: Value) -> Result<Value> {
         self.0.tool_value(name, arguments).await
     }
+
+    /// Refuses before the call when the daemon's `tool` takes none of
+    /// `fields` it would need (`what`: what they are for, in words): an
+    /// older daemon ignores arguments it does not know, and would do
+    /// something else than asked.
+    pub(super) async fn require_fields(
+        &self,
+        tool: &str,
+        fields: &[&str],
+        what: &str,
+    ) -> Result<()> {
+        let Host::Daemon(d) = &self.0 else {
+            return Ok(());
+        };
+        if fields.is_empty() {
+            return Ok(());
+        }
+        let listed = d
+            .spaces()
+            .list_space_tools(dpb::ListSpaceToolsRequest {})
+            .await
+            .map_err(daemon_err)?
+            .into_inner()
+            .tools_json;
+        let missing = missing_fields(&listed, tool, fields);
+        if missing.is_empty() {
+            return Ok(());
+        }
+        let version = d
+            .info()
+            .await
+            .map(|i| format!(" (cua {})", i.version))
+            .unwrap_or_default();
+        Err(CuaError::CapabilityMissing(format!(
+            "the cua daemon{version} is too old to {what} (its {tool} has no {}), so nothing was \
+             changed; update cua and restart its daemon (`cua daemon stop`, then run this again, \
+             or quit and reopen Cua Spaces)",
+            missing.join(", ")
+        )))
+    }
+}
+
+/// Which of `fields` the `tool` in a `tools/list` result (`listed`, JSON)
+/// does not take; all of them when the tool is not listed.
+fn missing_fields(listed: &str, tool: &str, fields: &[&str]) -> Vec<String> {
+    let v: Value = serde_json::from_str(listed).unwrap_or_default();
+    let props = v["tools"]
+        .as_array()
+        .and_then(|ts| ts.iter().find(|t| t["name"] == tool))
+        .map(|t| t["inputSchema"]["properties"].clone())
+        .unwrap_or_default();
+    fields
+        .iter()
+        .filter(|f| props.get(**f).is_none())
+        .map(|f| (*f).to_string())
+        .collect()
+}
+
+#[cfg(test)]
+mod require_fields_tests {
+    use super::missing_fields;
+
+    #[test]
+    fn an_older_daemons_cloud_connect_misses_the_new_fields() {
+        // What a 0.8 daemon lists: no auth, no budget.
+        let old = r#"{"tools":[{"name":"cloud_connect","inputSchema":{"properties":
+            {"provider":{},"profile":{},"region":{},"make_default":{},"ttl_hours":{}}}}]}"#;
+        assert_eq!(
+            missing_fields(old, "cloud_connect", &["auth", "budget_usd_month"]),
+            vec!["auth", "budget_usd_month"]
+        );
+        assert!(missing_fields(old, "cloud_connect", &["ttl_hours"]).is_empty());
+        assert_eq!(missing_fields(old, "cloud_gone", &["x"]), vec!["x"]);
+        // This build's own contract takes every field it sends.
+        let ours = cua_spaces::mcp::McpServer::remote(std::sync::Arc::new(Nothing))
+            .tools_list()
+            .to_string();
+        let all = [
+            "auth",
+            "budget_usd_month",
+            "max_size",
+            "account_id",
+            "role_arn",
+            "check",
+            "agent",
+        ];
+        assert!(missing_fields(&ours, "cloud_connect", &all).is_empty());
+    }
+
+    struct Nothing;
+
+    #[async_trait::async_trait]
+    impl cua_spaces::mcp::ToolBackend for Nothing {
+        async fn call(&self, _: &str, _: serde_json::Value) -> cua_spaces::mcp::ToolOutcome {
+            cua_spaces::mcp::ToolOutcome::text("")
+        }
+    }
 }
 
 // ------------------------------------------------------------ Machine health
@@ -3754,6 +4006,114 @@ impl Spaces {
                     .map_err(daemon_err)?
                     .into_inner()
                     .message),
+            }
+        })
+        .await
+    }
+
+    /// Deletes several Spaces ([`Spaces::delete`] each), at most three at
+    /// a time, turning running ones off first. One result per id, in
+    /// order; one failure never stops the rest.
+    pub async fn delete_many(&self, ids: Vec<String>) -> Result<Vec<BulkResult>> {
+        let host = self.host.clone();
+        run(async move {
+            match &host {
+                Host::Embedded(s) => Ok(s
+                    .delete_many(&ids)
+                    .await
+                    .into_iter()
+                    .map(Into::into)
+                    .collect()),
+                Host::Daemon(d) => Ok(d
+                    .spaces()
+                    .delete_spaces(dpb::DeleteSpacesRequest { spaces: ids })
+                    .await
+                    .map_err(daemon_err)?
+                    .into_inner()
+                    .results
+                    .into_iter()
+                    .map(Into::into)
+                    .collect()),
+            }
+        })
+        .await
+    }
+
+    /// Takes this account off Spaces shared with it (through the relay): a
+    /// direct share ends, a team's Space leaves this account's list. Your
+    /// own Spaces are refused (delete them). One result per id, in order;
+    /// a relay that predates leaving answers "Couldn't leave <name>: the
+    /// Cua relay needs an update."
+    pub async fn leave_many(&self, ids: Vec<String>) -> Result<Vec<BulkResult>> {
+        let host = self.host.clone();
+        run(async move {
+            match &host {
+                Host::Embedded(s) => Ok(s
+                    .leave_many(&ids)
+                    .await
+                    .into_iter()
+                    .map(Into::into)
+                    .collect()),
+                Host::Daemon(d) => Ok(d
+                    .spaces()
+                    .leave_spaces(dpb::LeaveSpacesRequest { spaces: ids })
+                    .await
+                    .map_err(daemon_err)?
+                    .into_inner()
+                    .results
+                    .into_iter()
+                    .map(Into::into)
+                    .collect()),
+            }
+        })
+        .await
+    }
+
+    /// Gives a Space a new name; its id stays the same. Returns the Space
+    /// as it is listed now (`display_name`, or `name` for a Space that is a
+    /// machine on the relay).
+    ///
+    /// The name follows the rule a create's does (lowercase letters,
+    /// digits and dashes, starting and ending with a letter or digit, at
+    /// most 63) and may not be another of your Spaces' names
+    /// (`InvalidArgument`). Only its owner renames a Space: one shared with
+    /// you is refused (`PermissionDenied`). A Space you shared, or one of
+    /// your computers provides, is renamed on the relay too, so your other
+    /// devices and the people it is shared with see the new name.
+    pub async fn rename(&self, space: String, name: String) -> Result<SpaceInfo> {
+        cua_spaces::rename::check_space_name(&name).map_err(refused)?;
+        let host = self.host.clone();
+        run(async move {
+            match &host {
+                Host::Embedded(s) => {
+                    s.rename(&space, &name)
+                        .await
+                        .map(Into::into)
+                        .map_err(|e| match e {
+                            // The relay's refusal in its own words.
+                            cua_spaces::Error::Relay(r) if e.tag() == "permission_denied" => {
+                                CuaError::PermissionDenied(r.to_string())
+                            }
+                            e => refused(e),
+                        })
+                }
+                Host::Daemon(d) => d
+                    .spaces()
+                    .rename_space(dpb::RenameSpaceRequest { space, name })
+                    .await
+                    .map_err(|e| match e.code() {
+                        // A daemon that predates renaming: nothing changed.
+                        tonic::Code::Unimplemented => CuaError::CapabilityMissing(
+                            "renaming a Space: the cua daemon is too old to rename one; update \
+                             cua and restart its daemon"
+                                .into(),
+                        ),
+                        _ => daemon_err(e),
+                    })?
+                    .into_inner()
+                    .space
+                    .map(Into::into)
+                    .ok_or_else(|| CuaError::Internal("the daemon answered no Space".into())),
             }
         })
         .await

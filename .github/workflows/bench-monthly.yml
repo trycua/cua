@@ -1,0 +1,282 @@
+name: "Bench: monthly Spaces benchmarks"
+
+# The macOS benchmark set of `cua bench` (libs/cua/bench) on the self-hosted
+# Apple-silicon Mac of the nightly Lume lane (vars.CUA_E2E_LUME_RUNNER), once
+# a month and by hand:
+#
+#   1. builds `cua`, cua-vz, the guest init, the SDK and the bench harnesses
+#      from a public release tag (`cua-sdk-v*`, the newest by default) or
+#      from this commit (release: main);
+#   2. runs each bench with `cua bench run` (the `cua bench` of this commit,
+#      driving the built `cua` through CUA_BENCH_CUA) and
+#      applies its perf guard with `cua bench check` against the committed
+#      macOS baseline; a regression fails the job;
+#   3. uploads every run (result.json + samples.csv in the bench-result v1
+#      format, and the bench's own output) as a workflow artifact.
+#
+# Publishing to the website (a pull request on trycua/cloud with the new
+# result.json and samples.csv of every page that exists there) runs only
+# when the repository variable BENCH_PUBLISH_SITE is "true", every bench of a
+# released build passed its guard, and the run was not a pull request. The
+# variable is unset by default: nothing is published.
+#
+# No pull_request trigger: the job runs on a self-hosted machine, and a pull
+# request (from a fork or not) never starts it.
+
+on:
+  schedule:
+    # 07:23 UTC on the 3rd of every month.
+    - cron: "23 7 3 * *"
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "cua-sdk-vX.Y.Z (a public release), latest, or main (this commit; never published)"
+        required: false
+        default: latest
+      benches:
+        description: "Space-separated benches (default: the macOS set)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bench-monthly
+  cancel-in-progress: false
+
+env:
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+  CARGO_TERM_COLOR: always
+  # The published Linux Spaces disk (slim tier), for fork-fanout and fork-batch.
+  DISK_REF: ghcr.io/trycua/linux:24.04-slim-disk
+  DEFAULT_BENCHES: microvm-fork fork-fanout fork-batch channel rollouts spaces-startup.vm-density
+
+jobs:
+  run:
+    name: macOS benchmarks (self-hosted)
+    if: github.repository_owner == 'trycua' && vars.CUA_E2E_LUME_RUNNER != ''
+    runs-on: ["self-hosted", "macOS", "${{ vars.CUA_E2E_LUME_RUNNER }}"]
+    timeout-minutes: 720
+    outputs:
+      released: ${{ steps.ref.outputs.released }}
+      tag: ${{ steps.ref.outputs.tag }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Which build
+        id: ref
+        env:
+          RELEASE: ${{ inputs.release || 'latest' }}
+        run: |
+          set -euo pipefail
+          case "$RELEASE" in
+            main)
+              echo "released=false" >>"$GITHUB_OUTPUT"
+              echo "tag=" >>"$GITHUB_OUTPUT"
+              echo "SRC=$GITHUB_WORKSPACE" >>"$GITHUB_ENV"
+              echo "CUA_BENCH_SOURCE=source build of $GITHUB_SHA (not a release)" >>"$GITHUB_ENV"
+              exit 0 ;;
+            latest)
+              tag=$(git ls-remote --tags --refs https://github.com/trycua/cua 'refs/tags/cua-sdk-v*' |
+                awk '{sub("refs/tags/", "", $2); print $2}' | grep -E '^cua-sdk-v[0-9]+\.[0-9]+\.[0-9]+$' |
+                sort -V | tail -1) ;;
+            cua-sdk-v*)
+              [[ "$RELEASE" =~ ^cua-sdk-v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "not a release tag: $RELEASE" >&2; exit 2; }
+              tag=$RELEASE ;;
+            *) echo "release must be cua-sdk-vX.Y.Z, latest or main" >&2; exit 2 ;;
+          esac
+          [ -n "$tag" ] || { echo "no cua-sdk release tag on trycua/cua" >&2; exit 2; }
+          src="$RUNNER_TEMP/release-src"
+          rm -rf "$src"
+          git clone --quiet --depth 1 --branch "$tag" https://github.com/trycua/cua "$src"
+          sha=$(git -C "$src" rev-parse --short HEAD)
+          echo "released=true" >>"$GITHUB_OUTPUT"
+          echo "tag=$tag" >>"$GITHUB_OUTPUT"
+          echo "SRC=$src" >>"$GITHUB_ENV"
+          echo "CUA_BENCH_SOURCE=public release $tag (commit $sha), built from source" >>"$GITHUB_ENV"
+
+      - name: Tools (QEMU, crane, protoc, Node)
+        run: |
+          command -v qemu-system-aarch64 >/dev/null || brew install qemu
+          command -v crane >/dev/null || brew install crane
+          command -v protoc >/dev/null || brew install protobuf
+          command -v node >/dev/null || brew install node
+
+      - name: Build cua, cua-vz, the guest init, the SDK and the harnesses
+        env:
+          RUSTFLAGS: ""
+        run: |
+          set -euo pipefail
+          bin="$RUNNER_TEMP/bin"
+          mkdir -p "$bin"
+          "$SRC/libs/cua/vz/build.sh" "$bin"
+          cd "$SRC/libs/cua"
+          cargo build --locked --release -p cua-cli --bin cua -p cua-sdk \
+            --example rollout_bench --example channel_bench
+          cp target/release/cua target/release/examples/rollout_bench target/release/examples/channel_bench "$bin/"
+          RUSTFLAGS="-C target-feature=+crt-static" CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=rust-lld \
+            cargo build --locked --release -p cua-microvm-init --target aarch64-unknown-linux-musl
+          cp target/aarch64-unknown-linux-musl/release/cua-microvm-init "$bin/"
+          # The Python SDK (fork-batch) loads the library staged next to it.
+          node scripts/stage-uniffi-library.mjs --only=python
+          # `cua bench` itself (the runner) comes from this commit; the
+          # benchmarked `cua` (CUA_BENCH_CUA) from the build above.
+          if [ "$SRC" != "$GITHUB_WORKSPACE" ]; then
+            (cd "$GITHUB_WORKSPACE/libs/cua" && cargo build --locked --release -p cua-cli --bin cua)
+            mkdir -p "$RUNNER_TEMP/runner"
+            cp "$GITHUB_WORKSPACE/libs/cua/target/release/cua" "$RUNNER_TEMP/runner/cua"
+            runner="$RUNNER_TEMP/runner/cua"
+          else
+            runner="$bin/cua"
+          fi
+          {
+            echo "BENCH_CLI=$runner"
+            echo "CUA_BENCH_CUA=$bin/cua"
+            echo "CUA=$bin/cua"
+            echo "CUA_VZ=$bin/cua-vz"
+            echo "CUA_MICROVM_INIT=$bin/cua-microvm-init"
+            echo "ROLLOUT_BENCH=$bin/rollout_bench"
+            echo "CHANNEL_BENCH=$bin/channel_bench"
+            echo "PYTHONPATH=$SRC/libs/cua/python/src"
+            echo "CUA_HOME=$RUNNER_TEMP/cua-home"
+            # This build's daemon, never an installed Cua Spaces app's.
+            echo "CUA_SPACES_CLI=/nonexistent"
+            # The scripts of this commit (the runner, converters and guards).
+            echo "CUA_BENCH_DIR=$GITHUB_WORKSPACE/libs/cua/bench"
+          } >>"$GITHUB_ENV"
+          "$bin/cua" --version
+          "$runner" bench list >/dev/null
+
+      - name: Fetch the Linux disk
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/disk"
+          crane export --platform linux/arm64 "$DISK_REF" - | tar -x -C "$RUNNER_TEMP/disk" disk/disk.img
+          echo "DISK=$RUNNER_TEMP/disk/disk/disk.img" >>"$GITHUB_ENV"
+
+      - name: Run and check
+        env:
+          BENCHES: ${{ inputs.benches }}
+          # fork-fanout: the macos-hvf baseline's shape.
+          WAVES: "8,32,64"
+          MEMORY_MB: "2048"
+          DIRTY_MB: "300"
+          FORKABLE: "1"
+          WARM: "0"
+          # channel: the file sizes of the macOS baseline.
+          FILES: "1:20,4:20,16:10,100:10,512:5"
+        run: |
+          set -uo pipefail
+          out="$RUNNER_TEMP/bench-results"
+          mkdir -p "$out"
+          list=${BENCHES:-$DEFAULT_BENCHES}
+          for b in $list; do
+            [[ "$b" =~ ^[a-z0-9.-]+$ ]] || { echo "bad bench name: $b" >&2; exit 2; }
+          done
+          baseline() {
+            case $1 in
+              microvm-fork) echo "microvm-fork/baseline.json" ;;
+              fork-fanout) echo "fork-fanout/baseline.json --host macos-hvf" ;;
+              fork-batch) echo "fork-batch/baseline.json --host macos-hvf-m2max" ;;
+              channel) echo "channel/baselines/macos-m2max-qemu.json" ;;
+              rollouts) echo "rollouts/baseline/macos-m2max-96g.json" ;;
+              spaces-startup.vm-density) echo "spaces-startup/baseline/macos-m2max-96g.json" ;;
+              *) echo "" ;;
+            esac
+          }
+          failed=()
+          {
+            echo "| Bench | Run | Guard |"
+            echo "|---|---|---|"
+          } >>"$GITHUB_STEP_SUMMARY"
+          for b in $list; do
+            echo "::group::$b"
+            dir="$out/$b"
+            rm -rf "$dir"
+            if "$BENCH_CLI" bench run "$b" --out "$dir" --src "$SRC/libs/cua"; then run=ok; else run=failed; fi
+            guard="none"
+            base=$(baseline "$b")
+            if [ -f "$dir/result.json" ] && [ -n "$base" ]; then
+              # shellcheck disable=SC2086
+              if "$BENCH_CLI" bench check "$dir/result.json" --baseline $base; then guard=ok; else guard=REGRESSION; fi
+            fi
+            echo "::endgroup::"
+            echo "| \`$b\` | $run | $guard |" >>"$GITHUB_STEP_SUMMARY"
+            if [ "$run" != ok ] || [ "$guard" = REGRESSION ]; then failed+=("$b"); fi
+          done
+          if [ ${#failed[@]} -gt 0 ]; then
+            echo "failed or regressed: ${failed[*]}" >&2
+            exit 1
+          fi
+
+      - name: Stop leftover daemons of this run
+        if: always()
+        run: |
+          # Only the daemon of this run's own CUA_HOME.
+          "$CUA" daemon stop >/dev/null 2>&1 || true
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: bench-results
+          path: ${{ runner.temp }}/bench-results
+          if-no-files-found: ignore
+
+  publish:
+    name: Publish to the website (BENCH_PUBLISH_SITE)
+    needs: run
+    if: >-
+      vars.BENCH_PUBLISH_SITE == 'true' &&
+      github.event_name != 'pull_request' &&
+      github.repository_owner == 'trycua' &&
+      needs.run.result == 'success' &&
+      needs.run.outputs.released == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: bench-results
+          path: results
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: trycua/cloud
+          token: ${{ secrets.BENCH_SITE_TOKEN }}
+          path: cloud
+      - name: Open a pull request with the new runs
+        env:
+          GH_TOKEN: ${{ secrets.BENCH_SITE_TOKEN }}
+          TAG: ${{ needs.run.outputs.tag }}
+        run: |
+          set -euo pipefail
+          content=cloud/src/spaces-site/src/content/benchmarks
+          changed=()
+          for r in results/*/result.json; do
+            [ -f "$r" ] || continue
+            slug=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["slug"])' "$r")
+            day=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["measured_at"][:10])' "$r")
+            # Only pages that exist on the site get a new run.
+            [ -f "$content/$slug/meta.json" ] || { echo "no page for $slug: skipped"; continue; }
+            dest="$content/$slug/runs/$day"
+            mkdir -p "$dest"
+            cp "$r" "$(dirname "$r")/samples.csv" "$dest/"
+            changed+=("$slug")
+          done
+          if [ ${#changed[@]} -eq 0 ]; then
+            echo "no page to update"
+            exit 0
+          fi
+          cd cloud
+          branch="bench/${TAG}-$(date -u +%Y%m%d)"
+          git checkout -b "$branch"
+          git add src/spaces-site/src/content/benchmarks
+          git -c user.name="Cua benchmarks" -c user.email="bench@trycua.com" \
+            commit -m "benchmarks: monthly run of ${TAG} (${changed[*]})"
+          git push origin "$branch"
+          gh pr create --repo trycua/cloud --head "$branch" \
+            --title "benchmarks: monthly run of ${TAG}" \
+            --body "New runs (bench-result v1) of ${TAG} from the monthly benchmark workflow, every perf guard passed: ${changed[*]}."

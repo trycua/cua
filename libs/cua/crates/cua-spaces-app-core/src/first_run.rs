@@ -189,6 +189,9 @@ pub struct FirstRunAgent {
     /// The settings file Cua adds itself to (`~/.claude.json`), when the
     /// agent has one.
     pub mcp_config: Option<String>,
+    /// Its row of the connection status (`agents.status`, CONTRACT §4),
+    /// when the host answers it: "Connected" only when that says so.
+    pub connection: Option<crate::connection::ConnectionInput>,
 }
 
 /// A permission this computer still needs (`host.status`'s hint: the host
@@ -306,6 +309,10 @@ pub struct FirstRunInput {
     pub connecting_agent: Option<String>,
     /// Adding Cua to the agent's settings failed with this.
     pub connect_error: Option<String>,
+    /// Advanced setup on Pick your agent: paths and per-item ticks
+    /// (CUA-2267). Simple, the default, is one Connect each.
+    #[serde(default)]
+    pub advanced: bool,
     /// The agent was running when its settings changed (none: not known;
     /// no process check exists yet).
     pub agent_open_before_setup: Option<bool>,
@@ -447,6 +454,18 @@ pub struct ConnectView {
     /// "Skip" (none once an agent is connected).
     pub secondary: Option<FirstRunButton>,
     pub error: Option<String>,
+    /// The one line under the agents: what Connect does (Simple), or that
+    /// ticked sign-ins are copied (Advanced).
+    #[serde(default)]
+    pub consent: String,
+    /// The quiet link at the right of the buttons: "Advanced" in Simple
+    /// (`advanced`), "Simple" in Advanced (`simple`).
+    #[serde(default)]
+    pub mode: Option<FirstRunButton>,
+    /// Advanced: each agent's file and its sign-in are shown and ticked
+    /// one by one; Simple: one Connect each, no paths.
+    #[serde(default)]
+    pub advanced: bool,
 }
 
 /// A row of screen 3 (what signing in connects).
@@ -909,20 +928,51 @@ fn agent_picks(input: &FirstRunInput) -> Vec<AgentPick> {
         .into_iter()
         .map(|id| {
             let row = agents.iter().find(|a| a.agent == id);
-            // Connected here: Cua is in its settings. A run that pressed
-            // Connect and is waiting for the setup to say so counts too.
-            let is_connected = row.is_some_and(|a| a.configured)
-                || (connected.contains(&id) && input.agents.is_some() && !input.connecting);
+            let status = row.and_then(|a| a.connection.as_ref());
+            // Connected here: the connection status says so (Cua's entry is
+            // there and answers). Without one, Cua is in its settings, or a
+            // run pressed Connect and waits for the setup to say so.
+            let is_connected = match status {
+                // Connected and waiting for its own sign-in is still connected;
+                // a broken entry (Reconnect, Disconnect) is not.
+                Some(c) => match c.state.as_str() {
+                    "connected" => true,
+                    "attention" => !c
+                        .problem
+                        .as_ref()
+                        .is_some_and(|p| p.action == "reconnect" || p.action == "disconnect"),
+                    _ => false,
+                },
+                None => {
+                    row.is_some_and(|a| a.configured)
+                        || (connected.contains(&id) && input.agents.is_some() && !input.connecting)
+                }
+            };
+            let problem = status
+                .filter(|c| c.state == "attention")
+                .and_then(|c| c.problem.as_ref())
+                .filter(|p| p.action == "reconnect" || p.action == "disconnect");
             let busy = input.connecting
                 && input.connecting_agent.as_deref().is_none_or(|a| a == id)
                 && !row.is_some_and(|a| a.configured);
             AgentPick {
                 name: name_of(agents, &id),
-                file: row.and_then(|a| a.mcp_config.as_deref()).map(tilde),
+                // Simple shows no paths; Advanced names the file Connect changes.
+                file: input
+                    .advanced
+                    .then(|| row.and_then(|a| a.mcp_config.as_deref()).map(tilde))
+                    .flatten(),
                 connected: is_connected,
-                action: (!is_connected && !busy).then(|| button("connect", "Connect")),
+                action: (!is_connected && !busy).then(|| match problem {
+                    // Gone from This Mac: take Cua out of its settings.
+                    Some(p) if p.action == "disconnect" => button("disconnect", "Disconnect"),
+                    Some(_) => button("connect", "Reconnect"),
+                    None => button("connect", "Connect"),
+                }),
                 note: if busy {
                     Some("Connecting…".into())
+                } else if let Some(p) = problem {
+                    Some(p.line.clone())
                 } else if is_connected {
                     Some("Connected".into())
                 } else {
@@ -1071,10 +1121,27 @@ fn connect_view(input: &FirstRunInput) -> ConnectView {
         } else {
             vec![]
         },
+        consent: if none || input.agents.is_none() {
+            String::new()
+        } else if input.advanced {
+            format!("Ticked sign-ins are copied to Keyvault on {}.", cap(place))
+        } else {
+            format!("{SIMPLE_CONSENT} on {}.", cap(place))
+        },
+        mode: (!none && input.agents.is_some()).then(|| {
+            if input.advanced {
+                button("simple", "Simple")
+            } else {
+                button("advanced", "Advanced")
+            }
+        }),
+        advanced: input.advanced,
         credentials: credentials(input, &connected),
         credentials_note: format!("Sign-ins and keys stay on {place}."),
         primary: button("continue", "Continue"),
-        secondary: connected.is_empty().then(|| button("skip", "Skip")),
+        // Continue works with nothing connected, and "Skip for now" stays at
+        // the top: no second Skip here (CUA-2267).
+        secondary: None,
         error: input
             .connect_error
             .as_ref()
@@ -1571,11 +1638,19 @@ fn setup_view(input: &FirstRunInput) -> SetupView {
             settings_url: None,
         },
     };
+    // The last button names the choice (CUA-2267): skip while the agent
+    // hasn't used Cua, continue once it has. The step id stays `done`.
+    let primary = PrimaryView {
+        label: if input.agent_used_at.is_some() {
+            "Continue to the app".into()
+        } else {
+            SKIP_TRY_LATER.into()
+        },
+        ..done
+    };
     SetupView {
         title: format!("Try it in {name}."),
-        lede: format!(
-            "Paste this request into {name}. It makes a Space and opens its desktop in a window."
-        ),
+        lede: format!("Paste this in {name} now, or try it later from Home."),
         prompt: Some(PromptView {
             heading: format!("Paste this in {name}"),
             text: try_prompt(&input.host_os).into(),
@@ -1586,9 +1661,15 @@ fn setup_view(input: &FirstRunInput) -> SetupView {
         }),
         status: Some(status),
         extra: None,
-        primary: done,
+        primary,
     }
 }
+
+/// The try step's button while the agent hasn't used Cua yet.
+pub const SKIP_TRY_LATER: &str = "Skip, I'll try it later";
+
+/// What Simple's Connect does, in one line (the consent).
+pub const SIMPLE_CONSENT: &str = "Connect adds Cua to the agent and copies its sign-in to Keyvault";
 
 /// The plan card for a moment after the first success: Teams for someone
 /// who entered teammates' emails and isn't on Teams, else Pro for Free.
@@ -2051,11 +2132,28 @@ mod tests {
             assert!(!a.connected, "{}", a.agent);
             assert_eq!(a.action.as_ref().unwrap().id, "connect");
         }
+        // Simple (the default) shows no paths and says what Connect does;
+        // Advanced names each file, and the link switches back.
+        assert!(c.agents.iter().all(|a| a.file.is_none()));
+        assert_eq!(
+            c.consent,
+            "Connect adds Cua to the agent and copies its sign-in to Keyvault on This Mac."
+        );
+        assert_eq!(c.mode.as_ref().unwrap().id, "advanced");
+        let c = connect(&FirstRunInput {
+            advanced: true,
+            ..i.clone()
+        });
+        assert_eq!(c.mode.as_ref().unwrap().label, "Simple");
+        assert_eq!(
+            c.consent,
+            "Ticked sign-ins are copied to Keyvault on This Mac."
+        );
         let files: Vec<Option<String>> = c.agents.iter().map(|a| a.file.clone()).collect();
         assert_eq!(files[0].as_deref(), Some("~/.hermes/config.yaml"));
         assert_eq!(files[1].as_deref(), Some("~/.claude.json"));
         assert_eq!(files[2].as_deref(), Some("~/.codex/config.toml"));
-        assert_eq!(c.secondary.as_ref().unwrap().id, "skip");
+        assert!(c.secondary.is_none());
         assert_eq!(lead_agent(i.agents.as_deref().unwrap()), "hermes");
         assert_eq!(view(&i).art.agent, "hermes");
     }
@@ -2438,15 +2536,21 @@ mod tests {
         assert_eq!(s.title, "Try it in Hermes.");
         assert_eq!(
             s.lede,
-            "Paste this request into Hermes. It makes a Space and opens its desktop in a window."
+            "Paste this in Hermes now, or try it later from Home."
         );
-        let p = s.prompt.unwrap();
+        let p = s.prompt.clone().unwrap();
         assert_eq!(p.text, TRY_PROMPT);
         assert_eq!(p.copy.as_deref(), Some("Copy"));
         assert_eq!(s.status.as_ref().unwrap().title, "Waiting for Hermes…");
         assert!(s.primary.enabled);
+        // The last button names the choice: skip until Hermes used Cua, then continue.
+        assert_eq!(
+            (s.primary.id.as_str(), s.primary.label.as_str()),
+            ("done", "Skip, I'll try it later")
+        );
         i.agent_used_at = Some("18:12".into());
         let s = view(&i).setup.unwrap();
+        assert_eq!(s.primary.label, "Continue to the app");
         let st = s.status.unwrap();
         assert_eq!(
             (st.state, st.title.as_str()),

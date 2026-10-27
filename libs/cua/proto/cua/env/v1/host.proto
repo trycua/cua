@@ -158,10 +158,32 @@ message HostSpace {
   // response: `none`, or empty for the default. A host older than
   // `CreateHostSpaceRequest.network` leaves it empty.
   string network = 21;
+  // What the Space takes on the host's disk, set only when
+  // `GetHostSpacesRequest.disk` asked for it and the host could measure
+  // it. A host that predates it leaves it unset.
+  HostSpaceDisk disk = 22;
+}
+
+// What a Space takes on its host's disk (numbers only), as the host's
+// resource sampler measured it: at most a few minutes old.
+message HostSpaceDisk {
+  // Bytes only this Space holds: what deleting it frees. Unset when they
+  // could not be measured.
+  optional uint64 bytes = 1;
+  // Blocks its files occupy, clones counted in full: an upper bound.
+  uint64 allocated = 2;
+  // Part of it is shared with other copies.
+  bool shares_space = 3;
 }
 
 // Request for `HostSpacesService.GetHostSpaces`.
-message GetHostSpacesRequest {}
+message GetHostSpacesRequest {
+  // Also say what each listed Space takes on this host's disk
+  // (`HostSpace.disk`). The host measures each Space at most every few
+  // minutes and answers from that, so asking costs it little; another of
+  // your devices asks while a window shows the sizes.
+  bool disk = 1;
+}
 
 // Response for `HostSpacesService.GetHostSpaces`.
 message GetHostSpacesResponse {
@@ -590,4 +612,69 @@ message HostSpaceCreating {
   optional uint64 bytes_total = 6;
   // Smoothed download rate, bytes per second.
   optional double bytes_per_second = 7;
+}
+
+// A Space's thread and its agent members, for people on other devices. The
+// thread of a Space a host provides lives in the host's cua daemon (its
+// owner); a person the host is shared with reads it, posts to it and
+// @mentions its agents through this service, from their own device.
+//
+// The host's cua-spacesd serves it while the host provides Spaces (feature
+// `host_thread`), to relay-verified callers including view-only shares
+// (they read only), and to the local token holder (the owner). It forwards
+// each call to the host's cua daemon with the verified caller, which it
+// sets itself (a caller a client sent is never forwarded). The daemon runs
+// the tool as that caller: the thread records them as the author, and the
+// Space's roles and each agent's rights decide what they may do. Only the
+// thread and agent member tools are served, and only for the Spaces the
+// host provides.
+service HostThreadService {
+  // Runs one thread or agent member tool (`thread_read`, `thread_post`,
+  // `thread_inbox`, `thread_claim`, `thread_reply`, `agent_members`,
+  // `agent_send`, and `agent_message`, `agent_status`, `agent_events`,
+  // `agent_interrupt`, `agent_stop` by a member's name) on a Space this
+  // host provides, as the verified caller. A tool error (a refusal
+  // included) is a result with `is_error`, as the MCP server answers it.
+  rpc CallThreadTool(CallThreadToolRequest) returns (CallThreadToolResponse);
+}
+
+// Request for `HostThreadService.CallThreadTool`.
+message CallThreadToolRequest {
+  // The Space: `relay:<machine>` (or `<machine>`), as other devices know
+  // it, or its id on the host (`local:<name>`).
+  string space = 1;
+  // The tool's name (a former name works too).
+  string name = 2;
+  // The tool's arguments as a JSON object; its `space` is replaced by the
+  // host's id of `space`.
+  string arguments_json = 3;
+}
+
+// Response for `HostThreadService.CallThreadTool`.
+message CallThreadToolResponse {
+  // MCP content parts, as a JSON array.
+  string content_json = 1;
+  // MCP structured content as JSON (empty: none).
+  string structured_json = 2;
+  // The tool failed (a refusal, a bad argument): the content says why.
+  bool is_error = 3;
+  // MCP `_meta` as JSON (empty: none).
+  string meta_json = 4;
+}
+
+// What a person was looking at in a Space as they posted to its thread: the
+// Space's desktop, or one of its windows. `thread_post` takes it as `view`,
+// and every entry and task that has one returns it (`thread_read`,
+// `thread_inbox`), as JSON with these field names (`CallThreadTool`'s
+// `arguments_json` and `structured_json`). Typed clients read it as this
+// message; the daemon's `thread::ViewContext` is held to it by a test.
+message ThreadView {
+  // `desktop` or `window`.
+  string kind = 1;
+  // The window's app ("Firefox"); empty for the desktop.
+  string app = 2;
+  // The window's title ("Pull requests"), at most 256 characters.
+  string title = 3;
+  // The window's id in the Space, as `computer_window_list` gives it.
+  string window_id = 4;
 }

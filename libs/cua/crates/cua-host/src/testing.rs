@@ -83,6 +83,8 @@ struct State_ {
     refuse_offline: bool,
     /// A relay that predates meta patches: the key is ignored.
     ignore_meta_patches: bool,
+    /// Answers `POST /v1/machines/{id}/leave` as a relay that predates it.
+    without_leave: bool,
     /// A relay (or its control plane) that refuses to change who a computer
     /// is shared with, with this code (`share_outside_team`).
     refuse_shares: Option<String>,
@@ -96,6 +98,9 @@ struct State_ {
     usage: Option<serde_json::Value>,
     /// Pairing codes by canonical code.
     pairing: BTreeMap<String, FakePairing>,
+    /// The most unused pairing codes an account may hold (none: no cap),
+    /// as the real relay's 429.
+    max_unused_codes: Option<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -428,6 +433,21 @@ async fn pairing_mint(
     let Some(Caller::Account(who)) = caller(&st, &headers) else {
         return err(StatusCode::UNAUTHORIZED, "account token required");
     };
+    if let Some(max) = st.max_unused_codes
+        && st
+            .pairing
+            .values()
+            .filter(|p| p.owner.id == who.id && p.state() == "active")
+            .count()
+            >= max
+    {
+        return err(
+            StatusCode::TOO_MANY_REQUESTS,
+            &format!(
+                "at most {max} unused pairing codes at once; revoke one or wait for it to expire"
+            ),
+        );
+    }
     let code: String = (0..12)
         .map(|_| b"0123456789ABCDEFGHJKMNPQRSTVWXYZ"[(rand::random::<u32>() % 32) as usize] as char)
         .collect();
@@ -623,6 +643,59 @@ async fn delete(State(s): State<S>, headers: HeaderMap, Path(id): Path<String>) 
     }
     st.machines.remove(&id);
     StatusCode::NO_CONTENT.into_response()
+}
+
+async fn leave(State(s): State<S>, headers: HeaderMap, Path(id): Path<String>) -> Response {
+    let mut st = s.lock().unwrap();
+    if st.without_leave {
+        // What an older relay answers: no such route.
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let (view, _) = match authorize(&st, &headers, &id, false) {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    if view.role == "owner" {
+        return err(
+            StatusCode::FORBIDDEN,
+            "you own this computer; delete it instead of leaving it",
+        );
+    }
+    let Some(Caller::Account(who)) = caller(&st, &headers) else {
+        return err(StatusCode::FORBIDDEN, "a machine token cannot do this");
+    };
+    let mine = |a: &String| {
+        a == &who.id
+            || who
+                .email
+                .as_deref()
+                .is_some_and(|e| e.eq_ignore_ascii_case(a))
+    };
+    let rec = st.machines.get_mut(&id).unwrap();
+    let removed: Vec<String> = rec
+        .machine
+        .allow
+        .iter()
+        .chain(&rec.machine.viewers)
+        .filter(|a| mine(a))
+        .cloned()
+        .collect();
+    rec.machine.allow.retain(|a| !mine(a));
+    rec.machine.viewers.retain(|a| !mine(a));
+    rec.machine.clients.retain(|c| c.id != who.id);
+    let owner = rec_owner(&st, &id);
+    st.audit.push((
+        owner,
+        serde_json::json!({"ts": now_secs(), "kind": "share_left", "machine": id, "subject": who.email.clone().unwrap_or_else(|| who.id.clone())}),
+    ));
+    Json(serde_json::json!({"id": id, "removed": removed})).into_response()
+}
+
+fn rec_owner(st: &State_, id: &str) -> String {
+    st.machines
+        .get(id)
+        .map(|r| r.machine.owner.id.clone())
+        .unwrap_or_default()
 }
 
 async fn sharing(s: S, headers: HeaderMap, id: String, on: bool) -> Response {
@@ -1161,6 +1234,7 @@ impl FakeRelay {
             )
             .route("/v1/machines/{id}/stop-sharing", post(stop))
             .route("/v1/machines/{id}/start-sharing", post(start))
+            .route("/v1/machines/{id}/leave", post(leave))
             .route("/v1/devices", get(device_list).post(device_register))
             .route("/v1/devices/session", post(device_session))
             .route("/v1/devices/approve", post(device_approve))
@@ -1246,6 +1320,24 @@ impl FakeRelay {
             .map(|r| r.machine.clone())
     }
 
+    /// Caps the unused pairing codes an account may hold at `max` (the
+    /// real relay's is 10): a mint over it answers 429.
+    pub fn cap_unused_codes(&self, max: usize) {
+        self.state.lock().unwrap().max_unused_codes = Some(max);
+    }
+
+    /// The pairing codes of `account` (its id) not used, revoked or
+    /// expired yet.
+    pub fn unused_codes(&self, account: &str) -> usize {
+        self.state
+            .lock()
+            .unwrap()
+            .pairing
+            .values()
+            .filter(|p| p.owner.id == account && p.state() == "active")
+            .count()
+    }
+
     /// The next machine registrations answer with `statuses`, in order,
     /// before the relay registers normally again.
     pub fn fail_registrations(&self, statuses: &[u16]) {
@@ -1289,6 +1381,12 @@ impl FakeRelay {
     /// dropped, as a relay that predates them does.
     pub fn set_ignore_meta_patches(&self, on: bool) {
         self.state.lock().unwrap().ignore_meta_patches = on;
+    }
+
+    /// Answers `POST /v1/machines/{id}/leave` the way a relay that
+    /// predates it does (404, no body), or as the current relay again.
+    pub fn without_leave(&self, on: bool) {
+        self.state.lock().unwrap().without_leave = on;
     }
 
     /// Machine registrations received so far (refused ones too).

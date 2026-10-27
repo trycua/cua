@@ -48,6 +48,31 @@ pub struct SkillRecord {
     pub installed_at: String,
 }
 
+/// An agent Cua connected (what the connection status compares against).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ConnectionRecord {
+    /// The agent's version when Cua last connected it.
+    #[serde(default)]
+    pub version: Option<String>,
+    /// RFC 3339.
+    #[serde(default)]
+    pub connected_at: String,
+    /// The sign-in Cua copied into Keyvault (never its value).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sign_in: Option<SignInRecord>,
+}
+
+/// A sign-in copy Cua made.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct SignInRecord {
+    /// The variable a run gets it as.
+    pub env: String,
+    /// "Codex · ChatGPT sign-in".
+    pub label: String,
+    /// RFC 3339.
+    pub copied_at: String,
+}
+
 /// The whole state file.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct State {
@@ -67,6 +92,9 @@ pub struct State {
     /// Config file path → the backup taken before cua first wrote it.
     #[serde(default)]
     pub backups: BTreeMap<PathBuf, PathBuf>,
+    /// Agent id → what Cua connected (version, sign-in copy).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub connections: BTreeMap<String, ConnectionRecord>,
 }
 
 impl State {

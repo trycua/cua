@@ -50,11 +50,11 @@ function CopyButton({ text, className }: { text: string; className?: string }) {
 }
 
 /** The empty state's line: "Prefer the terminal?" and each command, copyable. */
-export function CliHintLine({ commands, className }: { commands: string[]; className?: string }) {
+export function CliHintLine({ commands, className, label = "Prefer the terminal?" }: { commands: string[]; className?: string; label?: string | null }) {
   if (!commands.length) return null;
   return (
     <div data-cli-hint="line" className={cn("flex flex-wrap items-center justify-center gap-x-2 gap-y-1.5 text-xs text-muted-foreground", className)}>
-      <span>Prefer the terminal?</span>
+      {label ? <span>{label}</span> : null}
       {commands.map((command) => (
         <span key={command} className="inline-flex items-center rounded-md bg-foreground/[0.05] py-0.5 pr-0.5 pl-2">
           <code data-cli-command="" className="font-mono text-[11px] text-foreground/80 select-all">

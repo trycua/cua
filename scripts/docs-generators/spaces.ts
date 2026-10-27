@@ -57,6 +57,12 @@ export const PAGES: Array<{ slug: string; title: string; description: string; ca
     description: 'Run agents in a Space, teleport apps, and use Keyvault and Cua Volume: the tools with their parameters, results and errors.',
     categories: ['agents', 'persistent-agents', 'teleport', 'keyvault', 'volume'],
   },
+  {
+    slug: 'threads',
+    title: 'Thread and member tools',
+    description: "Each Space's conversation: post, read and mention, join as a member, and the view a message was sent from.",
+    categories: ['thread'],
+  },
 ];
 
 /** Category id -> the page that documents it. */

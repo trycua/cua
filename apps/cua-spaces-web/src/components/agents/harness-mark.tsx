@@ -39,6 +39,7 @@ export const APP_MARKS: Record<string, AppMark> = {
   goose: pair("goose"),
   zed: pair("zed", 0.85),
   antigravity: both("mark-antigravity.svg", 1.15),
+  t3code: both("mark-t3code.png"),
 };
 
 /** The app's mark at the size `className` gives, switched with the app theme; null when it has none. */

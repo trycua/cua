@@ -60,7 +60,7 @@ export function plainKeysIntro(intro: string): string {
   return intro.replace("need a provider key to run.", "need an account key from their AI company to run.");
 }
 
-/** Settings, Connected apps, Account keys. */
+/** Settings, Connectors, Account keys. */
 export const KEYS_TITLE = "Account keys";
 export const KEYS_ADD_OTHER_LABEL = "Add a key for another AI company";
 export const KEYS_ADD_OTHER_BUTTON = "Add key";

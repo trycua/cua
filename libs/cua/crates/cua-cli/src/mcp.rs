@@ -34,6 +34,8 @@ use std::{
 fn spaces_permissions(readonly: bool) -> Vec<String> {
     cua_spaces::contract::tools()
         .into_iter()
+        // A person's tool is never a permission an agent can be given.
+        .filter(|t| !cua_spaces::contract::person_only(t.name))
         .filter(|t| !readonly || t.annotations.read_only)
         .map(|t| format!("spaces:{}", t.name))
         .collect()
@@ -70,6 +72,9 @@ const COMPUTER_ALL: &[&str] = &[
 ];
 const RUNS_ALL: &[&str] = &["runs:run", "runs:read"];
 const SHARE_ALL: &[&str] = &["share:create", "share:read", "share:stop"];
+/// `connect_status`: whether each agent on this computer is connected
+/// (read-only; the same rows as `cua connect status --json` and the app).
+const CONNECT_ALL: &[&str] = &["connect:status"];
 const SKILLS_ALL: &[&str] = &[
     "skills:list",
     "skills:read",
@@ -90,6 +95,7 @@ pub fn parse_permissions(s: &str) -> BTreeSet<String> {
         .iter()
         .chain(COMPUTER_ALL)
         .chain(SKILLS_ALL)
+        .chain(CONNECT_ALL)
         .chain(IMAGES_ALL)
         .chain(TELEPORT_ALL)
         .chain(RUNS_ALL)
@@ -115,6 +121,7 @@ pub fn parse_permissions(s: &str) -> BTreeSet<String> {
             "computer:readonly" => &["computer:screenshot"],
             "skills:all" => SKILLS_ALL,
             "skills:readonly" => &["skills:list", "skills:read"],
+            "connect:all" | "connect:readonly" => CONNECT_ALL,
             // Deprecated name of `sandbox:view`.
             "sandbox:vnc" => &["sandbox:view"],
             "images:all" | "images:readonly" => IMAGES_ALL,
@@ -125,6 +132,19 @@ pub fn parse_permissions(s: &str) -> BTreeSet<String> {
             "share:readonly" => &["share:read"],
             one if all.contains(&one) => {
                 out.insert(one.to_string());
+                continue;
+            }
+            // A former Spaces tool name (`spaces:persistent_agent_send`)
+            // grants the tool it now is (`spaces:agent_send`).
+            one if one.strip_prefix("spaces:").is_some_and(|t| {
+                cua_spaces::contract::canonical(t) != t
+                    && all.contains(
+                        &format!("spaces:{}", cua_spaces::contract::canonical(t)).as_str(),
+                    )
+            }) =>
+            {
+                let t = &one["spaces:".len()..];
+                out.insert(format!("spaces:{}", cua_spaces::contract::canonical(t)));
                 continue;
             }
             unknown => {
@@ -166,6 +186,13 @@ const NAME: (&str, &str, bool, &str) = (
 const X: (&str, &str, bool, &str) = ("x", "integer", true, "X in screenshot pixels");
 const Y: (&str, &str, bool, &str) = ("y", "integer", true, "Y in screenshot pixels");
 const WID: (&str, &str, bool, &str) = ("window_id", "string", true, "Window id");
+
+/// The names of this server's own tools (the Spaces contract tools come
+/// on top), for the 0.7.0 compatibility test.
+#[cfg(test)]
+pub(crate) fn own_tool_names() -> Vec<&'static str> {
+    TOOLS.iter().map(|t| t.name).collect()
+}
 
 const TOOLS: &[Tool] = &[
     Tool {
@@ -340,7 +367,7 @@ const TOOLS: &[Tool] = &[
     Tool {
         name: "sandbox_create",
         permission: "sandbox:create",
-        description: "Create a sandbox from any image. `on` says where (local, the default unless the user configured another with `cua config set default.on`), `kind` what (auto, container, vm) and `runtime` which engine (auto, or gvisor, runc, qemu, lume); an impossible combination fails and lists the valid values. To browse the web, pass browser=true (and optionally url): it starts the canonical Linux image, registers it as a Space, launches Chromium with a throwaway profile inside it and returns the space, session, target_id and tab_id to pass to call_tool with the in-sandbox browser tools (browser_navigate, get_browser_state, browser_click, browser_type). Pass command, env and services to run a server in it, for example an MCP server: services {\"mcp\": 8765}. Without browser=true it does not register a Space: to reach its MCP server with list_tools/call_tool (service=\"mcp\"), use create_space instead (same arguments), or add this one with add_space (address local:<name>).",
+        description: "Create a sandbox from any image. `on` says where (local, the default unless the user configured another with `cua config set default.on`), `kind` what (auto, container, vm, microvm) and `runtime` which engine (auto, or gvisor, runc, qemu, lume, firecracker, vz, containerization); an impossible combination fails and lists the valid values. To browse the web, pass browser=true (and optionally url): it starts the canonical Linux image, registers it as a Space, launches Chromium with a throwaway profile inside it and returns the space, session, target_id and tab_id to pass to call_tool with the in-sandbox browser tools (browser_navigate, get_browser_state, browser_click, browser_type). Pass command, env and services to run a server in it, for example an MCP server: services {\"mcp\": 8765}. Without browser=true it does not register a Space: to reach its MCP server with list_tools/call_tool (service=\"mcp\"), use create_space instead (same arguments), or add this one with add_space (address local:<name>).",
         params: &[
             (
                 "browser",
@@ -390,7 +417,7 @@ const TOOLS: &[Tool] = &[
                 "kind",
                 "string",
                 false,
-                "What kind of computer: auto (default; from the image), container or vm",
+                "What kind of computer: auto (default; from the image), container, vm or microvm",
             ),
             (
                 "runtime",
@@ -447,7 +474,12 @@ const TOOLS: &[Tool] = &[
                 false,
                 "After this long without a create from the pool it keeps none ready until the next one (default: never)",
             ),
-            ("kind", "string", false, "auto (default), container or vm"),
+            (
+                "kind",
+                "string",
+                false,
+                "auto (default), container, vm or microvm",
+            ),
             (
                 "runtime",
                 "string",
@@ -850,6 +882,12 @@ const TOOLS: &[Tool] = &[
         ],
     },
     Tool {
+        name: "connect_status",
+        permission: "connect:status",
+        description: "Whether each AI agent on this computer (Hermes, Claude Code, Codex, Cursor, OpenClaw, T3 Code, ...) is really connected to Cua: installed and its version, signed in, Cua's MCP entry present and answering, its sign-in copied to Keyvault, and one line saying what to do when something is wrong. Read-only.",
+        params: &[],
+    },
+    Tool {
         name: "skills_list",
         permission: "skills:list",
         description: "List recorded skills.",
@@ -884,7 +922,7 @@ fn schema(t: &Tool) -> Value {
             p["items"] = json!({"type": "string"});
         }
         if t.name == "sandbox_create" && *n == "kind" {
-            p["enum"] = json!(["auto", "container", "vm"]);
+            p["enum"] = json!(["auto", "container", "vm", "microvm"]);
         }
         if t.name == "teleport_browser_session" && *n == "browser" {
             p["enum"] = json!(["firefox", "chrome"]);
@@ -907,6 +945,8 @@ pub fn docs() -> Value {
     let groups = |ro: &[&str], all: &[&str]| json!({"all": all, "readonly": ro});
     let mut tools: Vec<Value> = cua_spaces::contract::tools()
         .into_iter()
+        // Not served over MCP (a person's tool): documented with the SDK.
+        .filter(|t| !cua_spaces::contract::person_only(t.name))
         .map(|t| {
             json!({
                 "name": t.name,
@@ -943,6 +983,7 @@ pub fn docs() -> Value {
             "sandbox": groups(&["sandbox:list", "sandbox:get"], SANDBOX_ALL),
             "computer": groups(&["computer:screenshot"], COMPUTER_ALL),
             "skills": groups(&["skills:list", "skills:read"], SKILLS_ALL),
+            "connect": groups(CONNECT_ALL, CONNECT_ALL),
             "images": groups(IMAGES_ALL, IMAGES_ALL),
             "teleport": groups(&[], TELEPORT_ALL),
             "runs": groups(&["runs:read"], RUNS_ALL),
@@ -1064,6 +1105,15 @@ impl Server {
         }
         if let Some(r) = self.call_skills(name, a) {
             return r;
+        }
+        if name == "connect_status" {
+            return tokio::task::spawn_blocking(|| {
+                crate::agents::connection_report(&cua_agent_setup::AgentSetup::from_env())
+            })
+            .await
+            .map_err(|e| CuaError::Internal(e.to_string()))
+            .and_then(|r| serde_json::to_value(r).map_err(|e| CuaError::Internal(e.to_string())))
+            .and_then(jtext);
         }
         if name == "space_run" || name == "space_runs" {
             return runs_tool(name, a).await;
@@ -2222,7 +2272,7 @@ mod tests {
         assert_eq!(schema["properties"]["services"]["type"], "object");
         assert_eq!(
             schema["properties"]["kind"]["enum"],
-            json!(["auto", "container", "vm"])
+            json!(["auto", "container", "vm", "microvm"])
         );
         // It creates a sandbox and says so: no Space is registered.
         let d = TOOLS
@@ -2255,6 +2305,14 @@ mod tests {
     }
 
     #[test]
+    fn no_permission_grants_a_person_only_tool() {
+        for group in ["all", "spaces:all", "spaces:cloud_approve"] {
+            let p = parse_permissions(group);
+            assert!(!p.contains("spaces:cloud_approve"), "{group}: {p:?}");
+        }
+    }
+
+    #[test]
     fn permission_groups_expand() {
         let p = parse_permissions("sandbox:readonly,computer:click");
         assert_eq!(
@@ -2263,5 +2321,11 @@ mod tests {
         );
         assert!(parse_permissions("").contains("skills:delete"));
         assert!(parse_permissions("bogus").is_empty());
+        // Former Spaces tool names grant the tool under its current name.
+        assert_eq!(
+            parse_permissions("spaces:persistent_agent_send,spaces:routine_add"),
+            parse_permissions("spaces:agent_send,spaces:agent_schedule_add")
+        );
+        assert!(parse_permissions("spaces:agent_send").contains("spaces:agent_send"));
     }
 }

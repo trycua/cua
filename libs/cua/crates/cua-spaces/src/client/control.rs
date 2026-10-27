@@ -491,6 +491,22 @@ impl Connection {
         Ok(expect_array(&payload, None))
     }
 
+    /// `cloud_cost`: what the machines Cua created cost, grouped `by`
+    /// `space`, `agent`, `day` or `cloud` since `since` (`YYYY-MM-DD`;
+    /// `None`: the first of this month): `by`, `since`, `until`, `rows`
+    /// (each `key`, `usd`, `hours`, `machines`) and `total_usd`.
+    pub fn cloud_cost(
+        &self,
+        provider: Option<&str>,
+        by: &str,
+        since: Option<&str>,
+    ) -> Result<Map<String, Value>> {
+        self.call_object(
+            "cloud_cost",
+            json!({ "provider": provider, "by": by, "since": since }),
+        )
+    }
+
     /// `cloud_sweep`: what Cua left in your clouds; deletes it unless
     /// `dry_run`.
     pub fn cloud_sweep(

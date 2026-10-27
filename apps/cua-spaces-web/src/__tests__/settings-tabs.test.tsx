@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 // Settings' six tabs on the real routes and the wasm core: Account, General,
-// Connected apps, Trusted devices, Advanced, About. The old addresses
+// Connectors, Trusted devices, Advanced, About. The old addresses
 // (Agents, Experiments) still land on the right tab, and what moved is where
 // the audit put it.
 
@@ -24,16 +24,16 @@ const tab = (id: string) => document.querySelector<HTMLElement>(`[data-settings-
 const labels = () => [...document.querySelectorAll<HTMLElement>('nav[aria-label="Settings"] a')].map((a) => a.textContent);
 
 describe.skipIf(!wasmBuilt)("Settings tabs (real routes, wasm core)", () => {
-  it("has Account, General, Connected apps, Trusted devices, Advanced and About, in that order", async () => {
+  it("has Account, General, Connectors, Trusted devices, Advanced and About, in that order", async () => {
     await mountApp("/settings", host);
     await waitFor(() => expect(tab("account")).not.toBeNull());
-    expect(labels()).toEqual(["Account", "General", "Connected apps", "Trusted devices", "Advanced", "About"]);
+    expect(labels()).toEqual(["Account", "General", "Connectors", "Trusted devices", "Advanced", "About"]);
   });
 
   it.each([
     ["/settings", "Account"],
     ["/settings/general", "General"],
-    ["/settings/connected-apps", "Connected apps"],
+    ["/settings/connectors", "Connectors"],
     ["/settings/devices", "Trusted devices"],
     ["/settings/advanced", "Advanced"],
     ["/settings/about", "About"],
@@ -45,7 +45,8 @@ describe.skipIf(!wasmBuilt)("Settings tabs (real routes, wasm core)", () => {
   });
 
   it.each([
-    ["/settings/agents", "/settings/connected-apps", "connected-apps"],
+    ["/settings/agents", "/settings/connectors", "connectors"],
+    ["/settings/connected-apps", "/settings/connectors", "connectors"],
     ["/settings/experiments", "/settings/advanced", "advanced"],
   ])("sends the old %s to %s", async (from, to, id) => {
     const { router } = await mountApp(from, host);
@@ -63,10 +64,10 @@ describe.skipIf(!wasmBuilt)("Settings tabs (real routes, wasm core)", () => {
     expect(text).not.toMatch(/Keyboard shortcuts|Shared links|Storage|Runtimes|Keyvault|AI agents|Welcome/);
   });
 
-  it("puts Connected apps where Agents was, with the account keys and Terminal", async () => {
-    await mountApp("/settings/connected-apps", host);
+  it("puts Connectors where Agents was, with the account keys and Terminal", async () => {
+    await mountApp("/settings/connectors", host);
     await waitFor(() => expect(document.querySelector("[data-agent-keys]")).not.toBeNull(), { timeout: 8000 });
-    const text = tab("connected-apps")!.textContent!;
+    const text = tab("connectors")!.textContent!;
     expect(text).toContain("Account keys");
     expect(text).toContain("Add a key for another AI company");
     expect(text).not.toMatch(/provider key/i);
@@ -101,7 +102,7 @@ describe.skipIf(!wasmBuilt)("Settings tabs (real routes, wasm core)", () => {
 });
 
 describe.skipIf(!wasmBuilt)("Cmd+K finds Settings tabs", () => {
-  it("opens Connected apps from the palette", async () => {
+  it("opens Connectors from the palette", async () => {
     const { router } = await mountApp("/spaces", host);
     await waitFor(() => expect(document.querySelector("nav")).not.toBeNull());
     act(() => useUiStore.getState().setPaletteOpen(true));
@@ -110,8 +111,8 @@ describe.skipIf(!wasmBuilt)("Cmd+K finds Settings tabs", () => {
       expect(el).not.toBeNull();
       return el!;
     });
-    fireEvent.change(input, { target: { value: "connected apps" } });
+    fireEvent.change(input, { target: { value: "connectors" } });
     fireEvent.keyDown(input, { key: "Enter" });
-    await waitFor(() => expect(router.state.location.pathname).toBe("/settings/connected-apps"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/settings/connectors"));
   });
 });

@@ -1,6 +1,6 @@
 ---
-title: "Share a Space"
-description: "Give another person access to a Space, list who has it and take it back."
+title: "Sharing, leaving and bulk delete"
+description: "Give another person access to a Space, see who owns a Space and who else has it, leave Spaces shared with you, and delete several at once."
 ---
 
 {/*
@@ -12,7 +12,7 @@ description: "Give another person access to a Space, list who has it and take it
 
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
-`Space.share` gives a person access to a Space, `Space.shares` lists who has it, and `Space.unshare` takes it back.
+`Space.share` gives a person access to a Space, `Space.shares` lists who has it, and `Space.unshare` takes it back. A Space on the relay carries `SpaceInfo.sharing`: its owner, your role (`owner`, `editor`, `viewer`), the team you reach it through and, for your own, who else has it. `leave_many` takes you off Spaces shared with you; `delete_many` deletes several of yours, three at a time, turning running ones off first. Both answer one `BulkResult` per id, in order.
 
 ## Sharing
 
@@ -165,6 +165,114 @@ pub async fn unshare(&self, who: Option<String>) -> Result<SpaceShares, CuaError
 
 **Returns** [`SpaceShares`](#spaceshares-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
 
+## Leave and bulk delete
+
+Methods of [`Spaces`](/cua-sdk/reference/spaces#spaces).
+
+### `Spaces.leave_many`
+
+Takes this account off Spaces shared with it (through the relay): a
+direct share ends, a team's Space leaves this account's list. Your
+own Spaces are refused (delete them). One result per id, in order;
+a relay that predates leaving answers "Couldn't leave &lt;name&gt;: the
+Cua relay needs an update."
+
+<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Python">
+
+```python
+async def leave_many(self, ids: List[str]) -> List[BulkResult]
+```
+
+</Tab>
+<Tab value="TypeScript">
+
+```ts
+leaveMany(ids: Array<string>, asyncOpts_?: { signal: AbortSignal }): Promise<Array<BulkResult>>
+```
+
+</Tab>
+<Tab value="Swift">
+
+```swift
+func leaveMany(ids: [String]) async throws -> [BulkResult]
+```
+
+</Tab>
+<Tab value="Kotlin">
+
+```kotlin
+@Throws(CuaException::class)
+suspend fun leaveMany(ids: List<String>): List<BulkResult>
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub async fn leave_many(&self, ids: Vec<String>) -> Result<Vec<BulkResult>, CuaError>
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `ids` | `Vec<String>` | required |
+
+**Returns** [`Vec<BulkResult>`](#bulkresult-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
+
+### `Spaces.delete_many`
+
+Deletes several Spaces (`Spaces.delete` each), at most three at
+a time, turning running ones off first. One result per id, in
+order; one failure never stops the rest.
+
+<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Python">
+
+```python
+async def delete_many(self, ids: List[str]) -> List[BulkResult]
+```
+
+</Tab>
+<Tab value="TypeScript">
+
+```ts
+deleteMany(ids: Array<string>, asyncOpts_?: { signal: AbortSignal }): Promise<Array<BulkResult>>
+```
+
+</Tab>
+<Tab value="Swift">
+
+```swift
+func deleteMany(ids: [String]) async throws -> [BulkResult]
+```
+
+</Tab>
+<Tab value="Kotlin">
+
+```kotlin
+@Throws(CuaException::class)
+suspend fun deleteMany(ids: List<String>): List<BulkResult>
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub async fn delete_many(&self, ids: Vec<String>) -> Result<Vec<BulkResult>, CuaError>
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `ids` | `Vec<String>` | required |
+
+**Returns** [`Vec<BulkResult>`](#bulkresult-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
+
 ## `SpaceShareEntry` record
 
 One account a Space is shared with.
@@ -189,3 +297,44 @@ Returned by [`Space.share`](#spaceshare), [`Space.shares`](#spaceshares), [`Spac
 | `url` | `String` |  | The relay URL of the machine. |
 | `online` | `bool` |  | The machine is on the relay now. |
 | `shares` | [`Vec<SpaceShareEntry>`](#spaceshareentry-record) |  | The accounts and their roles. |
+
+## `SpaceSharing` record
+
+Who a Space belongs to and who else has it, as this account sees it
+(`SpaceInfo.sharing`).
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `owner_id` / `ownerId` | `String` |  | The owner's account id. |
+| `owner_email` / `ownerEmail` | `String` | `""` | The owner's email, when known. |
+| `owner_name` / `ownerName` | `String` | `""` | The owner's display name, when known. |
+| `role` | `String` |  | What this account may do: `owner`, `editor` or `viewer`. |
+| `team` | `String` | `""` | The team this account reaches it through (its key), when it is a team's and not shared with this account directly. |
+| `team_name` / `teamName` | `String` | `""` | That team's display name (its key when the name is not known). |
+| `editors` | `Vec<String>` | `[]` | Owner view: accounts (emails or ids) that may use it. |
+| `viewers` | `Vec<String>` | `[]` | Owner view: accounts that may only watch. |
+| `teams` | [`Vec<SpaceTeamShare>`](#spaceteamshare-record) | `[]` | Owner view: the teams it is a machine of. |
+
+## `SpaceTeamShare` record
+
+A team a Space is shared with (`SpaceSharing.teams`).
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `key` | `String` |  | The team's key (org id). |
+| `name` | `String` |  | Its display name. |
+| `role` | `String` |  | `editor` or `viewer`. |
+
+## `BulkResult` record
+
+The outcome for one Space of `Spaces.delete_many` or
+`Spaces.leave_many`.
+
+Returned by [`Spaces.delete_many`](#spacesdelete_many), [`Spaces.leave_many`](#spacesleave_many).
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `id` | `String` |  | The Space as asked. |
+| `ok` | `bool` |  | It went through. |
+| `error` | `Option<String>` |  | Why not, in plain words. |
+| `message` | `String` |  | What happened, for people. |

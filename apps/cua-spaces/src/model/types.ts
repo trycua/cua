@@ -67,7 +67,7 @@ export type SpaceProvider = "local" | "direct" | "relay";
 export type Location = "local" | "yours" | "host";
 
 /** What kind of machine a Space is. */
-export type SpaceKind = "container" | "vm";
+export type SpaceKind = "container" | "vm" | "microvm";
 
 /**
  * Which engine runs it. Local: `gvisor`, `runc` (containers), `qemu`, `lume`

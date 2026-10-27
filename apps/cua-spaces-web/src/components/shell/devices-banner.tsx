@@ -31,13 +31,13 @@ export function DevicesBanner() {
     void navigate({ to: "/settings/devices" });
   };
   return (
-    <div role="status" data-shell-devices-banner={banner.tone} className="flex shrink-0 items-center gap-2 border-b px-4 py-1.5 text-xs">
+    <div role="status" data-shell-devices-banner={banner.tone} className="flex shrink-0 items-center gap-2 bg-muted/60 px-4 py-1.5 text-xs">
       <Icon className={cn("size-3.5 shrink-0", critical ? "text-destructive" : "text-warning")} />
       <span className="min-w-0 flex-1 truncate" title={banner.text}>
         {banner.text}
       </span>
       {banner.actionLabel ? (
-        <Button size="sm" variant="outline" className="h-6" onClick={enroll} data-shell-banner-enroll>
+        <Button size="sm" variant="secondary" className="h-6" onClick={enroll} data-shell-banner-enroll>
           {banner.actionLabel}
         </Button>
       ) : null}

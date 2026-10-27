@@ -653,6 +653,44 @@ struct ViewModelTests {
         #expect(appDropSentText(files: files) == "notes.txt (1.0 KB) verified in /home/cua/Downloads/notes.txt")
     }
 
+    /// New Space > Advanced > Kind: MicroVM where this Mac's doctor reports a
+    /// microVM runtime; created, the backend gets `kind` microvm (the CLI's
+    /// `--kind microvm`). Where none is ready it is greyed out and choosing
+    /// it changes nothing.
+    @Test func newSpaceCreatesAMicrovm() async throws {
+        let backend = FixtureSpacesBackend(rows: [])
+        backend.fixtureBackends = ["docker", "lume", "vz", "containerization"]
+        let model = makeModel(backend, host: FixtureHost())
+        await model.refresh()
+        await model.openNewSpace()
+        model.wizard.send(.chooseKind(kind: .microvm))
+        let v = model.wizard.view
+        #expect(v.kindTiles.map(\.id) == ["container", "vm", "microvm"])
+        #expect(v.runtimes.map(\.value) == ["auto", "vz", "containerization"])
+        model.wizard.send(.setRuntime(runtime: .containerization))
+        model.create(model.wizard.view.plan)
+        for _ in 0..<50 where backend.created.isEmpty { try? await Task.sleep(for: .milliseconds(20)) }
+        #expect(backend.created.first?.kind == .microvm)
+        #expect(backend.created.first?.kind.word == "microvm")
+        #expect(backend.created.first?.runtime.word == "containerization")
+        #expect(backend.created.first?.image == "ghcr.io/trycua/linux:24.04")
+
+        let none = FixtureSpacesBackend(rows: [])
+        none.fixtureBackends = ["docker", "lume"]
+        let mac = makeModel(none, host: FixtureHost())
+        await mac.refresh()
+        await mac.openNewSpace()
+        mac.wizard.send(.chooseKind(kind: .microvm))
+        #expect(mac.wizard.view.kindTiles.first { $0.id == "microvm" }?.enabled == false)
+        // No words in New Space; Settings, Advanced, Runtimes says why.
+        #expect(mac.wizard.view.kindTiles.first { $0.id == "microvm" }?.detail == "")
+        let microvm = mac.settingsPage.sections.first { $0.id == "runtimes" }?.rows.filter { $0.id.hasPrefix("microvm-") }
+        #expect(microvm?.map(\.id) == ["microvm-runtime", "microvm-runtime-note"])
+        #expect(microvm?.first?.value == "Not available")
+        #expect(microvm?.last?.label == "MicroVM needs macOS 26.")
+        #expect(appWizardCreateArgs(plan: mac.wizard.view.plan).kind == .container)
+    }
+
     /// Only This machine: the window stays on the empty home. One click creates
     /// that system's default Space when this Mac can run it, and opens the
     /// sheet on the core's refusal when it cannot.
@@ -741,11 +779,11 @@ struct ViewModelTests {
     /// names that machine, not this Mac.
     @Test func aCreateOnAnotherMachineIsOneRowNextToItsMachinesRecord() async throws {
         let name = "e2e-1005-gamma-macos"
-        let record = AppSpaceRow(id: "relay:96fe/space-46e0", name: name, provider: "relay", spacesdVersion: "",
+        let record = AppSpaceRow(id: "relay:96fe/space-46e0", name: name, displayName: nil, provider: "relay", spacesdVersion: "",
                                  features: [], addedAt: nil, os: nil, osName: nil, osPrettyName: nil, image: nil,
                                  imageDigest: nil, kind: nil, arch: nil, reachable: false, error: nil,
                                  host: "96fe", hostName: "gamma-4 Mac Studio", power: nil, powerState: nil,
-                                 cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil)
+                                 cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil)
         let backend = FixtureSpacesBackend(rows: [record])
         backend.holdCreates = true
         let model = makeModel(backend)
@@ -1176,10 +1214,10 @@ struct ViewModelTests {
     /// Remove from List, which only forgets it.
     @Test func aSpaceInYourCloudDeletesPermanentlyOrIsRemovedFromTheList() async throws {
         func cloudRow(_ id: String, _ name: String, _ cloud: String, _ place: String, _ delete: String) -> AppSpaceRow {
-            AppSpaceRow(id: id, name: name, provider: "relay", spacesdVersion: "0.4.0", features: [], addedAt: nil,
+            AppSpaceRow(id: id, name: name, displayName: nil, provider: "relay", spacesdVersion: "0.4.0", features: [], addedAt: nil,
                         os: .linux, osName: nil, osPrettyName: nil, image: nil, imageDigest: nil, kind: nil, arch: nil,
                         reachable: true, error: nil, host: nil, hostName: nil, power: nil, powerState: nil,
-                        cloud: cloud, cloudPlace: place, cloudDelete: delete, stopReason: nil)
+                        cloud: cloud, cloudPlace: place, cloudDelete: delete, stopReason: nil, sharing: nil)
         }
         let backend = FixtureSpacesBackend(rows: [
             cloudRow("relay:cloud-0000000000000a01", "research-box", "aws", "AWS \u{b7} us-west-2", "here"),

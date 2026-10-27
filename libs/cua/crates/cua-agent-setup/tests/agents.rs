@@ -148,7 +148,7 @@ fn fixture(agent: &str) -> (&'static str, String) {
             ".claude.json",
             "{\n  \"numStartups\": 12,\n  \"mcpServers\": {\n    \"other\": {\"type\": \"stdio\", \"command\": \"other-mcp\", \"args\": []}\n  },\n  \"projects\": {}\n}\n".into(),
         ),
-        "codex" => (
+        "codex" | "t3code" => (
             ".codex/config.toml",
             "# my codex config\nmodel = \"gpt-5\" # pinned\n\n[mcp_servers.other]\ncommand = \"other-mcp\" # keep\nargs = []\n".into(),
         ),
@@ -277,7 +277,12 @@ fn every_mcp_agent_merges_idempotently_backs_up_and_removes_only_its_entry() {
         let st = s.detect().into_iter().find(|x| x.id == a.id).unwrap();
         assert!(st.cua_configured && st.cua_managed, "{}: {st:?}", a.id);
         assert_eq!(st.mcp_config.as_deref(), Some(file.as_path()));
-        assert!(st.installed, "{}: the config marks it installed", a.id);
+        // T3 Code's config is Codex's: it doesn't mark T3 Code installed.
+        assert!(
+            st.installed || a.id == "t3code",
+            "{}: the config marks it installed",
+            a.id
+        );
 
         // A new command updates the entry (still one backup).
         let o = one(s

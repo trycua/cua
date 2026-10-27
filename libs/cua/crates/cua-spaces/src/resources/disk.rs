@@ -7,6 +7,12 @@
 //! (`ATTR_CMNEXT_PRIVATESIZE`), which is what deleting it frees. Where that
 //! cannot be measured the number is left out and [`DiskOnHost::shares_space`]
 //! says the Space shares with other copies.
+//!
+//! A container Space costs what its own layer holds: the writable layer the
+//! engine keeps for it (and its sidecars) plus the anonymous volumes that
+//! go with it ([`container_disk`]); the image it runs is shared and stays.
+//! A microVM's instance directory holds its own scratch disk and state; its
+//! base image lives apart.
 
 use super::{DiskOnHost, MIB};
 use cua_sandbox_core::state::{SandboxState, StateStore};
@@ -100,12 +106,18 @@ pub fn private_tree(dir: &Path) -> Private {
     let mut shared_capable = false;
     let mut stack = vec![dir.to_path_buf()];
     while let Some(next) = stack.pop() {
-        let Ok(meta) = std::fs::symlink_metadata(&next) else {
-            return Private::Unknown;
+        let meta = match std::fs::symlink_metadata(&next) {
+            Ok(m) => m,
+            // Gone while the tree was walked (a log rotated, a temp file):
+            // it holds nothing now.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => return Private::Unknown,
         };
         if meta.is_dir() {
-            let Ok(rd) = std::fs::read_dir(&next) else {
-                return Private::Unknown;
+            let rd = match std::fs::read_dir(&next) {
+                Ok(rd) => rd,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(_) => return Private::Unknown,
             };
             stack.extend(rd.flatten().map(|e| e.path()));
         } else if meta.is_file() {
@@ -115,6 +127,7 @@ pub fn private_tree(dir: &Path) -> Private {
                     total = total.saturating_add(b);
                 }
                 Private::NotShared => total = total.saturating_add(allocated_file(&next)),
+                Private::Unknown if !next.exists() => {}
                 Private::Unknown => return Private::Unknown,
             }
         }
@@ -166,8 +179,12 @@ pub struct Footprint {
     pub memory: u64,
     /// Its disk's size limit, bytes (0: unknown).
     pub disk: u64,
-    /// The directory holding its disk on this computer (VMs only).
+    /// The directory holding its own files on this computer: a VM's disk,
+    /// a microVM's instance (scratch disk and state).
     pub dir: Option<PathBuf>,
+    /// A container a container engine runs: its own bytes are the engine's
+    /// writable layer for it ([`container_disk`]).
+    pub engine: bool,
     /// Bytes `lume serve` reports its disk occupies, clones counted in
     /// full (0: not reported). The fallback when [`Footprint::dir`] cannot
     /// be read.
@@ -227,8 +244,30 @@ pub fn footprints(
                 name: l.name.clone(),
                 runtime: l.runtime_type.clone(),
                 dir: None,
+                engine: false,
             };
             match l.runtime_type.as_str() {
+                "gvisor" | "runsc" | "container" | "docker" | "runc" | "managed"
+                | "qemu-docker" | "qemu_docker" => f.engine = true,
+                "firecracker" | "microvm" | "vz" => {
+                    f.dir = Some(
+                        layout
+                            .home()
+                            .join("vmm")
+                            .join("microvm")
+                            .join("instances")
+                            .join(&l.name),
+                    );
+                }
+                "containerization" => {
+                    let rt = cua_vmm::containerization::ContainerizationRuntime::new(
+                        cua_vmm::containerization::ContainerizationConfig {
+                            root: layout.home().join("vmm").join("containerization"),
+                            ..Default::default()
+                        },
+                    );
+                    f.dir = Some(rt.container_dir(&l.name));
+                }
                 "lume" => f.dir = lume_home.map(|h| h.join(&l.name)),
                 "qemu" => {
                     let dir = layout.qemu().join(&l.name);
@@ -247,6 +286,74 @@ pub fn footprints(
             f
         })
         .collect()
+}
+
+/// Whether a volume name is an anonymous one (64 hex digits): the engine
+/// made it for one container, and it goes with that container.
+fn is_anonymous_volume(name: &str) -> bool {
+    name.len() == 64 && name.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// The containers of Space `name` among `containers`: its own and its
+/// sidecars' (`<name>-sc-<sidecar>`), of this home (`home_tag`) when the
+/// container says which home made it.
+fn space_containers<'a>(
+    name: &'a str,
+    home_tag: &'a str,
+    containers: &'a [cua_disk::docker::DockerContainer],
+) -> impl Iterator<Item = &'a cua_disk::docker::DockerContainer> + 'a {
+    let sidecar = format!("{name}-sc-");
+    containers.iter().filter(move |c| {
+        (c.name == name || c.name.starts_with(&sidecar))
+            && c.labels
+                .get(cua_disk::docker::LABEL_HOME)
+                .is_none_or(|h| h == home_tag)
+    })
+}
+
+/// The anonymous volumes Space `name`'s containers mount (sized with the
+/// engine's disk-usage report, only when there are some).
+pub fn container_volumes(
+    name: &str,
+    home_tag: &str,
+    containers: &[cua_disk::docker::DockerContainer],
+) -> Vec<String> {
+    let mut out: Vec<String> = space_containers(name, home_tag, containers)
+        .flat_map(|c| c.volumes.iter().filter(|v| is_anonymous_volume(v)).cloned())
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// What container Space `name` costs: the writable layers of its
+/// containers plus the anonymous volumes they mount (what deleting it
+/// frees). Its image's layers are shared and not counted, nor are named
+/// volumes (Cua Volumes outlive the Space). `None` when the engine has no
+/// container of it.
+pub fn container_disk(
+    name: &str,
+    home_tag: &str,
+    containers: &[cua_disk::docker::DockerContainer],
+    volume_sizes: &std::collections::HashMap<String, u64>,
+) -> Option<DiskOnHost> {
+    let mut found = false;
+    let mut bytes = 0u64;
+    for c in space_containers(name, home_tag, containers) {
+        found = true;
+        bytes = bytes.saturating_add(c.size_rw);
+    }
+    if !found {
+        return None;
+    }
+    for v in container_volumes(name, home_tag, containers) {
+        bytes = bytes.saturating_add(volume_sizes.get(&v).copied().unwrap_or(0));
+    }
+    Some(DiskOnHost {
+        bytes: Some(bytes),
+        allocated: bytes,
+        shares_space: false,
+    })
 }
 
 #[cfg(test)]
@@ -375,5 +482,128 @@ mod tests {
             (4, 8 << 30, 80 << 30, 31 << 30)
         );
         assert_eq!(m.dir, Some(lume_home.join("mac")));
+        assert!(!m.engine);
+        assert!(b.engine, "a gVisor Space is the engine's container");
+    }
+
+    #[test]
+    fn microvms_and_apple_containers_are_measured_in_their_own_directories() {
+        let home = tempfile::tempdir().unwrap();
+        let store = StateStore::new(home.path().join("sandboxes"));
+        for (name, runtime) in [
+            ("fc", "firecracker"),
+            ("vz1", "vz"),
+            ("apple", "containerization"),
+        ] {
+            store
+                .save(&SandboxState::Local(LocalState {
+                    name: name.into(),
+                    runtime_type: runtime.into(),
+                    status: "stopped".into(),
+                    ..Default::default()
+                }))
+                .unwrap();
+        }
+        let layout = cua_disk::Layout::new(home.path());
+        let mut list = footprints(&store, &layout, &[], None);
+        list.sort_by(|a, b| a.name.cmp(&b.name));
+        let vmm = home.path().join("vmm");
+        let dirs: Vec<_> = list
+            .iter()
+            .map(|f| (f.name.as_str(), f.dir.clone(), f.engine))
+            .collect();
+        assert_eq!(
+            dirs,
+            [
+                (
+                    "apple",
+                    Some(vmm.join("containerization/data/containers/apple")),
+                    false
+                ),
+                ("fc", Some(vmm.join("microvm/instances/fc")), false),
+                ("vz1", Some(vmm.join("microvm/instances/vz1")), false),
+            ]
+        );
+        // A microVM's instance directory: its scratch disk is its own.
+        let dir = vmm.join("microvm/instances/fc");
+        std::fs::create_dir_all(&dir).unwrap();
+        write(&dir.join("scratch.ext4"), 3, 1);
+        let d = measure(&dir).unwrap();
+        assert!(d.bytes.unwrap() >= 3 * MIB, "{d:?}");
+    }
+
+    fn container(
+        name: &str,
+        home: Option<&str>,
+        size_rw: u64,
+        volumes: &[&str],
+    ) -> cua_disk::docker::DockerContainer {
+        cua_disk::docker::DockerContainer {
+            name: name.into(),
+            size_rw,
+            labels: home
+                .map(|h| [(cua_disk::docker::LABEL_HOME.to_string(), h.to_string())].into())
+                .unwrap_or_default(),
+            volumes: volumes.iter().map(|v| v.to_string()).collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_container_costs_its_own_layer_its_sidecars_and_its_anonymous_volumes() {
+        let anon = "a".repeat(64);
+        let other_anon = "b".repeat(64);
+        let containers = [
+            container("box", Some("h1"), 300 * MIB, &[&anon, "cua-vol-notes"]),
+            container("box-sc-db", Some("h1"), 50 * MIB, &[]),
+            // Another home's container of the same name, another Space's,
+            // and one from before homes were labelled.
+            container("box", Some("h2"), 9000 * MIB, &[]),
+            container("boxer", Some("h1"), 7000 * MIB, &[&other_anon]),
+            container("old", None, 20 * MIB, &[]),
+        ];
+        assert_eq!(container_volumes("box", "h1", &containers), [anon.as_str()]);
+        let sizes = std::collections::HashMap::from([
+            (anon.clone(), 100 * MIB),
+            ("cua-vol-notes".to_string(), 5000 * MIB),
+            (other_anon, 1000 * MIB),
+        ]);
+        let d = container_disk("box", "h1", &containers, &sizes).unwrap();
+        // 300 + 50 + 100: not the image, not the named volume (it outlives
+        // the Space), not another home's or Space's.
+        assert_eq!(d.bytes, Some(450 * MIB));
+        assert_eq!(d.allocated, 450 * MIB);
+        assert!(!d.shares_space);
+        assert_eq!(
+            container_disk("old", "h1", &containers, &sizes)
+                .unwrap()
+                .bytes,
+            Some(20 * MIB)
+        );
+        // An unsized volume adds nothing; no container: nothing to say.
+        let d = container_disk("box", "h1", &containers, &Default::default()).unwrap();
+        assert_eq!(d.bytes, Some(350 * MIB));
+        assert_eq!(container_disk("gone", "h1", &containers, &sizes), None);
+    }
+
+    /// Only what truly cannot be read leaves the number out: a folder this
+    /// user may not list.
+    #[cfg(unix)]
+    #[test]
+    fn only_what_cannot_be_read_leaves_the_size_unknown() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        write(&dir.path().join("disk.img"), 2, 3);
+        assert!(measure(dir.path()).unwrap().bytes.is_some());
+        let locked = dir.path().join("locked");
+        std::fs::create_dir(&locked).unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let readable = std::fs::read_dir(&locked).is_ok(); // root reads anything
+        let d = measure(dir.path()).unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        if !readable {
+            assert_eq!(d.bytes, None, "{d:?}");
+            assert!(d.shares_space);
+        }
     }
 }

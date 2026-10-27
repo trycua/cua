@@ -307,7 +307,7 @@ export class AgentRunsModel {
 
 // MARK: Provider keys
 
-/** Settings → Agents: the provider keys agents get. The cua daemon keeps them in the system's credential store (`agent_keys.list/set/remove`, its app methods; no MCP tool reaches them) and answers only the provider, the variable, the last four characters and when each was added. A key passes through here once, in `save`, and is never kept. */
+/** Settings → Connectors: the provider keys agents get. The cua daemon keeps them in the system's credential store (`agent_keys.list/set/remove`, its app methods; no MCP tool reaches them) and answers only the provider, the variable, the last four characters and when each was added. A key passes through here once, in `save`, and is never kept. */
 export class AgentKeysModel {
   /** The daemon's last answer, as it came. */
   report: Json | null = null;
@@ -402,6 +402,12 @@ export interface AgentSetupRunning {
   remove(agents: string[]): Promise<AppAgentSetupOutcomeInput[]>;
   /** Starts `agent`'s own sign-in on this computer (`codex login`); returns once it runs. */
   signIn(agent: string): Promise<void>;
+  /** Whether each agent is really connected (CONTRACT §4), as `cua connect status --json` prints it. */
+  connectionStatusJson(refresh: boolean): Promise<string>;
+  /** Connect and Reconnect: Cua's tools and, with `signIn`, the agent's sign-in copied to Keyvault. */
+  connectJson(agents: string[], signIn: boolean, skills: boolean, mcp: boolean): Promise<string>;
+  /** Disconnect: both undone. */
+  disconnectJson(agents: string[], signIn: boolean): Promise<string>;
   /** Deletes the config copies (`.cua-backup-*`) earlier versions left, once per install. */
   sweepLeftovers?(): void;
 }
@@ -466,6 +472,18 @@ export class LiveAgentSetup implements AgentSetupRunning {
     this.inner.signIn(agent);
   }
 
+  async connectionStatusJson(refresh: boolean): Promise<string> {
+    return this.inner.connectionStatusJson(this.server, refresh);
+  }
+
+  async connectJson(agents: string[], signIn: boolean, skills: boolean, mcp: boolean): Promise<string> {
+    return this.inner.connectJson(agents, this.server, skills, mcp, signIn);
+  }
+
+  async disconnectJson(agents: string[], signIn: boolean): Promise<string> {
+    return this.inner.disconnectJson(agents, signIn);
+  }
+
   sweepLeftovers(): void {
     sweepBackupsOnce(this.configsOf());
   }
@@ -493,6 +511,10 @@ export class PendingAgentSetup implements AgentSetupRunning {
   setUpCuaDriver = async (agents: string[]) => (await this.s()).setUpCuaDriver(agents);
   remove = async (agents: string[]) => (await this.s()).remove(agents);
   signIn = async (agent: string) => (await this.s()).signIn(agent);
+  connectionStatusJson = async (refresh: boolean) =>
+    (await this.gate.wait()).agentSetup?.connectionStatusJson(refresh) ?? '{"agents":[],"checked_at_ms":0}';
+  connectJson = async (agents: string[], signIn: boolean, skills: boolean, mcp: boolean) => (await this.s()).connectJson(agents, signIn, skills, mcp);
+  disconnectJson = async (agents: string[], signIn: boolean) => (await this.s()).disconnectJson(agents, signIn);
   sweepLeftovers = () => this.gate.current?.agentSetup?.sweepLeftovers?.();
 }
 

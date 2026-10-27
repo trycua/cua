@@ -1,0 +1,106 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
+//! Captures a cua home as this cua (0.8.0, before federation) writes it,
+//! for the upgrade tests of later versions. Run with CUA_UPGRADE_CAPTURE_HOME
+//! (an empty directory) and CUA_CREDENTIAL_STORE=file.
+#![cfg(all(feature = "aws", feature = "hetzner"))]
+
+#[path = "/Users/dillondupont/projects/.cua-work/byoc-gaps/wt-upgrade/libs/cua/crates/cua-byoc/tests/support/fake_aws.rs"]
+mod fake_aws;
+#[path = "/Users/dillondupont/projects/.cua-work/byoc-gaps/wt-upgrade/libs/cua/crates/cua-byoc/tests/support/fake_hetzner.rs"]
+mod fake_hetzner;
+
+use std::sync::Arc;
+
+use cua_byoc::aws::Aws;
+use cua_byoc::hetzner::{CuaCredentialStore, Hetzner};
+use cua_byoc::hosts::HostOptions;
+use cua_byoc::model::{self, ProvisionSpec};
+use cua_byoc::{CloudApi, Clouds, RelayAccess, Store};
+use cua_host::testing::FakeRelay;
+use cua_sandbox_core::byoc::{AddHost, CloudManager, CloudTarget};
+
+#[tokio::test(flavor = "multi_thread")]
+async fn capture() {
+    let Some(home) = std::env::var_os("CUA_UPGRADE_CAPTURE_HOME") else {
+        return;
+    };
+    assert_eq!(std::env::var("CUA_CREDENTIAL_STORE").as_deref(), Ok("file"));
+    let home = std::path::PathBuf::from(home);
+    let (aws_url, _a) = fake_aws::fake().await;
+    let (hz_url, _h) = fake_hetzner::serve().await;
+    let relay = Arc::new(FakeRelay::start().await);
+    relay.add_account("acct-token", "user-1", Some("ada@example.com"));
+    let aws = Arc::new(Aws::with_endpoint(&aws_url, "AKIDFAKE", "fake"));
+    let hz = Arc::new(Hetzner::with_endpoint(&hz_url, Arc::new(CuaCredentialStore), None));
+    let store = Arc::new(Store::new(&home));
+    let access = RelayAccess::new(
+        relay.url.clone(),
+        Arc::new(cua_host::relay::StaticToken("acct-token".into())),
+    );
+    let clouds = Clouds::new(
+        &home,
+        vec![aws.clone() as Arc<dyn CloudApi>, hz.clone() as Arc<dyn CloudApi>],
+        store.clone(),
+    )
+    .with_relay(access);
+
+    // Hetzner: the token on stdin, saved in the Cua credential store.
+    clouds
+        .connect(
+            &CloudTarget {
+                provider: "hetzner".into(),
+                region: Some("fsn1".into()),
+                token: Some("hz-fake-token-0123456789".into()),
+                ..Default::default()
+            },
+            false,
+            Some(6),
+        )
+        .await
+        .expect("connect hetzner");
+    // A pool host there (pinned, as `cua cloud hosts add` makes it).
+    let types = hz.host_types(&store.connection("hetzner").unwrap().unwrap()).await.unwrap();
+    let t = types.iter().find(|t| t.name == "cx23").or(types.first()).unwrap().name.clone();
+    let host = clouds
+        .add_host(&AddHost {
+            provider: "hetzner".into(),
+            type_name: t,
+            ..Default::default()
+        })
+        .await;
+    eprintln!("host: {host:?}");
+    let _ = HostOptions::default();
+
+    // AWS: a Space's machine, recorded as the sandbox layer records it.
+    let owner = store.owner_id().unwrap();
+    let conn = store.connection("aws").unwrap();
+    eprintln!("aws conn before: {conn:?}");
+    if let Some(conn) = conn {
+        let expires = model::now() + 4 * 3600;
+        let spec = ProvisionSpec {
+            name: "cua-aws-0123456789ab".into(),
+            family: "linux".into(),
+            machine_type: "t4g.medium".into(),
+            disk_gb: 30,
+            user_data: "#cloud-config\n".into(),
+            tags: model::tags(&owner, "research", "cloud-0123456789abcdef", expires),
+            arch: "arm64".into(),
+            ..Default::default()
+        };
+        let made = aws.provision(&conn, &spec).await.expect("provision");
+        for mut r in made {
+            if r.resource_type == "instance" {
+                r.sandbox = "aws:research".into();
+                r.machine = "cloud-0123456789abcdef".into();
+                r.extra.insert("machine_type".into(), "t4g.medium".into());
+                r.extra.insert("usd_per_hour".into(), "0.0336".into());
+            }
+            store.record(r).unwrap();
+        }
+    }
+    // The sweep (list only), as `cua cloud sweep` runs it.
+    let swept = clouds.sweep(None, true, true).await;
+    eprintln!("sweep: {swept:?}");
+}

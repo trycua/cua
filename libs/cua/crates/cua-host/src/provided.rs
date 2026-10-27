@@ -68,7 +68,9 @@ impl Default for HostSpacesSettings {
 #[serde(rename_all = "kebab-case")]
 pub enum HostProfile {
     /// Your own desktop, reached from your other devices (the default):
-    /// share the desktop, do not provide Spaces.
+    /// share the desktop, and provide Spaces as the machine already does
+    /// (a new relay setup provides them; see
+    /// [`crate::default_provide_spaces`]).
     #[default]
     Desktop,
     /// A spare machine that runs Spaces for you: do not share its desktop,
@@ -88,11 +90,13 @@ impl HostProfile {
         }
     }
 
-    /// `(share_desktop, provide_spaces)` of the profile.
-    pub fn settings(self) -> (bool, bool) {
+    /// `(share_desktop, provide_spaces)` of the profile. `None` leaves
+    /// providing Spaces to [`crate::default_provide_spaces`]: on for a new
+    /// relay setup, kept as it is on a machine already set up.
+    pub fn settings(self) -> (bool, Option<bool>) {
         match self {
-            Self::Desktop => (true, false),
-            Self::Spare => (false, true),
+            Self::Desktop => (true, None),
+            Self::Spare => (false, Some(true)),
         }
     }
 }
@@ -656,11 +660,13 @@ mod tests {
     fn profiles() {
         assert_eq!(
             HostProfile::parse("spare").unwrap().settings(),
-            (false, true)
+            (false, Some(true))
         );
+        // The desktop profile leaves providing Spaces to the default (on
+        // for a new setup, unchanged on a machine already set up).
         assert_eq!(
             HostProfile::parse("desktop").unwrap().settings(),
-            (true, false)
+            (true, None)
         );
         assert!(HostProfile::parse("laptop").is_err());
     }

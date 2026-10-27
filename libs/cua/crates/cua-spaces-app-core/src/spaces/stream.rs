@@ -447,3 +447,147 @@ mod tests {
         );
     }
 }
+
+/// What a thread post says the person was looking at, when the Space's main
+/// view shows `row` (the Stream rail's pick): a window by its app, title and
+/// id. The desktop is the default view, so a post made on it carries none.
+/// The daemon stores it with the entry (`thread_post`'s `view`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StreamView {
+    /// `window` (a desktop view is never sent).
+    pub kind: String,
+    /// The app ("Firefox").
+    pub app: Option<String>,
+    /// The window's title ("Pull requests").
+    pub title: Option<String>,
+    /// The window's handle (the row's id).
+    pub window_id: Option<String>,
+}
+
+/// [`StreamView`] for `row`, `None` for the desktop.
+pub fn view_context(row: &StreamRow) -> Option<StreamView> {
+    if row.kind == StreamRowKind::Desktop || row.id == DESKTOP_ROW_ID {
+        return None;
+    }
+    let app = match &row.icon {
+        StreamRowIcon::App { app_name, .. } if !app_name.trim().is_empty() => {
+            Some(app_name.trim().to_string())
+        }
+        _ => None,
+    };
+    // A window with no title is labelled with its app name: no title then.
+    let title =
+        Some(row.label.trim().to_string()).filter(|t| !t.is_empty() && Some(t) != app.as_ref());
+    Some(StreamView {
+        kind: "window".into(),
+        app,
+        title,
+        window_id: Some(row.id.clone()),
+    })
+}
+
+/// The quiet line under a message that carries a view: "Sent from
+/// Firefox", the window's title when its app is not known, or "Sent from
+/// the desktop". `kind`, `app` and `title` are the entry's `view`.
+pub fn view_line(kind: &str, app: Option<&str>, title: Option<&str>) -> String {
+    fn some(s: Option<&str>) -> Option<&str> {
+        s.map(str::trim).filter(|s| !s.is_empty())
+    }
+    match (kind, some(app), some(title)) {
+        ("window", Some(app), _) => format!("Sent from {app}"),
+        ("window", None, Some(title)) => format!("Sent from {title}"),
+        ("window", None, None) => "Sent from a window".into(),
+        _ => "Sent from the desktop".into(),
+    }
+}
+
+#[cfg(test)]
+mod view_tests {
+    use super::*;
+
+    fn row(kind: StreamRowKind, id: &str, label: &str, app: Option<&str>) -> StreamRow {
+        StreamRow {
+            id: id.into(),
+            kind,
+            label: label.into(),
+            help: label.into(),
+            resolution: None,
+            icon: match app {
+                Some(a) => StreamRowIcon::App {
+                    app_name: a.into(),
+                    app_id: format!("org.{a}"),
+                    pid: 0,
+                },
+                None => StreamRowIcon::Os {
+                    id: "os-ubuntu".into(),
+                },
+            },
+            actions: vec![],
+        }
+    }
+
+    #[test]
+    fn a_window_pick_says_its_app_title_and_id() {
+        let v = view_context(&row(
+            StreamRowKind::Window,
+            "w42",
+            "Pull requests",
+            Some("Firefox"),
+        ))
+        .unwrap();
+        assert_eq!(
+            v,
+            StreamView {
+                kind: "window".into(),
+                app: Some("Firefox".into()),
+                title: Some("Pull requests".into()),
+                window_id: Some("w42".into()),
+            }
+        );
+        assert_eq!(
+            view_line(&v.kind, v.app.as_deref(), v.title.as_deref()),
+            "Sent from Firefox"
+        );
+        assert_eq!(
+            serde_json::to_value(&v).unwrap(),
+            serde_json::json!({"kind": "window", "app": "Firefox", "title": "Pull requests", "windowId": "w42"})
+        );
+    }
+
+    #[test]
+    fn the_desktop_is_the_default_view_and_sends_none() {
+        assert_eq!(
+            view_context(&row(
+                StreamRowKind::Desktop,
+                DESKTOP_ROW_ID,
+                "Desktop (1280×800)",
+                None
+            )),
+            None
+        );
+    }
+
+    #[test]
+    fn an_untitled_window_is_its_app_and_an_unknown_app_its_title() {
+        let untitled = view_context(&row(
+            StreamRowKind::Window,
+            "w1",
+            "Terminal",
+            Some("Terminal"),
+        ))
+        .unwrap();
+        assert_eq!(untitled.title, None);
+        let no_app = view_context(&row(StreamRowKind::Window, "w2", "notes.txt", None)).unwrap();
+        assert_eq!(no_app.app, None);
+        assert_eq!(
+            view_line("window", None, Some("notes.txt")),
+            "Sent from notes.txt"
+        );
+        assert_eq!(view_line("window", None, None), "Sent from a window");
+        assert_eq!(
+            view_line("desktop", Some("x"), None),
+            "Sent from the desktop"
+        );
+    }
+}

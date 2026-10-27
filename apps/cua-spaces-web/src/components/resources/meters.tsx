@@ -69,7 +69,7 @@ export function LowDiskWarning({ warning, compact = false, className }: { warnin
         <p className="text-[13px] font-semibold">{warning.title}</p>
         {compact ? null : <p className="mt-0.5 text-xs text-muted-foreground">{warning.detail}</p>}
       </div>
-      <Button size="sm" variant="outline" data-see-space-use="" render={<Link to="/spaces" search={{ sort: "size" }} />}>
+      <Button size="sm" variant="secondary" data-see-space-use="" render={<Link to="/spaces" search={{ sort: "size" }} />}>
         See what’s using space
       </Button>
     </div>

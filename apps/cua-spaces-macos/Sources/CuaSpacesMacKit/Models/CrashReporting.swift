@@ -218,6 +218,25 @@ public enum CrashReporting {
         }
     }
 
+    /// The host service (`CuaSpacesMac --service-helper run`): only the
+    /// variables its cua-spacesd child reports with. The Swift SDK is not
+    /// started there: starting it checks the windowless helper in with
+    /// LaunchServices as "Cua Spaces" itself, and opening the app then fails
+    /// (error -600) while the helper runs. Returns whether the variables were
+    /// set (a DSN and consent).
+    @discardableResult
+    public static func prepareService(bundle: Bundle = .main,
+                                      environment: [String: String] = ProcessInfo.processInfo.environment) -> Bool {
+        guard environment["CUA_SPACES_FIXTURES"] != "1",
+              let settings = settings(info: bundle.infoDictionary ?? [:]),
+              currentlyAllowed() else { return false }
+        for (key, value) in childEnvironment(settings) { setenv(key, value, 1) }
+        return true
+    }
+
+    /// Whether the Swift SDK was started in this process.
+    public static var isStarted: Bool { started }
+
     /// The Settings switch changed: closes the SDK when reports are no
     /// longer allowed (it is not restarted until the next launch).
     public static func switchChanged(enabled: Bool, noticeShown: Bool) {

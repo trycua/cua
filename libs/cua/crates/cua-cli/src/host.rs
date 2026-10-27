@@ -5212,7 +5212,10 @@ mod tests {
                 )
                 .await;
                 let text = String::from_utf8(out).unwrap();
-                assert!(matches!(r, Err(CuaError::PermissionDenied(_))), "{r:?} {text}");
+                assert!(
+                    matches!(r, Err(CuaError::PermissionDenied(_))),
+                    "{r:?} {text}"
+                );
                 assert!(g.relay.machine(ID).is_none(), "{text}");
                 assert_eq!(
                     g.relay.device_state(&g.remote[0]),

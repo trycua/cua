@@ -408,12 +408,26 @@ pub fn status_word(online: bool, stopped_sharing: bool) -> &'static str {
     }
 }
 
-/// "1 Space", "3 Spaces", "No Spaces".
+/// "1 Space", "3 Spaces", "No Spaces". For a machine that shares its own
+/// desktop see [`desktop_spaces_label`].
 pub fn spaces_label(n: u32) -> String {
     match n {
         0 => "No Spaces".into(),
         1 => "1 Space".into(),
         n => format!("{n} Spaces"),
+    }
+}
+
+/// The words for a machine that shares its own desktop with no Spaces.
+pub const DESKTOP_SHARED: &str = "Desktop shared";
+
+/// "Desktop shared", or "Desktop \u{b7} 2 Spaces" when the machine also
+/// provides Spaces. Every UI shows this label for a machine that shares
+/// its own desktop.
+pub fn desktop_spaces_label(n: u32) -> String {
+    match n {
+        0 => DESKTOP_SHARED.into(),
+        n => format!("Desktop \u{b7} {}", spaces_label(n)),
     }
 }
 
@@ -432,6 +446,20 @@ fn spaces_on(spaces: &[Space], id: &str, current: bool) -> u32 {
         })
         .count();
     u32::try_from(n).unwrap_or(u32::MAX)
+}
+
+/// Whether a live machine shares its own desktop: this machine's roster
+/// entry is `Local`; another machine's desktop does not say it keeps it to
+/// itself.
+fn shares_own_desktop(spaces: &[Space], space_id: Option<&str>, current: bool, live: bool) -> bool {
+    let Some(entry) = space_id.and_then(|id| spaces.iter().find(|s| s.id == id)) else {
+        return false;
+    };
+    live && if current {
+        entry.status == SpaceStatus::Local
+    } else {
+        crate::spaces::sidebar::shares_desktop(entry) != Some(false)
+    }
 }
 
 /// A Space's error says its machine refused because its owner stopped
@@ -589,6 +617,12 @@ pub fn page_rows(input: &MachinesPageInput) -> Vec<MachinePageRow> {
             };
             let stopped_sharing = extra[i].stopped_sharing && r.online;
             let spaces = spaces_on(&input.spaces, &r.id, r.current);
+            let desktop = shares_own_desktop(
+                &input.spaces,
+                extra[i].space_id.as_deref(),
+                r.current,
+                r.online && !stopped_sharing,
+            );
             MachinePageRow {
                 os,
                 via: extra[i].via.into(),
@@ -597,7 +631,11 @@ pub fn page_rows(input: &MachinesPageInput) -> Vec<MachinePageRow> {
                 last_seen,
                 status: status_word(r.online, stopped_sharing).into(),
                 spaces,
-                spaces_label: spaces_label(spaces),
+                spaces_label: if desktop {
+                    desktop_spaces_label(spaces)
+                } else {
+                    spaces_label(spaces)
+                },
                 id: r.id,
                 name: r.name,
                 online: r.online,
@@ -864,7 +902,7 @@ mod tests {
         assert_eq!(
             words,
             [
-                ("Online", "1 Space"),
+                ("Online", "Desktop \u{b7} 1 Space"),
                 ("Not sharing", "No Spaces"),
                 ("Online", "1 Space"),
                 ("Offline", ""),
@@ -909,6 +947,147 @@ mod tests {
         });
         assert_eq!(rows[1].status, OFFLINE);
         assert_eq!(spaces_label(3), "3 Spaces");
+    }
+
+    fn label_of(spaces: Vec<serde_json::Value>, id: &str) -> (u32, String) {
+        let rows = page_rows(&MachinesPageInput {
+            spaces: spaces.into_iter().map(space).collect(),
+            now: NOW,
+            ..Default::default()
+        });
+        let r = rows.iter().find(|r| r.id == id).unwrap();
+        (r.spaces, r.spaces_label.clone())
+    }
+
+    fn desktop(id: &str, features: &[&str]) -> serde_json::Value {
+        serde_json::json!({
+            "id": format!("relay:{id}"), "name": id, "os": "macos",
+            "status": "running", "provider": "relay",
+            "sdk": {"features": features, "spacesdVersion": "", "reachable": true}
+        })
+    }
+
+    fn hosted(id: &str, n: u32, status: &str) -> serde_json::Value {
+        serde_json::json!({
+            "id": format!("relay:{id}/space-{n}"), "name": format!("s{n}"),
+            "status": status, "provider": "relay", "host": id
+        })
+    }
+
+    fn this_mac_space(status: &str) -> serde_json::Value {
+        serde_json::json!({"id": "this-mac", "name": "This Mac", "os": "macos", "status": status})
+    }
+
+    fn local_space(n: u32, status: &str) -> serde_json::Value {
+        serde_json::json!({"id": format!("local:s{n}"), "name": format!("s{n}"), "status": status, "provider": "local"})
+    }
+
+    #[test]
+    fn a_machine_sharing_only_its_desktop_reads_desktop_shared() {
+        assert_eq!(
+            label_of(vec![desktop("m-mini", &["desktop_stream"])], "m-mini"),
+            (0, "Desktop shared".into())
+        );
+        assert_eq!(
+            label_of(vec![this_mac_space("local")], "this-mac"),
+            (0, "Desktop shared".into())
+        );
+    }
+
+    #[test]
+    fn a_machine_sharing_its_desktop_and_spaces_reads_desktop_and_the_count() {
+        assert_eq!(
+            label_of(
+                vec![
+                    desktop("m-mini", &["desktop_stream"]),
+                    hosted("m-mini", 1, "running")
+                ],
+                "m-mini"
+            ),
+            (1, "Desktop \u{b7} 1 Space".into())
+        );
+        assert_eq!(
+            label_of(
+                vec![
+                    this_mac_space("local"),
+                    local_space(1, "running"),
+                    local_space(2, "suspended")
+                ],
+                "this-mac"
+            ),
+            (2, "Desktop \u{b7} 2 Spaces".into())
+        );
+    }
+
+    #[test]
+    fn a_machine_providing_only_spaces_reads_the_count() {
+        assert_eq!(
+            label_of(
+                vec![hosted("m-box", 1, "running"), hosted("m-box", 2, "running")],
+                "m-box"
+            ),
+            (2, "2 Spaces".into())
+        );
+        assert_eq!(
+            label_of(
+                vec![
+                    desktop("m-x", &["host_spaces"]),
+                    hosted("m-x", 1, "running")
+                ],
+                "m-x"
+            ),
+            (1, "1 Space".into())
+        );
+        assert_eq!(
+            label_of(
+                vec![this_mac_space("suspended"), local_space(1, "running")],
+                "this-mac"
+            ),
+            (1, "1 Space".into())
+        );
+    }
+
+    #[test]
+    fn the_desktop_words_never_replace_offline_stopped_or_device_rows() {
+        // Offline desktop.
+        let mut off = desktop("m-off", &["desktop_stream"]);
+        off["status"] = "suspended".into();
+        let rows = page_rows(&MachinesPageInput {
+            spaces: vec![space(off)],
+            now: NOW,
+            ..Default::default()
+        });
+        assert_eq!(
+            (rows[1].status.as_str(), rows[1].spaces_label.as_str()),
+            (OFFLINE, "No Spaces")
+        );
+        // Stopped sharing.
+        let rows = page_rows(&MachinesPageInput {
+            spaces: vec![space(serde_json::json!({
+                "id": "relay:b695", "name": "b", "os": "macos",
+                "status": "suspended", "provider": "relay",
+                "sdk": {"features": ["desktop_stream"], "spacesdVersion": "", "reachable": false,
+                        "error": "b stopped sharing: ask its owner"}
+            }))],
+            now: NOW,
+            ..Default::default()
+        });
+        assert_eq!(
+            (rows[1].status.as_str(), rows[1].spaces_label.as_str()),
+            (NOT_SHARING, "No Spaces")
+        );
+        // A device of its own.
+        let rows = page_rows(&MachinesPageInput {
+            devices: vec![device("dev_x", "Phone")],
+            now: NOW,
+            ..Default::default()
+        });
+        assert_eq!(rows[1].spaces_label, "");
+        // An older daemon reporting no features counts as sharing.
+        assert_eq!(
+            label_of(vec![desktop("m-old", &[])], "m-old"),
+            (0, "Desktop shared".into())
+        );
     }
 
     fn merge_rows(rows: &[MachinePageRow]) -> Vec<MachineOut> {

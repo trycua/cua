@@ -639,13 +639,16 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
         };
 
         // The row's one line.
-        // One short label: no "a · b" chains (the switches show the rest).
+        // One short label: no "a · b" chains (the switches show the rest),
+        // except a shared desktop's "Desktop · N Spaces".
         let line = if row.device_only {
             DEVICE_LINE.into()
         } else if !row.online {
             machines::OFFLINE.into()
         } else if row.stopped_sharing {
             machines::NOT_SHARING.into()
+        } else if has_desktop {
+            machines::desktop_spaces_label(u32::try_from(on.len()).unwrap_or(u32::MAX))
         } else {
             let mut parts = vec![];
             if n_running > 0 {
@@ -1244,11 +1247,15 @@ mod tests {
         assert_eq!(
             lines,
             [
-                ("Ada's MacBook Pro", "2 Spaces running", Some("This Mac")),
-                ("cua's Mac Studio", "1 Space running", None),
+                (
+                    "Ada's MacBook Pro",
+                    "Desktop \u{b7} 2 Spaces",
+                    Some("This Mac")
+                ),
+                ("cua's Mac Studio", "Desktop \u{b7} 1 Space", None),
                 ("Cua BYOC tests", "Offline", None),
                 ("mac-mini-staging", "Offline", None),
-                ("build-mini-01", "Ready for Spaces", None),
+                ("build-mini-01", "Desktop shared", None),
             ]
         );
         assert_eq!(v.summary, "5 machines, 3 online");
@@ -1514,14 +1521,125 @@ mod tests {
         assert!(studio.line.contains("1 Space"), "{}", studio.line);
         // Offline machines show none.
         assert!(by_id(&v, "byoc").desktop.is_none());
-        // With no provided Spaces the empty line says "other".
-        if let Some(m) = v
-            .machines
-            .iter()
-            .find(|m| m.desktop.is_some() && m.spaces.is_empty() && m.online)
-        {
-            assert_eq!(m.spaces_empty.as_deref(), Some("No other Spaces yet."));
-        }
+    }
+
+    fn view_of(
+        spaces: Vec<serde_json::Value>,
+        relay_rows: Vec<MachinesViewRelay>,
+        host: Option<HostState>,
+    ) -> MachinesView {
+        view(&MachinesViewInput {
+            page: MachinesPageInput {
+                spaces: spaces.into_iter().map(space).collect(),
+                now: NOW,
+                ..Default::default()
+            },
+            relay: relay_rows,
+            host,
+            ..Default::default()
+        })
+    }
+
+    fn relay_desktop(id: &str, features: &[&str]) -> serde_json::Value {
+        serde_json::json!({
+            "id": format!("relay:{id}"), "name": id, "os": "macos",
+            "status": "running", "provider": "relay",
+            "sdk": {"features": features, "spacesdVersion": "", "reachable": true}
+        })
+    }
+
+    fn relay_hosted(id: &str, n: u32, status: &str) -> serde_json::Value {
+        serde_json::json!({
+            "id": format!("relay:{id}/space-{n}"), "name": format!("s{n}"),
+            "status": status, "provider": "relay", "host": id
+        })
+    }
+
+    fn this_mac(status: &str) -> serde_json::Value {
+        serde_json::json!({"id": "this-mac", "name": "This Mac", "os": "macos", "status": status})
+    }
+
+    fn local(n: u32, status: &str) -> serde_json::Value {
+        serde_json::json!({"id": format!("local:s{n}"), "name": format!("s{n}"), "status": status, "provider": "local"})
+    }
+
+    #[test]
+    fn a_machine_sharing_only_its_desktop_lists_it_alone() {
+        let v = view_of(
+            vec![relay_desktop("m1", &["desktop_stream"])],
+            vec![relay("m1", "owner", Some(true))],
+            None,
+        );
+        let m = by_id(&v, "m1");
+        assert_eq!(m.line, "Desktop shared");
+        let d = m.desktop.as_ref().unwrap();
+        assert_eq!((d.label.as_str(), d.id.as_str()), ("Desktop", "relay:m1"));
+        assert!(m.spaces.is_empty());
+        assert_eq!(m.spaces_empty.as_deref(), Some("No other Spaces yet."));
+    }
+
+    #[test]
+    fn a_machine_sharing_its_desktop_and_spaces_counts_all_of_them() {
+        let v = view_of(
+            vec![
+                relay_desktop("m1", &["desktop_stream"]),
+                relay_hosted("m1", 1, "running"),
+            ],
+            vec![relay("m1", "owner", Some(true))],
+            None,
+        );
+        let m = by_id(&v, "m1");
+        assert_eq!(m.line, "Desktop \u{b7} 1 Space");
+        assert!(m.desktop.is_some());
+        assert_eq!(m.spaces.len(), 1);
+        let v = view_of(
+            vec![
+                this_mac("local"),
+                local(1, "running"),
+                local(2, "suspended"),
+            ],
+            vec![],
+            Some(host(true, true)),
+        );
+        assert_eq!(by_id(&v, "this-mac").line, "Desktop \u{b7} 2 Spaces");
+    }
+
+    #[test]
+    fn a_machine_providing_only_spaces_keeps_the_sandbox_line() {
+        let v = view_of(
+            vec![
+                relay_desktop("m1", &["host_spaces"]),
+                relay_hosted("m1", 1, "running"),
+            ],
+            vec![relay("m1", "owner", Some(true))],
+            None,
+        );
+        let m = by_id(&v, "m1");
+        assert_eq!(m.line, "1 Space running");
+        assert!(m.desktop.is_none() && m.spaces_empty.is_none());
+        let v = view_of(vec![this_mac("local")], vec![], Some(host(true, false)));
+        assert_eq!(by_id(&v, "this-mac").line, "Ready for Spaces");
+    }
+
+    /// The page rows get no host settings, so for this machine a host set
+    /// to provide Spaces only still reads "Desktop shared" in the row
+    /// label while the view's line follows the host.
+    #[test]
+    fn this_machines_row_label_is_weaker_than_the_view_line() {
+        let input = MachinesViewInput {
+            page: MachinesPageInput {
+                spaces: vec![space(this_mac("local"))],
+                now: NOW,
+                ..Default::default()
+            },
+            host: Some(host(true, false)),
+            ..Default::default()
+        };
+        assert_eq!(
+            machines::page_rows(&input.page)[0].spaces_label,
+            "Desktop shared"
+        );
+        assert_eq!(by_id(&view(&input), "this-mac").line, "Ready for Spaces");
     }
 
     #[test]

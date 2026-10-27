@@ -189,10 +189,8 @@ impl RunnerKind {
             }
         } else if cfg!(windows) {
             RunnerKind::WindowsTask
-        } else if Path::new("/run/systemd/system").is_dir() {
-            RunnerKind::Systemd
         } else {
-            RunnerKind::Process
+            linux_runner(Path::new("/run/systemd/system"))
         }
     }
 
@@ -1160,8 +1158,34 @@ mod windows_procs {
     }
 }
 
+/// Systemd when `systemd_dir` (`/run/systemd/system`) exists, else the plain
+/// process. A seam for tests: it checks the filesystem.
+fn linux_runner(systemd_dir: &Path) -> RunnerKind {
+    if systemd_dir.is_dir() {
+        RunnerKind::Systemd
+    } else {
+        RunnerKind::Process
+    }
+}
+
+/// The warning `cua host setup` prints when `requested` was `Auto` and the
+/// stored runner `resolved` is the plain process; `None` otherwise.
+pub fn auto_fallback_warning(requested: RunnerKind, resolved: &str) -> Option<&'static str> {
+    (requested == RunnerKind::Auto && resolved == RunnerKind::Process.as_str()).then_some(
+        "warning: systemd is not running here, so `--runner auto` set the host up as a plain process.\n\
+It will not come back after a reboot or a crash. To fix it, either:\n\
+\x20 - turn on systemd (on WSL: systemd=true under [boot] in /etc/wsl.conf, then wsl --shutdown) and run `cua host setup --runner systemd` again with the same options, or\n\
+\x20 - run `cua host start` after each boot (from your init system or container start script).\n\
+Pass `--runner process` to keep the plain process without this warning.",
+    )
+}
+
+/// The note `cua host status` prints under a `process` runner.
+pub const PROCESS_RUNNER_NOTE: &str = "  note: the process runner does not start the host again after a reboot or a crash; run `cua host start` after each boot.";
+
 /// A detached process with a pidfile: the fallback where no init system
-/// runs (containers). Not restarted on reboot or crash.
+/// runs (containers). Not restarted on reboot or crash; `cua host setup`
+/// warns about it ([`auto_fallback_warning`]).
 pub struct ProcessRunner {
     /// Directory for `service.json` and `driver.pid`.
     pub dir: PathBuf,
@@ -1953,6 +1977,32 @@ mod tests {
         assert!(!e.contains("\"launchctl\""), "{e}");
     }
     use super::*;
+
+    #[test]
+    fn auto_detection_falls_back_to_a_process_without_systemd() {
+        let dir = tempfile::tempdir().unwrap();
+        let probe = dir.path().join("system");
+        assert_eq!(linux_runner(&probe), RunnerKind::Process);
+        std::fs::create_dir(&probe).unwrap();
+        assert_eq!(linux_runner(&probe), RunnerKind::Systemd);
+    }
+
+    #[test]
+    fn only_auto_resolved_to_a_process_warns() {
+        let text = auto_fallback_warning(RunnerKind::Auto, "process").expect("warns");
+        assert!(text.contains("will not come back after a reboot"), "{text}");
+        assert!(text.contains("host setup --runner systemd"), "{text}");
+        assert!(text.contains("host start"), "{text}");
+        for (req, resolved) in [
+            (RunnerKind::Process, "process"),
+            (RunnerKind::Auto, "systemd"),
+            (RunnerKind::Auto, "launchd"),
+            (RunnerKind::Auto, "app-helper"),
+            (RunnerKind::Auto, "windows-task"),
+        ] {
+            assert_eq!(auto_fallback_warning(req, resolved), None, "{resolved}");
+        }
+    }
 
     fn spec() -> ServiceSpec {
         ServiceSpec {

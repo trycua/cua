@@ -325,6 +325,19 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
     expect(rows[1]!.textContent).not.toContain("Desktop");
   });
 
+  it("reads a shared desktop in the row: desktop only, desktop with Spaces, Spaces only", async () => {
+    const view = await issuesView("a machine sharing only its desktop");
+    const { router } = await mountApp("/machines", hostDrawn(view, []));
+    await router.load();
+    await screen.findByText(view.summary);
+    const line = (id: string) => document.querySelector(`[data-machine-id="${id}"] [data-machine-line]`)?.textContent;
+    expect([line("solo"), line("both"), line("spaces")]).toEqual(["Desktop shared", "Desktop \u00b7 2 Spaces", "1 Space running"]);
+    select("solo");
+    const detail = await detailOf("solo");
+    const rows = [...detail.querySelectorAll<HTMLElement>("[data-machine-spaces] [data-space-row]")];
+    expect(rows.map((r) => r.dataset.spaceRow)).toEqual(["relay:solo"]);
+  });
+
   it("draws the clouds: a group under the machines, each cloud's page, and Connect a cloud", async () => {
     const { router, hooks } = await mountApp("/machines", { failsCreates: false, listsGhost: false, demo: { clouds: "connected" } });
     await router.load();

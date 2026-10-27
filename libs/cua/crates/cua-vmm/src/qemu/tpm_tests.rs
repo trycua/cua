@@ -433,11 +433,7 @@ async fn cancelled_launch_child() {
     } else {
         Duration::from_millis(100)
     };
-    assert!(
-        tokio::time::timeout(wait, launch)
-            .await
-            .is_err()
-    );
+    assert!(tokio::time::timeout(wait, launch).await.is_err());
     // The VM is released only once the cancelled launch's own cleanup is done.
     let _owner = tokio::time::timeout(Duration::from_secs(10), runtime.own("vm"))
         .await
@@ -953,7 +949,7 @@ async fn an_unreadable_or_malformed_record_stops_and_copies_nothing() {
     let mut st = tpm_state("vm", &dir);
     st.pid = None;
     let dst = tmp.path().join("dst");
-    std::fs::set_permissions(&record, std::fs::Permissions::from_mode(0)).unwrap();
+    std::fs::set_permissions(&record, std::fs::Permissions::from_mode(0o000)).unwrap();
     let unreadable = std::fs::read_to_string(&record).is_err();
     for malformed in [false, true] {
         if malformed {

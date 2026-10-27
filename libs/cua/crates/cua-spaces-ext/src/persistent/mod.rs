@@ -119,7 +119,13 @@ pub struct Recreate {
 /// One persistent agent.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AgentRecord {
+    /// The record's key on this machine: unique across Spaces.
     pub name: String,
+    /// What its Space calls it (`@claude`), when that is not `name`: a
+    /// second Space's `claude` is stored as `claude-2` and still answers to
+    /// `@claude` there. Absent: the name is the handle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handle: Option<String>,
     /// Harness id (`claude-code`, `openai-codex`, `hermes`, `openclaw`, ...).
     pub harness: String,
     /// The Space it works in (a Space id).
@@ -269,6 +275,11 @@ pub struct SessionRun {
 pub const MAX_SESSIONS: u32 = 8;
 
 impl AgentRecord {
+    /// What its Space calls it: the `@handle`.
+    pub fn handle(&self) -> &str {
+        self.handle.as_deref().unwrap_or(&self.name)
+    }
+
     /// The session this record shows (1-based).
     pub fn k(&self) -> u32 {
         self.session_k.max(1)
@@ -595,6 +606,7 @@ impl Persistent {
         }
         let rec = AgentRecord {
             name: spec.name.clone(),
+            handle: None,
             harness: h.id.into(),
             space,
             model: spec.model,

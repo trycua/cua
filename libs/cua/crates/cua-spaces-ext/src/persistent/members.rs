@@ -22,7 +22,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::{AgentRecord, AgentSpec, MAX_SESSIONS, Persistent};
+use super::{AgentRecord, AgentSpec, MAX_SESSIONS, Persistent, locked_json};
 use crate::DriveResult as _;
 use crate::thread::claims::{ClaimEntries, Holder};
 use crate::thread::policy::{self, Right, Rights};
@@ -284,11 +284,35 @@ impl Persistent {
             .collect())
     }
 
+    /// A Space of this machine that is no longer there: its members' keys are
+    /// free again. Only the registry of this machine answers for itself, for a
+    /// local Space or an address added by hand (a Space on another computer
+    /// may be offline, not gone).
+    fn space_is_gone(&self, space: &str) -> bool {
+        (space.starts_with("local:") || space.starts_with("direct:"))
+            && self
+                .spaces
+                .list()
+                .map(|rows| !rows.iter().any(|s| s.id == space))
+                .unwrap_or(false)
+    }
+
+    /// `base`, or `base-2`, `base-3`, ... : the first key no persistent agent has.
+    fn free_key(&self, base: &str) -> Result<String> {
+        let taken: Vec<String> = self.list()?.into_iter().map(|r| r.name).collect();
+        (2..)
+            .map(|n| format!("{base}-{n}"))
+            .find(|k| k.len() <= 63 && !taken.contains(k))
+            .ok_or_else(|| Error::invalid(format!("no free name for {base}")))
+    }
+
     /// Adds an agent member: a persistent agent of `spec.space`, added by
     /// `caller`, with its policy (`durable`, `on`, `once`) and 1 to
     /// [`MAX_SESSIONS`] sessions. Its Space's `.cua/setup` runs before it
-    /// gets a task. A persistent agent that exists already (same harness and
-    /// Space, for example one an older Cua created) takes the new policy.
+    /// gets a task. A member of that name that exists already in the Space
+    /// (same harness, for example one an older Cua created) takes the new
+    /// policy. A name used by another Space does not matter: each Space's
+    /// `@claude` is its own.
     pub fn add_member(
         &self,
         caller: &Caller,
@@ -308,19 +332,45 @@ impl Persistent {
                 "on: auto needs the member's Space to be a durable Space",
             ));
         }
-        let existing = self.get(&spec.name).ok();
-        let rec = match existing {
+        let space = self.spaces.resolve(&spec.space)?.to_string();
+        let wanted = spec.name.clone();
+        // This Space's own member of that name (an older Cua's included).
+        let here = self
+            .members_of(&space)?
+            .into_iter()
+            .find(|r| r.handle() == wanted);
+        let rec = match here {
             Some(r) => {
-                let space = self.spaces.resolve(&spec.space)?.to_string();
-                if r.harness != spec.harness || r.space != space {
+                if r.harness != spec.harness {
                     return Err(Error::invalid(format!(
-                        "a persistent agent named {} exists with another harness or Space",
-                        r.name
+                        "{wanted} in this Space is {}, not {}: pick another name",
+                        r.harness, spec.harness
                     )));
                 }
                 r
             }
-            None => self.create(spec)?,
+            None => {
+                // Names are keys on this machine, but a Space's `@claude` is its
+                // own: when the key is taken elsewhere (or by a Space that is
+                // gone, which frees it), this Space's member gets a key of its
+                // own and answers to the name it was asked for.
+                let mut spec = spec;
+                if let Ok(other) = self.get(&wanted) {
+                    if self.space_is_gone(&other.space) {
+                        locked_json(&self.agents_path(), |all: &mut Vec<AgentRecord>| {
+                            all.retain(|a| a.name != other.name)
+                        })?;
+                    } else {
+                        spec.name = self.free_key(&wanted)?;
+                    }
+                }
+                let alias = (spec.name != wanted).then(|| wanted.clone());
+                let rec = self.create(spec)?;
+                if alias.is_some() {
+                    self.update(&rec.name, |r| r.handle = alias.clone())?;
+                }
+                self.get(&rec.name)?
+            }
         };
         let added_by = self.author_for(caller);
         self.update(&rec.name, |r| {
@@ -1042,7 +1092,7 @@ pub fn member_row(r: &AgentRecord, owner: &Author) -> Value {
     identity.collides.get_or_insert(false);
     json!({
         "identity": identity,
-        "name": r.name, "harness": r.harness, "space": r.space, "model": r.model,
+        "name": r.name, "handle": r.handle(), "harness": r.harness, "space": r.space, "model": r.model,
         "sessions": r.sessions, "policy": r.policy,
         "added_by": r.added_by.clone().unwrap_or_else(|| owner.clone()),
         "member_since_ms": if r.member_since_ms > 0 { r.member_since_ms } else { r.created_ms },
@@ -1099,8 +1149,18 @@ impl Thread {
             .p
             .members_of(self.store.space())?
             .into_iter()
-            .map(|r| r.name)
+            .map(|r| r.handle().to_string())
             .collect())
+    }
+
+    /// The key of this Space's member that answers to `@handle`.
+    fn member_key(&self, handle: &str) -> Option<String> {
+        self.p
+            .members_of(self.store.space())
+            .ok()?
+            .into_iter()
+            .find(|r| r.handle() == handle)
+            .map(|r| r.name)
     }
 
     /// Posts as the caller. An @mention of an agent member (not the author
@@ -1117,9 +1177,11 @@ impl Thread {
         }
         let author = self.author();
         let members = self.member_names()?;
+        // `@claude` of this Space is the member's key (`claude-2` in a second Space).
         let mentions: Vec<String> = parse_mentions(&args.text)
             .into_iter()
             .filter(|m| members.contains(m))
+            .filter_map(|m| self.member_key(&m))
             .collect();
         let fold = self.store.fold()?;
         let mut kind = EntryKind::Message;

@@ -203,6 +203,8 @@ export type AgentMemberStatus = string;
 
 export interface AgentMember {
   name: string;
+  /** What the Space calls it (`@claude`) when that is not `name` (a second Space's `claude` is stored as `claude-2`). */
+  handle?: string;
   /** Harness id (`claude-code`, `hermes`, ...). */
   harness: string;
   status: AgentMemberStatus;
@@ -775,6 +777,7 @@ function agentMember(r: unknown): AgentMember[] {
   return [
     {
       name,
+      ...(str(m.handle) && str(m.handle) !== name ? { handle: str(m.handle) } : {}),
       harness: str(m.harness),
       // `status` is a word, or `{state, activity}`.
       status: (status ? str(status.state) : str(m.status)) || "idle",

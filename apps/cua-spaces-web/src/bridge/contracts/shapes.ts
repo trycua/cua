@@ -988,6 +988,7 @@ const AgentMemberShape = ref(
   "AgentMember",
   obj<AgentMember>()({
     name: str,
+    handle: opt(str),
     harness: str,
     status: str,
     activity: nullable(str),

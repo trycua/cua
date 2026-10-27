@@ -257,6 +257,9 @@
         "name": {
           "type": "string"
         },
+        "handle": {
+          "type": "string"
+        },
         "harness": {
           "type": "string"
         },

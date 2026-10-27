@@ -175,7 +175,7 @@ export function useSummon({ spaceId, thread, roster, canAdd }: { spaceId: string
   const connectors = useConnectors();
   const input: SummonInput = useMemo(
     () => ({
-      members: thread.members.map((m) => ({ handle: m.name, harness: m.harness, label: roster.agents.find((a) => a.name === m.name)?.label ?? m.name })),
+      members: thread.members.map((m) => ({ handle: m.handle ?? m.name, harness: m.harness, label: roster.agents.find((a) => a.name === m.name)?.label ?? m.name })),
       people: roster.people.map((p) => p.label.toLowerCase().replace(/\s+/g, "")),
       canAdd: canAdd && !!data && threadOpAvailable(data.mode, "thread.agentAdd"),
       connectors: connectors.input,

@@ -1025,6 +1025,24 @@ impl Persistent {
                         "{name} is in the middle of a turn (it crashed and is being resumed); try again when it ends"
                     )));
                 }
+                // An idle run whose credentials are not the ones forwarded
+                // now (the person reconnected in Settings), or whose last
+                // turn failed to authenticate, ends and starts again: it
+                // would otherwise keep using what it began with.
+                Ok(st)
+                    if st.accepts_message
+                        && st.status == RunStatus::Idle
+                        && self.credentials_changed(&rec, &agents, run, &st).await =>
+                {
+                    tracing::info!(agent = name, "credentials changed or rejected: starting a fresh run");
+                    if rec.k() == 1 {
+                        let _ = self.save(name).await;
+                    }
+                    if let Err(e) = agents.stop(run).await {
+                        tracing::warn!(agent = name, "the old run did not stop: {e}");
+                    }
+                    self.release_writer(&rec).await;
+                }
                 Ok(st) if st.accepts_message && st.status == RunStatus::Idle => {
                     if rec.k() == 1 && !self.live.lock().await.leases.contains_key(name) {
                         self.take_lease(&rec).await?;
@@ -1042,6 +1060,35 @@ impl Persistent {
             }
         }
         self.start_session(&rec, text, entry, None).await
+    }
+
+    /// Whether the idle run `run` of `rec` must not take another message:
+    /// it was started with other credentials than the ones forwarded now, or
+    /// its last turn failed to authenticate.
+    async fn credentials_changed(
+        &self,
+        rec: &AgentRecord,
+        agents: &cua_spaces::agents::Agents,
+        run: &str,
+        st: &ag::RunInfo,
+    ) -> bool {
+        if let Some(started) = st.meta.as_ref().and_then(|m| m.cred_hash.as_deref())
+            && let Ok((env, _)) = cua_spaces::agents::run_env(
+                &rec.harness,
+                &rec.env,
+                &rec.env_from_host,
+                rec.base_url.is_some(),
+            )
+            && ag::runs::credential_hash(&rec.harness, &env) != started
+        {
+            return true;
+        }
+        if st.stop_reason.as_deref() == Some("error")
+            && let Ok(r) = agents.result(run).await
+        {
+            return r.error.as_deref().is_some_and(ag::failure::is_auth_failure);
+        }
+        false
     }
 
     async fn stop_run(&self, rec: &AgentRecord) -> Result<Option<String>> {

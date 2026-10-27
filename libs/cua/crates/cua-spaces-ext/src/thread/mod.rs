@@ -551,6 +551,11 @@ pub struct ThreadEntry {
     /// What the person was looking at when they posted ([`ViewContext`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub view: Option<ViewContext>,
+    /// On an agent's reply to a task that failed: what failed
+    /// (`needs_connect` with the provider to connect, or an error), with
+    /// the complete text. `text` says it in plain words.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<cua_agents::failure::Failure>,
     /// Fields of a newer format, kept as they are.
     #[serde(flatten)]
     pub extra: Map<String, Value>,
@@ -579,6 +584,7 @@ pub struct Draft {
     pub event: Option<Value>,
     pub join_request: Option<JoinRequest>,
     pub view: Option<ViewContext>,
+    pub failure: Option<cua_agents::failure::Failure>,
 }
 
 impl Draft {
@@ -602,6 +608,7 @@ impl Draft {
             event: None,
             join_request: None,
             view: None,
+            failure: None,
         }
     }
 
@@ -968,6 +975,7 @@ impl ThreadStore {
                 event: d.event,
                 join_request: d.join_request,
                 view: d.view,
+                failure: d.failure,
                 extra: Map::new(),
             };
             self.write_entry(&mut head, &e)?;

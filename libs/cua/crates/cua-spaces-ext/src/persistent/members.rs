@@ -32,6 +32,7 @@ use crate::thread::{
     refuse_secrets,
 };
 use cua_agents::RunStatus;
+use cua_spaces::agents as ag;
 use cua_spaces::extension::Caller;
 use cua_spaces::{Error, Result};
 
@@ -400,7 +401,7 @@ impl Persistent {
                     .and_then(|seq| fold.tasks.get(&seq))
                     .map(|t| format!("task #{}: {}", t.seq, clip_words(&t.text, 80))),
                 "failed" if r.setup == super::durable::setup::FAILED => {
-                    Some(super::notify::short_reason(&r.setup_note))
+                    Some(super::notify::reason(&r.setup_note))
                 }
                 "waiting" => sessions
                     .iter()
@@ -410,7 +411,11 @@ impl Persistent {
                     .iter()
                     .find(|s| s.state == "failed")
                     .and_then(|s| s.activity.clone())
-                    .or_else(|| r.last_error.as_deref().map(super::notify::short_reason)),
+                    .or_else(|| {
+                        r.last_error
+                            .as_deref()
+                            .map(|e| failed_line(&r.harness, e))
+                    }),
                 "idle" | "asleep" if open > 0 => Some(format!(
                     "{open} open task{}",
                     if open == 1 { "" } else { "s" }
@@ -420,6 +425,15 @@ impl Persistent {
             let mut status = json!({"state": state});
             if let Some(a) = activity {
                 status["activity"] = json!(a);
+            }
+            // The typed failure (and its complete text) of a failed member.
+            if state == "failed"
+                && let Some(f) = sessions
+                    .iter()
+                    .find_map(|s| s.failure.clone())
+                    .or_else(|| r.last_error.as_deref().map(|e| failure_for(&r, e)))
+            {
+                status["failure"] = json!(f);
             }
             let mut row = member_row(&r, &self.owner());
             row["run_id"] = json!(r.run_id);
@@ -604,12 +618,26 @@ impl Persistent {
                 Ok(Delivered::Busy)
             }
             Err(e) => {
+                // The agent answers in the thread: plain words, with the
+                // complete error (and a Connect button when it needs a
+                // sign-in) in `failure`.
+                let failure = failure_for(rec, &e.to_string());
+                let mut reply = Draft::new(
+                    Author::agent(&rec.name),
+                    EntryKind::Message,
+                    ag::failure::plain(&failure),
+                );
+                reply.reply_to = Some(task.seq);
+                reply.failure = Some(failure);
                 store.release(
                     task.seq,
-                    vec![update(
-                        TaskState::Failed,
-                        format!("could not start {}: {e}", session_name(rec)),
-                    )],
+                    vec![
+                        reply,
+                        update(
+                            TaskState::Failed,
+                            format!("could not start {}", session_name(rec)),
+                        ),
+                    ],
                 )?;
                 Err(e)
             }
@@ -787,8 +815,10 @@ impl Persistent {
         {
             let mut drafts = vec![];
             if !t.replied {
-                let text = match (&error, &answer) {
-                    (Some(e), _) => format!("Failed: {}", super::notify::short_reason(e)),
+                let failure = error.as_deref().map(|e| failure_for(rec, e));
+                let text = match (&failure, &answer) {
+                    // Plain words; the complete error rides along as `failure`.
+                    (Some(f), _) => ag::failure::plain(f),
                     (None, Some(a)) if !a.trim().is_empty() => a.trim().to_string(),
                     _ => "Finished.".to_string(),
                 };
@@ -800,6 +830,7 @@ impl Persistent {
                 };
                 let mut reply = Draft::new(Author::agent(&rec.name), EntryKind::Message, text);
                 reply.reply_to = Some(t.seq);
+                reply.failure = failure;
                 drafts.push(reply);
             }
             drafts.push(Draft::update(
@@ -1775,6 +1806,27 @@ fn session_name(rec: &AgentRecord) -> String {
     }
 }
 
+/// The typed failure of `rec`'s turn or start with the error text `e`: its
+/// class, the provider to connect, and the complete text (a text that looks
+/// like a secret is withheld, as everything posted to the thread is).
+pub(crate) fn failure_for(rec: &AgentRecord, e: &str) -> ag::failure::Failure {
+    let mut f = ag::failure::classify(&rec.harness, e);
+    if check_text(&f.message).is_err() {
+        f.message = "(details withheld: they looked like they held a secret)".into();
+    }
+    f
+}
+
+/// A failed member's status line: "Not connected" when it needs a sign-in,
+/// else the error's first line, whole.
+fn failed_line(harness: &str, e: &str) -> String {
+    let f = ag::failure::classify(harness, e);
+    match f.class {
+        ag::failure::FailureClass::NeedsConnect => "Not connected".into(),
+        ag::failure::FailureClass::Error => super::notify::reason(e),
+    }
+}
+
 /// One session of an agent member, as `agent_members` shows it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct SessionState {
@@ -1786,6 +1838,10 @@ pub struct SessionState {
     /// what it waits for, or why it failed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub activity: Option<String>,
+    /// For a failed session: what failed, typed (`needs_connect` and the
+    /// provider, or an error) with the complete text.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure: Option<ag::failure::Failure>,
     /// The task its turn works on.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task_seq: Option<u64>,
@@ -1824,13 +1880,23 @@ pub fn session_state(
                 .map(|t| format!("task #{}: {}", t.seq, clip_words(&t.text, 80)))
         }),
         "waiting" => asked.map(|a| format!("waiting for an answer to #{a}")),
-        "failed" => s.last_error.as_deref().map(super::notify::short_reason),
+        "failed" => s.last_error.as_deref().map(|e| failed_line(&s.harness, e)),
         _ => None,
     };
+    // An error is never cut: only a working line is clipped.
+    let activity = if state == "failed" {
+        activity
+    } else {
+        activity.map(|a| clip_line(&a, 80))
+    };
+    let failure = (state == "failed")
+        .then(|| s.last_error.as_deref().map(|e| failure_for(s, e)))
+        .flatten();
     SessionState {
         k: s.k(),
         state,
-        activity: activity.map(|a| clip_line(&a, 80)),
+        activity,
+        failure,
         task_seq,
         run_id: s.run_id.clone(),
     }

@@ -495,6 +495,7 @@ mod tests {
                             env: (*e).into(),
                             last4: "abcd".into(),
                             added_ms: 1,
+                            expired: false,
                         })
                         .collect(),
                     ..Default::default()

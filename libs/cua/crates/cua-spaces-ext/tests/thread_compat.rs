@@ -1062,6 +1062,85 @@ fn the_daemon_reports_the_thread_feature() {
     assert_eq!(cua_spaces_ext::thread::FEATURE, "thread.v1");
 }
 
+/// `meta.json` of the idle run, as a runner that stored the hash of the
+/// credentials it started with writes it.
+fn run_meta_with_hash(fx: &Fx, hash: &str) {
+    let meta = json!({"run_id": RUN, "harness": "claude-code", "prompt": "hi",
+                      "cwd": "/home/cua/work", "created_at": 0.0, "cred_hash": hash});
+    fx.srv.state.put_file(
+        &format!("{RUNS}/{RUN}/meta.json"),
+        meta.to_string().into_bytes(),
+    );
+}
+
+async fn run_alive(fx: &Fx) -> bool {
+    let s = fx.spaces.space(&fx.space).await.unwrap();
+    s.spacesd()
+        .unwrap()
+        .list_processes(false)
+        .await
+        .unwrap()
+        .iter()
+        .any(|p| p.tag == format!("cua-agent/{RUN}"))
+}
+
+fn forwarded_hash(key: &str) -> String {
+    cua_agents::runs::credential_hash(
+        "claude-code",
+        &std::collections::BTreeMap::from([("ANTHROPIC_API_KEY".to_string(), key.to_string())]),
+    )
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_message_reaches_the_idle_run_while_its_credentials_are_the_ones_forwarded() {
+    let fx = setup().await;
+    let (p, _proc) = member_with_idle_run(&fx).await;
+    edit_record(&fx, "ada", |r| r["env"] = json!({"ANTHROPIC_API_KEY": "sk-one"}));
+    run_meta_with_hash(&fx, &forwarded_hash("sk-one"));
+    let d = p.send("ada", "again").await.unwrap();
+    assert!(!d.started, "the idle run takes it");
+    assert_eq!(inbox(&fx), vec!["again".to_string()]);
+    assert!(run_alive(&fx).await);
+}
+
+/// Reconnecting in Settings must take effect on the next message: a run that
+/// began with other credentials is ended, not reused.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_changed_credential_ends_the_idle_run_instead_of_reusing_it() {
+    let fx = setup().await;
+    let (p, _proc) = member_with_idle_run(&fx).await;
+    edit_record(&fx, "ada", |r| r["env"] = json!({"ANTHROPIC_API_KEY": "sk-new"}));
+    run_meta_with_hash(&fx, &forwarded_hash("sk-old"));
+    // The mock runs no shell, so the fresh start itself can't finish here;
+    // what matters is that the old run did not get the message and is gone.
+    let _ = p.send("ada", "again").await;
+    assert!(inbox(&fx).is_empty(), "the old run was not reused");
+    assert!(!run_alive(&fx).await, "the old run was ended");
+}
+
+/// A run whose last turn failed to authenticate is not reused either, even
+/// with the same credentials (the provider rejected them).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_run_that_failed_to_authenticate_is_not_reused() {
+    let fx = setup().await;
+    let (p, _proc) = member_with_idle_run(&fx).await;
+    edit_record(&fx, "ada", |r| r["env"] = json!({"ANTHROPIC_API_KEY": "sk-one"}));
+    run_meta_with_hash(&fx, &forwarded_hash("sk-one"));
+    events(
+        &fx,
+        &[
+            ("turn_started", 2, None),
+            ("error", 2, Some("Failed to authenticate. API Error: 401 OAuth access token is invalid")),
+            ("turn_ended", 2, None),
+        ],
+    );
+    run_state(&fx, json!({"status": "idle", "turn": 2, "stopReason": "error"}));
+    run_meta_with_hash(&fx, &forwarded_hash("sk-one"));
+    let _ = p.send("ada", "again").await;
+    assert!(inbox(&fx).is_empty());
+    assert!(!run_alive(&fx).await);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_failed_turn_fails_its_task_and_the_notification_points_at_it() {
     let fx = setup().await;
@@ -1093,7 +1172,16 @@ async fn a_failed_turn_fails_its_task_and_the_notification_points_at_it() {
         .iter()
         .find(|x| x["reply_to"] == task && x["kind"] == "message")
         .expect("a reply");
-    assert_eq!(reply["text"], "Failed: Authentication required");
+    // Plain words from the agent; the complete error rides along typed, and
+    // the harness's own words are never the summary.
+    assert_eq!(
+        reply["text"],
+        "I can't reach Claude yet. Connect Claude, then try again."
+    );
+    assert_eq!(reply["failure"]["class"], "needs_connect");
+    assert_eq!(reply["failure"]["provider"], "anthropic");
+    assert_eq!(reply["failure"]["message"], "Authentication required");
+    assert_eq!(reply["failure"]["retryable"], true);
     let update = e.iter().rev().find(|x| x["kind"] == "task_update").unwrap();
     assert_eq!(update["update"]["state"], "failed");
     let n = p

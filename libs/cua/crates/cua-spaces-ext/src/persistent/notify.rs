@@ -52,6 +52,10 @@ const MAX_REASON: usize = 80;
 
 /// The title of a failed run or turn: "<agent> stopped: <short reason>".
 pub fn stopped_title(agent: &str, error: &str) -> String {
+    // A rejected or missing sign-in is said in words, not as the provider's error.
+    if cua_agents::failure::is_auth_failure(error) {
+        return format!("{agent} needs you to connect it");
+    }
     format!("{agent} stopped: {}", short_reason(error))
 }
 
@@ -59,6 +63,13 @@ pub fn stopped_title(agent: &str, error: &str) -> String {
 /// error object (`API Error: 401 {"error":{"message":"invalid x-api-key"}}`)
 /// reduced to its message.
 pub fn short_reason(error: &str) -> String {
+    let r = reason(error);
+    if r == "unknown error" { r } else { clip(&r, MAX_REASON) }
+}
+
+/// [`short_reason`] without the clip: the error's first line as it is
+/// (surfaces that draw errors never cut them).
+pub fn reason(error: &str) -> String {
     let first = error
         .lines()
         .map(str::trim)
@@ -84,7 +95,7 @@ pub fn short_reason(error: &str) -> String {
     if short.is_empty() {
         "unknown error".into()
     } else {
-        clip(short, MAX_REASON)
+        short.to_string()
     }
 }
 

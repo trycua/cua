@@ -58,6 +58,8 @@ pub struct AgentKeyInput {
     pub last4: String,
     /// When it was added (Unix ms).
     pub added_ms: u64,
+    /// A sign-in past its expiry: not used by any run until reconnected.
+    pub expired: bool,
 }
 
 /// What the section shows.
@@ -463,6 +465,7 @@ mod tests {
             env: env.into(),
             last4: last4.into(),
             added_ms: 1,
+            expired: false,
         }
     }
 

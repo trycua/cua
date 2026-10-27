@@ -186,6 +186,7 @@ export function SpaceCall({
       onAnswer={thread.answer}
       onOpenAttachment={openAttachment}
       onRemoveAgent={thread.removeAgent ?? undefined}
+      onRetry={(text) => summon.send(text, view ?? null)}
       onReachTop={thread.hasMoreBefore ? thread.loadEarlier : undefined}
       empty={
         thread.status === "loading" ? null : (

@@ -1234,6 +1234,14 @@ async fn open(cli: &Cli, with_session: bool) -> Result<Arc<Cua>, CuaError> {
         let _ = TOPOLOGY.set("daemon");
         return Cua::connect(cli.daemon.clone(), cli.daemon_token.clone());
     }
+    // Inside a Space with children on: its spawn channel, where every
+    // Space made is a child of this one.
+    if let Some(cua_daemon::client::DaemonAddress::Url { url, token }) =
+        cua_daemon::client::spawn_channel()
+    {
+        let _ = TOPOLOGY.set("space");
+        return Cua::connect(Some(url), Some(token));
+    }
     // A daemon that is starting is waited for (bounded), never raced with
     // a runtime of this process's own (a `cua volume mount` would mount
     // here, not in the daemon).
@@ -1813,6 +1821,7 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
             | host::SpacesCmd::Resize { .. }
             | host::SpacesCmd::Start { .. }
             | host::SpacesCmd::Egress { .. }
+            | host::SpacesCmd::Children { .. }
             | host::SpacesCmd::Prewarm { .. }
             | host::SpacesCmd::Share { .. }
             | host::SpacesCmd::Unshare { .. }
@@ -1948,6 +1957,13 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
                 out,
             )
             .await;
+        }
+        Command::Spaces(host::SpacesCmd::Ls { .. })
+            if cli.daemon.is_none() && cua_daemon::client::spawn_channel().is_some() =>
+        {
+            // Inside a Space: its own children, through its spawn channel.
+            let cua = open(&cli, false).await?;
+            return host::run_children_ls(&cua, json, out).await;
         }
         Command::Spaces(cmd) => {
             // Relay machines only when signed in; the registry either way.

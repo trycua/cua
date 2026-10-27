@@ -172,6 +172,7 @@
     "features_optional": [
       "background_input",
       "hotspot",
+      "spawn",
       "relay_attach",
       "h264_hw",
       "audio.desktop",

@@ -93,6 +93,7 @@
   "features_not_applicable": [],
   "features_optional": [
     "hotspot",
+    "spawn",
     "relay_attach",
     "h264_hw",
     "audio.per_app",

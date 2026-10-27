@@ -64,6 +64,7 @@
     ],
     "features_optional": [
       "hotspot",
+      "spawn",
       "relay_attach",
       "h264_hw",
       "audio.desktop",

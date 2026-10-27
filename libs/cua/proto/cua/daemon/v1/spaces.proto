@@ -109,6 +109,10 @@ service SpaceService {
   // Replaces a Space's network settings (a child's stay within its
   // parent's unless `widen`).
   rpc SetSpaceNetwork(SetSpaceNetworkRequest) returns (SetSpaceNetworkResponse);
+  // Lets a Space make child Spaces of its own, or stops it. Turning it off
+  // ends the Space's spawn capability at once; children it already made
+  // keep running until they are deleted or their lifetime ends.
+  rpc SetSpaceChildren(SetSpaceChildrenRequest) returns (SetSpaceChildrenResponse);
   // Connects to a registered Space and returns a loopback env passthrough
   // (`<loopback>/v1/spaces/<key>/env`) that carries the Space's credentials,
   // so a client runs every `cua.env.v1` call and media WebSocket through the
@@ -301,6 +305,10 @@ message Space {
   uint32 depth = 39;
   // How it was made: "user", "child" or "fork-batch:<id>".
   string origin = 40;
+  // The Space may make child Spaces of its own (`SetSpaceChildren`): `cua`,
+  // the SDKs and the agent's tools in it create, list and delete Spaces
+  // that belong to it, on a channel only it can reach.
+  bool children = 43;
 }
 
 // Who a Space belongs to and who else has it (`Space.sharing`).
@@ -937,6 +945,23 @@ message CreateSpaceRequest {
   // Space).
   // (30 and 31 are kept for other create options.)
   bool widen = 32;
+  // Let the Space make child Spaces of its own (`SetSpaceChildren`).
+  // Unset: off.
+  optional bool children = 33;
+}
+
+// Request for `SpaceService.SetSpaceChildren`.
+message SetSpaceChildrenRequest {
+  // Id or name.
+  string space = 1;
+  // On or off.
+  bool enabled = 2;
+}
+
+// Response for `SpaceService.SetSpaceChildren`.
+message SetSpaceChildrenResponse {
+  // The Space as it is now.
+  Space space = 1;
 }
 
 // Request for `SpaceService.CreateSpaceStream`.

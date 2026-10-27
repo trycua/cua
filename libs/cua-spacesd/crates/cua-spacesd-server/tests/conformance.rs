@@ -119,6 +119,7 @@ async fn capabilities_report_contract_and_limitations() {
             "fs_watch",
             "tunnel.forward",
             "hotspot",
+            "spawn",
             "driver",
             "a11y",
             "desktop_stream",
@@ -181,6 +182,7 @@ async fn route_spec_consistency() {
         cua_proto::metadata::MEDIA_WS_PATH,
         cua_proto::metadata::TUNNEL_WS_PATH,
         cua_proto::metadata::HOTSPOT_WS_PATH,
+        cua_proto::metadata::SPAWN_WS_PATH,
         cua_proto::metadata::VOLUME_WS_PATH,
         cua_proto::metadata::FILES_PATH,
         cua_proto::metadata::MCP_PATH,
@@ -1840,6 +1842,119 @@ async fn hotspot_egress_goes_through_the_peer() {
         .unwrap()
         .into_inner();
     assert_eq!(status.state, HotspotState::Stopped as i32);
+    t.cleanup().await;
+}
+
+#[tokio::test]
+async fn spawn_channel_reaches_the_host_and_tells_processes_where() {
+    let t = target().await;
+    let c = t.client(TransportPreference::Native).await;
+    let spawn = c
+        .tunnel()
+        .start_spawn(StartSpawnRequest {
+            capability: "cap-for-this-space".into(),
+            space_id: "space-under-test".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(spawn.address.starts_with("http://127.0.0.1:"));
+    // A forged ticket is refused.
+    let bad = t.endpoint().ws_url("/spawn?ticket=v1.bad.sig");
+    assert!(ws_connect(&bad).await.is_err());
+    let (ws, _) = ws_connect(t.endpoint().ws_url(&spawn.ws_path))
+        .await
+        .unwrap();
+    let (sink, source) = ws.split();
+    let source = Box::pin(source.filter_map(|m| async move {
+        match m {
+            Ok(tokio_tungstenite::tungstenite::Message::Binary(b)) => Some(b),
+            _ => None,
+        }
+    }));
+    let sink = Box::pin(sink.with(|b: Vec<u8>| async move {
+        Ok::<_, tokio_tungstenite::tungstenite::Error>(
+            tokio_tungstenite::tungstenite::Message::Binary(b),
+        )
+    }));
+    // The host's end: every connection is a stream to its own API (here a
+    // fixed HTTP answer), never a dial into the network.
+    let opened = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = opened.clone();
+    tokio::spawn(cua_spacesd_socks::peer::serve_streams(
+        source,
+        sink,
+        move |host: String, port| {
+            log.lock().unwrap().push(format!("{host}:{port}"));
+            async move {
+                let (ours, theirs) = tokio::io::duplex(4096);
+                tokio::spawn(async move {
+                    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                    let mut s = theirs;
+                    let mut buf = [0u8; 1024];
+                    let _ = s.read(&mut buf).await;
+                    let _ = s
+                        .write_all(b"HTTP/1.0 200 OK\r\nContent-Length: 8\r\n\r\nspawn-ok")
+                        .await;
+                });
+                Ok::<_, std::io::Error>(ours)
+            }
+        },
+    ));
+    // New processes are told the Space, the listener and the capability.
+    let (code, env) = run_sh(
+        &c,
+        "printf '%s|%s|' \"$CUA_SPACE\" \"$CUA_SPAWN\"; cat \"$CUA_SPAWN_TOKEN_FILE\"",
+    )
+    .await;
+    assert_eq!(code, Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&env),
+        format!("space-under-test|{}|cap-for-this-space", spawn.address)
+    );
+    let mut body = Vec::new();
+    for _ in 0..20 {
+        let (code, out) = run_sh(&c, &format!("curl -s --max-time 5 {}/", spawn.address)).await;
+        body = out;
+        if code == Some(0) && body == b"spawn-ok" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    assert_eq!(body, b"spawn-ok");
+    assert_eq!(opened.lock().unwrap()[0], "spawn:0");
+    let status = c
+        .tunnel()
+        .get_spawn_status(GetSpawnStatusRequest {})
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(status.started && status.attached);
+    c.tunnel()
+        .stop_spawn(StopSpawnRequest {
+            spawn_id: spawn.spawn_id,
+        })
+        .await
+        .unwrap();
+    // Stopped: the capability is gone from the guest and new processes are
+    // not told about a channel.
+    let (_, gone) = run_sh(
+        &c,
+        &format!(
+            "test -e '{}' && echo left; printf '%s' \"$CUA_SPAWN\"",
+            spawn.token_path
+        ),
+    )
+    .await;
+    assert_eq!(gone, b"");
+    let status = c
+        .tunnel()
+        .get_spawn_status(GetSpawnStatusRequest {})
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(!status.started);
     t.cleanup().await;
 }
 

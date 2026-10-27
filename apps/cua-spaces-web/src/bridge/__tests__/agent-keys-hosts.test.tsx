@@ -25,8 +25,8 @@ const WORDS = {
   },
   // cua keeps no agent key in a file and has no vault on Linux: no store is named.
   linux: {
-    intro: "Agents in your Spaces need a provider key to run. Keys stay on this computer, and each one is only given to the agents that use it.",
-    help: "It's saved on this computer and won't be shown again.",
+    intro: "Agents in your Spaces need a provider key to run. Keys stay on this machine, and each one is only given to the agents that use it.",
+    help: "It's saved on this machine and won't be shown again.",
   },
 } as const;
 

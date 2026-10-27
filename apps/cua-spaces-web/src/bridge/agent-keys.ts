@@ -84,7 +84,7 @@ export interface AgentKeyConfirm {
 
 export const agentKeysInputOf = (report: AgentKeysReport | undefined, error: Error | null): AgentKeysInput => ({
   keys: (report?.keys ?? []).map(({ provider, env, last4, addedMs }) => ({ provider, env, last4, addedMs })),
-  unavailable: report?.available === false ? (report.unavailable ?? "this computer can't keep keys") : null,
+  unavailable: report?.available === false ? (report.unavailable ?? "this machine can't keep keys") : null,
   error: error ? error.message : null,
 });
 

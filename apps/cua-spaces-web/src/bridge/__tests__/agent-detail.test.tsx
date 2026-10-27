@@ -124,7 +124,7 @@ describe.skipIf(!wasmBuilt)("useAgentDetail with the core", () => {
     const got = mount(await testCore());
     await waitFor(() => expect(got.d?.view?.memory.length).toBeGreaterThan(0));
     const v = got.d!.view!;
-    expect(v.tabs.map((t) => t.label)).toEqual(["Memory", "Routines", "Access to this computer"]);
+    expect(v.tabs.map((t) => t.label)).toEqual(["Memory", "Routines", "Access to this machine"]);
     expect(v.subtitle).toMatch(/^Home agents\/ada\/, saved /);
     expect(v.memory.map((l) => l.text)).toEqual(["MEMORY.md", "notes/review-checklist.md", "notes/open-questions.md"]);
 
@@ -179,7 +179,7 @@ describe.skipIf(!wasmBuilt)("useAgentDetail with the core", () => {
   it("revokes and allows this computer, and shows the agent's audit", async () => {
     const got = mount(await testCore());
     await waitFor(() => expect(got.d?.view?.access.length).toBe(1));
-    expect(got.d!.view!.access[0]).toMatchObject({ text: "This computer", actionLabel: "Revoke" });
+    expect(got.d!.view!.access[0]).toMatchObject({ text: "This machine", actionLabel: "Revoke" });
     expect(got.d!.view!.allowThisMachineLabel ?? null).toBeNull();
     // Ada's own lines only (Claw's refusal and Atlas's use are not hers).
     expect(got.d!.view!.audit.map((l) => l.text)).toEqual(["Used relay:this-mac", "Allowed relay:this-mac"]);
@@ -187,13 +187,13 @@ describe.skipIf(!wasmBuilt)("useAgentDetail with the core", () => {
     act(() => got.d!.act({ type: "revoke-computer", machine: "relay:this-mac" }));
     await waitFor(() => expect(got.d!.view!.access).toEqual([]));
     await idle(got);
-    expect(got.d!.view!.accessEmpty).toBe("This agent cannot use your computers.");
-    expect(got.d!.view!.allowThisMachineLabel).toBe("Allow on this computer");
+    expect(got.d!.view!.accessEmpty).toBe("This agent cannot use your machines.");
+    expect(got.d!.view!.allowThisMachineLabel).toBe("Allow on this machine");
     expect(got.d!.thisMachine).toBe("relay:this-mac");
     expect(got.d!.view!.audit[0]!.text).toBe("Revoked relay:this-mac");
 
     act(() => got.d!.act({ type: "allow-computer", machine: got.d!.thisMachine! }));
-    await waitFor(() => expect(got.d!.view!.access.map((l) => l.text)).toEqual(["This computer"]));
+    await waitFor(() => expect(got.d!.view!.access.map((l) => l.text)).toEqual(["This machine"]));
   });
 
   it("says why a change failed", async () => {

@@ -3129,8 +3129,8 @@ pub(crate) fn setup_options_for_request(
     request: AppHostSetupRequest,
 ) -> Result<cua_sdk::HostSetupOptions> {
     let request = core::host::validate_setup(request).map_err(CuaError::InvalidArgument)?;
-    // The default choice is "let my other devices use this computer": its
-    // screen and Spaces. Pass what the core resolved, not the SDK's own
+    // The default setup lets other machines create Spaces here and keeps
+    // the desktop private. Pass what the core resolved, not the SDK's own
     // (CLI) profile defaults, so both agree.
     let (share_desktop, provide_spaces) = request.settings();
     Ok(cua_sdk::HostSetupOptions {
@@ -3201,13 +3201,20 @@ mod host_setup_tests {
             (o.share_desktop, o.provide_spaces),
             (Some(false), Some(true))
         );
-        // The default choice, "let my other devices use this computer",
-        // turns on the screen and leaves Spaces to the host's default
-        // (cua_host::default_provide_spaces: on for a new relay setup, kept
-        // as it was on a machine set up before); a direct connection only
-        // the screen.
+        // The default setup keeps the desktop private and leaves Spaces to
+        // the host's default (cua_host::default_provide_spaces: on for a
+        // new relay setup, kept as it was on a machine set up before); a
+        // direct connection always shares the screen.
         let o = setup_options_for_request(AppHostSetupRequest {
             mode: "relay".into(),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!((o.share_desktop, o.provide_spaces), (Some(false), None));
+        // The desktop choice also lets other machines control this desktop.
+        let o = setup_options_for_request(AppHostSetupRequest {
+            mode: "relay".into(),
+            profile: Some("desktop".into()),
             ..Default::default()
         })
         .unwrap();

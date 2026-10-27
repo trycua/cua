@@ -572,7 +572,7 @@ pub fn desktop_note(space: &Space) -> Option<String> {
 pub fn host_desktop_note(os: crate::model::SpaceOs) -> String {
     format!(
         "This is {}\u{2019}s own screen, so it isn\u{2019}t shown here. \
-         Your other devices see and control it while you let them use it.",
+         Your other machines see and control it while you let them use it.",
         os.this_machine_lower()
     )
 }
@@ -745,7 +745,7 @@ fn delete_confirm(space: &Space, remove_only: bool, delete_label: &str) -> Delet
         let elsewhere = space.cloud_delete.as_deref() == Some("elsewhere");
         let message = if elsewhere {
             format!(
-                "It runs in {place} and was created on another device. Remove from List keeps it running there."
+                "It runs in {place} and was created on another machine. Remove from List keeps it running there."
             )
         } else {
             format!(
@@ -758,7 +758,7 @@ fn delete_confirm(space: &Space, remove_only: bool, delete_label: &str) -> Delet
             confirm_label: "Delete Permanently".into(),
             confirm_enabled: !elsewhere,
             disabled_reason: elsewhere.then(|| {
-                "Created on another device: delete it there, or remove it from this list.".into()
+                "Created on another machine: delete it there, or remove it from this list.".into()
             }),
             remove_label: Some("Remove from List".into()),
             cancel_label: "Cancel".into(),
@@ -1636,7 +1636,7 @@ mod tests {
                 .sections
                 .iter()
                 .find(|s| s.title.code == "spaces.sidebar.section.my_computers")
-                .unwrap_or_else(|| panic!("no My computers for {features:?} {error:?}: {view:?}"));
+                .unwrap_or_else(|| panic!("no My machines for {features:?} {error:?}: {view:?}"));
             assert_eq!(
                 mine.rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
                 [other.as_str()],

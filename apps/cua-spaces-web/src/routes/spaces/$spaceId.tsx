@@ -18,6 +18,7 @@ import { StreamSection } from "@/components/space-detail/stream-section";
 import { StreamSurface } from "@/components/space-detail/stream-surface";
 import { SpaceHeader } from "@/components/space-detail/space-header";
 import { SpaceCall } from "@/components/space-thread/space-call";
+import { ThisMacCall } from "@/components/space-detail/this-mac-desktop";
 import { StateLabel } from "@/components/state-dot";
 import { PageTip } from "@/components/tips";
 import { creatingThread } from "@/components/space-thread/queued";
@@ -29,7 +30,7 @@ import { thisComputerText } from "@/lib/host-labels";
 import { useSpaceVolumeError } from "@/lib/space-volume";
 import { cn } from "@/lib/utils";
 import { volumeUnavailableNote } from "@/lib/volume-notes";
-import { canDelete, canPower, createError, createProgress, machineName, powerLabel, powerPending, spacePlace, spaceState } from "@/lib/spaces";
+import { canDelete, canPower, createError, isUnsharedDesktop, createProgress, machineName, powerLabel, powerPending, spacePlace, spaceState } from "@/lib/spaces";
 import { useFlag } from "@/bridge/flags";
 import { useSpaceLayout } from "@/components/space-thread/layout-mode";
 import { LegacySpacePage } from "@/legacy/routes/spaces/$spaceId";
@@ -137,7 +138,7 @@ function SpaceDetailPage() {
             </Button>
           }
         >
-          {error ? error.message : "It may have been deleted, or it runs on a computer this app can't see."}
+          {error ? error.message : "It may have been deleted, or it runs on a machine this app can't see."}
         </EmptyState>
       </Page>
     );
@@ -290,7 +291,13 @@ function SpaceDetailPage() {
   const place = (
     <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-muted-foreground">
       <span>{spacePlace(space, machine)}</span>
-      {pending ? <span className="text-xs">{pending}</span> : <StateLabel state={state} space={space} />}
+      {pending ? (
+        <span className="text-xs">{pending}</span>
+      ) : space.id === "this-mac" ? (
+        <StateLabel state={isUnsharedDesktop(space) ? "stopped" : "running"} word={isUnsharedDesktop(space) ? "Not sharing" : "Sharing"} />
+      ) : (
+        <StateLabel state={state} space={space} />
+      )}
     </p>
   );
   const osMark = (
@@ -419,6 +426,22 @@ function SpaceDetailPage() {
   const creating = space.id.startsWith("pending:") && askFirstOn && state !== "failed" && tasks.some((t) => t.pendingId === space.id);
   const callThread = creating ? creatingThread(space.id) : thread;
   const later = "Available once the Space is ready";
+  // This Mac's own desktop row: a Space's page as any other, with the share prompt where the stream would be.
+  if (space.id === "this-mac") {
+    return (
+      <>
+        <ThisMacCall
+          spaceName={space.name}
+          shared={!isUnsharedDesktop(space)}
+          identity={session?.signedIn ? (session.account.identity ?? null) : null}
+          facts={detail.facts}
+          more={sections}
+          header={<SpaceHeader back={<BackLink inline />} os={space.os} title={detail.title} place={place} />}
+        />
+        {dialogs}
+      </>
+    );
+  }
   if (!detail.desktopNote && callThread.status !== "unsupported" && (creating || !space.id.startsWith("pending:"))) {
     return (
       <>
@@ -509,11 +532,11 @@ function SpaceDetailPage() {
           note={detail.desktopNote}
           listSpaces={Boolean(detail.newSpace)}
           spaces={hostedSpaces(spaces ?? [], space.id)}
-          // This machine's own screen: its switches live on its Computers page.
+          // This machine's own screen: its switches live on its Machines page.
           action={
             detail.isHost ? (
               <Button variant="outline" size="sm" data-host-desktop-action="" render={<Link to="/machines" />}>
-                Open Computers
+                Open Machines
               </Button>
             ) : null
           }
@@ -677,7 +700,7 @@ function SpaceResources({ space, spaces, snapshot, machines }: { space: Space; s
   if (!local && mine.powerState === "running" && !mine.usage) return null;
   const machine = local ? machines.find((m) => m.current) : machines.find((m) => m.id === space.host || m.spaceIds.includes(space.id));
   const host = hostResources(snapshot, machine);
-  const computer = local ? thisComputerText() : (machine?.name ?? space.hostName ?? "its computer");
+  const computer = local ? thisComputerText() : (machine?.name ?? space.hostName ?? "its machine");
   // The Spaces on the same computer, with the numbers it sent, for how it fits.
   const sameComputer = (s: Space) => (local ? s.provider === "local" : s.host === space.host);
   const onComputer = spaces.flatMap((s) => {

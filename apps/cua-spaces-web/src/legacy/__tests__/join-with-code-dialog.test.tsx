@@ -90,7 +90,7 @@ describe("Join with a code", () => {
     fireEvent.click(join());
     await waitFor(() => expect(state()).toBe("failed"));
     expect(document.querySelector("[data-join-error]")?.textContent).toBe(
-      "That code didn't work. It may be used, expired or mistyped. Make a new one in Add a computer.",
+      "That code didn't work. It may be used, expired or mistyped. Make a new one in Add a machine.",
     );
     expect(field().disabled).toBe(false);
     fireEvent.click(join());

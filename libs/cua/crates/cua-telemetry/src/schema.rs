@@ -1576,7 +1576,7 @@ pub const EVENTS: &[EventSpec] = &[
             p(
                 "profile",
                 Kind::Enum(HOST_PROFILES),
-                "Share this desktop, only run Spaces for other devices, or both.",
+                "Share this desktop, only run Spaces for other machines, or both.",
             ),
             OUTCOME,
             ERROR_KIND,

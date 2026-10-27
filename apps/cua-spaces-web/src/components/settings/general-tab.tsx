@@ -4,7 +4,7 @@
 import { MonitorIcon, MoonIcon, SunIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { chooseSettings, useBridge, useLoginItem, useSession, useSettings, useTips, type GlobalShortcut, type SettingsRow as CoreRow } from "@/bridge";
+import { chooseSettings, useBridge, useLoginItem, useMachines, useSession, useSettings, useThisMachine, useTips, type GlobalShortcut, type SettingsRow as CoreRow } from "@/bridge";
 import { SettingsGroup, SettingsRow } from "@/components/settings-group";
 import { CoreSettingsRow } from "@/components/settings/core-section";
 import { Button } from "@/components/ui/button";
@@ -36,7 +36,7 @@ export const showCuaIn = (row: CoreRow): CoreRow => ({
 /**
  * Settings, General: the few things a person sets every day. Start at login,
  * where Cua lives (Mac), appearance, the shortcut (Mac) and usage data.
- * Everything else moved: Advanced, Connectors, Trusted devices, the Volume
+ * Everything else moved: Advanced, Connectors, Trusted machines, the Volume
  * and Keyvault pages.
  */
 export function GeneralTab() {
@@ -123,7 +123,53 @@ export function GeneralTab() {
           />
         ) : null}
       </SettingsGroup>
+      <SharingGroup />
     </div>
+  );
+}
+
+/** What the switch says before this Mac is set up (the core's words once it is). */
+const SPACES_SWITCH = "Let other machines create Spaces here";
+const SPACES_HELP = "Your other machines can create Spaces here.";
+
+/**
+ * Sharing, for this Mac: "Let other machines create Spaces here", on by default. Before this Mac is set
+ * up, turning it on sets it up with the defaults (its desktop stays private; that switch is on its page
+ * under Machines). With both switches off this Mac simply is not shared, with no error.
+ */
+function SharingGroup() {
+  const { data: machines } = useMachines();
+  const { data: session } = useSession();
+  const host = useThisMachine(session?.identity ?? null);
+  const panel = machines?.find((m) => m.current && !m.device)?.panel;
+  if (!panel) return null;
+  const toggle = panel.toggles?.find((t) => t.id === "spaces");
+  const resume = panel.actions.some((a) => a.id === "resume-sharing" && a.enabled);
+  const on = panel.configured && Boolean(toggle?.on);
+  const flip = (next: boolean) => {
+    void (async () => {
+      try {
+        if (!panel.configured) {
+          if (next && !(await host.quickSetUp())) throw new Error(host.setupError?.message ?? "Couldn't set this Mac up.");
+          return;
+        }
+        if (!toggle) return;
+        await host.run(toggle.action);
+        if (next && resume) await host.run("resume-sharing");
+      } catch (e) {
+        fail("Couldn't change sharing")(e);
+      }
+    })();
+  };
+  return (
+    <SettingsGroup title="Sharing">
+      <SettingsRow
+        label={toggle?.label ?? SPACES_SWITCH}
+        description={toggle?.help ?? SPACES_HELP}
+        htmlFor="share-spaces"
+        control={<Switch id="share-spaces" data-setting-row="share-spaces" checked={on} disabled={host.busy || (panel.configured && !toggle?.enabled)} onCheckedChange={flip} />}
+      />
+    </SettingsGroup>
   );
 }
 

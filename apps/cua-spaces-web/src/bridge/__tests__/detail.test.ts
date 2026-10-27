@@ -179,7 +179,7 @@ describe("this computer on the relay (CUA-1527)", () => {
   it("lists the machine that is set up for access once, as This computer, with its Spaces", () => {
     const spaces = { spaces: [wkSpace("relay:space-16dec1e7810d08b6", "remote-from-wl", HOST), wkSpace(`relay:${HOST}`, "lg-x11")] };
     const rows = toMachineRows(spaces as never, { devices: null, signedIn: true, host: status } as never, "linux");
-    expect(rows.map((r) => r.name)).toEqual(["This computer"]);
+    expect(rows.map((r) => r.name)).toEqual(["This machine"]);
     const machines = toMachines(rows, []);
     expect(machines).toHaveLength(1);
   });
@@ -192,12 +192,12 @@ describe("this computer on the relay (CUA-1527)", () => {
 
   it("does not list a Space registered on the relay as a machine", () => {
     const rows = toMachineRows({ spaces: [wkSpace("relay:space-32179dffc4bd8902", "lin-local")] } as never, { devices: null, signedIn: true } as never, "linux");
-    expect(rows.map((r) => r.name)).toEqual(["This computer"]);
+    expect(rows.map((r) => r.name)).toEqual(["This machine"]);
   });
 
   it("still lists another machine's Spaces under that machine", () => {
     const rows = toMachineRows({ spaces: [wkSpace("relay:space-aaaa", "job", "feedfacefeedfacefeedfacefeedface")] } as never, { devices: null, signedIn: true, host: status } as never, "linux");
-    expect(rows.map((r) => r.name)).toEqual(["This computer", "lg-x11"]);
+    expect(rows.map((r) => r.name)).toEqual(["This machine", "lg-x11"]);
   });
 });
 
@@ -337,6 +337,6 @@ describe("the Machines rows listed here for an older host (machinesView)", () =>
       [machine("solo"), machine("both"), machine("box"), machine("stopped", { notSharing: "stopped sharing" })],
       [desktop("solo"), desktop("both"), hosted("both", 1), hosted("box", 1), hosted("box", 2), desktop("stopped", { sdk: { features: [], reachable: false, error: "stopped sharing" } })],
     );
-    expect(labels).toEqual({ solo: "Desktop shared", both: "Desktop · 1 Space", box: "2 Spaces", stopped: "No Spaces" });
+    expect(labels).toEqual({ solo: "Desktop shared", both: "Desktop and 1 Space", box: "2 Spaces", stopped: "No Spaces" });
   });
 });

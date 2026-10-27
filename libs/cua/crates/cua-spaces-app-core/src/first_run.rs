@@ -62,9 +62,9 @@ pub const OFFERED: [&str; 5] = PREFERENCE;
 const AGENT_KEYS: [(&str, &str); 2] = [("claude-code", "anthropic"), ("codex", "openai")];
 
 /// Home's to-do request: it works on this computer with nothing else set up.
-pub const FIRST_PROMPT: &str = "List my computers and tell me what's on this Mac";
-const FIRST_PROMPT_OTHER: &str = "List my computers and tell me what's on this computer";
-const FIRST_PROMPT_PC: &str = "List my computers and tell me what's on this PC";
+pub const FIRST_PROMPT: &str = "List my machines and tell me what's on this Mac";
+const FIRST_PROMPT_OTHER: &str = "List my machines and tell me what's on this computer";
+const FIRST_PROMPT_PC: &str = "List my machines and tell me what's on this PC";
 
 /// The try screen's request: the agent makes a Space on this computer.
 pub const TRY_PROMPT: &str = "Make a Linux Space on this Mac and show its desktop in a new window.";
@@ -1062,7 +1062,7 @@ fn default_or(name: &str, id: &str) -> String {
 fn welcome_view(input: &FirstRunInput) -> WelcomeView {
     let place = this_computer(&input.host_os);
     WelcomeView {
-        title: "Your computers, shared by your team and its agents.".into(),
+        title: "Your machines, shared by your team and its agents.".into(),
         lede: format!("Run agents in Spaces on {place}, or on any computer your team connects."),
         primary: button("start", "Get started"),
     }
@@ -1217,7 +1217,7 @@ fn devices_view(input: &FirstRunInput) -> DevicesView {
     let place = this_computer(&input.host_os);
     let rows = vec![
         DeviceRow {
-            title: "Your other computers".into(),
+            title: "Your other machines".into(),
             note: "Sign in with the same account".into(),
         },
         DeviceRow {
@@ -1234,7 +1234,7 @@ fn devices_view(input: &FirstRunInput) -> DevicesView {
             } else {
                 format!("Adding {place} to your account.")
             },
-            lede: "Sign in on your other computers to use its Spaces.".into(),
+            lede: "Sign in on your other machines to use its Spaces.".into(),
             rows,
             status,
             primary: button("continue", "Continue"),
@@ -1243,9 +1243,9 @@ fn devices_view(input: &FirstRunInput) -> DevicesView {
         };
     }
     DevicesView {
-        title: "Add your other computers.".into(),
+        title: "Add your other machines.".into(),
         lede: format!(
-            "Sign in to Cua here and on your other computers. Then they can all use {place}'s Spaces."
+            "Sign in to Cua here and on your other machines. Then they can all use {place}'s Spaces."
         ),
         rows,
         status: account_row(input),
@@ -1396,7 +1396,7 @@ fn computer_row(input: &FirstRunInput) -> CheckRow {
         return row(
             RowState::Fix,
             "Sign in to Cua".into(),
-            &format!("So your other computers can reach {place}."),
+            &format!("So your other machines can reach {place}."),
             Some(button("sign-in", "Sign in")),
         );
     }
@@ -1919,11 +1919,11 @@ pub fn todos(input: &FirstRunInput) -> FirstRunTodos {
     });
     items.push(FirstRunTodo {
         id: "sign-in".into(),
-        title: "Add your other computers (optional)".into(),
+        title: "Add your other machines (optional)".into(),
         note: if input.signed_in {
             "Signed in to Cua.".into()
         } else {
-            format!("Sign in to use {place}'s Spaces from your other computers.")
+            format!("Sign in to use {place}'s Spaces from your other machines.")
         },
         done: input.signed_in,
         optional: true,
@@ -2092,7 +2092,7 @@ mod tests {
         let w = view(&input(FirstRunStep::Welcome, vec![])).welcome.unwrap();
         assert_eq!(
             w.title,
-            "Your computers, shared by your team and its agents."
+            "Your machines, shared by your team and its agents."
         );
         assert_eq!(w.primary.id, "start");
     }
@@ -2311,13 +2311,13 @@ mod tests {
     fn signing_in_is_optional_and_says_what_it_connects() {
         let mut i = input(FirstRunStep::Devices, vec![]);
         let d = view(&i).devices.unwrap();
-        assert_eq!(d.title, "Add your other computers.");
+        assert_eq!(d.title, "Add your other machines.");
         assert_eq!(
             d.lede,
-            "Sign in to Cua here and on your other computers. Then they can all use this Mac's Spaces."
+            "Sign in to Cua here and on your other machines. Then they can all use this Mac's Spaces."
         );
         let rows: Vec<&str> = d.rows.iter().map(|r| r.title.as_str()).collect();
-        assert_eq!(rows, ["Your other computers", "Your cloud"]);
+        assert_eq!(rows, ["Your other machines", "Your cloud"]);
         assert_eq!(
             (d.primary.id.as_str(), d.primary.label.as_str()),
             ("sign-in", "Sign in")

@@ -28,7 +28,7 @@ export interface JoinHook {
 
 /** What the page says for a failure: the host's own words, or a plain line. */
 export function joinFailureText(e: unknown): string {
-  if (isUnsupported(e)) return "This version of Cua Spaces can't join with a code. Update the app, or run the install command on this computer.";
+  if (isUnsupported(e)) return "This version of Cua Spaces can't join with a code. Update the app, or run the install command on this machine.";
   return plainJoinError(e);
 }
 

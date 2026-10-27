@@ -311,7 +311,7 @@ export function StartFailed({ error, name, agent, host, onRetry }: { error: stri
         <div className="mt-3 flex flex-wrap items-center gap-2">
           {view.action === "set-up-host" ? (
             <Button className="h-10 px-4" render={<Link to="/machines" />}>
-              Open Computers
+              Open Machines
             </Button>
           ) : null}
           {view.action === "add-key" ? (

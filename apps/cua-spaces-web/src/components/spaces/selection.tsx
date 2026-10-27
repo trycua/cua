@@ -19,6 +19,7 @@ import type { SpaceItem } from "./model";
 
 /** It can be ticked: yours to delete, or someone else's to leave; not while it goes. */
 export function selectable(item: SpaceItem): boolean {
+  if (item.desktop) return false;
   if (item.state === "deleting" || item.state === "creating") return false;
   return item.mine ? item.access.canDelete && canDelete(item.space) : item.access.canLeave;
 }
@@ -132,6 +133,8 @@ export function SelectBox({
   onPicture?: boolean;
   className?: string;
 }) {
+  // A machine's desktop is not a Space to delete: no checkbox (an empty cell keeps the columns).
+  if (item.desktop) return <span className="block size-4" aria-hidden />;
   const on = picked ?? selection.has(item.space.id);
   const can = selectable(item);
   const why = can || on ? null : unselectableReason(item);

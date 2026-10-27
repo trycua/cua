@@ -241,7 +241,7 @@ I kept the structure and only changed the words. Three screens change:
 + <h1>Welcome to Cua Spaces</h1>
 + <p>Set up takes about a minute.</p>
 
-- <p>Sign in to sync your Spaces across all your devices!</p>
+- <p>Sign in to sync your Spaces across all your machines!</p>
 + <p>Sign in to see your Spaces on every computer you use.</p>
 \`\`\`
 

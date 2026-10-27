@@ -94,7 +94,7 @@ fn word(s: &str) -> &str {
         "windows" => "Windows",
         "macos" => "macOS",
         "local" => "this computer",
-        "relay" => "another of my computers",
+        "relay" => "another of my machines",
         "container" => "container",
         "vm" => "VM",
         _ => s,

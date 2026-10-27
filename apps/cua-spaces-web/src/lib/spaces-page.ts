@@ -10,7 +10,7 @@
 import type { Machine, Space } from "@/bridge";
 import { thisComputerLabel } from "@/lib/host-labels";
 import { size } from "@/lib/resources";
-import { spaceState, type SpaceFilter, type SpaceState } from "@/lib/spaces";
+import { orderSpaces, spaceState, type SpaceFilter } from "@/lib/spaces";
 
 export type SpacesView = "grid" | "list";
 export type SpacesSort = "used" | "name" | "size";
@@ -69,7 +69,6 @@ export function computerChoices(machines: readonly Machine[]): { value: string; 
   return [...here, ...real.filter((m) => !m.current)].map((m) => ({ value: m.id, label: m.current ? thisComputerLabel() : m.name }));
 }
 
-const ORDER: Record<SpaceState, number> = { failed: 0, creating: 0, running: 1, stopped: 2, deleting: 3 };
 
 export interface ShownInput {
   spaces: readonly Space[];
@@ -85,9 +84,8 @@ export interface ShownInput {
 }
 
 /**
- * The Spaces the page shows, in order. Last used: in the grid, being
- * created first, then running, then the rest, most recent first in each
- * (as before); in the list strictly by the column. Name: A to Z. Size:
+ * The Spaces the page shows, in order. Last used: running first, then
+ * being created, then the rest, most recent first in each. Name: A to Z. Size:
  * biggest first, the ones without a known size last.
  */
 export function shownSpaces({ spaces, search, mine, machineOf, bytes, matches }: ShownInput): Space[] {
@@ -103,8 +101,8 @@ export function shownSpaces({ spaces, search, mine, machineOf, bytes, matches }:
   const byName = (a: Space, b: Space) => a.name.localeCompare(b.name);
   if (search.sort === "name") return kept.toSorted((a, b) => byName(a, b) || byUsed(a, b));
   if (search.sort === "size") return kept.toSorted((a, b) => (bytes(b) ?? -1) - (bytes(a) ?? -1) || byName(a, b));
-  if (search.view === "list") return kept.toSorted(byUsed);
-  return kept.toSorted((a, b) => ORDER[spaceState(a)] - ORDER[spaceState(b)] || byUsed(a, b));
+  // Last used: running first, then the most recently used, in the grid and the list alike.
+  return orderSpaces(kept);
 }
 
 /** The list's Size column: yours with a known size, else "—". */

@@ -42,7 +42,7 @@ describe("the demo host on Windows and Linux", () => {
   it("names this machine after the system it runs on", async () => {
     for (const [p, name] of [
       [demoPlatformOf("win32", "x64"), "This PC"],
-      [demoPlatformOf("linux", "x64"), "This computer"],
+      [demoPlatformOf("linux", "x64"), "This machine"],
     ] as const) {
       const a = demo(p);
       const here = (await a.call("machines.list", {})).find((m) => m.current)!;
@@ -67,7 +67,7 @@ describe("the demo host on Windows and Linux", () => {
       const section = storageSection(core, await a.call("storage.get", {}), storageInitial(core)!)!;
       const words = JSON.stringify(section);
       expect(words).not.toMatch(MAC_WORDS);
-      expect(words).toContain(p.os === "windows" ? "This PC" : "This computer");
+      expect(words).toContain(p.os === "windows" ? "This PC" : "This machine");
       if (p.os === "linux") expect(words).toContain("Mounted at");
 
       const env = wizardEnv(core, {
@@ -78,7 +78,7 @@ describe("the demo host on Windows and Linux", () => {
       });
       let state = wizardInitial(core, env);
       const system = wizardView(core, state, env, p.os);
-      expect(system.placements.find((o) => o.id === "local")?.label).toBe(p.os === "windows" ? "This PC" : "This computer");
+      expect(system.placements.find((o) => o.id === "local")?.label).toBe(p.os === "windows" ? "This PC" : "This machine");
       state = wizardReduce(core, wizardReduce(core, wizardReduce(core, state, { type: "next" }, env), { type: "next" }, env), { type: "next" }, env);
       const summary = wizardView(core, state, env, p.os).summary;
       expect(JSON.stringify(summary)).not.toMatch(MAC_WORDS);

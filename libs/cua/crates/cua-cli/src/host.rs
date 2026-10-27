@@ -511,8 +511,7 @@ Examples:
         )]
         egress_deny: Vec<String>,
         /// Allow this destination, also where a block covers it (IP or CIDR;
-        /// repeat for more). This computer itself opens only with
-        /// `--network localhost:<ports>`.
+        /// repeat for more).
         #[arg(
             long = "allow",
             visible_alias = "egress-allow",
@@ -661,6 +660,8 @@ Examples:
     /// List child Spaces whose parent is gone or out of reach. The daemon
     /// ends a child only on proof its parent is gone, after a grace period;
     /// the others stay until you delete them or their lifetime ends.
+    #[command(after_help = "Examples:
+  cua spaces orphans")]
     Orphans,
     /// Keep a command running in a Space: started again when it exits or
     /// fails its health check (with a backoff), started when the Space
@@ -6350,8 +6351,12 @@ pub async fn run_children_ls(
     out: &mut dyn Write,
 ) -> Result<i32, CuaError> {
     let list = cua.spaces().list().await?;
-    let parent_of =
-        |s: &cua_sdk::SpaceInfo| s.labels.get("cua.parent").cloned().unwrap_or_default();
+    let parent_of = |s: &cua_sdk::SpaceInfo| {
+        s.parent
+            .clone()
+            .or_else(|| s.labels.get("cua.parent").cloned())
+            .unwrap_or_default()
+    };
     if json {
         let rows: Vec<serde_json::Value> = list
             .iter()
@@ -6435,11 +6440,15 @@ pub enum ServiceCmd {
         command: Vec<String>,
     },
     /// List a Space's services.
+    #[command(after_help = "Examples:
+  cua spaces service ls studio")]
     Ls {
         /// Space id or name.
         space: String,
     },
     /// Show the end of a service's log.
+    #[command(after_help = "Examples:
+  cua spaces service logs studio web")]
     Logs {
         /// Space id or name.
         space: String,
@@ -6450,6 +6459,8 @@ pub enum ServiceCmd {
         tail: u64,
     },
     /// Start a stopped service.
+    #[command(after_help = "Examples:
+  cua spaces service start studio web")]
     Start {
         /// Space id or name.
         space: String,
@@ -6457,6 +6468,8 @@ pub enum ServiceCmd {
         name: String,
     },
     /// Stop a service and keep it stopped.
+    #[command(after_help = "Examples:
+  cua spaces service stop studio web")]
     Stop {
         /// Space id or name.
         space: String,
@@ -6464,6 +6477,8 @@ pub enum ServiceCmd {
         name: String,
     },
     /// Restart a service.
+    #[command(after_help = "Examples:
+  cua spaces service restart studio web")]
     Restart {
         /// Space id or name.
         space: String,
@@ -6471,6 +6486,8 @@ pub enum ServiceCmd {
         name: String,
     },
     /// Stop a service and forget it.
+    #[command(after_help = "Examples:
+  cua spaces service rm studio web")]
     Rm {
         /// Space id or name.
         space: String,
@@ -6555,7 +6572,7 @@ pub async fn run_service(
             one(s.put_service(def).await?, out);
         }
         ServiceCmd::Ls { space } => {
-            let list = spaces.space(space).await?.services().await?;
+            let list = spaces.space(space).await?.kept_services().await?;
             if json {
                 line(out, serde_json::json!({ "services": list }).to_string());
             } else if list.is_empty() {

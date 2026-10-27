@@ -12,7 +12,7 @@ use cua_proto::daemon::v1::{
 use cua_spaces::registry::Credential;
 use tonic::{Code, Request};
 
-use super::api::{LABEL_DEPTH, LABEL_PARENT, LABEL_ROOT};
+use super::api::LABEL_PARENT;
 use crate::server::Shared;
 use crate::{Runtime, RuntimeConfig};
 
@@ -26,6 +26,8 @@ struct World {
 /// other ── o1
 /// owner-dup ("dup", a Space of the owner's own)
 fn world() -> World {
+    // Child Spaces are an experiment; these tests run with it on.
+    cua_vmm::experiments::set_enabled(cua_vmm::experiments::Gate::ChildSpaces, Some(true));
     let home = tempfile::tempdir().unwrap();
     let runtime = Runtime::new(RuntimeConfig {
         state_dir: Some(home.path().join("sandboxes")),
@@ -51,9 +53,11 @@ fn world() -> World {
             spaces
                 .registry()
                 .update_meta(id, |m| {
+                    m.parent = Some(parent.into());
+                    m.root = Some(root.into());
+                    m.depth = depth;
+                    m.origin = Some("child".into());
                     m.labels.insert(LABEL_PARENT.into(), parent.into());
-                    m.labels.insert(LABEL_ROOT.into(), root.into());
-                    m.labels.insert(LABEL_DEPTH.into(), depth.to_string());
                 })
                 .unwrap();
         }
@@ -169,6 +173,7 @@ async fn siblings_ancestors_other_trees_and_guesses_read_as_missing() {
                 &cap,
                 pb::DeleteSpaceRequest {
                     space: target.into(),
+                    keep_children: false,
                 },
             ))
             .await
@@ -346,9 +351,9 @@ async fn a_create_becomes_a_child_or_a_plain_refusal() {
         .unwrap();
     assert_eq!(r.location, "local");
     assert_eq!(r.name, "a.c1");
-    assert_eq!(r.labels[LABEL_PARENT], "local:a");
-    assert_eq!(r.labels[LABEL_ROOT], "local:root");
-    assert_eq!(r.labels[LABEL_DEPTH], "2");
+    // On this machine the record's tree fields place it, not labels.
+    assert_eq!(r.parent, "local:a");
+    assert!(r.labels.is_empty(), "{:?}", r.labels);
 
     let refuse = |depth, req: pb::CreateSpaceRequest| {
         scoped
@@ -358,12 +363,24 @@ async fn a_create_becomes_a_child_or_a_plain_refusal() {
     };
     // Deeper than the tree allows.
     assert_eq!(refuse(2, Default::default()), Code::ResourceExhausted);
-    // Another machine or a cloud, reuse, durable, volumes.
+    // Another machine or a linked cloud is allowed (inside the budget); an
+    // address is not; nor are reuse, durable and volumes.
+    assert!(
+        scoped
+            .child_request(
+                &claims(1),
+                pb::CreateSpaceRequest {
+                    location: "aws".into(),
+                    ..Default::default()
+                }
+            )
+            .is_ok()
+    );
     assert_eq!(
         refuse(
             1,
             pb::CreateSpaceRequest {
-                location: "aws".into(),
+                location: "direct:10.0.0.9:7400".into(),
                 ..Default::default()
             }
         ),
@@ -399,6 +416,27 @@ async fn a_create_becomes_a_child_or_a_plain_refusal() {
             }
         ),
         Code::InvalidArgument
+    );
+    assert_eq!(
+        refuse(
+            1,
+            pb::CreateSpaceRequest {
+                parent: "local:other".into(),
+                ..Default::default()
+            }
+        ),
+        Code::InvalidArgument
+    );
+    // A network more open than the caller's.
+    assert_eq!(
+        refuse(
+            1,
+            pb::CreateSpaceRequest {
+                widen: true,
+                ..Default::default()
+            }
+        ),
+        Code::PermissionDenied
     );
     // Egress: the parent's rules, never wider.
     w.shared
@@ -568,7 +606,7 @@ fn orphans_are_listed_and_only_provable_ones_will_end() {
         spaces
             .registry()
             .update_meta(id, |m| {
-                m.labels.insert(LABEL_PARENT.into(), parent.into());
+                m.parent = Some(parent.into());
             })
             .unwrap();
     }

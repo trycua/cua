@@ -1547,9 +1547,13 @@ impl Runtime for ContainerRuntime {
             .ok_or_else(|| VmmError::NotFound(name.into()))?;
         if Self::status_from(&before) == Status::Stopped {
             if self.needs_recreate(name, &before) {
+                // Recreating it would drop its writable layer: never done for you.
                 return Err(VmmError::invalid(format!(
-                    "{name} must be recreated for its egress policy before it runs again: \
-                     start it (not resume)"
+                    "{name} was made before its network settings, so it can start only on the \
+                     network it had. Joining the secure network means recreating it, and its \
+                     files would be lost: turn Secure Spaces off (`cua experiments disable \
+                     secure-spaces`) to keep using it as it is, or copy what you need out \
+                     (`cua sandbox cp`) and delete it"
                 )));
             }
             self.start_policed(name).await?;

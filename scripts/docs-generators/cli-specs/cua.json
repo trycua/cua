@@ -14350,6 +14350,17 @@
        "aliases": [],
        "default_value": false,
        "env": null,
+       "help": "Let it make child Spaces of its own: `cua`, the SDKs and the agent's tools in it create, list and delete Spaces that belong to it, on this machine, never wider than it (`cua spaces children`). Agent runs turn this on by themselves",
+       "hidden": false,
+       "name": "children",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
        "help": "A fork source (a \"bake\" Space): a local QEMU VM's guest RAM is a shared file, so `cua sb checkpoint` takes milliseconds and forks of its checkpoints share its pages. Other kinds ignore it",
        "hidden": false,
        "name": "forkable",
@@ -14621,7 +14632,7 @@
        ],
        "default_value": null,
        "env": null,
-       "help": "Allow this destination, also where a block covers it (IP or CIDR; repeat for more). This computer itself opens only with `--network localhost:<ports>`",
+       "help": "Allow this destination, also where a block covers it (IP or CIDR; repeat for more)",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,
@@ -14906,6 +14917,565 @@
      "subcommand_optional": false,
      "subcommands": [],
      "usage": "cua spaces egress [OPTIONS] <SPACE>"
+    },
+    {
+     "abstract": "Let a Space make child Spaces of its own, or stop it. While on, `cua`, the SDKs and the agent's tools inside it create, list and delete Spaces that belong to it: on this machine, with its egress rules, ending no later than it, through a channel only it can reach. Off ends its capability at once; children it made keep running until deleted or their lifetime ends",
+     "after_help": "Examples:\n  cua spaces children studio on\n  cua spaces children studio off",
+     "aliases": [],
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "Space id or name",
+       "hidden": false,
+       "is_optional": false,
+       "name": "SPACE",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      },
+      {
+       "default_value": null,
+       "help": "`on` or `off`",
+       "hidden": false,
+       "is_optional": false,
+       "name": "STATE",
+       "possible_values": [
+        "on",
+        "off"
+       ],
+       "repeatable": false,
+       "type": "on | off"
+      }
+     ],
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "children",
+     "options": [],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua spaces children [OPTIONS] <SPACE> <STATE>"
+    },
+    {
+     "abstract": "Show or set a tree's budget: how many child Spaces, vCPUs and memory its children may hold at once, and what they may cost. A child that does not fit is refused with what is left. Without flags it shows the budget and what the children use",
+     "after_help": "Examples:\n  cua spaces budget studio\n  cua spaces budget studio --spaces 32 --cpus 64 --memory 131072\n  cua spaces budget studio --usd-per-hour 5 --usd-total 50\n  cua spaces budget studio --clear",
+     "aliases": [],
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "Any Space of the tree (id or name)",
+       "hidden": false,
+       "is_optional": false,
+       "name": "SPACE",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Back to the defaults",
+       "hidden": false,
+       "name": "clear",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      }
+     ],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "budget",
+     "options": [
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Child Spaces at once (default 16)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "spaces",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "integer",
+       "value_name": "SPACES"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "vCPUs at once (default 16)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "cpus",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "integer",
+       "value_name": "CPUS"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Memory at once, in MiB (default 32768)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "memory",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "integer",
+       "value_name": "MIB"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Cost per hour in linked clouds, in dollars (default 2)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "usd-per-hour",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "number",
+       "value_name": "USD"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Cost in total, in dollars (default: none)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "usd-total",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "number",
+       "value_name": "USD"
+      }
+     ],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua spaces budget [OPTIONS] <SPACE>"
+    },
+    {
+     "abstract": "List child Spaces whose parent is gone or out of reach. The daemon ends a child only on proof its parent is gone, after a grace period; the others stay until you delete them or their lifetime ends",
+     "after_help": "Examples:\n  cua spaces orphans",
+     "aliases": [],
+     "arguments": [],
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "orphans",
+     "options": [],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua spaces orphans [OPTIONS]"
+    },
+    {
+     "abstract": "Keep a command running in a Space: started again when it exits or fails its health check (with a backoff), started when the Space boots, its output kept in a log file in the Space",
+     "aliases": [],
+     "arguments": [],
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "service",
+     "options": [],
+     "subcommand_optional": false,
+     "subcommands": [
+      {
+       "abstract": "Keep a command running (replaces a service of that name)",
+       "after_help": "Examples:\n  cua spaces service add studio web -- python3 -m http.server 8080\n  cua spaces service add studio web --http http://127.0.0.1:8080/ -- python3 -m http.server 8080\n  cua spaces service add studio job --restart on-failure -- ./run.sh",
+       "aliases": [],
+       "arguments": [
+        {
+         "default_value": null,
+         "help": "Space id or name",
+         "hidden": false,
+         "is_optional": false,
+         "name": "SPACE",
+         "possible_values": [],
+         "repeatable": false,
+         "type": "string"
+        },
+        {
+         "default_value": null,
+         "help": "Service name (lowercase letters, digits, `-`, `_`, `.`)",
+         "hidden": false,
+         "is_optional": false,
+         "name": "NAME",
+         "possible_values": [],
+         "repeatable": false,
+         "type": "string"
+        },
+        {
+         "default_value": null,
+         "help": "The command (after `--`)",
+         "hidden": false,
+         "is_optional": false,
+         "name": "COMMAND",
+         "possible_values": [],
+         "repeatable": true,
+         "type": "string"
+        }
+       ],
+       "flags": [
+        {
+         "aliases": [],
+         "default_value": false,
+         "env": null,
+         "help": "Do not start it when the Space boots",
+         "hidden": false,
+         "name": "no-boot",
+         "repeatable": false,
+         "short_name": null,
+         "takes_value": false
+        }
+       ],
+       "hidden": false,
+       "hidden_aliases": [],
+       "name": "add",
+       "options": [
+        {
+         "aliases": [],
+         "default_value": "always",
+         "env": null,
+         "help": "When to start it again: always, on-failure or never",
+         "hidden": false,
+         "is_optional": true,
+         "multiple_values": false,
+         "name": "restart",
+         "possible_values": [
+          "always",
+          "on-failure",
+          "never"
+         ],
+         "repeatable": false,
+         "short_name": null,
+         "takes_value": true,
+         "type": "always | on-failure | never",
+         "value_name": "RESTART"
+        },
+        {
+         "aliases": [],
+         "default_value": null,
+         "env": null,
+         "help": "Health check: a URL that answers 2xx or 3xx",
+         "hidden": false,
+         "is_optional": true,
+         "multiple_values": false,
+         "name": "http",
+         "possible_values": [],
+         "repeatable": false,
+         "short_name": null,
+         "takes_value": true,
+         "type": "string",
+         "value_name": "HTTP"
+        },
+        {
+         "aliases": [],
+         "default_value": null,
+         "env": null,
+         "help": "Health check: `host:port` that accepts a connection",
+         "hidden": false,
+         "is_optional": true,
+         "multiple_values": false,
+         "name": "tcp",
+         "possible_values": [],
+         "repeatable": false,
+         "short_name": null,
+         "takes_value": true,
+         "type": "string",
+         "value_name": "TCP"
+        },
+        {
+         "aliases": [],
+         "default_value": null,
+         "env": null,
+         "help": "Health check: a shell command that exits 0 when healthy",
+         "hidden": false,
+         "is_optional": true,
+         "multiple_values": false,
+         "name": "check",
+         "possible_values": [],
+         "repeatable": false,
+         "short_name": null,
+         "takes_value": true,
+         "type": "string",
+         "value_name": "CHECK"
+        },
+        {
+         "aliases": [],
+         "default_value": null,
+         "env": null,
+         "help": "`KEY=VALUE` for its environment (repeat for more)",
+         "hidden": false,
+         "is_optional": true,
+         "multiple_values": false,
+         "name": "env",
+         "possible_values": [],
+         "repeatable": true,
+         "short_name": null,
+         "takes_value": true,
+         "type": "string",
+         "value_name": "KEY=VALUE"
+        },
+        {
+         "aliases": [],
+         "default_value": null,
+         "env": null,
+         "help": "Working directory in the Space",
+         "hidden": false,
+         "is_optional": true,
+         "multiple_values": false,
+         "name": "cwd",
+         "possible_values": [],
+         "repeatable": false,
+         "short_name": null,
+         "takes_value": true,
+         "type": "string",
+         "value_name": "CWD"
+        }
+       ],
+       "subcommand_optional": false,
+       "subcommands": [],
+       "usage": "cua spaces service add [OPTIONS] <SPACE> <NAME> -- <COMMAND>..."
+      },
+      {
+       "abstract": "List a Space's services",
+       "after_help": "Examples:\n  cua spaces service ls studio",
+       "aliases": [],
+       "arguments": [
+        {
+         "default_value": null,
+         "help": "Space id or name",
+         "hidden": false,
+         "is_optional": false,
+         "name": "SPACE",
+         "possible_values": [],
+         "repeatable": false,
+         "type": "string"
+        }
+       ],
+       "flags": [],
+       "hidden": false,
+       "hidden_aliases": [],
+       "name": "ls",
+       "options": [],
+       "subcommand_optional": false,
+       "subcommands": [],
+       "usage": "cua spaces service ls [OPTIONS] <SPACE>"
+      },
+      {
+       "abstract": "Show the end of a service's log",
+       "after_help": "Examples:\n  cua spaces service logs studio web",
+       "aliases": [],
+       "arguments": [
+        {
+         "default_value": null,
+         "help": "Space id or name",
+         "hidden": false,
+         "is_optional": false,
+         "name": "SPACE",
+         "possible_values": [],
+         "repeatable": false,
+         "type": "string"
+        },
+        {
+         "default_value": null,
+         "help": "Service name",
+         "hidden": false,
+         "is_optional": false,
+         "name": "NAME",
+         "possible_values": [],
+         "repeatable": false,
+         "type": "string"
+        }
+       ],
+       "flags": [],
+       "hidden": false,
+       "hidden_aliases": [],
+       "name": "logs",
+       "options": [
+        {
+         "aliases": [],
+         "default_value": "65536",
+         "env": null,
+         "help": "Bytes from the end",
+         "hidden": false,
+         "is_optional": true,
+         "multiple_values": false,
+         "name": "tail",
+         "possible_values": [],
+         "repeatable": false,
+         "short_name": null,
+         "takes_value": true,
+         "type": "integer",
+         "value_name": "TAIL"
+        }
+       ],
+       "subcommand_optional": false,
+       "subcommands": [],
+       "usage": "cua spaces service logs [OPTIONS] <SPACE> <NAME>"
+      },
+      {
+       "abstract": "Start a stopped service",
+       "after_help": "Examples:\n  cua spaces service start studio web",
+       "aliases": [],
+       "arguments": [
+        {
+         "default_value": null,
+         "help": "Space id or name",
+         "hidden": false,
+         "is_optional": false,
+         "name": "SPACE",
+         "possible_values": [],
+         "repeatable": false,
+         "type": "string"
+        },
+        {
+         "default_value": null,
+         "help": "Service name",
+         "hidden": false,
+         "is_optional": false,
+         "name": "NAME",
+         "possible_values": [],
+         "repeatable": false,
+         "type": "string"
+        }
+       ],
+       "flags": [],
+       "hidden": false,
+       "hidden_aliases": [],
+       "name": "start",
+       "options": [],
+       "subcommand_optional": false,
+       "subcommands": [],
+       "usage": "cua spaces service start [OPTIONS] <SPACE> <NAME>"
+      },
+      {
+       "abstract": "Stop a service and keep it stopped",
+       "after_help": "Examples:\n  cua spaces service stop studio web",
+       "aliases": [],
+       "arguments": [
+        {
+         "default_value": null,
+         "help": "Space id or name",
+         "hidden": false,
+         "is_optional": false,
+         "name": "SPACE",
+         "possible_values": [],
+         "repeatable": false,
+         "type": "string"
+        },
+        {
+         "default_value": null,
+         "help": "Service name",
+         "hidden": false,
+         "is_optional": false,
+         "name": "NAME",
+         "possible_values": [],
+         "repeatable": false,
+         "type": "string"
+        }
+       ],
+       "flags": [],
+       "hidden": false,
+       "hidden_aliases": [],
+       "name": "stop",
+       "options": [],
+       "subcommand_optional": false,
+       "subcommands": [],
+       "usage": "cua spaces service stop [OPTIONS] <SPACE> <NAME>"
+      },
+      {
+       "abstract": "Restart a service",
+       "after_help": "Examples:\n  cua spaces service restart studio web",
+       "aliases": [],
+       "arguments": [
+        {
+         "default_value": null,
+         "help": "Space id or name",
+         "hidden": false,
+         "is_optional": false,
+         "name": "SPACE",
+         "possible_values": [],
+         "repeatable": false,
+         "type": "string"
+        },
+        {
+         "default_value": null,
+         "help": "Service name",
+         "hidden": false,
+         "is_optional": false,
+         "name": "NAME",
+         "possible_values": [],
+         "repeatable": false,
+         "type": "string"
+        }
+       ],
+       "flags": [],
+       "hidden": false,
+       "hidden_aliases": [],
+       "name": "restart",
+       "options": [],
+       "subcommand_optional": false,
+       "subcommands": [],
+       "usage": "cua spaces service restart [OPTIONS] <SPACE> <NAME>"
+      },
+      {
+       "abstract": "Stop a service and forget it",
+       "after_help": "Examples:\n  cua spaces service rm studio web",
+       "aliases": [],
+       "arguments": [
+        {
+         "default_value": null,
+         "help": "Space id or name",
+         "hidden": false,
+         "is_optional": false,
+         "name": "SPACE",
+         "possible_values": [],
+         "repeatable": false,
+         "type": "string"
+        },
+        {
+         "default_value": null,
+         "help": "Service name",
+         "hidden": false,
+         "is_optional": false,
+         "name": "NAME",
+         "possible_values": [],
+         "repeatable": false,
+         "type": "string"
+        }
+       ],
+       "flags": [],
+       "hidden": false,
+       "hidden_aliases": [],
+       "name": "rm",
+       "options": [],
+       "subcommand_optional": false,
+       "subcommands": [],
+       "usage": "cua spaces service rm [OPTIONS] <SPACE> <NAME>"
+      }
+     ],
+     "usage": "cua spaces service [OPTIONS] <COMMAND>"
     },
     {
      "abstract": "Cancel a create that is still running (here, in the daemon, or in another terminal): it stops and what it made is removed. Finished image downloads stay cached. Ctrl-C during `cua spaces create` does the same",

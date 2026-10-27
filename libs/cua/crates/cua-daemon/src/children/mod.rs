@@ -136,7 +136,10 @@ pub(crate) fn record_cost(shared: &Shared, root: &str, child: &str, ask: budget:
 pub(crate) fn local_size(shared: &Shared, id: &str) -> (u32, u64) {
     let recorded = id.strip_prefix("local:").and_then(|name| {
         let cua_sandbox_core::SandboxState::Local(l) =
-            shared.runtime.sandboxes().state().load(name)?;
+            shared.runtime.sandboxes().state().load(name)?
+        else {
+            return None;
+        };
         Some((l.cpu_count, l.memory_mb))
     });
     let (cpus, mem) = recorded.unwrap_or((None, None));
@@ -266,6 +269,13 @@ pub(crate) fn channel_app(shared: Arc<Shared>, space: String) -> axum::Router {
             let Some(authority) = shared.spawn_authority() else {
                 return unauthenticated(grpc, "child Spaces are off on this machine");
             };
+            // An experiment: while it is off, no capability does anything.
+            if !cua_vmm::experiments::enabled(cua_vmm::experiments::Gate::ChildSpaces) {
+                return unauthenticated(
+                    grpc,
+                    &cua_vmm::experiments::Gate::ChildSpaces.off_message(),
+                );
+            }
             let Some(token) = bearer(&req) else {
                 return unauthenticated(grpc, capability::Refusal::Malformed.message());
             };

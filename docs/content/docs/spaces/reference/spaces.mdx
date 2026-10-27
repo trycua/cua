@@ -764,6 +764,7 @@ Discover and call the MCP services inside a Space.
 | --- | --- |
 | [`list_tools`](#list_tools) | List the MCP services and tools reachable inside the Space. |
 | [`call_tool`](#call_tool) | Call a service tool inside the Space. |
+| [`space_service`](#space_service) | Keep a command running in the Space: restarts, health checks, start on boot, logs. |
 
 ### list_tools
 
@@ -831,6 +832,44 @@ The called tool's own result, unchanged: its content parts (images included), `s
 #### Notes
 
 - Open world twice over: the callee is a tool the SDK has never seen.
+
+### space_service
+
+Keep a command running in the Space: restarts, health checks, start on boot, logs.
+
+Keeps a command running in the Space: cua-spacesd starts it at once, starts it again by its `restart` policy when it ends (waiting longer after each quick failure, up to a minute), restarts it when its health check (`http`, `tcp` or `check`, one of them) fails 3 times in a row, starts it when the Space boots unless start_on_boot is false, and keeps its output in a log file in the Space (`logs`). `stop` keeps it stopped, across a reboot too, until `start`. `add` with a name that exists replaces it.
+
+| | |
+| --- | --- |
+| Providers | all (cloud, local, direct, relay) |
+| Platforms | all (macos, windows, linux) |
+| Metering | free |
+| Approval | permission `spaces:space_service`; destructive |
+| Swift SDK | `space.keepRunning.service(_:)` |
+| Rust | `Space::keep_service` |
+
+#### Parameters
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `action` | `string` | required | `add` (or replace), `list`, `start`, `stop`, `restart`, `remove` or `logs`. |
+| `check` | `string` | none | `add`: health check, a shell command that exits 0 when healthy. |
+| `command` | `string` | none | `add`: the shell command line to keep running. |
+| `http` | `string` | none | `add`: health check, a URL that answers 2xx or 3xx. |
+| `name` | `string` | none | Service name (every action but `list`): lowercase letters, digits, `-`, `_` and `.`. |
+| `restart` | `string` | none | `add`: when to start it again: `always` (default), `on-failure` or `never`. |
+| `space` | `string` | required | Space id or name. |
+| `start_on_boot` | `boolean` | none | `add`: start it when the Space boots (default true). |
+| `tail_bytes` | `integer` | none | `logs`: bytes from the end (default 64 KiB). At least 0. |
+| `tcp` | `string` | none | `add`: health check, `host:port` that accepts a connection. |
+
+#### Result
+
+JSON: `add`, `start`, `stop` and `restart` give the service (`name`, `command`, `state`, `pid`, `restarts`, `last_end`, `probe_error`, `restart`, `start_on_boot`, `log_path`); `list` gives `services`; `logs` gives `logs` (text); `remove` gives `removed`.
+
+#### Errors
+
+[`invalid_argument`](/spaces/reference#invalid_argument), [`not_found`](/spaces/reference#not_found), [`ambiguous_sandbox`](/spaces/reference#ambiguous_sandbox), [`capability_missing`](/spaces/reference#capability_missing)
 
 ## Hotspot
 

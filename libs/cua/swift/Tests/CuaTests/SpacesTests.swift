@@ -125,7 +125,7 @@ func exerciseSpaces(_ cua: Cua, _ fx: Fixtures, tmp: URL, teleport: Bool = false
 @Suite(.serialized) struct SpacesTests {
     @Test func everyContractToolMapsToAGeneratedMethod() {
         let rows = spacesToolMethods()
-        #expect(rows.count == 116)
+        #expect(rows.count == 117)
         // Swift spells `Class.method_name` as `methodName` on the generated
         // protocol; check each against the protocol's requirement list.
         let spaceMethods: Set<String> = [
@@ -151,7 +151,7 @@ func exerciseSpaces(_ cua: Cua, _ fx: Fixtures, tmp: URL, teleport: Bool = false
             "windows", "openStream", "closeStream", "streamSession", "joinPresence",
             "teleportManifest", "teleport", "startHotspot", "stopHotspot", "hotspotStatus",
             "agentStart", "agentStatus", "agentMessage", "agentStop", "agentList",
-            "agentEvents", "agentInterrupt", "requestSiteLogin", "share", "unshare", "shares",
+            "agentEvents", "agentInterrupt", "requestSiteLogin", "share", "unshare", "shares", "putService",
         ]
         for row in rows {
             let parts = row.method.split(separator: ".").map(String.init)

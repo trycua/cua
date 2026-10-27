@@ -79,6 +79,7 @@ Returned by [`Cua.spaces`](/cua-sdk/reference/cua#cua).
 | [`notifications`](/cua-sdk/reference/spaces/persistent-agents#spacesnotifications) | The notifications feed, newest first. |
 | [`notifications_ack`](/cua-sdk/reference/spaces/persistent-agents#spacesnotifications_ack) | Marks notifications read (every one when `ids` is empty). |
 | [`notify_user`](/cua-sdk/reference/spaces/persistent-agents#spacesnotify_user) | Posts a notification to the Cua app. |
+| [`orphans`](/cua-sdk/reference/spaces/children#spacesorphans) | Child Spaces whose parent is gone or out of reach. |
 | [`persistent_agent_create`](/cua-sdk/reference/spaces/persistent-agents#spacespersistent_agent_create) | Creates a persistent agent: `harness` working in `space`, its home at `agents/<name>/` in the Cua Volume. |
 | [`persistent_agent_remove`](/cua-sdk/reference/spaces/persistent-agents#spacespersistent_agent_remove) | Forgets a persistent agent (its home stays in the drive). |
 | [`persistent_agent_save`](/cua-sdk/reference/spaces/persistent-agents#spacespersistent_agent_save) | Saves a persistent agent's home into the drive now. |
@@ -95,9 +96,12 @@ Returned by [`Cua.spaces`](/cua-sdk/reference/cua#cua).
 | [`routine_remove`](/cua-sdk/reference/spaces/persistent-agents#spacesroutine_remove) | Deletes a routine. |
 | [`routine_set_enabled`](/cua-sdk/reference/spaces/persistent-agents#spacesroutine_set_enabled) | Turns a routine on or off. |
 | [`routines`](/cua-sdk/reference/spaces/persistent-agents#spacesroutines) | Routines (of one agent, or all). |
+| [`set_children`](/cua-sdk/reference/spaces/children#spacesset_children) | Lets a Space make child Spaces of its own, or stops it. |
 | [`set_egress`](/cua-sdk/reference/spaces/lifetime#spacesset_egress) | Replaces a Space's egress policy; an empty one removes it (see `EgressPolicy`). |
 | [`set_lifetime`](/cua-sdk/reference/spaces/lifetime#spacesset_lifetime) | Gives a Space a lifetime of `seconds` from now, replacing any earlier one: when it passes, the cua daemon deletes the Space (`on_expire` `"delete"`, the default) or turns it off (`"suspend"`), whether or not this process is still running. |
 | [`set_network`](/cua-sdk/reference/spaces/network#spacesset_network) | Replaces a Space's network settings (see `NetworkSettings`). |
+| [`set_tree_budget`](/cua-sdk/reference/spaces/children#spacesset_tree_budget) | Sets the budget of `space`'s tree: how many child Spaces, vCPUs and memory its children may hold at once, and what they may cost. |
+| [`tree_budget`](/cua-sdk/reference/spaces/children#spacestree_budget) | The budget of `space`'s tree (any Space of it) and what its children use now. |
 | [`volume_approve`](/cua-sdk/reference/spaces/volume#spacesvolume_approve) | `volume_approve`: the request becomes a grant (with presence). |
 | [`volume_audit`](/cua-sdk/reference/spaces/volume#spacesvolume_audit) | `volume_audit`: the newest events (default 50) and whether the log verified. |
 | [`volume_cache_clear`](/cua-sdk/reference/spaces/volume#spacesvolume_cache_clear) | `volume_cache_clear`: drops every cached block. |
@@ -1196,6 +1200,7 @@ as sandboxes.
 | `widen` | `Option<bool>` | `None` | With `parent`: let its network be more open than its parent's (recorded on the Space). |
 | `instance_type` / `instanceType` | `Option<String>` | `None` | With `on` a linked cloud (`aws`, `hetzner`, ...): the machine type its host must be (`c7g.xlarge`, `cax41`), a pin of the elastic pool's solve. `None`: the pool picks the cheapest that fits. |
 | `region` | `Option<String>` | `None` | With `on` a linked cloud: the region its host must be in. |
+| `children` | `Option<bool>` | `None` | Lets the Space make child Spaces of its own (`Spaces.set_children`). `None`: off. Only a Space the machine of the runtime runs itself. |
 
 ## `EgressPolicy` record
 

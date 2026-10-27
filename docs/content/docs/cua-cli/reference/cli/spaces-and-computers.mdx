@@ -18,6 +18,17 @@ description: "Your Spaces and machines, unattended access on this machine, devic
 | [`cua spaces create`](#cua-spaces-create) | Create Spaces: on this computer, on one of your computers that provides Spaces (`cua host setup --share spaces` there), or in your own cloud account. |
 | [`cua spaces prewarm`](#cua-spaces-prewarm) | Keep Spaces of one image ready where the elastic pool puts them, so the next creates of that shape start in a fraction of a second (`--list` shows the prewarms, `--remove ID` ends one). |
 | [`cua spaces egress`](#cua-spaces-egress) | Choose which destinations a Space may reach: block some, or block everything except a few. |
+| [`cua spaces children`](#cua-spaces-children) | Let a Space make child Spaces of its own, or stop it. |
+| [`cua spaces budget`](#cua-spaces-budget) | Show or set a tree's budget: how many child Spaces, vCPUs and memory its children may hold at once, and what they may cost. |
+| [`cua spaces orphans`](#cua-spaces-orphans) | List child Spaces whose parent is gone or out of reach. |
+| [`cua spaces service`](#cua-spaces-service) | Keep a command running in a Space: started again when it exits or fails its health check (with a backoff), started when the Space boots, its output kept in a log file in the Space. |
+| [`cua spaces service add`](#cua-spaces-service-add) | Keep a command running (replaces a service of that name). |
+| [`cua spaces service ls`](#cua-spaces-service-ls) | List a Space's services. |
+| [`cua spaces service logs`](#cua-spaces-service-logs) | Show the end of a service's log. |
+| [`cua spaces service start`](#cua-spaces-service-start) | Start a stopped service. |
+| [`cua spaces service stop`](#cua-spaces-service-stop) | Stop a service and keep it stopped. |
+| [`cua spaces service restart`](#cua-spaces-service-restart) | Restart a service. |
+| [`cua spaces service rm`](#cua-spaces-service-rm) | Stop a service and forget it. |
 | [`cua spaces cancel`](#cua-spaces-cancel) | Cancel a create that is still running (here, in the daemon, or in another terminal): it stops and what it made is removed. |
 | [`cua spaces gpus`](#cua-spaces-gpus) | The GPU options each runtime offers on this computer (or in your own cloud account). |
 | [`cua spaces delete`](#cua-spaces-delete) | Delete a Space's sandbox (on this computer, on the computer that provides it, or in your own cloud account) and forget it (asks first). |
@@ -191,9 +202,10 @@ cua spaces create [OPTIONS] [IMAGE]
 | <span id="cua-spaces-create--label"></span>`--label` | string |  | A label to keep with the Space (`key=value`; repeat for more; up to 64, keys up to 63 bytes, values up to 256, none empty). Not with `--durable`. Repeatable. |
 | <span id="cua-spaces-create--network"></span>`--network` | string |  | Its network: `internet` (the default: the internet and its own tree; this computer, your local network, cloud metadata and other trees are blocked), `none`, `localhost:5432,3000` (also this computer's localhost on those ports), `lan` (also your local network), `custom` / `custom:none` (with --allow/--deny), or `unprotected` (No protection). Enforced by the host, outside the guest. See `cua network`. |
 | <span id="cua-spaces-create--deny"></span>`--deny` | string |  | Block this destination (IP, CIDR or `all`; repeat for more). Alias: `--egress-deny`. Repeatable. |
-| <span id="cua-spaces-create--allow"></span>`--allow` | string |  | Allow this destination, also where a block covers it (IP or CIDR; repeat for more). This computer itself opens only with `--network localhost:<ports>`. Alias: `--egress-allow`. Repeatable. |
+| <span id="cua-spaces-create--allow"></span>`--allow` | string |  | Allow this destination, also where a block covers it (IP or CIDR; repeat for more). Alias: `--egress-allow`. Repeatable. |
 | <span id="cua-spaces-create--parent"></span>`--parent` | string |  | Create it as a child of this Space: it joins the parent's tree (they reach each other) and its network is no more open than the parent's. With `--parent`, the children are deleted, stopped and suspended with it. |
 | <span id="cua-spaces-create--durable"></span>`--durable` | boolean | `false` | Keep it on your machines (with `--on auto`): when its machine goes away it is created again on another one, with the same name (its disk starts fresh). `cua spaces delete <name>` deletes it for good. |
+| <span id="cua-spaces-create--children"></span>`--children` | boolean | `false` | Let it make child Spaces of its own: `cua`, the SDKs and the agent's tools in it create, list and delete Spaces that belong to it, on this machine, never wider than it (`cua spaces children`). Agent runs turn this on by themselves. |
 | <span id="cua-spaces-create--forkable"></span>`--forkable` | boolean | `false` | A fork source (a "bake" Space): a local QEMU VM's guest RAM is a shared file, so `cua sb checkpoint` takes milliseconds and forks of its checkpoints share its pages. Other kinds ignore it. |
 | <span id="cua-spaces-create--widen"></span>`--widen` | boolean | `false` | With --parent: let its network be more open than its parent's (recorded on the Space). |
 
@@ -286,6 +298,227 @@ cua spaces egress studio --deny all --allow 1.1.1.1 --allow 203.0.113.0/24
 
 # Back to unrestricted
 cua spaces egress studio --clear
+```
+
+### `cua spaces children`
+
+Let a Space make child Spaces of its own, or stop it. While on, `cua`, the SDKs and the agent's tools inside it create, list and delete Spaces that belong to it: on this machine, with its egress rules, ending no later than it, through a channel only it can reach. Off ends its capability at once; children it made keep running until deleted or their lifetime ends.
+
+```text output
+cua spaces children [OPTIONS] <SPACE> <STATE>
+```
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `<SPACE>` | string | required | Space id or name. |
+| `<STATE>` | `on` \| `off` | required | `on` or `off`. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-spaces-children"
+cua spaces children studio on
+cua spaces children studio off
+```
+
+### `cua spaces budget`
+
+Show or set a tree's budget: how many child Spaces, vCPUs and memory its children may hold at once, and what they may cost. A child that does not fit is refused with what is left. Without flags it shows the budget and what the children use.
+
+```text output
+cua spaces budget [OPTIONS] <SPACE>
+```
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `<SPACE>` | string | required | Any Space of the tree (id or name). |
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="cua-spaces-budget--spaces"></span>`--spaces` | integer |  | Child Spaces at once (default 16). |
+| <span id="cua-spaces-budget--cpus"></span>`--cpus` | integer |  | vCPUs at once (default 16). |
+| <span id="cua-spaces-budget--memory"></span>`--memory` | integer |  | Memory at once, in MiB (default 32768). |
+| <span id="cua-spaces-budget--usd-per-hour"></span>`--usd-per-hour` | number |  | Cost per hour in linked clouds, in dollars (default 2). |
+| <span id="cua-spaces-budget--usd-total"></span>`--usd-total` | number |  | Cost in total, in dollars (default: none). |
+| <span id="cua-spaces-budget--clear"></span>`--clear` | boolean | `false` | Back to the defaults. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-spaces-budget"
+cua spaces budget studio
+cua spaces budget studio --spaces 32 --cpus 64 --memory 131072
+cua spaces budget studio --usd-per-hour 5 --usd-total 50
+cua spaces budget studio --clear
+```
+
+### `cua spaces orphans`
+
+List child Spaces whose parent is gone or out of reach. The daemon ends a child only on proof its parent is gone, after a grace period; the others stay until you delete them or their lifetime ends.
+
+```text output
+cua spaces orphans [OPTIONS]
+```
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-spaces-orphans"
+cua spaces orphans
+```
+
+### `cua spaces service`
+
+Keep a command running in a Space: started again when it exits or fails its health check (with a backoff), started when the Space boots, its output kept in a log file in the Space.
+
+```text output
+cua spaces service [OPTIONS] <COMMAND>
+```
+
+#### `cua spaces service add`
+
+Keep a command running (replaces a service of that name).
+
+```text output
+cua spaces service add [OPTIONS] <SPACE> <NAME> -- <COMMAND>...
+```
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `<SPACE>` | string | required | Space id or name. |
+| `<NAME>` | string | required | Service name (lowercase letters, digits, `-`, `_`, `.`). |
+| `<COMMAND>...` | string | required | The command (after `--`). Repeatable. |
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="cua-spaces-service-add--restart"></span>`--restart` | `always` \| `on-failure` \| `never` | `always` | When to start it again: always, on-failure or never. |
+| <span id="cua-spaces-service-add--http"></span>`--http` | string |  | Health check: a URL that answers 2xx or 3xx. |
+| <span id="cua-spaces-service-add--tcp"></span>`--tcp` | string |  | Health check: `host:port` that accepts a connection. |
+| <span id="cua-spaces-service-add--check"></span>`--check` | string |  | Health check: a shell command that exits 0 when healthy. |
+| <span id="cua-spaces-service-add--env"></span>`--env` | string |  | `KEY=VALUE` for its environment (repeat for more). Repeatable. |
+| <span id="cua-spaces-service-add--cwd"></span>`--cwd` | string |  | Working directory in the Space. |
+| <span id="cua-spaces-service-add--no-boot"></span>`--no-boot` | boolean | `false` | Do not start it when the Space boots. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-spaces-service-add"
+cua spaces service add studio web -- python3 -m http.server 8080
+cua spaces service add studio web --http http://127.0.0.1:8080/ -- python3 -m http.server 8080
+cua spaces service add studio job --restart on-failure -- ./run.sh
+```
+
+#### `cua spaces service ls`
+
+List a Space's services.
+
+```text output
+cua spaces service ls [OPTIONS] <SPACE>
+```
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `<SPACE>` | string | required | Space id or name. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-spaces-service-ls"
+cua spaces service ls studio
+```
+
+#### `cua spaces service logs`
+
+Show the end of a service's log.
+
+```text output
+cua spaces service logs [OPTIONS] <SPACE> <NAME>
+```
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `<SPACE>` | string | required | Space id or name. |
+| `<NAME>` | string | required | Service name. |
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="cua-spaces-service-logs--tail"></span>`--tail` | integer | `65536` | Bytes from the end. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-spaces-service-logs"
+cua spaces service logs studio web
+```
+
+#### `cua spaces service start`
+
+Start a stopped service.
+
+```text output
+cua spaces service start [OPTIONS] <SPACE> <NAME>
+```
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `<SPACE>` | string | required | Space id or name. |
+| `<NAME>` | string | required | Service name. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-spaces-service-start"
+cua spaces service start studio web
+```
+
+#### `cua spaces service stop`
+
+Stop a service and keep it stopped.
+
+```text output
+cua spaces service stop [OPTIONS] <SPACE> <NAME>
+```
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `<SPACE>` | string | required | Space id or name. |
+| `<NAME>` | string | required | Service name. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-spaces-service-stop"
+cua spaces service stop studio web
+```
+
+#### `cua spaces service restart`
+
+Restart a service.
+
+```text output
+cua spaces service restart [OPTIONS] <SPACE> <NAME>
+```
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `<SPACE>` | string | required | Space id or name. |
+| `<NAME>` | string | required | Service name. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-spaces-service-restart"
+cua spaces service restart studio web
+```
+
+#### `cua spaces service rm`
+
+Stop a service and forget it.
+
+```text output
+cua spaces service rm [OPTIONS] <SPACE> <NAME>
+```
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `<SPACE>` | string | required | Space id or name. |
+| `<NAME>` | string | required | Service name. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-spaces-service-rm"
+cua spaces service rm studio web
 ```
 
 ### `cua spaces cancel`

@@ -1059,7 +1059,7 @@ fn unauthorized(req: &Request<AxumBody>) -> Response<AxumBody> {
 // ------------------------------------------------------------------ services
 
 #[derive(Clone)]
-pub(crate) struct Svc(pub(crate) Arc<Shared>);
+pub struct Svc(pub(crate) Arc<Shared>);
 
 impl Svc {
     pub(crate) fn rt(&self) -> &Runtime {

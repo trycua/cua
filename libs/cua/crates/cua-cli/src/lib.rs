@@ -2824,13 +2824,28 @@ fn uses_experiment(cmd: &Command) -> Option<cua_vmm::experiments::Gate> {
             network,
             parent,
             widen,
+            children,
             ..
-        }) if network.is_some() || parent.is_some() || *widen => Some(Gate::SecureSpaces),
-        Command::Spaces(host::SpacesCmd::Ls { tree: true, .. }) => Some(Gate::SecureSpaces),
-        Command::Spaces(host::SpacesCmd::Delete {
-            keep_children: true,
-            ..
-        }) => Some(Gate::SecureSpaces),
+        }) => {
+            if network.is_some() {
+                Some(Gate::SecureSpaces)
+            } else if parent.is_some() || *widen || *children {
+                Some(Gate::ChildSpaces)
+            } else {
+                None
+            }
+        }
+        Command::Spaces(
+            host::SpacesCmd::Ls { tree: true, .. }
+            | host::SpacesCmd::Delete {
+                keep_children: true,
+                ..
+            }
+            | host::SpacesCmd::Children { .. }
+            | host::SpacesCmd::Budget { .. }
+            | host::SpacesCmd::Orphans
+            | host::SpacesCmd::Service(host::ServiceCmd::Add { .. }),
+        ) => Some(Gate::ChildSpaces),
         _ => None,
     }
 }
@@ -2852,14 +2867,23 @@ fn cli_command_for(teams: bool, on: impl Fn(cua_vmm::experiments::Gate) -> bool)
         cmd = cmd
             .mut_subcommand("network", |c| c.hide(true))
             .mut_subcommand("spaces", |s| {
-                s.mut_subcommand("create", |c| {
-                    c.mut_arg("network", |a| a.hide(true))
-                        .mut_arg("parent", |a| a.hide(true))
-                        .mut_arg("widen", |a| a.hide(true))
-                })
-                .mut_subcommand("ls", |c| c.mut_arg("tree", |a| a.hide(true)))
-                .mut_subcommand("delete", |c| c.mut_arg("keep_children", |a| a.hide(true)))
+                s.mut_subcommand("create", |c| c.mut_arg("network", |a| a.hide(true)))
             });
+    }
+    if !on(Gate::ChildSpaces) {
+        cmd = cmd.mut_subcommand("spaces", |s| {
+            s.mut_subcommand("create", |c| {
+                c.mut_arg("parent", |a| a.hide(true))
+                    .mut_arg("widen", |a| a.hide(true))
+                    .mut_arg("children", |a| a.hide(true))
+            })
+            .mut_subcommand("ls", |c| c.mut_arg("tree", |a| a.hide(true)))
+            .mut_subcommand("delete", |c| c.mut_arg("keep_children", |a| a.hide(true)))
+            .mut_subcommand("children", |c| c.hide(true))
+            .mut_subcommand("budget", |c| c.hide(true))
+            .mut_subcommand("orphans", |c| c.hide(true))
+            .mut_subcommand("service", |c| c.hide(true))
+        });
     }
     cmd
 }

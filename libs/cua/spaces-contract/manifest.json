@@ -9,7 +9,7 @@
     "mcp_stdio",
     "mcp_streamable_http"
   ],
-  "tool_count": 116,
+  "tool_count": 117,
   "categories": [
     {
       "id": "lifecycle",
@@ -1712,6 +1712,95 @@
         "required": [
           "space",
           "tool"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "space_service",
+      "category": "services",
+      "description": "Keep a command running in the Space: restarts, health checks, start on boot, logs.",
+      "instructions": "Keeps a command running in the Space: cua-spacesd starts it at once, starts it again by its `restart` policy when it ends (waiting longer after each quick failure, up to a minute), restarts it when its health check (`http`, `tcp` or `check`, one of them) fails 3 times in a row, starts it when the Space boots unless start_on_boot is false, and keeps its output in a log file in the Space (`logs`). `stop` keeps it stopped, across a reboot too, until `start`. `add` with a name that exists replaces it.",
+      "platforms": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free",
+      "capabilities": [
+        "space.services.keep"
+      ],
+      "requires": [],
+      "host_requires": [],
+      "annotations": {
+        "read_only": false,
+        "destructive": true,
+        "idempotent": false,
+        "open_world": true
+      },
+      "sdk_symbol": "space.keepRunning.service(_:)",
+      "rust_symbol": "Space::keep_service",
+      "notes": [],
+      "result": "JSON: `add`, `start`, `stop` and `restart` give the service (`name`, `command`, `state`, `pid`, `restarts`, `last_end`, `probe_error`, `restart`, `start_on_boot`, `log_path`); `list` gives `services`; `logs` gives `logs` (text); `remove` gives `removed`.",
+      "errors": [
+        "capability_missing",
+        "invalid_argument",
+        "not_found"
+      ],
+      "input_schema": {
+        "properties": {
+          "action": {
+            "description": "`add` (or replace), `list`, `start`, `stop`, `restart`, `remove` or\n`logs`.",
+            "type": "string"
+          },
+          "check": {
+            "description": "`add`: health check, a shell command that exits 0 when healthy.",
+            "type": "string"
+          },
+          "command": {
+            "description": "`add`: the shell command line to keep running.",
+            "type": "string"
+          },
+          "http": {
+            "description": "`add`: health check, a URL that answers 2xx or 3xx.",
+            "type": "string"
+          },
+          "name": {
+            "description": "Service name (every action but `list`): lowercase letters, digits,\n`-`, `_` and `.`.",
+            "type": "string"
+          },
+          "restart": {
+            "description": "`add`: when to start it again: `always` (default), `on-failure` or\n`never`.",
+            "type": "string"
+          },
+          "space": {
+            "description": "Space id or name.",
+            "type": "string"
+          },
+          "start_on_boot": {
+            "description": "`add`: start it when the Space boots (default true).",
+            "type": "boolean"
+          },
+          "tail_bytes": {
+            "description": "`logs`: bytes from the end (default 64 KiB).",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "tcp": {
+            "description": "`add`: health check, `host:port` that accepts a connection.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "space",
+          "action"
         ],
         "type": "object"
       }

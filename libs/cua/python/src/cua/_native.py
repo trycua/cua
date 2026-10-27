@@ -1053,6 +1053,8 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_space_close_stream() != 64912:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_space_delete_service() != 14460:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_space_displays() != 30039:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_space_download() != 24915:
@@ -1071,17 +1073,25 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_space_join_presence() != 56636:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_space_kept_services() != 50248:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_space_list_tools() != 19376:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_space_open_stream() != 19577:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_space_put_service() != 55111:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_space_request_site_login() != 2223:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_space_restart_service() != 63778:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_space_route() != 9790:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_space_screenshot() != 41142:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_space_send_file() != 29056:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_space_service_logs() != 48773:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_space_services() != 32496:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -1095,7 +1105,11 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_space_start_hotspot() != 44744:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_space_start_service() != 13576:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_space_stop_hotspot() != 18254:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_space_stop_service() != 14671:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_space_stream_session() != 61326:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -1249,6 +1263,8 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_notify_user() != 48805:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_spaces_orphans() != 23539:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_persistent_agent_create() != 6521:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_persistent_agent_remove() != 55018:
@@ -1287,11 +1303,15 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_routines() != 22768:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_spaces_set_children() != 33485:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_set_egress() != 12366:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_set_lifetime() != 62609:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_set_network() != 31983:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_spaces_set_tree_budget() != 8418:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_space() != 26355:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -1300,6 +1320,8 @@ def _uniffi_check_api_checksums(lib):
     if lib.uniffi_cua_sdk_checksum_method_spaces_stop() != 59057:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_suspend() != 23817:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_spaces_tree_budget() != 58333:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_volume_approve() != 8640:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -3731,6 +3753,11 @@ _UniffiLib.uniffi_cua_sdk_fn_method_space_close_stream.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_space_close_stream.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_space_delete_service.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_space_delete_service.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_space_displays.argtypes = (
     ctypes.c_uint64,
 )
@@ -3776,6 +3803,10 @@ _UniffiLib.uniffi_cua_sdk_fn_method_space_join_presence.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_space_join_presence.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_space_kept_services.argtypes = (
+    ctypes.c_uint64,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_space_kept_services.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_space_list_tools.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -3786,12 +3817,22 @@ _UniffiLib.uniffi_cua_sdk_fn_method_space_open_stream.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_space_open_stream.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_space_put_service.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_space_put_service.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_space_request_site_login.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_space_request_site_login.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_space_restart_service.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_space_restart_service.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_space_route.argtypes = (
     ctypes.c_uint64,
 )
@@ -3807,6 +3848,12 @@ _UniffiLib.uniffi_cua_sdk_fn_method_space_send_file.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_space_send_file.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_space_service_logs.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_space_service_logs.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_space_services.argtypes = (
     ctypes.c_uint64,
     ctypes.POINTER(_UniffiRustCallStatus),
@@ -3838,10 +3885,20 @@ _UniffiLib.uniffi_cua_sdk_fn_method_space_start_hotspot.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_space_start_hotspot.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_space_start_service.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_space_start_service.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_space_stop_hotspot.argtypes = (
     ctypes.c_uint64,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_space_stop_hotspot.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_space_stop_service.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_space_stop_service.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_space_stream_session.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -4251,6 +4308,10 @@ _UniffiLib.uniffi_cua_sdk_fn_method_spaces_notify_user.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_spaces_notify_user.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_spaces_orphans.argtypes = (
+    ctypes.c_uint64,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_spaces_orphans.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_spaces_persistent_agent_create.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -4359,6 +4420,12 @@ _UniffiLib.uniffi_cua_sdk_fn_method_spaces_routines.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_spaces_routines.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_spaces_set_children.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.c_int8,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_spaces_set_children.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_spaces_set_egress.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -4380,6 +4447,12 @@ _UniffiLib.uniffi_cua_sdk_fn_method_spaces_set_network.argtypes = (
     ctypes.c_int8,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_spaces_set_network.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_spaces_set_tree_budget.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_spaces_set_tree_budget.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_spaces_space.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -4400,6 +4473,11 @@ _UniffiLib.uniffi_cua_sdk_fn_method_spaces_suspend.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_spaces_suspend.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_spaces_tree_budget.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_spaces_tree_budget.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_spaces_volume_approve.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -5778,6 +5856,9 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_space_checkpoint.restype = ctypes.c_ui
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_close_stream.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_close_stream.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_space_delete_service.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_space_delete_service.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_displays.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_displays.restype = ctypes.c_uint16
@@ -5805,15 +5886,24 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_space_info.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_join_presence.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_join_presence.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_space_kept_services.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_space_kept_services.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_list_tools.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_list_tools.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_open_stream.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_open_stream.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_space_put_service.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_space_put_service.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_request_site_login.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_request_site_login.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_space_restart_service.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_space_restart_service.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_route.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_route.restype = ctypes.c_uint16
@@ -5823,6 +5913,9 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_space_screenshot.restype = ctypes.c_ui
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_send_file.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_send_file.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_space_service_logs.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_space_service_logs.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_services.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_services.restype = ctypes.c_uint16
@@ -5841,9 +5934,15 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_space_spacesd.restype = ctypes.c_uint1
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_start_hotspot.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_start_hotspot.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_space_start_service.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_space_start_service.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_stop_hotspot.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_stop_hotspot.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_space_stop_service.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_space_stop_service.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_stream_session.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_stream_session.restype = ctypes.c_uint16
@@ -6072,6 +6171,9 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_notifications_ack.restype = cty
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_notify_user.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_notify_user.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaces_orphans.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaces_orphans.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_persistent_agent_create.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_persistent_agent_create.restype = ctypes.c_uint16
@@ -6129,6 +6231,9 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_routine_set_enabled.restype = c
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_routines.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_routines.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaces_set_children.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaces_set_children.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_set_egress.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_set_egress.restype = ctypes.c_uint16
@@ -6138,6 +6243,9 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_set_lifetime.restype = ctypes.c
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_set_network.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_set_network.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaces_set_tree_budget.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaces_set_tree_budget.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_space.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_space.restype = ctypes.c_uint16
@@ -6150,6 +6258,9 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_stop.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_suspend.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_suspend.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaces_tree_budget.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaces_tree_budget.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_volume_approve.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_volume_approve.restype = ctypes.c_uint16
@@ -24470,7 +24581,7 @@ class SpaceCreateOptions:
     Options for [`Spaces::create`]: the same location / kind / runtime model
     as sandboxes.
 """
-    def __init__(self, *, image:typing.Optional[str] = _DEFAULT, on:typing.Optional[str] = _DEFAULT, kind:typing.Optional[str] = _DEFAULT, runtime:typing.Optional[str] = _DEFAULT, name:typing.Optional[str] = _DEFAULT, cpus:typing.Optional[int] = _DEFAULT, memory_mb:typing.Optional[int] = _DEFAULT, disk_gb:typing.Optional[int] = _DEFAULT, timeout_ms:typing.Optional[int] = _DEFAULT, wait:typing.Optional[bool] = _DEFAULT, reuse:bool = False, command:typing.Optional[typing.List[str]] = _DEFAULT, env:dict[str, str] = _DEFAULT, services:dict[str, int] = _DEFAULT, spacesd:typing.Optional[bool] = _DEFAULT, gpu:typing.Optional[str] = _DEFAULT, create_id:typing.Optional[str] = _DEFAULT, durable:bool = False, profile:typing.Optional[str] = _DEFAULT, headless:typing.Optional[bool] = _DEFAULT, forkable:typing.Optional[bool] = _DEFAULT, build:typing.Optional[BuildOptions] = _DEFAULT, volumes:typing.List[VolumeMount] = _DEFAULT, network:typing.Optional[str] = _DEFAULT, labels:dict[str, str] = _DEFAULT, egress:typing.Optional[EgressPolicy] = _DEFAULT, network_settings:typing.Optional[NetworkSettings] = _DEFAULT, parent:typing.Optional[str] = _DEFAULT, widen:typing.Optional[bool] = _DEFAULT, instance_type:typing.Optional[str] = _DEFAULT, region:typing.Optional[str] = _DEFAULT):
+    def __init__(self, *, image:typing.Optional[str] = _DEFAULT, on:typing.Optional[str] = _DEFAULT, kind:typing.Optional[str] = _DEFAULT, runtime:typing.Optional[str] = _DEFAULT, name:typing.Optional[str] = _DEFAULT, cpus:typing.Optional[int] = _DEFAULT, memory_mb:typing.Optional[int] = _DEFAULT, disk_gb:typing.Optional[int] = _DEFAULT, timeout_ms:typing.Optional[int] = _DEFAULT, wait:typing.Optional[bool] = _DEFAULT, reuse:bool = False, command:typing.Optional[typing.List[str]] = _DEFAULT, env:dict[str, str] = _DEFAULT, services:dict[str, int] = _DEFAULT, spacesd:typing.Optional[bool] = _DEFAULT, gpu:typing.Optional[str] = _DEFAULT, create_id:typing.Optional[str] = _DEFAULT, durable:bool = False, profile:typing.Optional[str] = _DEFAULT, headless:typing.Optional[bool] = _DEFAULT, forkable:typing.Optional[bool] = _DEFAULT, build:typing.Optional[BuildOptions] = _DEFAULT, volumes:typing.List[VolumeMount] = _DEFAULT, network:typing.Optional[str] = _DEFAULT, labels:dict[str, str] = _DEFAULT, egress:typing.Optional[EgressPolicy] = _DEFAULT, network_settings:typing.Optional[NetworkSettings] = _DEFAULT, parent:typing.Optional[str] = _DEFAULT, widen:typing.Optional[bool] = _DEFAULT, instance_type:typing.Optional[str] = _DEFAULT, region:typing.Optional[str] = _DEFAULT, children:typing.Optional[bool] = _DEFAULT):
         if image is _DEFAULT:
             self.image = None
         else:
@@ -24589,12 +24700,16 @@ class SpaceCreateOptions:
             self.region = None
         else:
             self.region = region
+        if children is _DEFAULT:
+            self.children = None
+        else:
+            self.children = children
 
 
 
 
     def __str__(self):
-        return "SpaceCreateOptions(image={}, on={}, kind={}, runtime={}, name={}, cpus={}, memory_mb={}, disk_gb={}, timeout_ms={}, wait={}, reuse={}, command={}, env={}, services={}, spacesd={}, gpu={}, create_id={}, durable={}, profile={}, headless={}, forkable={}, build={}, volumes={}, network={}, labels={}, egress={}, network_settings={}, parent={}, widen={}, instance_type={}, region={})".format(self.image, self.on, self.kind, self.runtime, self.name, self.cpus, self.memory_mb, self.disk_gb, self.timeout_ms, self.wait, self.reuse, self.command, self.env, self.services, self.spacesd, self.gpu, self.create_id, self.durable, self.profile, self.headless, self.forkable, self.build, self.volumes, self.network, self.labels, self.egress, self.network_settings, self.parent, self.widen, self.instance_type, self.region)
+        return "SpaceCreateOptions(image={}, on={}, kind={}, runtime={}, name={}, cpus={}, memory_mb={}, disk_gb={}, timeout_ms={}, wait={}, reuse={}, command={}, env={}, services={}, spacesd={}, gpu={}, create_id={}, durable={}, profile={}, headless={}, forkable={}, build={}, volumes={}, network={}, labels={}, egress={}, network_settings={}, parent={}, widen={}, instance_type={}, region={}, children={})".format(self.image, self.on, self.kind, self.runtime, self.name, self.cpus, self.memory_mb, self.disk_gb, self.timeout_ms, self.wait, self.reuse, self.command, self.env, self.services, self.spacesd, self.gpu, self.create_id, self.durable, self.profile, self.headless, self.forkable, self.build, self.volumes, self.network, self.labels, self.egress, self.network_settings, self.parent, self.widen, self.instance_type, self.region, self.children)
     def __eq__(self, other):
         if self.image != other.image:
             return False
@@ -24658,6 +24773,8 @@ class SpaceCreateOptions:
             return False
         if self.region != other.region:
             return False
+        if self.children != other.children:
+            return False
         return True
 
 class _UniffiFfiConverterTypeSpaceCreateOptions(_UniffiConverterRustBuffer):
@@ -24695,6 +24812,7 @@ class _UniffiFfiConverterTypeSpaceCreateOptions(_UniffiConverterRustBuffer):
             widen=_UniffiFfiConverterOptionalBoolean.read(buf),
             instance_type=_UniffiFfiConverterOptionalString.read(buf),
             region=_UniffiFfiConverterOptionalString.read(buf),
+            children=_UniffiFfiConverterOptionalBoolean.read(buf),
         )
 
     @staticmethod
@@ -24730,6 +24848,7 @@ class _UniffiFfiConverterTypeSpaceCreateOptions(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalBoolean.check_lower(value.widen)
         _UniffiFfiConverterOptionalString.check_lower(value.instance_type)
         _UniffiFfiConverterOptionalString.check_lower(value.region)
+        _UniffiFfiConverterOptionalBoolean.check_lower(value.children)
 
     @staticmethod
     def write(value, buf):
@@ -24764,6 +24883,7 @@ class _UniffiFfiConverterTypeSpaceCreateOptions(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalBoolean.write(value.widen, buf)
         _UniffiFfiConverterOptionalString.write(value.instance_type, buf)
         _UniffiFfiConverterOptionalString.write(value.region, buf)
+        _UniffiFfiConverterOptionalBoolean.write(value.children, buf)
 
 @dataclass
 class SpaceCreateProgress:
@@ -25733,6 +25853,63 @@ class _UniffiFfiConverterTypeSpaceList(_UniffiConverterRustBuffer):
         _UniffiFfiConverterSequenceTypeSpaceCreatingElsewhere.write(value.creating, buf)
 
 @dataclass
+class SpaceOrphan:
+    """
+    A child Space whose parent is gone or out of reach ([`Spaces::orphans`]).
+"""
+    def __init__(self, *, space:str, parent:str, state:str, why:str, ends_in_secs:int):
+        self.space = space
+        self.parent = parent
+        self.state = state
+        self.why = why
+        self.ends_in_secs = ends_in_secs
+
+
+
+
+    def __str__(self):
+        return "SpaceOrphan(space={}, parent={}, state={}, why={}, ends_in_secs={})".format(self.space, self.parent, self.state, self.why, self.ends_in_secs)
+    def __eq__(self, other):
+        if self.space != other.space:
+            return False
+        if self.parent != other.parent:
+            return False
+        if self.state != other.state:
+            return False
+        if self.why != other.why:
+            return False
+        if self.ends_in_secs != other.ends_in_secs:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeSpaceOrphan(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return SpaceOrphan(
+            space=_UniffiFfiConverterString.read(buf),
+            parent=_UniffiFfiConverterString.read(buf),
+            state=_UniffiFfiConverterString.read(buf),
+            why=_UniffiFfiConverterString.read(buf),
+            ends_in_secs=_UniffiFfiConverterInt64.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.space)
+        _UniffiFfiConverterString.check_lower(value.parent)
+        _UniffiFfiConverterString.check_lower(value.state)
+        _UniffiFfiConverterString.check_lower(value.why)
+        _UniffiFfiConverterInt64.check_lower(value.ends_in_secs)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.space, buf)
+        _UniffiFfiConverterString.write(value.parent, buf)
+        _UniffiFfiConverterString.write(value.state, buf)
+        _UniffiFfiConverterString.write(value.why, buf)
+        _UniffiFfiConverterInt64.write(value.ends_in_secs, buf)
+
+@dataclass
 class SpacePowerReport:
     """
     What [`Spaces::stop`] or [`Spaces::start`] did.
@@ -26096,6 +26273,274 @@ class _UniffiFfiConverterTypeSpaceSendFileReport(_UniffiConverterRustBuffer):
         _UniffiFfiConverterSequenceString.write(value.skipped_by_ignorefiles, buf)
         _UniffiFfiConverterSequenceString.write(value.skipped_by_guest, buf)
         _UniffiFfiConverterBoolean.write(value.verified, buf)
+
+@dataclass
+class SpaceServiceProbe:
+    """
+    A health check: exactly one of `http`, `tcp`, `command`.
+"""
+    def __init__(self, *, http:typing.Optional[str] = _DEFAULT, tcp:typing.Optional[str] = _DEFAULT, command:typing.Optional[str] = _DEFAULT, interval_secs:typing.Optional[int] = _DEFAULT, failures:typing.Optional[int] = _DEFAULT):
+        if http is _DEFAULT:
+            self.http = None
+        else:
+            self.http = http
+        if tcp is _DEFAULT:
+            self.tcp = None
+        else:
+            self.tcp = tcp
+        if command is _DEFAULT:
+            self.command = None
+        else:
+            self.command = command
+        if interval_secs is _DEFAULT:
+            self.interval_secs = None
+        else:
+            self.interval_secs = interval_secs
+        if failures is _DEFAULT:
+            self.failures = None
+        else:
+            self.failures = failures
+
+
+
+
+    def __str__(self):
+        return "SpaceServiceProbe(http={}, tcp={}, command={}, interval_secs={}, failures={})".format(self.http, self.tcp, self.command, self.interval_secs, self.failures)
+    def __eq__(self, other):
+        if self.http != other.http:
+            return False
+        if self.tcp != other.tcp:
+            return False
+        if self.command != other.command:
+            return False
+        if self.interval_secs != other.interval_secs:
+            return False
+        if self.failures != other.failures:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeSpaceServiceProbe(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return SpaceServiceProbe(
+            http=_UniffiFfiConverterOptionalString.read(buf),
+            tcp=_UniffiFfiConverterOptionalString.read(buf),
+            command=_UniffiFfiConverterOptionalString.read(buf),
+            interval_secs=_UniffiFfiConverterOptionalUInt64.read(buf),
+            failures=_UniffiFfiConverterOptionalUInt32.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterOptionalString.check_lower(value.http)
+        _UniffiFfiConverterOptionalString.check_lower(value.tcp)
+        _UniffiFfiConverterOptionalString.check_lower(value.command)
+        _UniffiFfiConverterOptionalUInt64.check_lower(value.interval_secs)
+        _UniffiFfiConverterOptionalUInt32.check_lower(value.failures)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterOptionalString.write(value.http, buf)
+        _UniffiFfiConverterOptionalString.write(value.tcp, buf)
+        _UniffiFfiConverterOptionalString.write(value.command, buf)
+        _UniffiFfiConverterOptionalUInt64.write(value.interval_secs, buf)
+        _UniffiFfiConverterOptionalUInt32.write(value.failures, buf)
+
+class _UniffiFfiConverterOptionalTypeSpaceServiceProbe(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterTypeSpaceServiceProbe.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterTypeSpaceServiceProbe.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterTypeSpaceServiceProbe.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
+@dataclass
+class SpaceServiceDef:
+    """
+    A command a Space keeps running ([`Space::put_service`]).
+"""
+    def __init__(self, *, name:str, command:str, env:dict[str, str] = _DEFAULT, cwd:typing.Optional[str] = _DEFAULT, restart:typing.Optional[str] = _DEFAULT, probe:typing.Optional[SpaceServiceProbe] = _DEFAULT, start_on_boot:typing.Optional[bool] = _DEFAULT):
+        self.name = name
+        self.command = command
+        if env is _DEFAULT:
+            self.env = {}
+        else:
+            self.env = env
+        if cwd is _DEFAULT:
+            self.cwd = None
+        else:
+            self.cwd = cwd
+        if restart is _DEFAULT:
+            self.restart = None
+        else:
+            self.restart = restart
+        if probe is _DEFAULT:
+            self.probe = None
+        else:
+            self.probe = probe
+        if start_on_boot is _DEFAULT:
+            self.start_on_boot = None
+        else:
+            self.start_on_boot = start_on_boot
+
+
+
+
+    def __str__(self):
+        return "SpaceServiceDef(name={}, command={}, env={}, cwd={}, restart={}, probe={}, start_on_boot={})".format(self.name, self.command, self.env, self.cwd, self.restart, self.probe, self.start_on_boot)
+    def __eq__(self, other):
+        if self.name != other.name:
+            return False
+        if self.command != other.command:
+            return False
+        if self.env != other.env:
+            return False
+        if self.cwd != other.cwd:
+            return False
+        if self.restart != other.restart:
+            return False
+        if self.probe != other.probe:
+            return False
+        if self.start_on_boot != other.start_on_boot:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeSpaceServiceDef(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return SpaceServiceDef(
+            name=_UniffiFfiConverterString.read(buf),
+            command=_UniffiFfiConverterString.read(buf),
+            env=_UniffiFfiConverterMapStringString.read(buf),
+            cwd=_UniffiFfiConverterOptionalString.read(buf),
+            restart=_UniffiFfiConverterOptionalString.read(buf),
+            probe=_UniffiFfiConverterOptionalTypeSpaceServiceProbe.read(buf),
+            start_on_boot=_UniffiFfiConverterOptionalBoolean.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.name)
+        _UniffiFfiConverterString.check_lower(value.command)
+        _UniffiFfiConverterMapStringString.check_lower(value.env)
+        _UniffiFfiConverterOptionalString.check_lower(value.cwd)
+        _UniffiFfiConverterOptionalString.check_lower(value.restart)
+        _UniffiFfiConverterOptionalTypeSpaceServiceProbe.check_lower(value.probe)
+        _UniffiFfiConverterOptionalBoolean.check_lower(value.start_on_boot)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.name, buf)
+        _UniffiFfiConverterString.write(value.command, buf)
+        _UniffiFfiConverterMapStringString.write(value.env, buf)
+        _UniffiFfiConverterOptionalString.write(value.cwd, buf)
+        _UniffiFfiConverterOptionalString.write(value.restart, buf)
+        _UniffiFfiConverterOptionalTypeSpaceServiceProbe.write(value.probe, buf)
+        _UniffiFfiConverterOptionalBoolean.write(value.start_on_boot, buf)
+
+@dataclass
+class SpaceServiceInfo:
+    """
+    A service and how it is doing ([`Space::services`]).
+"""
+    def __init__(self, *, name:str, command:str, state:str, pid:int, restarts:int, last_end:str, probe_error:str, restart:str, start_on_boot:bool, log_path:str):
+        self.name = name
+        self.command = command
+        self.state = state
+        self.pid = pid
+        self.restarts = restarts
+        self.last_end = last_end
+        self.probe_error = probe_error
+        self.restart = restart
+        self.start_on_boot = start_on_boot
+        self.log_path = log_path
+
+
+
+
+    def __str__(self):
+        return "SpaceServiceInfo(name={}, command={}, state={}, pid={}, restarts={}, last_end={}, probe_error={}, restart={}, start_on_boot={}, log_path={})".format(self.name, self.command, self.state, self.pid, self.restarts, self.last_end, self.probe_error, self.restart, self.start_on_boot, self.log_path)
+    def __eq__(self, other):
+        if self.name != other.name:
+            return False
+        if self.command != other.command:
+            return False
+        if self.state != other.state:
+            return False
+        if self.pid != other.pid:
+            return False
+        if self.restarts != other.restarts:
+            return False
+        if self.last_end != other.last_end:
+            return False
+        if self.probe_error != other.probe_error:
+            return False
+        if self.restart != other.restart:
+            return False
+        if self.start_on_boot != other.start_on_boot:
+            return False
+        if self.log_path != other.log_path:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeSpaceServiceInfo(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return SpaceServiceInfo(
+            name=_UniffiFfiConverterString.read(buf),
+            command=_UniffiFfiConverterString.read(buf),
+            state=_UniffiFfiConverterString.read(buf),
+            pid=_UniffiFfiConverterUInt32.read(buf),
+            restarts=_UniffiFfiConverterUInt32.read(buf),
+            last_end=_UniffiFfiConverterString.read(buf),
+            probe_error=_UniffiFfiConverterString.read(buf),
+            restart=_UniffiFfiConverterString.read(buf),
+            start_on_boot=_UniffiFfiConverterBoolean.read(buf),
+            log_path=_UniffiFfiConverterString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.name)
+        _UniffiFfiConverterString.check_lower(value.command)
+        _UniffiFfiConverterString.check_lower(value.state)
+        _UniffiFfiConverterUInt32.check_lower(value.pid)
+        _UniffiFfiConverterUInt32.check_lower(value.restarts)
+        _UniffiFfiConverterString.check_lower(value.last_end)
+        _UniffiFfiConverterString.check_lower(value.probe_error)
+        _UniffiFfiConverterString.check_lower(value.restart)
+        _UniffiFfiConverterBoolean.check_lower(value.start_on_boot)
+        _UniffiFfiConverterString.check_lower(value.log_path)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.name, buf)
+        _UniffiFfiConverterString.write(value.command, buf)
+        _UniffiFfiConverterString.write(value.state, buf)
+        _UniffiFfiConverterUInt32.write(value.pid, buf)
+        _UniffiFfiConverterUInt32.write(value.restarts, buf)
+        _UniffiFfiConverterString.write(value.last_end, buf)
+        _UniffiFfiConverterString.write(value.probe_error, buf)
+        _UniffiFfiConverterString.write(value.restart, buf)
+        _UniffiFfiConverterBoolean.write(value.start_on_boot, buf)
+        _UniffiFfiConverterString.write(value.log_path, buf)
 
 @dataclass
 class SpaceShareEntry:
@@ -28422,6 +28867,178 @@ class _UniffiFfiConverterTypeTransferResult(_UniffiConverterRustBuffer):
         _UniffiFfiConverterUInt64.write(value.size, buf)
         _UniffiFfiConverterString.write(value.sha256, buf)
         _UniffiFfiConverterUInt32.write(value.resumes, buf)
+
+@dataclass
+class TreeBudgetLimits:
+    """
+    What a tree's children may hold and cost ([`Spaces::set_tree_budget`]).
+    `None`: the default.
+"""
+    def __init__(self, *, max_spaces:typing.Optional[int] = _DEFAULT, max_vcpus:typing.Optional[int] = _DEFAULT, max_memory_mb:typing.Optional[int] = _DEFAULT, usd_per_hour:typing.Optional[float] = _DEFAULT, usd_total:typing.Optional[float] = _DEFAULT):
+        if max_spaces is _DEFAULT:
+            self.max_spaces = None
+        else:
+            self.max_spaces = max_spaces
+        if max_vcpus is _DEFAULT:
+            self.max_vcpus = None
+        else:
+            self.max_vcpus = max_vcpus
+        if max_memory_mb is _DEFAULT:
+            self.max_memory_mb = None
+        else:
+            self.max_memory_mb = max_memory_mb
+        if usd_per_hour is _DEFAULT:
+            self.usd_per_hour = None
+        else:
+            self.usd_per_hour = usd_per_hour
+        if usd_total is _DEFAULT:
+            self.usd_total = None
+        else:
+            self.usd_total = usd_total
+
+
+
+
+    def __str__(self):
+        return "TreeBudgetLimits(max_spaces={}, max_vcpus={}, max_memory_mb={}, usd_per_hour={}, usd_total={})".format(self.max_spaces, self.max_vcpus, self.max_memory_mb, self.usd_per_hour, self.usd_total)
+    def __eq__(self, other):
+        if self.max_spaces != other.max_spaces:
+            return False
+        if self.max_vcpus != other.max_vcpus:
+            return False
+        if self.max_memory_mb != other.max_memory_mb:
+            return False
+        if self.usd_per_hour != other.usd_per_hour:
+            return False
+        if self.usd_total != other.usd_total:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeTreeBudgetLimits(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return TreeBudgetLimits(
+            max_spaces=_UniffiFfiConverterOptionalUInt32.read(buf),
+            max_vcpus=_UniffiFfiConverterOptionalUInt32.read(buf),
+            max_memory_mb=_UniffiFfiConverterOptionalUInt64.read(buf),
+            usd_per_hour=_UniffiFfiConverterOptionalFloat64.read(buf),
+            usd_total=_UniffiFfiConverterOptionalFloat64.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterOptionalUInt32.check_lower(value.max_spaces)
+        _UniffiFfiConverterOptionalUInt32.check_lower(value.max_vcpus)
+        _UniffiFfiConverterOptionalUInt64.check_lower(value.max_memory_mb)
+        _UniffiFfiConverterOptionalFloat64.check_lower(value.usd_per_hour)
+        _UniffiFfiConverterOptionalFloat64.check_lower(value.usd_total)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterOptionalUInt32.write(value.max_spaces, buf)
+        _UniffiFfiConverterOptionalUInt32.write(value.max_vcpus, buf)
+        _UniffiFfiConverterOptionalUInt64.write(value.max_memory_mb, buf)
+        _UniffiFfiConverterOptionalFloat64.write(value.usd_per_hour, buf)
+        _UniffiFfiConverterOptionalFloat64.write(value.usd_total, buf)
+
+@dataclass
+class TreeBudget:
+    """
+    A tree's budget and what its children use ([`Spaces::tree_budget`]).
+"""
+    def __init__(self, *, root:str, set:TreeBudgetLimits, max_spaces:int, max_vcpus:int, max_memory_mb:int, usd_per_hour:float, usd_total:typing.Optional[float], spaces:int, vcpus:int, memory_mb:int, usd_per_hour_used:float, usd_spent:float):
+        self.root = root
+        self.set = set
+        self.max_spaces = max_spaces
+        self.max_vcpus = max_vcpus
+        self.max_memory_mb = max_memory_mb
+        self.usd_per_hour = usd_per_hour
+        self.usd_total = usd_total
+        self.spaces = spaces
+        self.vcpus = vcpus
+        self.memory_mb = memory_mb
+        self.usd_per_hour_used = usd_per_hour_used
+        self.usd_spent = usd_spent
+
+
+
+
+    def __str__(self):
+        return "TreeBudget(root={}, set={}, max_spaces={}, max_vcpus={}, max_memory_mb={}, usd_per_hour={}, usd_total={}, spaces={}, vcpus={}, memory_mb={}, usd_per_hour_used={}, usd_spent={})".format(self.root, self.set, self.max_spaces, self.max_vcpus, self.max_memory_mb, self.usd_per_hour, self.usd_total, self.spaces, self.vcpus, self.memory_mb, self.usd_per_hour_used, self.usd_spent)
+    def __eq__(self, other):
+        if self.root != other.root:
+            return False
+        if self.set != other.set:
+            return False
+        if self.max_spaces != other.max_spaces:
+            return False
+        if self.max_vcpus != other.max_vcpus:
+            return False
+        if self.max_memory_mb != other.max_memory_mb:
+            return False
+        if self.usd_per_hour != other.usd_per_hour:
+            return False
+        if self.usd_total != other.usd_total:
+            return False
+        if self.spaces != other.spaces:
+            return False
+        if self.vcpus != other.vcpus:
+            return False
+        if self.memory_mb != other.memory_mb:
+            return False
+        if self.usd_per_hour_used != other.usd_per_hour_used:
+            return False
+        if self.usd_spent != other.usd_spent:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeTreeBudget(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return TreeBudget(
+            root=_UniffiFfiConverterString.read(buf),
+            set=_UniffiFfiConverterTypeTreeBudgetLimits.read(buf),
+            max_spaces=_UniffiFfiConverterUInt32.read(buf),
+            max_vcpus=_UniffiFfiConverterUInt32.read(buf),
+            max_memory_mb=_UniffiFfiConverterUInt64.read(buf),
+            usd_per_hour=_UniffiFfiConverterFloat64.read(buf),
+            usd_total=_UniffiFfiConverterOptionalFloat64.read(buf),
+            spaces=_UniffiFfiConverterUInt32.read(buf),
+            vcpus=_UniffiFfiConverterUInt32.read(buf),
+            memory_mb=_UniffiFfiConverterUInt64.read(buf),
+            usd_per_hour_used=_UniffiFfiConverterFloat64.read(buf),
+            usd_spent=_UniffiFfiConverterFloat64.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.root)
+        _UniffiFfiConverterTypeTreeBudgetLimits.check_lower(value.set)
+        _UniffiFfiConverterUInt32.check_lower(value.max_spaces)
+        _UniffiFfiConverterUInt32.check_lower(value.max_vcpus)
+        _UniffiFfiConverterUInt64.check_lower(value.max_memory_mb)
+        _UniffiFfiConverterFloat64.check_lower(value.usd_per_hour)
+        _UniffiFfiConverterOptionalFloat64.check_lower(value.usd_total)
+        _UniffiFfiConverterUInt32.check_lower(value.spaces)
+        _UniffiFfiConverterUInt32.check_lower(value.vcpus)
+        _UniffiFfiConverterUInt64.check_lower(value.memory_mb)
+        _UniffiFfiConverterFloat64.check_lower(value.usd_per_hour_used)
+        _UniffiFfiConverterFloat64.check_lower(value.usd_spent)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.root, buf)
+        _UniffiFfiConverterTypeTreeBudgetLimits.write(value.set, buf)
+        _UniffiFfiConverterUInt32.write(value.max_spaces, buf)
+        _UniffiFfiConverterUInt32.write(value.max_vcpus, buf)
+        _UniffiFfiConverterUInt64.write(value.max_memory_mb, buf)
+        _UniffiFfiConverterFloat64.write(value.usd_per_hour, buf)
+        _UniffiFfiConverterOptionalFloat64.write(value.usd_total, buf)
+        _UniffiFfiConverterUInt32.write(value.spaces, buf)
+        _UniffiFfiConverterUInt32.write(value.vcpus, buf)
+        _UniffiFfiConverterUInt64.write(value.memory_mb, buf)
+        _UniffiFfiConverterFloat64.write(value.usd_per_hour_used, buf)
+        _UniffiFfiConverterFloat64.write(value.usd_spent, buf)
 
 class _UniffiFfiConverterOptionalMapStringString(_UniffiConverterRustBuffer):
     @classmethod
@@ -39694,6 +40311,29 @@ class _UniffiFfiConverterTypeSpacePresence:
     def write(cls, value: SpacePresence, buf: _UniffiRustBuffer):
         buf.write_u64(cls.lower(value))
 
+class _UniffiFfiConverterSequenceTypeSpaceServiceInfo(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiFfiConverterTypeSpaceServiceInfo.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiFfiConverterTypeSpaceServiceInfo.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiFfiConverterTypeSpaceServiceInfo.read(buf) for i in range(count)
+        ]
+
 class _UniffiFfiConverterSequenceTypeSpaceToolInfo(_UniffiConverterRustBuffer):
     @classmethod
     def check_lower(cls, value):
@@ -40263,6 +40903,11 @@ class SpaceProtocol(typing.Protocol):
         Closes a media session opened with [`Space::open_stream`].
 """
         raise NotImplementedError
+    async def delete_service(self, name: str) -> None:
+        """
+        Stops a service and forgets it (its logs go too).
+"""
+        raise NotImplementedError
     async def displays(self, ) -> typing.List[SpaceDisplay]:
         """
         The Space's displays, primary first, with their resolution in
@@ -40326,6 +40971,11 @@ class SpaceProtocol(typing.Protocol):
         roster.
 """
         raise NotImplementedError
+    async def kept_services(self, ) -> typing.List[SpaceServiceInfo]:
+        """
+        This Space's services.
+"""
+        raise NotImplementedError
     async def list_tools(self, service: typing.Optional[str]) -> typing.List[SpaceToolInfo]:
         """
         Tools of the Space's MCP service (`driver`, the default).
@@ -40337,6 +40987,13 @@ class SpaceProtocol(typing.Protocol):
         to attach to.
 """
         raise NotImplementedError
+    async def put_service(self, _def: SpaceServiceDef) -> SpaceServiceInfo:
+        """
+        Keeps a command running in this Space (replacing a service of that
+        name): restarted by its policy when it ends or fails its health
+        check, started when the Space boots, its output kept in a log file.
+"""
+        raise NotImplementedError
     async def request_site_login(self, url: str,options: typing.Optional[SiteLoginOptions]) -> SiteLoginReport:
         """
         Signs in to a site in this Space's browser with a password the user
@@ -40345,6 +41002,11 @@ class SpaceProtocol(typing.Protocol):
         Cua, then call again with that `request_id` and the Keyvault types
         the login through the Space's cua-driver (`status == "filled"`). A
         declined request is an error. The password never reaches the caller.
+"""
+        raise NotImplementedError
+    async def restart_service(self, name: str) -> SpaceServiceInfo:
+        """
+        Restarts a service.
 """
         raise NotImplementedError
     async def route(self, ) -> str:
@@ -40367,6 +41029,11 @@ class SpaceProtocol(typing.Protocol):
         """
         Drops a host file or folder into the Space's `~/Downloads[/subdir]`
         (TeleportService.ReceiveFiles, per-file SHA-256).
+"""
+        raise NotImplementedError
+    async def service_logs(self, name: str,tail_bytes: typing.Optional[int]) -> str:
+        """
+        The end of a service's log (`tail_bytes` `None`: 64 KiB).
 """
         raise NotImplementedError
     def services(self, ) -> typing.List[str]:
@@ -40408,9 +41075,19 @@ class SpaceProtocol(typing.Protocol):
         (default false here).
 """
         raise NotImplementedError
+    async def start_service(self, name: str) -> SpaceServiceInfo:
+        """
+        Starts a stopped service.
+"""
+        raise NotImplementedError
     async def stop_hotspot(self, ) -> typing.List[str]:
         """
         Stops this Space's hotspot. Returns the stopped Space ids.
+"""
+        raise NotImplementedError
+    async def stop_service(self, name: str) -> SpaceServiceInfo:
+        """
+        Stops a service and keeps it stopped (also across a reboot).
 """
         raise NotImplementedError
     async def stream_session(self, options: SpaceStreamOptions,frames: FrameSink,audio: typing.Optional[AudioSink]) -> SpaceStreamSession:
@@ -40909,6 +41586,26 @@ class Space(SpaceProtocol):
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
+    async def delete_service(self, name: str) -> None:
+        """
+        Stops a service and forgets it (its logs go too).
+"""
+
+        _UniffiFfiConverterString.check_lower(name)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(name),
+        )
+        _uniffi_lift_return = lambda val: None
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_space_delete_service(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_void,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_void,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_void,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
     async def displays(self, ) -> typing.List[SpaceDisplay]:
         """
         The Space's displays, primary first, with their resolution in
@@ -41099,6 +41796,23 @@ class Space(SpaceProtocol):
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
+    async def kept_services(self, ) -> typing.List[SpaceServiceInfo]:
+        """
+        This Space's services.
+"""
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterSequenceTypeSpaceServiceInfo.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_space_kept_services(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
     async def list_tools(self, service: typing.Optional[str]) -> typing.List[SpaceToolInfo]:
         """
         Tools of the Space's MCP service (`driver`, the default).
@@ -41140,6 +41854,28 @@ class Space(SpaceProtocol):
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
+    async def put_service(self, _def: SpaceServiceDef) -> SpaceServiceInfo:
+        """
+        Keeps a command running in this Space (replacing a service of that
+        name): restarted by its policy when it ends or fails its health
+        check, started when the Space boots, its output kept in a log file.
+"""
+
+        _UniffiFfiConverterTypeSpaceServiceDef.check_lower(_def)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterTypeSpaceServiceDef.lower(_def),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeSpaceServiceInfo.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_space_put_service(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
     async def request_site_login(self, url: str,options: typing.Optional[SiteLoginOptions]) -> SiteLoginReport:
         """
         Signs in to a site in this Space's browser with a password the user
@@ -41162,6 +41898,26 @@ class Space(SpaceProtocol):
         _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
         return await _uniffi_rust_call_async(
             _UniffiLib.uniffi_cua_sdk_fn_method_space_request_site_login(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def restart_service(self, name: str) -> SpaceServiceInfo:
+        """
+        Restarts a service.
+"""
+
+        _UniffiFfiConverterString.check_lower(name)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(name),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeSpaceServiceInfo.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_space_restart_service(*_uniffi_lowered_args),
             _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
@@ -41229,6 +41985,29 @@ class Space(SpaceProtocol):
         _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
         return await _uniffi_rust_call_async(
             _UniffiLib.uniffi_cua_sdk_fn_method_space_send_file(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def service_logs(self, name: str,tail_bytes: typing.Optional[int]) -> str:
+        """
+        The end of a service's log (`tail_bytes` `None`: 64 KiB).
+"""
+
+        _UniffiFfiConverterString.check_lower(name)
+
+        _UniffiFfiConverterOptionalUInt64.check_lower(tail_bytes)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(name),
+            _UniffiFfiConverterOptionalUInt64.lower(tail_bytes),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterString.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_space_service_logs(*_uniffi_lowered_args),
             _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
@@ -41359,6 +42138,26 @@ class Space(SpaceProtocol):
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
+    async def start_service(self, name: str) -> SpaceServiceInfo:
+        """
+        Starts a stopped service.
+"""
+
+        _UniffiFfiConverterString.check_lower(name)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(name),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeSpaceServiceInfo.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_space_start_service(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
     async def stop_hotspot(self, ) -> typing.List[str]:
         """
         Stops this Space's hotspot. Returns the stopped Space ids.
@@ -41370,6 +42169,26 @@ class Space(SpaceProtocol):
         _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
         return await _uniffi_rust_call_async(
             _UniffiLib.uniffi_cua_sdk_fn_method_space_stop_hotspot(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def stop_service(self, name: str) -> SpaceServiceInfo:
+        """
+        Stops a service and keeps it stopped (also across a reboot).
+"""
+
+        _UniffiFfiConverterString.check_lower(name)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(name),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeSpaceServiceInfo.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_space_stop_service(*_uniffi_lowered_args),
             _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
@@ -41783,6 +42602,29 @@ class _UniffiFfiConverterSequenceTypeNotificationInfo(_UniffiConverterRustBuffer
 
         return [
             _UniffiFfiConverterTypeNotificationInfo.read(buf) for i in range(count)
+        ]
+
+class _UniffiFfiConverterSequenceTypeSpaceOrphan(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiFfiConverterTypeSpaceOrphan.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiFfiConverterTypeSpaceOrphan.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiFfiConverterTypeSpaceOrphan.read(buf) for i in range(count)
         ]
 
 class _UniffiFfiConverterOptionalTypePersistentAgentOptions(_UniffiConverterRustBuffer):
@@ -42851,6 +43693,13 @@ class SpacesProtocol(typing.Protocol):
         Posts a notification to the Cua app. Returns its id.
 """
         raise NotImplementedError
+    async def orphans(self, ) -> typing.List[SpaceOrphan]:
+        """
+        Child Spaces whose parent is gone or out of reach. The cua daemon
+        ends a child only on proof its parent is gone (after a grace period);
+        the rest are listed here and never ended by it.
+"""
+        raise NotImplementedError
     async def persistent_agent_create(self, name: str,harness: str,space: str,options: typing.Optional[PersistentAgentOptions]) -> PersistentAgentInfo:
         """
         Creates a persistent agent: `harness` working in `space`, its home at
@@ -42976,6 +43825,17 @@ class SpacesProtocol(typing.Protocol):
         Routines (of one agent, or all).
 """
         raise NotImplementedError
+    async def set_children(self, space: str,enabled: bool) -> None:
+        """
+        Lets a Space make child Spaces of its own, or stops it. While on,
+        `cua`, the SDKs and the agent's tools in that Space create, list and
+        delete Spaces that belong to it (on the same machine, never wider
+        than it, ending no later than it), through a channel only it can
+        reach. Off ends its capability at once; children it made keep running
+        until deleted or their lifetime ends. Only for a Space the machine of
+        this runtime runs itself.
+"""
+        raise NotImplementedError
     async def set_egress(self, space: str,policy: EgressPolicy) -> None:
         """
         Replaces a Space's egress policy; an empty one removes it (see
@@ -43000,6 +43860,13 @@ class SpacesProtocol(typing.Protocol):
         children the same settings. They hold at once where the runtime can
         change a running guest's network, else from its next start
         (`applied`). A Space another machine runs is `Unsupported`.
+"""
+        raise NotImplementedError
+    async def set_tree_budget(self, space: str,limits: TreeBudgetLimits) -> TreeBudget:
+        """
+        Sets the budget of `space`'s tree: how many child Spaces, vCPUs and
+        memory its children may hold at once, and what they may cost. A child
+        that does not fit is refused with what is left. All `None` removes it.
 """
         raise NotImplementedError
     async def space(self, space: str) -> Space:
@@ -43030,6 +43897,12 @@ class SpacesProtocol(typing.Protocol):
         Suspends a local Space (a container or a QEMU VM), keeping its
         memory: it resumes where it was, and its memory stays in use until
         then. [`Spaces::stop`] stops it instead and frees its memory.
+"""
+        raise NotImplementedError
+    async def tree_budget(self, space: str) -> TreeBudget:
+        """
+        The budget of `space`'s tree (any Space of it) and what its
+        children use now. Kept by the cua daemon.
 """
         raise NotImplementedError
     async def volume_approve(self, request_id: str,expires_in_secs: typing.Optional[int]) -> DriveGrant:
@@ -44357,6 +45230,25 @@ class Spaces(SpacesProtocol):
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
+    async def orphans(self, ) -> typing.List[SpaceOrphan]:
+        """
+        Child Spaces whose parent is gone or out of reach. The cua daemon
+        ends a child only on proof its parent is gone (after a grace period);
+        the rest are listed here and never ended by it.
+"""
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterSequenceTypeSpaceOrphan.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_spaces_orphans(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
     async def persistent_agent_create(self, name: str,harness: str,space: str,options: typing.Optional[PersistentAgentOptions]) -> PersistentAgentInfo:
         """
         Creates a persistent agent: `harness` working in `space`, its home at
@@ -44806,6 +45698,35 @@ class Spaces(SpacesProtocol):
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
+    async def set_children(self, space: str,enabled: bool) -> None:
+        """
+        Lets a Space make child Spaces of its own, or stops it. While on,
+        `cua`, the SDKs and the agent's tools in that Space create, list and
+        delete Spaces that belong to it (on the same machine, never wider
+        than it, ending no later than it), through a channel only it can
+        reach. Off ends its capability at once; children it made keep running
+        until deleted or their lifetime ends. Only for a Space the machine of
+        this runtime runs itself.
+"""
+
+        _UniffiFfiConverterString.check_lower(space)
+
+        _UniffiFfiConverterBoolean.check_lower(enabled)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(space),
+            _UniffiFfiConverterBoolean.lower(enabled),
+        )
+        _uniffi_lift_return = lambda val: None
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_spaces_set_children(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_void,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_void,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_void,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
     async def set_egress(self, space: str,policy: EgressPolicy) -> None:
         """
         Replaces a Space's egress policy; an empty one removes it (see
@@ -44889,6 +45810,31 @@ class Spaces(SpacesProtocol):
         _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
         return await _uniffi_rust_call_async(
             _UniffiLib.uniffi_cua_sdk_fn_method_spaces_set_network(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def set_tree_budget(self, space: str,limits: TreeBudgetLimits) -> TreeBudget:
+        """
+        Sets the budget of `space`'s tree: how many child Spaces, vCPUs and
+        memory its children may hold at once, and what they may cost. A child
+        that does not fit is refused with what is left. All `None` removes it.
+"""
+
+        _UniffiFfiConverterString.check_lower(space)
+
+        _UniffiFfiConverterTypeTreeBudgetLimits.check_lower(limits)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(space),
+            _UniffiFfiConverterTypeTreeBudgetLimits.lower(limits),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeTreeBudget.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_spaces_set_tree_budget(*_uniffi_lowered_args),
             _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
@@ -44979,6 +45925,27 @@ class Spaces(SpacesProtocol):
         _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
         return await _uniffi_rust_call_async(
             _UniffiLib.uniffi_cua_sdk_fn_method_spaces_suspend(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def tree_budget(self, space: str) -> TreeBudget:
+        """
+        The budget of `space`'s tree (any Space of it) and what its
+        children use now. Kept by the cua daemon.
+"""
+
+        _UniffiFfiConverterString.check_lower(space)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(space),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeTreeBudget.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_spaces_tree_budget(*_uniffi_lowered_args),
             _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
@@ -48068,12 +49035,16 @@ __all__ = [
     "SpaceDisplay",
     "SpaceHotspotStatus",
     "SpaceList",
+    "SpaceOrphan",
     "SpacePowerReport",
     "SpaceRelayRegistration",
     "SpaceResizeReport",
     "SpaceSendFileOptions",
     "SpaceSentFile",
     "SpaceSendFileReport",
+    "SpaceServiceProbe",
+    "SpaceServiceDef",
+    "SpaceServiceInfo",
     "SpaceShareEntry",
     "SpaceShares",
     "SpaceStreamOptions",
@@ -48106,6 +49077,8 @@ __all__ = [
     "TeleportReceipt",
     "ThreadView",
     "TransferResult",
+    "TreeBudgetLimits",
+    "TreeBudget",
     "UploadOptions",
     "VideoFrame",
     "ViewerLink",

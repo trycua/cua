@@ -70,6 +70,7 @@ Full entries: [Services](/spaces/reference/spaces#services).
 | --- | --- |
 | <span id="list_tools"></span>[`list_tools`](/spaces/reference/spaces#list_tools) | List the MCP services and tools reachable inside the Space. |
 | <span id="call_tool"></span>[`call_tool`](/spaces/reference/spaces#call_tool) | Call a service tool inside the Space. |
+| <span id="space_service"></span>[`space_service`](/spaces/reference/spaces#space_service) | Keep a command running in the Space: restarts, health checks, start on boot, logs. |
 
 ### Agents
 
@@ -1218,5 +1219,5 @@ Tools are gated by `--permissions` (or `CUA_MCP_PERMISSIONS`), a comma-separated
 | `sandbox:all` | 11 permissions | `sandbox:list`, `sandbox:get` |
 | `share:all` | `share:create`, `share:read`, `share:stop` | `share:read` |
 | `skills:all` | `skills:list`, `skills:read`, `skills:record`, `skills:delete` | `skills:list`, `skills:read` |
-| `spaces:all` | 115 permissions | 37 permissions |
+| `spaces:all` | 116 permissions | 37 permissions |
 | `teleport:all` | `teleport:browser` | none |

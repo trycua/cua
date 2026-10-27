@@ -21,16 +21,20 @@ pub enum Gate {
     /// Secure Spaces: a Space reaches the internet only by default, with a
     /// network preset per Space (`cua network`).
     SecureSpaces,
+    /// Child Spaces: a Space makes Spaces of its own through a channel only
+    /// it can reach, inside a budget for its tree (`cua spaces children`).
+    ChildSpaces,
 }
 
 impl Gate {
     /// Every experiment, in the order they are listed.
-    pub const ALL: &'static [Gate] = &[Gate::SecureSpaces];
+    pub const ALL: &'static [Gate] = &[Gate::SecureSpaces, Gate::ChildSpaces];
 
     /// The stable name (`secure-spaces`): the file name, the CLI word.
     pub fn name(self) -> &'static str {
         match self {
             Gate::SecureSpaces => "secure-spaces",
+            Gate::ChildSpaces => "child-spaces",
         }
     }
 
@@ -38,6 +42,7 @@ impl Gate {
     pub fn id(self) -> &'static str {
         match self {
             Gate::SecureSpaces => "secure_spaces",
+            Gate::ChildSpaces => "child_spaces",
         }
     }
 
@@ -51,6 +56,7 @@ impl Gate {
     pub fn title(self) -> &'static str {
         match self {
             Gate::SecureSpaces => "Secure Spaces",
+            Gate::ChildSpaces => "Child Spaces",
         }
     }
 
@@ -59,6 +65,9 @@ impl Gate {
         match self {
             Gate::SecureSpaces => {
                 "A Space reaches the internet and nothing else on your network unless you open it, with a network setting for each Space."
+            }
+            Gate::ChildSpaces => {
+                "A Space can make Spaces of its own, inside a budget, and keep a command running."
             }
         }
     }

@@ -129,6 +129,7 @@ pub const SPACES_TOOL_METHODS: &[(&str, &str)] = &[
     ("share_space", "Space.share"),
     ("network_show", "Spaces.network"),
     ("network_set", "Spaces.set_network"),
+    ("space_service", "Space.put_service"),
     ("unshare_space", "Space.unshare"),
     ("space_shares", "Space.shares"),
     ("relay_register_space", "Spaces.relay_register"),
@@ -3964,6 +3965,15 @@ impl Spaces {
         run(async move {
             match &host {
                 Host::Embedded(s) => {
+                    if options.children == Some(true)
+                        && !cua_spaces::experiments::enabled(
+                            cua_spaces::experiments::Gate::ChildSpaces,
+                        )
+                    {
+                        return Err(CuaError::Unsupported(
+                            cua_spaces::experiments::Gate::ChildSpaces.off_message(),
+                        ));
+                    }
                     let created = s
                         .create(cua_spaces::SpaceCreate {
                             image: options.image,
@@ -4563,6 +4573,15 @@ impl Spaces {
             match &host {
                 Host::Embedded(s) => {
                     let id = s.resolve(&space)?.to_string();
+                    if enabled
+                        && !cua_spaces::experiments::enabled(
+                            cua_spaces::experiments::Gate::ChildSpaces,
+                        )
+                    {
+                        return Err(CuaError::Unsupported(
+                            cua_spaces::experiments::Gate::ChildSpaces.off_message(),
+                        ));
+                    }
                     if enabled && !id.starts_with("local:") {
                         return Err(CuaError::Unsupported(
                             "child Spaces are available for Spaces this machine runs".into(),
@@ -5314,7 +5333,7 @@ impl Space {
     }
 
     /// This Space's services.
-    pub async fn services(&self) -> Result<Vec<SpaceServiceInfo>> {
+    pub async fn kept_services(&self) -> Result<Vec<SpaceServiceInfo>> {
         let s = self.inner.clone();
         run(async move { via_json(&s.kept_services().await?) }).await
     }

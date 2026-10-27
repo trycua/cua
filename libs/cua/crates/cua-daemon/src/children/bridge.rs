@@ -40,7 +40,7 @@ pub(crate) fn seen(shared: &Shared) -> Option<Vec<super::reaper::Seen>> {
             .map(|r| {
                 let m = meta.get(&r.id);
                 super::reaper::Seen {
-                    parent: m.and_then(|m| m.labels.get(super::api::LABEL_PARENT).cloned()),
+                    parent: m.and_then(super::api::parent_of),
                     created_at: m.map(|m| m.created_at_unix).unwrap_or(0),
                     id: r.id,
                 }
@@ -83,6 +83,7 @@ pub(crate) fn reap(shared: &Arc<Shared>) {
                     .delete_space(tonic::Request::new(
                         cua_proto::daemon::v1::DeleteSpaceRequest {
                             space: victim.clone(),
+                            keep_children: false,
                         },
                     ))
                     .await;
@@ -220,6 +221,14 @@ async fn run(shared: Arc<Shared>, id: String) {
         let Some(authority) = shared.spawn_authority() else {
             return;
         };
+        // Child Spaces are an experiment: no capability while it is off
+        // (turning it off ends this channel at its next renewal; the API
+        // refuses the capability at once).
+        if !cua_vmm::experiments::enabled(cua_vmm::experiments::Gate::ChildSpaces) {
+            authority.revoke(&id);
+            tokio::time::sleep(NO_FEATURE_RETRY).await;
+            continue;
+        }
         let (root, depth) = super::api::position(spaces, &id);
         let limit = if root == id {
             DEFAULT_MAX_DEPTH

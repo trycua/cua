@@ -2109,6 +2109,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_fn_method_space_delete_service": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_fn_method_space_displays": {
       args: [FfiType.Handle],
       ret: FfiType.Handle,
@@ -2154,6 +2159,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_fn_method_space_kept_services": {
+      args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_fn_method_space_list_tools": {
       args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
@@ -2164,8 +2174,18 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_fn_method_space_put_service": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_fn_method_space_request_site_login": {
       args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_fn_method_space_restart_service": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
@@ -2180,6 +2200,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_sdk_fn_method_space_send_file": {
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_fn_method_space_service_logs": {
       args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
@@ -2214,8 +2239,18 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_fn_method_space_start_service": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_fn_method_space_stop_hotspot": {
       args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_fn_method_space_stop_service": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
@@ -2599,6 +2634,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_fn_method_spaces_orphans": {
+      args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_fn_method_spaces_persistent_agent_create": {
       args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer, FfiType.RustBuffer, FfiType.RustBuffer],
       ret: FfiType.Handle,
@@ -2694,6 +2734,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_fn_method_spaces_set_children": {
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.Int8],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_fn_method_spaces_set_egress": {
       args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer],
       ret: FfiType.Handle,
@@ -2706,6 +2751,11 @@ const DEFINITIONS = {
     },
     "uniffi_cua_sdk_fn_method_spaces_set_network": {
       args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer, FfiType.Int8, FfiType.Int8],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_fn_method_spaces_set_tree_budget": {
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
@@ -2725,6 +2775,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_sdk_fn_method_spaces_suspend": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_fn_method_spaces_tree_budget": {
       args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
@@ -4634,6 +4689,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_checksum_method_space_delete_service": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_checksum_method_space_displays": {
       args: [],
       ret: FfiType.UInt16,
@@ -4679,6 +4739,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_checksum_method_space_kept_services": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_checksum_method_space_list_tools": {
       args: [],
       ret: FfiType.UInt16,
@@ -4689,7 +4754,17 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_checksum_method_space_put_service": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_checksum_method_space_request_site_login": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_checksum_method_space_restart_service": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -4705,6 +4780,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_sdk_checksum_method_space_send_file": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_checksum_method_space_service_logs": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -4739,7 +4819,17 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_checksum_method_space_start_service": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_checksum_method_space_stop_hotspot": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_checksum_method_space_stop_service": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -5124,6 +5214,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_checksum_method_spaces_orphans": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_checksum_method_spaces_persistent_agent_create": {
       args: [],
       ret: FfiType.UInt16,
@@ -5219,6 +5314,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_checksum_method_spaces_set_children": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_checksum_method_spaces_set_egress": {
       args: [],
       ret: FfiType.UInt16,
@@ -5230,6 +5330,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_sdk_checksum_method_spaces_set_network": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_checksum_method_spaces_set_tree_budget": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -5250,6 +5355,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_sdk_checksum_method_spaces_suspend": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_checksum_method_spaces_tree_budget": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -6311,6 +6421,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_method_space_capabilities_json(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_sdk_fn_method_space_checkpoint(uniffiSelf: bigint, checkpoint: Uint8Array, pin: number): bigint;
     uniffi_cua_sdk_fn_method_space_close_stream(uniffiSelf: bigint, mediaSessionId: Uint8Array): bigint;
+    uniffi_cua_sdk_fn_method_space_delete_service(uniffiSelf: bigint, name: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_space_displays(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_space_download(uniffiSelf: bigint, remotePath: Uint8Array, destDir: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_space_fork(uniffiSelf: bigint, name: Uint8Array): bigint;
@@ -6320,19 +6431,25 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_method_space_id(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_sdk_fn_method_space_info(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_sdk_fn_method_space_join_presence(uniffiSelf: bigint, identity: Uint8Array, timeoutMs: Uint8Array): bigint;
+    uniffi_cua_sdk_fn_method_space_kept_services(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_space_list_tools(uniffiSelf: bigint, service: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_space_open_stream(uniffiSelf: bigint, options: Uint8Array): bigint;
+    uniffi_cua_sdk_fn_method_space_put_service(uniffiSelf: bigint, def: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_space_request_site_login(uniffiSelf: bigint, url: Uint8Array, options: Uint8Array): bigint;
+    uniffi_cua_sdk_fn_method_space_restart_service(uniffiSelf: bigint, name: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_space_route(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_space_screenshot(uniffiSelf: bigint, options: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_space_send_file(uniffiSelf: bigint, localPath: Uint8Array, options: Uint8Array): bigint;
+    uniffi_cua_sdk_fn_method_space_service_logs(uniffiSelf: bigint, name: Uint8Array, tailBytes: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_space_services(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_sdk_fn_method_space_set_presence_settings(uniffiSelf: bigint, cursorProbe: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_space_share(uniffiSelf: bigint, who: Uint8Array, role: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_space_shares(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_space_spacesd(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_sdk_fn_method_space_start_hotspot(uniffiSelf: bigint, setSystemProxy: Uint8Array, bypass: Uint8Array): bigint;
+    uniffi_cua_sdk_fn_method_space_start_service(uniffiSelf: bigint, name: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_space_stop_hotspot(uniffiSelf: bigint): bigint;
+    uniffi_cua_sdk_fn_method_space_stop_service(uniffiSelf: bigint, name: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_space_stream_session(uniffiSelf: bigint, options: Uint8Array, frames: bigint, audio: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_space_supports(uniffiSelf: bigint, feature: Uint8Array, uniffi_out_err: UniffiRustCallStatus): number;
     uniffi_cua_sdk_fn_method_space_teleport(uniffiSelf: bigint, app: Uint8Array, scope: Uint8Array, approver: bigint, requestId: Uint8Array): bigint;
@@ -6409,6 +6526,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_method_spaces_notifications(uniffiSelf: bigint, unreadOnly: number, sinceMs: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_notifications_ack(uniffiSelf: bigint, ids: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_notify_user(uniffiSelf: bigint, title: Uint8Array, body: Uint8Array, agent: Uint8Array): bigint;
+    uniffi_cua_sdk_fn_method_spaces_orphans(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_spaces_persistent_agent_create(uniffiSelf: bigint, name: Uint8Array, harness: Uint8Array, space: Uint8Array, options: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_persistent_agent_remove(uniffiSelf: bigint, name: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_persistent_agent_save(uniffiSelf: bigint, name: Uint8Array): bigint;
@@ -6428,13 +6546,16 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_method_spaces_routine_remove(uniffiSelf: bigint, id: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_routine_set_enabled(uniffiSelf: bigint, id: Uint8Array, enabled: number): bigint;
     uniffi_cua_sdk_fn_method_spaces_routines(uniffiSelf: bigint, agent: Uint8Array): bigint;
+    uniffi_cua_sdk_fn_method_spaces_set_children(uniffiSelf: bigint, space: Uint8Array, enabled: number): bigint;
     uniffi_cua_sdk_fn_method_spaces_set_egress(uniffiSelf: bigint, space: Uint8Array, policy: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_set_lifetime(uniffiSelf: bigint, space: Uint8Array, seconds: bigint, onExpire: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_set_network(uniffiSelf: bigint, space: Uint8Array, settings: Uint8Array, widen: number, tree: number): bigint;
+    uniffi_cua_sdk_fn_method_spaces_set_tree_budget(uniffiSelf: bigint, space: Uint8Array, limits: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_space(uniffiSelf: bigint, space: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_start(uniffiSelf: bigint, space: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_stop(uniffiSelf: bigint, space: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_suspend(uniffiSelf: bigint, space: Uint8Array): bigint;
+    uniffi_cua_sdk_fn_method_spaces_tree_budget(uniffiSelf: bigint, space: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_volume_approve(uniffiSelf: bigint, requestId: Uint8Array, expiresInSecs: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_volume_audit(uniffiSelf: bigint, limit: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_volume_cache_clear(uniffiSelf: bigint): bigint;
@@ -6816,6 +6937,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_method_space_capabilities_json(): number;
     uniffi_cua_sdk_checksum_method_space_checkpoint(): number;
     uniffi_cua_sdk_checksum_method_space_close_stream(): number;
+    uniffi_cua_sdk_checksum_method_space_delete_service(): number;
     uniffi_cua_sdk_checksum_method_space_displays(): number;
     uniffi_cua_sdk_checksum_method_space_download(): number;
     uniffi_cua_sdk_checksum_method_space_fork(): number;
@@ -6825,19 +6947,25 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_method_space_id(): number;
     uniffi_cua_sdk_checksum_method_space_info(): number;
     uniffi_cua_sdk_checksum_method_space_join_presence(): number;
+    uniffi_cua_sdk_checksum_method_space_kept_services(): number;
     uniffi_cua_sdk_checksum_method_space_list_tools(): number;
     uniffi_cua_sdk_checksum_method_space_open_stream(): number;
+    uniffi_cua_sdk_checksum_method_space_put_service(): number;
     uniffi_cua_sdk_checksum_method_space_request_site_login(): number;
+    uniffi_cua_sdk_checksum_method_space_restart_service(): number;
     uniffi_cua_sdk_checksum_method_space_route(): number;
     uniffi_cua_sdk_checksum_method_space_screenshot(): number;
     uniffi_cua_sdk_checksum_method_space_send_file(): number;
+    uniffi_cua_sdk_checksum_method_space_service_logs(): number;
     uniffi_cua_sdk_checksum_method_space_services(): number;
     uniffi_cua_sdk_checksum_method_space_set_presence_settings(): number;
     uniffi_cua_sdk_checksum_method_space_share(): number;
     uniffi_cua_sdk_checksum_method_space_shares(): number;
     uniffi_cua_sdk_checksum_method_space_spacesd(): number;
     uniffi_cua_sdk_checksum_method_space_start_hotspot(): number;
+    uniffi_cua_sdk_checksum_method_space_start_service(): number;
     uniffi_cua_sdk_checksum_method_space_stop_hotspot(): number;
+    uniffi_cua_sdk_checksum_method_space_stop_service(): number;
     uniffi_cua_sdk_checksum_method_space_stream_session(): number;
     uniffi_cua_sdk_checksum_method_space_supports(): number;
     uniffi_cua_sdk_checksum_method_space_teleport(): number;
@@ -6914,6 +7042,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_method_spaces_notifications(): number;
     uniffi_cua_sdk_checksum_method_spaces_notifications_ack(): number;
     uniffi_cua_sdk_checksum_method_spaces_notify_user(): number;
+    uniffi_cua_sdk_checksum_method_spaces_orphans(): number;
     uniffi_cua_sdk_checksum_method_spaces_persistent_agent_create(): number;
     uniffi_cua_sdk_checksum_method_spaces_persistent_agent_remove(): number;
     uniffi_cua_sdk_checksum_method_spaces_persistent_agent_save(): number;
@@ -6933,13 +7062,16 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_method_spaces_routine_remove(): number;
     uniffi_cua_sdk_checksum_method_spaces_routine_set_enabled(): number;
     uniffi_cua_sdk_checksum_method_spaces_routines(): number;
+    uniffi_cua_sdk_checksum_method_spaces_set_children(): number;
     uniffi_cua_sdk_checksum_method_spaces_set_egress(): number;
     uniffi_cua_sdk_checksum_method_spaces_set_lifetime(): number;
     uniffi_cua_sdk_checksum_method_spaces_set_network(): number;
+    uniffi_cua_sdk_checksum_method_spaces_set_tree_budget(): number;
     uniffi_cua_sdk_checksum_method_spaces_space(): number;
     uniffi_cua_sdk_checksum_method_spaces_start(): number;
     uniffi_cua_sdk_checksum_method_spaces_stop(): number;
     uniffi_cua_sdk_checksum_method_spaces_suspend(): number;
+    uniffi_cua_sdk_checksum_method_spaces_tree_budget(): number;
     uniffi_cua_sdk_checksum_method_spaces_volume_approve(): number;
     uniffi_cua_sdk_checksum_method_spaces_volume_audit(): number;
     uniffi_cua_sdk_checksum_method_spaces_volume_cache_clear(): number;

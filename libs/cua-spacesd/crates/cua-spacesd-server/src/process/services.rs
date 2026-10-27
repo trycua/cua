@@ -327,7 +327,7 @@ impl ServiceManager {
     ) -> Result<ServiceStatus, Status> {
         let unit = self.unit(name)?;
         match action {
-            ServiceAction::Unspecified => return Err(invalid("action is required")),
+            ServiceAction::Unspecified => Err(invalid("action is required")),
             ServiceAction::Stop => {
                 self.halt(&unit).await;
                 self.save(&unit.spec, true)?;

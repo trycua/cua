@@ -52,15 +52,22 @@ Returned by [`Space.fork`](/cua-sdk/reference/sandbox/checkpoints#spacefork), [`
 | [`attach_stream`](/cua-sdk/reference/spaces/streams#spaceattach_stream) | Attaches to a ticket from `Self.open_stream` and delivers the media socket's encoded frames and audio packets to the sinks as they arrive. |
 | [`checkpoint`](/cua-sdk/reference/sandbox/checkpoints#spacecheckpoint) | Saves this Space's state as checkpoint `checkpoint` (the sandbox API's `Sandboxes.checkpoint`): it keeps running, and `Spaces.fork(checkpoint, name)` (this machine) or `Spaces.create` with image `checkpoint:<name>` (any of your machines) starts new Spaces from it. |
 | [`close_stream`](/cua-sdk/reference/spaces/streams#spaceclose_stream) | Closes a media session opened with `Space.open_stream`. |
+| [`delete_service`](/cua-sdk/reference/spaces/services#spacedelete_service) | Stops a service and forgets it (its logs go too). |
 | [`displays`](/cua-sdk/reference/spaces/space#spacedisplays) | The Space's displays, primary first, with their resolution in physical pixels. |
 | [`fork`](/cua-sdk/reference/sandbox/checkpoints#spacefork) | Starts Space `name`, a fork of this one (with its memory when it is running), and returns it connected. |
 | [`forward`](/cua-sdk/reference/spaces/channel#spaceforward) | Forwards a free loopback port on this machine to guest `port` over this Space's own connection (cua-spacesd's tunnel): the same path its calls take, so a Space one of your machines provides on your LAN is reached directly, and never through a port opened on that machine's network. |
 | [`join_presence`](/cua-sdk/reference/spaces/streams#spacejoin_presence) | Joins presence. |
+| [`kept_services`](/cua-sdk/reference/spaces/services#spacekept_services) | This Space's services. |
 | [`open_stream`](/cua-sdk/reference/spaces/streams#spaceopen_stream) | Mints a media session (ticket + WebSocket URL) for another client to attach to. |
+| [`put_service`](/cua-sdk/reference/spaces/services#spaceput_service) | Keeps a command running in this Space (replacing a service of that name): restarted by its policy when it ends or fails its health check, started when the Space boots, its output kept in a log file. |
+| [`restart_service`](/cua-sdk/reference/spaces/services#spacerestart_service) | Restarts a service. |
 | [`route`](/cua-sdk/reference/spaces/channel#spaceroute) | Which way this Space's calls go now (see `super.spacesd.SpacesdClient.route`): `local …`, `direct …`, `relay …`, `mesh direct <ip:port> rtt <ms> ms`, `mesh relayed` or `cloud`; empty when the Space runs no cua-spacesd. |
+| [`service_logs`](/cua-sdk/reference/spaces/services#spaceservice_logs) | The end of a service's log (`tail_bytes` `None`: 64 KiB). |
 | [`share`](/cua-sdk/reference/spaces/sharing#spaceshare) | Lets `who` (a verified email or an account id) watch (`viewer`, the default) or use (`editor`) this Space through the relay. |
 | [`shares`](/cua-sdk/reference/spaces/sharing#spaceshares) | Who this Space is shared with, and who of them is connected now. |
 | [`spacesd`](/cua-sdk/reference/spacesd#spacespacesd) | The cua-spacesd client over the connection this Space authenticated. |
+| [`start_service`](/cua-sdk/reference/spaces/services#spacestart_service) | Starts a stopped service. |
+| [`stop_service`](/cua-sdk/reference/spaces/services#spacestop_service) | Stops a service and keeps it stopped (also across a reboot). |
 | [`stream_session`](/cua-sdk/reference/spaces/streams#spacestream_session) | Opens a media session and delivers keyframe-gated encoded frames and audio to the sinks (one delivery thread; decoding stays with the caller). |
 | [`teleport`](/cua-sdk/reference/spaces/space#spaceteleport) | Teleports `app`'s session into this Space. |
 | [`teleport_manifest`](/cua-sdk/reference/spaces/space#spaceteleport_manifest) | What teleporting `app` (`full` or `tabs`) would move from this host. |

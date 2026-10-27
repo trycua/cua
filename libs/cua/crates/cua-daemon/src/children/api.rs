@@ -32,11 +32,13 @@ use cua_sandbox_core::placement::On;
 
 type R<T> = std::result::Result<Response<T>, Status>;
 
-/// Labels that carry the tree until the registry holds it.
-pub const LABEL_PARENT: &str = "cua.parent";
-/// The root of the tree.
+/// The label that mirrors a child's parent. The record's tree fields
+/// (`SpaceMeta.parent`, `root`, `depth`) are what counts on this machine.
+pub const LABEL_PARENT: &str = cua_spaces::tree::PARENT_LABEL;
+/// The root of the tree, for a child placed on another machine or a cloud
+/// (whose registry does not hold its parent).
 pub const LABEL_ROOT: &str = "cua.root";
-/// The depth (0 for a Space a person made).
+/// The depth, for a child placed elsewhere (0 for a Space a person made).
 pub const LABEL_DEPTH: &str = "cua.depth";
 
 /// A child's lifetime when its parent has none.
@@ -161,6 +163,18 @@ impl Scoped {
         // Whether it may make children of its own is the tree's depth's
         // call ([`Scoped::adopt`]), never the request's.
         r.children = None;
+        // Its place in the tree is this Space's, and its network stays
+        // within this Space's: neither is the request's to say.
+        if r.widen {
+            return Err(refused(
+                "make children whose network is no more open than its own",
+            ));
+        }
+        if !r.parent.trim().is_empty() && r.parent != self.space {
+            return Err(Status::invalid_argument(
+                "a child's parent is the Space that makes it; leave parent empty",
+            ));
+        }
         // Where: this machine (the default), the least-loaded of the
         // owner's machines and linked clouds (`auto`), one of the owner's
         // machines (`host:<m>`), or a linked cloud. This daemon creates it
@@ -233,10 +247,54 @@ impl Scoped {
         if r.name.trim().is_empty() {
             r.name = self.next_child_name("c");
         }
-        r.labels.insert(LABEL_PARENT.into(), self.space.clone());
-        r.labels.insert(LABEL_ROOT.into(), claims.root.clone());
-        r.labels.insert(LABEL_DEPTH.into(), depth.to_string());
+        if local {
+            // This machine records it in the caller's tree: the record's
+            // parent, root and depth, its network no more open than the
+            // caller's, the tree's own network.
+            r.parent = self.space.clone();
+            self.allow_depth(claims);
+        } else {
+            // Another machine or a cloud does not hold the caller's record:
+            // the network goes with the request, cut down to the caller's,
+            // and labels carry the tree.
+            let asked = match r.network_settings.as_ref() {
+                Some(n) => cua_spaces::network::from_pb(n)
+                    .map_err(|e| Status::invalid_argument(e.to_string()))?,
+                None => cua_spaces::network::NetworkSettings::internet(),
+            };
+            let own = self.own_network();
+            r.network_settings = Some(cua_spaces::network::to_pb(&asked.intersect(&own)));
+            r.labels.insert(LABEL_PARENT.into(), self.space.clone());
+            r.labels.insert(LABEL_ROOT.into(), claims.root.clone());
+            r.labels.insert(LABEL_DEPTH.into(), depth.to_string());
+        }
         Ok(r)
+    }
+
+    /// The caller's network settings (or what it would move to).
+    fn own_network(&self) -> cua_spaces::network::NetworkSettings {
+        match self.own_meta() {
+            Some(m) => m
+                .network
+                .clone()
+                .unwrap_or_else(|| cua_spaces::network::migrate_meta(&m, false)),
+            None => cua_spaces::network::NetworkSettings::internet(),
+        }
+    }
+
+    /// The tree's depth limit is at least what the owner granted the
+    /// caller's capability, so the record's own limit does not refuse a
+    /// child the capability allows.
+    fn allow_depth(&self, claims: &Claims) {
+        let want = claims.max_depth.min(cua_spaces::tree::MAX_DEPTH);
+        let limit =
+            cua_spaces::tree::depth_limit(self.spaces().registry().meta(&claims.root).as_ref());
+        if limit < want {
+            let _ = self
+                .spaces()
+                .registry()
+                .update_meta(&claims.root, |m| m.depth_limit = Some(want));
+        }
     }
 
     /// `<parent name>.<prefix><n>`, the first one not taken.
@@ -297,6 +355,7 @@ impl Scoped {
                 .owner()
                 .delete_space(Request::new(pb::DeleteSpaceRequest {
                     space: victim.clone(),
+                    keep_children: false,
                 }))
                 .await;
             if let Some(a) = self.shared.spawn_authority() {
@@ -432,19 +491,33 @@ pub(crate) fn links_of(spaces: &cua_spaces::Spaces) -> tree::Links {
     tree::Links(
         ids.into_iter()
             .map(|id| {
-                let parent = meta
-                    .get(&id)
-                    .and_then(|m| m.labels.get(LABEL_PARENT).cloned());
+                let parent = meta.get(&id).and_then(parent_of);
                 (id, parent)
             })
             .collect(),
     )
 }
 
+/// A record's parent: its tree field, else the label a child placed from
+/// another machine carries.
+pub(crate) fn parent_of(m: &cua_spaces::registry::SpaceMeta) -> Option<String> {
+    m.parent
+        .clone()
+        .or_else(|| m.labels.get(LABEL_PARENT).cloned())
+}
+
 /// The tree position of `id`: (root, depth). A Space a person made is its
 /// own root at depth 0.
 pub(crate) fn position(spaces: &cua_spaces::Spaces, id: &str) -> (String, u32) {
     let meta = spaces.registry().meta(id);
+    if let Some(m) = meta.as_ref().filter(|m| m.parent.is_some()) {
+        let root = m
+            .root
+            .clone()
+            .or_else(|| m.parent.clone())
+            .unwrap_or_default();
+        return (root, m.depth);
+    }
     let label = |k: &str| meta.as_ref().and_then(|m| m.labels.get(k).cloned());
     match (
         label(LABEL_ROOT),
@@ -680,9 +753,13 @@ impl SpaceService for Scoped {
             // child whatever it was forked from.
             let depth = claims.depth.saturating_add(1);
             let _ = self.spaces().registry().update_meta(&s.id, |m| {
+                m.parent = Some(self.space.clone());
+                m.root = Some(claims.root.clone());
+                m.depth = depth;
+                m.origin = Some(cua_spaces::tree::ORIGIN_CHILD.into());
                 m.labels.insert(LABEL_PARENT.into(), self.space.clone());
-                m.labels.insert(LABEL_ROOT.into(), claims.root.clone());
-                m.labels.insert(LABEL_DEPTH.into(), depth.to_string());
+                m.labels.remove(LABEL_ROOT);
+                m.labels.remove(LABEL_DEPTH);
             });
             self.adopt(&claims, &s.id);
         }
@@ -755,6 +832,22 @@ impl SpaceService for Scoped {
     }
 
     async fn list_orphans(&self, _: Request<pb::ListOrphansRequest>) -> R<pb::ListOrphansResponse> {
+        deny()
+    }
+
+    async fn get_space_network(
+        &self,
+        _: Request<pb::GetSpaceNetworkRequest>,
+    ) -> R<pb::GetSpaceNetworkResponse> {
+        // Network settings are the owner's, never an agent's.
+        deny()
+    }
+
+    async fn set_space_network(
+        &self,
+        _: Request<pb::SetSpaceNetworkRequest>,
+    ) -> R<pb::SetSpaceNetworkResponse> {
+        // Network settings are the owner's, never an agent's.
         deny()
     }
 

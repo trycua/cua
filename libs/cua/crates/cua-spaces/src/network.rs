@@ -66,9 +66,9 @@ pub fn note_for(backend: &str, settings: &NetworkSettings) -> Option<String> {
 }
 
 /// While Secure Spaces is off (an experiment), a Space gets the network it
-/// always had: only the old allow and deny lists, and no parent. Anything
+/// always had: only the old allow and deny lists. Anything
 /// else is refused with how to turn the experiment on.
-pub fn require_secure_spaces(settings: Option<&NetworkSettings>, parent: bool) -> Result<()> {
+pub fn require_secure_spaces(settings: Option<&NetworkSettings>) -> Result<()> {
     if Mode::from_env() == Mode::Secure {
         return Ok(());
     }
@@ -81,7 +81,7 @@ pub fn require_secure_spaces(settings: Option<&NetworkSettings>, parent: bool) -
             || s.all_localhost_ports
             || s.widened_by.is_some()
     });
-    if beyond_lists || parent {
+    if beyond_lists {
         return Err(Error::invalid(
             cua_vmm::experiments::Gate::SecureSpaces.off_message(),
         ));

@@ -91,6 +91,8 @@ async fn a_space_makes_uses_and_cannot_escape_its_children() {
     let home = tempfile::tempdir().unwrap();
     // SAFETY: set before the runtime or any thread reads it.
     unsafe { std::env::set_var("CUA_HOME", home.path()) };
+    // Child Spaces are an experiment, off unless turned on.
+    cua_vmm::experiments::set_enabled(cua_vmm::experiments::Gate::ChildSpaces, Some(true));
     let runtime = DaemonRuntime::new(RuntimeConfig {
         state_dir: Some(home.path().join("sandboxes")),
         spaces_home: Some(home.path().to_path_buf()),
@@ -114,6 +116,7 @@ async fn a_space_makes_uses_and_cannot_escape_its_children() {
         .connect()
         .await
         .unwrap();
+    #[allow(clippy::type_complexity)]
     let auth: Box<
         dyn FnMut(tonic::Request<()>) -> Result<tonic::Request<()>, tonic::Status> + Send,
     > = Box::new(|mut r: tonic::Request<()>| {
@@ -153,7 +156,7 @@ async fn a_space_makes_uses_and_cannot_escape_its_children() {
         let child = list
             .spaces
             .iter()
-            .find(|s| s.labels.get("cua.parent") == Some(&parent))
+            .find(|s| s.parent == parent)
             .expect("the child is registered under its parent")
             .id
             .clone();
@@ -210,7 +213,10 @@ async fn a_space_makes_uses_and_cannot_escape_its_children() {
     .await;
     for id in made.iter().rev() {
         let _ = c
-            .delete_space(pb::DeleteSpaceRequest { space: id.clone() })
+            .delete_space(pb::DeleteSpaceRequest {
+                space: id.clone(),
+                keep_children: false,
+            })
             .await;
     }
     handle.shutdown();

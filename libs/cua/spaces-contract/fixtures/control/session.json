@@ -254,6 +254,17 @@
       "metering": "free"
     },
     {
+      "tool": "space_service",
+      "sdk_symbol": "Space::keep_service",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
       "tool": "agent_start",
       "sdk_symbol": "Space::start_agent",
       "providers": [

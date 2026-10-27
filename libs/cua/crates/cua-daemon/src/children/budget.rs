@@ -469,7 +469,8 @@ mod tests {
                     if let Ok(t) = ledger.reserve("r", &limits, &Usage::default(), ask(1, 512, 0.0))
                     {
                         granted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                        std::mem::forget(t);
+                        // The reservation stays: the test counts what was granted.
+                        let _ticket = t;
                     }
                 })
             })

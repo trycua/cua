@@ -174,7 +174,10 @@ impl WithChildTools {
             }
             "delete_space" => {
                 let r = c
-                    .delete_space(dpb::DeleteSpaceRequest { space: s("space") })
+                    .delete_space(dpb::DeleteSpaceRequest {
+                        space: s("space"),
+                        keep_children: false,
+                    })
                     .await
                     .map_err(status)?
                     .into_inner();
@@ -204,7 +207,11 @@ fn row(s: dpb::Space) -> Value {
     json!({
         "id": s.id,
         "name": if s.display_name.is_empty() { s.name } else { s.display_name },
-        "parent": s.labels.get("cua.parent").cloned().unwrap_or_default(),
+        "parent": if s.parent.is_empty() {
+            s.labels.get("cua.parent").cloned().unwrap_or_default()
+        } else {
+            s.parent.clone()
+        },
         "power": s.power,
         "image": s.image,
         "os": s.os,

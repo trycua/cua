@@ -149,6 +149,7 @@ pub mod walk;
 
 pub use app_icon::{AppIcon, IconRequest};
 pub use creating::{CancelOutcome, CancelState};
+pub use cua_vmm::experiments;
 pub use error::{Error, Result};
 pub use id::{Provider, SpaceId};
 pub use listing::{LIST_WAIT, ListProgress, SpaceListing};

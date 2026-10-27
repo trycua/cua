@@ -1201,7 +1201,17 @@ impl QemuRuntime {
         };
         st.cpus = spec.cpus;
         st.memory_mb = spec.memory_mb;
-        st.restrict_network = spec.restrict_network;
+        st.restrict_network = spec.restrict_network
+            || st
+                .network
+                .as_ref()
+                .is_some_and(|n| n.preset == crate::network::NetworkPreset::None);
+        // No point to enforce rules on this host (macOS, Windows): no
+        // network at all (`restrict=on`; its published ports still answer)
+        // unless the user chose No protection.
+        if let Some(plan) = crate::network::gate(BackendKind::Qemu, &st.name, &qemu_settings(st))? {
+            st.restrict_network = !matches!(plan, crate::network::NetworkPlan::Open { .. });
+        }
         if spec.gpu.is_some() {
             st.gpu = spec.gpu.clone();
         }
@@ -2244,6 +2254,16 @@ fn vnc_password() -> String {
     random_token(8)
 }
 
+/// A VM's network settings: its own, or its old policy migrated.
+fn qemu_settings(st: &QemuState) -> crate::network::NetworkSettings {
+    st.network.clone().unwrap_or_else(|| {
+        crate::network::NetworkSettings::migrate(
+            &st.egress.clone().unwrap_or_default(),
+            st.restrict_network,
+        )
+    })
+}
+
 /// Whether VMs run in a pasta namespace with compiled network settings:
 /// on Linux, under the secure default.
 fn secure_netns() -> bool {
@@ -2575,7 +2595,17 @@ impl Runtime for QemuRuntime {
         crate::types::reject_sidecars(BackendKind::Qemu, spec)?;
         crate::types::reject_mounts(BackendKind::Qemu, spec)?;
         crate::types::reject_injection(BackendKind::Qemu, spec)?;
-        crate::egress::check(BackendKind::Qemu, &spec.egress)?;
+        // Under the secure default a host with no point for rules starts the
+        // VM without network instead of refusing its lists (`launch_once`).
+        if crate::network::gate(
+            BackendKind::Qemu,
+            &spec.name,
+            &crate::network::spec_settings(spec),
+        )?
+        .is_none()
+        {
+            crate::egress::check(BackendKind::Qemu, &spec.egress)?;
+        }
         crate::cloudinit::check_guest_support(spec)?;
         windows_arm_host(
             spec.os,

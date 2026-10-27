@@ -27,6 +27,59 @@ pub use cua_vmm::network::{
     NetworkSupport, Placement, UNPROTECTED_NOTE, network_support,
 };
 
+/// The runtime of a local Space's backend word (`qemu`, `docker`,
+/// `gvisor`, `vz`, ...).
+pub fn backend_kind(word: &str) -> Option<cua_vmm::BackendKind> {
+    use cua_vmm::BackendKind as B;
+    Some(match word {
+        "qemu" => B::Qemu,
+        "qemu-docker" => B::QemuDocker,
+        "lume" => B::Lume,
+        "container" | "docker" | "podman" | "runc" | "runsc" | "gvisor" => B::Container,
+        "managed" => B::Managed,
+        "firecracker" => B::Firecracker,
+        "vz" => B::Vz,
+        "containerization" | "apple" => B::Containerization,
+        _ => return None,
+    })
+}
+
+/// The note a Space on this machine's `backend` gets for `settings`: why
+/// it has no network (its runtime can't protect it yet), or that the user
+/// chose No protection. `None` when its rules are enforced.
+pub fn note_for(backend: &str, settings: &NetworkSettings) -> Option<String> {
+    let kind = backend_kind(backend)?;
+    let support = network_support(kind, std::env::consts::OS, Placement::Local);
+    match cua_vmm::network::plan(
+        settings,
+        support,
+        &NetworkContext::default(),
+        Mode::from_env(),
+    ) {
+        Ok(NetworkPlan::NoNetwork { note: Some(n) }) | Ok(NetworkPlan::Open { note: Some(n) }) => {
+            Some(n.to_string())
+        }
+        _ => None,
+    }
+}
+
+/// Refuses network settings a Space in your own cloud account or a
+/// provider can't keep: anything but No protection (the provider has no
+/// point cua controls to enforce them).
+pub fn refuse_on_provider(settings: &NetworkSettings) -> Result<()> {
+    if Mode::from_env() == Mode::Legacy || settings.preset == NetworkPreset::Unprotected {
+        return Ok(());
+    }
+    match network_support(
+        cua_vmm::BackendKind::Container,
+        "linux",
+        Placement::Provider,
+    ) {
+        NetworkSupport::Refuse { why } => Err(Error::invalid(why)),
+        NetworkSupport::Enforced { .. } | NetworkSupport::NoNetworkOnly { .. } => Ok(()),
+    }
+}
+
 /// What a Space's listing shows of its network.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct SpaceNetwork {
@@ -328,6 +381,40 @@ impl Spaces {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn notes_and_provider_refusals_in_plain_words() {
+        if Mode::from_env() == Mode::Legacy {
+            return;
+        }
+        let internet = NetworkSettings::internet();
+        assert_eq!(note_for("docker", &internet), None);
+        assert_eq!(note_for("unknown", &internet), None);
+        if cfg!(target_os = "macos") {
+            assert_eq!(note_for("vz", &internet).as_deref(), Some(NO_NETWORK_NOTE));
+        }
+        let open = NetworkSettings::preset(NetworkPreset::Unprotected);
+        assert_eq!(
+            note_for("docker", &open),
+            None,
+            "enforced: its platform denies hold"
+        );
+        let e = refuse_on_provider(&internet).unwrap_err();
+        assert_eq!(e.tag(), "invalid_argument");
+        assert!(e.to_string().contains("No protection"), "{e}");
+        assert!(refuse_on_provider(&open).is_ok());
+        for w in [
+            "qemu",
+            "docker",
+            "gvisor",
+            "vz",
+            "lume",
+            "firecracker",
+            "containerization",
+        ] {
+            assert!(backend_kind(w).is_some(), "{w}");
+        }
+    }
 
     fn meta(allow: &[&str], deny: &[&str]) -> SpaceMeta {
         SpaceMeta {

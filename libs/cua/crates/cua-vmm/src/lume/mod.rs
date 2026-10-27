@@ -1598,9 +1598,22 @@ impl LumeRuntime {
         {
             return Err(VmmError::invalid(why));
         }
-        crate::types::reject_restricted_network(BackendKind::Lume, spec)?;
+        // Under the secure default a macOS VM can't be protected yet (it
+        // shares Apple's NAT), and cua reaches it over that network, so a
+        // VM without one could never answer: only No protection starts it.
+        match crate::network::gate(
+            BackendKind::Lume,
+            &spec.name,
+            &crate::network::spec_settings(spec),
+        )? {
+            Some(crate::network::NetworkPlan::Open { .. }) => {}
+            Some(_) => return Err(VmmError::Other(crate::network::WHY_LUME.into())),
+            None => {
+                crate::types::reject_restricted_network(BackendKind::Lume, spec)?;
+                crate::egress::check(BackendKind::Lume, &spec.egress)?;
+            }
+        }
         crate::types::reject_injection(BackendKind::Lume, spec)?;
-        crate::egress::check(BackendKind::Lume, &spec.egress)?;
         if macos_guest(spec) {
             macos_mount_shares(&spec.mounts)?;
         } else {

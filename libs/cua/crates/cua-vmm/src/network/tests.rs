@@ -451,7 +451,7 @@ fn golden_support_table() {
     };
     // (kind, linux, macos, windows) on this machine or a pool host.
     let local = [
-        (BackendKind::Lume, "R", "N", "R"),
+        (BackendKind::Lume, "R", "R", "R"),
         (BackendKind::Qemu, "E", "N", "N"),
         (BackendKind::QemuDocker, "R", "R", "R"),
         (BackendKind::Container, "E", "E", "E"),

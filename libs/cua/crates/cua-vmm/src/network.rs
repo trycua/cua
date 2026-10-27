@@ -885,7 +885,9 @@ pub const NS_POINT: &str = "iptables in the network namespace pasta creates arou
 
 const WHY_VZ: &str = "Apple's microVM network can't be filtered per Space yet";
 const WHY_QEMU: &str = "QEMU on this system can't filter one VM's connections yet";
-const WHY_LUME: &str = "macOS VMs share Apple's network, which can't be filtered per Space yet";
+/// Why a macOS VM (Lume) is refused under the secure default.
+pub const WHY_LUME: &str = "macOS VMs can't protect your network yet, and Cua reaches a macOS \
+     VM over its network, so it can't start without one. Choose No protection to start it.";
 const WHY_CONTAINERIZATION: &str = "Apple's Containerization can't protect your network yet. \
      Use the standard microVM (the default) or choose No protection.";
 const WHY_QEMU_DOCKER: &str = "QEMU in a container isn't supported by this build";
@@ -932,7 +934,8 @@ pub fn network_support(kind: BackendKind, os: &str, placement: Placement) -> Net
         BackendKind::Qemu => NoNetworkOnly { why: WHY_QEMU },
         BackendKind::Vz if mac => NoNetworkOnly { why: WHY_VZ },
         BackendKind::Vz => Refuse { why: WHY_VZ_OS },
-        BackendKind::Lume if mac => NoNetworkOnly { why: WHY_LUME },
+        // Not "no network only": Cua reaches a macOS VM over its network.
+        BackendKind::Lume if mac => Refuse { why: WHY_LUME },
         BackendKind::Lume => Refuse { why: WHY_MAC_OS },
         BackendKind::Containerization => Refuse {
             why: WHY_CONTAINERIZATION,
@@ -1007,6 +1010,70 @@ pub fn plan(
     })
 }
 
+/// What a start of `kind` on this machine does with `spec`'s network, for
+/// a runtime that has no point to enforce rules (Lume, Vz, QEMU on macOS
+/// or Windows, Apple Containerization): [`NetworkPlan::NoNetwork`] (start
+/// it with no network), [`NetworkPlan::Open`] (`unprotected`, or the old
+/// default) or an error in plain words. Never more open than asked.
+pub fn local_plan(kind: BackendKind, spec: &crate::StartSpec) -> crate::Result<NetworkPlan> {
+    local_plan_for(kind, &spec.name, &spec_settings(spec))
+}
+
+/// The settings a start spec asks for: its own, else what its old options
+/// say.
+pub fn spec_settings(spec: &crate::StartSpec) -> NetworkSettings {
+    spec.network
+        .clone()
+        .unwrap_or_else(|| NetworkSettings::migrate(&spec.egress, spec.restrict_network))
+}
+
+/// Under the secure default, for a runtime that does not enforce rules on
+/// this host: [`local_plan_for`] (`Some`). `None` for a runtime that
+/// enforces them, and under the old default (the caller keeps its old
+/// checks).
+pub fn gate(
+    kind: BackendKind,
+    name: &str,
+    settings: &NetworkSettings,
+) -> crate::Result<Option<NetworkPlan>> {
+    if Mode::from_env() == Mode::Legacy {
+        return Ok(None);
+    }
+    match network_support(kind, std::env::consts::OS, Placement::Local) {
+        NetworkSupport::Enforced { .. } => Ok(None),
+        NetworkSupport::NoNetworkOnly { .. } | NetworkSupport::Refuse { .. } => {
+            local_plan_for(kind, name, settings).map(Some)
+        }
+    }
+}
+
+/// [`local_plan`] for `settings` of sandbox `name`.
+pub fn local_plan_for(
+    kind: BackendKind,
+    name: &str,
+    settings: &NetworkSettings,
+) -> crate::Result<NetworkPlan> {
+    let support = network_support(kind, std::env::consts::OS, Placement::Local);
+    let p = plan(
+        settings,
+        support,
+        &NetworkContext::default(),
+        Mode::from_env(),
+    )?;
+    match p {
+        NetworkPlan::Refuse(why) => Err(crate::VmmError::Other(why.to_string())),
+        NetworkPlan::Enforce(_) => Err(crate::VmmError::other(format!(
+            "{kind} enforces network rules itself; it does not start through local_plan"
+        ))),
+        other => {
+            if let NetworkPlan::NoNetwork { note: Some(n) } = &other {
+                tracing::info!(sandbox = %name, runtime = %kind, "{n}");
+            }
+            Ok(other)
+        }
+    }
+}
+
 /// The support table as a Markdown table (for the docs; a test keeps them
 /// in step).
 pub fn support_table_markdown() -> String {
@@ -1040,6 +1107,41 @@ mod tests;
 
 #[cfg(test)]
 mod host_tests {
+    use super::*;
+
+    #[test]
+    fn a_runtime_without_rules_starts_without_network_or_refuses() {
+        if Mode::from_env() == Mode::Legacy {
+            return;
+        }
+        let spec = crate::StartSpec::new("x", crate::ImageSource::Existing);
+        let os = std::env::consts::OS;
+        for kind in crate::egress::BACKENDS {
+            let support = network_support(kind, os, Placement::Local);
+            match (support, local_plan(kind, &spec)) {
+                (NetworkSupport::Enforced { .. }, r) => assert!(r.is_err(), "{kind}"),
+                (NetworkSupport::NoNetworkOnly { .. }, r) => assert_eq!(
+                    r.unwrap(),
+                    NetworkPlan::NoNetwork {
+                        note: Some(NO_NETWORK_NOTE)
+                    }
+                ),
+                (NetworkSupport::Refuse { why }, r) => {
+                    assert_eq!(r.unwrap_err().to_string(), why, "{kind}")
+                }
+            }
+        }
+        // No protection opens it, and says so.
+        let mut open = spec.clone();
+        open.network = Some(NetworkSettings::preset(NetworkPreset::Unprotected));
+        assert_eq!(
+            local_plan(BackendKind::Containerization, &open).unwrap(),
+            NetworkPlan::Open {
+                note: Some(UNPROTECTED_NOTE)
+            }
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn host_addresses_leave_out_loopback() {

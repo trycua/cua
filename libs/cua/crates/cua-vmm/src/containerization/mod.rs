@@ -828,8 +828,27 @@ impl Runtime for ContainerizationRuntime {
     async fn start(&self, spec: &StartSpec) -> Result<Instance> {
         reject_sidecars(BackendKind::Containerization, spec)?;
         crate::types::reject_mounts(BackendKind::Containerization, spec)?;
-        reject_restricted_network(BackendKind::Containerization, spec)?;
-        crate::egress::check(BackendKind::Containerization, &spec.egress)?;
+        // Apple's Containerization can't protect a Space's network: under the
+        // secure default only No protection starts it (anything else is
+        // refused in plain words); as before under the old one.
+        match crate::network::gate(
+            BackendKind::Containerization,
+            &spec.name,
+            &crate::network::spec_settings(spec),
+        )? {
+            Some(crate::network::NetworkPlan::Open { .. }) => {}
+            Some(_) => {
+                return Err(VmmError::Other(
+                    "Apple's Containerization can't protect your network yet. Use the standard \
+                     microVM (the default) or choose No protection."
+                        .into(),
+                ));
+            }
+            None => {
+                reject_restricted_network(BackendKind::Containerization, spec)?;
+                crate::egress::check(BackendKind::Containerization, &spec.egress)?;
+            }
+        }
         reject_gpu(BackendKind::Containerization, spec, &[])?;
         if spec.os != GuestOs::Linux {
             return Err(VmmError::Unsupported {

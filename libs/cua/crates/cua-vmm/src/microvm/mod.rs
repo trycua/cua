@@ -507,6 +507,25 @@ fn boot_args() -> String {
     )
 }
 
+/// Whether a Vz microVM boots with no network: always under the secure
+/// default (a Mac has no point to enforce rules yet) unless the user chose
+/// No protection; else only when asked (`network=none`).
+fn vz_no_network(st: &VmState) -> Result<bool> {
+    let settings = st.network.clone().unwrap_or_else(|| {
+        crate::network::NetworkSettings::migrate(
+            &st.egress.clone().unwrap_or_default(),
+            st.restrict_network,
+        )
+    });
+    Ok(
+        match crate::network::gate(BackendKind::Vz, &st.name, &settings)? {
+            Some(crate::network::NetworkPlan::Open { .. }) => false,
+            Some(_) => true,
+            None => st.restrict_network,
+        },
+    )
+}
+
 /// The rules a Firecracker VM's namespace enforces: under the secure
 /// default ([`crate::network`]) its settings compiled with
 /// [`fc_context`], else its old policy alone.
@@ -1306,6 +1325,8 @@ impl MicroVmRuntime {
                  it in ~/.cua/bin (libs/cua/vz/build.sh builds it)",
             )
         })?;
+        // No network when asked, and on a Mac under the secure default
+        // unless the user chose No protection (`boot` decided).
         let gvproxy = if st.restrict_network {
             None
         } else {
@@ -1567,6 +1588,20 @@ impl MicroVmRuntime {
     /// snapshot of the same configuration (a fresh VM only), else a cold
     /// boot (which records the golden snapshot when warm starts are on).
     async fn boot(&self, st: &mut VmState, fresh: bool, timeout: Duration) -> Result<()> {
+        if self.cfg.vmm == Vmm::Vz {
+            // Decided before anything keys on it (golden snapshots, the
+            // monitor's config): a Mac has no point to enforce rules yet, so
+            // no network unless the user chose No protection.
+            if st.network.is_none()
+                && crate::network::Mode::from_env() == crate::network::Mode::Secure
+            {
+                st.network = Some(crate::network::NetworkSettings::migrate(
+                    &st.egress.clone().unwrap_or_default(),
+                    st.restrict_network,
+                ));
+            }
+            st.restrict_network = vz_no_network(st)?;
+        }
         if let Some(snap) = st.restore_from.clone() {
             self.restore(st, &snap, timeout, "restore").await?;
             st.restore_from = None;
@@ -2342,7 +2377,17 @@ impl Runtime for MicroVmRuntime {
         }
         reject_sidecars(self.cfg.vmm.backend(), spec)?;
         crate::types::reject_mounts(self.cfg.vmm.backend(), spec)?;
-        crate::egress::check(self.cfg.vmm.backend(), &spec.egress)?;
+        // Under the secure default a Vz microVM starts without network
+        // instead of refusing its lists (`vz_no_network`).
+        if crate::network::gate(
+            self.cfg.vmm.backend(),
+            &spec.name,
+            &crate::network::spec_settings(spec),
+        )?
+        .is_none()
+        {
+            crate::egress::check(self.cfg.vmm.backend(), &spec.egress)?;
+        }
         reject_gpu(self.cfg.vmm.backend(), spec, &[])?;
         if spec.arch.is_some_and(|a| a != Arch::host()) {
             return Err(VmmError::invalid(format!(

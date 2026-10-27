@@ -2763,6 +2763,13 @@ impl Spaces {
                      list_spaces"
                 )));
             }
+            // Nothing there enforces network settings: only No protection.
+            crate::network::refuse_on_provider(
+                &opts
+                    .network_settings
+                    .clone()
+                    .unwrap_or_else(crate::network::NetworkSettings::internet),
+            )?;
             let info = self.create_in_cloud(word, opts).await?;
             return Ok(SpaceCreated::Ready {
                 info,
@@ -2929,6 +2936,23 @@ impl Spaces {
                 .create_cancellable(create, cua_sandbox_core::CancellationToken::new()),
         )
         .await;
+        // A runtime that can't protect it yet started it without network
+        // (or the user chose No protection): say so on the Space.
+        if let Ok(sb) = &created {
+            let settings = opts
+                .network_settings
+                .clone()
+                .unwrap_or_else(crate::network::NetworkSettings::internet);
+            let note = crate::network::note_for(sb.runtime_type(), &settings);
+            let id = SpaceId::Local { name: name.clone() }.to_string();
+            if let Err(e) = self
+                .inner
+                .registry
+                .update_meta(&id, |m| m.network_note = note)
+            {
+                tracing::warn!(space = %id, error = %e, "could not record the Space's network note");
+            }
+        }
         if let Err(e) = created {
             // A start that failed after the instance existed (a readiness
             // probe that never passed) leaves a running VM no registry

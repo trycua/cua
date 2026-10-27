@@ -28,6 +28,7 @@ import argparse
 import base64
 import hashlib
 import json
+import math
 import os
 import platform
 import re
@@ -1113,6 +1114,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
             video_raw = ctx.recorder.stop()
         if lab is not None:
             claude_driver.kill_group(lab.pid)
+            lab.wait(timeout=5)
         if watcher is not None:
             watcher.finish()
         if guard is not None:
@@ -1728,7 +1730,7 @@ def check_gates(ctx: Ctx) -> None:
         ):
             raise StopRun("BUDGET", f"cap {args.budget_cap_usd}")
         free = rec.free_gb(ctx.run_dir)
-        if free < DISK_FLOOR_GB:
+        if free < args.disk_floor_gb:
             if ctx.compress and ctx.compress.pending():
                 ctx.log(f"disk {free:.1f} GB < floor; waiting for compression")
                 ctx.compress.join()
@@ -2148,8 +2150,8 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
     free = rec.free_gb(ctx.run_dir)
     add(
         "disk",
-        "pass" if free > DISK_FLOOR_GB else "fail",
-        f"{free:.1f} GB free (floor {DISK_FLOOR_GB:.0f})",
+        "pass" if free > ctx.args.disk_floor_gb else "fail",
+        f"{free:.1f} GB free (floor {ctx.args.disk_floor_gb:g})",
     )
     git_root = subprocess.run(
         ["git", "-C", str(ca.CWD_ROOT.parent), "rev-parse", "--show-toplevel"],
@@ -2379,6 +2381,13 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
 # ---------------------------------------------------------------- setup
 
 
+def positive_gb(text: str) -> float:
+    value = float(text)
+    if not math.isfinite(value) or value <= 0:
+        raise argparse.ArgumentTypeError(f"must be a finite number > 0: {text}")
+    return value
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -2464,6 +2473,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="move the real pointer to an empty menu-bar point before each trial (Amendment 3, A3.9)",
     )
     p.add_argument("--no-recorder", action="store_true")
+    p.add_argument(
+        "--disk-floor-gb",
+        type=positive_gb,
+        default=DISK_FLOOR_GB,
+        help="free-space floor for preflight and every trial admission",
+    )
     p.add_argument(
         "--codex-cu-mcp",
         type=Path,
@@ -2695,6 +2710,10 @@ def shutdown(ctx: Ctx) -> None:
     for proc, sock in ((ctx.rec_daemon, ca.RECORDER_SOCKET), (ctx.daemon, agent_socket)):
         if proc is not None:
             claude_driver.kill_group(proc.pid)
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
             try:
                 os.unlink(sock)
             except OSError:

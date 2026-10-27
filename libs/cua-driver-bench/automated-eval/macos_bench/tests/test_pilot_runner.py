@@ -978,5 +978,141 @@ class ScheduleTest(unittest.TestCase):
         )
 
 
+def _has_session_tools() -> bool:
+    import shutil
+
+    return sys.platform == "linux" and all(
+        shutil.which(t) for t in ("xvfb-run", "openbox", "picom", "xprop", "gdbus")
+    )
+
+
+FAKE_DRIVER = """#!/usr/bin/python3
+import json, sys, time
+a = sys.argv[1:]
+if "--version" in a:
+    print("cua-driver 9.9.9")
+elif a and a[0] == "serve":
+    time.sleep(600)
+elif a and a[0] == "status":
+    pass
+elif "health_report" in a:
+    print(json.dumps({"build": {"version": "9.9.9", "git_sha": "abc", "exe_sha256": "x"},
+        "checks": [{"name": "ax_capability", "status": "pass"},
+                   {"name": "screen_capture_capability", "status": "pass"}]}))
+"""
+
+
+@unittest.skipUnless(_has_session_tools(), "xvfb-run, openbox, picom, xprop and gdbus required")
+class LinuxLauncherTest(unittest.TestCase):
+    script = HERE.parent / "launch" / "linux_session.sh"
+
+    def launch(self, evidence: Path, *command: str) -> subprocess.CompletedProcess:
+        env = {k: v for k, v in os.environ.items() if k != "CDB_BENCH_PID_LOG"}
+        return subprocess.run(
+            ["bash", str(self.script), "--evidence", str(evidence), "--", *command],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env=env,
+        )
+
+    def test_launcher_owns_and_reaps_its_session(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ev = Path(tmp) / "ev"
+            done = self.launch(
+                ev,
+                "bash",
+                "-c",
+                'xprop -root _NET_SUPPORTING_WM_CHECK > "$CDB_SESSION_DIR/wm.txt"',
+            )
+            self.assertEqual(done.returncode, 0, done.stderr + done.stdout)
+            self.assertIn("window id", (ev / "wm.txt").read_text())
+            address = (ev / "at-spi-address.txt").read_text()
+            self.assertTrue("unix:path=" in address or "unix:abstract=" in address, address)
+            entries = [json.loads(x) for x in (ev / "pids.jsonl").read_text().splitlines()]
+            self.assertEqual({e["role"] for e in entries}, {"openbox", "picom"})
+            for entry in entries:
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(entry["pid"], 0)
+            self.assertEqual((ev / "exit").read_text().strip(), "command=0 evidence=0")
+
+    def test_status_passes_through(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ev = Path(tmp) / "ev"
+            done = self.launch(ev, "bash", "-c", "exit 7")
+            self.assertEqual(done.returncode, 7)
+            self.assertIn("command=7", (ev / "exit").read_text())
+            self.assertTrue((ev / "launch.log").exists())
+
+    def test_surviving_child_fails_the_check(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ev = Path(tmp) / "ev"
+            done = self.launch(
+                ev,
+                "bash",
+                "-c",
+                'setsid sleep 300 & echo "{\\"pid\\": $!, \\"pgid\\": $!, \\"role\\": \\"leak\\"}"'
+                ' >> "$CDB_BENCH_PID_LOG"; sleep 0.5',
+            )
+            leaked = [
+                json.loads(x)["pid"]
+                for x in (ev / "pids.jsonl").read_text().splitlines()
+                if json.loads(x)["role"] == "leak"
+            ]
+            try:
+                self.assertNotEqual(done.returncode, 0)
+                self.assertEqual(len(leaked), 1)
+                os.kill(leaked[0], 0)
+            finally:
+                for pid in leaked:
+                    try:
+                        os.kill(pid, signal.SIGKILL)
+                    except OSError:
+                        pass
+
+    @unittest.skipUnless(_x11_ready() and _has_gi(), "headless X11 session with GTK required")
+    def test_doctor_private_daemon_is_reaped(self) -> None:
+        import desktop_runtime as desktop
+
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp) / "cua-driver"
+            binary.write_text(FAKE_DRIVER)
+            binary.chmod(0o755)
+            out = Path(tmp) / "out"
+            with mock.patch("sys.stdout"):
+                code = desktop.main(["doctor", "--cua-bin", str(binary), "--out", str(out)])
+            report = json.loads((out / "doctor.json").read_text())
+            self.assertEqual(code, 0, report)
+            self.assertTrue(report["ok"])
+            self.assertEqual(report["daemon"], "private")
+            self.assertTrue(report["at_spi_address"])
+            with self.assertRaises(ProcessLookupError):
+                os.kill(report["daemon_pid"], 0)
+
+
+@unittest.skipUnless(sys.platform == "linux", "Linux desktop")
+class DoctorExistingSocketTest(unittest.TestCase):
+    def test_missing_display_and_socket_fails_without_starting_anything(self) -> None:
+        import desktop_runtime as desktop
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "out"
+            with (
+                mock.patch.dict(os.environ, {"DISPLAY": ""}),
+                mock.patch.object(desktop, "start_driver", side_effect=AssertionError),
+                mock.patch.object(desktop, "start_app", side_effect=AssertionError),
+            ):
+                code = desktop.main(
+                    ["doctor", "--cua-bin", "/nonexistent/cua-driver",
+                     "--socket", str(Path(tmp) / "missing.sock"), "--out", str(out)]
+                )  # fmt: skip
+            report = json.loads((out / "doctor.json").read_text())
+            self.assertEqual(code, 1)
+            self.assertEqual(report["daemon"], "existing")
+            self.assertIsNone(report["daemon_pid"])
+            display = next(c for c in report["checks"] if c["name"] == "display")
+            self.assertEqual(display["status"], "fail")
+
+
 if __name__ == "__main__":
     unittest.main()

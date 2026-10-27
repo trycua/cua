@@ -45,16 +45,40 @@ Python for GTK/AT-SPI; no Swift build is required. Older non-v2 BenchLab modes a
 explicitly unsupported on Linux. Codex Sky and Claude Desktop arms are skipped
 with an `unsupported-platform` reason before any MCP or daemon setup.
 
-From this directory, using an explicitly selected Linux driver and matching skills:
+From this directory, using an explicitly selected Linux driver and matching skills.
+The launcher brings up Xvfb (1920x1080x24), a private D-Bus session, openbox and picom,
+runs any command inside it, and writes its evidence (`launch.log`, component logs,
+`at-spi-address.txt`, `pids.jsonl`, `exit`) to a directory outside the checkout, exported
+as `CDB_SESSION_DIR`. It stops only the processes it started, fails if any recorded
+process outlives the session, and passes the command's exit status through.
 
 ```sh
 export CDB_BENCH_WORK="$PWD/local-work"
-xvfb-run -a --server-args="-screen 0 1920x1080x24" \
-  dbus-run-session -- bash -lc \
-  'openbox & picom --backend xrender --config /dev/null & sleep 2;
-   python3 run_bench.py preflight --bench-v2 --arms cc-cua-driver \
-     --cua-bin "$CUA_DRIVER_BIN" --cua-skills "$CUA_SKILLS" --pins "$LINUX_PINS"'
+bash launch/linux_session.sh --evidence "$HOME/cua-session" \
+  --check-run "$HOME/cua-session/runs/RUN_ID" -- bash -c '
+  python3 desktop_runtime.py doctor --cua-bin "$CUA_DRIVER_BIN" --out "$CDB_SESSION_DIR" --json &&
+  python3 tools/make_linux_pins.py --cua-bin "$CUA_DRIVER_BIN" --cua-skills "$CUA_SKILLS" \
+    --doctor-json "$CDB_SESSION_DIR/doctor.json" --out "$CDB_SESSION_DIR/pins.json" &&
+  python3 run_bench.py preflight --bench-v2 --arms cc-cua-driver \
+    --cua-bin "$CUA_DRIVER_BIN" --cua-skills "$CUA_SKILLS" --pins "$CDB_SESSION_DIR/pins.json" &&
+  python3 run_bench.py run --bench-v2 --run-id RUN_ID --runs-dir "$CDB_SESSION_DIR/runs" \
+    --cua-bin "$CUA_DRIVER_BIN" --cua-skills "$CUA_SKILLS" --pins "$CDB_SESSION_DIR/pins.json"'
 ```
+
+`doctor` needs no pins, agent or ledger. Without `--socket` it starts a private driver
+daemon and always stops it; with `--socket` it only probes that socket. The pins writer
+refuses to write inside a git checkout or over an existing file. `--check-run` runs
+`tools/check_run_evidence.py` on a run directory after teardown. That check covers
+evidence completeness only; it is separate from task success and from run completion
+(`DONE`). `--disk-floor-gb` sets the free-space floor for preflight and every trial
+admission (the default is unchanged and recorded in the manifest).
+
+Task descriptors name a browser; on hosts without that name, set up a shim (a
+symlink or wrapper script on `PATH`) in the environment, not in the pack.
+
+When the disposable-environment flag is set on a shared host, run inside a private PID
+and mount namespace with a private `/tmp`: the runner's fixed sockets live in `/tmp`,
+and it kills apps by name.
 
 The pin file must declare `platform: "linux"`, `cua_driver_version`,
 `cua_driver_binary_sha256`, and `cua_skills_tree_sha256`, matching the selected
@@ -77,6 +101,7 @@ clipboard ownership and transient windows. It never refocuses itself after armin
 XScreenSaver idle values include synthetic input: Linux HID counts and human-input
 inference are **unmeasured**, not zero. Screenshots and app/sentinel/driver logs
 are retained in trial evidence directories. Raw evidence and results are internal.
+HID counts stay unmeasured on Linux.
 
 Headless contract tests use independent `xdotool` XTest actions. The Linux CI job
 runs doctor, GTK interactions, sentinel and screenshot tests without a driver;

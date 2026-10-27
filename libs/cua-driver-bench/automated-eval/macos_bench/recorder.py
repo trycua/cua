@@ -23,6 +23,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
+import desktop_runtime as desktop
 from desktop_runtime import stop_group, tool
 
 
@@ -46,6 +47,7 @@ class McpStdioClient:
             bufsize=1,
             start_new_session=True,
         )
+        desktop.record_pid(self.proc.pid, "mcp-client")
         self._next = 0
         self._responses: dict[int, dict[str, Any]] = {}
         self._cond = threading.Condition()

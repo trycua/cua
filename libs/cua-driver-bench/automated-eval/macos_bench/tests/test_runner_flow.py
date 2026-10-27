@@ -56,6 +56,7 @@ def make_ctx(tmp: str, **overrides: object) -> rb.Ctx:
         schedule_seed=1,
         build_dir=None,
         offline=False,
+        disk_floor_gb=rb.DISK_FLOOR_GB,
     )
     for key, value in overrides.items():
         setattr(args, key, value)

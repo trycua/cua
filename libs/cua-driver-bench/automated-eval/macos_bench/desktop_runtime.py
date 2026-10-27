@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import argparse
+import hashlib
 import json
 import os
 import platform
@@ -10,8 +12,10 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
+import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Literal, Mapping, Sequence
 
@@ -108,6 +112,22 @@ def stop_group(pid: int) -> None:
             time.sleep(0.3)
 
 
+def record_pid(pid: int, role: str) -> None:
+    """Append a created process group to the launcher's ledger (Linux, when CDB_BENCH_PID_LOG is set)."""
+    path = os.environ.get("CDB_BENCH_PID_LOG")
+    if not path or detect_platform() != "linux":
+        return
+    try:
+        try:
+            pgid: int | None = os.getpgid(pid)
+        except OSError:
+            pgid = None
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps({"pid": pid, "pgid": pgid, "role": role}) + "\n")
+    except OSError:
+        pass
+
+
 def start_app(
     argv: Sequence[str], home: Path, log: Path, *, env: Mapping[str, str] | None = None
 ) -> subprocess.Popen:
@@ -122,6 +142,7 @@ def start_app(
             stderr=output,
             start_new_session=True,
         )
+    record_pid(proc.pid, Path(argv[0]).name)
     time.sleep(0.15)
     if proc.poll() is not None:
         stop_group(proc.pid)
@@ -271,3 +292,106 @@ def capture_screenshot(display: str, destination: Path) -> Path:
             timeout=20,
         )
     return destination
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _at_spi_address() -> str | None:
+    try:
+        done = subprocess.run(
+            [
+                "gdbus",
+                "call",
+                "--session",
+                "--dest",
+                "org.a11y.Bus",
+                "--object-path",
+                "/org/a11y/bus",
+                "--method",
+                "org.a11y.Bus.GetAddress",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return done.stdout.strip() if done.returncode == 0 and done.stdout.strip() else None
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="desktop_runtime.py")
+    sub = parser.add_subparsers(dest="command", required=True)
+    doc = sub.add_parser("doctor", help="run the desktop doctor without a full preflight")
+    doc.add_argument("--cua-bin", type=Path, required=True)
+    doc.add_argument("--socket", default=None)
+    doc.add_argument("--out", type=Path, default=Path.cwd())
+    doc.add_argument("--json", action="store_true")
+    args = parser.parse_args(argv)
+
+    binary = args.cua_bin
+    args.out.mkdir(parents=True, exist_ok=True)
+    state = Path(tempfile.mkdtemp(prefix="cdb-doctor-"))
+    (state / "home").mkdir()
+    proc: subprocess.Popen | None = None
+    checks: list[Check] = []
+    health: dict = {}
+    mode = "existing" if args.socket else "private"
+    try:
+        socket = args.socket or str(state / "d.sock")
+        if not args.socket:
+            try:
+                proc = start_driver(binary, socket, state, overlay=False, log_name="driver.log")
+            except (OSError, RuntimeError, TimeoutError, subprocess.SubprocessError) as error:
+                checks.append(Check("driver-start", "fail", f"{type(error).__name__}: {error}"))
+        if not checks:
+            checks = doctor(binary, socket, state / "home")
+            health = cua_health(binary, socket, state / "home")
+        try:
+            version = subprocess.run(
+                [str(binary), "--version"], capture_output=True, text=True, timeout=10
+            ).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            version = ""
+        try:
+            digest = _sha256_file(binary)
+        except OSError:
+            digest = None
+        report = {
+            "schema": 1,
+            "platform": detect_platform(),
+            "display": os.environ.get("DISPLAY", ""),
+            "driver_version": version,
+            "driver_sha256": digest,
+            "build": health.get("build", {}),
+            "at_spi_address": _at_spi_address(),
+            "daemon": mode,
+            "daemon_pid": proc.pid if proc else None,
+            "checks": [asdict(c) for c in checks],
+            "ok": bool(checks) and all(c.status != "fail" for c in checks),
+        }
+    finally:
+        if proc is not None:
+            stop_group(proc.pid)
+            try:
+                proc.wait(5)
+            except subprocess.TimeoutExpired:
+                pass
+            log = state / "driver.log"
+            if log.is_file():
+                shutil.copy2(log, args.out / "driver.log")
+        shutil.rmtree(state, ignore_errors=True)
+    (args.out / "doctor.json").write_text(json.dumps(report, indent=2) + "\n", "utf-8")
+    if args.json:
+        print(json.dumps(report, indent=2))
+    return 0 if report["ok"] else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

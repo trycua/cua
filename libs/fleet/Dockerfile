@@ -39,6 +39,8 @@ COPY --from=sdk-builder /workspace/cyclops-cs/sdk-bindings/ts-uniffi-browser/ts/
 COPY --from=sdk-builder /workspace/cyclops-cs/sdk-bindings/ts-uniffi-browser/ts/wasm-bindgen ./sdk-bindings/ts-uniffi-browser/ts/wasm-bindgen
 ARG VITE_CUA_REVIEW_VISUAL_PREVIEW=false
 ENV VITE_CUA_REVIEW_VISUAL_PREVIEW=${VITE_CUA_REVIEW_VISUAL_PREVIEW}
+ARG VITE_CUA_REVIEW_PREVIEW_HOST_SUFFIX=
+ENV VITE_CUA_REVIEW_PREVIEW_HOST_SUFFIX=${VITE_CUA_REVIEW_PREVIEW_HOST_SUFFIX}
 RUN pnpm build:app
 
 # Runtime stage — nginx serves static files and proxies /api to the backend.

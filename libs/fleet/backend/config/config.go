@@ -15,6 +15,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"net/url"
+	"os"
 	"regexp"
 	"slices"
 	"strconv"
@@ -141,11 +142,17 @@ type UsageConfiguration struct {
 	MaxResponseBytes  int64
 }
 
+// externalUsageQueryWebhookURL is an optional extra allowed webhook URL for
+// deployments that reach the webhook from outside the cluster. It comes from
+// USAGE_EXTERNAL_QUERY_WEBHOOK_URL and is unset by default.
+func externalUsageQueryWebhookURL() string {
+	return strings.TrimSpace(os.Getenv("USAGE_EXTERNAL_QUERY_WEBHOOK_URL"))
+}
+
 var usageQueryPartitionValue = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 const (
 	clusterUsageQueryWebhookURL  = "http://cua-temporal-webhook.temporal.svc.cluster.local/hooks/opencost-query"
-	externalUsageQueryWebhookURL = "https://cua-temporal-webhook.tail204509.ts.net/hooks/opencost-query"
 	minUsageQueryTimeout         = time.Second
 	maxUsageQueryTimeout         = 2 * time.Minute
 	minUsageResponseSize         = 64 * 1024
@@ -479,7 +486,7 @@ func validateUsageConfiguration(cfg UsageConfiguration) error {
 	if postgresConfig.ConnConfig.User != "cyclops_usage_reader" {
 		return fmt.Errorf("usage database URL must use cyclops_usage_reader")
 	}
-	if cfg.QueryWebhookURL != clusterUsageQueryWebhookURL && cfg.QueryWebhookURL != externalUsageQueryWebhookURL {
+	if cfg.QueryWebhookURL != clusterUsageQueryWebhookURL && (externalUsageQueryWebhookURL() == "" || cfg.QueryWebhookURL != externalUsageQueryWebhookURL()) {
 		return fmt.Errorf("invalid allocation query webhook URL")
 	}
 	if cfg.QueryResultBucket != "nanoclaw-telemetry-files" {

@@ -302,7 +302,7 @@ pub async fn session(config: &JoinConfig, shutdown: &CancellationToken) -> Sessi
         }
     };
     let heartbeat = heartbeat(handle.clone(), config.heartbeat);
-    tokio::select! {
+    let end = tokio::select! {
         _ = shutdown.cancelled() => SessionEnd::Shutdown,
         result = &mut driver => SessionEnd::Lost(match result {
             Ok(Ok(())) => "relay closed the connection".into(),
@@ -311,7 +311,11 @@ pub async fn session(config: &JoinConfig, shutdown: &CancellationToken) -> Sessi
         }),
         _ = accept => SessionEnd::Lost("stream acceptor ended".into()),
         reason = heartbeat => SessionEnd::Lost(reason),
-    }
+    };
+    // The connection ends with the session: a stopped client must not leave
+    // its relay connection up until the relay's heartbeat notices.
+    driver.abort();
+    end
 }
 
 /// Records the relay keys and owner from the 101 response. With pinned

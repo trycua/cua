@@ -47,6 +47,11 @@ lets a reconnecting client drop output it has already seen.
 | [`ResizePty`](#processserviceresizepty) | [`ResizePtyRequest`](#resizeptyrequest) | [`ResizePtyResponse`](#resizeptyresponse) | unary |
 | [`GetExecRecord`](#processservicegetexecrecord) | [`GetExecRecordRequest`](#getexecrecordrequest) | [`GetExecRecordResponse`](#getexecrecordresponse) | unary |
 | [`AdvanceEpoch`](#processserviceadvanceepoch) | [`AdvanceEpochRequest`](#advanceepochrequest) | [`AdvanceEpochResponse`](#advanceepochresponse) | unary |
+| [`PutService`](#processserviceputservice) | [`PutServiceRequest`](#putservicerequest) | [`PutServiceResponse`](#putserviceresponse) | unary |
+| [`DeleteService`](#processservicedeleteservice) | [`DeleteServiceRequest`](#deleteservicerequest) | [`DeleteServiceResponse`](#deleteserviceresponse) | unary |
+| [`ListServices`](#processservicelistservices) | [`ListServicesRequest`](#listservicesrequest) | [`ListServicesResponse`](#listservicesresponse) | unary |
+| [`ControlService`](#processservicecontrolservice) | [`ControlServiceRequest`](#controlservicerequest) | [`ControlServiceResponse`](#controlserviceresponse) | unary |
+| [`GetServiceLogs`](#processservicegetservicelogs) | [`GetServiceLogsRequest`](#getservicelogsrequest) | [`GetServiceLogsResponse`](#getservicelogsresponse) | unary |
 
 ### ProcessService.StartProcess
 
@@ -123,6 +128,41 @@ Raises the Space's fencing epoch. Every running process started with a
 lower non-zero `StartProcessRequest.epoch` is killed (SIGKILL to its
 process group), and later requests carrying a lower epoch fail with
 FAILED_PRECONDITION / `ERROR_REASON_STALE_EPOCH`.
+
+### ProcessService.PutService
+
+`/cua.env.v1.ProcessService/PutService`, unary: [`PutServiceRequest`](#putservicerequest) to [`PutServiceResponse`](#putserviceresponse).
+
+Keeps a command running as a named service: started at once, started
+again by its restart policy when it exits or fails its health check,
+started when cua-spacesd starts (after the guest boots) unless
+`start_on_boot` is false, and its output kept in log files. Putting a
+name that exists replaces it (the old process is stopped first).
+
+### ProcessService.DeleteService
+
+`/cua.env.v1.ProcessService/DeleteService`, unary: [`DeleteServiceRequest`](#deleteservicerequest) to [`DeleteServiceResponse`](#deleteserviceresponse).
+
+Stops a service and forgets it (its log files go too).
+
+### ProcessService.ListServices
+
+`/cua.env.v1.ProcessService/ListServices`, unary: [`ListServicesRequest`](#listservicesrequest) to [`ListServicesResponse`](#listservicesresponse).
+
+Lists services with their state.
+
+### ProcessService.ControlService
+
+`/cua.env.v1.ProcessService/ControlService`, unary: [`ControlServiceRequest`](#controlservicerequest) to [`ControlServiceResponse`](#controlserviceresponse).
+
+Starts, stops or restarts a service. A stopped service stays stopped
+until started (also across a restart of cua-spacesd).
+
+### ProcessService.GetServiceLogs
+
+`/cua.env.v1.ProcessService/GetServiceLogs`, unary: [`GetServiceLogsRequest`](#getservicelogsrequest) to [`GetServiceLogsResponse`](#getservicelogsresponse).
+
+The end of a service's log.
 
 ## FilesystemService
 
@@ -602,6 +642,131 @@ Response for `ProcessService.AdvanceEpoch`.
 | `epoch` | 1 | `uint64` | The current epoch after the call. |
 | `killed` | 2 | `uint32` | Running processes killed because they carried a lower epoch. |
 
+### HealthProbe
+
+How a service's health is checked. Set exactly one of `exec`, `http`,
+`tcp`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `exec` | 1 | [`ProcessConfig`](#processconfig) | A command that exits 0 when the service is healthy. |
+| `http` | 2 | `string` | A URL that answers 2xx or 3xx (`http://127.0.0.1:8080/health`). |
+| `tcp` | 3 | `string` | A port that accepts a TCP connection (`127.0.0.1:5432`). |
+| `interval` | 4 | `google.protobuf.Duration` | Between checks. Unset: 10 seconds. |
+| `timeout` | 5 | `google.protobuf.Duration` | For one check. Unset: 5 seconds. |
+| `failure_threshold` | 6 | `uint32` | Failed checks in a row that mark it unhealthy and restart it. 0: 3. |
+| `start_period` | 7 | `google.protobuf.Duration` | Grace after a start before the first check counts. Unset: 10 seconds. |
+
+### ServiceSpec
+
+A service: a named command kept running.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `name` | 1 | `string` | Name: lowercase letters, digits, `-`, `_` and `.`, 1 to 63 of them, starting with a letter or digit. |
+| `config` | 2 | [`ProcessConfig`](#processconfig) | What to run (`timeout` is ignored). |
+| `restart` | 3 | [`RestartPolicy`](#restartpolicy) | When it is started again. Unset: always. |
+| `backoff_min` | 4 | `google.protobuf.Duration` | First wait before a restart; it doubles on each quick failure. Unset: 1 second. |
+| `backoff_max` | 5 | `google.protobuf.Duration` | Longest wait before a restart. Unset: 60 seconds. |
+| `probe` | 6 | [`HealthProbe`](#healthprobe) | Health check. Unset: the service is healthy while it runs. |
+| `start_on_boot` | 7 | optional `bool` | Start it when cua-spacesd starts. Unset: true. |
+| `log_max_bytes` | 8 | `uint64` | Size at which the log file is rotated (one older file is kept). 0: 10 MiB. |
+
+### ServiceStatus
+
+A service and how it is doing.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `spec` | 1 | [`ServiceSpec`](#servicespec) | What it runs. |
+| `state` | 2 | [`ServiceState`](#servicestate) | Where it is. |
+| `pid` | 3 | `uint32` | Its current process, while it runs. |
+| `restarts` | 4 | `uint32` | Starts after the first one. |
+| `started_at` | 5 | `google.protobuf.Timestamp` | When the current (or last) process started. |
+| `last_end` | 6 | [`ProcessEnd`](#processend) | How the last process ended. |
+| `probe_error` | 7 | `string` | The last failed health check, empty when the last one passed. |
+| `next_start_at` | 8 | `google.protobuf.Timestamp` | When it starts again (state `SERVICE_STATE_BACKOFF`). |
+| `log_path` | 9 | `string` | Its log file in the guest. |
+
+### PutServiceRequest
+
+Request for `ProcessService.PutService`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `spec` | 1 | [`ServiceSpec`](#servicespec) | The service. |
+
+### PutServiceResponse
+
+Response for `ProcessService.PutService`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `service` | 1 | [`ServiceStatus`](#servicestatus) | Its state right after it was put. |
+
+### DeleteServiceRequest
+
+Request for `ProcessService.DeleteService`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `name` | 1 | `string` | Name. |
+
+### DeleteServiceResponse
+
+Response for `ProcessService.DeleteService`.
+
+No fields.
+
+### ListServicesRequest
+
+Request for `ProcessService.ListServices`.
+
+No fields.
+
+### ListServicesResponse
+
+Response for `ProcessService.ListServices`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `services` | 1 | repeated [`ServiceStatus`](#servicestatus) | By name. |
+
+### ControlServiceRequest
+
+Request for `ProcessService.ControlService`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `name` | 1 | `string` | Name. |
+| `action` | 2 | [`ServiceAction`](#serviceaction) | What to do. |
+
+### ControlServiceResponse
+
+Response for `ProcessService.ControlService`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `service` | 1 | [`ServiceStatus`](#servicestatus) | Its state after the action. |
+
+### GetServiceLogsRequest
+
+Request for `ProcessService.GetServiceLogs`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `name` | 1 | `string` | Name. |
+| `tail_bytes` | 2 | `uint64` | How many bytes from the end. 0: 64 KiB; at most 4 MiB. |
+
+### GetServiceLogsResponse
+
+Response for `ProcessService.GetServiceLogs`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `data` | 1 | `bytes` | The end of its output (stdout and stderr interleaved as written). |
+| `truncated` | 2 | `bool` | True when older output was left out. |
+
 ### ProcessState
 
 Lifecycle state of a managed process.
@@ -645,6 +810,43 @@ Lifecycle of an exec ledger entry.
 | `EXEC_STATE_RUNNING` | 1 | Started by this server and still running. |
 | `EXEC_STATE_EXITED` | 2 | Exited (or could not start); `ExecRecord.end` says how. |
 | `EXEC_STATE_LOST` | 3 | Was running when the server stopped: the outcome is unknown. |
+
+### RestartPolicy
+
+When a service is started again.
+
+| Value | # | Description |
+| --- | --- | --- |
+| `RESTART_POLICY_UNSPECIFIED` | 0 | Unset: `RESTART_POLICY_ALWAYS`. |
+| `RESTART_POLICY_ALWAYS` | 1 | Whenever it ends, however it ends. |
+| `RESTART_POLICY_ON_FAILURE` | 2 | When it ends with a non-zero code, a signal, or a failed health check. |
+| `RESTART_POLICY_NEVER` | 3 | Never: it runs once. |
+
+### ServiceState
+
+Where a service is.
+
+| Value | # | Description |
+| --- | --- | --- |
+| `SERVICE_STATE_UNSPECIFIED` | 0 | Not reported. |
+| `SERVICE_STATE_STARTING` | 1 | Starting (or waiting for its first health check). |
+| `SERVICE_STATE_RUNNING` | 2 | Running, and healthy when it has a check. |
+| `SERVICE_STATE_UNHEALTHY` | 3 | Running, but its last checks failed. |
+| `SERVICE_STATE_BACKOFF` | 4 | Ended; waiting `next_start_at` to start again. |
+| `SERVICE_STATE_STOPPED` | 5 | Stopped by a caller. |
+| `SERVICE_STATE_EXITED` | 6 | Ended and its policy does not start it again. |
+| `SERVICE_STATE_FAILED` | 7 | Could not be started (the command does not exist, ...). |
+
+### ServiceAction
+
+What `ControlService` does.
+
+| Value | # | Description |
+| --- | --- | --- |
+| `SERVICE_ACTION_UNSPECIFIED` | 0 | Not set (refused). |
+| `SERVICE_ACTION_START` | 1 | Start it (no-op when it runs). |
+| `SERVICE_ACTION_STOP` | 2 | Stop it and keep it stopped. |
+| `SERVICE_ACTION_RESTART` | 3 | Stop it, then start it. |
 
 ## Types in `cua/env/v1/filesystem.proto`
 

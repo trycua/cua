@@ -12,6 +12,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import * as path from "node:path";
 import type { AppChecklistAction, AppChecklistState, AppChecklistStep, AppTelemetrySignal } from "../native/generated/index";
+import { keepDamaged } from "../damaged";
 import type { Native } from "../native/load";
 
 /** The state as the file and the page keep it: steps as their words. */
@@ -50,8 +51,9 @@ export class ChecklistModel {
     seed: string | null = null,
   ) {
     this.words = checklistWords(native);
-    const read = (f: string | null) => (f ? this.read(f) : null);
-    this.state = read(file) ?? read(seed) ?? { done: [], dismissed: false, shown: false, skipped: [] };
+    // Only its own file is kept when damaged: the seed is the Swift app's.
+    const read = (f: string | null, own: boolean) => (f ? this.read(f, own) : null);
+    this.state = read(file, true) ?? read(seed, false) ?? { done: [], dismissed: false, shown: false, skipped: [] };
   }
 
   /** The state with steps as words. */
@@ -92,14 +94,17 @@ export class ChecklistModel {
     if (t.signals.length) this.telemetry?.record(t.signals);
   }
 
-  private read(file: string): AppChecklistState | null {
+  private read(file: string, own = true): AppChecklistState | null {
     if (!existsSync(file)) return null;
     try {
       const raw = JSON.parse(readFileSync(file, "utf8")) as Partial<StoredChecklist> | null;
-      return raw && typeof raw === "object" ? this.fromStored(raw) : null;
+      if (raw && typeof raw === "object" && !Array.isArray(raw)) return this.fromStored(raw);
     } catch {
-      return null;
+      // damaged: below
     }
+    // Truncated or garbage: the defaults, and the file kept as `.damaged`.
+    if (own) keepDamaged(file);
+    return null;
   }
 
   private save(): void {

@@ -51,9 +51,13 @@ public final class OnboardingModel {
     static func readCompleted(_ path: String) -> Bool? { read(path)?.completed }
 
     private static func read(_ path: String) -> (completed: Bool, mode: AppOnboardingMode)? {
-        guard let data = FileManager.default.contents(atPath: path),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let completed = obj["completed"] as? Bool else { return nil }
+        // No file: the first run is due. A file that is not valid state: due too, and kept as `.damaged`.
+        guard let data = FileManager.default.contents(atPath: path) else { return nil }
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let completed = obj["completed"] as? Bool else {
+            DamagedFile.keep(path)
+            return nil
+        }
         return (completed, (obj["mode"] as? String) == "host" ? .host : .client)
     }
 }

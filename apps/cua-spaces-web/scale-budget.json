@@ -1,26 +1,26 @@
 {
   "100": {
-    "firstTile": 1380,
+    "firstTile": 1277,
     "filterKey": 50,
     "selectAll": 50,
     "pickOne": 50,
-    "longTasks": 147,
-    "drawn": 120
+    "longTasks": 50,
+    "drawn": 27
   },
   "1000": {
-    "firstTile": 1479,
-    "filterKey": 150,
-    "selectAll": 150,
-    "pickOne": 60,
-    "longTasks": 720,
-    "drawn": 90
+    "firstTile": 1340,
+    "filterKey": 50,
+    "selectAll": 50,
+    "pickOne": 50,
+    "longTasks": 50,
+    "drawn": 27
   },
   "3000": {
-    "firstTile": 2373,
-    "filterKey": 150,
-    "selectAll": 150,
-    "pickOne": 60,
-    "longTasks": 1200,
-    "drawn": 90
+    "firstTile": 1509,
+    "filterKey": 50,
+    "selectAll": 50,
+    "pickOne": 50,
+    "longTasks": 150,
+    "drawn": 27
   }
 }

@@ -72,8 +72,10 @@ async function once(n) {
   // One character in the filter, to the grid redrawn with fewer tiles.
   const filter = page.locator("[data-spaces-filter]").first();
   await filter.click();
+  // One Space's name: the list drops to that one, so the first tile and the count change.
+  const name = `scale-${String(n - 1).padStart(4, "0")}`;
   const filterKey = await page.evaluate(
-    () =>
+    (name) =>
       new Promise((resolve) => {
         // The grid draws only what is on screen, so the number of tiles may not change: the
         // first tile and the "N Spaces" line do.
@@ -89,10 +91,11 @@ async function once(n) {
         });
         obs.observe(document.body, { childList: true, subtree: true });
         const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
-        setter.call(input, "scale-00");
+        setter.call(input, name);
         input.dispatchEvent(new Event("input", { bubbles: true }));
         setTimeout(() => resolve(-1), 10_000);
       }),
+    name,
   );
   await filter.fill("");
   await page.waitForTimeout(500);
@@ -146,7 +149,11 @@ if (has("--update")) {
   const budget = JSON.parse(readFileSync(budgetFile, "utf8"));
   const over = [];
   for (const [n, r] of Object.entries(results))
-    for (const [k, v] of Object.entries(budget[n] ?? {})) if (r[k] > v) over.push(`N=${n} ${k} ${r[k]} > ${v}`);
+    for (const [k, v] of Object.entries(budget[n] ?? {})) {
+      // -1: the redraw never came (a measurement that timed out is a failure, not a fast run).
+      if (r[k] < 0) over.push(`N=${n} ${k} was not measured`);
+      else if (r[k] > v) over.push(`N=${n} ${k} ${r[k]} > ${v}`);
+    }
   if (over.length) {
     console.error(`over budget:\n  ${over.join("\n  ")}`);
     process.exit(1);

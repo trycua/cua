@@ -84,8 +84,15 @@ timeout 15 gdbus call --session --dest org.a11y.Bus --object-path /org/a11y/bus 
 # The command runs in its own session so its whole group is recorded and checked.
 setsid "$@" <&0 &
 cmd=$!
-printf "{\"pid\":%s,\"pgid\":%s,\"role\":\"command\"}\n" "$cmd" "$cmd" >> "$CDB_BENCH_PID_LOG"
-echo "$cmd" > "$CDB_SESSION_DIR/command.pid"
+# If either publication fails, nothing else owns the command: stop and reap its group.
+{
+  printf "{\"pid\":%s,\"pgid\":%s,\"role\":\"command\"}\n" "$cmd" "$cmd" >> "$CDB_BENCH_PID_LOG" &&
+    echo "$cmd" > "$CDB_SESSION_DIR/command.pid"
+} || {
+  kill -KILL -- "-$cmd" 2>/dev/null || true
+  wait "$cmd" 2>/dev/null || true
+  exit 1
+}
 rc=0
 while :; do
   wait "$cmd" && rc=0 || rc=$?
@@ -101,27 +108,42 @@ rm -f "$CDB_SESSION_DIR/command.pid"
 offset=$(stat -c %s "$log" 2>/dev/null || echo 0)
 # The session runs in the background so cancellation of this script is forwarded to it and
 # the teardown, ledger check and exit file still happen.
-timeout "${CDB_SESSION_TIMEOUT:-0}" xvfb-run -a --server-args='-screen 0 1920x1080x24' \
+xvfb-run -a --server-args='-screen 0 1920x1080x24' \
   dbus-run-session -- bash -euo pipefail -c "$inner" linux-session "$@" >> "$log" 2>&1 &
 session=$!
 cancelled=0
+timer=""
 # Forward cancellation to the command group only: the session wrappers must stay up until
 # the command and its teardown finish. Before the command exists, stop the session itself.
 cancel() {
   cancelled=$1
+  [ -e "$CDB_SESSION_DIR/timeout.flag" ] && cancelled=124
   local c
   c=$(cat "$CDB_SESSION_DIR/command.pid" 2>/dev/null)
   if [ -n "$c" ]; then kill -TERM -- "-$c" 2>/dev/null; else kill -TERM "$session" 2>/dev/null; fi
 }
 trap 'cancel 143' TERM
 trap 'cancel 130' INT
+# The timeout is routed through the same cancellation so the command finishes its own
+# TERM cleanup while the session wrappers stay up.
+rm -f "$CDB_SESSION_DIR/timeout.flag"
+limit="${CDB_SESSION_TIMEOUT:-0}"
+if [ "$limit" != 0 ]; then
+  owner=$$
+  ( sleep "$limit" & s=$!; trap 'kill $s 2>/dev/null; exit 0' TERM
+    wait $s && { : > "$CDB_SESSION_DIR/timeout.flag"; kill -TERM "$owner" 2>/dev/null; } ) &
+  timer=$!
+fi
 while :; do
   wait "$session"
   status=$?
   kill -0 "$session" 2>/dev/null || break
 done
 trap - TERM INT
-[ "$status" -eq 0 ] && [ "$cancelled" -ne 0 ] && status=$cancelled
+[ -n "$timer" ] && kill "$timer" 2>/dev/null
+if [ -e "$CDB_SESSION_DIR/timeout.flag" ]; then status=124
+elif [ "$status" -eq 0 ] && [ "$cancelled" -ne 0 ]; then status=$cancelled; fi
+rm -f "$CDB_SESSION_DIR/timeout.flag"
 tail -c +"$((offset + 1))" "$log"
 command_status=$status
 

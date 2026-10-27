@@ -1124,6 +1124,43 @@ class LinuxLauncherTest(unittest.TestCase):
                 except (OSError, ValueError):
                     pass
 
+    def test_timeout_waits_for_delayed_cleanup(self) -> None:
+        script = (
+            "import os,signal,subprocess,sys,time\n"
+            "d=os.environ['CDB_SESSION_DIR']\n"
+            "c=subprocess.Popen(['sleep','300'],start_new_session=True)\n"
+            "open(d+'/child.pid','w').write(str(c.pid))\n"
+            "open(d+'/pids.jsonl','a').write('{\"pid\":%d,\"pgid\":%d,\"role\":\"child\"}\\n'%(c.pid,c.pid))\n"
+            "def h(*a):\n"
+            "    time.sleep(2); c.kill(); c.wait(); open(d+'/cleaned','w').write('1'); sys.exit(143)\n"
+            "signal.signal(signal.SIGTERM,h)\n"
+            "open(d+'/ready','w').write('1')\n"
+            "time.sleep(300)\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            ev = Path(tmp) / "ev"
+            env = {k: v for k, v in os.environ.items() if k != "CDB_BENCH_PID_LOG"}
+            env["CDB_SESSION_TIMEOUT"] = "8"
+            proc = subprocess.Popen(
+                ["bash", str(self.script), "--evidence", str(ev), "--", sys.executable, "-c", script],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env,
+            )  # fmt: skip
+            try:
+                deadline = time.monotonic() + 60
+                while not (ev / "ready").exists() and time.monotonic() < deadline:
+                    time.sleep(0.2)
+                self.assertTrue((ev / "ready").exists())
+                self.assertEqual(proc.wait(90), 124)
+                self.assertTrue((ev / "cleaned").exists())
+                self.assertIn("command=124 evidence=0", (ev / "exit").read_text())
+            finally:
+                if proc.poll() is None:
+                    proc.kill()
+                try:
+                    os.kill(int((ev / "child.pid").read_text()), signal.SIGKILL)
+                except (OSError, ValueError):
+                    pass
+
     def test_sigterm_to_launcher_tears_down_and_reports(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ev = Path(tmp) / "ev"

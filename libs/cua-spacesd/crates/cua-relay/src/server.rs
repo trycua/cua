@@ -1316,12 +1316,36 @@ async fn machine_connect_inner(
                 user_cuts: Mutex::default(),
                 clients: Mutex::default(),
             });
-            if let Some(old) = relay
-                .machines
-                .lock()
-                .expect("machines")
-                .insert(id.clone(), machine.clone())
-            {
+            // The limit was checked before the upgrade, and joins that arrive together all
+            // pass it. Settle it here, where the machine is added: the oldest sessions of a
+            // token keep their places, a newer one over the limit is dropped (it retries).
+            let (replaced, over_limit) = {
+                let mut machines = relay.machines.lock().expect("machines");
+                let mut replaced = machines.insert(id.clone(), machine.clone());
+                let over_limit = matches!(machine.registrant, Registrant::Static(_)) && {
+                    let mut same: Vec<u64> = machines
+                        .values()
+                        .filter(|m| m.registrant == machine.registrant)
+                        .map(|m| m.generation)
+                        .collect();
+                    same.sort_unstable();
+                    same.iter().position(|g| *g == generation).unwrap_or(0)
+                        >= relay.config.max_machines_per_token
+                };
+                if over_limit {
+                    machines.remove(&id);
+                    if let Some(old) = replaced.take() {
+                        machines.insert(id.clone(), old);
+                    }
+                }
+                (replaced, over_limit)
+            };
+            if over_limit {
+                tracing::info!(machine = %id, "computer limit for this token reached");
+                driver.abort();
+                return;
+            }
+            if let Some(old) = replaced {
                 tracing::info!(machine = %id, "replacing previous session");
                 old.cut_clients();
                 old.abort.abort();

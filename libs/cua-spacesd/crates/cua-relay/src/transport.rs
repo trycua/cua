@@ -52,7 +52,9 @@ pub(super) async fn connect(
         .await
         .map_err(|e| match e {
             tungstenite::Error::Http(response) => match retry_after(&response) {
-                Some(after) if response.status() == StatusCode::SERVICE_UNAVAILABLE => SessionEnd::Throttled(after),
+                Some(after) if response.status() == StatusCode::SERVICE_UNAVAILABLE => {
+                    SessionEnd::Throttled(after)
+                }
                 _ => SessionEnd::Refused(format!("HTTP {}", response.status())),
             },
             tungstenite::Error::Tls(_) => lost("origin TLS failed"),
@@ -63,7 +65,14 @@ pub(super) async fn connect(
 
 /// A refusal's `Retry-After` in seconds (at most two minutes), when it has one.
 fn retry_after<T>(response: &http::Response<T>) -> Option<Duration> {
-    let secs: u64 = response.headers().get(http::header::RETRY_AFTER)?.to_str().ok()?.trim().parse().ok()?;
+    let secs: u64 = response
+        .headers()
+        .get(http::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .trim()
+        .parse()
+        .ok()?;
     Some(Duration::from_secs(secs.min(120)))
 }
 

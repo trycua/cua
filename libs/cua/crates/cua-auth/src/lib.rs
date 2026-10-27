@@ -2815,7 +2815,14 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let path = d.path().join("credentials.json");
         let store = Store::File(path.clone());
-        for garbage in ["{", "{\"access_token\": \"a", "", "null", "[]", "\u{0}\u{1}garbage"] {
+        for garbage in [
+            "{",
+            "{\"access_token\": \"a",
+            "",
+            "null",
+            "[]",
+            "\u{0}\u{1}garbage",
+        ] {
             std::fs::write(&path, garbage).unwrap();
             let err = store.load().unwrap_err();
             assert!(
@@ -2827,7 +2834,10 @@ mod tests {
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt as _;
-                assert_eq!(std::fs::metadata(&kept).unwrap().permissions().mode() & 0o777, 0o600);
+                assert_eq!(
+                    std::fs::metadata(&kept).unwrap().permissions().mode() & 0o777,
+                    0o600
+                );
             }
         }
         // Signing in again writes a good file over it; the copy stays.

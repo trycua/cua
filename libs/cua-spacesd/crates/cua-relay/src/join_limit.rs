@@ -27,7 +27,12 @@ pub struct JoinLimiter {
 impl JoinLimiter {
     pub fn new(rate_per_sec: f64, burst: u32, now: Instant) -> Self {
         let burst = f64::from(burst.max(1));
-        Self { rate: rate_per_sec, burst, tokens: burst, last: now }
+        Self {
+            rate: rate_per_sec,
+            burst,
+            tokens: burst,
+            last: now,
+        }
     }
 
     /// Admits one join, or says how long until one would be.
@@ -66,7 +71,10 @@ mod tests {
             assert!(l.admit(t0).is_ok());
         }
         let wait = l.admit(t0).unwrap_err();
-        assert!(wait <= Duration::from_millis(10) && wait > Duration::ZERO, "{wait:?}");
+        assert!(
+            wait <= Duration::from_millis(10) && wait > Duration::ZERO,
+            "{wait:?}"
+        );
         // 50 ms later: five more.
         let t1 = t0 + Duration::from_millis(50);
         for _ in 0..5 {
@@ -128,11 +136,27 @@ mod tests {
 
     #[test]
     fn retry_after_is_whole_seconds_and_spread() {
-        assert_eq!(retry_after_secs(Duration::from_millis(5), Duration::ZERO, 0.0), 1);
-        assert_eq!(retry_after_secs(Duration::from_millis(5), Duration::from_secs(4), 1.0), 5);
-        assert_eq!(retry_after_secs(Duration::from_secs(2), Duration::from_secs(4), 0.5), 4);
-        let spread: std::collections::BTreeSet<u64> =
-            (0..=10).map(|i| retry_after_secs(Duration::from_millis(100), Duration::from_secs(5), f64::from(i) / 10.0)).collect();
+        assert_eq!(
+            retry_after_secs(Duration::from_millis(5), Duration::ZERO, 0.0),
+            1
+        );
+        assert_eq!(
+            retry_after_secs(Duration::from_millis(5), Duration::from_secs(4), 1.0),
+            5
+        );
+        assert_eq!(
+            retry_after_secs(Duration::from_secs(2), Duration::from_secs(4), 0.5),
+            4
+        );
+        let spread: std::collections::BTreeSet<u64> = (0..=10)
+            .map(|i| {
+                retry_after_secs(
+                    Duration::from_millis(100),
+                    Duration::from_secs(5),
+                    f64::from(i) / 10.0,
+                )
+            })
+            .collect();
         assert!(spread.len() >= 5, "{spread:?}");
     }
 }

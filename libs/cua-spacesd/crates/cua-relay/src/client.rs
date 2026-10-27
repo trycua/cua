@@ -170,7 +170,13 @@ pub fn backoff_with(attempt: u32, cap: Duration, jitter: f64) -> Duration {
 /// that was up is spread over `spread` (`unit` is a random number from 0 to
 /// 1): machines drop together when the relay restarts, and a thousand of
 /// them retrying within half a second is a storm. Later attempts back off.
-pub fn reconnect_delay(attempt: u32, cap: Duration, was_up: bool, spread: Duration, unit: f64) -> Duration {
+pub fn reconnect_delay(
+    attempt: u32,
+    cap: Duration,
+    was_up: bool,
+    spread: Duration,
+    unit: f64,
+) -> Duration {
     if was_up && attempt == 0 && !spread.is_zero() {
         let low = spread / 10;
         return low + (spread - low).mul_f64(unit.clamp(0.0, 1.0));
@@ -211,9 +217,17 @@ pub async fn run(config: JoinConfig, shutdown: CancellationToken) {
         let was_up = started.elapsed() > Duration::from_secs(10);
         let delay = match &end {
             // The relay said when: that, and up to a second more.
-            SessionEnd::Throttled(after) => *after + Duration::from_millis(rand::thread_rng().gen_range(0..1000)),
+            SessionEnd::Throttled(after) => {
+                *after + Duration::from_millis(rand::thread_rng().gen_range(0..1000))
+            }
             _ => {
-                let d = reconnect_delay(attempt, config.max_backoff, was_up, config.reconnect_spread, rand::thread_rng().gen_range(0.0..=1.0));
+                let d = reconnect_delay(
+                    attempt,
+                    config.max_backoff,
+                    was_up,
+                    config.reconnect_spread,
+                    rand::thread_rng().gen_range(0.0..=1.0),
+                );
                 attempt = attempt.saturating_add(1);
                 d
             }
@@ -429,15 +443,33 @@ mod tests {
         let cap = Duration::from_secs(30);
         let spread = Duration::from_secs(5);
         // A session that was up: anywhere from a tenth of the spread to all of it.
-        assert_eq!(reconnect_delay(0, cap, true, spread, 0.0), Duration::from_millis(500));
-        assert_eq!(reconnect_delay(0, cap, true, spread, 1.0), Duration::from_secs(5));
-        assert_eq!(reconnect_delay(0, cap, true, spread, 0.5), Duration::from_millis(2750));
+        assert_eq!(
+            reconnect_delay(0, cap, true, spread, 0.0),
+            Duration::from_millis(500)
+        );
+        assert_eq!(
+            reconnect_delay(0, cap, true, spread, 1.0),
+            Duration::from_secs(5)
+        );
+        assert_eq!(
+            reconnect_delay(0, cap, true, spread, 0.5),
+            Duration::from_millis(2750)
+        );
         // One that never got up, or a second try: the doubling backoff, whatever the spread.
-        assert_eq!(reconnect_delay(0, cap, false, spread, 1.0), Duration::from_millis(500));
-        assert_eq!(reconnect_delay(1, cap, true, spread, 1.0), Duration::from_secs(1));
+        assert_eq!(
+            reconnect_delay(0, cap, false, spread, 1.0),
+            Duration::from_millis(500)
+        );
+        assert_eq!(
+            reconnect_delay(1, cap, true, spread, 1.0),
+            Duration::from_secs(1)
+        );
         assert!(reconnect_delay(20, cap, true, spread, 1.0) <= cap);
         // No spread configured: the old behaviour.
-        assert_eq!(reconnect_delay(0, cap, true, Duration::ZERO, 1.0), Duration::from_millis(500));
+        assert_eq!(
+            reconnect_delay(0, cap, true, Duration::ZERO, 1.0),
+            Duration::from_millis(500)
+        );
     }
 
     #[test]

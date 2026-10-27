@@ -36,7 +36,10 @@ const MACHINES: usize = 1000;
 #[cfg(unix)]
 fn raise_fd_limit() {
     unsafe {
-        let mut r = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+        let mut r = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
         if libc::getrlimit(libc::RLIMIT_NOFILE, &mut r) == 0 {
             r.rlim_cur = r.rlim_max.min(10_240);
             libc::setrlimit(libc::RLIMIT_NOFILE, &r);
@@ -77,7 +80,12 @@ impl Network {
                 c.lock().unwrap().push(task.abort_handle());
             }
         });
-        Self { addr, conns, down, attempts }
+        Self {
+            addr,
+            conns,
+            down,
+            attempts,
+        }
     }
 
     fn cut(&self) {
@@ -106,8 +114,13 @@ async fn backend() -> std::net::SocketAddr {
     addr
 }
 
-fn join_config(relay: std::net::SocketAddr, id: &str, local: std::net::SocketAddr) -> cua_relay::client::JoinConfig {
-    let mut c = cua_relay::client::JoinConfig::new(format!("ws://{relay}"), TOKEN.into(), id.into(), local);
+fn join_config(
+    relay: std::net::SocketAddr,
+    id: &str,
+    local: std::net::SocketAddr,
+) -> cua_relay::client::JoinConfig {
+    let mut c =
+        cua_relay::client::JoinConfig::new(format!("ws://{relay}"), TOKEN.into(), id.into(), local);
     c.heartbeat = Duration::from_secs(5);
     c.max_backoff = Duration::from_secs(4);
     c.reconnect_spread = Duration::from_secs(3);
@@ -116,28 +129,50 @@ fn join_config(relay: std::net::SocketAddr, id: &str, local: std::net::SocketAdd
 
 /// Waits for `want` machines online, noting the most that joined in one
 /// second and the slowest `/healthz` meanwhile.
-async fn until_online(relay: &Relay, base: &str, want: usize, within: Duration) -> (Duration, usize, Duration) {
+async fn until_online(
+    relay: &Relay,
+    base: &str,
+    want: usize,
+    within: Duration,
+) -> (Duration, usize, Duration) {
     let started = Instant::now();
-    let client = reqwest::Client::builder().pool_max_idle_per_host(0).build().unwrap();
+    let client = reqwest::Client::builder()
+        .pool_max_idle_per_host(0)
+        .build()
+        .unwrap();
     let (mut peak, mut slowest) = (0usize, Duration::ZERO);
-    let mut window: std::collections::VecDeque<(Instant, usize)> = std::collections::VecDeque::new();
+    let mut window: std::collections::VecDeque<(Instant, usize)> =
+        std::collections::VecDeque::new();
     loop {
         let online = relay.machine_ids().len();
         let now = Instant::now();
         window.push_back((now, online));
-        while window.front().is_some_and(|(t, _)| now - *t > Duration::from_secs(1)) {
+        while window
+            .front()
+            .is_some_and(|(t, _)| now - *t > Duration::from_secs(1))
+        {
             window.pop_front();
         }
         let low = window.iter().map(|(_, n)| *n).min().unwrap_or(online);
         peak = peak.max(online.saturating_sub(low));
         let t = Instant::now();
-        let health = client.get(format!("{base}/healthz")).timeout(Duration::from_secs(5)).send().await;
+        let health = client
+            .get(format!("{base}/healthz"))
+            .timeout(Duration::from_secs(5))
+            .send()
+            .await;
         slowest = slowest.max(t.elapsed());
-        assert!(health.is_ok_and(|h| h.status().is_success()), "the relay stopped answering during the storm");
+        assert!(
+            health.is_ok_and(|h| h.status().is_success()),
+            "the relay stopped answering during the storm"
+        );
         if online >= want {
             return (started.elapsed(), peak, slowest);
         }
-        assert!(started.elapsed() < within, "{online} of {want} online after {within:?}");
+        assert!(
+            started.elapsed() < within,
+            "{online} of {want} online after {within:?}"
+        );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
@@ -158,14 +193,21 @@ async fn a_thousand_machines_cut_off_and_back_do_not_starve_the_relay() {
     let stop = CancellationToken::new();
     for i in 0..MACHINES {
         let id = format!("storm{i:04}{}", uuid::Uuid::new_v4().simple());
-        tokio::spawn(cua_relay::client::run(join_config(net.addr, &id, local), stop.clone()));
+        tokio::spawn(cua_relay::client::run(
+            join_config(net.addr, &id, local),
+            stop.clone(),
+        ));
     }
 
     // 1. Every machine knocks at once: the relay admits a burst then a steady
     //    rate, and the rest come back when told.
-    let (first, peak, slowest) = until_online(&relay, &base, MACHINES, Duration::from_secs(90)).await;
+    let (first, peak, slowest) =
+        until_online(&relay, &base, MACHINES, Duration::from_secs(90)).await;
     println!("STORM join: machines={MACHINES} all online in {first:?}, most joined in one second={peak}, slowest /healthz={slowest:?}");
-    assert!(peak <= 800, "{peak} machines joined in one second: the limiter (burst 500, 250/s) did not hold");
+    assert!(
+        peak <= 800,
+        "{peak} machines joined in one second: the limiter (burst 500, 250/s) did not hold"
+    );
 
     // 2. The network is cut, held down for a second, and comes back.
     tokio::time::sleep(Duration::from_secs(11)).await; // sessions count as "was up" after 10 s
@@ -178,22 +220,35 @@ async fn a_thousand_machines_cut_off_and_back_do_not_starve_the_relay() {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     let dropped = relay.machine_ids().len();
-    assert!(dropped < MACHINES / 2, "{dropped} machines still online after the cut");
+    assert!(
+        dropped < MACHINES / 2,
+        "{dropped} machines still online after the cut"
+    );
     tokio::time::sleep(Duration::from_secs(1)).await;
     let attempts_before = net.attempts.load(Ordering::Relaxed);
     net.down.store(false, Ordering::SeqCst);
     let back = Instant::now();
 
-    let (again, peak, slowest) = until_online(&relay, &base, MACHINES, Duration::from_secs(60)).await;
+    let (again, peak, slowest) =
+        until_online(&relay, &base, MACHINES, Duration::from_secs(60)).await;
     let attempts = net.attempts.load(Ordering::Relaxed) - attempts_before;
     println!(
         "STORM rejoin: all online again {again:?} after the network came back, connection attempts={attempts} for {MACHINES} machines, most joined in one second={peak}, slowest /healthz={slowest:?} ({:?} since)",
         back.elapsed()
     );
-    assert!(peak <= 800, "{peak} machines joined in one second after the cut");
-    assert!(slowest < Duration::from_secs(3), "/healthz took {slowest:?} during the rejoin");
+    assert!(
+        peak <= 800,
+        "{peak} machines joined in one second after the cut"
+    );
+    assert!(
+        slowest < Duration::from_secs(3),
+        "/healthz took {slowest:?} during the rejoin"
+    );
     // Spread, not hammered: each machine knocked a few times at most.
-    assert!(attempts <= MACHINES * 4, "{attempts} connection attempts for {MACHINES} machines");
+    assert!(
+        attempts <= MACHINES * 4,
+        "{attempts} connection attempts for {MACHINES} machines"
+    );
     stop.cancel();
 }
 
@@ -225,7 +280,11 @@ async fn machines_past_the_token_limit_keep_trying_and_take_a_freed_place() {
         async move {
             let deadline = Instant::now() + Duration::from_secs(20);
             while relay.machine_ids().len() != want {
-                assert!(Instant::now() < deadline, "{} online, wanted {want}", relay.machine_ids().len());
+                assert!(
+                    Instant::now() < deadline,
+                    "{} online, wanted {want}",
+                    relay.machine_ids().len()
+                );
                 tokio::time::sleep(Duration::from_millis(50)).await;
             }
         }
@@ -233,11 +292,22 @@ async fn machines_past_the_token_limit_keep_trying_and_take_a_freed_place() {
     // Exactly the limit is online; the others are refused (429) and retry.
     settle(LIMIT).await;
     tokio::time::sleep(Duration::from_secs(2)).await;
-    assert_eq!(relay.machine_ids().len(), LIMIT, "the limit holds while the rest keep trying");
+    assert_eq!(
+        relay.machine_ids().len(),
+        LIMIT,
+        "the limit holds while the rest keep trying"
+    );
 
     // Three leave: three of the waiting take their places, the limit still holds.
-    let online_before: std::collections::BTreeSet<String> = relay.machine_ids().into_iter().collect();
-    let leaving: Vec<usize> = ids.iter().enumerate().filter(|(_, id)| online_before.contains(*id)).map(|(i, _)| i).take(3).collect();
+    let online_before: std::collections::BTreeSet<String> =
+        relay.machine_ids().into_iter().collect();
+    let leaving: Vec<usize> = ids
+        .iter()
+        .enumerate()
+        .filter(|(_, id)| online_before.contains(*id))
+        .map(|(i, _)| i)
+        .take(3)
+        .collect();
     for i in &leaving {
         stops[*i].cancel();
     }
@@ -248,8 +318,16 @@ async fn machines_past_the_token_limit_keep_trying_and_take_a_freed_place() {
         if newcomers == 3 && now.len() == LIMIT {
             break;
         }
-        assert!(now.len() <= LIMIT, "{} online past the limit of {LIMIT}", now.len());
-        assert!(Instant::now() < deadline, "the freed places were not taken: {} online, {newcomers} new", now.len());
+        assert!(
+            now.len() <= LIMIT,
+            "{} online past the limit of {LIMIT}",
+            now.len()
+        );
+        assert!(
+            Instant::now() < deadline,
+            "the freed places were not taken: {} online, {newcomers} new",
+            now.len()
+        );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     for s in &stops {
@@ -270,7 +348,9 @@ async fn a_busy_relay_answers_503_with_a_retry_after() {
     })
     .await;
     let join = |id: &str| {
-        let mut request = format!("ws://{addr}{}", cua_relay::CONNECT_PATH).into_client_request().unwrap();
+        let mut request = format!("ws://{addr}{}", cua_relay::CONNECT_PATH)
+            .into_client_request()
+            .unwrap();
         let h = request.headers_mut();
         h.insert("authorization", format!("Bearer {TOKEN}").parse().unwrap());
         h.insert(cua_relay::MACHINE_ID_HEADER, id.parse().unwrap());
@@ -281,10 +361,20 @@ async fn a_busy_relay_answers_503_with_a_retry_after() {
     match join("busy-cccc").await {
         Err(Error::Http(response)) => {
             assert_eq!(response.status(), 503);
-            let secs: u64 = response.headers().get("retry-after").expect("a Retry-After").to_str().unwrap().parse().unwrap();
+            let secs: u64 = response
+                .headers()
+                .get("retry-after")
+                .expect("a Retry-After")
+                .to_str()
+                .unwrap()
+                .parse()
+                .unwrap();
             // Five seconds for the next token, plus up to five more of spread.
             assert!((1..=11).contains(&secs), "Retry-After {secs}");
         }
-        other => panic!("the third join should be told to wait, got {:?}", other.map(|_| ())),
+        other => panic!(
+            "the third join should be told to wait, got {:?}",
+            other.map(|_| ())
+        ),
     }
 }

@@ -1200,14 +1200,21 @@ async fn machine_connect_inner(
     };
     // A reconnect storm (every machine back at once after a restart) is let
     // in at a steady rate; the rest are told when to come back.
-    let admitted = relay.join_limiter.lock().expect("join limiter").admit(Instant::now());
+    let admitted = relay
+        .join_limiter
+        .lock()
+        .expect("join limiter")
+        .admit(Instant::now());
     if let Err(wait) = admitted {
         let unit = {
             use rand::Rng as _;
             rand::thread_rng().gen::<f64>()
         };
         let secs = crate::join_limit::retry_after_secs(wait, Duration::from_secs(5), unit);
-        let mut response = text(StatusCode::SERVICE_UNAVAILABLE, "the relay is busy; try again shortly");
+        let mut response = text(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "the relay is busy; try again shortly",
+        );
         if let Ok(v) = HeaderValue::from_str(&secs.to_string()) {
             response.headers_mut().insert(header::RETRY_AFTER, v);
         }

@@ -117,8 +117,22 @@ export function useSelection(shown: readonly SpaceItem[], paused: boolean): Sele
 }
 
 /** A tile's or row's checkbox. Over a picture it sits on a dark scrim; in the list it is plain. */
-export function SelectBox({ item, selection, onPicture = false, className }: { item: SpaceItem; selection: Selection; onPicture?: boolean; className?: string }) {
-  const on = selection.has(item.space.id);
+export function SelectBox({
+  item,
+  selection,
+  picked,
+  onPicture = false,
+  className,
+}: {
+  item: SpaceItem;
+  selection: Selection;
+  /** Whether it is picked, when the caller already knows (a memoized grid
+   * tile passes it: its `selection` stays the same object across picks). */
+  picked?: boolean;
+  onPicture?: boolean;
+  className?: string;
+}) {
+  const on = picked ?? selection.has(item.space.id);
   const can = selectable(item);
   const why = can || on ? null : unselectableReason(item);
   return (

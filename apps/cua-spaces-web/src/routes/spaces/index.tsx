@@ -3,7 +3,7 @@
 
 import { createFileRoute } from "@tanstack/react-router";
 import { MonitorIcon, PlusIcon, SearchIcon } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 
 import { emptyHome, listView, spaceDiskBytes, useBridge, useResources, useFirstSpaceOffers, useMachines, useNewSpaceWizard, useSpaceAccess, useSpaces, type Space } from "@/bridge";
 import { EmptyHome } from "@/components/empty-home";
@@ -46,7 +46,8 @@ function SpacesPage() {
     void navigate({ search: (prev: SpacesSearch) => nextSearch(prev, next), replace: true });
   const { data: all = [], isLoading, error, listNotice, listStatus, startSpace, stopSpace, creatingElsewhere } = useSpaces();
   // Machines' own desktops are on Machines, not here.
-  const spaces = realSpaces(all);
+  // Stable while the list is: the tiles below redraw only when their own item changes.
+  const spaces = useMemo(() => realSpaces(all), [all]);
   const { data: machines = [] } = useMachines();
   const resources = useResources();
   const [query, setQuery] = useState("");
@@ -116,6 +117,11 @@ function SpacesPage() {
     for (const it of list) void (on ? startSpace : stopSpace)(it.space.id).catch(toastError(`Couldn't turn ${on ? "on" : "off"} ${it.space.name}`));
   };
   const actions: MenuActions = { power: (it, on) => power([it], on), remove: (it) => bulk.ask([it]) };
+  // The grid's tiles read the selection and the menus' actions through this,
+  // so a tile redraws only when its own Space, pick or state changes (picking
+  // one of 3,000 Spaces redrew all 3,000).
+  const live = useRef<GridLive>({ selection, actions });
+  live.current = { selection, actions };
   // `?select=stopped` (the cleanup tip, a link): every stopped Space shown of yours, once the list is in.
   const ready = !isLoading && shown.length > 0;
   useEffect(() => {
@@ -244,30 +250,17 @@ function SpacesPage() {
               />
               </>
             ) : (
-              <ul className="grid grid-cols-[repeat(auto-fill,minmax(232px,1fr))] gap-x-5 gap-y-7">
+              <ul data-picking={selection.ids.size > 0 || undefined} className="group/grid grid grid-cols-[repeat(auto-fill,minmax(232px,1fr))] gap-x-5 gap-y-7">
                 {elsewhereTiles}
                 {shown.map((it) => (
-                  // Off-screen tiles skip layout and paint until they scroll in (with room for the selected ring).
-                  <li key={it.space.id} className={TILE_CELL}>
-                    <SpaceContextMenu item={it} actions={actions}>
-                      <SpaceTile
-                        item={it}
-                        accessKey={keyvault.signedIn.has(it.space.id) ? keyvault.accessKey(it.space.id) : undefined}
-                        selected={selection.has(it.space.id)}
-                        busy={bulk.running.has(it.space.id)}
-                        onClick={(e) => selection.onClick(it, e)}
-                        topLeft={
-                          <SelectBox
-                            item={it}
-                            selection={selection}
-                            onPicture
-                            className={selection.ids.size ? undefined : "opacity-0 group-focus-within/tile:opacity-100 group-hover/tile:opacity-100"}
-                          />
-                        }
-                        more={<SpaceMoreMenu item={it} actions={actions} />}
-                      />
-                    </SpaceContextMenu>
-                  </li>
+                  <GridTile
+                    key={it.space.id}
+                    item={it}
+                    selected={selection.has(it.space.id)}
+                    busy={bulk.running.has(it.space.id)}
+                    accessKey={keyvault.signedIn.has(it.space.id) ? keyvault.accessKey(it.space.id) : undefined}
+                    live={live}
+                  />
                 ))}
               </ul>
             );
@@ -289,3 +282,60 @@ function SpacesPage() {
 function SpacesPageSwitch() {
   return useFlag("spaces_redesign") ? <SpacesPage /> : <LegacySpacesPage />;
 }
+
+interface GridLive {
+  selection: ReturnType<typeof useSelection>;
+  actions: MenuActions;
+}
+
+/** One tile of the grid, redrawn only when its own props change (`live` is a
+ * stable ref to what every tile shares). */
+const GridTile = memo(function GridTile({
+  item,
+  selected,
+  busy,
+  accessKey,
+  live,
+}: {
+  item: SpaceItem;
+  selected: boolean;
+  busy: boolean;
+  accessKey: string | null | undefined;
+  live: RefObject<GridLive>;
+}) {
+  const actions = useMemo<MenuActions>(
+    () => ({ power: (it, on) => live.current.actions.power(it, on), remove: (it) => live.current.actions.remove(it) }),
+    [live],
+  );
+  // The checkbox reads whether it is picked and toggles it (the latest selection).
+  const selection = useMemo(
+    () => ({ ...live.current.selection, has: (id: string) => live.current.selection.has(id), toggle: (it: SpaceItem, e?: { shiftKey?: boolean }) => live.current.selection.toggle(it, e) }),
+    [live],
+  );
+  return (
+    // Off-screen tiles skip layout and paint until they scroll in (with room for the selected ring).
+    <li className={TILE_CELL}>
+      <SpaceContextMenu item={item} actions={actions}>
+        <SpaceTile
+          item={item}
+          accessKey={accessKey}
+          selected={selected}
+          busy={busy}
+          onClick={(e) => live.current.selection.onClick(item, e)}
+          topLeft={
+            <SelectBox
+              item={item}
+              selection={selection}
+              picked={selected}
+              onPicture
+              // Hidden until hovered, unless something is picked (the grid's `data-picking`): a
+              // CSS group, so the first pick doesn't redraw every tile.
+              className="opacity-0 group-focus-within/tile:opacity-100 group-hover/tile:opacity-100 group-data-[picking]/grid:opacity-100"
+            />
+          }
+          more={<SpaceMoreMenu item={item} actions={actions} />}
+        />
+      </SpaceContextMenu>
+    </li>
+  );
+});

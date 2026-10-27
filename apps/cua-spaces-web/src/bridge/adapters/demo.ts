@@ -74,6 +74,9 @@ export interface DemoOptions {
   noVault?: boolean;
   /** Start with no Spaces (the first-Space empty state). */
   noSpaces?: boolean;
+  /** This many more Spaces on the list, for scale (`?demo=scale-1000`;
+   * scripts/scale-bench.mjs). */
+  extraSpaces?: number;
   /** An account in no team (`?demo=no-team`): Share explains that sharing is for teams. */
   noTeam?: boolean;
   /** A team with no free computers (`?demo=team-full`): adding a machine to it is refused, as the control plane does at one computer per seat. Simulated: the demo has no control plane. */
@@ -164,6 +167,31 @@ const DEMO_NOTES = "https://github.com/trycua/cua/releases/tag/cua-spaces-v0.9.3
  * Space and the first Space offers see it too), and `?demo=intel-mac` /
  * `?demo=linux-pc` (an Intel Mac, an x64 Linux PC with QEMU), and
  * `?demo=creating-elsewhere` (the Mac mini is creating a Space). */
+/** `count` plain Spaces for scale: alternating systems, places and states,
+ * each with its own id, name and time (`?demo=scale-N`). */
+export function demoScaleRows(now: number, count: number): SpaceRow[] {
+  const oses = ["linux", "macos", "windows"] as const;
+  return Array.from({ length: count }, (_, i) => {
+    const os = oses[i % 3]!;
+    const on = i % 4 !== 0;
+    return {
+      id: `local:scale-${i}`,
+      name: `scale-${String(i).padStart(4, "0")}`,
+      provider: "local",
+      spacesdVersion: "0.6.0",
+      features: [],
+      addedAt: new Date(now - i * 60_000).toISOString(),
+      os,
+      osName: os === "linux" ? "Ubuntu" : os === "macos" ? "macOS" : "Windows",
+      kind: os === "macos" ? "vm" : "container",
+      arch: "arm64",
+      reachable: true,
+      power: "suspend",
+      powerState: on ? "running" : "stopped",
+    } as SpaceRow;
+  });
+}
+
 export function demoOptionsFromSearch(search: string): DemoOptions {
   const flags = new Set((new URLSearchParams(search).get("demo") ?? "").split(",").filter(Boolean));
   return {
@@ -174,6 +202,10 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     keyvaultLocked: flags.has("locked"),
     noVault: flags.has("novault"),
     noSpaces: flags.has("empty"),
+    ...(() => {
+      const scale = [...flags].find((f) => /^scale-\d+$/.test(f));
+      return scale ? { extraSpaces: Math.min(5000, Number(scale.slice(6))) } : {};
+    })(),
     noTeam: flags.has("no-team"),
     teamFull: flags.has("team-full"),
     noThread: flags.has("nothread"),
@@ -263,7 +295,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
   const timers = new Set<ReturnType<typeof setTimeout>>();
 
   const state: DemoState = {
-    rows: options.noSpaces ? [] : demoSpaceRows(now()),
+    rows: options.noSpaces ? [] : [...demoSpaceRows(now()), ...demoScaleRows(now(), options.extraSpaces ?? 0)],
     items: demoKeyvaultItems(now()),
     keyvaultLocked: Boolean(options.keyvaultLocked),
     keyvaultDisabled: false,

@@ -15,7 +15,7 @@
  */
 
 import { Link } from "@tanstack/react-router";
-import { ArrowDownCircleIcon, KeyRoundIcon, LoaderCircleIcon, PowerIcon } from "lucide-react";
+import { ArrowDownCircleIcon, EyeOffIcon, KeyRoundIcon, LoaderCircleIcon, PowerIcon } from "lucide-react";
 import { useEffect, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from "react";
 
 import { useBridge, useSpaceFiles, useSpaces, useSpaceThumbnail, useTips, useWindowDropTarget, type Space, type SpaceAccess } from "@/bridge";
@@ -29,7 +29,7 @@ import { createError, createProgress, powerButton, powerError, type PowerButton 
 import { cn } from "@/lib/utils";
 
 import { PeopleStack, SpaceMark } from "./avatars";
-import type { SpaceItem } from "./model";
+import { desktopWord, type SpaceItem } from "./model";
 
 export interface SpaceTileProps {
   item: SpaceItem;
@@ -43,6 +43,8 @@ export interface SpaceTileProps {
   topLeft?: ReactNode;
   /** After the text, on hover (the "⋯" menu). */
   more?: ReactNode;
+  /** A machine's desktop: Hide, in place of the power button, on hover. */
+  hide?: () => void;
   /** A click on the tile; call `preventDefault` to keep it from opening. */
   onClick?: (e: MouseEvent) => void;
 }
@@ -56,16 +58,17 @@ export interface SpaceTileProps {
  */
 export const TILE_CELL = "-m-1 p-1 [content-visibility:auto] [contain-intrinsic-size:auto_240px]";
 
-export function SpaceTile({ item, accessKey, selected = false, busy = false, topLeft, more, onClick }: SpaceTileProps) {
+export function SpaceTile({ item, accessKey, selected = false, busy = false, topLeft, more, hide, onClick }: SpaceTileProps) {
   const { space, state, access } = item;
-  const drop = useTileDrop(space, state === "running");
+  const drop = useTileDrop(space, state === "running" && item.desktop !== "off");
   // A real window dragged over this tile (the host hit-tests the tiles' boxes and says which; macOS only).
   const windowOver = useWindowDropTarget() === space.id;
   const creating = state === "creating";
   const { core } = useBridge();
   // Shown wherever the Space has power at all; disabled, with why, where you may not use it.
-  const power = powerButton(core, space);
+  const power = item.desktop ? null : powerButton(core, space);
   const hasPower = power !== null;
+  const hasAction = hasPower || Boolean(hide);
   return (
     <div
       className={cn("group/tile relative", (busy || state === "deleting") && "opacity-60")}
@@ -93,10 +96,12 @@ export function SpaceTile({ item, accessKey, selected = false, busy = false, top
               <p data-space-name="" className="min-w-0 flex-1 truncate text-[13px] leading-5 font-semibold">
                 {space.name}
               </p>
+              {item.desktop ? <DesktopTag /> : null}
               {/* The state, in the core's words ("Running", "Suspended", "Turning off…"), flush right; the hover "⋯" takes its place. */}
               <StateLabel
-                state={state}
+                state={item.desktop === "off" ? "stopped" : state}
                 space={space}
+                word={desktopWord(item)}
                 className="shrink-0 group-has-[[data-space-more]]/tile:group-hover/tile:invisible group-has-[[data-space-more]]/tile:group-focus-within/tile:invisible group-has-[[data-popup-open]]/tile:invisible"
               />
             </div>
@@ -145,7 +150,7 @@ export function SpaceTile({ item, accessKey, selected = false, busy = false, top
             title="A Keyvault sign-in is live in this Space. Open Access."
             className={cn(
               "ml-auto inline-flex h-6 items-center gap-1 rounded-md bg-black/55 px-1.5 text-[11px] font-medium text-white/90 outline-none backdrop-blur-sm transition-[margin] hover:text-white focus-visible:ring-2 focus-visible:ring-ring/60",
-              hasPower && "group-hover/tile:mr-7 group-focus-within/tile:mr-7",
+              hasAction && "group-hover/tile:mr-7 group-focus-within/tile:mr-7",
             )}
           >
             <KeyRoundIcon className="size-3" /> Signed in
@@ -155,10 +160,40 @@ export function SpaceTile({ item, accessKey, selected = false, busy = false, top
           <div className="absolute right-0 top-0">
             <TilePower space={space} button={power} denied={access.canPower ? null : cantPower(access)} />
           </div>
+        ) : hide ? (
+          <div className="absolute right-0 top-0">
+            <TileHide name={space.name} onHide={hide} />
+          </div>
         ) : null}
       </div>
       {more ? <div className="absolute top-[calc(100%-2.75rem)] right-0 z-10">{more}</div> : null}
     </div>
+  );
+}
+
+/** The "Desktop" tag beside a machine's own desktop in the list. */
+export function DesktopTag() {
+  return (
+    <span data-desktop-tag="" className="shrink-0 text-xs text-muted-foreground">
+      Desktop
+    </span>
+  );
+}
+
+/** Hide, on a desktop's hover where a Space has its power button: the row leaves the list until "Show hidden". */
+function TileHide({ name, onHide }: { name: string; onHide: () => void }) {
+  return (
+    <button
+      type="button"
+      data-tile-hide=""
+      data-video-hole=""
+      title="Hide"
+      aria-label={`Hide ${name}`}
+      onClick={onHide}
+      className="inline-flex size-6 items-center justify-center rounded-lg bg-black/55 text-white/90 opacity-0 outline-none backdrop-blur-sm group-focus-within/tile:opacity-100 group-hover/tile:opacity-100 hover:bg-black/70 hover:text-white focus-visible:ring-2 focus-visible:ring-ring/60"
+    >
+      <EyeOffIcon className="size-3" aria-hidden />
+    </button>
   );
 }
 

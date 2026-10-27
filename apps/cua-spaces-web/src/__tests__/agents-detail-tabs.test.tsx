@@ -20,7 +20,7 @@ describe.skipIf(!wasmBuilt)("Agents, a persistent agent's detail", () => {
   it("shows Memory, adds a routine and lists Access with its audit", { timeout: 20_000 }, async () => {
     await mountApp("/agents/all?agent=ada", { failsCreates: false, listsGhost: false });
     await waitFor(() => expect(tab("memory")).not.toBeNull(), { timeout: 8000 });
-    expect([...document.querySelectorAll("[data-agent-tab]")].map((t) => t.textContent)).toEqual(["Conversation", "Memory", "Routines", "Access to this computer"]);
+    expect([...document.querySelectorAll("[data-agent-tab]")].map((t) => t.textContent)).toEqual(["Conversation", "Memory", "Routines", "Access to this machine"]);
     expect(tab("run")!.getAttribute("aria-selected")).toBe("true");
 
     fireEvent.click(tab("memory")!);
@@ -45,7 +45,7 @@ describe.skipIf(!wasmBuilt)("Agents, a persistent agent's detail", () => {
 
     fireEvent.click(tab("access")!);
     const access = await waitFor(() => panel("access")!);
-    expect(within(access).getByText("This computer")).toBeTruthy();
+    expect(within(access).getByText("This machine")).toBeTruthy();
     expect(within(access).getByRole("button", { name: "Revoke" })).toBeTruthy();
     expect(within(access).getByText("Audit")).toBeTruthy();
     expect(within(access).getByText("Used relay:this-mac")).toBeTruthy();

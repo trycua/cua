@@ -22,9 +22,9 @@ const machine = (over: Partial<Machine>): Machine => ({
 });
 
 describe("machines", () => {
-  it("counts computers in the Computers header in the singular too", () => {
-    expect(machinesSummary(1, 1)).toBe("1 computer, 1 online");
-    expect(machinesSummary(3, 2)).toBe("3 computers, 2 online");
+  it("counts machines in the Machines header in the singular too", () => {
+    expect(machinesSummary(1, 1)).toBe("1 machine, 1 online");
+    expect(machinesSummary(3, 2)).toBe("3 machines, 2 online");
   });
 
   it("reads the OS the host reported", () => {
@@ -72,7 +72,7 @@ describe("machines", () => {
 
   it("counts a shared desktop in the words (machines::desktop_spaces_label)", () => {
     expect(spacesLabel(machine({}), 0, true)).toBe("Desktop shared");
-    expect(spacesLabel(machine({}), 2, true)).toBe("Desktop · 2 Spaces");
+    expect(spacesLabel(machine({}), 2, true)).toBe("Desktop and 2 Spaces");
     // A label the core sent still wins.
     expect(spacesLabel(machine({ spacesLabel: "No Spaces" }), 0, true)).toBe("No Spaces");
     expect(spacesLabel(machine({ device: true, spacesLabel: "" }), 0, true)).toBe("");

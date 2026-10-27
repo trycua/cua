@@ -9,18 +9,19 @@
  */
 
 import { Link, useNavigate } from "@tanstack/react-router";
-import { ArrowDownIcon, ArrowUpIcon, LoaderCircleIcon } from "lucide-react";
+import { ArrowDownIcon, ArrowUpIcon, EyeOffIcon, LoaderCircleIcon } from "lucide-react";
 import type { MouseEvent, ReactNode, RefObject } from "react";
 
 import { OsIcon } from "@/components/os-icon";
 import { StateLabel } from "@/components/state-dot";
+import { DesktopTag } from "@/components/spaces/space-tile";
 import { useWindowedRows } from "@/hooks/use-windowed-rows";
 import { lastUsedText, sizeCell, type SpacesSort } from "@/lib/spaces-page";
 import { WINDOW_FROM } from "@/lib/windowing";
 import { cn } from "@/lib/utils";
 
 import { PeopleStack, SpaceMark } from "./avatars";
-import type { SpaceItem } from "./model";
+import { desktopWord, type SpaceItem } from "./model";
 
 export interface SpaceListProps {
   items: SpaceItem[];
@@ -39,12 +40,14 @@ export interface SpaceListProps {
   /** The row's "⋯" (on hover) and right-click menu. */
   menu?: (item: SpaceItem, children: ReactNode) => ReactNode;
   more?: (item: SpaceItem) => ReactNode;
+  /** A machine's desktop row: Hide, in place of the "⋯", on hover. */
+  hide?: (item: SpaceItem) => void;
 }
 
 /** A list row's height (`h-10`), and nothing between rows. */
 const ROW_PITCH = 40;
 
-export function SpaceList({ items, sort, onSort, now, selection, menu, more }: SpaceListProps) {
+export function SpaceList({ items, sort, onSort, now, selection, menu, more, hide }: SpaceListProps) {
   // A long list draws only the rows on screen (`lib/windowing.ts`).
   const windowed = useWindowedRows({ enabled: items.length >= WINDOW_FROM, rows: items.length, perRow: 1, gap: 0, estimatePitch: () => ROW_PITCH });
   const { start: from, end: to } = windowed.window;
@@ -69,14 +72,14 @@ export function SpaceList({ items, sort, onSort, now, selection, menu, more }: S
         {selection ? <span role="columnheader">{selection.header}</span> : null}
         <span role="columnheader">{head("name", "Name")}</span>
         <span role="columnheader">{head(null, "Status")}</span>
-        <span role="columnheader">{head(null, "Computer")}</span>
+        <span role="columnheader">{head(null, "Machine")}</span>
         <span role="columnheader">{head("size", "Size", true)}</span>
         <span role="columnheader">{head("used", "Last used")}</span>
         <span />
       </div>
       <div role="rowgroup" ref={windowed.ref as RefObject<HTMLDivElement>} style={windowed.style}>
         {items.slice(from, to).map((item) => {
-          const row = <ListRow key={item.space.id} item={item} cols={cols} now={now} selection={selection} more={more?.(item)} />;
+          const row = <ListRow key={item.space.id} item={item} cols={cols} now={now} selection={selection} more={item.desktop ? undefined : more?.(item)} hide={item.desktop ? () => hide?.(item) : undefined} />;
           return menu ? <div key={item.space.id}>{menu(item, row)}</div> : row;
         })}
       </div>
@@ -84,7 +87,7 @@ export function SpaceList({ items, sort, onSort, now, selection, menu, more }: S
   );
 }
 
-function ListRow({ item, cols, now, selection, more }: { item: SpaceItem; cols: string; now: number; selection: SpaceListProps["selection"]; more?: ReactNode }) {
+function ListRow({ item, cols, now, selection, more, hide }: { item: SpaceItem; cols: string; now: number; selection: SpaceListProps["selection"]; more?: ReactNode; hide?: () => void }) {
   const { space, state, access } = item;
   const navigate = useNavigate();
   const selected = selection?.selected(item) ?? false;
@@ -123,6 +126,7 @@ function ListRow({ item, cols, now, selection, more }: { item: SpaceItem; cols: 
         >
           {space.name}
         </Link>
+        {item.desktop ? <DesktopTag /> : null}
         <PeopleStack access={access} />
       </span>
       <span role="cell" className="flex min-w-0 items-center">
@@ -131,7 +135,7 @@ function ListRow({ item, cols, now, selection, more }: { item: SpaceItem; cols: 
             <LoaderCircleIcon className="size-3 animate-spin" aria-hidden /> Deleting
           </span>
         ) : (
-          <StateLabel state={state} space={space} />
+          <StateLabel state={item.desktop === "off" ? "stopped" : state} space={space} word={desktopWord(item)} />
         )}
       </span>
       <span role="cell" className="truncate text-xs text-muted-foreground">
@@ -144,7 +148,20 @@ function ListRow({ item, cols, now, selection, more }: { item: SpaceItem; cols: 
         {lastUsedText(space.lastUsedAt, now)}
       </span>
       <span role="cell" className="flex justify-end" onClick={(e) => e.stopPropagation()}>
-        {more}
+        {hide ? (
+          <button
+            type="button"
+            data-row-hide=""
+            title="Hide"
+            aria-label={`Hide ${space.name}`}
+            onClick={hide}
+            className="flex size-7 shrink-0 cursor-default items-center justify-center rounded-lg text-muted-foreground opacity-0 outline-none group-hover/row:opacity-100 hover:bg-tile hover:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/60"
+          >
+            <EyeOffIcon className="size-4" aria-hidden />
+          </button>
+        ) : (
+          more
+        )}
       </span>
     </div>
   );

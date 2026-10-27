@@ -14,7 +14,7 @@ import { useMemo, type KeyboardEvent, type MouseEvent } from "react";
 
 import { spaceDiskBytes, useMachines, useResources, useSpaces, useSpaceThumbnail, type AgentChat } from "@/bridge";
 import { BulkConfirmDialog, useBulkRemove } from "@/components/spaces/bulk-remove";
-import type { SpaceItem } from "@/components/spaces/model";
+import { desktopOf, type SpaceItem } from "@/components/spaces/model";
 import { SpaceMoreMenu, type MenuActions } from "@/components/spaces/space-menu";
 import { SpaceTile } from "@/components/spaces/space-tile";
 import { AgentTile } from "@/components/space-thread/avatar";
@@ -23,7 +23,9 @@ import { GroupedSection } from "@/components/ui/grouped";
 import { toastError } from "@/components/ui/toast";
 import { useAttemptAction } from "@/hooks/use-agent-attempts";
 import { accessOf, isMine } from "@/lib/space-access";
-import { machineName, realSpaces, spaceState } from "@/lib/spaces";
+import { useListedSpaces } from "@/components/spaces/listed";
+import { hideDesktop } from "@/lib/hidden-desktops";
+import { machineName, orderSpaces, spaceState } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
 
 /** Agents shown on Home before See all. */
@@ -126,31 +128,34 @@ export function YourSpaces() {
   const { data, startSpace, stopSpace } = useSpaces();
   const { data: machines = [] } = useMachines();
   const resources = useResources();
-  const spaces = realSpaces(data ?? []);
+  // Running Spaces first, then the most recently used; This Mac's unshared desktop never counts.
+  const { listed, counted } = useListedSpaces(data);
+  const spaces = useMemo(() => orderSpaces(listed), [listed]);
   const items = useMemo(
     () =>
       spaces.map((space): SpaceItem => {
         const machine = machineName(machines, space);
         const mine = isMine(space);
-        return { space, state: spaceState(space), access: accessOf(space, machine), mine, bytes: mine ? spaceDiskBytes(resources, space.id) : null, machine };
+        return { space, state: spaceState(space), access: accessOf(space, machine), mine, bytes: mine ? spaceDiskBytes(resources, space.id) : null, machine, desktop: desktopOf(space) };
       }),
     [spaces, machines, resources],
   );
   const present = useMemo(() => new Set(spaces.map((s) => s.id)), [spaces]);
   const bulk = useBulkRemove(present, () => {});
-  if (spaces.length === 0) return null;
-  const running = items.filter((it) => it.state === "running").length;
+  if (counted.length === 0) return null;
+  const running = items.filter((it) => it.state === "running" && it.desktop !== "off").length;
   const actions: MenuActions = {
+    hide: (it) => hideDesktop(it.space.id),
     power: (it, on) => void (on ? startSpace : stopSpace)(it.space.id).catch(toastError(`Couldn't turn ${on ? "on" : "off"} ${it.space.name}`)),
     remove: (it) => bulk.ask([it]),
   };
   return (
     <section data-home-spaces="">
-      <SectionHead title="Your Spaces" note={running ? `${running} running` : null} to="/spaces" all={`See all ${spaces.length}`} />
+      <SectionHead title="Your Spaces" note={running ? `${running} running` : null} to="/spaces" all={`See all ${counted.length}`} />
       <ul className="grid grid-cols-2 gap-5 md:grid-cols-4">
         {items.slice(0, HOME_SPACES).map((it) => (
           <li key={it.space.id}>
-            <SpaceTile item={it} more={<SpaceMoreMenu item={it} actions={actions} />} />
+            <SpaceTile item={it} hide={it.desktop ? () => actions.hide?.(it) : undefined} more={it.desktop ? undefined : <SpaceMoreMenu item={it} actions={actions} />} />
           </li>
         ))}
       </ul>

@@ -245,7 +245,7 @@ struct MachineAccessTests {
                                                 enrollment: .enrolled, hostSetUp: true, hostStatus: status)
             #expect(m.sidebar.thisMachine != nil)
             let mine = try #require(m.sidebar.sections.first { $0.title.code == "spaces.sidebar.section.my_computers" },
-                                    "no My computers for \(features) \(String(describing: error))")
+                                    "no My machines for \(features) \(String(describing: error))")
             #expect(mine.rows.map(\.id) == [other])
         }
     }

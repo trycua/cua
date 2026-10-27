@@ -251,7 +251,7 @@ describe("Add a computer by link or QR code", () => {
     });
     await mount(flaky);
     await waitFor(() => expect(phase()).toBe("error"));
-    expect(screen.getByText(/This computer isn't set up for access yet\. Set it up first, then add computers\./)).toBeTruthy();
+    expect(screen.getByText(/This machine isn't set up for access yet\. Set it up first, then add machines\./)).toBeTruthy();
     expect(document.body.textContent).not.toMatch(/relay: no such device|not found:/);
     fail = false;
     fireEvent.click(screen.getByText("Try again"));

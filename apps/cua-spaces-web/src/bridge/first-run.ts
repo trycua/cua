@@ -156,7 +156,7 @@ const rank = (id: string) => {
 /** Without the core: the screens in their plainest state. Not the
  * product's behaviour; the demo and tests without wasm use it. */
 function fallbackView(input: FirstRunInput): FirstRunView {
-  const place = input.hostOs === "macos" ? "this Mac" : input.hostOs === "windows" ? "this PC" : "this computer";
+  const place = input.hostOs === "macos" ? "this Mac" : input.hostOs === "windows" ? "this PC" : "this machine";
   const Place = `${place[0]!.toUpperCase()}${place.slice(1)}`;
   const found = (input.agents ?? []).filter((a) => a.installed || a.configured).sort((a, b) => rank(a.agent) - rank(b.agent));
   const connected = found.filter((a) => a.configured || (input.picked ?? []).includes(a.agent));
@@ -202,7 +202,7 @@ function fallbackView(input: FirstRunInput): FirstRunView {
       };
     }
     case "welcome":
-      return { ...base, welcome: { title: "Your computers, shared by your team and its agents.", lede: `Run agents in Spaces on ${place}, or on any computer your team connects.`, primary: { id: "start", label: "Get started" } } };
+      return { ...base, welcome: { title: "Your machines, shared by your team and its agents.", lede: `Run agents in Spaces on ${place}, or on any computer your team connects.`, primary: { id: "start", label: "Get started" } } };
     case "connect":
       return {
         ...base,
@@ -225,10 +225,10 @@ function fallbackView(input: FirstRunInput): FirstRunView {
       return {
         ...base,
         devices: {
-          title: input.signedIn ? `${Place} is in your account.` : "Add your other computers.",
-          lede: `Sign in to Cua here and on your other computers. Then they can all use ${place}'s Spaces.`,
+          title: input.signedIn ? `${Place} is in your account.` : "Add your other machines.",
+          lede: `Sign in to Cua here and on your other machines. Then they can all use ${place}'s Spaces.`,
           rows: [
-            { title: "Your other computers", note: "Sign in on each one" },
+            { title: "Your other machines", note: "Sign in on each one" },
             { title: "Your cloud", note: "Hetzner, AWS, Google Cloud or Modal" },
           ],
           status: null,

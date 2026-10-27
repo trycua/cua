@@ -14,7 +14,8 @@ import { CuaKey } from "@/components/cua-key";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
 import { bindingFor } from "@/lib/keybindings";
-import { realSpaces, spaceState } from "@/lib/spaces";
+import { useListedSpaces } from "@/components/spaces/listed";
+import { spaceState } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
 import { SIDEBAR_DEFAULT, useUiStore } from "@/stores/ui";
 import { Shortcut } from "@/components/ui/kbd";
@@ -31,7 +32,8 @@ export function Sidebar() {
   const notifications = useNotifications();
   // No count before the list was read (not "0" while the daemon starts); while computers still answer, the
   // Spaces known so far.
-  const spacesCount = spaces && listStatus.loaded ? realSpaces(spaces).length : undefined;
+  const { counted } = useListedSpaces(spaces);
+  const spacesCount = spaces && listStatus.loaded ? counted.length : undefined;
   const counts: Partial<Record<string, number>> = { "/spaces": spacesCount, "/machines": machines?.length };
   const navItems = useNavItems();
   const unread = notifications.data?.unread ?? 0;

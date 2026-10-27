@@ -20092,9 +20092,9 @@ public struct AppHostSetupRequest: Equatable, Hashable {
      */
     public var allow: [String]?
     /**
-     * What the machine is for: `desktop` (share this desktop, and
-     * provide Spaces on a new relay setup; the default) or `spare` (only
-     * run Spaces for your other devices).
+     * What the machine is for: `spare` (the default: other machines
+     * create Spaces here, its desktop stays private) or `desktop` (also
+     * let other machines control this desktop).
      */
     public var profile: String?
     /**
@@ -20102,10 +20102,9 @@ public struct AppHostSetupRequest: Equatable, Hashable {
      */
     public var shareDesktop: Bool?
     /**
-     * Create Spaces for your other devices (overrides the profile).
-     * `None` with the desktop profile: on for a new relay setup; a
-     * machine set up before keeps its setting (the host decides,
-     * `cua_host::default_provide_spaces`).
+     * Let other machines create Spaces here (overrides the profile).
+     * `None`: on for a new relay setup; a machine set up before keeps
+     * its setting (the host decides, `cua_host::default_provide_spaces`).
      */
     public var provideSpaces: Bool?
 
@@ -20128,18 +20127,17 @@ public struct AppHostSetupRequest: Equatable, Hashable {
          * Accounts (ids or emails) allowed besides the owner.
          */allow: [String]?,
         /**
-         * What the machine is for: `desktop` (share this desktop, and
-         * provide Spaces on a new relay setup; the default) or `spare` (only
-         * run Spaces for your other devices).
+         * What the machine is for: `spare` (the default: other machines
+         * create Spaces here, its desktop stays private) or `desktop` (also
+         * let other machines control this desktop).
          */profile: String?,
         /**
          * Share this machine's own desktop (overrides the profile).
          */shareDesktop: Bool?,
         /**
-         * Create Spaces for your other devices (overrides the profile).
-         * `None` with the desktop profile: on for a new relay setup; a
-         * machine set up before keeps its setting (the host decides,
-         * `cua_host::default_provide_spaces`).
+         * Let other machines create Spaces here (overrides the profile).
+         * `None`: on for a new relay setup; a machine set up before keeps
+         * its setting (the host decides, `cua_host::default_provide_spaces`).
          */provideSpaces: Bool?) {
         self.mode = mode
         self.relayUrl = relayUrl
@@ -23968,7 +23966,8 @@ public struct AppMachinesViewMachine: Equatable, Hashable {
      */
     public var noticeAction: AppHostAction?
     /**
-     * Provide Spaces, then Share this desktop.
+     * Create Spaces here, then control this desktop (This Mac: the
+     * desktop switch only).
      */
     public var toggles: [AppMachinesViewToggle]
     /**
@@ -24067,7 +24066,8 @@ public struct AppMachinesViewMachine: Equatable, Hashable {
          * The notice's button (Sign In).
          */noticeAction: AppHostAction?,
         /**
-         * Provide Spaces, then Share this desktop.
+         * Create Spaces here, then control this desktop (This Mac: the
+         * desktop switch only).
          */toggles: [AppMachinesViewToggle],
         /**
          * Under read-only switches: where they change.
@@ -24322,7 +24322,7 @@ public struct AppMachinesViewRelay: Equatable, Hashable {
      */
     public var ownerEmail: String?
     /**
-     * It creates Spaces for your devices (`None`: it did not say).
+     * It lets your other machines create Spaces (`None`: it did not say).
      */
     public var providesSpaces: Bool?
 
@@ -24342,7 +24342,7 @@ public struct AppMachinesViewRelay: Equatable, Hashable {
          * Its owner's email, when the relay says.
          */ownerEmail: String?,
         /**
-         * It creates Spaces for your devices (`None`: it did not say).
+         * It lets your other machines create Spaces (`None`: it did not say).
          */providesSpaces: Bool?) {
         self.id = id
         self.role = role
@@ -24782,7 +24782,8 @@ public struct AppMachinesViewToggle: Equatable, Hashable {
      */
     public var id: String
     /**
-     * "Provide Spaces", "Share this desktop".
+     * "Let other machines create Spaces here", "Let other machines control
+     * this desktop".
      */
     public var label: String
     /**
@@ -24818,7 +24819,8 @@ public struct AppMachinesViewToggle: Equatable, Hashable {
          * `spaces` or `desktop`.
          */id: String,
         /**
-         * "Provide Spaces", "Share this desktop".
+         * "Let other machines create Spaces here", "Let other machines control
+         * this desktop".
          */label: String,
         /**
          * One line under it.

@@ -60,9 +60,9 @@ function UsageBar({ id, label, text, used, limit }: { id: string; label: string;
 
 /** What the plan gives, in one line, from the limits the relay reports. */
 function allowanceLine(plan: string, usage: RelayUsage): string | null {
-  const { liveSessionsLimit: computers, hoursLimit: away } = usage;
-  if (!computers || !away) return null;
-  return `${plan}: ${computers} computers at once and ${hours(away)} hours a month away from the computer you're using.`;
+  const { liveSessionsLimit: machines, hoursLimit: away } = usage;
+  if (!machines || !away) return null;
+  return `${plan}: ${machines} machines at once and ${hours(away)} hours a month away from the machine you're using.`;
 }
 
 /**
@@ -134,7 +134,7 @@ export function AccountTab() {
             />
             <UsageBar
               id="Live sessions"
-              label="Computers in use right now"
+              label="Machines in use right now"
               text={`${usage.liveSessions} of ${usage.liveSessionsLimit ?? 0}`}
               used={usage.liveSessions}
               limit={usage.liveSessionsLimit}

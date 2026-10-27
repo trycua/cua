@@ -53,7 +53,7 @@ describe("the Spaces page while the list is incomplete", { timeout: 30_000 }, ()
     // This machine answered, 6 computers have not yet.
     status.current = { loaded: true, incomplete: true, reaching: 6, stale: false };
     act(() => emit({ type: "spaces.changed" }));
-    await waitFor(() => expect(reaching()).toBe("Reaching 6 computers…"), WAIT);
+    await waitFor(() => expect(reaching()).toBe("Reaching 6 machines…"), WAIT);
     expect(emptyHome()).toBeNull();
 
     // Every computer answered and there is no Space: now it is empty.
@@ -66,7 +66,7 @@ describe("the Spaces page while the list is incomplete", { timeout: 30_000 }, ()
   it("shows the Spaces known so far with the line under them", async () => {
     const status = { current: { loaded: true, incomplete: true, reaching: 1, stale: false } };
     await mount(status, false);
-    await waitFor(() => expect(reaching()).toBe("Reaching 1 computer…"), WAIT);
+    await waitFor(() => expect(reaching()).toBe("Reaching 1 machine…"), WAIT);
     const grid = document.querySelector("ul.grid");
     expect(grid?.children.length).toBeGreaterThan(0);
     // The line follows the tiles, so they do not move when it goes.
@@ -86,9 +86,9 @@ describe("listView", () => {
   // The core's decision, and the TypeScript stand-in without it, agree.
   const cases: [ListStatus, number, { empty: boolean; reachingLine: string | null }][] = [
     [{ loaded: false, incomplete: false, reaching: 0, stale: false }, 0, { empty: false, reachingLine: "Loading Spaces…" }],
-    [{ loaded: true, incomplete: true, reaching: 6, stale: false }, 0, { empty: false, reachingLine: "Reaching 6 computers…" }],
-    [{ loaded: true, incomplete: true, reaching: 1, stale: false }, 2, { empty: false, reachingLine: "Reaching 1 computer…" }],
-    [{ loaded: true, incomplete: true, reaching: 0, stale: false }, 0, { empty: false, reachingLine: "Reaching your computers…" }],
+    [{ loaded: true, incomplete: true, reaching: 6, stale: false }, 0, { empty: false, reachingLine: "Reaching 6 machines…" }],
+    [{ loaded: true, incomplete: true, reaching: 1, stale: false }, 2, { empty: false, reachingLine: "Reaching 1 machine…" }],
+    [{ loaded: true, incomplete: true, reaching: 0, stale: false }, 0, { empty: false, reachingLine: "Reaching your machines…" }],
     [{ loaded: true, incomplete: false, reaching: 0, stale: false }, 0, { empty: true, reachingLine: null }],
     [{ loaded: true, incomplete: false, reaching: 0, stale: false }, 3, { empty: false, reachingLine: null }],
   ];

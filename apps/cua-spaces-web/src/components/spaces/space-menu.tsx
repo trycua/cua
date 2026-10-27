@@ -46,6 +46,8 @@ export interface MenuActions {
   power: (item: SpaceItem, on: boolean) => void;
   /** Ask to delete or leave it (the bulk confirm, with one Space). */
   remove: (item: SpaceItem) => void;
+  /** Hide a machine's desktop row from the list (Hide on its hover). */
+  hide?: (item: SpaceItem) => void;
 }
 
 /** The menu's items, each with what it does. */
@@ -55,7 +57,8 @@ export function useSpaceMenu(item: SpaceItem, actions: MenuActions): (SpaceMenuI
   const share = useShareSheet();
   const teleport = useTeleport();
   const { data: session } = useSession();
-  if (core.status !== "ready") return [];
+  // A machine's desktop is not a Space: no delete, power or share menu; Hide is its hover button.
+  if (core.status !== "ready" || item.desktop) return [];
   const items = spaceMenu(core, menuInput(item));
   const run = (id: SpaceMenuItem["id"]) => {
     switch (id) {

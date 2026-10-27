@@ -548,11 +548,11 @@ mod tests {
         // Linux: cua has no vault there (the file store never holds agent keys), so no store is named.
         assert_eq!(
             view_on(&AgentKeysInput::default(), SpaceOs::Linux).intro,
-            "Agents in your Spaces need a provider key to run. Keys stay on this computer, and each one is only given to the agents that use it."
+            "Agents in your Spaces need a provider key to run. Keys stay on this machine, and each one is only given to the agents that use it."
         );
         assert_eq!(
             sheet(SpaceOs::Linux).value_help,
-            "It's saved on this computer and won't be shown again."
+            "It's saved on this machine and won't be shown again."
         );
 
         // Nothing of another system's words is left, in any sheet or section.

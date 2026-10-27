@@ -6889,6 +6889,94 @@ pub struct AppExperiments {
     pub web_ui: bool,
 }
 
+/// A runtime the host found for one kind (the SDK's `RuntimeDetected`).
+pub type AppDetectedRuntime = core::runtimes::DetectedRuntime;
+#[uniffi::remote(Record)]
+pub struct AppDetectedRuntime {
+    /// `docker`, `podman`, `lume`, `qemu`, `container`, `firecracker`.
+    pub tool: String,
+    /// As people know it (`Docker`, `Apple container`).
+    pub name: String,
+    pub path: String,
+    /// As its `--version` says it (`27.3.1`).
+    pub version: Option<String>,
+    /// The one guest system it runs, when only one (`macOS`, `Linux`).
+    pub guests: Option<String>,
+}
+
+/// What a binary is for one kind (the SDK's `RuntimePathProbe`).
+pub type AppRuntimePathCheck = core::runtimes::RuntimePathCheck;
+#[uniffi::remote(Record)]
+pub struct AppRuntimePathCheck {
+    pub path: String,
+    /// A file is there.
+    pub exists: bool,
+    /// It can be run.
+    pub executable: bool,
+    /// The tool it is, when it is one the kind takes.
+    pub tool: Option<String>,
+    pub name: Option<String>,
+    pub version: Option<String>,
+    /// The oldest version Cua runs on.
+    pub min_version: Option<String>,
+    /// The tools the kind takes here (`Docker`, `Podman`).
+    pub expected: Vec<String>,
+    pub guests: Option<String>,
+}
+
+/// One kind as the host read it (the SDK's `RuntimeKindState`).
+pub type AppRuntimeKindInput = core::runtimes::RuntimeKindInput;
+#[uniffi::remote(Record)]
+pub struct AppRuntimeKindInput {
+    /// `container`, `vm` or `microvm`.
+    pub kind: String,
+    /// `runtime.<kind>`: `auto`, `builtin`, `system` (none: auto).
+    pub source: Option<String>,
+    /// `runtime.<kind>_path`, when set.
+    pub path: Option<String>,
+    /// What is installed for the kind, the one used first (none: not
+    /// looked for yet).
+    pub detected: Option<Vec<AppDetectedRuntime>>,
+    /// The path in use, probed.
+    pub check: Option<AppRuntimePathCheck>,
+    /// The tools the kind takes on this machine (`Docker`, `Podman`).
+    pub expected: Vec<String>,
+}
+
+/// What Settings knows about this machine's runtimes.
+pub type AppRuntimesInput = core::runtimes::RuntimesInput;
+#[uniffi::remote(Record)]
+pub struct AppRuntimesInput {
+    /// This machine's system (none: not said; every option is offered).
+    pub os: Option<AppSpaceOs>,
+    /// `arm64`, `amd64`.
+    pub host_arch: Option<String>,
+    /// The runtime doctor's ready backends (none: not read yet).
+    pub local_backends: Option<Vec<String>>,
+    /// Why each other backend is not ready.
+    pub local_details: Option<std::collections::HashMap<String, String>>,
+    /// Each kind's setting and what is installed for it (none: not read).
+    pub kinds: Option<Vec<AppRuntimeKindInput>>,
+}
+
+/// A path's one line: whether it can be used, and what it is.
+pub type AppRuntimePathVerdict = core::runtimes::RuntimePathVerdict;
+#[uniffi::remote(Record)]
+pub struct AppRuntimePathVerdict {
+    pub ok: bool,
+    pub line: String,
+}
+
+/// What a row in the section changes: the setting and its new value
+/// (`None`: unset it, back to the default or the detected path).
+pub type AppRuntimeSettingChange = core::runtimes::RuntimeSettingChange;
+#[uniffi::remote(Record)]
+pub struct AppRuntimeSettingChange {
+    /// `runtime.container`, `runtime.vm_path`.
+    pub key: String,
+    pub value: Option<String>,
+}
+
 /// Notch island or glass.
 pub type AppSwitcherTheme = core::settings::SwitcherTheme;
 #[uniffi::remote(Enum)]
@@ -7017,21 +7105,6 @@ pub struct AppTelemetryInput {
     pub notice_shown: bool,
 }
 
-/// This machine's runtime doctor, for Settings, Advanced, Runtimes'
-/// MicroVM row (the same facts New Space's MicroVM tile follows).
-pub type AppMicrovmInput = core::settings::MicrovmInput;
-#[uniffi::remote(Record)]
-pub struct AppMicrovmInput {
-    /// This machine's system (`macos`, `linux`, `windows`).
-    pub os: Option<AppSpaceOs>,
-    /// Ready backends (none: not read yet).
-    pub local_backends: Option<Vec<String>>,
-    /// Why each other backend is not ready, by backend name.
-    pub local_details: Option<std::collections::HashMap<String, String>>,
-    /// This machine's architecture (`arm64`, `amd64`).
-    pub host_arch: Option<String>,
-}
-
 /// What the Settings page shows.
 pub type AppSettingsInput = core::settings::SettingsInput;
 #[uniffi::remote(Record)]
@@ -7078,18 +7151,13 @@ pub struct AppSettingsInput {
     /// "Connect to the desktop automatically" (none: no row; a shell
     /// without the preview cover leaves it out).
     pub auto_connect: Option<bool>,
-    /// Which Lume macOS Spaces run on (`runtime.lume`: `auto`, `builtin`,
-    /// `system`); none: no Runtimes section.
-    pub lume_source: Option<String>,
-    /// Which engine local Linux Spaces run on (`runtime.linux`: `auto`,
-    /// `builtin`, `system`); none: no Linux row.
-    pub linux_source: Option<String>,
     /// Overflow into your clouds when this machine is full
     /// (`placement.overflow`); none: no row.
     pub overflow: Option<bool>,
-    /// What this machine's runtime doctor said, for Runtimes' MicroVM row
-    /// (whether microVMs run here, and why not); none: no MicroVM row.
-    pub microvm: Option<AppMicrovmInput>,
+    /// Settings, Advanced's runtimes: each kind's setting, what is
+    /// installed for it and whether it runs here. None: nothing read yet
+    /// (the rows still show, "Checking…").
+    pub runtimes: Option<AppRuntimesInput>,
     /// Settings, General's Show tips switch: tips are on
     /// (`!AppSettings.tips.off`). A shell that does not say reads as on.
     pub show_tips: bool,

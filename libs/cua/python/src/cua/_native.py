@@ -781,6 +781,10 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_local_push_image() != 29472:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_local_runtime_check_path() != 59009:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_local_runtime_kinds() != 34595:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_local_setup() != 57791:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_local_storage() != 42598:
@@ -2993,6 +2997,16 @@ _UniffiLib.uniffi_cua_sdk_fn_method_local_push_image.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_local_push_image.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_local_runtime_check_path.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_local_runtime_check_path.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_local_runtime_kinds.argtypes = (
+    ctypes.c_uint64,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_local_runtime_kinds.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_local_setup.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -5288,6 +5302,12 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_local_pull_image.restype = ctypes.c_ui
 _UniffiLib.uniffi_cua_sdk_checksum_method_local_push_image.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_local_push_image.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_local_runtime_check_path.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_local_runtime_check_path.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_local_runtime_kinds.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_local_runtime_kinds.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_local_setup.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_local_setup.restype = ctypes.c_uint16
@@ -21281,6 +21301,255 @@ class _UniffiFfiConverterTypeRoutineInfo(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.write(value.last_outcome, buf)
         _UniffiFfiConverterOptionalString.write(value.last_run_id, buf)
 
+@dataclass
+class RuntimeDetected:
+    """
+    A runtime installed on this machine for one kind of Space.
+"""
+    def __init__(self, *, tool:str, name:str, path:str, version:typing.Optional[str], guests:typing.Optional[str]):
+        self.tool = tool
+        self.name = name
+        self.path = path
+        self.version = version
+        self.guests = guests
+
+
+
+
+    def __str__(self):
+        return "RuntimeDetected(tool={}, name={}, path={}, version={}, guests={})".format(self.tool, self.name, self.path, self.version, self.guests)
+    def __eq__(self, other):
+        if self.tool != other.tool:
+            return False
+        if self.name != other.name:
+            return False
+        if self.path != other.path:
+            return False
+        if self.version != other.version:
+            return False
+        if self.guests != other.guests:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeRuntimeDetected(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return RuntimeDetected(
+            tool=_UniffiFfiConverterString.read(buf),
+            name=_UniffiFfiConverterString.read(buf),
+            path=_UniffiFfiConverterString.read(buf),
+            version=_UniffiFfiConverterOptionalString.read(buf),
+            guests=_UniffiFfiConverterOptionalString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.tool)
+        _UniffiFfiConverterString.check_lower(value.name)
+        _UniffiFfiConverterString.check_lower(value.path)
+        _UniffiFfiConverterOptionalString.check_lower(value.version)
+        _UniffiFfiConverterOptionalString.check_lower(value.guests)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.tool, buf)
+        _UniffiFfiConverterString.write(value.name, buf)
+        _UniffiFfiConverterString.write(value.path, buf)
+        _UniffiFfiConverterOptionalString.write(value.version, buf)
+        _UniffiFfiConverterOptionalString.write(value.guests, buf)
+
+class _UniffiFfiConverterSequenceTypeRuntimeDetected(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiFfiConverterTypeRuntimeDetected.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiFfiConverterTypeRuntimeDetected.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiFfiConverterTypeRuntimeDetected.read(buf) for i in range(count)
+        ]
+
+@dataclass
+class RuntimePathProbe:
+    """
+    What a binary is, for one kind of Space (`runtime_check_path`).
+"""
+    def __init__(self, *, path:str, exists:bool, executable:bool, tool:typing.Optional[str], name:typing.Optional[str], version:typing.Optional[str], min_version:typing.Optional[str], expected:typing.List[str], guests:typing.Optional[str]):
+        self.path = path
+        self.exists = exists
+        self.executable = executable
+        self.tool = tool
+        self.name = name
+        self.version = version
+        self.min_version = min_version
+        self.expected = expected
+        self.guests = guests
+
+
+
+
+    def __str__(self):
+        return "RuntimePathProbe(path={}, exists={}, executable={}, tool={}, name={}, version={}, min_version={}, expected={}, guests={})".format(self.path, self.exists, self.executable, self.tool, self.name, self.version, self.min_version, self.expected, self.guests)
+    def __eq__(self, other):
+        if self.path != other.path:
+            return False
+        if self.exists != other.exists:
+            return False
+        if self.executable != other.executable:
+            return False
+        if self.tool != other.tool:
+            return False
+        if self.name != other.name:
+            return False
+        if self.version != other.version:
+            return False
+        if self.min_version != other.min_version:
+            return False
+        if self.expected != other.expected:
+            return False
+        if self.guests != other.guests:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeRuntimePathProbe(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return RuntimePathProbe(
+            path=_UniffiFfiConverterString.read(buf),
+            exists=_UniffiFfiConverterBoolean.read(buf),
+            executable=_UniffiFfiConverterBoolean.read(buf),
+            tool=_UniffiFfiConverterOptionalString.read(buf),
+            name=_UniffiFfiConverterOptionalString.read(buf),
+            version=_UniffiFfiConverterOptionalString.read(buf),
+            min_version=_UniffiFfiConverterOptionalString.read(buf),
+            expected=_UniffiFfiConverterSequenceString.read(buf),
+            guests=_UniffiFfiConverterOptionalString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.path)
+        _UniffiFfiConverterBoolean.check_lower(value.exists)
+        _UniffiFfiConverterBoolean.check_lower(value.executable)
+        _UniffiFfiConverterOptionalString.check_lower(value.tool)
+        _UniffiFfiConverterOptionalString.check_lower(value.name)
+        _UniffiFfiConverterOptionalString.check_lower(value.version)
+        _UniffiFfiConverterOptionalString.check_lower(value.min_version)
+        _UniffiFfiConverterSequenceString.check_lower(value.expected)
+        _UniffiFfiConverterOptionalString.check_lower(value.guests)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.path, buf)
+        _UniffiFfiConverterBoolean.write(value.exists, buf)
+        _UniffiFfiConverterBoolean.write(value.executable, buf)
+        _UniffiFfiConverterOptionalString.write(value.tool, buf)
+        _UniffiFfiConverterOptionalString.write(value.name, buf)
+        _UniffiFfiConverterOptionalString.write(value.version, buf)
+        _UniffiFfiConverterOptionalString.write(value.min_version, buf)
+        _UniffiFfiConverterSequenceString.write(value.expected, buf)
+        _UniffiFfiConverterOptionalString.write(value.guests, buf)
+
+class _UniffiFfiConverterOptionalTypeRuntimePathProbe(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterTypeRuntimePathProbe.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterTypeRuntimePathProbe.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterTypeRuntimePathProbe.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
+@dataclass
+class RuntimeKindState:
+    """
+    One kind of Space's runtime, as Settings shows it.
+"""
+    def __init__(self, *, kind:str, source:str, path:typing.Optional[str], detected:typing.List[RuntimeDetected], check:typing.Optional[RuntimePathProbe], expected:typing.List[str]):
+        self.kind = kind
+        self.source = source
+        self.path = path
+        self.detected = detected
+        self.check = check
+        self.expected = expected
+
+
+
+
+    def __str__(self):
+        return "RuntimeKindState(kind={}, source={}, path={}, detected={}, check={}, expected={})".format(self.kind, self.source, self.path, self.detected, self.check, self.expected)
+    def __eq__(self, other):
+        if self.kind != other.kind:
+            return False
+        if self.source != other.source:
+            return False
+        if self.path != other.path:
+            return False
+        if self.detected != other.detected:
+            return False
+        if self.check != other.check:
+            return False
+        if self.expected != other.expected:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeRuntimeKindState(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return RuntimeKindState(
+            kind=_UniffiFfiConverterString.read(buf),
+            source=_UniffiFfiConverterString.read(buf),
+            path=_UniffiFfiConverterOptionalString.read(buf),
+            detected=_UniffiFfiConverterSequenceTypeRuntimeDetected.read(buf),
+            check=_UniffiFfiConverterOptionalTypeRuntimePathProbe.read(buf),
+            expected=_UniffiFfiConverterSequenceString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.kind)
+        _UniffiFfiConverterString.check_lower(value.source)
+        _UniffiFfiConverterOptionalString.check_lower(value.path)
+        _UniffiFfiConverterSequenceTypeRuntimeDetected.check_lower(value.detected)
+        _UniffiFfiConverterOptionalTypeRuntimePathProbe.check_lower(value.check)
+        _UniffiFfiConverterSequenceString.check_lower(value.expected)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.kind, buf)
+        _UniffiFfiConverterString.write(value.source, buf)
+        _UniffiFfiConverterOptionalString.write(value.path, buf)
+        _UniffiFfiConverterSequenceTypeRuntimeDetected.write(value.detected, buf)
+        _UniffiFfiConverterOptionalTypeRuntimePathProbe.write(value.check, buf)
+        _UniffiFfiConverterSequenceString.write(value.expected, buf)
+
 class _UniffiFfiConverterSequenceTypeReadinessProbe(_UniffiConverterRustBuffer):
     @classmethod
     def check_lower(cls, value):
@@ -31520,6 +31789,29 @@ class _UniffiFfiConverterTypeBuildListener:
     def write(cls, value: BuildListener, buf: _UniffiRustBuffer):
         buf.write_u64(cls.lower(value))
 
+class _UniffiFfiConverterSequenceTypeRuntimeKindState(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiFfiConverterTypeRuntimeKindState.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiFfiConverterTypeRuntimeKindState.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiFfiConverterTypeRuntimeKindState.read(buf) for i in range(count)
+        ]
+
 class _UniffiFfiConverterSequenceTypeSetupStep(_UniffiConverterRustBuffer):
     @classmethod
     def check_lower(cls, value):
@@ -31572,6 +31864,22 @@ class LocalProtocol(typing.Protocol):
         """
         Copies an image (host architecture) to `destination`; returns the
         pushed manifest digest.
+"""
+        raise NotImplementedError
+    async def runtime_check_path(self, kind: str,path: str) -> RuntimePathProbe:
+        """
+        What `path` is for `kind` (`container`, `vm`, `microvm`): there,
+        runnable, which runtime and its version. Settings checks a typed path
+        with it before it is saved (`runtime.<kind>_path`).
+"""
+        raise NotImplementedError
+    async def runtime_kinds(self, ) -> typing.List[RuntimeKindState]:
+        """
+        Each kind of Space (`container`, `vm`, `microvm`) with its runtime
+        setting (`runtime.<kind>`), the runtimes installed on this machine
+        for it and what the path in use is. Read-only: runs each runtime's
+        `--version`, nothing else; probed in this process (the daemon runs
+        on the same host).
 """
         raise NotImplementedError
     async def setup(self, components: typing.List[str],dry_run: bool) -> typing.List[SetupStep]:
@@ -31708,6 +32016,52 @@ class Local(LocalProtocol):
         _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
         return await _uniffi_rust_call_async(
             _UniffiLib.uniffi_cua_sdk_fn_method_local_push_image(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def runtime_check_path(self, kind: str,path: str) -> RuntimePathProbe:
+        """
+        What `path` is for `kind` (`container`, `vm`, `microvm`): there,
+        runnable, which runtime and its version. Settings checks a typed path
+        with it before it is saved (`runtime.<kind>_path`).
+"""
+
+        _UniffiFfiConverterString.check_lower(kind)
+
+        _UniffiFfiConverterString.check_lower(path)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(kind),
+            _UniffiFfiConverterString.lower(path),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeRuntimePathProbe.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_local_runtime_check_path(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def runtime_kinds(self, ) -> typing.List[RuntimeKindState]:
+        """
+        Each kind of Space (`container`, `vm`, `microvm`) with its runtime
+        setting (`runtime.<kind>`), the runtimes installed on this machine
+        for it and what the path in use is. Read-only: runs each runtime's
+        `--version`, nothing else; probed in this process (the daemon runs
+        on the same host).
+"""
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterSequenceTypeRuntimeKindState.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_local_runtime_kinds(*_uniffi_lowered_args),
             _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
@@ -46775,6 +47129,9 @@ __all__ = [
     "ResourcesSnapshot",
     "ResourcesUpdate",
     "RoutineInfo",
+    "RuntimeDetected",
+    "RuntimePathProbe",
+    "RuntimeKindState",
     "SandboxCreateOptions",
     "SandboxInfo",
     "SandboxListing",

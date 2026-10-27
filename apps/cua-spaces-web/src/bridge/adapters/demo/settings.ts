@@ -14,6 +14,7 @@ import type { NotificationInput } from "../../contracts/notifications";
 import type { AboutInput, DriveCheckInput, Experiments, LoginItemReport, StorageInput, UpdateState } from "../../contracts/settings";
 import { NO_EXPERIMENTS } from "../../contracts/volume";
 import { demoMachine, MAC_DEMO_PLATFORM, type DemoPlatform } from "./platform";
+import { DEMO_BROWSED, demoProbe } from "./runtimes";
 import type { NotificationsOperations } from "../../ops/notifications";
 import type { SettingsOperations } from "../../ops/settings";
 import type { HostEvent, SettingsValues } from "../../protocol";
@@ -234,6 +235,12 @@ export function createDemoSettings(ctx: DemoSettingsContext): Handlers {
       return loginItem();
     },
     "loginItem.openSettings": () => null,
+
+    "runtimes.check": async ({ kind, path }) => {
+      await wait(stepMs);
+      return demoProbe(kind, path);
+    },
+    "runtimes.browse": ({ kind }) => ({ path: DEMO_BROWSED[kind] ?? null }),
 
     "devices.get": () => {
       if (!ctx.signedIn()) throw new HostError("Sign in to Cua to see your devices", "signed_out");

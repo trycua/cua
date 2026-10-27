@@ -196,6 +196,25 @@ export class FixtureSpacesBackend implements SpacesBackend {
     return "auto";
   }
   async setLinuxSource() {}
+  runtimeSettings = new Map<string, string>();
+  async runtimeKinds() {
+    return ["container", "vm", "microvm"].map((kind) => ({
+      kind,
+      source: this.runtimeSettings.get(`runtime.${kind}`) ?? "auto",
+      path: this.runtimeSettings.get(`runtime.${kind}_path`),
+      detected: kind === "container" ? [{ tool: "docker", name: "Docker", path: "/usr/local/bin/docker", version: "27.3.1", guests: undefined }] : [],
+      check: undefined,
+      expected: kind === "container" ? ["Docker", "Podman"] : [],
+    }));
+  }
+  async runtimeCheckPath(kind: string, path: string) {
+    const docker = kind === "container" && path === "/usr/local/bin/docker";
+    return { path, exists: docker, executable: docker, tool: docker ? "docker" : undefined, name: docker ? "Docker" : undefined, version: docker ? "27.3.1" : undefined, minVersion: undefined, expected: ["Docker", "Podman"], guests: undefined };
+  }
+  async setRuntimeSetting(key: string, value: string | null) {
+    if (value === null) this.runtimeSettings.delete(key);
+    else this.runtimeSettings.set(key, value);
+  }
   async localStorage() {
     return null;
   }

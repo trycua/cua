@@ -4480,6 +4480,22 @@ public protocol LocalProtocol: AnyObject, Sendable {
     func pushImage(reference: String, destination: String) async throws  -> String
 
     /**
+     * What `path` is for `kind` (`container`, `vm`, `microvm`): there,
+     * runnable, which runtime and its version. Settings checks a typed path
+     * with it before it is saved (`runtime.<kind>_path`).
+     */
+    func runtimeCheckPath(kind: String, path: String) async throws  -> RuntimePathProbe
+
+    /**
+     * Each kind of Space (`container`, `vm`, `microvm`) with its runtime
+     * setting (`runtime.<kind>`), the runtimes installed on this machine
+     * for it and what the path in use is. Read-only: runs each runtime's
+     * `--version`, nothing else; probed in this process (the daemon runs
+     * on the same host).
+     */
+    func runtimeKinds() async throws  -> [RuntimeKindState]
+
+    /**
      * Provisions `components` (`qemu`, `lume`; `runsc` reports its plan).
      * Empty = everything provisionable. `dry_run` only reports.
      */
@@ -4631,6 +4647,52 @@ open func pushImage(reference: String, destination: String)async throws  -> Stri
             completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
             freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
             liftFunc: FfiConverterString.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * What `path` is for `kind` (`container`, `vm`, `microvm`): there,
+     * runnable, which runtime and its version. Settings checks a typed path
+     * with it before it is saved (`runtime.<kind>_path`).
+     */
+open func runtimeCheckPath(kind: String, path: String)async throws  -> RuntimePathProbe  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_local_runtime_check_path(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(kind),FfiConverterString.lower(path)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeRuntimePathProbe_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Each kind of Space (`container`, `vm`, `microvm`) with its runtime
+     * setting (`runtime.<kind>`), the runtimes installed on this machine
+     * for it and what the path in use is. Read-only: runs each runtime's
+     * `--version`, nothing else; probed in this process (the daemon runs
+     * on the same host).
+     */
+open func runtimeKinds()async throws  -> [RuntimeKindState]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_local_runtime_kinds(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeRuntimeKindState.lift,
             errorHandler: FfiConverterTypeCuaError_lift
         )
 }
@@ -22453,8 +22515,9 @@ public func FfiConverterTypeComputerResources_lower(_ value: ComputerResources) 
  */
 public struct ConfigEntry: Equatable, Hashable {
     /**
-     * `default.on`, `default.kind`, `default.runtime`, `runtime.lume`,
-     * `runtime.linux` or `telemetry.enabled`.
+     * `default.on`, `default.kind`, `default.runtime`, `runtime.container`,
+     * `runtime.vm`, `runtime.microvm` (and their `_path`) or
+     * `telemetry.enabled`.
      */
     public var key: String
     /**
@@ -22487,8 +22550,9 @@ public struct ConfigEntry: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * `default.on`, `default.kind`, `default.runtime`, `runtime.lume`,
-         * `runtime.linux` or `telemetry.enabled`.
+         * `default.on`, `default.kind`, `default.runtime`, `runtime.container`,
+         * `runtime.vm`, `runtime.microvm` (and their `_path`) or
+         * `telemetry.enabled`.
          */key: String,
         /**
          * The effective value.
@@ -34071,6 +34135,323 @@ public func FfiConverterTypeRuntimeCheck_lift(_ buf: RustBuffer) throws -> Runti
 #endif
 public func FfiConverterTypeRuntimeCheck_lower(_ value: RuntimeCheck) -> RustBuffer {
     return FfiConverterTypeRuntimeCheck.lower(value)
+}
+
+
+/**
+ * A runtime installed on this machine for one kind of Space.
+ */
+public struct RuntimeDetected: Equatable, Hashable {
+    /**
+     * `docker`, `podman`, `lume`, `qemu`, `container`, `firecracker`.
+     */
+    public var tool: String
+    /**
+     * As people know it (`Docker`, `Apple container`).
+     */
+    public var name: String
+    public var path: String
+    /**
+     * As `--version` says it (`27.3.1`).
+     */
+    public var version: String?
+    /**
+     * The guest system it runs, when only one (`macOS`, `Linux`).
+     */
+    public var guests: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `docker`, `podman`, `lume`, `qemu`, `container`, `firecracker`.
+         */tool: String,
+        /**
+         * As people know it (`Docker`, `Apple container`).
+         */name: String, path: String,
+        /**
+         * As `--version` says it (`27.3.1`).
+         */version: String?,
+        /**
+         * The guest system it runs, when only one (`macOS`, `Linux`).
+         */guests: String?) {
+        self.tool = tool
+        self.name = name
+        self.path = path
+        self.version = version
+        self.guests = guests
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RuntimeDetected: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRuntimeDetected: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RuntimeDetected {
+        return
+            try RuntimeDetected(
+                tool: FfiConverterString.read(from: &buf),
+                name: FfiConverterString.read(from: &buf),
+                path: FfiConverterString.read(from: &buf),
+                version: FfiConverterOptionString.read(from: &buf),
+                guests: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RuntimeDetected, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.tool, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.path, into: &buf)
+        FfiConverterOptionString.write(value.version, into: &buf)
+        FfiConverterOptionString.write(value.guests, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRuntimeDetected_lift(_ buf: RustBuffer) throws -> RuntimeDetected {
+    return try FfiConverterTypeRuntimeDetected.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRuntimeDetected_lower(_ value: RuntimeDetected) -> RustBuffer {
+    return FfiConverterTypeRuntimeDetected.lower(value)
+}
+
+
+/**
+ * One kind of Space's runtime, as Settings shows it.
+ */
+public struct RuntimeKindState: Equatable, Hashable {
+    /**
+     * `container`, `vm` or `microvm`.
+     */
+    public var kind: String
+    /**
+     * `runtime.<kind>`: `auto`, `builtin` or `system`.
+     */
+    public var source: String
+    /**
+     * `runtime.<kind>_path`, when set.
+     */
+    public var path: String?
+    /**
+     * What is installed here for the kind, the one used first.
+     */
+    public var detected: [RuntimeDetected]
+    /**
+     * The path in use (the custom one, else the first detected), probed.
+     */
+    public var check: RuntimePathProbe?
+    /**
+     * The names of the tools the kind takes here (`Docker`, `Podman`).
+     */
+    public var expected: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `container`, `vm` or `microvm`.
+         */kind: String,
+        /**
+         * `runtime.<kind>`: `auto`, `builtin` or `system`.
+         */source: String,
+        /**
+         * `runtime.<kind>_path`, when set.
+         */path: String?,
+        /**
+         * What is installed here for the kind, the one used first.
+         */detected: [RuntimeDetected],
+        /**
+         * The path in use (the custom one, else the first detected), probed.
+         */check: RuntimePathProbe?,
+        /**
+         * The names of the tools the kind takes here (`Docker`, `Podman`).
+         */expected: [String]) {
+        self.kind = kind
+        self.source = source
+        self.path = path
+        self.detected = detected
+        self.check = check
+        self.expected = expected
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RuntimeKindState: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRuntimeKindState: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RuntimeKindState {
+        return
+            try RuntimeKindState(
+                kind: FfiConverterString.read(from: &buf),
+                source: FfiConverterString.read(from: &buf),
+                path: FfiConverterOptionString.read(from: &buf),
+                detected: FfiConverterSequenceTypeRuntimeDetected.read(from: &buf),
+                check: FfiConverterOptionTypeRuntimePathProbe.read(from: &buf),
+                expected: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RuntimeKindState, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.kind, into: &buf)
+        FfiConverterString.write(value.source, into: &buf)
+        FfiConverterOptionString.write(value.path, into: &buf)
+        FfiConverterSequenceTypeRuntimeDetected.write(value.detected, into: &buf)
+        FfiConverterOptionTypeRuntimePathProbe.write(value.check, into: &buf)
+        FfiConverterSequenceString.write(value.expected, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRuntimeKindState_lift(_ buf: RustBuffer) throws -> RuntimeKindState {
+    return try FfiConverterTypeRuntimeKindState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRuntimeKindState_lower(_ value: RuntimeKindState) -> RustBuffer {
+    return FfiConverterTypeRuntimeKindState.lower(value)
+}
+
+
+/**
+ * What a binary is, for one kind of Space (`runtime_check_path`).
+ */
+public struct RuntimePathProbe: Equatable, Hashable {
+    public var path: String
+    /**
+     * A file is there.
+     */
+    public var exists: Bool
+    /**
+     * It can be run.
+     */
+    public var executable: Bool
+    /**
+     * The tool it is, when it is one the kind takes.
+     */
+    public var tool: String?
+    public var name: String?
+    public var version: String?
+    /**
+     * The oldest version cua runs on.
+     */
+    public var minVersion: String?
+    /**
+     * The names of the tools the kind takes here (`Docker`, `Podman`).
+     */
+    public var expected: [String]
+    public var guests: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(path: String,
+        /**
+         * A file is there.
+         */exists: Bool,
+        /**
+         * It can be run.
+         */executable: Bool,
+        /**
+         * The tool it is, when it is one the kind takes.
+         */tool: String?, name: String?, version: String?,
+        /**
+         * The oldest version cua runs on.
+         */minVersion: String?,
+        /**
+         * The names of the tools the kind takes here (`Docker`, `Podman`).
+         */expected: [String], guests: String?) {
+        self.path = path
+        self.exists = exists
+        self.executable = executable
+        self.tool = tool
+        self.name = name
+        self.version = version
+        self.minVersion = minVersion
+        self.expected = expected
+        self.guests = guests
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RuntimePathProbe: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRuntimePathProbe: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RuntimePathProbe {
+        return
+            try RuntimePathProbe(
+                path: FfiConverterString.read(from: &buf),
+                exists: FfiConverterBool.read(from: &buf),
+                executable: FfiConverterBool.read(from: &buf),
+                tool: FfiConverterOptionString.read(from: &buf),
+                name: FfiConverterOptionString.read(from: &buf),
+                version: FfiConverterOptionString.read(from: &buf),
+                minVersion: FfiConverterOptionString.read(from: &buf),
+                expected: FfiConverterSequenceString.read(from: &buf),
+                guests: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RuntimePathProbe, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.path, into: &buf)
+        FfiConverterBool.write(value.exists, into: &buf)
+        FfiConverterBool.write(value.executable, into: &buf)
+        FfiConverterOptionString.write(value.tool, into: &buf)
+        FfiConverterOptionString.write(value.name, into: &buf)
+        FfiConverterOptionString.write(value.version, into: &buf)
+        FfiConverterOptionString.write(value.minVersion, into: &buf)
+        FfiConverterSequenceString.write(value.expected, into: &buf)
+        FfiConverterOptionString.write(value.guests, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRuntimePathProbe_lift(_ buf: RustBuffer) throws -> RuntimePathProbe {
+    return try FfiConverterTypeRuntimePathProbe.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRuntimePathProbe_lower(_ value: RuntimePathProbe) -> RustBuffer {
+    return FfiConverterTypeRuntimePathProbe.lower(value)
 }
 
 
@@ -46602,6 +46983,30 @@ fileprivate struct FfiConverterOptionTypePtySize: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeRuntimePathProbe: FfiConverterRustBuffer {
+    typealias SwiftType = RuntimePathProbe?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeRuntimePathProbe.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeRuntimePathProbe.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeScreenshotOptions: FfiConverterRustBuffer {
     typealias SwiftType = ScreenshotOptions?
 
@@ -48980,6 +49385,56 @@ fileprivate struct FfiConverterSequenceTypeRuntimeCheck: FfiConverterRustBuffer 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeRuntimeDetected: FfiConverterRustBuffer {
+    typealias SwiftType = [RuntimeDetected]
+
+    public static func write(_ value: [RuntimeDetected], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeRuntimeDetected.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [RuntimeDetected] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [RuntimeDetected]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeRuntimeDetected.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeRuntimeKindState: FfiConverterRustBuffer {
+    typealias SwiftType = [RuntimeKindState]
+
+    public static func write(_ value: [RuntimeKindState], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeRuntimeKindState.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [RuntimeKindState] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [RuntimeKindState]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeRuntimeKindState.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeSandboxInfo: FfiConverterRustBuffer {
     typealias SwiftType = [SandboxInfo]
 
@@ -50842,6 +51297,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_local_push_image() != 29472) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_local_runtime_check_path() != 59009) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_local_runtime_kinds() != 34595) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_local_setup() != 57791) {

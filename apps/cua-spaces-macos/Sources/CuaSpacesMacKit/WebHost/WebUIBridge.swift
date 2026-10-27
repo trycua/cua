@@ -102,6 +102,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "spaces.chooseFiles", "spaces.droppedFiles", "spaces.sendFiles",
         "host.setUp", "host.joinWithCode", "host.action", "host.openSettings",
         "settings.get", "settings.choose", "settings.update",
+        // Settings, Advanced's runtime rows (WebUIBridge+Runtimes.swift).
+        "runtimes.check", "runtimes.browse",
         "keyvault.get", "keyvault.lock", "keyvault.unlock",
         "keyvault.unlockVault", "keyvault.setup", "keyvault.setDisabled",
         "keyvault.approve", "keyvault.deny", "keyvault.revokeGrant",
@@ -180,6 +182,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
     var offeredPaths: Set<String> = []
     /// "Send file…"'s picker (a test sets its own).
     var pickFiles: @MainActor () -> [URL]? = WebUIBridge.openPanel
+    /// Settings, Advanced's "Browse…" for a kind's program (a test sets its own).
+    var pickRuntime: @MainActor (String) async -> URL? = { WebUIBridge.runtimePanel($0) }
     /// The "<Space> is ready" notification of a create the onboarding
     /// started (a test sets its own).
     var notifySpaceReady: @MainActor (SpaceReadyNote) -> Void = { SpaceReadyNotifier.shared.post($0) }
@@ -356,10 +360,21 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             model.refreshTelemetry()
             // Settings, Advanced's runtime choices and overflow come from the
             // config file; read them here (nothing else does before New Space).
-            if model.servicesIn { await model.loadRuntimeSettings() }
+            // What is installed and the doctor are read in the background:
+            // the rows say "Checking…" until `settings.changed`.
+            if model.servicesIn {
+                await model.loadRuntimeSettings()
+                model.refreshRuntimesIfStale()
+            }
             return settings()
+        case "runtimes.check", "runtimes.browse":
+            return try await runtimes(method, args)
         case "settings.choose":
-            let row = try string(args, "row"), option = try string(args, "option")
+            let row = try string(args, "row")
+            // An empty option only for a runtime path ("Reset to detected").
+            guard let option = args["option"] as? String, !option.isEmpty || row.hasPrefix("runtime-path:") else {
+                throw Failure.badArgs("option: string")
+            }
             if row == "update-channel" {
                 // Settings → About's channel (saved in `AppSettings`).
                 guard model.updates.updater != nil else { throw Failure.unsupported("Updates are off in this build") }
@@ -587,6 +602,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             "accountUrl": appAccountAppUrl(),
             // The CLI this app installs and whether it is here (WebUIBridge+Cli.swift).
             "cli": cliSetting(),
+            // Settings, Advanced's runtimes as read (`runtimes::RuntimesInput`):
+            // the page's core lays out every kind's row from them.
+            "runtimes": BridgeValue.encode(model.runtimesInput),
             // The app core's own settings the page reads and saves (`settings.update`).
             "tips": ["off": model.settings.tips.off, "done": model.settings.tips.done] as [String: Any],
         ]
@@ -1175,7 +1193,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         // The runtime choices too: New Space's probe and its "Use built-in"
         // switch read and change them.
         follow("settings.changed") { [model] in
-            _ = (model.settings, model.lumeSource, model.linuxSource, model.placementOverflow)
+            _ = (model.settings, model.lumeSource, model.linuxSource, model.placementOverflow,
+                 model.runtimeKinds, model.runtimeDoctor?.ready, model.runtimeDoctor?.details)
         }
         // These views are rewritten on every read, so the event goes out
         // only when what the page shows differs.

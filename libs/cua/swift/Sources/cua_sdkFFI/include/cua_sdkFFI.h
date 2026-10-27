@@ -969,6 +969,16 @@ uint64_t uniffi_cua_sdk_fn_method_local_pull_image(uint64_t ptr, RustBuffer refe
 uint64_t uniffi_cua_sdk_fn_method_local_push_image(uint64_t ptr, RustBuffer reference, RustBuffer destination
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_LOCAL_RUNTIME_CHECK_PATH
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_LOCAL_RUNTIME_CHECK_PATH
+uint64_t uniffi_cua_sdk_fn_method_local_runtime_check_path(uint64_t ptr, RustBuffer kind, RustBuffer path
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_LOCAL_RUNTIME_KINDS
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_LOCAL_RUNTIME_KINDS
+uint64_t uniffi_cua_sdk_fn_method_local_runtime_kinds(uint64_t ptr
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_LOCAL_SETUP
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_LOCAL_SETUP
 uint64_t uniffi_cua_sdk_fn_method_local_setup(uint64_t ptr, RustBuffer components, int8_t dry_run
@@ -4396,6 +4406,18 @@ uint16_t uniffi_cua_sdk_checksum_method_local_pull_image(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_LOCAL_PUSH_IMAGE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_LOCAL_PUSH_IMAGE
 uint16_t uniffi_cua_sdk_checksum_method_local_push_image(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_LOCAL_RUNTIME_CHECK_PATH
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_LOCAL_RUNTIME_CHECK_PATH
+uint16_t uniffi_cua_sdk_checksum_method_local_runtime_check_path(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_LOCAL_RUNTIME_KINDS
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_LOCAL_RUNTIME_KINDS
+uint16_t uniffi_cua_sdk_checksum_method_local_runtime_kinds(void
 
 );
 #endif

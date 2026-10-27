@@ -300,7 +300,6 @@ export function toSettingsSnapshot(s: WkSettings, page: Pick<SettingsValues, "th
   const telemetryOn = telemetry ? active(telemetry) === "on" : DEFAULT_SETTINGS.telemetry;
   // The rows only this host lays out: what they show now, so the core lays
   // them out again on the page (null: the host has none).
-  const source = (id: string) => (rows.has(id) ? (active(rows.get(id)) ?? "auto") : null);
   const on = (id: string) => (rows.has(id) ? active(rows.get(id)) === "on" : null);
   const protection = [...rows.values()]
     .filter((r) => r.id.startsWith("keyvault-protection:"))
@@ -332,8 +331,7 @@ export function toSettingsSnapshot(s: WkSettings, page: Pick<SettingsValues, "th
         }
       : null,
     hostSettings: {
-      lumeSource: source("macos-runtime"),
-      linuxSource: source("linux-runtime"),
+      runtimes: s.runtimes ?? null,
       autoConnect: on("auto-connect"),
       overflow: on("placement-overflow"),
       keyvaultAutoWipe: on("keyvault-auto-wipe"),

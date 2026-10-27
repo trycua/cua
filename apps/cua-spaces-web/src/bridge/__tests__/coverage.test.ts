@@ -113,6 +113,8 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "loginItem.get": {},
   "loginItem.set": { on: true },
   "loginItem.openSettings": {},
+  "runtimes.check": { kind: "container", path: "/usr/local/bin/docker" },
+  "runtimes.browse": { kind: "container" },
   "devices.get": {},
   "devices.enroll": {},
   "devices.checkEnrolled": {},

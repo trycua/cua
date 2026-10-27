@@ -49,6 +49,7 @@ import type { CliInstallPlan } from "../contracts/first-run";
 import { unsupportedChecklistOps } from "../ops/checklist";
 import { demoTeleportHandlers } from "./demo/teleport";
 import { createDemoSettings } from "./demo/settings";
+import { demoChooseRuntime, demoRuntimesInput, demoRuntimesState, type DemoRuntimes } from "./demo/runtimes";
 import { demoAgentSetup, demoConnections, demoPersistentAgents, demoReply, demoRunRecords, demoStartedRun, runAt, writtenEvents, type DemoRunRecord } from "./demo-agents";
 import { demoVolumeHandlers, demoVolumeState, type DemoVolumeState } from "./demo/volume";
 import { demoHostSetupHandlers, demoHostSetupState, type DemoHostSetupState } from "./demo/host-setup";
@@ -285,6 +286,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     renamed: {},
     removed: [],
     hostSettings: options.macHost ? DEMO_MAC_HOST_SETTINGS : undefined,
+    runtimes: demoRuntimesState(),
     volume: demoVolumeState(now(), options.onboarded !== false, options.platform),
     ...demoTelemetryState(),
     ...demoRelayUsageState(),
@@ -357,7 +359,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     values: { ...state.settings },
     defaultLocation: { value: state.settings.defaultLocation, source: "config", path: "~/.cua/config.toml" },
     telemetry: demoTelemetry(state.settings.telemetry),
-    ...(state.hostSettings ? { hostSettings: { ...state.hostSettings } } : {}),
+    hostSettings: { ...state.hostSettings, runtimes: demoRuntimesInput(state.runtimes) },
     // The macOS hosts register ⌘⇧Space; the Windows and Linux shells have none.
     globalShortcut: state.platform.os === "macos" ? { label: state.settings.hotkey, registered: true } : null,
     // What a host's CLI install plan names (`CuaChannel::cli_name`): Local's is `cua-local`.
@@ -577,6 +579,8 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     "settings.choose": async ({ row, option }) => {
       const key = DEMO_KEYVAULT_ROWS[row];
       if (key && state.hostSettings) state.hostSettings = { ...state.hostSettings, [key]: option === "on" };
+      // Settings, Advanced's runtime rows: the kind's source or its path.
+      if (demoChooseRuntime(state.runtimes, row, option)) await wait(step);
       // An AI agents row's button (the SwiftUI host's `press`): set it up, or remove what cua added.
       const agent = row.startsWith("agent:") ? state.agentSetup.find((r) => `agent:${r.agent}` === row && r.installed) : undefined;
       if (agent) {
@@ -893,4 +897,6 @@ export interface DemoState extends DemoLinksStateField, DemoTelemetryState, Demo
   removed: string[];
   /** `?demo=mac-host`: the Keyvault's switches the SwiftUI host lays out in Settings. */
   hostSettings?: HostSettings;
+  /** Settings, Advanced's runtimes (every demo host has them). */
+  runtimes: DemoRuntimes;
 }

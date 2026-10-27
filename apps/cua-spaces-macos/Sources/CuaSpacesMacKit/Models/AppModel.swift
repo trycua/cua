@@ -1807,12 +1807,72 @@ public final class AppModel {
             experiments: settings.experiments, keyvaultAutoWipe: keyvault.autoWipe,
             keyvaultUnlockPrompt: keyvault.unlockPromptShows,
             keyvaultSiteIcons: settings.keyvaultSiteIcons, keyvaultProtection: keyvault.page.protection,
-            autoConnect: settings.autoConnect, lumeSource: lumeSource, linuxSource: linuxSource,
+            autoConnect: settings.autoConnect,
             overflow: placementOverflow,
-            // Runtimes' MicroVM row: the runtime doctor New Space's MicroVM tile follows.
-            microvm: AppMicrovmInput(os: .macos, localBackends: wizard.env.localBackends,
-                                     localDetails: wizard.env.localDetails, hostArch: wizard.env.hostArch),
+            runtimes: runtimesInput,
             showTips: !settings.tips.off))
+    }
+
+    // MARK: - Runtimes (Settings, Advanced)
+
+    /// Each kind of Space's runtime setting and what is installed for it,
+    /// once read (`runtime_kinds`).
+    public private(set) var runtimeKinds: [AppRuntimeKindInput]?
+    /// The runtime doctor's answer for Settings (ready backends, why not),
+    /// once read.
+    public private(set) var runtimeDoctor: (ready: [String], details: [String: String])?
+    /// When the runtimes were last read.
+    @ObservationIgnored private var runtimesReadAt: Date?
+    @ObservationIgnored private var runtimesReading = false
+    /// How long a read of the runtimes stands before the page's next
+    /// `settings.get` reads them again.
+    static let runtimesRefreshInterval: TimeInterval = 15
+
+    /// What Settings, Advanced's runtime rows are laid out from
+    /// (`runtimes::section`): every kind, "Checking…" until read.
+    public var runtimesInput: AppRuntimesInput {
+        AppRuntimesInput(os: .macos, hostArch: Self.hostArch,
+                         localBackends: runtimeDoctor?.ready, localDetails: runtimeDoctor?.details,
+                         kinds: runtimeKinds)
+    }
+
+    /// Reads the runtimes again when the last read is older than
+    /// `runtimesRefreshInterval` (or `force`), in the background: the page
+    /// hears `settings.changed` when they come in.
+    public func refreshRuntimesIfStale(force: Bool = false) {
+        guard servicesIn, !runtimesReading else { return }
+        if !force, let at = runtimesReadAt, Date().timeIntervalSince(at) < Self.runtimesRefreshInterval { return }
+        runtimesReading = true
+        Task { @MainActor in
+            await readRuntimes()
+            runtimesReading = false
+        }
+    }
+
+    /// Reads each kind's setting, what is installed and the doctor.
+    public func readRuntimes() async {
+        async let doctor = backend.localRuntimes()
+        async let kinds = backend.runtimeKinds()
+        let (d, k) = await (doctor, kinds)
+        runtimesReadAt = Date()
+        if let d, runtimeDoctor.map({ $0.ready != d.ready || $0.details != d.details }) ?? true { runtimeDoctor = d }
+        if let k, k != runtimeKinds { runtimeKinds = k }
+    }
+
+    /// A runtime row's choice (`runtime:<kind>`, `runtime-detected:<kind>`,
+    /// `runtime-path:<kind>`): the setting the core names, written; the
+    /// runtimes read again. Whether `row` was one.
+    func chooseRuntime(row: String, option: String) async -> Bool {
+        guard let change = appRuntimesChoose(input: runtimesInput, row: row, option: option) else { return false }
+        do {
+            try await backend.setRuntimeSetting(key: change.key, value: change.value)
+        } catch {
+            show(error: LiveSpacesBackend.words(error))
+        }
+        await readRuntimes()
+        // New Space's "Use built-in" switches read the same settings.
+        await loadRuntimeSettings()
+        return true
     }
 
     /// Teams for Settings: the account's organizations with their people
@@ -2033,20 +2093,8 @@ public final class AppModel {
         case "notch":
             settings.menuBar = option == "hide"
             saveSettings()
-        case "macos-runtime":
-            do {
-                try await backend.setLumeSource(option)
-                lumeSource = await backend.lumeSource() ?? option
-            } catch {
-                show(error: LiveSpacesBackend.words(error))
-            }
-        case "linux-runtime":
-            do {
-                try await backend.setLinuxSource(option)
-                linuxSource = await backend.linuxSource() ?? option
-            } catch {
-                show(error: LiveSpacesBackend.words(error))
-            }
+        case _ where row.hasPrefix("runtime"):
+            _ = await chooseRuntime(row: row, option: option)
         case "placement-overflow":
             do {
                 try await backend.setPlacementOverflow(option == "on")

@@ -638,6 +638,13 @@ public final class PendingSpacesBackend: SpacesBackend, AgentsToolRunning, Cloud
     public func setLinuxSource(_ value: String) async throws { try await b().setLinuxSource(value) }
     public func placementOverflow() async -> Bool? { await b().placementOverflow() }
     public func setPlacementOverflow(_ on: Bool) async throws { try await b().setPlacementOverflow(on) }
+    public func runtimeKinds() async -> [AppRuntimeKindInput]? { await b().runtimeKinds() }
+    public func runtimeCheckPath(kind: String, path: String) async throws -> AppRuntimePathCheck {
+        try await b().runtimeCheckPath(kind: kind, path: path)
+    }
+    public func setRuntimeSetting(key: String, value: String?) async throws {
+        try await b().setRuntimeSetting(key: key, value: value)
+    }
     public func localStorage() async -> LocalStorage? { await b().localStorage() }
     public func runningMacosVms() async -> Int? { await b().runningMacosVms() }
     // The Machines page: Remove from account and each computer's health

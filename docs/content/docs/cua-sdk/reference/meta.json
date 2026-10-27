@@ -3,6 +3,7 @@
   "pages": [
     "---Sandboxes---",
     "cua",
+    "runtime-kinds",
     "sandbox",
     "share",
     "image",

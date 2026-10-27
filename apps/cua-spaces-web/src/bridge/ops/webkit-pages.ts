@@ -75,6 +75,8 @@ export const WEBKIT_PAGE_OPS = [
   "loginItem.get",
   "loginItem.set",
   "loginItem.openSettings",
+  "runtimes.check",
+  "runtimes.browse",
   "devices.get",
   "devices.enroll",
   "devices.checkEnrolled",
@@ -255,6 +257,9 @@ export function webkitPageOps(request: Request, toHostStatus: (h: WkHostState) =
     "loginItem.get": call("loginItem.get"),
     "loginItem.set": call("loginItem.set"),
     "loginItem.openSettings": none("loginItem.openSettings"),
+    "runtimes.check": call("runtimes.check"),
+    // The file panel waits for the person: no timeout.
+    "runtimes.browse": async (args) => (await request("runtimes.browse", { ...args }, null)) as { path: string | null },
     "devices.get": call("devices.get"),
     "devices.enroll": call("devices.enroll"),
     "devices.checkEnrolled": async () => Boolean(await request("devices.checkEnrolled")),

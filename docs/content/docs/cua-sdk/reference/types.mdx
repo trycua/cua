@@ -48,7 +48,7 @@ Renamed members: in Kotlin, objects implement `AutoCloseable`, whose `close()` f
 
 ## All items
 
-321 items. Methods are listed on their object.
+324 items. Methods are listed on their object.
 
 The 10 items of Batched forks are listed on [its page](/cua-sdk/reference/sandbox/fork-batch#all-items).
 
@@ -267,6 +267,9 @@ The 11 items of Processor, memory and disk are listed on [its page](/cua-sdk/ref
 | [`RoutineInfo`](/cua-sdk/reference/spaces/persistent-agents#routineinfo-record) | record | A routine: a recurring turn of a persistent agent, fired by the daemon. |
 | [`RuntimeCheck`](/cua-sdk/reference/cua#runtimecheck-record) | record | One doctor check (one backend). |
 | [`RuntimeCheckStatus`](/cua-sdk/reference/cua#runtimecheckstatus-enum) | enum | Status of one local runtime component. |
+| [`RuntimeDetected`](/cua-sdk/reference/runtime-kinds#runtimedetected-record) | record | A runtime installed on this machine for one kind of Space. |
+| [`RuntimeKindState`](/cua-sdk/reference/runtime-kinds#runtimekindstate-record) | record | One kind of Space's runtime, as Settings shows it. |
+| [`RuntimePathProbe`](/cua-sdk/reference/runtime-kinds#runtimepathprobe-record) | record | What a binary is, for one kind of Space (`runtime_check_path`). |
 | [`Sandbox`](/cua-sdk/reference/sandbox#sandbox) | object | A sandbox handle. |
 | [`sandbox_locations`](/cua-sdk/reference/sandbox#sandbox_locations) | function | Every location word `on=` accepts, in display order: `local`, `cloud`, then the contrib providers (`e2b`, `daytona`, `modal`, ...) and your own… |
 | [`SandboxCreateOptions`](/cua-sdk/reference/image#sandboxcreateoptions-record) | record | Options for `Sandboxes.create`. |

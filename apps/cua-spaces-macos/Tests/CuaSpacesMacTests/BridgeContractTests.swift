@@ -51,6 +51,8 @@ struct BridgeContractTests {
         }
         // "Send file…" picks this instead of showing the native panel.
         bridge.pickFiles = { [URL(fileURLWithPath: "/tmp/cua-contract-notes.txt")] }
+        // Settings, Advanced's "Browse…" picks this instead of the panel.
+        bridge.pickRuntime = { _ in URL(fileURLWithPath: "/opt/homebrew/bin/podman") }
         return bridge
     }
 
@@ -148,6 +150,13 @@ struct BridgeContractTests {
         func streamProvider(id: String) async throws -> SpaceStreamSourceProviding { try await inner.streamProvider(id: id) }
         func localBackends() async -> [String]? { await inner.localBackends() }
         func localRuntimes() async -> (ready: [String], details: [String: String])? { await inner.localRuntimes() }
+        func runtimeKinds() async -> [AppRuntimeKindInput]? { await inner.runtimeKinds() }
+        func runtimeCheckPath(kind: String, path: String) async throws -> AppRuntimePathCheck {
+            try await inner.runtimeCheckPath(kind: kind, path: path)
+        }
+        func setRuntimeSetting(key: String, value: String?) async throws {
+            try await inner.setRuntimeSetting(key: key, value: value)
+        }
         func lumeSource() async -> String? { await inner.lumeSource() }
         func setLumeSource(_ value: String) async throws { try await inner.setLumeSource(value) }
         func linuxSource() async -> String? { await inner.linuxSource() }
@@ -205,6 +214,7 @@ struct BridgeContractTests {
         }
         // "Send file…" picks this instead of showing the native panel.
         bridge.pickFiles = { [URL(fileURLWithPath: "/tmp/cua-contract-notes.txt")] }
+        bridge.pickRuntime = { _ in URL(fileURLWithPath: "/opt/homebrew/bin/podman") }
         let space = try #require(model.spaces.first?.id)
         return (bridge, model, space)
     }
@@ -264,6 +274,7 @@ struct BridgeContractTests {
             ("spaces.droppedFiles", ["names": ["notes.txt"]]), ("spaces.chooseFiles", [:]),
             ("spaces.sendFiles", ["spaceId": space, "paths": ["/tmp/cua-contract-notes.txt"]]),
             ("settings.get", [:]), ("settings.choose", ["row": "telemetry", "option": "off"]),
+            ("runtimes.check", ["kind": "container", "path": "/usr/local/bin/docker"]), ("runtimes.browse", ["kind": "container"]),
             ("settings.update", ["tips": ["off": false, "done": ["try-agent"]]]),
             ("keyvault.get", [:]),
             ("keyvault.lock", ["ids": ["kv-1"]]),

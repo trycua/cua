@@ -12802,6 +12802,96 @@ public func FfiConverterTypeAppDetailCopy_lower(_ value: AppDetailCopy) -> RustB
 }
 
 
+public struct AppDetectedRuntime: Equatable, Hashable {
+    /**
+     * `docker`, `podman`, `lume`, `qemu`, `container`, `firecracker`.
+     */
+    public var tool: String
+    /**
+     * As people know it (`Docker`, `Apple container`).
+     */
+    public var name: String
+    public var path: String
+    /**
+     * As its `--version` says it (`27.3.1`).
+     */
+    public var version: String?
+    /**
+     * The one guest system it runs, when only one (`macOS`, `Linux`).
+     */
+    public var guests: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `docker`, `podman`, `lume`, `qemu`, `container`, `firecracker`.
+         */tool: String,
+        /**
+         * As people know it (`Docker`, `Apple container`).
+         */name: String, path: String,
+        /**
+         * As its `--version` says it (`27.3.1`).
+         */version: String?,
+        /**
+         * The one guest system it runs, when only one (`macOS`, `Linux`).
+         */guests: String?) {
+        self.tool = tool
+        self.name = name
+        self.path = path
+        self.version = version
+        self.guests = guests
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppDetectedRuntime: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppDetectedRuntime: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppDetectedRuntime {
+        return
+            try AppDetectedRuntime(
+                tool: FfiConverterString.read(from: &buf),
+                name: FfiConverterString.read(from: &buf),
+                path: FfiConverterString.read(from: &buf),
+                version: FfiConverterOptionString.read(from: &buf),
+                guests: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppDetectedRuntime, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.tool, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.path, into: &buf)
+        FfiConverterOptionString.write(value.version, into: &buf)
+        FfiConverterOptionString.write(value.guests, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppDetectedRuntime_lift(_ buf: RustBuffer) throws -> AppDetectedRuntime {
+    return try FfiConverterTypeAppDetectedRuntime.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppDetectedRuntime_lower(_ value: AppDetectedRuntime) -> RustBuffer {
+    return FfiConverterTypeAppDetectedRuntime.lower(value)
+}
+
+
 public struct AppDeviceBanner: Equatable, Hashable {
     /**
      * Tone.
@@ -25488,92 +25578,6 @@ public func FfiConverterTypeAppMenuPreviewRow_lower(_ value: AppMenuPreviewRow) 
 }
 
 
-public struct AppMicrovmInput: Equatable, Hashable {
-    /**
-     * This machine's system (`macos`, `linux`, `windows`).
-     */
-    public var os: AppSpaceOs?
-    /**
-     * Ready backends (none: not read yet).
-     */
-    public var localBackends: [String]?
-    /**
-     * Why each other backend is not ready, by backend name.
-     */
-    public var localDetails: [String: String]?
-    /**
-     * This machine's architecture (`arm64`, `amd64`).
-     */
-    public var hostArch: String?
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * This machine's system (`macos`, `linux`, `windows`).
-         */os: AppSpaceOs?,
-        /**
-         * Ready backends (none: not read yet).
-         */localBackends: [String]?,
-        /**
-         * Why each other backend is not ready, by backend name.
-         */localDetails: [String: String]?,
-        /**
-         * This machine's architecture (`arm64`, `amd64`).
-         */hostArch: String?) {
-        self.os = os
-        self.localBackends = localBackends
-        self.localDetails = localDetails
-        self.hostArch = hostArch
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension AppMicrovmInput: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeAppMicrovmInput: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppMicrovmInput {
-        return
-            try AppMicrovmInput(
-                os: FfiConverterOptionTypeAppSpaceOs.read(from: &buf),
-                localBackends: FfiConverterOptionSequenceString.read(from: &buf),
-                localDetails: FfiConverterOptionDictionaryStringString.read(from: &buf),
-                hostArch: FfiConverterOptionString.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: AppMicrovmInput, into buf: inout [UInt8]) {
-        FfiConverterOptionTypeAppSpaceOs.write(value.os, into: &buf)
-        FfiConverterOptionSequenceString.write(value.localBackends, into: &buf)
-        FfiConverterOptionDictionaryStringString.write(value.localDetails, into: &buf)
-        FfiConverterOptionString.write(value.hostArch, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeAppMicrovmInput_lift(_ buf: RustBuffer) throws -> AppMicrovmInput {
-    return try FfiConverterTypeAppMicrovmInput.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeAppMicrovmInput_lower(_ value: AppMicrovmInput) -> RustBuffer {
-    return FfiConverterTypeAppMicrovmInput.lower(value)
-}
-
-
 public struct AppModeChoice: Equatable, Hashable {
     /**
      * What it means.
@@ -34380,6 +34384,340 @@ public func FfiConverterTypeAppRoutineInput_lower(_ value: AppRoutineInput) -> R
 }
 
 
+public struct AppRuntimeKindInput: Equatable, Hashable {
+    /**
+     * `container`, `vm` or `microvm`.
+     */
+    public var kind: String
+    /**
+     * `runtime.<kind>`: `auto`, `builtin`, `system` (none: auto).
+     */
+    public var source: String?
+    /**
+     * `runtime.<kind>_path`, when set.
+     */
+    public var path: String?
+    /**
+     * What is installed for the kind, the one used first (none: not
+     * looked for yet).
+     */
+    public var detected: [AppDetectedRuntime]?
+    /**
+     * The path in use, probed.
+     */
+    public var check: AppRuntimePathCheck?
+    /**
+     * The tools the kind takes on this machine (`Docker`, `Podman`).
+     */
+    public var expected: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `container`, `vm` or `microvm`.
+         */kind: String,
+        /**
+         * `runtime.<kind>`: `auto`, `builtin`, `system` (none: auto).
+         */source: String?,
+        /**
+         * `runtime.<kind>_path`, when set.
+         */path: String?,
+        /**
+         * What is installed for the kind, the one used first (none: not
+         * looked for yet).
+         */detected: [AppDetectedRuntime]?,
+        /**
+         * The path in use, probed.
+         */check: AppRuntimePathCheck?,
+        /**
+         * The tools the kind takes on this machine (`Docker`, `Podman`).
+         */expected: [String]) {
+        self.kind = kind
+        self.source = source
+        self.path = path
+        self.detected = detected
+        self.check = check
+        self.expected = expected
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppRuntimeKindInput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppRuntimeKindInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppRuntimeKindInput {
+        return
+            try AppRuntimeKindInput(
+                kind: FfiConverterString.read(from: &buf),
+                source: FfiConverterOptionString.read(from: &buf),
+                path: FfiConverterOptionString.read(from: &buf),
+                detected: FfiConverterOptionSequenceTypeAppDetectedRuntime.read(from: &buf),
+                check: FfiConverterOptionTypeAppRuntimePathCheck.read(from: &buf),
+                expected: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppRuntimeKindInput, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.kind, into: &buf)
+        FfiConverterOptionString.write(value.source, into: &buf)
+        FfiConverterOptionString.write(value.path, into: &buf)
+        FfiConverterOptionSequenceTypeAppDetectedRuntime.write(value.detected, into: &buf)
+        FfiConverterOptionTypeAppRuntimePathCheck.write(value.check, into: &buf)
+        FfiConverterSequenceString.write(value.expected, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppRuntimeKindInput_lift(_ buf: RustBuffer) throws -> AppRuntimeKindInput {
+    return try FfiConverterTypeAppRuntimeKindInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppRuntimeKindInput_lower(_ value: AppRuntimeKindInput) -> RustBuffer {
+    return FfiConverterTypeAppRuntimeKindInput.lower(value)
+}
+
+
+public struct AppRuntimePathCheck: Equatable, Hashable {
+    public var path: String
+    /**
+     * A file is there.
+     */
+    public var exists: Bool
+    /**
+     * It can be run.
+     */
+    public var executable: Bool
+    /**
+     * The tool it is, when it is one the kind takes.
+     */
+    public var tool: String?
+    public var name: String?
+    public var version: String?
+    /**
+     * The oldest version Cua runs on.
+     */
+    public var minVersion: String?
+    /**
+     * The tools the kind takes here (`Docker`, `Podman`).
+     */
+    public var expected: [String]
+    public var guests: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(path: String,
+        /**
+         * A file is there.
+         */exists: Bool,
+        /**
+         * It can be run.
+         */executable: Bool,
+        /**
+         * The tool it is, when it is one the kind takes.
+         */tool: String?, name: String?, version: String?,
+        /**
+         * The oldest version Cua runs on.
+         */minVersion: String?,
+        /**
+         * The tools the kind takes here (`Docker`, `Podman`).
+         */expected: [String], guests: String?) {
+        self.path = path
+        self.exists = exists
+        self.executable = executable
+        self.tool = tool
+        self.name = name
+        self.version = version
+        self.minVersion = minVersion
+        self.expected = expected
+        self.guests = guests
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppRuntimePathCheck: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppRuntimePathCheck: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppRuntimePathCheck {
+        return
+            try AppRuntimePathCheck(
+                path: FfiConverterString.read(from: &buf),
+                exists: FfiConverterBool.read(from: &buf),
+                executable: FfiConverterBool.read(from: &buf),
+                tool: FfiConverterOptionString.read(from: &buf),
+                name: FfiConverterOptionString.read(from: &buf),
+                version: FfiConverterOptionString.read(from: &buf),
+                minVersion: FfiConverterOptionString.read(from: &buf),
+                expected: FfiConverterSequenceString.read(from: &buf),
+                guests: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppRuntimePathCheck, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.path, into: &buf)
+        FfiConverterBool.write(value.exists, into: &buf)
+        FfiConverterBool.write(value.executable, into: &buf)
+        FfiConverterOptionString.write(value.tool, into: &buf)
+        FfiConverterOptionString.write(value.name, into: &buf)
+        FfiConverterOptionString.write(value.version, into: &buf)
+        FfiConverterOptionString.write(value.minVersion, into: &buf)
+        FfiConverterSequenceString.write(value.expected, into: &buf)
+        FfiConverterOptionString.write(value.guests, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppRuntimePathCheck_lift(_ buf: RustBuffer) throws -> AppRuntimePathCheck {
+    return try FfiConverterTypeAppRuntimePathCheck.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppRuntimePathCheck_lower(_ value: AppRuntimePathCheck) -> RustBuffer {
+    return FfiConverterTypeAppRuntimePathCheck.lower(value)
+}
+
+
+public struct AppRuntimePathVerdict: Equatable, Hashable {
+    public var ok: Bool
+    public var line: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(ok: Bool, line: String) {
+        self.ok = ok
+        self.line = line
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppRuntimePathVerdict: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppRuntimePathVerdict: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppRuntimePathVerdict {
+        return
+            try AppRuntimePathVerdict(
+                ok: FfiConverterBool.read(from: &buf),
+                line: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppRuntimePathVerdict, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.ok, into: &buf)
+        FfiConverterString.write(value.line, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppRuntimePathVerdict_lift(_ buf: RustBuffer) throws -> AppRuntimePathVerdict {
+    return try FfiConverterTypeAppRuntimePathVerdict.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppRuntimePathVerdict_lower(_ value: AppRuntimePathVerdict) -> RustBuffer {
+    return FfiConverterTypeAppRuntimePathVerdict.lower(value)
+}
+
+
+public struct AppRuntimeSettingChange: Equatable, Hashable {
+    /**
+     * `runtime.container`, `runtime.vm_path`.
+     */
+    public var key: String
+    public var value: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `runtime.container`, `runtime.vm_path`.
+         */key: String, value: String?) {
+        self.key = key
+        self.value = value
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppRuntimeSettingChange: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppRuntimeSettingChange: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppRuntimeSettingChange {
+        return
+            try AppRuntimeSettingChange(
+                key: FfiConverterString.read(from: &buf),
+                value: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppRuntimeSettingChange, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.key, into: &buf)
+        FfiConverterOptionString.write(value.value, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppRuntimeSettingChange_lift(_ buf: RustBuffer) throws -> AppRuntimeSettingChange {
+    return try FfiConverterTypeAppRuntimeSettingChange.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppRuntimeSettingChange_lower(_ value: AppRuntimeSettingChange) -> RustBuffer {
+    return FfiConverterTypeAppRuntimeSettingChange.lower(value)
+}
+
+
 public struct AppRuntimeSwitch: Equatable, Hashable {
     /**
      * The `cua config` setting: `runtime.lume`.
@@ -34463,6 +34801,102 @@ public func FfiConverterTypeAppRuntimeSwitch_lift(_ buf: RustBuffer) throws -> A
 #endif
 public func FfiConverterTypeAppRuntimeSwitch_lower(_ value: AppRuntimeSwitch) -> RustBuffer {
     return FfiConverterTypeAppRuntimeSwitch.lower(value)
+}
+
+
+public struct AppRuntimesInput: Equatable, Hashable {
+    /**
+     * This machine's system (none: not said; every option is offered).
+     */
+    public var os: AppSpaceOs?
+    /**
+     * `arm64`, `amd64`.
+     */
+    public var hostArch: String?
+    /**
+     * The runtime doctor's ready backends (none: not read yet).
+     */
+    public var localBackends: [String]?
+    /**
+     * Why each other backend is not ready.
+     */
+    public var localDetails: [String: String]?
+    /**
+     * Each kind's setting and what is installed for it (none: not read).
+     */
+    public var kinds: [AppRuntimeKindInput]?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * This machine's system (none: not said; every option is offered).
+         */os: AppSpaceOs?,
+        /**
+         * `arm64`, `amd64`.
+         */hostArch: String?,
+        /**
+         * The runtime doctor's ready backends (none: not read yet).
+         */localBackends: [String]?,
+        /**
+         * Why each other backend is not ready.
+         */localDetails: [String: String]?,
+        /**
+         * Each kind's setting and what is installed for it (none: not read).
+         */kinds: [AppRuntimeKindInput]?) {
+        self.os = os
+        self.hostArch = hostArch
+        self.localBackends = localBackends
+        self.localDetails = localDetails
+        self.kinds = kinds
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppRuntimesInput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppRuntimesInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppRuntimesInput {
+        return
+            try AppRuntimesInput(
+                os: FfiConverterOptionTypeAppSpaceOs.read(from: &buf),
+                hostArch: FfiConverterOptionString.read(from: &buf),
+                localBackends: FfiConverterOptionSequenceString.read(from: &buf),
+                localDetails: FfiConverterOptionDictionaryStringString.read(from: &buf),
+                kinds: FfiConverterOptionSequenceTypeAppRuntimeKindInput.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppRuntimesInput, into buf: inout [UInt8]) {
+        FfiConverterOptionTypeAppSpaceOs.write(value.os, into: &buf)
+        FfiConverterOptionString.write(value.hostArch, into: &buf)
+        FfiConverterOptionSequenceString.write(value.localBackends, into: &buf)
+        FfiConverterOptionDictionaryStringString.write(value.localDetails, into: &buf)
+        FfiConverterOptionSequenceTypeAppRuntimeKindInput.write(value.kinds, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppRuntimesInput_lift(_ buf: RustBuffer) throws -> AppRuntimesInput {
+    return try FfiConverterTypeAppRuntimesInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppRuntimesInput_lower(_ value: AppRuntimesInput) -> RustBuffer {
+    return FfiConverterTypeAppRuntimesInput.lower(value)
 }
 
 
@@ -35246,25 +35680,16 @@ public struct AppSettingsInput: Equatable, Hashable {
      */
     public var autoConnect: Bool?
     /**
-     * Which Lume macOS Spaces run on (`runtime.lume`: `auto`, `builtin`,
-     * `system`); none: no Runtimes section.
-     */
-    public var lumeSource: String?
-    /**
-     * Which engine local Linux Spaces run on (`runtime.linux`: `auto`,
-     * `builtin`, `system`); none: no Linux row.
-     */
-    public var linuxSource: String?
-    /**
      * Overflow into your clouds when this machine is full
      * (`placement.overflow`); none: no row.
      */
     public var overflow: Bool?
     /**
-     * What this machine's runtime doctor said, for Runtimes' MicroVM row
-     * (whether microVMs run here, and why not); none: no MicroVM row.
+     * Settings, Advanced's runtimes: each kind's setting, what is
+     * installed for it and whether it runs here. None: nothing read yet
+     * (the rows still show, "Checking…").
      */
-    public var microvm: AppMicrovmInput?
+    public var runtimes: AppRuntimesInput?
     /**
      * Settings, General's Show tips switch: tips are on
      * (`!AppSettings.tips.off`). A shell that does not say reads as on.
@@ -35334,21 +35759,14 @@ public struct AppSettingsInput: Equatable, Hashable {
          * without the preview cover leaves it out).
          */autoConnect: Bool?,
         /**
-         * Which Lume macOS Spaces run on (`runtime.lume`: `auto`, `builtin`,
-         * `system`); none: no Runtimes section.
-         */lumeSource: String?,
-        /**
-         * Which engine local Linux Spaces run on (`runtime.linux`: `auto`,
-         * `builtin`, `system`); none: no Linux row.
-         */linuxSource: String?,
-        /**
          * Overflow into your clouds when this machine is full
          * (`placement.overflow`); none: no row.
          */overflow: Bool?,
         /**
-         * What this machine's runtime doctor said, for Runtimes' MicroVM row
-         * (whether microVMs run here, and why not); none: no MicroVM row.
-         */microvm: AppMicrovmInput?,
+         * Settings, Advanced's runtimes: each kind's setting, what is
+         * installed for it and whether it runs here. None: nothing read yet
+         * (the rows still show, "Checking…").
+         */runtimes: AppRuntimesInput?,
         /**
          * Settings, General's Show tips switch: tips are on
          * (`!AppSettings.tips.off`). A shell that does not say reads as on.
@@ -35370,10 +35788,8 @@ public struct AppSettingsInput: Equatable, Hashable {
         self.keyvaultSiteIcons = keyvaultSiteIcons
         self.keyvaultProtection = keyvaultProtection
         self.autoConnect = autoConnect
-        self.lumeSource = lumeSource
-        self.linuxSource = linuxSource
         self.overflow = overflow
-        self.microvm = microvm
+        self.runtimes = runtimes
         self.showTips = showTips
     }
 
@@ -35410,10 +35826,8 @@ public struct FfiConverterTypeAppSettingsInput: FfiConverterRustBuffer {
                 keyvaultSiteIcons: FfiConverterBool.read(from: &buf),
                 keyvaultProtection: FfiConverterSequenceTypeAppFact.read(from: &buf),
                 autoConnect: FfiConverterOptionBool.read(from: &buf),
-                lumeSource: FfiConverterOptionString.read(from: &buf),
-                linuxSource: FfiConverterOptionString.read(from: &buf),
                 overflow: FfiConverterOptionBool.read(from: &buf),
-                microvm: FfiConverterOptionTypeAppMicrovmInput.read(from: &buf),
+                runtimes: FfiConverterOptionTypeAppRuntimesInput.read(from: &buf),
                 showTips: FfiConverterBool.read(from: &buf)
         )
     }
@@ -35436,10 +35850,8 @@ public struct FfiConverterTypeAppSettingsInput: FfiConverterRustBuffer {
         FfiConverterBool.write(value.keyvaultSiteIcons, into: &buf)
         FfiConverterSequenceTypeAppFact.write(value.keyvaultProtection, into: &buf)
         FfiConverterOptionBool.write(value.autoConnect, into: &buf)
-        FfiConverterOptionString.write(value.lumeSource, into: &buf)
-        FfiConverterOptionString.write(value.linuxSource, into: &buf)
         FfiConverterOptionBool.write(value.overflow, into: &buf)
-        FfiConverterOptionTypeAppMicrovmInput.write(value.microvm, into: &buf)
+        FfiConverterOptionTypeAppRuntimesInput.write(value.runtimes, into: &buf)
         FfiConverterBool.write(value.showTips, into: &buf)
     }
 }
@@ -69939,30 +70351,6 @@ fileprivate struct FfiConverterOptionTypeAppMenuPreview: FfiConverterRustBuffer 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterOptionTypeAppMicrovmInput: FfiConverterRustBuffer {
-    typealias SwiftType = AppMicrovmInput?
-
-    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
-        guard let value = value else {
-            writeInt(&buf, Int8(0))
-            return
-        }
-        writeInt(&buf, Int8(1))
-        FfiConverterTypeAppMicrovmInput.write(value, into: &buf)
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
-        switch try readInt(&buf) as Int8 {
-        case 0: return nil
-        case 1: return try FfiConverterTypeAppMicrovmInput.read(from: &buf)
-        default: throw UniffiInternalError.unexpectedOptionalTag
-        }
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
 fileprivate struct FfiConverterOptionTypeAppMsg: FfiConverterRustBuffer {
     typealias SwiftType = AppMsg?
 
@@ -70467,6 +70855,54 @@ fileprivate struct FfiConverterOptionTypeAppReviewView: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeAppRuntimePathCheck: FfiConverterRustBuffer {
+    typealias SwiftType = AppRuntimePathCheck?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAppRuntimePathCheck.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAppRuntimePathCheck.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeAppRuntimeSettingChange: FfiConverterRustBuffer {
+    typealias SwiftType = AppRuntimeSettingChange?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAppRuntimeSettingChange.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAppRuntimeSettingChange.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeAppRuntimeSwitch: FfiConverterRustBuffer {
     typealias SwiftType = AppRuntimeSwitch?
 
@@ -70483,6 +70919,30 @@ fileprivate struct FfiConverterOptionTypeAppRuntimeSwitch: FfiConverterRustBuffe
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeAppRuntimeSwitch.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeAppRuntimesInput: FfiConverterRustBuffer {
+    typealias SwiftType = AppRuntimesInput?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAppRuntimesInput.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAppRuntimesInput.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -71835,6 +72295,30 @@ fileprivate struct FfiConverterOptionSequenceTypeAppCatalogEntry: FfiConverterRu
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionSequenceTypeAppDetectedRuntime: FfiConverterRustBuffer {
+    typealias SwiftType = [AppDetectedRuntime]?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterSequenceTypeAppDetectedRuntime.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterSequenceTypeAppDetectedRuntime.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionSequenceTypeAppGpuChoice: FfiConverterRustBuffer {
     typealias SwiftType = [AppGpuChoice]?
 
@@ -71899,6 +72383,30 @@ fileprivate struct FfiConverterOptionSequenceTypeAppRemoteWindow: FfiConverterRu
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterSequenceTypeAppRemoteWindow.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionSequenceTypeAppRuntimeKindInput: FfiConverterRustBuffer {
+    typealias SwiftType = [AppRuntimeKindInput]?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterSequenceTypeAppRuntimeKindInput.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterSequenceTypeAppRuntimeKindInput.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -72998,6 +73506,31 @@ fileprivate struct FfiConverterSequenceTypeAppDetailAction: FfiConverterRustBuff
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeAppDetailAction.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeAppDetectedRuntime: FfiConverterRustBuffer {
+    typealias SwiftType = [AppDetectedRuntime]
+
+    public static func write(_ value: [AppDetectedRuntime], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAppDetectedRuntime.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AppDetectedRuntime] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AppDetectedRuntime]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAppDetectedRuntime.read(from: &buf))
         }
         return seq
     }
@@ -74998,6 +75531,31 @@ fileprivate struct FfiConverterSequenceTypeAppRoutineInput: FfiConverterRustBuff
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeAppRoutineInput.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeAppRuntimeKindInput: FfiConverterRustBuffer {
+    typealias SwiftType = [AppRuntimeKindInput]
+
+    public static func write(_ value: [AppRuntimeKindInput], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAppRuntimeKindInput.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AppRuntimeKindInput] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AppRuntimeKindInput]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAppRuntimeKindInput.read(from: &buf))
         }
         return seq
     }
@@ -79114,6 +79672,31 @@ public func appRowsToSpaces(rows: [AppSpaceRow], nowMs: Int64) -> [AppSpace]  {
 })
 }
 /**
+ * A runtime binary's one line in Settings, Advanced ("Docker 27.3 found",
+ * "Not a Docker or Podman binary").
+ */
+public func appRuntimePathVerdict(check: AppRuntimePathCheck) -> AppRuntimePathVerdict  {
+    return try!  FfiConverterTypeAppRuntimePathVerdict_lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_runtime_path_verdict(
+        FfiConverterTypeAppRuntimePathCheck_lower(check),$0
+    )
+})
+}
+/**
+ * The setting a runtime row's choice changes (`runtime.<kind>` or
+ * `runtime.<kind>_path`; a `None` value unsets it), or none for any other
+ * row.
+ */
+public func appRuntimesChoose(input: AppRuntimesInput?, row: String, option: String) -> AppRuntimeSettingChange?  {
+    return try!  FfiConverterOptionTypeAppRuntimeSettingChange.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_runtimes_choose(
+        FfiConverterOptionTypeAppRuntimesInput.lower(input),
+        FfiConverterString.lower(row),
+        FfiConverterString.lower(option),$0
+    )
+})
+}
+/**
  * The SDK's plan-option group for a picker group.
  */
 public func appSensitiveGroupSdk(group: AppSensitiveGroup) -> TeleportSensitiveGroup  {
@@ -81284,6 +81867,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_rows_to_spaces() != 20688) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_runtime_path_verdict() != 38898) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_runtimes_choose() != 22513) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_sensitive_group_sdk() != 32734) {

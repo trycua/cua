@@ -7,6 +7,7 @@ import Testing
 /// The background thumbnail sweep refreshes a bounded number of Spaces each
 /// time, rotating through the rest, so 256 running Spaces are not 256
 /// screenshots in one go.
+@MainActor
 @Suite("Thumbnail sweep")
 struct ThumbnailSweepTests {
     @Test func aListThatFitsIsSweptWhole() {

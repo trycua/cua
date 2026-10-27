@@ -30,7 +30,11 @@ const thisMac = (shared: boolean) => ({ id: "this-mac", name: "This Mac", provid
 const withDesktop = (shared: boolean, only = false) => ({
   failsCreates: false,
   listsGhost: false,
-  answer: (op: string, out: unknown) => (op === "spaces.list" ? (only ? [thisMac(shared)] : [...(out as unknown[]), thisMac(shared)]) : out),
+  answer: (op: string, out: unknown) => {
+    if (op === "host.status") return { ...(out as object), shareDesktop: shared };
+    if (op === "machines.list") return (out as { current?: boolean; host?: object }[]).map((r) => (r.current && r.host ? { ...r, host: { ...r.host, shareDesktop: shared } } : r));
+    return op === "spaces.list" ? (only ? [thisMac(shared)] : [...(out as unknown[]), thisMac(shared)]) : out;
+  },
 });
 
 const row = () => document.querySelector<HTMLElement>('[data-space-id="this-mac"]');
@@ -87,18 +91,41 @@ describe.skipIf(!wasmBuilt)("This Mac's desktop row", () => {
     expect(document.querySelector("[data-empty-home]")).toBeNull();
   });
 
-  it("its page has no stream, says You aren't sharing your desktop as a Space, and holds the switch", async () => {
-    await mountApp("/spaces/this-mac", withDesktop(false));
-    const page = await waitFor(() => {
+  it("its page is a Space's page with the share prompt where the stream would be, and the chat beside it", async () => {
+    const actions: string[] = [];
+    await mountApp("/spaces/this-mac", {
+      ...withDesktop(false),
+      intercept: (op, args) => {
+        if (op === "host.action") {
+          actions.push((args as { action: string }).action);
+          return null;
+        }
+        return undefined;
+      },
+    });
+    const stage = await waitFor(() => {
       const el = document.querySelector<HTMLElement>("[data-this-mac-desktop]");
       expect(el).not.toBeNull();
       return el!;
     });
-    expect(page.getAttribute("data-this-mac-desktop")).toBe("off");
-    expect(page.textContent).toContain("You aren't sharing your desktop as a Space");
-    expect(page.textContent).toContain("from your other machines");
-    expect(page.querySelector("[data-desktop-switch]")?.textContent).toContain("Let other machines control this desktop");
+    // The same page as any Space: header, call layout, thread and composer.
+    expect(document.querySelector("[data-call-layout]")).not.toBeNull();
+    expect(document.querySelector("textarea")).not.toBeNull();
+    expect(stage.getAttribute("data-this-mac-desktop")).toBe("off");
+    expect(stage.textContent).toContain("You aren't sharing your desktop as a Space");
     expect(document.querySelector("[data-stream-surface], video, canvas")).toBeNull();
+    expect(document.body.textContent).not.toContain("\u00b7");
+
+    // Writing while not sharing lights the prompt and keeps the draft.
+    const box = document.querySelector<HTMLTextAreaElement>("textarea")!;
+    await act(async () => void fireEvent.change(box, { target: { value: "look at my screen" } }));
+    await act(async () => void fireEvent.keyDown(box, { key: "Enter" }));
+    await waitFor(() => expect(document.querySelector("[data-this-mac-desktop][data-nudge]")).not.toBeNull());
+    expect(document.querySelector<HTMLTextAreaElement>("textarea")!.value).toBe("look at my screen");
+
+    // The button turns sharing on.
+    await act(async () => void fireEvent.click(document.querySelector("[data-desktop-share-button]")!));
+    await waitFor(() => expect(actions).toContain("share-desktop"));
   });
 });
 

@@ -18,7 +18,7 @@ import { StreamSection } from "@/components/space-detail/stream-section";
 import { StreamSurface } from "@/components/space-detail/stream-surface";
 import { SpaceHeader } from "@/components/space-detail/space-header";
 import { SpaceCall } from "@/components/space-thread/space-call";
-import { ThisMacDesktop } from "@/components/space-detail/this-mac-desktop";
+import { ThisMacCall } from "@/components/space-detail/this-mac-desktop";
 import { StateLabel } from "@/components/state-dot";
 import { PageTip } from "@/components/tips";
 import { creatingThread } from "@/components/space-thread/queued";
@@ -426,6 +426,22 @@ function SpaceDetailPage() {
   const creating = space.id.startsWith("pending:") && askFirstOn && state !== "failed" && tasks.some((t) => t.pendingId === space.id);
   const callThread = creating ? creatingThread(space.id) : thread;
   const later = "Available once the Space is ready";
+  // This Mac's own desktop row: a Space's page as any other, with the share prompt where the stream would be.
+  if (space.id === "this-mac") {
+    return (
+      <>
+        <ThisMacCall
+          spaceName={space.name}
+          shared={!isUnsharedDesktop(space)}
+          identity={session?.signedIn ? (session.account.identity ?? null) : null}
+          facts={detail.facts}
+          more={sections}
+          header={<SpaceHeader back={<BackLink inline />} os={space.os} title={detail.title} place={place} />}
+        />
+        {dialogs}
+      </>
+    );
+  }
   if (!detail.desktopNote && callThread.status !== "unsupported" && (creating || !space.id.startsWith("pending:"))) {
     return (
       <>
@@ -508,10 +524,7 @@ function SpaceDetailPage() {
 
       {powerError}
 
-      {space.id === "this-mac" ? (
-        // This Mac's own desktop row: no stream, only whether it is shared, and the switch.
-        <ThisMacDesktop shared={!isUnsharedDesktop(space)} />
-      ) : detail.desktopNote ? (
+      {detail.desktopNote ? (
         // One of your machines that keeps its desktop private: why, in place
         // of the desktop, then the Spaces it provides (no New Space button
         // beside the note).

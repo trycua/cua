@@ -95,17 +95,39 @@ pub(crate) fn tree_usage(shared: &Shared, root: &str) -> budget::Usage {
     let spaces = shared.runtime.spaces();
     let links = api::links_of(spaces);
     let mut u = budget::Usage::default();
+    let ledger = shared.children.as_deref().map(|c| &c.budget);
     for id in tree::subtree(&links, root) {
         u.spaces += 1;
         let (power, _) = spaces.power_of(&id);
         if power == "stopped" {
             continue;
         }
-        let (cpus, mem) = local_size(shared, &id);
+        let (cpus, mem) = match ledger.and_then(|l| l.cost(&id)) {
+            Some(c) => (c.vcpus, c.memory_mb),
+            None => local_size(shared, &id),
+        };
         u.vcpus += cpus;
         u.memory_mb += mem;
     }
+    if let Some(l) = ledger {
+        (u.usd_per_hour, u.usd_spent) = l.spend(root, unix_now());
+    }
     u
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Records what a new child of `root`'s tree was made with (its size and
+/// cost per hour), so its tree's use and spend count it.
+pub(crate) fn record_cost(shared: &Shared, root: &str, child: &str, ask: budget::Ask) {
+    if let Some(c) = shared.children.as_deref() {
+        c.budget.record(root, child, &ask, unix_now());
+    }
 }
 
 /// A local Space's vCPUs and memory (MiB) as recorded, else the create

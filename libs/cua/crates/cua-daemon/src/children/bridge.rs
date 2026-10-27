@@ -62,6 +62,15 @@ pub(crate) fn reconcile(shared: &Arc<Shared>, bridges: &mut BTreeMap<String, Joi
         return;
     };
     let registered: BTreeSet<String> = records.into_iter().map(|r| r.id).collect();
+    // Children that are gone stop costing; what they cost stays with their
+    // tree.
+    children.budget.close_gone(
+        &registered,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
+    );
     for id in children.authority.spaces() {
         if !registered.contains(&id) {
             children.authority.revoke(&id);

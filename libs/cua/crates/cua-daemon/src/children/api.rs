@@ -28,6 +28,7 @@ use tonic::{Request, Response, Status};
 use super::capability::Claims;
 use super::tree::{self, Tree};
 use crate::server::{Shared, Svc};
+use cua_sandbox_core::placement::On;
 
 type R<T> = std::result::Result<Response<T>, Status>;
 
@@ -160,16 +161,28 @@ impl Scoped {
         // Whether it may make children of its own is the tree's depth's
         // call ([`Scoped::adopt`]), never the request's.
         r.children = None;
+        // Where: this machine (the default), the least-loaded of the
+        // owner's machines and linked clouds (`auto`), one of the owner's
+        // machines (`host:<m>`), or a linked cloud. This daemon creates it
+        // with the owner's own sign-in and cloud links; the Space asking
+        // never holds them.
         let location = r.location.trim().to_owned();
-        match location.as_str() {
-            "" | "local" => r.location = "local".into(),
-            other => {
+        let on = if location.is_empty() {
+            On::Local
+        } else {
+            On::parse_or_host(&location).map_err(|e| Status::invalid_argument(e.message))?
+        };
+        match &on {
+            On::Local | On::Auto | On::Host(_) | On::Provider(_) => {}
+            On::Cloud | On::Direct(_) | On::Relay(_) => {
                 return Err(Status::failed_precondition(format!(
-                    "a child runs on the same machine as its parent; on={other:?} is not \
-                     available to children yet"
+                    "a child goes on this machine, `auto`, one of your machines \
+                     (`host:<name>`) or a linked cloud; on={location:?} is not one"
                 )));
             }
         }
+        r.location = on.to_string();
+        let local = matches!(on, On::Local);
         if r.reuse {
             return Err(Status::invalid_argument(
                 "a child is always a new Space (reuse is not available here)",
@@ -185,9 +198,9 @@ impl Scoped {
                 "mount volumes in children that it was given itself",
             ));
         }
-        if !r.instance_type.is_empty() || !r.region.is_empty() {
+        if local && (!r.instance_type.is_empty() || !r.region.is_empty()) {
             return Err(Status::failed_precondition(
-                "a child runs on the same machine as its parent (no cloud machine type or region)",
+                "a machine type or region needs on=auto or a linked cloud",
             ));
         }
         if let Some(k) = r.labels.keys().find(|k| k.starts_with("cua.")) {
@@ -336,6 +349,42 @@ fn ask_of(r: &pb::CreateSpaceRequest) -> super::budget::Ask {
     }
 }
 
+/// What a child placed off this machine costs per hour: what the elastic
+/// pool would add to place it (0 when it fits on a machine already running).
+/// A child the pool can't place is refused with the pool's reason.
+async fn priced(
+    spaces: &cua_spaces::Spaces,
+    r: &pb::CreateSpaceRequest,
+    mut ask: super::budget::Ask,
+) -> Result<super::budget::Ask, Status> {
+    if r.location == "local" {
+        return Ok(ask);
+    }
+    let req = cua_spaces::elastic::ElasticRequest {
+        image: r.image.clone(),
+        kind: r.kind.clone(),
+        cpus: Some(ask.vcpus),
+        memory_mb: Some(ask.memory_mb),
+        count: 1,
+        ..Default::default()
+    };
+    match spaces.elastic_plan(&[req]).await {
+        Ok(p) => {
+            if let Some(u) = p.plan.unplaced.first() {
+                return Err(Status::resource_exhausted(format!(
+                    "no machine can take this child: {}",
+                    u.reason
+                )));
+            }
+            ask.usd_per_hour = p.plan.added_usd_per_hour.max(0.0);
+            Ok(ask)
+        }
+        // Without a pool view (no linked cloud), it goes on a machine of
+        // yours: free here; the create itself says if none can take it.
+        Err(_) => Ok(ask),
+    }
+}
+
 /// A tree's budget and use, as the API reports it.
 pub(crate) fn tree_budget(shared: &Shared, root: &str) -> pb::TreeBudget {
     let Some(c) = shared.children.as_deref() else {
@@ -471,10 +520,12 @@ impl SpaceService for Scoped {
     ) -> R<pb::CreateSpaceResponse> {
         let claims = claims(&req)?;
         let child = self.child_request(&claims, req.into_inner())?;
-        let _held = super::admit(&self.shared, &claims.root, ask_of(&child))?;
+        let ask = priced(self.spaces(), &child, ask_of(&child)).await?;
+        let _held = super::admit(&self.shared, &claims.root, ask)?;
         let resp = self.owner().create_space(Request::new(child)).await?;
         if let Some(s) = &resp.get_ref().space {
             self.adopt(&claims, &s.id);
+            super::record_cost(&self.shared, &claims.root, &s.id, ask);
         }
         Ok(resp)
     }
@@ -489,7 +540,8 @@ impl SpaceService for Scoped {
         let claims = claims(&req)?;
         let inner = req.into_inner();
         let child = self.child_request(&claims, inner.create.unwrap_or_default())?;
-        let held = super::admit(&self.shared, &claims.root, ask_of(&child))?;
+        let ask = priced(self.spaces(), &child, ask_of(&child)).await?;
+        let held = super::admit(&self.shared, &claims.root, ask)?;
         let stream = self
             .owner()
             .create_space_stream(Request::new(pb::CreateSpaceStreamRequest {
@@ -507,6 +559,7 @@ impl SpaceService for Scoped {
                 && let Some(s) = &r.space
             {
                 me.adopt(&claims, &s.id);
+                super::record_cost(&me.shared, &claims.root, &s.id, ask);
             }
             item
         });

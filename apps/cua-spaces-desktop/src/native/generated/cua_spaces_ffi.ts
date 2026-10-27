@@ -8828,7 +8828,11 @@ export type AppAgentKeyInput = {
     /**
      * When it was added (Unix ms).
      */
-    addedMs: bigint
+    addedMs: bigint,
+    /**
+     * A sign-in past its expiry: not used by any run until reconnected.
+     */
+    expired: boolean
 }
 
 /**
@@ -8855,7 +8859,8 @@ const FfiConverterTypeAppAgentKeyInput = (() => {
                 provider: FfiConverterString.read(from),
                 env: FfiConverterString.read(from),
                 last4: FfiConverterString.read(from),
-                addedMs: FfiConverterUInt64.read(from)
+                addedMs: FfiConverterUInt64.read(from),
+                expired: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -8863,12 +8868,14 @@ const FfiConverterTypeAppAgentKeyInput = (() => {
             FfiConverterString.write(value.env, into);
             FfiConverterString.write(value.last4, into);
             FfiConverterUInt64.write(value.addedMs, into);
+            FfiConverterBool.write(value.expired, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.provider) +
              FfiConverterString.allocationSize(value.env) +
              FfiConverterString.allocationSize(value.last4) +
-             FfiConverterUInt64.allocationSize(value.addedMs);
+             FfiConverterUInt64.allocationSize(value.addedMs) +
+             FfiConverterBool.allocationSize(value.expired);
 
         }
     };

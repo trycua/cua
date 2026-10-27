@@ -2043,6 +2043,7 @@ mod tests {
                     env: (*env).into(),
                     last4: "1234".into(),
                     added_ms: 1,
+                    expired: false,
                 })
                 .collect(),
             ..Default::default()

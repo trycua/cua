@@ -32,6 +32,8 @@ export interface RosterAgent {
   identity: MemberIdentity | null;
   /** Another agent here uses the same name: its owner shows after the AI tag. */
   collides: boolean;
+  /** What the Space calls it (`@claude`); `name` is its key on this machine (`claude-2` in a second Space). */
+  handle: string;
 }
 
 /** How an author shows in the thread. */
@@ -122,6 +124,7 @@ export function buildRoster(input: {
     kind: "agent",
     id: `agent:${m.name}`,
     name: m.name,
+    handle: m.handle || m.name,
     // The name the agent chose; without an identity, the harness's name when it is named after it.
     label: m.identity?.displayName || agentLabel(m.name, m.harness, input.harnessName),
     harness: m.identity?.harness.id || m.harness,
@@ -161,7 +164,7 @@ export function buildRoster(input: {
   for (const a of posted.values()) add({ kind: "person", id: a.id, label: a.name, me: false }, a.id, a.name.toLowerCase());
 
   const candidates: MentionCandidate[] = [
-    ...agents.map((a) => ({ handle: a.name, label: a.label, kind: "agent" as const })),
+    ...agents.map((a) => ({ handle: a.handle, label: a.label, kind: "agent" as const })),
     ...people.filter((p) => !p.me).map((p) => ({ handle: p.label.toLowerCase().replace(/\s+/g, ""), label: p.label, kind: "person" as const })),
   ];
   const labels = new Set(agents.map((a) => a.label.trim().toLowerCase()));

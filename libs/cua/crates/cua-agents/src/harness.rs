@@ -53,8 +53,10 @@ pub struct Harness {
     /// Shell tests (run in the guest) for a sign-in the harness uses
     /// instead of a key: a credentials file under `$HOME`, a Keychain item.
     /// `Some(&[])`: only a key works. `None`: the harness can also be set up
-    /// through its own config files, which cua does not read, so a missing
-    /// key is not conclusive.
+    /// through config files cua does not know, so a missing key is not
+    /// conclusive (no harness here is `None` any more: each lists the files
+    /// of its own setup, and a run without a key or one of them is refused
+    /// before the install).
     pub logins: Option<&'static [&'static str]>,
     /// ACP `authenticate` method used with an env key, when the agent
     /// requires one.
@@ -170,7 +172,10 @@ pub const HARNESSES: &[Harness] = &[
             "GEMINI_API_KEY",
             "OPENROUTER_API_KEY",
         ],
-        logins: None,
+        logins: Some(&[
+            "[ -s \"$HOME/.local/share/opencode/auth.json\" ]",
+            "[ -s \"$HOME/.config/opencode/opencode.json\" ]",
+        ]),
         auth_method: None,
         wires: &[Wire::OpenaiChat],
         mode_kinds: FULL,
@@ -191,7 +196,10 @@ pub const HARNESSES: &[Harness] = &[
             "GOOGLE_API_KEY",
             "OPENROUTER_API_KEY",
         ],
-        logins: None,
+        logins: Some(&[
+            "[ -s \"$HOME/.config/goose/config.yaml\" ]",
+            "[ -s \"$HOME/.config/goose/secrets.yaml\" ]",
+        ]),
         auth_method: None,
         wires: &[Wire::OpenaiChat],
         mode_kinds: FULL,
@@ -212,7 +220,10 @@ pub const HARNESSES: &[Harness] = &[
             "GEMINI_API_KEY",
             "OPENROUTER_API_KEY",
         ],
-        logins: None,
+        logins: Some(&[
+            "[ -s \"$HOME/.pi/agent/auth.json\" ]",
+            "[ -s \"$HOME/.pi/agent/models.json\" ]",
+        ]),
         auth_method: None,
         wires: &[Wire::OpenaiChat],
         mode_kinds: FULL,
@@ -230,8 +241,20 @@ pub const HARNESSES: &[Harness] = &[
         installs: &["hermes"],
         acp: &["hermes-acp"],
         cli: Some("hermes"),
-        keys: &["OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"],
-        logins: None,
+        // CLAUDE_CODE_OAUTH_TOKEN: the Claude sign-in Connect made; Hermes
+        // reads it as its Anthropic credential. It has no reader for the
+        // ChatGPT sign-in (CODEX_AUTH_JSON), so that one is not forwarded.
+        keys: &[
+            "OPENROUTER_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "OPENAI_API_KEY",
+        ],
+        // Its own `.env` (a key set inside the Space) or a provider sign-in.
+        logins: Some(&[
+            "[ -s \"$HOME/.hermes/.env\" ]",
+            "[ -s \"$HOME/.hermes/auth.json\" ]",
+        ]),
         auth_method: None,
         wires: &[Wire::OpenaiChat],
         mode_kinds: FULL,
@@ -251,7 +274,10 @@ pub const HARNESSES: &[Harness] = &[
         acp: &["openclaw", "acp"],
         cli: Some("openclaw"),
         keys: &["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY"],
-        logins: None,
+        logins: Some(&[
+            "[ -s \"$HOME/.openclaw/openclaw.json\" ]",
+            "[ -s \"$HOME/.openclaw/.env\" ]",
+        ]),
         auth_method: None,
         wires: &[Wire::OpenaiChat],
         mode_kinds: FULL,
@@ -264,6 +290,21 @@ pub const HARNESSES: &[Harness] = &[
         ],
     },
 ];
+
+impl Harness {
+    /// The provider whose Connect row gives this harness a credential
+    /// (`anthropic`, `openai`), when it has one. Hermes reads either; the
+    /// first is named.
+    pub fn connect_provider(&self) -> Option<&'static str> {
+        match self.id {
+            "claude-code" | "hermes" | "opencode" | "pi" | "openclaw" | "goose" => {
+                Some("anthropic")
+            }
+            "openai-codex" => Some("openai"),
+            _ => None,
+        }
+    }
+}
 
 /// A harness by id.
 pub fn harness(id: &str) -> Option<&'static Harness> {

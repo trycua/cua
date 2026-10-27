@@ -12,6 +12,7 @@ import { mentionSegments } from "@/lib/mentions";
 import { cn } from "@/lib/utils";
 
 import { AgentTile, MemberAvatar } from "./avatar";
+import { FailureNote } from "./failure-note";
 import { AgentName, AiTag, holderNames, MemberEventNote } from "./identity";
 import { MentionChip, ProfileTrigger } from "./profile-card";
 import { waitingFor } from "./rights";
@@ -43,6 +44,7 @@ export function ThreadView({
   onOpenAttachment,
   onReachTop,
   onRemoveAgent,
+  onRetry,
   empty,
   className,
   endInset = 0,
@@ -58,6 +60,8 @@ export function ThreadView({
   tail?: ReactNode;
   /** Removes an agent member from its card (absent: the host can't). */
   onRemoveAgent?: (handle: string) => Promise<void>;
+  /** Sends a message again (a failed agent's Retry); absent: no Retry. */
+  onRetry?: (text: string) => Promise<void>;
   /** Scrolled to the top: read the page before (when there is one). */
   onReachTop?: () => Promise<void>;
   roster: Roster;
@@ -138,7 +142,7 @@ export function ThreadView({
         <div ref={body} className="flex min-h-full flex-col justify-end gap-1 px-8 pt-5 pb-4" style={endInset ? { paddingBottom: endInset + 16 } : undefined}>
           {items.map((item) => (
             <Fragment key={item.key}>
-              <ThreadItemView item={item} roster={roster} onAnswer={onAnswer} onOpenAttachment={onOpenAttachment} onRemoveAgent={onRemoveAgent} />
+              <ThreadItemView item={item} roster={roster} onAnswer={onAnswer} onOpenAttachment={onOpenAttachment} onRemoveAgent={onRemoveAgent} onRetry={onRetry} />
               {after && "entry" in item ? after(item.entry.seq) : null}
             </Fragment>
           ))}
@@ -156,6 +160,7 @@ export const ThreadItemView = memo(function Item({
   onAnswer,
   onOpenAttachment,
   onRemoveAgent,
+  onRetry,
   label,
 }: {
   item: ThreadItem;
@@ -163,6 +168,7 @@ export const ThreadItemView = memo(function Item({
   onAnswer: (approval: number, approve: boolean) => Promise<void>;
   onOpenAttachment: (a: ThreadAttachment) => void;
   onRemoveAgent?: (handle: string) => Promise<void>;
+  onRetry?: (text: string) => Promise<void>;
   /** Beside each message's time (the DM's Space). */
   label?: ReactNode;
 }) {
@@ -188,7 +194,8 @@ export const ThreadItemView = memo(function Item({
     case "task":
       return (
         <div data-task={item.entry.seq} data-task-state={item.state}>
-          <Message entry={item.entry} {...m} status={<TaskChip state={item.state} />} footnote={keysLine(item.entry, roster)} />
+          {/* An agent that failed is marked on its own reply, never on the person's message. */}
+          <Message entry={item.entry} {...m} status={item.state === "failed" ? null : <TaskChip state={item.state} />} footnote={keysLine(item.entry, roster)} />
           {item.replies.length || item.notes.length ? (
             <div data-task-replies="" className="pl-10">
               {[...item.notes.map((n) => ({ seq: n.entry.seq, note: n.text, entry: n.entry })), ...item.replies.map((r) => ({ seq: r.seq, note: null, entry: r }))]
@@ -199,7 +206,7 @@ export const ThreadItemView = memo(function Item({
                       {x.note}
                     </p>
                   ) : (
-                    <Message key={x.seq} entry={x.entry} {...m} nested />
+                    <Message key={x.seq} entry={x.entry} {...m} nested status={x.entry.failure ? <TaskChip state="failed" /> : undefined} task={{ text: item.entry.text, onRetry }} />
                   ),
                 )}
             </div>
@@ -248,6 +255,7 @@ function Message({
   status,
   footnote,
   nested,
+  task,
   surface = "background",
 }: {
   entry: ThreadEntry;
@@ -262,6 +270,8 @@ function Message({
   /** A muted line under the text ("Runs on Ada's keys"). */
   footnote?: string | null;
   nested?: boolean;
+  /** The task this message replies to (its text, for a failed reply's Retry). */
+  task?: { text: string; onRetry?: (text: string) => Promise<void> };
 }) {
   const who = roster.author(entry.author);
   // A person's card: the roster's entry for this author (by id, else by name).
@@ -306,6 +316,7 @@ function Message({
           {status ? <span className="shrink-0">{status}</span> : null}
         </div>
         {entry.text ? <ThreadText text={entry.text} handles={roster.handles} /> : null}
+        {entry.failure ? <FailureNote failure={entry.failure} harness={who.harness ?? ""} taskText={task?.text ?? null} onRetry={task?.onRetry} /> : null}
         {entry.view ? <ViewLine view={entry.view} /> : null}
         {footnote ? (
           <p data-entry-footnote="" className="mt-0.5 text-[11px] text-muted-foreground">

@@ -6669,6 +6669,8 @@ pub struct AppAgentKeyInput {
     pub last4: String,
     /// When it was added (Unix ms).
     pub added_ms: u64,
+    /// A sign-in past its expiry: not used by any run until reconnected.
+    pub expired: bool,
 }
 
 /// What the section shows.

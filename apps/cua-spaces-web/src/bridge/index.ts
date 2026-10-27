@@ -180,6 +180,7 @@ export {
   type ThreadAttachment,
   type ThreadAuthor,
   type ThreadEntry,
+  type ThreadFailure,
   type ThreadView,
   type ThreadPage,
   type ThreadRole,

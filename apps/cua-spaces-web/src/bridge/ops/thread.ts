@@ -117,6 +117,18 @@ export interface ThreadAttachment {
   mime: string | null;
 }
 
+/** What failed in an agent's turn or start, typed (`cua_agents::failure::Failure`). */
+export interface ThreadFailure {
+  /** `needs_connect`: no working credential, connect (or reconnect) one; `error`: anything else. */
+  class: "needs_connect" | "error";
+  /** For `needs_connect`: the Connectors row that fixes it (`anthropic`, `openai`). */
+  provider: string | null;
+  /** The complete error as the harness or provider said it (for Show details; never the summary). */
+  message: string;
+  /** Sending the same message again can work. */
+  retryable: boolean;
+}
+
 export interface ThreadEntry {
   seq: number;
   id: string;
@@ -146,6 +158,8 @@ export interface ThreadEntry {
   joinRequest?: JoinRequest | null;
   /** What the person was looking at in the Space as they posted (`view`): its desktop or a window. */
   view?: ThreadView | null;
+  /** On an agent's reply to a task that failed: what failed, with the complete text. `text` says it in plain words. */
+  failure?: ThreadFailure | null;
 }
 
 /** `thread_post`'s `view` and every entry's: the Space's desktop, or one of its windows (`cua.env.v1.ThreadView`). */
@@ -189,11 +203,15 @@ export type AgentMemberStatus = string;
 
 export interface AgentMember {
   name: string;
+  /** What the Space calls it (`@claude`) when that is not `name` (a second Space's `claude` is stored as `claude-2`). */
+  handle?: string;
   /** Harness id (`claude-code`, `hermes`, ...). */
   harness: string;
   status: AgentMemberStatus;
   /** What it is doing, in a few words ("running e2e suite"), when it says. */
   activity: string | null;
+  /** For a failed member: what failed, typed, with the complete text. */
+  failure?: ThreadFailure | null;
   /** Sessions it runs (P2 shows each). */
   sessions: number;
   /** Its rights (null from a daemon without them: the defaults apply). */
@@ -601,6 +619,19 @@ export function threadEntryFromTool(v: unknown): ThreadEntry | null {
     event: kind === "system" ? memberEvent(e.event) : null,
     ...(kind === "join_request" ? { joinRequest: joinRequest(e) } : {}),
     ...(e.view != null ? { view: threadViewFromTool(e.view) } : {}),
+    ...(e.failure != null ? { failure: threadFailure(e.failure) } : {}),
+  };
+}
+
+/** A typed failure (`failure` of an entry, or of a failed member's status). */
+export function threadFailure(v: unknown): ThreadFailure | null {
+  const f = obj(v);
+  if (!f) return null;
+  return {
+    class: f.class === "needs_connect" ? "needs_connect" : "error",
+    provider: str(f.provider) || null,
+    message: str(f.message),
+    retryable: f.retryable !== false,
   };
 }
 
@@ -746,10 +777,12 @@ function agentMember(r: unknown): AgentMember[] {
   return [
     {
       name,
+      ...(str(m.handle) && str(m.handle) !== name ? { handle: str(m.handle) } : {}),
       harness: str(m.harness),
       // `status` is a word, or `{state, activity}`.
       status: (status ? str(status.state) : str(m.status)) || "idle",
       activity: (status ? str(status.activity) : str(m.activity)) || null,
+      ...(status && status.failure != null ? { failure: threadFailure(status.failure) } : {}),
       sessions: num(m.sessions) ?? 1,
       rights: rights(m.rights),
       youCan: youCan(m.you_can),

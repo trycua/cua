@@ -23,7 +23,7 @@ import type { AgentKeyProvider, AgentKeysReport } from "./ops/agent-keys";
 
 /** What the section shows (`agent_keys::AgentKeysInput`). */
 export interface AgentKeysInput {
-  keys: { provider: string; env: string; last4: string; addedMs: number }[];
+  keys: { provider: string; env: string; last4: string; addedMs: number; expired?: boolean }[];
   unavailable?: string | null;
   error?: string | null;
 }
@@ -83,7 +83,7 @@ export interface AgentKeyConfirm {
 }
 
 export const agentKeysInputOf = (report: AgentKeysReport | undefined, error: Error | null): AgentKeysInput => ({
-  keys: (report?.keys ?? []).map(({ provider, env, last4, addedMs }) => ({ provider, env, last4, addedMs })),
+  keys: (report?.keys ?? []).map(({ provider, env, last4, addedMs, expired }) => ({ provider, env, last4, addedMs, ...(expired ? { expired: true } : {}) })),
   unavailable: report?.available === false ? (report.unavailable ?? "this machine can't keep keys") : null,
   error: error ? error.message : null,
 });

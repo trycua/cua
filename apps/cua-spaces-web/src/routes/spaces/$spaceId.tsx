@@ -532,7 +532,7 @@ function SpaceDetailPage() {
         surface("h-72")
       )}
 
-      {sections}
+      {space.id === "this-mac" ? null : sections}
       {dialogs}
     </Page>
   );

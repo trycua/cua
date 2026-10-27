@@ -25,7 +25,7 @@ import { toast, toastError } from "@/components/ui/toast";
 import { useTileVideo } from "@/components/video/tile-video";
 import { useInView } from "@/hooks/use-in-view";
 import { creatingLine } from "@/lib/host-labels";
-import { createError, createProgress, powerButton, powerError, type PowerButton } from "@/lib/spaces";
+import { createError, createProgress, osLabel, powerButton, powerError, type PowerButton } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
 
 import { PeopleStack, SpaceMark } from "./avatars";
@@ -107,7 +107,7 @@ export function SpaceTile({ item, accessKey, selected = false, busy = false, top
             </div>
             {/* Where it runs ("This Mac", "Sam's Mac mini", "QA team"); while being created, the core's pending line. */}
             <p className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-              <span className="truncate">{creating && space.detail ? creatingLine(space.detail) : access.place || item.machine}</span>
+              <span className="truncate">{creating && space.detail ? creatingLine(space.detail) : item.desktop && (access.place || item.machine) === space.name ? osLabel(space) : access.place || item.machine}</span>
               <PeopleStack access={access} />
             </p>
             {/* Downloading: how far, how fast, how long is left. */}

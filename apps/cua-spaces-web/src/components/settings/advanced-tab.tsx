@@ -26,13 +26,19 @@ const LABS = new Set(["experiment:cua_volume"]);
  * touch; each says what it does in a line.
  */
 export function AdvancedTab() {
-  const { data: settings, chooseSetting } = useSettings();
+  const { data: settings, chooseSetting, isLoading: settingsLoading } = useSettings();
+  const { isLoading: aboutLoading } = useAbout();
+  const { isLoading: experimentsLoading } = useExperiments();
   const page = settings?.page;
   const general = page?.sections.find((s) => s.id === "general");
   const runtimes = page?.sections.find((s) => s.id === "runtimes");
   const autoConnect = general?.rows.find((r) => r.id === "auto-connect");
   const overflow = general?.rows.find((r) => r.id === "placement-overflow");
   const choose = (row: CoreRow, option: string) => void chooseSetting(row.id, option).catch(toastError(`Couldn't change ${row.label}`));
+
+  // Nothing is drawn until the host has answered for every group, so none of them pushes
+  // another down as it arrives (a layout shift of the whole tab).
+  if (settingsLoading || aboutLoading || experimentsLoading) return <div data-settings-tab="advanced" aria-busy="true" />;
 
   return (
     <div data-settings-tab="advanced">

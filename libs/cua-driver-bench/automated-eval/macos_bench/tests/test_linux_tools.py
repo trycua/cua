@@ -189,6 +189,54 @@ class RecordPidTest(unittest.TestCase):
                 os.kill(daemon, 0)
 
     @unittest.skipUnless(sys.platform == "linux", "Linux only")
+    def test_doctor_cancel_then_retry_starts_cleanly(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            pidfile = Path(tmp) / "pid"
+            fake = Path(tmp) / "driver"
+            fake.write_text(
+                f'#!/bin/sh\n[ "$1" = serve ] && {{ echo $$ > {pidfile}; exec sleep 300; }}\n'
+                "exit 0\n"
+            )
+            fake.chmod(0o755)
+            real = desktop.start_app
+
+            def start_then_term(*a, **k):
+                proc = real(*a, **k)
+                os.kill(os.getpid(), signal.SIGTERM)
+                return proc
+
+            handler = signal.getsignal(signal.SIGTERM)
+            with mock.patch.object(desktop, "start_app", start_then_term), self.assertRaises(
+                SystemExit
+            ) as raised:
+                desktop.main(["doctor", "--cua-bin", str(fake), "--out", str(Path(tmp) / "o1")])
+            self.assertEqual(raised.exception.code, 143)
+            self.assertIs(signal.getsignal(signal.SIGTERM), handler)
+
+            state = Path(tmp) / "state"
+            (state / "home").mkdir(parents=True)
+            proc = desktop.start_driver(fake, str(state / "d.sock"), state, overlay=False)
+            try:
+                self.assertIsNone(proc.poll())
+            finally:
+                desktop.stop_group(proc.pid)
+                proc.wait(5)
+
+            with mock.patch("sys.stdout"):
+                code = desktop.main(["doctor", "--cua-bin", str(fake), "--out", str(Path(tmp) / "o2")])
+            self.assertIn(code, (0, 1))
+            report = json.loads((Path(tmp) / "o2" / "doctor.json").read_text())
+            self.assertEqual(report["daemon"], "private")
+            time.sleep(0.5)
+            with self.assertRaises(ProcessLookupError):
+                os.kill(report["daemon_pid"], 0)
+
+    def test_cancel_helpers_are_inert_outside_doctor(self) -> None:
+        with desktop.deferred_cancel():
+            desktop.check_cancel()
+        desktop.check_cancel()
+
+    @unittest.skipUnless(sys.platform == "linux", "Linux only")
     def test_doctor_second_sigterm_during_teardown_still_reaps_daemon(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             pidfile, termed = Path(tmp) / "pid", Path(tmp) / "termed"

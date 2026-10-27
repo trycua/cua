@@ -103,23 +103,34 @@ def bench_app_argv(name: str, build_dir: Path | None = None) -> list[str]:
     return [str(next(p for p in exes if p.is_file() and os.access(p, os.X_OK)))]
 
 
+class _CancelScope:
+    """Cancellation state of one doctor invocation."""
+
+    defer = 0
+    pending: int | None = None
+
+
 # SIGTERM cancels a doctor run, but never between creating a daemon and owning it.
-_cancel: dict = {"defer": 0, "pending": None}
+# The scope exists only while `main` runs a doctor; elsewhere these helpers do nothing.
+_scope: _CancelScope | None = None
 
 
 def check_cancel() -> None:
     """Raise the cancellation deferred by `deferred_cancel`, at a point where cleanup owns everything."""
-    if _cancel["pending"] is not None:
-        raise SystemExit(_cancel["pending"])
+    if _scope is not None and _scope.pending is not None:
+        raise SystemExit(_scope.pending)
 
 
 @contextlib.contextmanager
 def deferred_cancel():
-    _cancel["defer"] += 1
+    scope = _scope
+    if scope is not None:
+        scope.defer += 1
     try:
         yield
     finally:
-        _cancel["defer"] -= 1
+        if scope is not None:
+            scope.defer -= 1
 
 
 def stop_group(pid: int) -> None:
@@ -378,25 +389,30 @@ def main(argv: Sequence[str] | None = None) -> int:
     doc.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
+    global _scope
     fired = False
+    scope = _CancelScope()
+    outer = _scope
 
     def terminate(signum: int, _frame: object) -> None:
         # Only the first signal unwinds; later ones must not interrupt teardown.
         nonlocal fired
         if fired:
             return
-        if _cancel["defer"]:
-            _cancel["pending"] = 128 + signum
+        if scope.defer:
+            scope.pending = 128 + signum
             return
         fired = True
         raise SystemExit(128 + signum)
 
     # SIGTERM must unwind through the cleanup below instead of killing the process outright.
+    _scope = scope
     previous = signal.signal(signal.SIGTERM, terminate)
     try:
         return _doctor(args)
     finally:
         signal.signal(signal.SIGTERM, previous)
+        _scope = outer
 
 
 def _doctor(args: argparse.Namespace) -> int:
@@ -414,9 +430,9 @@ def _doctor(args: argparse.Namespace) -> int:
             try:
                 with deferred_cancel():
                     proc = start_driver(binary, socket, state, overlay=False, log_name="driver.log")
-                check_cancel()
             except (OSError, RuntimeError, TimeoutError, subprocess.SubprocessError) as error:
                 checks.append(Check("driver-start", "fail", f"{type(error).__name__}: {error}"))
+            check_cancel()
         if not checks:
             checks = doctor(binary, socket, state / "home")
             health = cua_health(binary, socket, state / "home")

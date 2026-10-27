@@ -136,8 +136,8 @@ function Labs() {
   return (
     <SettingsGroup title="Labs">
       <CoreSettingsRow
-        row={flagRow("spaces_redesign", "Try the new design", redesign)}
-        description="The new Spaces page, Space page and Agents tab. On this device only."
+        row={flagRow("spaces_redesign", "New design", redesign)}
+        description="The new Spaces page, Space page and Agents tab. Turn off to use the classic design. On this device only."
         onChoose={(_, option) => setFlagOverride("spaces_redesign", option === "on")}
       />
       <CoreSettingsRow

@@ -4,7 +4,8 @@
 //! Virtualization.framework), the guest init (`cua-microvm-init`, shipped
 //! next to `cua`), `pasta` (passt) for unprivileged networking, and
 //! `mkfs.ext4`/`debugfs` (and `sqfstar` for squashfs bases) for disk images.
-//! A Mac needs `cua-vz` and gvproxy instead ([`super::vz`]).
+//! A Mac needs `cua-vz` and the network gateway instead ([`super::vz`],
+//! [`crate::netgw`]).
 
 use std::path::{Path, PathBuf};
 

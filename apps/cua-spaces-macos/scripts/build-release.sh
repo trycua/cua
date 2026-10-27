@@ -17,6 +17,8 @@
 #   Contents/MacOS/cua                     com.trycua.cua, Support/cua.entitlements
 #   Contents/MacOS/cua-vz                  ai.cua.vz, libs/cua/vz/cua-vz.entitlements
 #                                          (the microVM monitor; arm64 builds)
+#   Contents/MacOS/cua-netgw               ai.cua.netgw (the network gateway of
+#                                          microVMs; universal, no entitlements)
 #   Contents/Resources/cua-microvm-init    the microVMs' Linux guest init (data)
 #   Contents/Helpers/cua-spacesd           com.trycua.cua-env-driver (the host service,
 #                                          which the app's own executable runs as its
@@ -142,6 +144,10 @@ if [[ " $archs " == *" arm64 "* ]]; then
   microvm_env=(CUA_VZ_BIN="$out/.vz/cua-vz" CUA_MICROVM_INIT_BIN="$init_bin")
 fi
 
+# The network gateway of microVMs (Go, universal; libs/cua/netgw).
+"$cua/netgw/build.sh" "$out/.netgw" >/dev/null
+microvm_env+=(CUA_NETGW_BIN="$out/.netgw/cua-netgw")
+
 # One library and one CLI with every architecture, where stage-library.sh
 # and build-app.sh look for them.
 joined="$out/.joined"
@@ -216,11 +222,15 @@ done
 "${sign[@]}" --identifier com.trycua.cua \
   --entitlements "$here/Support/cua.entitlements" "$app/Contents/MacOS/cua"
 vz_parts=()
+if [ -e "$app/Contents/MacOS/cua-netgw" ]; then
+  "${sign[@]}" --identifier ai.cua.netgw "$app/Contents/MacOS/cua-netgw"
+  vz_parts+=("$app/Contents/MacOS/cua-netgw")
+fi
 if [ -e "$app/Contents/MacOS/cua-vz" ]; then
   # Virtualization.framework refuses a monitor without its entitlement.
   "${sign[@]}" --identifier ai.cua.vz \
     --entitlements "$cua/vz/cua-vz.entitlements" "$app/Contents/MacOS/cua-vz"
-  vz_parts=("$app/Contents/MacOS/cua-vz")
+  vz_parts+=("$app/Contents/MacOS/cua-vz")
 fi
 # The host service. The app's own executable runs it, so its permissions
 # are the app's (designated requirement: identifier and team, checked

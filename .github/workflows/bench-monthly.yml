@@ -99,8 +99,9 @@ jobs:
           echo "SRC=$src" >>"$GITHUB_ENV"
           echo "CUA_BENCH_SOURCE=public release $tag (commit $sha), built from source" >>"$GITHUB_ENV"
 
-      - name: Tools (QEMU, crane, protoc, Node)
+      - name: Tools (QEMU, crane, protoc, Node, Go)
         run: |
+          command -v go >/dev/null || brew install go
           command -v qemu-system-aarch64 >/dev/null || brew install qemu
           command -v crane >/dev/null || brew install crane
           command -v protoc >/dev/null || brew install protobuf
@@ -114,6 +115,9 @@ jobs:
           bin="$RUNNER_TEMP/bin"
           mkdir -p "$bin"
           "$SRC/libs/cua/vz/build.sh" "$bin"
+          # The microVMs' network gateway (releases from before it existed
+          # used a downloaded gvproxy instead).
+          if [ -x "$SRC/libs/cua/netgw/build.sh" ]; then "$SRC/libs/cua/netgw/build.sh" "$bin"; fi
           cd "$SRC/libs/cua"
           cargo build --locked --release -p cua-cli --bin cua -p cua-sdk \
             --example rollout_bench --example channel_bench

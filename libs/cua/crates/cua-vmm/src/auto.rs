@@ -198,8 +198,9 @@ pub struct VzReport {
     pub init: Option<PathBuf>,
     #[serde(default)]
     pub init_static: bool,
-    /// gvproxy (downloaded on first use, pinned).
-    pub gvproxy: Option<PathBuf>,
+    /// The network gateway (`cua-netgw`), which ships next to `cua`.
+    #[serde(default)]
+    pub gateway: Option<PathBuf>,
     /// The guest kernel is cached (downloaded on first use).
     pub kernel_cached: bool,
 }
@@ -215,6 +216,9 @@ impl VzReport {
             m.push("cua-microvm-init (ships next to `cua`)".into());
         } else if !self.init_static {
             m.push("a static cua-microvm-init (this one is dynamically linked)".into());
+        }
+        if self.gateway.is_none() {
+            m.push("cua-netgw, the network gateway (ships next to `cua`)".into());
         }
         m
     }
@@ -574,9 +578,9 @@ pub async fn doctor() -> DoctorReport {
     }
 }
 
-/// microVMs on a Mac under `cua-vz`: ready when the monitor and the guest
-/// init are installed (they ship next to `cua`); the guest kernel and
-/// gvproxy download on first use.
+/// microVMs on a Mac under `cua-vz`: ready when the monitor, the guest init
+/// and the network gateway are installed (they ship next to `cua`); the
+/// guest kernel downloads on first use.
 #[cfg(feature = "microvm")]
 fn vz_status() -> Option<(BackendStatus, VzReport)> {
     use crate::microvm::{assets, vz};
@@ -596,7 +600,7 @@ fn vz_status() -> Option<(BackendStatus, VzReport)> {
             .and_then(|b| crate::microvm::rootfs::elf_interpreter(&b))
             .is_some_and(|interp| interp.is_none()),
         init,
-        gvproxy: vz::gvproxy_bin(),
+        gateway: crate::netgw::bin(),
         kernel_cached: assets::kernel_path(&root).is_file(),
     };
     let missing = if r.supported_host {
@@ -612,12 +616,6 @@ fn vz_status() -> Option<(BackendStatus, VzReport)> {
                 assets::KERNEL_VERSION
             ));
         }
-        if r.gvproxy.is_none() {
-            provisioning.push(format!(
-                "download gvproxy {} (pinned, about 27 MB) for the guests' network",
-                vz::GVPROXY_VERSION
-            ));
-        }
     }
     let status = BackendStatus {
         backend: BackendKind::Vz,
@@ -628,9 +626,10 @@ fn vz_status() -> Option<(BackendStatus, VzReport)> {
             (None, true) if provisioning.is_empty() => {
                 "microVMs with checkpoints and forks (Virtualization.framework)".into()
             }
-            (None, true) => "microVMs with checkpoints and forks; the guest kernel and network \
-                             download on first use"
-                .into(),
+            (None, true) => {
+                "microVMs with checkpoints and forks; the guest kernel downloads on first use"
+                    .into()
+            }
             (None, false) => "macOS microVMs are not installed with this cua".into(),
         },
         missing,

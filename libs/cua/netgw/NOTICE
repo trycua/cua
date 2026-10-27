@@ -1,0 +1,26 @@
+Cua network gateway (cua-netgw)
+Copyright (c) 2026 Cua AI, Inc.
+
+This product includes software developed by the gvisor-tap-vsock authors
+(https://github.com/containers/gvisor-tap-vsock), version v0.9.0, licensed
+under the Apache License, Version 2.0. A copy of the license is in
+LICENSES/Apache-2.0-gvisor-tap-vsock.txt.
+
+How it is used:
+  - As a Go module dependency, unmodified (pinned in go.mod and go.sum):
+    pkg/tap, pkg/services/dhcp, pkg/services/forwarder (the UDP proxy),
+    pkg/transport and pkg/types.
+  - Adapted into this module. These files carry the Apache-2.0 header and a
+    "MODIFIED" note that says what changed:
+      internal/gateway/gateway.go  from pkg/virtualnetwork/virtualnetwork.go
+                                   and pkg/virtualnetwork/services.go
+      internal/gateway/forward.go  from pkg/services/forwarder/tcp.go, udp.go
+                                   and udp_proxy.go
+
+It also depends on gVisor (https://gvisor.dev, Apache-2.0), miekg/dns
+(BSD-3-Clause), inetaf/tcpproxy (Apache-2.0), sirupsen/logrus (MIT),
+insomniacslk/dhcp (BSD-3-Clause) and golang.org/x modules (BSD-3-Clause);
+their licenses are in the Go module cache entries go.sum pins.
+
+The rest of this module is Cua's own code under the repository's MIT
+license (LICENSE at the repository root).

@@ -493,6 +493,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: .github/scripts/fetch_static_spacesd.sh "$GITHUB_REPOSITORY" aarch64,x86_64 "$RUNNER_TEMP/static-spacesd"
 
+      # The microVMs' network gateway (Go) is built by build-release.sh.
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
+        with:
+          go-version-file: libs/cua/netgw/go.mod
+          cache-dependency-path: libs/cua/netgw/go.sum
       - name: Build and sign Cua Spaces.app (universal)
         env:
           CUA_SPACESD_STATIC_DIR: ${{ runner.temp }}/static-spacesd

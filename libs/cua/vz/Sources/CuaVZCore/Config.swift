@@ -24,8 +24,9 @@ public struct VZConfig: Codable, Equatable {
     public var sockets: String
     /// The guest's serial console is appended here.
     public var console: String
-    /// Egress through a user-mode network (gvproxy); `nil` leaves the
-    /// guest's network device unconnected (no network).
+    /// Egress through the Cua network gateway (`cua-netgw`, a user-mode
+    /// network that checks every connection); `nil` leaves the guest's
+    /// network device unconnected (no network).
     public var network: Network?
     /// Host loopback ports forwarded to guest ports over vsock.
     public var forwards: [Forward]
@@ -48,14 +49,14 @@ public struct VZConfig: Codable, Equatable {
     }
 
     public struct Network: Codable, Equatable {
-        /// The gvproxy binary.
-        public var gvproxy: String
+        /// The gateway binary (`cua-netgw`).
+        public var gateway: String
         /// Its configuration file (`-config`); it must listen for vfkit
         /// clients on `<sockets>/gv.sock`.
         public var config: String
 
-        public init(gvproxy: String, config: String) {
-            self.gvproxy = gvproxy
+        public init(gateway: String, config: String) {
+            self.gateway = gateway
             self.config = config
         }
     }

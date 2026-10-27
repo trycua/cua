@@ -5,7 +5,8 @@
 # Checks where a built Cua Spaces app keeps its executables:
 #
 #   Contents/MacOS     only the app's own executable (CFBundleExecutable),
-#                      the `cua` CLI and the microVM monitor `cua-vz`
+#                      the `cua` CLI, the microVM monitor `cua-vz` and its
+#                      network gateway `cua-netgw`
 #   Contents/Helpers   the host service, cua-spacesd
 #
 # Why: AppKit and LaunchServices take a process's bundle from its
@@ -30,7 +31,7 @@ for f in "$app/Contents/MacOS"/*; do
   [ -e "$f" ] || continue
   name="$(basename "$f")"
   case "$name" in
-    "$main" | cua | cua-vz) ;;
+    "$main" | cua | cua-vz | cua-netgw) ;;
     *)
       echo "$app: Contents/MacOS/$name is not the app or a command-line tool; put it in Contents/Helpers (from Contents/MacOS, a process that starts AppKit registers as the app and takes over its launch)" >&2
       bad=1

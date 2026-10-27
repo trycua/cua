@@ -48,6 +48,7 @@ pub mod lume;
 pub mod managed;
 #[cfg(feature = "microvm")]
 pub mod microvm;
+pub mod netgw;
 pub mod preflight;
 pub mod probe;
 pub mod progress;

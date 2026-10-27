@@ -1139,10 +1139,10 @@ install_cli() {
         chmod 0755 "$bindir/.cua.tmp.$$"
         mv -f "$bindir/.cua.tmp.$$" "$target"
         info "installed $target"
-        # macOS microVMs: the monitor and the guest init ship with the CLI
-        # and are found next to it, as is the static cua-spacesd injected
-        # into OCI images that carry none.
-        for extra in cua-vz cua-microvm-init cua-spacesd-linux-aarch64 cua-spacesd-linux-x86_64; do
+        # macOS microVMs: the monitor, its network gateway and the guest
+        # init ship with the CLI and are found next to it, as is the static
+        # cua-spacesd injected into OCI images that carry none.
+        for extra in cua-vz cua-netgw cua-microvm-init cua-spacesd-linux-aarch64 cua-spacesd-linux-x86_64; do
             xsrc="$(find "$tmp/cli" -type f -name "$extra" | head -n 1)"
             [ -n "$xsrc" ] || continue
             cp "$xsrc" "$bindir/.$extra.tmp.$$"

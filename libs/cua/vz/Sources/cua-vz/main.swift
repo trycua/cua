@@ -13,7 +13,7 @@
 //   vsock to the guest init, which connects to the guest's own port.
 //
 // The process exits when the VM stops (the guest powered off, `stop`, or
-// SIGTERM), taking its gvproxy with it.
+// SIGTERM), taking its network gateway with it.
 
 import CuaVZCore
 import Darwin
@@ -60,7 +60,7 @@ func sock(_ name: String) -> String {
 final class Host: NSObject, VZVirtualMachineDelegate {
     let queue = DispatchQueue(label: "ai.cua.vz.vm")
     var vm: VZVirtualMachine!
-    var gvproxy: Process?
+    var gateway: Process?
     /// The other end of an unconnected network device, drained.
     var netPeer: Int32 = -1
     var listeners: [Int32] = []
@@ -100,10 +100,10 @@ final class Host: NSObject, VZVirtualMachineDelegate {
         let gv = sock("gv.sock")
         unlink(gv)
         let p = Process()
-        p.executableURL = url(net.gvproxy)
+        p.executableURL = url(net.gateway)
         p.arguments = ["-config", url(net.config).path]
         p.currentDirectoryURL = dir
-        let logURL = dir.appendingPathComponent("gvproxy.log")
+        let logURL = dir.appendingPathComponent("netgw.log")
         FileManager.default.createFile(atPath: logURL.path, contents: nil)
         let logFH = try FileHandle(forWritingTo: logURL)
         logFH.seekToEndOfFile()
@@ -111,17 +111,17 @@ final class Host: NSObject, VZVirtualMachineDelegate {
         p.standardError = logFH
         p.standardInput = FileHandle.nullDevice
         try p.run()
-        gvproxy = p
+        gateway = p
         let deadline = Date().addingTimeInterval(10)
         while !FileManager.default.fileExists(atPath: gv) {
-            if !p.isRunning { throw Sockets.Failure("gvproxy exited (see gvproxy.log)") }
-            if Date() > deadline { throw Sockets.Failure("gvproxy did not listen within 10 s") }
+            if !p.isRunning { throw Sockets.Failure("the network gateway exited (see netgw.log)") }
+            if Date() > deadline { throw Sockets.Failure("the network gateway did not listen within 10 s") }
             usleep(2_000)
         }
         let fd = try Sockets.datagram(local: sock("net.sock"), remote: gv)
-        // vfkit's greeting: gvproxy learns the peer's address from it.
+        // vfkit's greeting: the gateway learns the peer's address from it.
         guard Sockets.writeAll(fd, Data("VFKT".utf8)) else {
-            throw Sockets.Failure("gvproxy greeting")
+            throw Sockets.Failure("network gateway greeting")
         }
         return VZFileHandleNetworkDeviceAttachment(
             fileHandle: FileHandle(fileDescriptor: fd, closeOnDealloc: true))
@@ -382,7 +382,7 @@ final class Host: NSObject, VZVirtualMachineDelegate {
     func cleanup() {
         for fd in listeners { close(fd) }
         for name in ["api.sock", "v.sock", "net.sock", "gv.sock"] { unlink(sock(name)) }
-        if let p = gvproxy, p.isRunning {
+        if let p = gateway, p.isRunning {
             p.terminate()
             p.waitUntilExit()
         }

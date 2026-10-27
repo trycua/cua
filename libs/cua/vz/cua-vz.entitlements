@@ -4,7 +4,7 @@
   cua-vz (the macOS microVM monitor), signed with the hardened runtime.
   Virtualization.framework refuses to create a VM without this entitlement.
   Nothing else: no JIT, no library exceptions, no network entitlement (the
-  guest's network is a user-mode stack, gvproxy, over a file handle).
+  guest's network is a user-mode stack, the Cua network gateway, over a file handle).
 -->
 <plist version="1.0">
 <dict>

@@ -25,7 +25,7 @@ await spaces.set_egress(space.id, cua.EgressPolicy(deny=["10.0.0.0/8"]))
 - Every `deny` entry blocks that destination; every `allow` entry is an exception that wins over `deny`. `deny=["all"]` with `allow=["1.1.1.1"]` leaves only 1.1.1.1 reachable.
 - An `allow` list alone blocks nothing. Both lists empty: no policy.
 - Entries are IPv4 or IPv6 addresses and CIDRs; `all` is `0.0.0.0/0` and `::/0`. A hostname is refused (`InvalidArgument`): rules are by address.
-- The destination is the address the guest sends to. DNS works while the resolver the guest uses is allowed: on a VM that is its virtual network's own resolver (`10.0.2.3` under QEMU, `172.16.0.1` in a Firecracker microVM); a container uses its engine's resolvers.
+- The destination is the address the guest sends to. DNS works while the resolver the guest uses is allowed: on a VM that is its virtual network's own resolver (`10.0.2.3` under QEMU, `172.16.0.1` in a microVM); a container uses its engine's resolvers.
 - Never filtered: loopback inside the guest, replies to connections made to the guest (cua-spacesd, published ports), IPv6 neighbor discovery.
 
 ## Where it is enforced
@@ -35,17 +35,18 @@ await spaces.set_egress(space.id, cua.EgressPolicy(deny=["10.0.0.0/8"]))
 | Container, runc or gVisor (any Docker engine, also the built-in runtime on a Mac) | nftables in the engine's own network namespace, on the Space's bridge port |
 | Firecracker microVM (Linux) | iptables in the network namespace pasta creates around the VM |
 | QEMU VM (Linux) | iptables in the network namespace pasta creates around QEMU |
+| `vz` microVM (Mac) | the Cua network gateway: the VM's own user-mode network on the Mac, which checks every connection before making it |
 | A Space one of your machines provides (`on="host:..."`, `on="auto"`) | that machine, as above |
-| macOS VM, `vz` or Apple Containerization microVM, QEMU on macOS or Windows | refused (`Unsupported`): filtering them needs root (pf, WFP) |
+| macOS VM, Apple Containerization microVM, QEMU on macOS or Windows | refused (`Unsupported`): filtering them needs root (pf, WFP) |
 | Cua Cloud, your own cloud account (AWS, Google Cloud, Modal), a Space added by address | refused (`Unsupported`): no host-side point cua controls |
 
 `SpaceInfo.egress_enforced` is `host` for a Space with a policy. A machine whose cua predates egress policies never gets a Space with one: the create fails and the Space it made is deleted.
 
 ## Lifetime
 
-- The policy is in place before the guest's first instruction: a container's rules exist before it starts (keyed by the MAC address it is created with), a VM's namespace holds them before the VM boots.
+- The policy is in place before the guest's first instruction: a container's rules exist before it starts (keyed by the MAC address it is created with), a VM's namespace (or a `vz` microVM's gateway) holds them before the VM boots.
 - It survives stop and start, suspend and resume, a restart of the daemon, forks and checkpoints (a fork inherits its source's policy).
-- `set_egress` applies at once. A running QEMU VM started without a policy first moves into its own namespace: its memory is carried over to a new QEMU process in a moment, and connections through the old one end.
+- `set_egress` applies at once. On a `vz` microVM the gateway also closes the open connections the new policy blocks. A running QEMU VM started without a policy first moves into its own namespace: its memory is carried over to a new QEMU process in a moment, and connections through the old one end.
 
 ## What changes for a Space with a policy
 

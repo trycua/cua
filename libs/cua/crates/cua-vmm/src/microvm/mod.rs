@@ -280,7 +280,8 @@ pub struct VmState {
     /// the VM's network namespace from its first instruction.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub egress: Option<crate::egress::EgressPolicy>,
-    /// The network's process: `pasta` (Linux) or gvproxy (macOS).
+    /// The network's process: `pasta` (Linux) or the network gateway
+    /// (macOS, [`crate::netgw`]).
     #[serde(default)]
     pub pasta_pid: Option<u32>,
     /// The monitor's process: `firecracker` or `cua-vz`.
@@ -1241,7 +1242,7 @@ impl MicroVmRuntime {
         Err(unix_only("start"))
     }
 
-    /// Starts `cua-vz` (and the VM's gvproxy) for `st`: a cold boot of
+    /// Starts `cua-vz` (and the VM's network gateway) for `st`: a cold boot of
     /// `kernel` and `initrd`, or a restore of the saved state `restore`
     /// (the monitor resumes it). Returns once the VM runs.
     #[cfg(unix)]
@@ -1261,10 +1262,10 @@ impl MicroVmRuntime {
                  it in ~/.cua/bin (libs/cua/vz/build.sh builds it)",
             )
         })?;
-        let gvproxy = if st.restrict_network {
+        let gateway = if st.restrict_network {
             None
         } else {
-            Some(vz::ensure_gvproxy().await?)
+            Some(crate::netgw::bin().ok_or_else(crate::netgw::missing)?)
         };
         let id = random_hex(4);
         let run = self.run_dir(&id);
@@ -1278,12 +1279,20 @@ impl MicroVmRuntime {
         let link = dir.join(st.base_format.link());
         let _ = std::fs::remove_file(&link);
         std::os::unix::fs::symlink(self.base_dir(&st.base).join(st.base_format.file()), &link)?;
-        let pid_file = dir.join("gvproxy.pid");
-        let _ = std::fs::remove_file(&pid_file);
-        if gvproxy.is_some() {
+        let _ = std::fs::remove_file(dir.join(crate::netgw::PID_FILE));
+        if gateway.is_some() {
+            // The rules first: the gateway does not start without them.
+            crate::netgw::write_rules(
+                &dir,
+                &st.egress
+                    .as_ref()
+                    .map(|p| p.parse())
+                    .transpose()?
+                    .unwrap_or_default(),
+            )?;
             std::fs::write(
-                dir.join("gvproxy.yaml"),
-                vz::gvproxy_config(&run, &pid_file),
+                dir.join(crate::netgw::CONFIG_FILE),
+                serde_json::to_vec_pretty(&vz::gateway_config(&run))?,
             )?;
         }
         let host_ports = self.pick_ports(st.ports.len())?;
@@ -1296,7 +1305,7 @@ impl MicroVmRuntime {
             memory_mb: st.memory_mb,
             base: st.base_format.link(),
             sockets: &run,
-            gvproxy: gvproxy.as_deref(),
+            gateway: gateway.as_deref(),
             forwards: &forwards,
             restore,
         });
@@ -1344,7 +1353,7 @@ impl MicroVmRuntime {
             }
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
-        st.pasta_pid = std::fs::read_to_string(&pid_file)
+        st.pasta_pid = std::fs::read_to_string(dir.join(crate::netgw::PID_FILE))
             .ok()
             .and_then(|p| p.trim().parse().ok());
         st.paused = false;
@@ -1442,10 +1451,10 @@ impl MicroVmRuntime {
             host::signal(p, "KILL");
         }
         if let Some(p) = st.pasta_pid.filter(|p| host::pid_alive(*p)) {
-            // gvproxy outlives a killed cua-vz: only ever signal it if the
-            // pid is still a gvproxy.
+            // The gateway outlives a killed cua-vz: only ever signal it if
+            // the pid is still a gateway.
             let ours = self.cfg.vmm == Vmm::Firecracker
-                || vz::pid_path(p).is_some_and(|e| e.to_string_lossy().contains("gvproxy"));
+                || vz::pid_path(p).is_some_and(|e| crate::netgw::is_gateway(&e));
             if ours {
                 host::signal(p, "TERM");
             }
@@ -2635,7 +2644,14 @@ impl Runtime for MicroVmRuntime {
         if st.kind != EntryKind::Instance {
             return Err(VmmError::invalid(format!("{name} is not a VM")));
         }
-        if self.running(&st) {
+        if self.cfg.vmm == Vmm::Vz {
+            // The gateway reloads its rules file (at once while the VM
+            // runs; it is read at the next start otherwise). A VM without
+            // network has no gateway and gets none.
+            if !st.restrict_network {
+                crate::netgw::write_rules(&self.dir(name), &rules)?;
+            }
+        } else if self.running(&st) {
             let pid = st
                 .fc_pid
                 .ok_or_else(|| VmmError::other(format!("{name}: no firecracker process")))?;

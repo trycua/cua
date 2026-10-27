@@ -86,6 +86,8 @@ fi
 icons="$here/../cua-spaces/src-tauri/icons"
 # CUA_VZ_BIN, CUA_MICROVM_INIT_BIN: the microVM monitor (cua-vz) and the
 # static aarch64 guest init to bundle (build-release.sh builds both).
+# CUA_NETGW_BIN: the microVMs' network gateway (cua-netgw) to bundle
+# (libs/cua/netgw/build.sh).
 # CUA_SPACESD_STATIC_DIR: a directory of static Linux cua-spacesd builds
 # (cua-spacesd-linux-aarch64, cua-spacesd-linux-x86_64) to bundle: the
 # daemon injects one into OCI images that carry none (the release workflow
@@ -270,6 +272,11 @@ if [ -n "${CUA_VZ_BIN:-}" ] && [ -n "${CUA_MICROVM_INIT_BIN:-}" ]; then
   codesign -s - -f -i ai.cua.vz --entitlements "$here/../../libs/cua/vz/cua-vz.entitlements" \
     "$app/Contents/MacOS/cua-vz"
   cp "$CUA_MICROVM_INIT_BIN" "$app/Contents/Resources/cua-microvm-init"
+fi
+# The network gateway among the executables (found next to `cua`).
+if [ -n "${CUA_NETGW_BIN:-}" ]; then
+  cp "$CUA_NETGW_BIN" "$app/Contents/MacOS/cua-netgw"
+  codesign -s - -f -i ai.cua.netgw "$app/Contents/MacOS/cua-netgw"
 fi
 # The static cua-spacesd builds among the resources (Linux executables, data
 # to the bundle).

@@ -11,7 +11,7 @@ let sample = """
      "disks":[{"path":"base.sqfs","read_only":true},{"path":"scratch.ext4","read_only":false}],
      "mac":"06:00:ac:10:00:02","machine_id":"machine-id","sockets":"/tmp/s",
      "console":"console.log",
-     "network":{"gvproxy":"/bin/gvproxy","config":"gvproxy.yaml"},
+     "network":{"gateway":"/bin/cua-netgw","config":"netgw.json"},
      "forwards":[{"host":50000,"guest":3211}],"restore":"snap/vzstate"}
     """
 
@@ -20,7 +20,7 @@ let sample = """
     #expect(c.memoryMB == 2048)
     #expect(
         c.disks == [.init(path: "base.sqfs", readOnly: true), .init(path: "scratch.ext4", readOnly: false)])
-    #expect(c.network == .init(gvproxy: "/bin/gvproxy", config: "gvproxy.yaml"))
+    #expect(c.network == .init(gateway: "/bin/cua-netgw", config: "netgw.json"))
     #expect(c.forwards == [.init(host: 50000, guest: 3211)])
     #expect(c.restore == "snap/vzstate")
     #expect(c.problems() == [])

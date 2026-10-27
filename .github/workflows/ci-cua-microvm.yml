@@ -5,9 +5,13 @@ name: "CI: microVMs"
 #   unit       Linux: the backend's, the init's and placement's unit tests;
 #              the static guest init for both architectures.
 #   macos      hosted macOS: cua-vz's Swift tests and signed build, the
-#              backend's unit tests on a Mac (vz.json, gvproxy config,
+#              backend's unit tests on a Mac (vz.json, the gateway's config,
 #              process lookups), the aarch64 guest init built there the way
 #              the release builds it, and the perf guard's own tests.
+#   netgw      the Cua network gateway (libs/cua/netgw, Go) on Linux, macOS
+#              and Windows: vet, format, unit and in-process end-to-end
+#              tests (a guest network stack behind the gateway), and its
+#              build (universal and ad-hoc signed on macOS).
 #   vz-e2e     nightly, on a self-hosted Apple silicon Mac
 #              (vars.CUA_E2E_LUME_RUNNER; hosted runners cannot nest VMs):
 #              a real microVM Space checkpointed, restored and forked 8
@@ -22,6 +26,7 @@ on:
       - "libs/cua/crates/cua-microvm-init/**"
       - "libs/cua/crates/cua-sandbox-core/src/placement.rs"
       - "libs/cua/vz/**"
+      - "libs/cua/netgw/**"
       - "libs/cua/bench/microvm-fork/**"
       - "tests/e2e/local-runtimes/tests/microvm_vz.rs"
       - ".github/workflows/ci-cua-microvm.yml"
@@ -32,6 +37,7 @@ on:
       - "libs/cua/crates/cua-microvm-init/**"
       - "libs/cua/crates/cua-sandbox-core/src/placement.rs"
       - "libs/cua/vz/**"
+      - "libs/cua/netgw/**"
       - "libs/cua/bench/microvm-fork/**"
       - ".github/workflows/ci-cua-microvm.yml"
   schedule:
@@ -82,6 +88,8 @@ jobs:
         run: |
           cargo test --locked -p cua-microvm-init
           cargo test --locked -p cua-vmm --lib microvm
+          cargo test --locked -p cua-vmm --lib netgw
+          cargo test --locked -p cua-vmm --lib egress
           cargo test --locked -p cua-sandbox-core --lib placement
       - name: The guest init is static (both architectures)
         env:
@@ -119,6 +127,8 @@ jobs:
         working-directory: libs/cua
         run: |
           cargo test --locked -p cua-vmm --lib microvm
+          cargo test --locked -p cua-vmm --lib netgw
+          cargo test --locked -p cua-vmm --lib egress
           cargo test --locked -p cua-sandbox-core --lib placement
       - name: The aarch64 guest init builds static on macOS (as the release does)
         working-directory: libs/cua
@@ -132,6 +142,36 @@ jobs:
         working-directory: libs/cua/bench/microvm-fork
         run: python3 test_check.py
 
+  netgw:
+    name: network gateway (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-26, windows-latest]
+    defaults:
+      run:
+        shell: bash
+        working-directory: libs/cua/netgw
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
+        with:
+          go-version-file: libs/cua/netgw/go.mod
+          cache-dependency-path: libs/cua/netgw/go.sum
+      - name: Format and vet
+        run: |
+          test -z "$(gofmt -l .)" || { gofmt -l .; echo "::error::gofmt"; exit 1; }
+          go vet ./...
+      - name: Test
+        run: go test -count=1 -race ./...
+      - name: Build (universal and signed on macOS)
+        run: ./build.sh "$RUNNER_TEMP/netgw"
+      - name: Windows build
+        if: runner.os == 'Linux'
+        run: GOOS=windows GOARCH=amd64 ./build.sh "$RUNNER_TEMP/netgw-windows"
+
   vz-e2e:
     name: vz e2e + perf guard (self-hosted Mac)
     if: vars.CUA_E2E_LUME_RUNNER != '' && github.event_name != 'pull_request'
@@ -141,7 +181,11 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
-      - name: Build cua, cua-vz and the guest init
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
+        with:
+          go-version-file: libs/cua/netgw/go.mod
+          cache-dependency-path: libs/cua/netgw/go.sum
+      - name: Build cua, cua-vz, the network gateway and the guest init
         env:
           RUSTFLAGS: ""
         run: |
@@ -150,6 +194,7 @@ jobs:
           bin="$RUNNER_TEMP/bin"
           mkdir -p "$bin"
           libs/cua/vz/build.sh "$bin"
+          libs/cua/netgw/build.sh "$bin"
           (cd libs/cua && cargo build --locked --release -p cua-cli)
           cp libs/cua/target/release/cua "$bin/"
           (cd libs/cua && RUSTFLAGS="-C target-feature=+crt-static" \

@@ -19,12 +19,14 @@
 //!   the new VM's own memory (only the pages the guest had touched are in
 //!   the file; the rest stay untouched), so each fork costs what its guest
 //!   uses, and restoring takes time in proportion to it.
-//! * **Network**: a user-mode stack per VM (gvproxy, Apache-2.0, pinned
-//!   and downloaded on first use) on a file-handle network device, with the
-//!   same guest address in every VM (as each Firecracker VM has its own
-//!   namespace); its host address leads nowhere, so a guest cannot reach the
-//!   host's loopback services. A Space without network gets an unconnected
-//!   device.
+//! * **Network**: a user-mode stack per VM, the Cua network gateway
+//!   ([`crate::netgw`], shipped next to `cua-vz`), on a file-handle network
+//!   device, with the same guest address in every VM (as each Firecracker
+//!   VM has its own namespace). The gateway checks every connection the
+//!   guest opens against the Space's egress rules, never dials the host's
+//!   loopback (its host address opens only for a rule naming it) and drops
+//!   DNS answers the rules refuse. A Space without network gets an
+//!   unconnected device.
 //! * **Published ports** are host loopback ports `cua-vz` carries over vsock
 //!   to the guest init ([`cua_microvm_init::Request::Forward`]), so they work
 //!   with or without a network.
@@ -33,35 +35,22 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 use crate::error::{Result, VmmError};
 use crate::host;
 
-/// The pinned gvproxy release (containers/gvisor-tap-vsock).
-pub const GVPROXY_VERSION: &str = "v0.9.0";
-
-/// SHA-256 of `gvproxy-darwin` (a universal binary) of [`GVPROXY_VERSION`].
-pub const GVPROXY_SHA256: &str = "e2a6825ba789fe588828b418c09aaf16525dec6d8cb2d16c94e72535dd4606be";
-
-fn gvproxy_url() -> String {
-    format!(
-        "https://github.com/containers/gvisor-tap-vsock/releases/download/{GVPROXY_VERSION}/gvproxy-darwin"
-    )
-}
-
 /// The oldest macOS that saves and restores VMs.
 pub const MIN_MACOS: u32 = 14;
 
 /// The guest's network: the Linux backend's addresses (in a /29, so the
-/// stack has a host address, [`HOST_IP`], that leads nowhere).
+/// gateway has a host address, [`HOST_IP`]).
 const SUBNET: &str = "172.16.0.0/29";
-/// gvproxy's host address, mapped to [`BLACKHOLE`] instead of the host's
-/// loopback (gvproxy's default).
-const HOST_IP: &str = "172.16.0.6";
-/// TEST-NET-1 (RFC 5737): never routed.
-const BLACKHOLE: &str = "192.0.2.1";
+/// The gateway's address for the host: its loopback, but only on the ports
+/// a rule naming this address opens (none unless the policy says so).
+pub const HOST_IP: &str = "172.16.0.6";
+/// The gateway's MAC address.
+const GATEWAY_MAC: &str = "5a:94:ef:e4:0c:dd";
 
 /// Why this host cannot run macOS microVMs, if it cannot.
 pub fn unsupported_reason() -> Option<String> {
@@ -102,58 +91,6 @@ pub fn vz_bin() -> Option<PathBuf> {
     host::which(NAME)
 }
 
-/// gvproxy: `$CUA_GVPROXY`, then cua's pinned copy in `~/.cua/bin`.
-pub fn gvproxy_bin() -> Option<PathBuf> {
-    if let Some(p) = std::env::var_os("CUA_GVPROXY").map(PathBuf::from)
-        && p.is_file()
-    {
-        return Some(p);
-    }
-    let own = gvproxy_path();
-    own.is_file().then_some(own)
-}
-
-fn gvproxy_path() -> PathBuf {
-    host::cua_home()
-        .join("bin")
-        .join(format!("gvproxy-{GVPROXY_VERSION}"))
-}
-
-/// gvproxy, downloaded (pinned by SHA-256) into `~/.cua/bin` the first time.
-pub async fn ensure_gvproxy() -> Result<PathBuf> {
-    if let Some(p) = gvproxy_bin() {
-        return Ok(p);
-    }
-    let dest = gvproxy_path();
-    if let Some(dir) = dest.parent() {
-        tokio::fs::create_dir_all(dir).await?;
-    }
-    let url = gvproxy_url();
-    tracing::info!(url, dest = %dest.display(), "downloading gvproxy");
-    let bytes = reqwest::get(&url)
-        .await
-        .and_then(|r| r.error_for_status())
-        .map_err(|e| VmmError::other(format!("download {url}: {e}")))?
-        .bytes()
-        .await
-        .map_err(|e| VmmError::other(format!("download {url}: {e}")))?;
-    let got = format!("{:x}", Sha256::digest(&bytes));
-    if got != GVPROXY_SHA256 {
-        return Err(VmmError::other(format!(
-            "download {url}: SHA-256 {got} does not match the pinned {GVPROXY_SHA256}"
-        )));
-    }
-    let partial = dest.with_extension("partial");
-    tokio::fs::write(&partial, &bytes).await?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&partial, std::fs::Permissions::from_mode(0o755))?;
-    }
-    tokio::fs::rename(&partial, &dest).await?;
-    Ok(dest)
-}
-
 /// The kernel command line: the init's network fixed by `ip=` (the same
 /// address in every VM), the console on the framework's virtio console,
 /// and reboot = power off (the monitor ends when the guest does).
@@ -165,21 +102,22 @@ pub fn boot_args() -> String {
     )
 }
 
-/// gvproxy's configuration for one VM: the guest's subnet, DNS on the
-/// gateway, no forwards (published ports go over vsock), and the stack's
-/// host address mapped nowhere.
-pub fn gvproxy_config(sockets: &Path, pid_file: &Path) -> String {
-    use cua_microvm_init::{GATEWAY_IP, GUEST_IP};
-    format!(
-        "log-level: warning\n\
-         pid-file: {pid}\n\
-         stack:\n  mtu: 1500\n  subnet: {SUBNET}\n  gatewayIP: {GATEWAY_IP}\n  deviceIP: {GUEST_IP}\n  \
-         hostIP: {HOST_IP}\n  gatewayMacAddress: 5a:94:ef:e4:0c:dd\n  nat:\n    {HOST_IP}: {BLACKHOLE}\n  \
-         gatewayVirtualIPs:\n    - {HOST_IP}\n\
-         interfaces:\n  vfkit: unixgram://{gv}\n",
-        pid = pid_file.display(),
-        gv = sockets.join("gv.sock").display(),
-    )
+/// The gateway's configuration for one VM ([`crate::netgw::CONFIG_FILE`]):
+/// the guest's subnet, DNS on the gateway, the host address, and the
+/// file-handle device's socket (`gv.sock` in `sockets`). Published ports
+/// go over vsock, not through the gateway.
+pub fn gateway_config(sockets: &Path) -> Value {
+    use cua_microvm_init::GATEWAY_IP;
+    crate::netgw::config(&crate::netgw::Network {
+        subnet: SUBNET,
+        gateway_ip: GATEWAY_IP,
+        gateway_mac: GATEWAY_MAC,
+        host_ip: Some(HOST_IP),
+        dhcp: false,
+        static_leases: Default::default(),
+        vfkit: Some(format!("unixgram://{}", sockets.join("gv.sock").display())),
+        qemu: None,
+    })
 }
 
 /// What [`vz_config`] needs.
@@ -191,7 +129,8 @@ pub struct VzLaunch<'a> {
     /// The image (`base.sqfs`) and the scratch disk, in the VM's directory.
     pub base: &'a str,
     pub sockets: &'a Path,
-    pub gvproxy: Option<&'a Path>,
+    /// The network gateway (`None`: no network).
+    pub gateway: Option<&'a Path>,
     pub forwards: &'a [(u16, u16)],
     pub restore: Option<&'a Path>,
 }
@@ -214,8 +153,8 @@ pub fn vz_config(l: &VzLaunch<'_>) -> Value {
         "console": "console.log",
         "forwards": l.forwards.iter().map(|(h, g)| json!({"host": h, "guest": g})).collect::<Vec<_>>(),
     });
-    if let Some(gv) = l.gvproxy {
-        v["network"] = json!({"gvproxy": gv, "config": "gvproxy.yaml"});
+    if let Some(gw) = l.gateway {
+        v["network"] = json!({"gateway": gw, "config": crate::netgw::CONFIG_FILE});
     }
     if let Some(r) = l.restore {
         v["restore"] = json!(r);
@@ -381,17 +320,21 @@ mod tests {
             !a.contains("pci=off"),
             "Virtualization.framework devices are PCI"
         );
-        let c = gvproxy_config(Path::new("/r/run/ab12"), Path::new("/v/gvproxy.pid"));
-        assert!(c.contains("subnet: 172.16.0.0/29"));
-        assert!(c.contains("gatewayIP: 172.16.0.1"));
-        assert!(c.contains("deviceIP: 172.16.0.2"));
-        // gvproxy maps its host address to the host's loopback by default:
-        // here it leads to an unrouted address instead.
-        assert!(c.contains("nat:\n    172.16.0.6: 192.0.2.1"), "{c}");
-        assert!(!c.contains("127.0.0.1"));
-        assert!(!c.contains("forwards"), "ports go over vsock");
-        assert!(c.contains("vfkit: unixgram:///r/run/ab12/gv.sock"));
-        assert!(c.contains("pid-file: /v/gvproxy.pid"));
+        let c = gateway_config(Path::new("/r/run/ab12"));
+        assert_eq!(c["subnet"], "172.16.0.0/29");
+        assert_eq!(c["gateway_ip"], "172.16.0.1");
+        // The host address stands for the host's loopback, which only a
+        // rule naming it opens (the gateway's own guarantee).
+        assert_eq!(c["host_ip"], HOST_IP);
+        assert!(
+            c.get("dhcp").is_none(),
+            "the kernel command line sets the address"
+        );
+        assert_eq!(
+            c["listen"],
+            json!({"vfkit": "unixgram:///r/run/ab12/gv.sock"})
+        );
+        assert_eq!(c["rules"], crate::netgw::RULES_FILE);
     }
 
     #[test]
@@ -403,7 +346,7 @@ mod tests {
             memory_mb: 64,
             base: "base.sqfs",
             sockets: Path::new("/r/run/ab12"),
-            gvproxy: Some(Path::new("/b/gvproxy")),
+            gateway: Some(Path::new("/b/cua-netgw")),
             forwards: &[(50001, 3211)],
             restore: Some(Path::new("/c/snap/vzstate")),
         });
@@ -421,12 +364,12 @@ mod tests {
         assert_eq!(v["machine_id"], "machine-id");
         assert_eq!(
             v["network"],
-            json!({"gvproxy": "/b/gvproxy", "config": "gvproxy.yaml"})
+            json!({"gateway": "/b/cua-netgw", "config": "netgw.json"})
         );
         assert_eq!(v["forwards"], json!([{"host": 50001, "guest": 3211}]));
         assert_eq!(v["restore"], "/c/snap/vzstate");
         let none = vz_config(&VzLaunch {
-            gvproxy: None,
+            gateway: None,
             restore: None,
             ..VzLaunch {
                 kernel: Path::new("/k"),
@@ -435,7 +378,7 @@ mod tests {
                 memory_mb: 1024,
                 base: "base.sqfs",
                 sockets: Path::new("/s"),
-                gvproxy: None,
+                gateway: None,
                 forwards: &[],
                 restore: None,
             }

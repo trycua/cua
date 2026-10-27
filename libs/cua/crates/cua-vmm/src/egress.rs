@@ -322,9 +322,11 @@ pub fn support_on(backend: BackendKind, os: &str) -> Support {
             why: "an egress policy (Apple's container network, vmnet, can only be filtered with \
                   pf, which needs root)",
         },
+        BackendKind::Vz if os == "macos" => Support::Host {
+            point: crate::netgw::POINT,
+        },
         BackendKind::Vz => Support::Unsupported {
-            why: "an egress policy (a macOS microVM's network goes through vmnet or its userspace \
-                  proxy, and neither filters by destination for one VM without root)",
+            why: "an egress policy (macOS microVMs run on macOS only)",
         },
         BackendKind::QemuDocker => Support::Unsupported {
             why: "an egress policy (no runtime of this build starts QEMU inside a container)",
@@ -1029,5 +1031,7 @@ mod tests {
         assert!(host(BackendKind::Qemu, "linux") && !host(BackendKind::Qemu, "macos"));
         assert!(host(BackendKind::Firecracker, "linux"));
         assert!(!host(BackendKind::Lume, "macos") && !host(BackendKind::Containerization, "macos"));
+        // macOS microVMs: the network gateway, on the Mac only.
+        assert!(host(BackendKind::Vz, "macos") && !host(BackendKind::Vz, "linux"));
     }
 }

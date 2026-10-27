@@ -2814,21 +2814,21 @@ pub(crate) fn headless_command_line() -> Vec<String> {
 
 /// `cua runtime setup firecracker`: the pinned Firecracker release into
 /// `~/.cua/bin` and the guest kernel into the microVM cache.
-/// macOS microVMs: the pinned guest kernel and gvproxy (`cua-vz` and the
-/// guest init ship with cua).
+/// macOS microVMs: the pinned guest kernel (`cua-vz`, the guest init and
+/// the network gateway ship with cua).
 async fn install_vz() -> std::result::Result<(), VmmError> {
     use cua_vmm::microvm::{assets, vz};
     if let Some(why) = vz::unsupported_reason() {
         return Err(VmmError::other(why));
     }
-    if vz::vz_bin().is_none() || assets::init_bin().is_none() {
+    if vz::vz_bin().is_none() || assets::init_bin().is_none() || cua_vmm::netgw::bin().is_none() {
         return Err(VmmError::missing(
-            "cua-vz and cua-microvm-init",
-            "they ship next to `cua` (a cua release, or libs/cua/vz/build.sh and a static \
-             aarch64-unknown-linux-musl cua-microvm-init in ~/.cua/bin)",
+            "cua-vz, cua-microvm-init and cua-netgw",
+            "they ship next to `cua` (a cua release, or libs/cua/vz/build.sh, \
+             libs/cua/netgw/build.sh and a static aarch64-unknown-linux-musl cua-microvm-init \
+             in ~/.cua/bin)",
         ));
     }
-    vz::ensure_gvproxy().await?;
     assets::ensure_kernel(&MicroVmConfig::default().root).await?;
     Ok(())
 }

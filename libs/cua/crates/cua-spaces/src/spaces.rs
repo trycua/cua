@@ -239,6 +239,10 @@ pub struct PendingSpace {
     pub phase: &'static str,
 }
 
+/// How long a connection made without the cua-spacesd its image publishes
+/// is kept before the next use dials again.
+const SPACESD_RETRY_AFTER: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// Builder for [`Spaces`].
 #[derive(Default)]
 pub struct SpacesBuilder {
@@ -1607,6 +1611,16 @@ impl Spaces {
         // Bound first: the cache's guard must be gone before the lock is
         // taken again below.
         let cached = self.inner.connections.lock().await.get(&key).cloned();
+        // Connected while its cua-spacesd didn't answer (the Space was still
+        // waking, as after a daemon restart): dial again, or the Space stays
+        // without spacesd until it is restarted and agents can't start there.
+        if let Some(s) = &cached
+            && s.spacesd_retry_due(SPACESD_RETRY_AFTER)
+        {
+            tracing::info!(space = %key, "no cua-spacesd answered when this connected; reconnecting");
+            self.inner.connections.lock().await.remove(&key);
+            return None;
+        }
         if let Some(s) = cached {
             let policy = |provided| {
                 if provided {

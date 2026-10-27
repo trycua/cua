@@ -892,6 +892,20 @@ impl AgentSetup {
         self.save_sign_in(&agent, &copy, vault)
     }
 
+    /// The whole device sign-in for `agent`: start it, `show` the link and
+    /// code, wait (up to `wait`) for the approval, save it into `vault`.
+    pub fn device_sign_in(
+        &self,
+        agent: &str,
+        vault: &dyn SignInVault,
+        wait: Duration,
+        show: ShowDeviceSignIn<'_>,
+    ) -> std::result::Result<ImportedSignIn, signin::CopyRefusal> {
+        let login = self.start_device_sign_in(agent)?;
+        show(agent, &login);
+        self.finish_device_sign_in(login, vault, wait)
+    }
+
     /// Deletes the copies of `agent`'s sign-in from `vault`; the variables
     /// removed.
     pub fn remove_sign_in(
@@ -922,6 +936,25 @@ impl AgentSetup {
         vault: Option<&dyn SignInVault>,
         wait: Duration,
     ) -> crate::Result<Vec<ConnectResult>> {
+        self.connect_with(agents, server, parts, vault, wait, None)
+    }
+
+    /// [`Self::connect`], and an agent that signs in with a code (Codex)
+    /// does so here: its device sign-in starts in a folder Cua owns,
+    /// `show` gets the link and the code to enter, and the sign-in made for
+    /// Cua is saved once it's approved. Without `show` such
+    /// an agent's sign-in is left for the app's Connect, as before. The
+    /// device sign-in waits up to [`signin::DEVICE_SIGN_IN_WAIT`]. The CLI's
+    /// `connect setup --sign-in` and the app take this same path.
+    pub fn connect_with(
+        &self,
+        agents: &[String],
+        server: &McpServer,
+        parts: ConnectParts,
+        vault: Option<&dyn SignInVault>,
+        wait: Duration,
+        mut show: Option<ShowDeviceSignIn<'_>>,
+    ) -> crate::Result<Vec<ConnectResult>> {
         let mut out = Vec::new();
         for id in agents {
             let a = registry::find(id).ok_or_else(|| signin::unknown(id))?;
@@ -947,7 +980,12 @@ impl AgentSetup {
                         "Connected. Sign-in not copied: Keyvault isn't available here.".into(),
                     ),
                 },
-                Some(v) => match self.import_sign_in(a.id, v, wait) {
+                Some(v) => match match show.as_deref_mut() {
+                    Some(show) if signin::signs_in_with_a_code(a.id) => {
+                        self.device_sign_in(a.id, v, signin::DEVICE_SIGN_IN_WAIT, show)
+                    }
+                    _ => self.import_sign_in(a.id, v, wait),
+                } {
                     Ok(i) => SignInResult {
                         imported: Some(i),
                         refused: None,
@@ -997,6 +1035,10 @@ impl AgentSetup {
         Ok((outcomes, removed))
     }
 }
+
+/// Shows a device sign-in's link and code (`agent`, the sign-in) while it
+/// waits for the approval.
+pub type ShowDeviceSignIn<'a> = &'a mut dyn FnMut(&str, &signin::DeviceSignIn);
 
 /// The name rows show ("Codex", not the registry's "OpenAI Codex").
 pub fn display_name(a: &registry::AgentSpec) -> &'static str {

@@ -99,8 +99,9 @@ pub struct SetupCmdArgs {
     pub cua_driver: bool,
     /// Also make a sign-in for each agent's runs in your Spaces and keep it
     /// in Keyvault on This Mac: Claude Code's `claude setup-token` (one
-    /// browser approval). Codex signs in with a code from the Cua Spaces app
-    /// (Settings, Connectors); Hermes uses the providers connected there.
+    /// browser approval) and Codex's own device sign-in (a link and a code
+    /// to enter there, in a folder Cua owns); Hermes uses the providers
+    /// connected in Cua Spaces (Settings, Connectors).
     /// The agent's own sign-in files are never read or changed.
     #[arg(long, conflicts_with = "cua_driver")]
     pub sign_in: bool,
@@ -745,13 +746,25 @@ fn run_connect(
         mcp: !args.skills_only,
         sign_in: true,
     };
+    // A sign-in with a code (Codex): the link and the code go to stderr, so
+    // `--json` stays one line on stdout.
+    let mut show = |agent: &str, d: &cua_agent_setup::signin::DeviceSignIn| {
+        let name = cua_agent_setup::registry::find(agent)
+            .map(cua_agent_setup::connection::display_name)
+            .unwrap_or(agent);
+        eprintln!(
+            "  {name}: open {} and enter the code {} (it works once and expires in 15 minutes).",
+            d.url, d.code
+        );
+    };
     let res = setup
-        .connect(
+        .connect_with(
             &ids,
             &server,
             parts,
             vault.as_deref(),
             cua_agent_setup::signin::SETUP_TOKEN_WAIT,
+            Some(&mut show),
         )
         .map_err(err)?;
     let failed = res.iter().any(|r| !r.tools_ok);

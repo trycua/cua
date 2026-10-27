@@ -25,6 +25,20 @@ fn script(dir: &Path, name: &str, body: &str) {
     std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
 }
 
+/// Codex with its device-code login: prints the link and the code, then the
+/// sign-in it makes lands in `$CODEX_HOME` (the folder Cua owns).
+const CODEX_DEVICE: &str = r#"#!/bin/sh
+case "$1" in
+  --version) echo "codex-cli 0.61.0" ;;
+  login)
+    if [ "$2" = "--device-auth" ]; then
+      printf '1. Open this link\n   https://auth.openai.com/codex/device\n2. Enter this one-time code\n   ABCD-12345\n'
+      printf '{"auth_mode":"chatgpt","tokens":{"refresh_token":"rt-made-for-cua"}}' > "$CODEX_HOME/auth.json"
+    fi ;;
+esac
+exit 0
+"#;
+
 fn agent(version: &str) -> String {
     format!("#!/bin/sh\n[ \"$1\" = --version ] && echo \"{version}\"\nexit 0\n")
 }
@@ -159,7 +173,7 @@ async fn cli_mcp_and_app_report_the_same_connection_in_every_state() {
     let vault = h.dir.path().join("keychain");
     std::fs::create_dir_all(&vault).unwrap();
     script(&bin, "cua", FAKE_CUA);
-    script(&bin, "codex", &agent("codex-cli 0.61.0"));
+    script(&bin, "codex", CODEX_DEVICE);
     script(&bin, "hermes", &agent("Hermes Agent v0.22.5"));
     script(&bin, "cursor-agent", &agent("2026.10.21"));
     h.set("PATH", format!("{}:/usr/bin:/bin", bin.display()))
@@ -184,7 +198,7 @@ async fn cli_mcp_and_app_report_the_same_connection_in_every_state() {
     std::fs::create_dir_all(home.join(".codex")).unwrap();
     std::fs::write(
         home.join(".codex/auth.json"),
-        r#"{"auth_mode":"chatgpt","tokens":{"id_token":"x","access_token":"y","refresh_token":"rt"}}"#,
+        r#"{"auth_mode":"chatgpt","tokens":{"id_token":"x","access_token":"y","refresh_token":"rt-yours"}}"#,
     )
     .unwrap();
 
@@ -213,17 +227,35 @@ async fn cli_mcp_and_app_report_the_same_connection_in_every_state() {
         .iter()
         .find(|a| a["agent"] == "codex")
         .unwrap();
+    // Codex signs in with its own device-code login, made for Cua; your own
+    // `~/.codex/auth.json` is never read.
     assert_eq!(
         codex["sign_in"]["imported"]["label"], "Codex · ChatGPT sign-in",
         "{res}"
     );
+    assert!(
+        out.stderr.contains("https://auth.openai.com/codex/device")
+            && out.stderr.contains("ABCD-12345"),
+        "{}",
+        out.stderr
+    );
+    let saved =
+        cua_spaces::agents::keys::AgentKeys::new(cua_auth::Store::TestKeychain(vault.clone()))
+            .values(&["CODEX_AUTH_JSON"]);
+    assert!(
+        saved["CODEX_AUTH_JSON"].contains("rt-made-for-cua"),
+        "{saved:?}"
+    );
+    assert!(!saved["CODEX_AUTH_JSON"].contains("rt-yours"));
     let hermes = res["agents"]
         .as_array()
         .unwrap()
         .iter()
         .find(|a| a["agent"] == "hermes")
         .unwrap();
-    assert_eq!(hermes["sign_in"]["refused"], "not_signed_in", "{res}");
+    // Hermes makes no sign-in of its own (it uses the providers connected in
+    // Cua Spaces), and its `.env` is never read.
+    assert!(hermes["sign_in"].is_null(), "{res}");
     let r = all_three(&h, &bin).await;
     assert_eq!(row(&r, "codex")["state"], "connected", "{r}");
     assert_eq!(row(&r, "codex")["signin_import"], "ok");

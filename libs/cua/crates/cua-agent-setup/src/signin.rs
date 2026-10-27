@@ -165,7 +165,7 @@ fn codex_check(env: &HostEnv) -> Check {
 /// device-code login ([`DeviceSignIn`]); your own `auth.json` is never read.
 fn codex_copy() -> Result<SignInCopy, CopyRefusal> {
     Err(CopyRefusal::NotYet(
-        "Connected. Codex signs in with a code: use Connect in Cua Spaces, Settings, Connectors."
+        "Connected. Codex signs in with a code: run `cua connect setup --agents codex --sign-in`, or use Connect in Cua Spaces."
             .into(),
     ))
 }
@@ -656,13 +656,19 @@ pub fn find_device_code(out: &str) -> Option<(String, String)> {
     Some((url, code.to_string()))
 }
 
+/// Whether `agent` signs in for Cua with a code entered in the browser
+/// (its device sign-in) rather than a token command or a copy.
+pub fn signs_in_with_a_code(agent: &str) -> bool {
+    agent == "codex"
+}
+
 /// Starts Codex's device-code sign-in in `dir` (a folder Cua owns, emptied first).
 pub fn start_device_sign_in(
     env: &HostEnv,
     dir: &Path,
     agent: &str,
 ) -> Result<DeviceSignIn, CopyRefusal> {
-    if agent != "codex" {
+    if !signs_in_with_a_code(agent) {
         return Err(CopyRefusal::NotYet(format!(
             "{} has no device sign-in.",
             registry::find(agent)

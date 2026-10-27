@@ -770,9 +770,12 @@ fn failed_start_holds_the_vm_through_its_cleanup() {
         return;
     }
     let tmp = tempfile::tempdir().unwrap();
-    let bin = tmp.path().join("bin");
+    // One spelling for every path: scripts rebuild paths from `$PWD`.
+    let tmp_root = tmp.path().canonicalize().unwrap();
+    let tmp = tmp_root.as_path();
+    let bin = tmp.join("bin");
     std::fs::create_dir(&bin).unwrap();
-    let link = fake_swtpm_link(tmp.path());
+    let link = fake_swtpm_link(tmp);
     let exe = |name: &str, body: String| {
         let path = bin.join(name);
         std::fs::write(&path, body).unwrap();
@@ -783,7 +786,7 @@ fn failed_start_holds_the_vm_through_its_cleanup() {
         format!(
             "#!/bin/sh\nfor a; do case \"$a\" in file=*) f=\"${{a#file=}}\";; dir=*) d=\"${{a#dir=}}\";; esac; done\n\"{link}\" --exact qemu::tpm_tests::fake_swtpm --nocapture -- --pid \"file=$f\" --tpmstate \"dir=$d\" </dev/null >/dev/null 2>&1 &\nwhile [ ! -S \"$d/swtpm.sock\" ] || [ ! -s \"$f\" ]; do sleep 0.01; done\ncp \"$f\" {pid}\n",
             link = link.display(),
-            pid = tmp.path().join("fake.pid").display()
+            pid = tmp.join("fake.pid").display()
         ),
     );
     exe(
@@ -791,7 +794,7 @@ fn failed_start_holds_the_vm_through_its_cleanup() {
         format!(
             "#!/bin/sh\nrm -f \"$PWD/tpm/swtpm.sock\"\n(trap \"\" TERM; exec \"{link}\" socket --exact qemu::tpm_tests::fake_swtpm --nocapture -- --pid \"file=$PWD/swtpm.extra.pid\" --tpmstate \"dir=$PWD/tpm\" </dev/null >/dev/null 2>&1) &\nwhile [ ! -s \"$PWD/swtpm.extra.pid\" ]; do sleep 0.01; done\ncp \"$PWD/swtpm.extra.pid\" {pid}\nexit 1\n",
             link = link.display(),
-            pid = tmp.path().join("extra.pid").display()
+            pid = tmp.join("extra.pid").display()
         ),
     );
     let output = std::process::Command::new(std::env::current_exe().unwrap())
@@ -804,7 +807,7 @@ fn failed_start_holds_the_vm_through_its_cleanup() {
             "PATH",
             format!("{}:{}", bin.display(), std::env::var("PATH").unwrap()),
         )
-        .env("CUA_FAILED_START_ROOT", tmp.path())
+        .env("CUA_FAILED_START_ROOT", tmp)
         .output()
         .unwrap();
     assert!(

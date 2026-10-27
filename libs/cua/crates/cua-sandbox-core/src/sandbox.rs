@@ -291,6 +291,8 @@ pub struct CreateOptions {
     /// lists. `None`: what `network` and `egress` say
     /// ([`cua_vmm::network::NetworkSettings::from_legacy`]).
     pub network_settings: Option<cua_vmm::network::NetworkSettings>,
+    /// The tree it belongs to (a top-level Space's id); `None`: its own.
+    pub network_tree: Option<String>,
     /// The process that owns an ephemeral local sandbox (recorded in its
     /// lease; the sandbox is reaped once that process is gone). `None`:
     /// this process. A daemon passes its client's pid.
@@ -353,6 +355,7 @@ impl CreateOptions {
             spacesd: None,
             egress: Default::default(),
             network_settings: None,
+            network_tree: None,
             owner_pid: None,
             contrib: None,
             keep_on_failure: false,
@@ -1175,6 +1178,7 @@ impl Sandboxes {
             spacesd: o.spacesd,
             egress: o.egress.clone(),
             network: Some(o.effective_network()),
+            tree: o.network_tree.clone(),
             gpu: o.gpu.clone().filter(|g| !g.trim().is_empty()),
             probes: o
                 .wait_for

@@ -510,6 +510,7 @@ impl Sandboxes {
             spacesd: None,
             egress: Default::default(),
             network: None,
+            tree: None,
             gpu: None,
             probes: probes
                 .iter()

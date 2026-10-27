@@ -784,6 +784,11 @@ pub struct EngineTarget {
     pub mac: String,
     /// Its bridge port, once it runs (`None` before its first start).
     pub port: Option<BridgePort>,
+    /// Frames from it may only go to the gateway (and broadcast, IPv6
+    /// multicast), so every packet enters the host's IP stack: on a bridge
+    /// shared with other sandboxes (the engine's default). A bridge of its
+    /// own tree leaves it off: the tree's members may talk directly.
+    pub isolate_l2: bool,
 }
 
 /// The nft input that removes one sandbox's tables in one transaction
@@ -826,12 +831,14 @@ pub fn engine_ruleset(t: &EngineTarget, rules: &Rules) -> String {
             ));
         }
     }
+    if t.isolate_l2 {
+        pre.push_str(&format!("    ether saddr {mac} jump l2\n"));
+    }
     out.push_str(&format!(
         "table bridge {table} {{\n\
          \x20 chain pre {{\n\
          \x20   type filter hook prerouting priority -200; policy accept;\n\
          {pre}\
-         \x20   ether saddr {mac} jump l2\n\
          \x20 }}\n\
          \x20 chain l2 {{\n\
          \x20   ether daddr {{ {gw}, ff:ff:ff:ff:ff:ff }} return\n\
@@ -1184,6 +1191,7 @@ mod tests {
                 veth: "veth1a2b3c4".into(),
                 ipv4: Some(Ipv4Addr::new(172, 17, 0, 2)),
             }),
+            isolate_l2: true,
         }
     }
 
@@ -1261,6 +1269,19 @@ mod tests {
             engine_ruleset(&t, &rules(&["1.1.1.1"], &[])),
             engine_remove(table)
         );
+        // On its own tree's bridge: members talk directly, spoofing is
+        // still dropped, and the policy still applies.
+        let tree = EngineTarget {
+            isolate_l2: false,
+            ..target(true)
+        };
+        let text = engine_ruleset(&tree, &r);
+        assert!(!text.contains("jump l2"), "{text}");
+        assert!(
+            text.contains(&format!("ether saddr != {mac} drop")),
+            "{text}"
+        );
+        assert!(text.contains("jump verdict"), "{text}");
     }
 
     #[test]

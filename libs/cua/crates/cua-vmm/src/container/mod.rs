@@ -845,13 +845,13 @@ impl ContainerRuntime {
         let mut body = create_body(name, image, spec, base_labels, engine_runtime);
         // Its own MAC, so egress rules can be keyed by it before it starts
         // ([`egress`]); no raw sockets under a policy that blocks anything.
-        if let Some((net, mac)) = self.mac_config(name).await {
+        if let Some((net, mac)) = self.mac_config(name).await? {
             body.networking_config = Some(net);
             body.labels
                 .get_or_insert_with(Default::default)
                 .insert(egress::LABEL_MAC.into(), mac);
         }
-        if (egress::policy_blocks(&spec.egress) || egress::blocks(name))
+        if (egress::secure() || egress::policy_blocks(&spec.egress) || egress::blocks(name))
             && let Some(hc) = body.host_config.as_mut()
         {
             hc.cap_drop = Some(vec!["NET_RAW".into()]);
@@ -1225,17 +1225,34 @@ impl Runtime for ContainerRuntime {
         // pulled or created.
         self.group_runtime(spec).await?;
         let existing = self.inspect(&spec.name).await?;
-        // The policy: the start spec's for a new container (or one that has
-        // none kept); a kept one wins (`set_egress` changed it since).
+        // The policy and network settings: the start spec's for a new
+        // container (or one that has none kept); kept ones win (`set_egress`
+        // changed them since). A container kept from before network
+        // settings takes the spec's.
         match (&existing, egress::kept(&spec.name)) {
-            (Some(_), Some(_)) => {}
-            (Some(_), None) if spec.egress.is_empty() => {}
-            _ if spec.egress.is_empty() => egress::forget(&spec.name),
+            (Some(_), Some(k)) => {
+                if k.network.is_none() && spec.network.is_some() {
+                    egress::keep(
+                        &spec.name,
+                        &egress::Kept {
+                            network: spec.network.clone(),
+                            tree: k.tree.clone().or_else(|| spec.tree.clone()),
+                            ..k
+                        },
+                    )?;
+                }
+            }
+            (Some(_), None) if spec.egress.is_empty() && spec.network.is_none() => {}
+            _ if spec.egress.is_empty() && spec.network.is_none() && spec.tree.is_none() => {
+                egress::forget(&spec.name)
+            }
             _ => egress::keep(
                 &spec.name,
                 &egress::Kept {
                     policy: spec.egress.clone(),
                     table: None,
+                    network: spec.network.clone(),
+                    tree: spec.tree.clone(),
                 },
             )?,
         }
@@ -1564,7 +1581,8 @@ impl Runtime for ContainerRuntime {
         }
         let mut labels = HashMap::new();
         labels.insert("cua.vmm.source".to_string(), source.to_string());
-        // A fork inherits its source's egress policy (applied at its start).
+        // A fork inherits its source's egress policy and network settings
+        // (applied at its start), and stays in its tree.
         egress::copy(source, new_name)?;
         // Memory: a running gVisor Space (checkpointed now) or a memory
         // checkpoint; the fork restores it when it starts.
@@ -1781,6 +1799,12 @@ impl Runtime for ContainerRuntime {
             &egress::Kept {
                 policy: policy.clone(),
                 table: previous.as_ref().and_then(|k| k.table.clone()),
+                // The lists are its network settings' own lists too.
+                network: Some(crate::network::NetworkSettings::with_lists(
+                    previous.as_ref().and_then(|k| k.network.clone()),
+                    policy,
+                )),
+                tree: previous.as_ref().and_then(|k| k.tree.clone()),
             },
         )?;
         if !running && self.needs_recreate(name, &i) {
@@ -2299,7 +2323,7 @@ impl ContainerRuntime {
         }
         hc.port_bindings = Some(bindings);
         let mut labels = cfg.labels;
-        let networking_config = match self.mac_config(name).await {
+        let networking_config = match self.mac_config(name).await? {
             Some((net, mac)) => {
                 labels
                     .get_or_insert_with(Default::default)

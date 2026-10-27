@@ -273,6 +273,11 @@ pub struct StartSpec {
     /// the runtime keeps to `restrict_network` and `egress`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub network: Option<crate::network::NetworkSettings>,
+    /// The tree the sandbox belongs to (its top-level Space's id): members
+    /// of one tree share a network and reach each other; other trees are
+    /// blocked. `None`: a tree of its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tree: Option<String>,
     #[serde(default)]
     pub labels: BTreeMap<String, String>,
     /// Backend-specific extra arguments (appended to the qemu command line).
@@ -621,6 +626,7 @@ impl StartSpec {
             restrict_network: false,
             egress: Default::default(),
             network: None,
+            tree: None,
             labels: BTreeMap::new(),
             extra_args: Vec::new(),
             sidecars: Vec::new(),

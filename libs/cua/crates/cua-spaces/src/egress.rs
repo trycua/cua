@@ -151,21 +151,7 @@ pub(crate) fn with_lists(
     settings: Option<crate::network::NetworkSettings>,
     policy: &EgressPolicy,
 ) -> crate::network::NetworkSettings {
-    use crate::network::{NetworkPreset as P, NetworkSettings};
-    let mut s = settings.unwrap_or_else(NetworkSettings::internet);
-    s.custom = policy.clone();
-    match s.preset {
-        P::Internet | P::None if !policy.is_empty() => {
-            s.custom_base = s.preset;
-            s.preset = P::Custom;
-        }
-        P::Custom if policy.is_empty() => {
-            s.preset = s.custom_base;
-            s.custom_base = P::Internet;
-        }
-        _ => {}
-    }
-    s
+    crate::network::NetworkSettings::with_lists(settings, policy)
 }
 
 #[cfg(test)]

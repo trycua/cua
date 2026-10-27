@@ -181,6 +181,20 @@ pub fn detach(all: &mut BTreeMap<String, SpaceMeta>, id: &str) -> Vec<String> {
 }
 
 impl Spaces {
+    /// The root of the tree a new child of `parent` joins (`None` without
+    /// a parent: it is its own).
+    pub(crate) fn tree_root_of(&self, parent: Option<&str>) -> Option<String> {
+        let parent = parent.map(str::trim).filter(|p| !p.is_empty())?;
+        let id = self.resolve(parent).ok()?.to_string();
+        Some(
+            self.inner
+                .registry
+                .meta(&id)
+                .and_then(|m| m.root)
+                .unwrap_or(id),
+        )
+    }
+
     /// The direct children of a Space (canonical ids).
     pub fn children(&self, space: &str) -> Result<Vec<String>> {
         let id = self.resolve(space)?.to_string();

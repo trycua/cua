@@ -240,6 +240,8 @@ pub(crate) struct LocalProvision {
     pub egress: crate::egress::EgressPolicy,
     /// Network settings ([`SpaceCreate::network_settings`]).
     pub network_settings: Option<crate::network::NetworkSettings>,
+    /// The tree it joins (its root's id); `None`: its own.
+    pub network_tree: Option<String>,
 }
 
 /// A Space [`Spaces::create`] started with `wait = false`.
@@ -2816,6 +2818,7 @@ impl Spaces {
             forkable: opts.forkable,
             network: opts.network,
             egress: opts.egress,
+            network_tree: self.tree_root_of(opts.parent.as_deref()),
             network_settings: opts.network_settings,
         };
         // `create` runs a `wait = false` create in the background
@@ -2902,6 +2905,12 @@ impl Spaces {
         create.network = opts.network;
         create.egress = opts.egress.clone();
         create.network_settings = opts.network_settings.clone();
+        // Its tree: its parent's, or its own.
+        create.network_tree = Some(
+            opts.network_tree
+                .clone()
+                .unwrap_or_else(|| SpaceId::Local { name: name.clone() }.to_string()),
+        );
         for (svc, port) in opts.services.iter().filter(|(s, _)| s.as_str() != "env") {
             create = create
                 .service(svc.clone(), *port)

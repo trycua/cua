@@ -145,6 +145,10 @@ pub struct LocalStartSpec {
     /// runtime keeps to `restrict_network` and `egress`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub network: Option<cua_vmm::network::NetworkSettings>,
+    /// The tree it belongs to ([`cua_vmm::StartSpec::tree`]); `None`: its
+    /// own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tree: Option<String>,
     /// A GPU option of the runtime (see [`crate::gpu`]); `None`: no GPU.
     #[serde(default)]
     pub gpu: Option<String>,

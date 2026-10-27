@@ -260,6 +260,28 @@ impl NetworkSettings {
         NetworkSettings::migrate(egress, restrict_network)
     }
 
+    /// These settings with `policy` as their lists (a legacy
+    /// `set_egress`): `internet` with lists becomes `custom` from
+    /// `internet`, `none` with lists `custom` from `none`, and `custom`
+    /// without lists goes back to its base.
+    pub fn with_lists(settings: Option<NetworkSettings>, policy: &EgressPolicy) -> NetworkSettings {
+        use NetworkPreset as P;
+        let mut s = settings.unwrap_or_else(NetworkSettings::internet);
+        s.custom = policy.clone();
+        match s.preset {
+            P::Internet | P::None if !policy.is_empty() => {
+                s.custom_base = s.preset;
+                s.preset = P::Custom;
+            }
+            P::Custom if policy.is_empty() => {
+                s.preset = s.custom_base;
+                s.custom_base = P::Internet;
+            }
+            _ => {}
+        }
+        s
+    }
+
     /// What these settings open beyond `internet`, one plain line each
     /// ("Allows your local network (192.168.1.0/24)"). Empty for `internet`
     /// and anything stricter.
@@ -503,6 +525,30 @@ pub struct NetworkContext {
     /// The daemon's ports on the host: always blocked on every host
     /// address and alias.
     pub daemon_ports: Vec<u16>,
+}
+
+/// The TCP port the cua daemon listens on, from its discovery file under
+/// the cua home (`None` when no daemon has written one). Guests are never
+/// let through to it ([`Reason::PlatformDaemon`]).
+pub fn daemon_ports() -> Vec<u16> {
+    #[derive(Deserialize)]
+    struct Discovery {
+        #[serde(default)]
+        loopback_url: Option<String>,
+    }
+    let path = crate::host::cua_home().join("daemon.json");
+    let Some(url) = std::fs::read(path)
+        .ok()
+        .and_then(|b| serde_json::from_slice::<Discovery>(&b).ok())
+        .and_then(|d| d.loopback_url)
+    else {
+        return Vec::new();
+    };
+    url.rsplit(':')
+        .next()
+        .and_then(|p| p.trim_end_matches('/').parse::<u16>().ok())
+        .into_iter()
+        .collect()
 }
 
 /// Whether the secure default applies, or the old open one

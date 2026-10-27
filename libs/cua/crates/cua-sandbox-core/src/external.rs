@@ -1822,6 +1822,7 @@ mod tests {
             spacesd: None,
             egress: Default::default(),
             network: None,
+            tree: None,
             gpu: None,
             probes: vec![],
             ephemeral: false,

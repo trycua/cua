@@ -37,7 +37,7 @@ app for each system, and every installer is attached to the
 
     Or run `cua-spaces-<version>-windows-x64-setup.exe` (`windows-arm64` on Arm)
     from the release. Windows may show a SmartScreen prompt the first time:
-    choose **More info**, then **Run anyway**.
+    choose **More info**, then **Run anyway**. The publisher shows as **Cua AI, Inc.**
   </Tab>
   <Tab value="Linux">
     ```bash skip="host-install"
@@ -53,7 +53,14 @@ app for each system, and every installer is attached to the
 At a console the installer shows a checklist first. Add `--cli-only`
 (`-CliOnly` on Windows) to install the CLI alone. Other flags are `--select`,
 `--only`, `--app-only`, `--mode host|client`, `--version`, `--no-onboarding`,
-`--dry-run` and `--yes` (`-Select`, `-CliOnly` and so on on Windows).
+`--no-host`, `--dry-run` and `--yes` (`-Select`, `-CliOnly` and so on on Windows).
+
+In a terminal the installer then signs you in. Over ssh, or on Linux without a
+display, it shows a code to approve in a browser on another device. Signing in
+adds this computer to your account, so it shows up in Cua Spaces on your other
+devices. It provides Spaces and keeps its screen private; a computer set up
+before keeps its settings. Add `--no-host` (`-NoHost`) to sign in without
+adding it.
 
 ## First run
 
@@ -62,12 +69,12 @@ The first time you open the app, it walks you through a short setup. The
 
 | Step | What it does |
 |---|---|
-| A shared Space for every agent | Connects your agent: Claude Code, Codex, Hermes, OpenClaw or another one. See [Connect your agent](/spaces/guides/connect-your-agent). |
-| Checking your setup | Signs you in to Cua and asks for the two settings your agent needs: to control this computer and to see its screen. Then this computer is your first Space. |
-| Try your first request | A request to copy into your agent. It works right away. |
-| Give your agent its own Space | Optional: a fresh Linux or macOS computer inside this one, away from your files. |
+| Your computers, shared by your team and its agents | The welcome. |
+| Pick your agent | The agents found on this computer, most used first (Hermes, Claude Code, Codex, Cursor, then the rest). Press **Connect** on each one you want; nothing is connected until you do. See [Connect your agent](/spaces/guides/connect-your-agent). |
+| Add your other computers | Optional. Signing in lets your other computers and your cloud use this computer's Spaces. **Not now** keeps Cua on this computer only. |
+| Try it in your agent | A request to paste into the agent you connected, which makes a Space on this computer. With no agent, a first Space in one click: Linux, or macOS on a Mac with Apple silicon. |
 
-If you stop before every step is done, Home keeps a **Finish setting up** list.
+If you skip the setup, **Finish setting up** at the bottom of the sidebar opens it again.
 
 Cua Spaces launches at login by default, so the Spaces this computer provides
 and your persistent agents come back after a restart. Turn it off in **Settings,

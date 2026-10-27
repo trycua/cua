@@ -104,6 +104,11 @@ pub fn error_kind(variant: &str) -> &'static str {
         }
         out
     };
+    // A failed create's Local Network cause comes as its subclass word
+    // (`cua_create_failure::create_failure_kind`); its kind is the parent.
+    if matches!(snake.as_str(), "local_network_denied" | "local_network_vpn") {
+        return "local_network";
+    }
     pick(schema::ERROR_KINDS, &snake, "other")
 }
 
@@ -918,6 +923,35 @@ pub fn onboarding_page(page: &str, action: &str, choice: &str) -> Option<Event> 
     })
 }
 
+/// One of the first-run funnel events: `step_viewed`, `step_completed`,
+/// `step_failed` (with `reason`) or `skipped` (with `how`, from the same
+/// last argument). None for a step, action or
+/// reason outside the vocabulary. `step_index` and `onboarding_version`
+/// come from the step, so a caller cannot send a wrong one.
+pub fn first_run_step(step: &str, action: &str, reason: &str) -> Option<Event> {
+    let step = pick(schema::FIRST_RUN_STEPS, step, "");
+    let name = match action.trim() {
+        "step_viewed" => event::ONBOARDING_STEP_VIEWED,
+        "step_completed" => event::ONBOARDING_STEP_COMPLETED,
+        "step_failed" => event::ONBOARDING_STEP_FAILED,
+        "step_skipped" => event::ONBOARDING_SKIPPED,
+        _ => return None,
+    };
+    let index = schema::FIRST_RUN_STEPS.iter().position(|s| *s == step)?;
+    let e = Event::new(name)
+        .s("step", step)
+        .n("step_index", index as u64 + 1)
+        .n("onboarding_version", schema::FIRST_RUN_VERSION);
+    Some(match name {
+        event::ONBOARDING_STEP_FAILED => e.s(
+            "reason",
+            pick(schema::FIRST_RUN_FAIL_REASONS, reason, "other"),
+        ),
+        event::ONBOARDING_SKIPPED => e.s("how", pick(schema::FIRST_RUN_SKIP_HOWS, reason, "later")),
+        _ => e,
+    })
+}
+
 /// `cua_space_wizard`; None for an action outside the vocabulary.
 pub fn space_wizard(action: &str) -> Option<Event> {
     let a = pick(schema::WIZARD_ACTIONS, action, "");
@@ -940,6 +974,10 @@ pub struct SpaceCreate<'a> {
     pub gpu: bool,
     /// The error enum's case name (`InsufficientDisk`); empty when the shell had none.
     pub error_variant: &'a str,
+    /// The app ran the create a second time by itself (0 or 1; more is 1).
+    pub retry_attempt: u32,
+    /// The finer cause (`schema::ERROR_SUBCLASSES`); empty is `none`.
+    pub error_subclass: &'a str,
 }
 
 /// `cua_space_create`.
@@ -975,6 +1013,14 @@ pub fn space_create(s: &SpaceCreate<'_>, outcome: Outcome, elapsed: Duration) ->
         .b("stalled", s.stalled && outcome == Outcome::Error)
         .s("time_bucket", create_time_bucket(elapsed))
         .b("gpu", s.gpu)
+        .n("retry_attempt", u64::from(s.retry_attempt.min(1)))
+        .s(
+            "error_subclass",
+            match outcome {
+                Outcome::Cancelled => "none",
+                _ => pick(schema::ERROR_SUBCLASSES, s.error_subclass, "none"),
+            },
+        )
 }
 
 /// `cua_space_create_started`.
@@ -1247,6 +1293,77 @@ pub fn device_enroll(method: &str, outcome: Outcome) -> Option<Event> {
     })
 }
 
+/// `cua_cloud_link`: `action` on `cloud` linked by `auth`, ending at
+/// `status` (`cloud_connect`'s word; `-` becomes `_`). Words outside the
+/// vocabularies become `other` (cloud), `none` (auth) or `error` (status),
+/// so no identifier can travel in them.
+pub fn cloud_link(
+    action: &str,
+    cloud: &str,
+    auth: &str,
+    status: &str,
+    outcome: Outcome,
+) -> Option<Event> {
+    let action = pick(schema::CLOUD_LINK_ACTIONS, action, "");
+    (!action.is_empty()).then(|| {
+        Event::new(event::CLOUD_LINK)
+            .s("action", action)
+            .s("cloud", pick(schema::CLOUD_LINK_CLOUDS, cloud, "other"))
+            .s("auth", pick(schema::CLOUD_LINK_AUTHS, auth, "none"))
+            .s(
+                "status",
+                pick(
+                    schema::CLOUD_LINK_STATUSES,
+                    &status.replace('-', "_"),
+                    "error",
+                ),
+            )
+            .s("outcome", outcome.as_str())
+    })
+}
+
+/// A plan name as [`schema::PLANS`] has it: `team` is `teams`; anything
+/// else the client does not know (an empty plan, a new one) is `unknown`.
+pub fn plan(plan: &str) -> &'static str {
+    match plan.trim().to_ascii_lowercase().as_str() {
+        "team" => "teams",
+        p => pick(schema::PLANS, p, "unknown"),
+    }
+}
+
+/// `cua_plan_limit_shown`: a plan limit was shown to the person at
+/// `surface` (a [`schema::PLAN_SURFACES`] word, else `other`), for cap
+/// `kind` (else `other`) on `plan` (classified with [`plan`]).
+pub fn plan_limit_shown(surface: &str, kind: &str, plan_name: &str) -> Event {
+    Event::new(event::PLAN_LIMIT_SHOWN)
+        .s("surface", pick(schema::PLAN_SURFACES, surface, "other"))
+        .s(
+            "kind",
+            match pick(schema::LIMIT_KINDS, kind, "other") {
+                "none" => "other",
+                k => k,
+            },
+        )
+        .s("plan", plan(plan_name))
+}
+
+/// `cua_upgrade_link_opened`: the person opened the upgrade or account link
+/// of a limit notice or an upgrade prompt at `surface`; `kind` is the cap
+/// when it came from a limit, `none` otherwise.
+pub fn upgrade_link_opened(surface: &str, kind: &str, plan_name: &str) -> Event {
+    Event::new(event::UPGRADE_LINK_OPENED)
+        .s("surface", pick(schema::PLAN_SURFACES, surface, "other"))
+        .s(
+            "kind",
+            if kind.trim().is_empty() {
+                "none"
+            } else {
+                pick(schema::LIMIT_KINDS, kind, "other")
+            },
+        )
+        .s("plan", plan(plan_name))
+}
+
 /// `cua_installer_step`, as `install.sh` and `install.ps1` send it (they
 /// build the same payload themselves; this builder is the reference the
 /// tests hold them to). None for a step outside [`schema::INSTALLER_STEPS`].
@@ -1322,6 +1439,13 @@ pub fn space_tool_group(tool: &str) -> Option<&'static str> {
         t if t.starts_with("computer_") && !t.starts_with("computer_access_") => "computer",
         _ => return None,
     })
+}
+
+/// `cua_agent_signin_imported`: Connect copied `harness`'s sign-in into
+/// Keyvault on This Mac (only that it happened, and for which agent).
+pub fn agent_signin_imported(harness: &str) -> Event {
+    Event::new(event::AGENT_SIGNIN_IMPORTED)
+        .s("harness", pick(schema::SIGNIN_HARNESSES, harness, "other"))
 }
 
 /// `cua_agent_used_space`: an agent's tool call reached a Space and worked.

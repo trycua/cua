@@ -59,6 +59,7 @@ cua-spacesd --print-config               # effective config, never the token
 | `--listen` | `CUA_ENV_LISTEN` | `0.0.0.0:<port>` with a token, `127.0.0.1:<port>` without |
 | `--port` | `CUA_ENV_PORT` | `3211` (gRPC, gRPC-Web and HTTP routes) |
 | `--quic-port` | `CUA_ENV_QUIC_PORT` | `3212` (QUIC media; `0` disables it) |
+| `--mesh-udp-port` | `CUA_ENV_MESH_UDP_PORT` | `3212` (the mesh port that reaches QUIC media; peers dial the same number) |
 | `--token-file` | `CUA_ENV_TOKEN_FILE` | `/run/cua/env-token` |
 | `--data-dir` | `CUA_ENV_DATA_DIR` | `~/.cua/spacesd` |
 | `--downloads-dir` | `CUA_ENV_DOWNLOADS_DIR` | `~/Downloads` (teleport destination) |

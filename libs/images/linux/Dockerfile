@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 # libs/images/linux (ghcr.io/trycua/linux): the default recommended "Spaces image",
-# in two tiers
+# in three tiers
 # (build one with `--target`; the default is the last stage, full):
 #
 #   slim   ghcr.io/trycua/linux:24.04-slim[-disk]  the minimum for
@@ -8,8 +8,13 @@
 #   full   ghcr.io/trycua/linux:24.04[-disk]       FROM slim + dev tooling
 #          (build-essential, git, gh, jq, ripgrep, Node LTS + pnpm, python3 +
 #          uv, rustup stable, Go, the Docker CLI) + Firefox
+#   docker ghcr.io/trycua/linux:24.04-docker-disk  FROM slim + the Docker
+#          engine (docker-ce, containerd, compose), dockerd up at boot,
+#          overlay + br_netfilter loaded; a VM tier (its rootfs never runs
+#          dockerd)
 #
-# full is FROM slim, so the two share every slim layer in the registry.
+# full and docker are FROM slim, so they share every slim layer in the
+# registry.
 #
 # slim: Ubuntu 24.04 + XFCE on Xvfb (:1) + session D-Bus + AT-SPI + headless
 # PipeWire (null sink cua_desktop, virtual source cua_mic)
@@ -73,7 +78,7 @@ ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=Etc/UTC
 RUN apt-get update \
  && for attempt in 1 2 3; do apt-get install -y --no-install-recommends \
       ca-certificates curl gnupg sudo tzdata locales procps psmisc iproute2 fuse3 \
-      netcat-openbsd less nano xz-utils \
+      netcat-openbsd less nano xz-utils nftables \
       supervisor dbus dbus-x11 dbus-user-session \
       xfce4 xfce4-terminal xfwm4 xfdesktop4 xfce4-panel xfce4-settings thunar \
       greybird-gtk-theme adwaita-icon-theme-full fonts-dejavu-core fonts-liberation \
@@ -92,6 +97,15 @@ RUN apt-get update \
  && mkdir -p /etc/systemd/user \
  && for u in pipewire.socket pipewire.service pipewire-pulse.socket pipewire-pulse.service \
       wireplumber.service filter-chain.service; do ln -sf /dev/null "/etc/systemd/user/$u"; done
+
+# CUA-1948: the compromised eMudhra intermediates. Ubuntu's ca-certificates >= 20260816ubuntu0.<release>.1 drops the
+# roots they chain to; Debian has not shipped that yet, so disable both roots explicitly (a no-op once they are gone).
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates \
+ && sed -i -E 's#^(mozilla/(emSign_ECC_Root_CA_-_G3|Comodo_AAA_Services_root)\.crt)$#!\1#' /etc/ca-certificates.conf \
+ && update-ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
 # (The user-session PipeWire units are masked: cua-audio runs one headless
 # instance for the desktop instead, see files/start-audio.sh.)
 
@@ -99,7 +113,7 @@ RUN install -d -m 0755 /etc/apt/keyrings
 
 # Chromium from the xtradeb/apps PPA (open-source build, BSD-3-Clause; not
 # Google-branded Chrome): only the chromium packages may come from it, at
-# the pinned major (CHROMIUM_MAJOR), and the key must have the pinned fingerprint.
+# the pinned major for this arch, and the key must have the pinned fingerprint.
 # The key is vendored (common/apt-keys/xtradeb-apps.asc), not fetched from
 # keyserver.ubuntu.com, so a keyserver outage cannot break the build.
 # cua-driver's browser_prepare launches /usr/lib/chromium/chromium (a
@@ -109,13 +123,20 @@ RUN install -d -m 0755 /etc/apt/keyrings
 # per runtime (common/desktop/browser-sandbox.sh), not the user.
 # The PPA keeps only its newest build per arch and prunes the rest, so an
 # exact build pin (155.0.8059.39-1xtradeb1.2404.1) breaks the build as soon as
-# the PPA moves on (it did, repeatedly). Pin the major instead: apt picks the
-# newest CHROMIUM_MAJOR.* build the PPA has for that arch, and the arches need
-# not move together. The resolved version is recorded in
-# /etc/cua-image/chromium-version. Bump the major
-# deliberately. CHROMIUM_VERSION, when set, wins (an exact build, for a repro).
+# the PPA moves on (it did, repeatedly). Pin the major per arch instead: apt
+# picks the newest <major>.* build the PPA has for that arch. The arches move
+# on separately (amd64 went to 156 while arm64 stayed on 155), so each has its
+# own major. When the PPA has dropped a pinned major for an arch, the build
+# takes the newest build it has for that arch and says so, rather than
+# failing; scripts/images/check-chromium-pin.sh (CI: Images, Chromium pin)
+# fails loudly with what the PPA has, so the bump is still made deliberately.
+# The resolved version is recorded in /etc/cua-image/chromium-version.
+# CHROMIUM_MAJOR, when set, is the major for every arch; CHROMIUM_VERSION, when
+# set, wins over both (an exact build, for a repro).
 ARG CHROMIUM_VERSION=
-ARG CHROMIUM_MAJOR=155
+ARG CHROMIUM_MAJOR=
+ARG CHROMIUM_MAJOR_AMD64=156
+ARG CHROMIUM_MAJOR_ARM64=156
 ARG CHROMIUM_PPA_KEY=5301FA4FD93244FBC6F6149982BB6851C64F6880
 RUN --mount=type=bind,source=common/apt-keys/xtradeb-apps.asc,target=/tmp/xtradeb-apps.asc \
     gpg --dearmor </tmp/xtradeb-apps.asc >/etc/apt/keyrings/xtradeb-apps.gpg \
@@ -124,12 +145,26 @@ RUN --mount=type=bind,source=common/apt-keys/xtradeb-apps.asc,target=/tmp/xtrade
       >/etc/apt/sources.list.d/xtradeb-apps.list \
  && printf 'Package: *\nPin: origin ppa.launchpadcontent.net\nPin-Priority: -1\n\nPackage: chromium chromium-common chromium-sandbox\nPin: origin ppa.launchpadcontent.net\nPin-Priority: 1001\n' \
       >/etc/apt/preferences.d/xtradeb-chromium \
- && pin="${CHROMIUM_VERSION:-${CHROMIUM_MAJOR}.*}" && test -n "$pin" \
- && apt-get update \
- && for attempt in 1 2 3; do apt-get install -y --no-install-recommends \
+  && for attempt in 1 2 3 4 5 6; do \
+       apt-get -o Acquire::Retries=3 update || true; \
+       apt-cache madison chromium | grep -q launchpadcontent && break; \
+       echo "the xtradeb PPA index did not download (attempt $attempt; Launchpad answered 5xx or timed out); retrying" >&2; \
+       [ "$attempt" = 6 ] && { echo "ppa.launchpadcontent.net stayed unavailable" >&2; exit 1; }; \
+       sleep $((attempt * 20)); done \
+  && major="${CHROMIUM_MAJOR}" \
+  && if [ -z "$major" ]; then case "$TARGETARCH" in \
+       arm64) major="$CHROMIUM_MAJOR_ARM64" ;; *) major="$CHROMIUM_MAJOR_AMD64" ;; esac; fi \
+  && have="$(apt-cache madison chromium | awk -F'|' '/ppa\.launchpadcontent\.net/ { gsub(/ /, "", $2); print $2 }' | sort -V)" \
+  && test -n "$have" \
+  && if [ -n "$CHROMIUM_VERSION" ]; then pin="$CHROMIUM_VERSION"; \
+     elif printf '%s\n' $have | grep -q "^${major}\."; then pin="${major}.*"; \
+     else pin="$(printf '%s\n' $have | tail -n 1)"; \
+       echo "warning: the PPA has no chromium ${major}.* for ${TARGETARCH} any more (it has: $(echo $have)); using ${pin}. Bump CHROMIUM_MAJOR_$(echo "$TARGETARCH" | tr a-z A-Z)." >&2; fi \
+  && echo "chromium for ${TARGETARCH}: ${pin}" \
+  && for attempt in 1 2 3 4 5; do apt-get -o Acquire::Retries=3 install -y --no-install-recommends \
       "chromium=${pin}" "chromium-common=${pin}" && break; \
-      echo "apt attempt $attempt failed; reconfiguring" >&2; dpkg --configure -a || true; \
-      [ "$attempt" = 3 ] && exit 1; done \
+      echo "apt attempt $attempt failed; reconfiguring, then retrying with backoff" >&2; dpkg --configure -a || true; \
+      [ "$attempt" = 5 ] && exit 1; sleep $((attempt * 15)); done \
  && rm -rf /var/lib/apt/lists/* \
  && mkdir -p /etc/chromium/policies/managed /etc/cua-image \
  && printf '%s\n' '{"BrowserSignin":0,"SyncDisabled":true,"PasswordManagerEnabled":false,' \
@@ -201,7 +236,8 @@ RUN --mount=type=bind,source=linux/dist,target=/dist \
 COPY linux/files/supervisor/supervisord.conf /etc/supervisor/supervisord.conf
 COPY linux/files/start-spacesd.sh linux/files/ensure-env-token.sh \
      linux/files/env-token-mode.sh linux/files/start-token-sync.sh \
-     linux/files/start-audio.sh linux/files/cua-chromium /opt/cua/bin/
+     linux/files/start-audio.sh linux/files/cua-chromium \
+     linux/files/run-spacesd.sh /opt/cua/bin/
 COPY linux/files/pipewire/ /etc/pipewire/pipewire.conf.d/
 COPY linux/files/chromium.d/cua-sandbox /etc/chromium.d/cua-sandbox
 COPY linux/files/spacesd.healthcheck.sh /opt/cua/healthcheck.d/10-spacesd.sh
@@ -231,6 +267,16 @@ RUN /opt/cua/bin/cua-image-manifest generate --image-json /etc/cua-image/image.j
       --variant rootfs --arch "$TARGETARCH" --spacesd-source "$(cat /etc/cua-image/spacesd-source)" \
       --source-revision "$CUA_IMAGE_SOURCE_REVISION" --out /etc/cua-image/manifest.json
 
+# No machine identity ships: systemd's and dbus's postinst scripts wrote a
+# machine id at build time, which every container (and VM) of this image
+# would otherwise share. Empty /etc/machine-id is the image convention:
+# systemd fills it at a VM's first boot, the container entrypoint fills it
+# at start, and cua-spacesd rewrites it when a restored or forked Space
+# becomes a new machine (the desktop user may write it for that; dbus reads
+# it, so the separate dbus copy is dropped).
+RUN : >/etc/machine-id && chown root:cua /etc/machine-id && chmod 0664 /etc/machine-id \
+ && rm -f /var/lib/dbus/machine-id
+
 ENV HOME=/root DISPLAY=:1 CUA_X_SERVER=xvfb CUA_AUDIO=true
 # 3211 spacesd (gRPC + gRPC-Web, /media, /viewer), 3212/udp spacesd QUIC
 # media, 18080 HTTP fixture (only while started).
@@ -239,6 +285,63 @@ HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=12 \
   CMD ["/opt/cua/desktop/healthcheck.sh"]
 STOPSIGNAL SIGTERM
 CMD ["/opt/cua/desktop/entrypoint.sh"]
+
+# ---------------------------------------------------------------------------
+# docker: slim + the Docker engine, for VMs that run Docker Compose stacks
+# (ghcr.io/trycua/linux:24.04-docker-disk). docker-ce, containerd and the
+# compose and buildx plugins from Docker's signed repo (key fingerprint
+# checked, Docker's packages only, each at its pinned version), iptables
+# (nft backend) for Docker's and the workload's own rules, and `overlay` and
+# `br_netfilter` loaded at boot. dockerd and containerd are VM units: the
+# disk boots with dockerd up (`docker-ready` waits for it); the container
+# rootfs carries the same bits but supervisord never starts them (a
+# container Space cannot run dockerd). `docker-compose` is the compose
+# plugin, for scripts that call the standalone name.
+# `cua sb bake` builds world checkpoints on it (create, compose up, health,
+# checkpoint), so forks start with their containers already running.
+# ---------------------------------------------------------------------------
+FROM slim AS docker
+ARG TARGETARCH
+ARG CUA_IMAGE_SOURCE_REVISION=
+ARG DOCKER_VERSION=5:29.9.1-1~ubuntu.24.04~noble
+ARG CONTAINERD_VERSION=2.4.2-2~ubuntu.24.04~noble
+ARG DOCKER_COMPOSE_VERSION=5.6.0-1~ubuntu.24.04~noble
+ARG DOCKER_BUILDX_VERSION=0.38.0-1~ubuntu.24.04~noble
+ARG DOCKER_APT_KEY=9DC858229FC7DD38854AE2D88D81803C0EBFCD88
+
+RUN curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor >/etc/apt/keyrings/docker.gpg \
+ && gpg --show-keys --with-colons /etc/apt/keyrings/docker.gpg | grep -q "^fpr:::::::::${DOCKER_APT_KEY}:" \
+ && echo "deb [signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu noble stable" \
+      >/etc/apt/sources.list.d/docker.list \
+ && printf 'Package: *\nPin: origin download.docker.com\nPin-Priority: -1\n\nPackage: docker-ce docker-ce-cli docker-ce-rootless-extras containerd.io docker-compose-plugin docker-buildx-plugin\nPin: origin download.docker.com\nPin-Priority: 1001\n' \
+      >/etc/apt/preferences.d/docker \
+ && apt-get update \
+ && for attempt in 1 2 3; do apt-get install -y --no-install-recommends \
+      "docker-ce=${DOCKER_VERSION}" "docker-ce-cli=${DOCKER_VERSION}" "containerd.io=${CONTAINERD_VERSION}" \
+      "docker-compose-plugin=${DOCKER_COMPOSE_VERSION}" "docker-buildx-plugin=${DOCKER_BUILDX_VERSION}" \
+      iptables kmod \
+      && break; echo "apt attempt $attempt failed; reconfiguring" >&2; dpkg --configure -a || true; \
+      [ "$attempt" = 3 ] && exit 1; done \
+ && rm -rf /var/lib/apt/lists/* \
+ && ln -s /usr/libexec/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose \
+ && usermod -aG docker cua \
+ && docker --version && docker compose version && docker-compose version && containerd --version \
+ && iptables --version | grep -q nf_tables
+
+COPY linux/files/docker/daemon.json /etc/docker/daemon.json
+COPY linux/files/docker/modules-load.conf /etc/modules-load.d/cua-docker.conf
+COPY linux/files/docker/docker-ready.sh /usr/local/bin/docker-ready
+RUN python3 -m json.tool /etc/docker/daemon.json >/dev/null \
+ && printf 'containerd.service\ndocker.service\n' >>/etc/cua-image/vm-units
+
+# The docker tier's manifest: the same image.json, tier docker.
+RUN /opt/cua/bin/cua-image-manifest generate --image-json /etc/cua-image/image.json --tier docker \
+      --variant rootfs --arch "$TARGETARCH" --spacesd-source "$(cat /etc/cua-image/spacesd-source)" \
+      --source-revision "$CUA_IMAGE_SOURCE_REVISION" --out /etc/cua-image/manifest.json
+
+# No machine identity ships (as in slim: this tier installs packages too).
+RUN : >/etc/machine-id && chown root:cua /etc/machine-id && chmod 0664 /etc/machine-id \
+ && rm -f /var/lib/dbus/machine-id
 
 # ---------------------------------------------------------------------------
 # full (the default tier): slim + developer tooling + Firefox.
@@ -354,3 +457,7 @@ RUN sed -i 's/^WebBrowser=.*/WebBrowser=firefox/' /home/cua/.config/xfce4/helper
 RUN /opt/cua/bin/cua-image-manifest generate --image-json /etc/cua-image/image.json --tier full \
       --variant rootfs --arch "$TARGETARCH" --spacesd-source "$(cat /etc/cua-image/spacesd-source)" \
       --source-revision "$CUA_IMAGE_SOURCE_REVISION" --out /etc/cua-image/manifest.json
+
+# No machine identity ships (as in slim: the full tier installs packages too).
+RUN : >/etc/machine-id && chown root:cua /etc/machine-id && chmod 0664 /etc/machine-id \
+ && rm -f /var/lib/dbus/machine-id

@@ -1,0 +1,760 @@
+{
+  "flow": "provisioning",
+  "frames": [
+    {
+      "creates": "initial",
+      "frame": {
+        "activity": {
+          "kind": null,
+          "label": null,
+          "permille": null
+        },
+        "details": [],
+        "ids": [],
+        "pending": true,
+        "rows": [],
+        "tiles": []
+      }
+    },
+    {
+      "creates": "start pending:1",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 10
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "facts": [
+              "Status: Starting… 1%",
+              "System: Linux",
+              "Kind: Container"
+            ],
+            "id": "pending:1",
+            "previewText": "Starting…",
+            "progress": 10,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:1"
+        ],
+        "pending": true,
+        "rows": [
+          "os-linux Box [spaces.status.starting] 10 1%"
+        ],
+        "tiles": [
+          "os-linux Box, Linux, This Mac, Starting 10 Starting…"
+        ]
+      }
+    },
+    {
+      "creates": "progress pending:1 preparing",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 25
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "facts": [
+              "Status: Setting up Linux runtime… 2%",
+              "System: Linux",
+              "Kind: Container"
+            ],
+            "id": "pending:1",
+            "previewText": "Setting up Linux runtime…",
+            "progress": 25,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:1"
+        ],
+        "pending": true,
+        "rows": [
+          "os-linux Box [spaces.status.starting] 25 2%"
+        ],
+        "tiles": [
+          "os-linux Box, Linux, This Mac, Starting 25 Setting up Linux runtime…"
+        ]
+      }
+    },
+    {
+      "creates": "fail pending:1",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 10
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "facts": [
+              "Status: Retrying… 1%",
+              "System: Linux",
+              "Kind: Container"
+            ],
+            "id": "pending:1",
+            "previewText": "Retrying…",
+            "progress": 10,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:1"
+        ],
+        "pending": true,
+        "rows": [
+          "os-linux Box [spaces.status.starting] 10 1%"
+        ],
+        "tiles": [
+          "os-linux Box, Linux, This Mac, Starting 10 Retrying…"
+        ]
+      }
+    },
+    {
+      "creates": "tick",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 53
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "facts": [
+              "Status: Retrying… 5%",
+              "System: Linux",
+              "Kind: Container"
+            ],
+            "id": "pending:1",
+            "previewText": "Retrying…",
+            "progress": 53,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:1"
+        ],
+        "pending": true,
+        "rows": [
+          "os-linux Box [spaces.status.starting] 53 5%"
+        ],
+        "tiles": [
+          "os-linux Box, Linux, This Mac, Starting 53 Retrying…"
+        ]
+      }
+    },
+    {
+      "creates": "progress pending:1 preparing",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 53
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "facts": [
+              "Status: Retrying… 5%",
+              "System: Linux",
+              "Kind: Container"
+            ],
+            "id": "pending:1",
+            "previewText": "Retrying…",
+            "progress": 53,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:1"
+        ],
+        "pending": true,
+        "rows": [
+          "os-linux Box [spaces.status.starting] 53 5%"
+        ],
+        "tiles": [
+          "os-linux Box, Linux, This Mac, Starting 53 Retrying…"
+        ]
+      }
+    },
+    {
+      "creates": "fail pending:1",
+      "frame": {
+        "activity": {
+          "kind": null,
+          "label": null,
+          "permille": null
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Remove",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "facts": [
+              "Status: Failed",
+              "System: Linux",
+              "Kind: Container"
+            ],
+            "fix": "It failed twice for the same reason. Run `cua doctor` in Terminal to check what's wrong, or see the details. [Copy cua doctor: copy-command cua doctor]",
+            "id": "pending:1",
+            "previewText": "local runtime: the built-in Linux runtime did not start: exiting, status 1",
+            "progress": null,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:1"
+        ],
+        "pending": true,
+        "rows": [
+          "os-linux Box [spaces.status.failed] - local runtime: the built-in Linux runtime did not start: exiting, status 1"
+        ],
+        "tiles": [
+          "os-linux Box, Linux, This Mac, Failed - Failed"
+        ]
+      }
+    },
+    {
+      "creates": "dismiss pending:1",
+      "frame": {
+        "activity": {
+          "kind": null,
+          "label": null,
+          "permille": null
+        },
+        "details": [],
+        "ids": [],
+        "pending": true,
+        "rows": [],
+        "tiles": []
+      }
+    },
+    {
+      "creates": "start pending:2",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 10
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "facts": [
+              "Status: Starting… 1%",
+              "Image: ghcr.io/trycua/macos:26 [copy ghcr.io/trycua/macos:26 doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: macOS Tahoe 26",
+              "Kind: Virtual machine"
+            ],
+            "id": "pending:2",
+            "previewText": "Starting…",
+            "progress": 10,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:2"
+        ],
+        "pending": true,
+        "rows": [
+          "os-macos Mac [spaces.status.starting] 10 1%"
+        ],
+        "tiles": [
+          "os-macos Mac, macOS, This Mac, Starting 10 Starting…"
+        ]
+      }
+    },
+    {
+      "creates": "fail pending:2",
+      "frame": {
+        "activity": {
+          "kind": null,
+          "label": null,
+          "permille": null
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Remove",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "facts": [
+              "Status: Failed",
+              "Image: ghcr.io/trycua/macos:26 [copy ghcr.io/trycua/macos:26 doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: macOS Tahoe 26",
+              "Kind: Virtual machine"
+            ],
+            "id": "pending:2",
+            "previewText": "Not enough disk space: this Space needs about 30.0 GB, plus 5.0 GB kept free, and only 12.4 GB is available. Free up space on this Mac (or run `cua cache prune` in Terminal), then try again.",
+            "progress": null,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:2"
+        ],
+        "pending": true,
+        "rows": [
+          "os-macos Mac [spaces.status.failed] - Not enough disk space: this Space needs about 30.0 GB, plus 5.0 GB kept free, and only 12.4 GB is available. Free up space on this Mac (or run `cua cache prune` in Terminal), then try again."
+        ],
+        "tiles": [
+          "os-macos Mac, macOS, This Mac, Failed - Failed"
+        ]
+      }
+    },
+    {
+      "creates": "dismiss pending:2",
+      "frame": {
+        "activity": {
+          "kind": null,
+          "label": null,
+          "permille": null
+        },
+        "details": [],
+        "ids": [],
+        "pending": true,
+        "rows": [],
+        "tiles": []
+      }
+    },
+    {
+      "creates": "start pending:3",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 10
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "facts": [
+              "Status: Starting… 1%",
+              "Image: ghcr.io/trycua/macos:26 [copy ghcr.io/trycua/macos:26 doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: macOS Tahoe 26",
+              "Kind: Virtual machine"
+            ],
+            "id": "pending:3",
+            "previewText": "Starting…",
+            "progress": 10,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:3"
+        ],
+        "pending": true,
+        "rows": [
+          "os-macos Mac [spaces.status.starting] 10 1%"
+        ],
+        "tiles": [
+          "os-macos Mac, macOS, This Mac, Starting 10 Starting…"
+        ]
+      }
+    },
+    {
+      "creates": "fail pending:3",
+      "frame": {
+        "activity": {
+          "kind": null,
+          "label": null,
+          "permille": null
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Remove",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "facts": [
+              "Status: Failed",
+              "Image: ghcr.io/trycua/macos:26 [copy ghcr.io/trycua/macos:26 doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: macOS Tahoe 26",
+              "Kind: Virtual machine"
+            ],
+            "fix": "It failed twice for the same reason: this Mac doesn't have enough free disk space. Free some up, or run `cua cache prune` in Terminal to remove old images, then create it again. [Copy cua cache prune: copy-command cua cache prune]",
+            "id": "pending:3",
+            "previewText": "Not enough disk space: this Space needs about 30.0 GB, plus 5.0 GB kept free, and only 12.4 GB is available. Free up space on this Mac (or run `cua cache prune` in Terminal), then try again.",
+            "progress": null,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:3"
+        ],
+        "pending": true,
+        "rows": [
+          "os-macos Mac [spaces.status.failed] - Not enough disk space: this Space needs about 30.0 GB, plus 5.0 GB kept free, and only 12.4 GB is available. Free up space on this Mac (or run `cua cache prune` in Terminal), then try again."
+        ],
+        "tiles": [
+          "os-macos Mac, macOS, This Mac, Failed - Failed"
+        ]
+      }
+    },
+    {
+      "creates": "dismiss pending:3",
+      "frame": {
+        "activity": {
+          "kind": null,
+          "label": null,
+          "permille": null
+        },
+        "details": [],
+        "ids": [],
+        "pending": true,
+        "rows": [],
+        "tiles": []
+      }
+    },
+    {
+      "creates": "start pending:4",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 10
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "facts": [
+              "Status: Starting… 1%",
+              "Image: ghcr.io/trycua/macos:26 [copy ghcr.io/trycua/macos:26 doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: macOS Tahoe 26",
+              "Kind: Virtual machine"
+            ],
+            "id": "pending:4",
+            "previewText": "Starting…",
+            "progress": 10,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:4"
+        ],
+        "pending": true,
+        "rows": [
+          "os-macos Mac [spaces.status.starting] 10 1%"
+        ],
+        "tiles": [
+          "os-macos Mac, macOS, This Mac, Starting 10 Starting…"
+        ]
+      }
+    },
+    {
+      "creates": "finish pending:4",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 1000
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel (off)",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "facts": [
+              "Status: Ready 100%",
+              "Image: ghcr.io/trycua/macos:26 [copy ghcr.io/trycua/macos:26 doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: macOS Tahoe 26",
+              "Kind: Virtual machine"
+            ],
+            "id": "pending:4",
+            "previewText": "Ready",
+            "progress": 1000,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:4"
+        ],
+        "pending": true,
+        "rows": [
+          "os-macos Mac [spaces.status.starting] 1000 100%"
+        ],
+        "tiles": [
+          "os-macos Mac, macOS, This Mac, Starting 1000 Ready"
+        ]
+      }
+    },
+    {
+      "creates": "start pending:5",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 2 Spaces",
+          "permille": 10
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "facts": [
+              "Status: Starting… 1%",
+              "Image: ghcr.io/trycua/macos:26 [copy ghcr.io/trycua/macos:26 doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: macOS Tahoe 26",
+              "Kind: Virtual machine"
+            ],
+            "id": "pending:5",
+            "previewText": "Starting…",
+            "progress": 10,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel (off)",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "facts": [
+              "Status: Ready 100%",
+              "Image: ghcr.io/trycua/macos:26 [copy ghcr.io/trycua/macos:26 doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: macOS Tahoe 26",
+              "Kind: Virtual machine"
+            ],
+            "id": "pending:4",
+            "previewText": "Ready",
+            "progress": 1000,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:5",
+          "pending:4"
+        ],
+        "pending": true,
+        "rows": [
+          "os-macos Mac [spaces.status.starting] 10 1%",
+          "os-macos Mac [spaces.status.starting] 1000 100%"
+        ],
+        "tiles": [
+          "os-macos Mac, macOS, This Mac, Starting 10 Starting…",
+          "os-macos Mac, macOS, This Mac, Starting 1000 Ready"
+        ]
+      }
+    },
+    {
+      "creates": "fail pending:5",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 1000
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Remove",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "facts": [
+              "Status: Failed",
+              "Image: ghcr.io/trycua/macos:26 [copy ghcr.io/trycua/macos:26 doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: macOS Tahoe 26",
+              "Kind: Virtual machine"
+            ],
+            "id": "pending:5",
+            "previewText": "Not enough disk space: this Space needs about 30.0 GB, plus 5.0 GB kept free, and only 12.4 GB is available. Free up space on this Mac (or run `cua cache prune` in Terminal), then try again.",
+            "progress": null,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel (off)",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "facts": [
+              "Status: Ready 100%",
+              "Image: ghcr.io/trycua/macos:26 [copy ghcr.io/trycua/macos:26 doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: macOS Tahoe 26",
+              "Kind: Virtual machine"
+            ],
+            "id": "pending:4",
+            "previewText": "Ready",
+            "progress": 1000,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:5",
+          "pending:4"
+        ],
+        "pending": true,
+        "rows": [
+          "os-macos Mac [spaces.status.failed] - Not enough disk space: this Space needs about 30.0 GB, plus 5.0 GB kept free, and only 12.4 GB is available. Free up space on this Mac (or run `cua cache prune` in Terminal), then try again.",
+          "os-macos Mac [spaces.status.starting] 1000 100%"
+        ],
+        "tiles": [
+          "os-macos Mac, macOS, This Mac, Failed - Failed",
+          "os-macos Mac, macOS, This Mac, Starting 1000 Ready"
+        ]
+      }
+    },
+    {
+      "creates": "refreshed",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 1000
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Remove",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "facts": [
+              "Status: Failed",
+              "Image: ghcr.io/trycua/macos:26 [copy ghcr.io/trycua/macos:26 doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: macOS Tahoe 26",
+              "Kind: Virtual machine"
+            ],
+            "id": "pending:5",
+            "previewText": "Not enough disk space: this Space needs about 30.0 GB, plus 5.0 GB kept free, and only 12.4 GB is available. Free up space on this Mac (or run `cua cache prune` in Terminal), then try again.",
+            "progress": null,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel (off)",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "facts": [
+              "Status: Ready 100%",
+              "Image: ghcr.io/trycua/macos:26 [copy ghcr.io/trycua/macos:26 doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: macOS Tahoe 26",
+              "Kind: Virtual machine"
+            ],
+            "id": "pending:4",
+            "previewText": "Ready",
+            "progress": 1000,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:5",
+          "pending:4"
+        ],
+        "pending": true,
+        "rows": [
+          "os-macos Mac [spaces.status.failed] - Not enough disk space: this Space needs about 30.0 GB, plus 5.0 GB kept free, and only 12.4 GB is available. Free up space on this Mac (or run `cua cache prune` in Terminal), then try again.",
+          "os-macos Mac [spaces.status.starting] 1000 100%"
+        ],
+        "tiles": [
+          "os-macos Mac, macOS, This Mac, Failed - Failed",
+          "os-macos Mac, macOS, This Mac, Starting 1000 Ready"
+        ]
+      }
+    }
+  ]
+}

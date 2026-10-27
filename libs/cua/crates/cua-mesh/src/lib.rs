@@ -27,20 +27,22 @@
 //!   network change moves packets to another path underneath a QUIC
 //!   connection that keeps going.
 //!
-//! The coordinator (accounts, devices, share lists, the relay) runs in
-//! Cua's relay service; this crate only speaks its protocol
+//! The coordinator (accounts, devices, share lists, the relay) is the
+//! source-available `cua-relay`; this crate only speaks its protocol
 //! ([`proto`]). [`testing`] has an in-process stand-in for tests.
 
 pub mod coord;
 pub mod dialer;
 pub mod disco;
 pub mod engine;
+pub mod gang;
 pub mod key;
 pub mod node;
 pub mod packet;
 pub mod policy;
 pub mod proto;
 pub mod quic;
+mod reconnect;
 pub mod stun;
 pub mod vnet;
 
@@ -51,7 +53,7 @@ pub use coord::{AuthFuture, AuthProvider, ControlState, PairVerifier};
 pub use engine::Path;
 pub use key::{NodeIdentity, PublicKey, SecretKey};
 pub use node::{Forward, IncomingStream, MEDIA_UDP_PORT, Mesh, MeshConfig, PeerStatus, Status};
-pub use policy::{Channel, Policy};
+pub use policy::Policy;
 pub use proto::{Grant, MeshInfo, Mode, NodeKind, PeerInfo, PeerUsage, VERSION};
 pub use quic::{MeshStream, STREAM_PORT, StreamHeader};
 

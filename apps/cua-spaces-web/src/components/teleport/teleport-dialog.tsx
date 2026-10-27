@@ -8,10 +8,12 @@ import { useEffect, useState, type ReactNode } from "react";
 
 import { useFeatureRecorded, useTeleport, type PickerState, type TeleportMove, type TeleportSession, type TeleportStore } from "@/bridge";
 import { Button } from "@/components/ui/button";
+import { GroupedSection, SectionHeading } from "@/components/ui/grouped";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { leavesLine } from "@/lib/host-labels";
+import { messageText } from "@/lib/messages";
 import { Segmented } from "@/components/ui/segmented";
 
 import { markExplained, needsExplainer, TeleportExplainer } from "./explainer";
@@ -135,29 +137,30 @@ function Options({ state, session, teleport }: { state: PickerState; session: Te
   const moves = state.entry?.moves ?? [];
   return (
     <div className="space-y-4 px-5 pb-4">
-      <section className="rounded-lg border bg-card">
-        <h3 className="border-b px-4 py-2 text-xs font-medium text-muted-foreground">Move</h3>
-        <RadioGroup
-          value={state.move ?? "app_only"}
-          onValueChange={(v) => teleport.send({ type: "move", move: v as TeleportMove })}
-          className="divide-y"
-          aria-label="Move"
-        >
-          {moves.map((m) => (
-            <label key={m} className="flex cursor-default items-center gap-3 px-4 py-2.5 text-[13px]" data-move={m}>
-              <Radio.Root
-                value={m}
-                className="flex size-4 shrink-0 items-center justify-center rounded-full border border-input bg-card shadow-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/60 data-checked:border-brand data-checked:bg-brand dark:bg-input/30"
-              >
-                <Radio.Indicator className="size-1.5 rounded-full bg-white" />
-              </Radio.Root>
-              {MOVE_LABEL[m]}
-            </label>
-          ))}
-        </RadioGroup>
+      <section>
+        <SectionHeading className="mt-0">Move</SectionHeading>
+        <GroupedSection>
+          <RadioGroup
+            value={state.move ?? "app_only"}
+            onValueChange={(v) => teleport.send({ type: "move", move: v as TeleportMove })}
+            aria-label="Move"
+          >
+            {moves.map((m) => (
+              <label key={m} className="flex cursor-default items-center gap-3 px-4 py-2.5 text-[13px]" data-move={m}>
+                <Radio.Root
+                  value={m}
+                  className="flex size-4 shrink-0 items-center justify-center rounded-full border border-input bg-card shadow-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/60 data-checked:border-brand data-checked:bg-brand dark:bg-input/30" // design-ok: radio control ring, not a content box
+                >
+                  <Radio.Indicator className="size-1.5 rounded-full bg-white" />
+                </Radio.Root>
+                {MOVE_LABEL[m]}
+              </label>
+            ))}
+          </RadioGroup>
+        </GroupedSection>
       </section>
       {session.frame.sensitive.length ? (
-        <section className="divide-y rounded-lg border bg-card">
+        <GroupedSection>
           {session.frame.sensitive.map((o) => (
             <label key={o.group} className="flex cursor-default items-start gap-3 px-4 py-2.5" data-sensitive={o.group} data-checked={o.checked || undefined}>
               <Checkbox
@@ -167,18 +170,18 @@ function Options({ state, session, teleport }: { state: PickerState; session: Te
               />
               <span className="min-w-0">
                 <span className="block text-[13px]" data-sensitive-label>
-                  {o.label}
+                  {messageText(o.label)}
                 </span>
                 <span className="block text-xs text-muted-foreground" data-sensitive-detail>
-                  {o.detail}
+                  {messageText(o.detail)}
                 </span>
               </span>
             </label>
           ))}
-        </section>
+        </GroupedSection>
       ) : null}
       {state.files.length ? (
-        <section className="divide-y rounded-lg border bg-card">
+        <GroupedSection>
           {state.files.map((f) => (
             <div key={f} className="flex items-center justify-between gap-3 px-4 py-2 text-[13px]">
               <span className="min-w-0 truncate font-mono text-xs">{f}</span>
@@ -187,7 +190,7 @@ function Options({ state, session, teleport }: { state: PickerState; session: Te
               </Button>
             </div>
           ))}
-        </section>
+        </GroupedSection>
       ) : null}
     </div>
   );
@@ -233,7 +236,7 @@ function Footer({
   const step = s.state.step;
   const leaves = step === "consent" && !explaining ? leavesLine(s.frame.review?.leavesText ?? "") : null;
   return (
-    <div className="flex shrink-0 items-center gap-2 border-t bg-muted/60 px-5 py-3">
+    <div /* design-ok: full-width dialog footer */ className="flex shrink-0 items-center gap-2 border-t bg-muted/60 px-5 py-3">
       {leaves ? (
         <span className="text-xs text-muted-foreground" data-review-leaves>
           {leaves}
@@ -241,7 +244,7 @@ function Footer({
       ) : null}
       <span className="flex-1" />
       {step !== "done" ? (
-        <Button variant="outline" onClick={() => teleport.close()}>
+        <Button variant="secondary" onClick={() => teleport.close()}>
           Cancel
         </Button>
       ) : null}
@@ -251,7 +254,7 @@ function Footer({
         </Button>
       ) : step === "options" ? (
         <>
-          <Button variant="outline" onClick={() => teleport.send({ type: "back" })}>
+          <Button variant="secondary" onClick={() => teleport.send({ type: "back" })}>
             Back
           </Button>
           <Button data-teleport-plan disabled={!s.frame.canPlan} onClick={() => void teleport.plan()}>
@@ -260,7 +263,7 @@ function Footer({
         </>
       ) : step === "consent" ? (
         <>
-          <Button variant="outline" onClick={() => (explaining ? onBack() : teleport.send({ type: "back" }))}>
+          <Button variant="secondary" onClick={() => (explaining ? onBack() : teleport.send({ type: "back" }))}>
             Back
           </Button>
           <Button data-teleport-confirm disabled={!s.frame.review?.canConfirm} onClick={onConfirm}>
@@ -268,7 +271,7 @@ function Footer({
           </Button>
         </>
       ) : step === "error" ? (
-        <Button variant="outline" onClick={() => teleport.send({ type: "back" })}>
+        <Button variant="secondary" onClick={() => teleport.send({ type: "back" })}>
           Back
         </Button>
       ) : step === "done" ? (

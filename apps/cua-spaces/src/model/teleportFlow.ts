@@ -17,6 +17,7 @@ import type {
 } from "@trycua/cua/teleport";
 
 import { core } from "../core";
+import type { Msg } from "../i18n";
 
 export type { PickerState };
 
@@ -75,8 +76,8 @@ export function canConfirm(s: PickerState): boolean {
 /** One opt-in checkbox of the options step. */
 export interface SensitiveOption {
   group: SensitiveGroup;
-  label: string;
-  detail: string;
+  label: Msg;
+  detail: Msg;
   checked: boolean;
 }
 

@@ -21,12 +21,13 @@ import type {
   SpacePresenceLike,
   TeleportLike,
 } from "../src/native/generated/index";
-import type { LocalRuntimes, SpaceThumbnailData, SpacesBackend } from "../src/model/backend";
+import type { BulkResult, LocalRuntimes, MachineHealthReport, ShareLinkRow, SpaceThumbnailData, SpacesBackend } from "../src/model/backend";
 import type { StreamWindow } from "../src/model/streams";
 import type { AccountProfile, AccountRunning, LinkNoticeView, SignInAttempt, TelemetryRunning } from "../src/model/services";
 
 export function sampleRows(n: Native): AppSpaceRow[] {
   const row = (r: Partial<AppSpaceRow> & Pick<AppSpaceRow, "id" | "name" | "provider">): AppSpaceRow => ({
+    displayName: undefined,
     spacesdVersion: "0.4.0",
     features: [],
     addedAt: undefined,
@@ -64,7 +65,7 @@ export function sampleRows(n: Native): AppSpaceRow[] {
       power: "suspend",
       powerState: "running",
     }),
-    row({ id: "cloud:builder", name: "builder", provider: "cloud", features: ["desktop_stream"], addedAt: "2026-09-24T08:00:00Z", os: n.AppSpaceOs.Linux, osName: "Arch Linux", reachable: false, error: "timed out" }),
+    row({ id: "direct:builder", name: "builder", provider: "direct", features: ["desktop_stream"], addedAt: "2026-09-24T08:00:00Z", os: n.AppSpaceOs.Linux, osName: "Arch Linux", reachable: false, error: "timed out" }),
     row({ id: "direct:10.0.0.5:3211", name: "10.0.0.5:3211", provider: "direct", addedAt: "2026-09-23T08:00:00Z", os: n.AppSpaceOs.Windows, osName: "Windows" }),
   ];
 }
@@ -135,6 +136,51 @@ export class FixtureSpacesBackend implements SpacesBackend {
     this.removed.push({ id, removeOnly });
     this.rowsNow = this.rowsNow.filter((r) => r.id !== id);
   }
+  /** Ids whose bulk delete fails, and why. */
+  readonly bulkErrors = new Map<string, string>();
+  readonly left: string[] = [];
+  async deleteMany(ids: string[]): Promise<BulkResult[]> {
+    return ids.map((id) => {
+      const error = this.bulkErrors.get(id);
+      if (error) return { id, ok: false, error };
+      this.removed.push({ id, removeOnly: false });
+      this.rowsNow = this.rowsNow.filter((r) => r.id !== id);
+      return { id, ok: true };
+    });
+  }
+  async leave(ids: string[]): Promise<BulkResult[]> {
+    return ids.map((id) => {
+      const row = this.rowsNow.find((r) => r.id === id);
+      if (!row?.sharing || row.sharing.role === "owner") return { id, ok: false, error: `Couldn't leave ${row?.name ?? id}: it's yours; delete it instead.` };
+      this.left.push(id);
+      this.rowsNow = this.rowsNow.filter((r) => r.id !== id);
+      return { id, ok: true };
+    });
+  }
+  readonly renamed: { id: string; name: string }[] = [];
+  /** What the next rename throws (the SDK's error), once. */
+  renameError: Error | null = null;
+  async rename(id: string, name: string) {
+    this.renamed.push({ id, name });
+    const failure = this.renameError;
+    this.renameError = null;
+    if (failure) throw failure;
+    this.rowsNow = this.rowsNow.map((r) => (r.id === id ? { ...r, displayName: name } : r));
+  }
+  /** What `machineHealth` answers, by machine (`this` for this one); a string is the error it throws. */
+  health = new Map<string, MachineHealthReport | string>();
+  readonly healthAsked: (string | null)[] = [];
+  async machineHealth(machine: string | null): Promise<MachineHealthReport> {
+    this.healthAsked.push(machine);
+    const h = this.health.get(machine ?? "this");
+    if (typeof h === "string") throw new Error(h);
+    return h ?? { cuaVersion: "0.4.1", checks: [] };
+  }
+  readonly unregistered: string[] = [];
+  async relayUnregister(machineId: string) {
+    this.unregistered.push(machineId);
+    this.rowsNow = this.rowsNow.filter((r) => r.id !== `relay:${machineId}`);
+  }
   async setPower(id: string, on: boolean) {
     this.power.push({ id, on });
     this.rowsNow = this.rowsNow.map((r) => (r.id === id ? { ...r, powerState: on ? "running" : r.power === "stop" ? "stopped" : "suspended", reachable: on } : r));
@@ -153,14 +199,11 @@ export class FixtureSpacesBackend implements SpacesBackend {
   async localStorage() {
     return null;
   }
-  async cloudAvailable() {
+  async loggedIn() {
     return false;
   }
   async runningMacosVms() {
     return 1;
-  }
-  async cloudPricing() {
-    return null;
   }
   async usage() {
     return null;
@@ -207,6 +250,31 @@ export class FixtureSpacesBackend implements SpacesBackend {
     this.sharesNow.set(id, [...rows, { who, role, connected: false }]);
     return this.shares(id);
   }
+  linksNow: ShareLinkRow[] = [];
+  async links() {
+    return [...this.linksNow];
+  }
+  async createLink(target: string, access: string | null, ttlSeconds: number | null, name: string | null) {
+    const id = `share-${String(this.linksNow.length + 1).padStart(12, "0")}`;
+    const row: ShareLinkRow = {
+      id,
+      url: `https://s${id}.m.relay.example/`,
+      name,
+      access: access === "team" || access === "public" ? access : "private",
+      kind: target.startsWith("space:") ? "space_port" : /^\d+$/.test(target) ? "port" : "file",
+      target,
+      owner: "ada@example.com",
+      createdAtUnix: 1_000,
+      expiresAtUnix: ttlSeconds ? 1_000 + ttlSeconds : null,
+    };
+    this.linksNow = [row, ...this.linksNow];
+    return row;
+  }
+  async stopLink(id: string) {
+    const gone = this.linksNow.filter((l) => id === "all" || l.id === id).map((l) => l.id);
+    this.linksNow = this.linksNow.filter((l) => !gone.includes(l.id));
+    return gone;
+  }
   async unshare(id: string, who: string) {
     this.sharesNow.set(id, (this.sharesNow.get(id) ?? []).filter((r) => r.who !== who));
     return this.shares(id);
@@ -214,6 +282,8 @@ export class FixtureSpacesBackend implements SpacesBackend {
   /** The daemon's tool calls, in order. */
   readonly toolCalls: [string, Record<string, unknown>][] = [];
   cloudConnected = false;
+  /** What `cloud_approve` was asked, in order. */
+  readonly cloudApprovals: { provider: string; deny: boolean }[] = [];
   async tool(tool: string, args: Record<string, unknown> = {}): Promise<unknown> {
     this.toolCalls.push([tool, args]);
     const aws = (connected: boolean) => ({
@@ -235,6 +305,14 @@ export class FixtureSpacesBackend implements SpacesBackend {
     if (tool === "cloud_connect") {
       this.cloudConnected = true;
       return { ...aws(true), checks: [{ name: "credentials", ok: true, detail: "account 1" }] };
+    }
+    if (tool === "cloud_disconnect") {
+      this.cloudConnected = false;
+      return { provider: "aws", disconnected: true };
+    }
+    if (tool === "cloud_approve") {
+      this.cloudApprovals.push(args as { provider: string; deny: boolean });
+      return aws(this.cloudConnected);
     }
     throw new Error(`unknown tool ${tool}`);
   }
@@ -291,6 +369,8 @@ export function unconfiguredHost(): HostStatus {
     pausedSignedOut: false,
     owner: undefined,
     ownerEmail: undefined,
+    helperAvailable: false,
+    legacyService: false,
   };
 }
 
@@ -342,6 +422,7 @@ export function fixtureDevices(now = BigInt(Math.floor(Date.now() / 1000))): Dev
 export class FixtureAccount implements AccountRunning {
   current: string | null;
   private finish: ((who: string) => void) | null = null;
+  private fail: ((e: Error) => void) | null = null;
   constructor(identity: string | null = null) {
     this.current = identity;
   }
@@ -352,7 +433,7 @@ export class FixtureAccount implements AccountRunning {
     return this.current ? { email: this.current } : null;
   }
   async beginSignIn(): Promise<SignInAttempt> {
-    const done = new Promise<string>((resolve) => (this.finish = resolve));
+    const done = new Promise<string>((resolve, reject) => ((this.finish = resolve), (this.fail = reject)));
     return {
       userCode: "ABCD-1234",
       url: "https://cua.ai/device",
@@ -364,6 +445,10 @@ export class FixtureAccount implements AccountRunning {
   }
   completeSignIn(who: string) {
     this.finish?.(who);
+  }
+  /** The sign-in fails (the network dropped, the code expired). */
+  failSignIn(error: Error) {
+    this.fail?.(error);
   }
   async signOut() {
     this.current = null;

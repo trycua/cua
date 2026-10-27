@@ -1,9 +1,10 @@
 //! Provider keys for agent runs, kept on this machine (Cua Spaces →
-//! Settings → Agents).
+//! Settings → Connectors).
 //!
 //! The keys live in the OS credential vault through cua-auth's secret store
 //! ([`cua_auth::Store::save_secret`]): one item, `agent-keys`, next to the
-//! session (service `ai.cua.session`), with the same access list, so the app,
+//! session (service `ai.cua.session`, or the channel's own,
+//! `CuaChannel::keychain_service`), with the same access list, so the app,
 //! the daemon and the CLI read it without a prompt. A build whose store is
 //! a file (an unsigned macOS build, Linux) refuses to save them: keys are
 //! never written to a plain file. Set the key in the daemon's environment
@@ -174,6 +175,16 @@ pub struct KeyInfo {
     pub last4: String,
     /// When it was added (Unix ms).
     pub added_ms: u64,
+    /// A copied sign-in's name ("Codex · ChatGPT sign-in"); none for a key
+    /// typed in Settings.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// The agent a copied sign-in came from (setup id).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// When a copied sign-in stops working (Unix ms), when known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_ms: Option<u64>,
 }
 
 /// `agent_keys.list`: the stored keys and whether this machine can store
@@ -195,6 +206,12 @@ struct Stored {
     provider: String,
     value: String,
     added_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    expires_ms: Option<u64>,
 }
 
 impl std::fmt::Debug for Stored {
@@ -220,6 +237,9 @@ impl Stored {
             env: self.env.clone(),
             last4,
             added_ms: self.added_ms,
+            label: self.label.clone(),
+            source: self.source.clone(),
+            expires_ms: self.expires_ms,
         }
     }
 }
@@ -389,6 +409,9 @@ impl AgentKeys {
             env,
             value: value.into(),
             added_ms: now_ms(),
+            label: None,
+            source: None,
+            expires_ms: None,
         };
         let info = stored.info();
         keys.push(stored);
@@ -411,6 +434,81 @@ impl AgentKeys {
         }
         self.write(&mut g, keys)?;
         Ok(true)
+    }
+
+    /// Saves a sign-in Connect copied from `source` (an agent's setup id)
+    /// under `env`, named `label`. It replaces an earlier copy from the
+    /// same agent, but never a key the person typed in Settings: that one
+    /// is kept and the copy refused.
+    pub fn import(
+        &self,
+        source: &str,
+        env: &str,
+        label: &str,
+        value: &str,
+        expires_ms: Option<u64>,
+    ) -> Result<KeyInfo> {
+        validate_name(env)?;
+        let value = validate_value(value)?;
+        if self.store.is_none() {
+            return Err(self.refusal());
+        }
+        let mut g = self.lock();
+        let mut keys = self.read(&mut g, true)?;
+        if keys
+            .iter()
+            .any(|k| k.env == env && k.source.as_deref() != Some(source))
+        {
+            return Err(Error::InvalidArgument(format!(
+                "{env} is already in Keyvault; remove it in Settings → Connectors to copy this one"
+            )));
+        }
+        keys.retain(|k| k.source.as_deref() != Some(source));
+        let stored = Stored {
+            provider: provider_of(env).into(),
+            env: env.into(),
+            value: value.into(),
+            added_ms: now_ms(),
+            label: Some(label.into()),
+            source: Some(source.into()),
+            expires_ms,
+        };
+        let info = stored.info();
+        keys.push(stored);
+        keys.sort_by(|a, b| a.env.cmp(&b.env));
+        self.write(&mut g, keys)?;
+        Ok(info)
+    }
+
+    /// Deletes every copy from `source`; the variables removed.
+    pub fn remove_imported(&self, source: &str) -> Result<Vec<String>> {
+        if self.store.is_none() {
+            return Ok(vec![]);
+        }
+        let mut g = self.lock();
+        let mut keys = self.read(&mut g, true)?;
+        let removed: Vec<String> = keys
+            .iter()
+            .filter(|k| k.source.as_deref() == Some(source))
+            .map(|k| k.env.clone())
+            .collect();
+        if removed.is_empty() {
+            return Ok(removed);
+        }
+        keys.retain(|k| k.source.as_deref() != Some(source));
+        self.write(&mut g, keys)?;
+        Ok(removed)
+    }
+
+    /// The copied sign-ins (no values), read fresh.
+    pub fn imported(&self) -> Result<Vec<KeyInfo>> {
+        let mut g = self.lock();
+        Ok(self
+            .read(&mut g, true)?
+            .iter()
+            .filter(|k| k.source.is_some())
+            .map(Stored::info)
+            .collect())
     }
 
     /// The names of the stored keys (readiness). A store that can't be read

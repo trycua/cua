@@ -8,6 +8,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as appCore from "../core";
 import type { TelemetryBridge, TelemetryView } from "../native/telemetry";
 import { fakeDrive, MOUNT_OFF, MOUNTED, NEEDS_APPROVAL } from "../test/fakeDrive";
+import { currentUiLocale } from "../i18n";
+import { setLocaleChoice } from "../i18n/preference";
+import * as telemetryModule from "../native/telemetry";
 import { SettingsPanel, SIGN_IN_URL } from "./SettingsPanel";
 
 beforeEach(() => {
@@ -57,17 +60,6 @@ describe("SettingsPanel account section", () => {
     const button = screen.getByRole("button", { name: "Sign in to Cua" });
     await user.click(button);
     expect(props.onOpenExternal).toHaveBeenCalledWith(SIGN_IN_URL);
-  });
-});
-
-describe("SettingsPanel default location", () => {
-  it("offers no default-location choice while the apps do not offer Cua Cloud", () => {
-    renderPanel({
-      defaultLocation: { value: "cloud", source: "env", env: "CUA_DEFAULT_ON", path: "/tmp/cua/config.toml" },
-      onDefaultLocation: vi.fn(),
-    });
-    expect(screen.queryByRole("radiogroup", { name: "New Spaces run on" })).toBeNull();
-    expect(screen.queryByText(/Cua Cloud/)).toBeNull();
   });
 });
 
@@ -398,7 +390,7 @@ describe("SettingsPanel Privacy", () => {
     renderPanel({ telemetry: fakeTelemetry(), onShowWelcome });
     await screen.findByText("Share usage data to help improve Cua");
     const titles = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
-    expect(titles).toEqual(["Account", "Teams", "General", "Privacy", "AI agents", "Experiments"]);
+    expect(titles).toEqual(["Account", "Teams", "General", "Privacy", "AI agents", "Experiments", "Language"]);
     await userEvent.click(screen.getByRole("button", { name: "Show again" }));
     expect(onShowWelcome).toHaveBeenCalled();
   });
@@ -430,11 +422,11 @@ describe("SettingsPanel Experiments", () => {
     renderPanel({ telemetry });
     await screen.findByText("Share usage data to help improve Cua");
     const experiments = within(screen.getByRole("region", { name: "Experiments" }));
-    for (const name of ["Cua Volume", "Your cloud"]) {
-      expect(experiments.getByRole("switch", { name })).toHaveAttribute("aria-checked", "false");
+    expect(experiments.getByRole("switch", { name: "Cua Volume" })).toHaveAttribute("aria-checked", "false");
+    // Sharing is on by default (cua.ai/pricing lists it), and so is Your cloud (a linked cloud shows under Run on).
+    for (const name of ["Sharing", "Your cloud"]) {
+      expect(experiments.getByRole("switch", { name })).toHaveAttribute("aria-checked", "true");
     }
-    // Sharing is on by default (cua.ai/pricing lists it).
-    expect(experiments.getByRole("switch", { name: "Sharing" })).toHaveAttribute("aria-checked", "true");
     expect(screen.queryByRole("region", { name: "Storage" })).toBeNull();
     await user.click(experiments.getByRole("switch", { name: "Cua Volume" }));
     expect(await screen.findByRole("region", { name: "Storage" })).toBeInTheDocument();
@@ -445,13 +437,13 @@ describe("SettingsPanel Experiments", () => {
     });
     expect(telemetry.recordSignals).toHaveBeenCalledWith([
       { type: "experiment", action: "experiment_on", experiment: "cua_volume" },
-      { type: "experiments-on", experiments: ["cua_volume", "sharing"] },
+      { type: "experiments-on", experiments: ["cua_volume", "your_cloud", "sharing"] },
     ]);
   });
 });
 
-describe("SettingsPanel billing and Teams", () => {
-  it("hides Cua Cloud billing and opens the account app for Teams", async () => {
+describe("SettingsPanel Teams", () => {
+  it("opens the account app for Teams", async () => {
     const auth = {
       beginSignIn: vi.fn(),
       signOut: vi.fn(),
@@ -462,16 +454,8 @@ describe("SettingsPanel billing and Teams", () => {
     const props = renderPanel({
       signedInIdentity: "you@example.com",
       auth,
-      billingStatus: async () => ({
-        billingEnabled: true,
-        card: null,
-        credit: { balanceUsdCents: 742 },
-        billingUrl: "https://example.com/billing",
-      }),
     });
     expect(await screen.findByRole("region", { name: "Teams" })).toBeInTheDocument();
-    expect(screen.queryByText("$7.42 credit left")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Manage billing" })).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Manage team" }));
     expect(props.onOpenExternal).toHaveBeenCalledWith("https://app.cua.ai/team");
   });
@@ -731,5 +715,39 @@ describe("SettingsPanel launch at login", () => {
     await user.click(toggle);
     expect(await screen.findByText("Permission denied")).toBeInTheDocument();
     expect(toggle).toHaveAttribute("aria-checked", "false");
+  });
+});
+
+describe("SettingsPanel language", () => {
+  afterEach(async () => {
+    await act(async () => {
+      await setLocaleChoice("system");
+    });
+  });
+
+  it("offers System default and the six languages, saves the choice and switches live", async () => {
+    const user = userEvent.setup();
+    const report = vi.spyOn(telemetryModule, "telemetryBridge");
+    renderPanel();
+    const select = screen.getByRole("combobox", { name: "Language" });
+    expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "System default",
+      "English",
+      "简体中文",
+      "한국어",
+      "Português (Brasil)",
+      "日本語",
+      "Español",
+    ]);
+    expect(select).toHaveValue("system");
+    await user.selectOptions(select, "ja");
+    await waitFor(() => expect(window.localStorage.getItem("cua.settings.locale")).toBe("ja"));
+    expect(currentUiLocale()).toBe("ja");
+    expect(report).toHaveBeenCalled(); // setUiLocale goes out through the telemetry bridge
+    expect(await screen.findByRole("combobox", { name: "言語" })).toHaveValue("ja");
+    await user.selectOptions(screen.getByRole("combobox", { name: "言語" }), "system");
+    await waitFor(() => expect(window.localStorage.getItem("cua.settings.locale")).toBeNull());
+    expect(currentUiLocale()).toBe("en");
+    report.mockRestore();
   });
 });

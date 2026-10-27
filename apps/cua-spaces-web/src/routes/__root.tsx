@@ -6,11 +6,13 @@ import { lazy, Suspense, useEffect, useRef } from "react";
 
 import { useBridge, useSavedOnboarding, useSession, useStartup } from "@/bridge";
 
-import { ChecklistTracker } from "@/components/getting-started";
 import { NewSpace } from "@/components/new-space";
 import { CommandPalette } from "@/components/shell/command-palette";
 import { DevicesBanner } from "@/components/shell/devices-banner";
+import { useFlag } from "@/bridge/flags";
 import { Sidebar } from "@/components/shell/sidebar";
+import { ChecklistTracker } from "@/legacy/components/getting-started";
+import { Sidebar as LegacySidebar } from "@/legacy/components/shell/sidebar";
 import { PlanLimitToastAction } from "@/components/shell/plan-limit-toast-action";
 import { RelayAllowanceNotice } from "@/components/shell/relay-allowance-notice";
 import { ShareRemovalNotice } from "@/components/shell/share-removal-notice";
@@ -20,6 +22,7 @@ import { UsageLinkNotice } from "@/components/usage-link-notice";
 import { TopBar } from "@/components/shell/top-bar";
 import { ThisMacNudges } from "@/components/this-mac-nudges";
 import { useGlobalKeybindings } from "@/hooks/use-global-keybindings";
+import { useAgentSync } from "@/hooks/use-connected-apps";
 import { useNotificationToasts } from "@/hooks/use-notification-toasts";
 import { useThemeHostSync, useThemeSync } from "@/lib/theme";
 import { useUiStore } from "@/stores/ui";
@@ -30,6 +33,8 @@ export const Route = createRootRoute({ component: RootLayout });
 const StartupScreen = lazy(() => import("@/components/startup/StartupScreen").then((m) => ({ default: m.StartupScreen })));
 
 function RootLayout() {
+  // `spaces_redesign` off: the sidebar and the getting-started checklist as they were.
+  const redesign = useFlag("spaces_redesign");
   useThemeSync();
   useThemeHostSync();
   const { mode } = useBridge();
@@ -40,6 +45,7 @@ function RootLayout() {
   useGlobalKeybindings();
   useFirstRun();
   useNotificationToasts();
+  useAgentSync();
   const sidebarOpen = useUiStore((s) => s.sidebarOpen);
   const { pathname } = useLocation();
   // The app shows as usual until the host says it is still starting.
@@ -67,7 +73,7 @@ function RootLayout() {
 
   return (
     <div className="flex h-full bg-chrome">
-      {sidebarOpen ? <Sidebar /> : null}
+      {sidebarOpen ? redesign ? <Sidebar /> : <LegacySidebar /> : null}
       <div className="flex min-w-0 flex-1 flex-col bg-background">
         <TopBar />
         <DevicesBanner />
@@ -80,7 +86,7 @@ function RootLayout() {
       </div>
       <PlanLimitToastAction />
       <CommandPalette />
-      <ChecklistTracker />
+      {redesign ? null : <ChecklistTracker />}
       <NewSpace />
       <SpaceSheets />
       <ThisMacNudges />

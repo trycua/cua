@@ -1,9 +1,13 @@
-//! `cua agents {detect,setup,status,remove,update}` and the agent onboarding
+//! `cua connect {detect,setup,status,remove,update}` (formerly `cua agents`) and the agent onboarding
 //! that follows `cua auth login`, on `cua-agent-setup`.
 
 use crate::util::{self, internal, line};
 use clap::{Args, Subcommand};
-use cua_agent_setup::{AgentSetup, AgentStatus, Change, McpServer, Outcome, Parts, Target};
+use cua_agent_setup::{
+    AgentSetup, AgentStatus, Change, ConnectionReport, ConnectionRow, ConnectionState, ImportState,
+    McpServer, McpState, Outcome, Parts, ProblemAction, RemoveOptions, SignedInState,
+    StatusOptions, Target, connection::ConnectParts,
+};
 use cua_sdk::CuaError;
 use std::{
     collections::BTreeSet,
@@ -15,41 +19,54 @@ use std::{
 pub enum AgentsCmd {
     /// List supported AI coding agents and which are installed (read-only).
     #[command(after_help = "Examples:
-  cua agents detect")]
+  cua connect detect")]
     Detect,
     /// Install the default cua skills and configure the cua MCP server.
     #[command(after_help = "Examples:
   # Every installed agent, asking before each change
-  cua agents setup
+  cua connect setup
   # Claude Code and Codex, no prompts
-  cua agents setup --agents claude,codex -y
+  cua connect setup --agents claude,codex -y
   # Hermes Agent (Nous Research): ~/.hermes/skills and ~/.hermes/config.yaml
-  cua agents setup --agents hermes -y
+  cua connect setup --agents hermes -y
   # Only the MCP server entry
-  cua agents setup --mcp-only
+  cua connect setup --mcp-only
   # Background computer-use: the cua-driver skill and MCP server
-  cua agents setup --cua-driver --agents all -y")]
+  cua connect setup --cua-driver --agents all -y
+  # Also copy each agent's sign-in to Keyvault on This Mac (Codex's
+  # ChatGPT sign-in, Claude Code's `claude setup-token`, Hermes' key)
+  cua connect setup --agents codex,claude --sign-in -y")]
     Setup(SetupCmdArgs),
-    /// What cua configured for each agent.
+    /// Whether each agent is really connected: installed and its version,
+    /// signed in, Cua's MCP entry present and answering, and its sign-in
+    /// copied to Keyvault. The same rows as the app and the
+    /// `connect_status` MCP tool.
     #[command(after_help = "Examples:
-  cua agents status")]
+  cua connect status
+  cua connect status --json")]
     Status,
-    /// Remove the skills and MCP entries cua added (nothing else).
+    /// Remove the Cua Spaces skills and MCP entries cua added (nothing else).
     #[command(after_help = "Examples:
-  cua agents remove
-  cua agents remove --agents codex --skills-only -y")]
+  # See what would be removed, change nothing
+  cua connect remove --dry-run
+  cua connect remove
+  cua connect remove --agents codex --skills-only -y
+  # Cua Driver's skill and MCP server too (they stay otherwise)
+  cua connect remove --include-cua-driver
+  # Also delete the sign-in Connect copied to Keyvault
+  cua connect remove --agents codex --sign-in -y")]
     Remove(RemoveArgs),
     /// Refresh installed cua skills and managed MCP entries to this version.
     #[command(after_help = "Examples:
-  cua agents update")]
+  cua connect update")]
     Update,
 }
 
-/// Flags shared by `cua agents setup` and `cua auth login` onboarding.
+/// Flags shared by `cua connect setup` and `cua auth login` onboarding.
 #[derive(Args, Debug, Clone, Default)]
 pub struct SetupArgs {
     /// Agents: `all` (installed), `none`, or ids such as `claude,codex,hermes`
-    /// (`cua agents detect` lists every supported agent).
+    /// (`cua connect detect` lists every supported agent).
     #[arg(long)]
     pub agents: Option<String>,
     /// Only install skills.
@@ -70,7 +87,7 @@ pub struct SetupArgs {
     pub mcp_command: Option<String>,
 }
 
-/// `cua agents setup` flags: the shared ones plus `--cua-driver`.
+/// `cua connect setup` flags: the shared ones plus `--cua-driver`.
 #[derive(Args, Debug, Clone, Default)]
 pub struct SetupCmdArgs {
     #[command(flatten)]
@@ -80,6 +97,13 @@ pub struct SetupCmdArgs {
     /// names the cua-driver binary.
     #[arg(long)]
     pub cua_driver: bool,
+    /// Also copy each agent's sign-in to Keyvault on This Mac, so its runs
+    /// in your Spaces use it: Codex's ChatGPT sign-in (`~/.codex/auth.json`),
+    /// Claude Code's `claude setup-token` (one browser approval), Hermes'
+    /// provider key (`~/.hermes/.env`). The agent's own sign-in is never
+    /// changed.
+    #[arg(long, conflicts_with = "cua_driver")]
+    pub sign_in: bool,
 }
 
 #[derive(Args, Debug)]
@@ -96,6 +120,17 @@ pub struct RemoveArgs {
     /// Do not ask for confirmation.
     #[arg(long, short = 'y')]
     pub yes: bool,
+    /// Also remove Cua Driver's skill and MCP server (`cua-driver`). Without
+    /// it only Cua Spaces' own entries go: the `cua` server (`cua-local` for
+    /// Local) and the Cua Spaces skills.
+    #[arg(long)]
+    pub include_cua_driver: bool,
+    /// List exactly what would be removed and change nothing.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Also delete the sign-ins Connect copied to Keyvault for these agents.
+    #[arg(long)]
+    pub sign_in: bool,
 }
 
 fn err(e: cua_agent_setup::Error) -> CuaError {
@@ -236,18 +271,21 @@ fn discard_typeahead() {
 
 /// The MCP server agents should launch.
 pub fn mcp_server(setup: &AgentSetup, command: Option<&str>) -> McpServer {
+    // The channel's own server (`cua`, or `cua-local` when this is the Local
+    // CLI), launching the channel's own binary.
+    let channel = setup.env().channel;
     if let Some(c) = command {
-        return McpServer::new(c);
+        return McpServer::for_channel(channel, c);
     }
-    if setup.env().which("cua").is_some() {
+    if setup.env().which(channel.cli_name()).is_some() {
         return McpServer::default_for(setup.env());
     }
     let exe = std::env::current_exe()
         .ok()
         .and_then(|p| p.canonicalize().ok())
         .map(|p| p.display().to_string())
-        .unwrap_or_else(|| "cua".into());
-    McpServer::new(exe)
+        .unwrap_or_else(|| channel.cli_name().into());
+    McpServer::for_channel(channel, exe)
 }
 
 fn print_agents(setup: &AgentSetup, statuses: &[AgentStatus], out: &mut dyn Write) {
@@ -287,7 +325,7 @@ fn print_agents(setup: &AgentSetup, statuses: &[AgentStatus], out: &mut dyn Writ
     }
 }
 
-/// `cua agents detect`.
+/// `cua connect detect`.
 pub fn cmd_detect(json: bool, out: &mut dyn Write) -> Result<i32, CuaError> {
     let setup = AgentSetup::from_env();
     let st = setup.detect();
@@ -303,51 +341,129 @@ pub fn cmd_detect(json: bool, out: &mut dyn Write) -> Result<i32, CuaError> {
     Ok(0)
 }
 
-/// `cua agents status`.
+/// `cua connect status`: the connection rows (CONTRACT §4).
 pub fn cmd_status(json: bool, out: &mut dyn Write) -> Result<i32, CuaError> {
     let setup = AgentSetup::from_env();
-    let st = setup.status();
+    let report = connection_report(&setup);
     if json {
-        util::json_line(
-            out,
-            &serde_json::json!({
-                "agents": st,
-                "skills": setup.bundled_skills(),
-                "state_file": setup.state_path(),
-            }),
-        );
+        util::json_line(out, &status_json(&setup, &report));
         return Ok(0);
     }
-    let bundled = setup.bundled_skills();
-    let rows: Vec<Vec<String>> = st
+    print_connections(&report, out);
+    Ok(0)
+}
+
+/// `cua connect status --json`: the connection rows, with each agent's
+/// earlier status fields (`cua_configured`, `cua_managed`, skills, ...)
+/// beside them, and `skills` and `state_file` as before, so scripts that read
+/// the earlier output keep working. The earlier fields are kept for
+/// compatibility only (CUA-2341 removes them).
+pub fn status_json(setup: &AgentSetup, report: &ConnectionReport) -> serde_json::Value {
+    let mut v = serde_json::to_value(report).unwrap_or_default();
+    let earlier = setup.status();
+    if let Some(rows) = v
+        .get_mut("agents")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for row in rows {
+            let id = row["id"].as_str().unwrap_or_default().to_string();
+            let Some(old) = earlier.iter().find(|a| a.id == id) else {
+                continue;
+            };
+            let (Some(row), Ok(serde_json::Value::Object(old))) =
+                (row.as_object_mut(), serde_json::to_value(old))
+            else {
+                continue;
+            };
+            for (k, x) in old {
+                row.entry(k).or_insert(x);
+            }
+        }
+    }
+    v["skills"] = serde_json::json!(setup.bundled_skills());
+    v["state_file"] = serde_json::json!(setup.state_path());
+    v
+}
+
+/// The rows `cua connect status` and the `connect_status` MCP tool show:
+/// this CLI's own cua is the expected MCP server.
+pub fn connection_report(setup: &AgentSetup) -> ConnectionReport {
+    let opts = StatusOptions {
+        expected: Some(mcp_server(setup, None)),
+        refresh: true,
+        ..Default::default()
+    };
+    let vault = cua_sdk::sign_in_vault();
+    setup.connection_status(&opts, vault.as_deref())
+}
+
+fn state_word(r: &ConnectionRow) -> &'static str {
+    match r.state {
+        ConnectionState::Connected => "connected",
+        ConnectionState::Attention => "needs you",
+        ConnectionState::NotConnected => "not connected",
+        ConnectionState::NotInstalled => "not installed",
+    }
+}
+
+fn print_connections(report: &ConnectionReport, out: &mut dyn Write) {
+    let rows: Vec<Vec<String>> = report
+        .agents
         .iter()
-        .filter(|a| a.installed || a.cua_configured)
-        .map(|a| {
-            let skills = if a.skills_dir.is_none() {
-                "n/a".to_string()
-            } else {
-                let mut s = format!("{}/{}", a.skills_installed.len(), bundled.len());
-                if !a.skills_outdated.is_empty() {
-                    s.push_str(&format!(" ({} outdated)", a.skills_outdated.len()));
-                }
-                s
+        .map(|r| {
+            let signed = match r.signed_in {
+                SignedInState::Yes => "yes",
+                SignedInState::No => "no",
+                SignedInState::Unknown => "unknown",
+                SignedInState::Expired => "expired",
             };
-            let mcp = match (&a.mcp_config, a.cua_configured, &a.error) {
-                (None, _, _) => "n/a".to_string(),
-                (_, _, Some(_)) => "error".into(),
-                (_, true, _) if a.cua_managed => "configured".into(),
-                (_, true, _) => "configured (not by cua agents)".into(),
-                _ => "-".into(),
+            let mcp = match r.mcp {
+                McpState::Ok => "ok",
+                McpState::Missing => "-",
+                McpState::Broken => "broken",
+                McpState::Stale => "other cua",
+                McpState::Unsupported => "n/a",
             };
-            vec![a.name.clone(), skills, mcp]
+            let vault = match r.signin_import {
+                ImportState::Ok => "copied",
+                ImportState::Expired => "expired",
+                ImportState::Missing => "-",
+                ImportState::Unsupported => "n/a",
+            };
+            vec![
+                r.name.clone(),
+                state_word(r).into(),
+                r.version.clone().unwrap_or_else(|| "-".into()),
+                if r.installed {
+                    signed.into()
+                } else {
+                    "-".into()
+                },
+                mcp.into(),
+                vault.into(),
+            ]
         })
         .collect();
-    if rows.is_empty() {
-        line(out, "No AI coding agents found. See `cua agents detect`.");
-        return Ok(0);
+    util::table(
+        out,
+        &["AGENT", "STATE", "VERSION", "SIGNED IN", "MCP", "KEYVAULT"],
+        &rows,
+    );
+    for r in &report.agents {
+        if let Some(p) = &r.problem {
+            let fix = match p.action {
+                ProblemAction::Reconnect => {
+                    format!(" (cua connect setup --agents {} --sign-in)", r.id)
+                }
+                ProblemAction::SignIn => String::new(),
+                ProblemAction::Disconnect => {
+                    format!(" (cua connect remove --agents {} --sign-in)", r.id)
+                }
+                ProblemAction::Install | ProblemAction::None => String::new(),
+            };
+            line(out, format!("{}: {}{fix}", r.name, p.line));
+        }
     }
-    util::table(out, &["AGENT", "SKILLS", "MCP"], &rows);
-    Ok(0)
 }
 
 /// Exit code for `--json` runs: 1 with the first failure as the last
@@ -397,7 +513,7 @@ struct Summary {
     failures: usize,
 }
 
-/// The setup flow shared by `cua agents setup` and login onboarding.
+/// The setup flow shared by `cua connect setup` and login onboarding.
 /// Returns the process exit code (1 when anything failed).
 pub fn run_setup(
     setup: &AgentSetup,
@@ -587,7 +703,7 @@ pub fn run_setup(
     if !sum.mcp_ok.is_empty() {
         line(
             out,
-            "Restart your agents to load the cua MCP server. Undo with `cua agents remove`.",
+            "Restart your agents to load the cua MCP server. Undo with `cua connect remove`.",
         );
     }
     if sum.failures > 0 {
@@ -597,14 +713,82 @@ pub fn run_setup(
     Ok(0)
 }
 
-/// `cua agents setup`.
+/// `cua connect setup`.
 pub fn cmd_setup(args: &SetupCmdArgs, json: bool, out: &mut dyn Write) -> Result<i32, CuaError> {
     let setup = AgentSetup::from_env();
     let prompt = Prompt::new(args.base.yes || json);
     if args.cua_driver {
         return run_driver_setup(&setup, &args.base, &prompt, json, out);
     }
+    if args.sign_in {
+        return run_connect(&setup, &args.base, json, out);
+    }
     run_setup(&setup, &args.base, &prompt, json, out)
+}
+
+/// `cua connect setup --sign-in`: the app's Connect, the same core call:
+/// skills, MCP and the sign-in copy per agent.
+fn run_connect(
+    setup: &AgentSetup,
+    args: &SetupArgs,
+    json: bool,
+    out: &mut dyn Write,
+) -> Result<i32, CuaError> {
+    let ids = match args.agents.as_deref() {
+        Some(sel) => setup.select(sel).map_err(err)?,
+        None => setup.select("all").map_err(err)?,
+    };
+    let server = mcp_server(setup, args.mcp_command.as_deref());
+    let vault = cua_sdk::sign_in_vault();
+    let parts = ConnectParts {
+        skills: !args.mcp_only,
+        mcp: !args.skills_only,
+        sign_in: true,
+    };
+    let res = setup
+        .connect(
+            &ids,
+            &server,
+            parts,
+            vault.as_deref(),
+            cua_agent_setup::signin::SETUP_TOKEN_WAIT,
+        )
+        .map_err(err)?;
+    let failed = res.iter().any(|r| !r.tools_ok);
+    if json {
+        util::json_line(out, &serde_json::json!({"agents": res}));
+        return Ok(i32::from(failed));
+    }
+    for r in &res {
+        let name = cua_agent_setup::registry::find(&r.agent)
+            .map(cua_agent_setup::connection::display_name)
+            .unwrap_or_default();
+        match (&r.tools_line, &r.sign_in) {
+            (Some(l), _) => line(out, format!("  ✗ {name}: {l}")),
+            (None, Some(s)) if s.imported.is_some() => line(
+                out,
+                format!(
+                    "  ✓ {name}: connected; {} copied to Keyvault",
+                    s.imported
+                        .as_ref()
+                        .map(|i| i.label.as_str())
+                        .unwrap_or_default()
+                ),
+            ),
+            (None, Some(s)) => line(
+                out,
+                format!("  ✓ {name}: {}", s.line.clone().unwrap_or_default()),
+            ),
+            (None, None) => line(out, format!("  ✓ {name}: connected")),
+        }
+    }
+    if !res.is_empty() {
+        line(
+            out,
+            "Restart your agents to load the cua MCP server. Undo with `cua connect remove --sign-in`.",
+        );
+    }
+    Ok(i32::from(failed))
 }
 
 /// The cua-driver server agents launch: `--mcp-command`, else the
@@ -616,7 +800,7 @@ pub fn driver_server(setup: &AgentSetup, command: Option<&str>) -> McpServer {
     }
 }
 
-/// `cua agents setup --cua-driver`: background computer-use for the
+/// `cua connect setup --cua-driver`: background computer-use for the
 /// selected agents (the cua-driver skill and the `cua-driver mcp` server).
 /// The installers' `cua-driver` item runs this; the Spaces onboarding card
 /// runs the same engine call ([`AgentSetup::setup_cua_driver`]).
@@ -667,7 +851,7 @@ pub fn run_driver_setup(
     if !prompt.confirm(out, "Install the cua-driver skill and MCP server?", true) {
         line(
             out,
-            "Skipped. Run `cua agents setup --cua-driver` any time.",
+            "Skipped. Run `cua connect setup --cua-driver` any time.",
         );
         return Ok(0);
     }
@@ -714,7 +898,7 @@ pub fn run_driver_setup(
     }
     line(
         out,
-        "Restart your agents to load cua-driver. Undo with `cua agents remove`.",
+        "Restart your agents to load cua-driver. Undo with `cua connect remove`.",
     );
     if failures > 0 {
         line(out, format!("{failures} step(s) failed; see above."));
@@ -723,7 +907,7 @@ pub fn run_driver_setup(
     Ok(0)
 }
 
-/// `cua agents remove`.
+/// `cua connect remove`.
 pub fn cmd_remove(args: &RemoveArgs, json: bool, out: &mut dyn Write) -> Result<i32, CuaError> {
     let setup = AgentSetup::from_env();
     let ids: Vec<String> = if args.agents.trim() == "all" {
@@ -738,28 +922,47 @@ pub fn cmd_remove(args: &RemoveArgs, json: bool, out: &mut dyn Write) -> Result<
         skills: !args.mcp_only,
         mcp: !args.skills_only,
     };
-    let prompt = Prompt::new(args.yes || json);
-    if !prompt.confirm(
-        out,
-        "Remove the cua skills and MCP entries that cua added?",
-        false,
-    ) {
-        if !stdin_is_tty() && !args.yes {
-            line(out, "Pass --yes to remove without a prompt.");
+    let opts = RemoveOptions {
+        include_cua_driver: args.include_cua_driver,
+        dry_run: args.dry_run,
+    };
+    if !args.dry_run {
+        let prompt = Prompt::new(args.yes || json);
+        let question = if args.include_cua_driver {
+            "Remove the Cua Spaces and Cua Driver skills and MCP entries that cua added?"
+        } else {
+            "Remove the Cua Spaces skills and MCP entries that cua added?"
+        };
+        if !prompt.confirm(out, question, false) {
+            if !stdin_is_tty() && !args.yes {
+                line(out, "Pass --yes to remove without a prompt.");
+            }
+            return Ok(1);
         }
-        return Ok(1);
     }
-    let res = setup.remove(&ids, parts).map_err(err)?;
+    let vault = cua_sdk::sign_in_vault();
+    let (res, removed) = setup
+        .disconnect(&ids, parts, opts, args.sign_in, vault.as_deref())
+        .map_err(err)?;
     let failed = res.iter().any(Outcome::failed);
     if json {
-        util::json_line(out, &serde_json::json!({"outcomes": res}));
+        util::json_line(
+            out,
+            &serde_json::json!({"dry_run": args.dry_run, "outcomes": res, "removed_sign_ins": removed}),
+        );
         return Ok(fail_line(&res.iter().collect::<Vec<_>>()));
+    }
+    for env in &removed {
+        line(out, format!("  ✓ sign-in {env}: deleted from Keyvault"));
     }
     let touched: Vec<&Outcome> = res
         .iter()
         .filter(|o| !(o.change == Change::Skipped && o.detail == "not configured by cua"))
         .collect();
-    if touched.is_empty() {
+    if args.dry_run {
+        line(out, "Dry run: nothing is changed.");
+    }
+    if touched.is_empty() && removed.is_empty() {
         line(out, "Nothing to remove.");
     }
     for o in touched {
@@ -767,6 +970,24 @@ pub fn cmd_remove(args: &RemoveArgs, json: bool, out: &mut dyn Write) -> Result<
             Target::Skill => format!("skill {}", o.item),
             Target::Mcp => format!("MCP server {}", o.item),
         };
+        let place = tilde(&setup, &o.path);
+        if o.change == Change::Skipped && o.detail == cua_agent_setup::KEPT_CUA_DRIVER {
+            line(out, format!("  - {what}: {place} kept ({})", o.detail));
+            continue;
+        }
+        if args.dry_run && o.change == Change::Removed {
+            if o.detail == "already gone" {
+                line(out, format!("  - {what}: {place} already gone"));
+            } else if o.detail == "restored the previous entry" {
+                line(
+                    out,
+                    format!("  would restore the previous entry of {what}: {place}"),
+                );
+            } else {
+                line(out, format!("  would remove {what}: {place}"));
+            }
+            continue;
+        }
         let detail = if o.detail.is_empty() || o.detail == "removed" {
             String::new()
         } else {
@@ -774,18 +995,13 @@ pub fn cmd_remove(args: &RemoveArgs, json: bool, out: &mut dyn Write) -> Result<
         };
         line(
             out,
-            format!(
-                "  {} {what}: {} {}{detail}",
-                mark(o),
-                tilde(&setup, &o.path),
-                change_word(o)
-            ),
+            format!("  {} {what}: {place} {}{detail}", mark(o), change_word(o)),
         );
     }
     Ok(i32::from(failed))
 }
 
-/// `cua agents update`.
+/// `cua connect update`.
 pub fn cmd_update(json: bool, out: &mut dyn Write) -> Result<i32, CuaError> {
     let setup = AgentSetup::from_env();
     let server = mcp_server(&setup, None);
@@ -845,13 +1061,13 @@ pub fn after_login(
         ) {
             Choice::Yes => {}
             Choice::No => {
-                line(out, "Skipped. Run `cua agents setup` any time.");
+                line(out, "Skipped. Run `cua connect setup` any time.");
                 return Ok(0);
             }
             Choice::NoAnswer => {
                 line(
                     out,
-                    "No answer (the input ended), so your agents are unchanged. Run `cua agents setup` when you are ready.",
+                    "No answer (the input ended), so your agents are unchanged. Run `cua connect setup` when you are ready.",
                 );
                 return Ok(0);
             }
@@ -860,7 +1076,7 @@ pub fn after_login(
                     .map_err(|e| internal(e.to_string()))?;
                 line(
                     out,
-                    "OK, cua will not ask again (saved in ~/.cua/config). Run `cua agents setup` any time.",
+                    "OK, cua will not ask again (saved in ~/.cua/config). Run `cua connect setup` any time.",
                 );
                 return Ok(0);
             }

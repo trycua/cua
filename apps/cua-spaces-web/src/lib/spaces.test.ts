@@ -87,7 +87,7 @@ describe("visibleSpaces", () => {
 describe("machineName", () => {
   it("names the machine a Space runs on", () => {
     expect(machineName(MACHINES, SPACES[1]!)).toBe("Mac mini");
-    expect(machineName(MACHINES, { id: "x", provider: "cloud" })).toBe("Cua Cloud");
+    expect(machineName(MACHINES, { id: "x", provider: "direct" })).toBe("a computer added by address");
     expect(machineName(MACHINES, { id: "x", provider: "relay", hostName: "Linux box" })).toBe("Linux box");
     expect(machineName(MACHINES, { id: "x", provider: "relay" })).toBe("Unknown computer");
   });
@@ -146,7 +146,7 @@ describe("powerButton", () => {
   const on = space("p", "running", 1, { power: { control: "suspend", off: false } });
 
   it("follows the core when it answers", () => {
-    const core = { tryCall: <T,>() => ({ symbol: "power", help: "Suspend", turnOn: false, enabled: true, busy: false }) as T };
+    const core = { tryCall: <T,>() => ({ symbol: "power", help: { code: "spaces.power.suspend", vars: {} }, turnOn: false, enabled: true, busy: false }) as T };
     expect(powerButton(core, on)).toEqual({ help: "Suspend", turnOn: false, busy: false });
     expect(powerButton({ tryCall: <T,>() => null as T }, on)).toBeNull();
   });

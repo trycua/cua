@@ -7,7 +7,6 @@ rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-publish = false
 
 [lib]
 name = "cua_sdk"
@@ -28,7 +27,7 @@ spaces = ["dep:cua-spaces", "cua-daemon/spaces", "dep:pbjson-types"]
 host = ["dep:cua-host"]
 # Media sessions (`SpacesdClient.open_media`) with FrameSink/AudioSink callbacks.
 media = []
-# Your own cloud account as a location (`on="aws"`, `"gcp"`, `"modal"`) for
+# Your own cloud account as a location (`on="aws"`, `"gcp"`, `"hetzner"`, `"modal"`) for
 # sandboxes and Spaces: the cua-byoc providers and `cua cloud`.
 byoc = ["cua-daemon/byoc"]
 # Contrib sandbox providers (`on="e2b"`, ...), off by default.
@@ -42,11 +41,12 @@ web = ["dep:tonic-web-wasm-client"]
 
 [dependencies]
 # Contract types (both targets). The server half never builds for wasm32.
-cua-proto = { path = "../cua-proto", default-features = false, features = ["client", "serde"] }
+cua-proto = { path = "../cua-proto", version = "0.9.0", default-features = false, features = ["client", "serde"] } # x-release-please-version
 uniffi.workspace = true
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+humantime.workspace = true
 tonic-web-wasm-client = { version = "0.9", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -63,11 +63,14 @@ cua-image.workspace = true
 cua-telemetry.workspace = true
 cua-create-failure.workspace = true
 cua-sandbox-core.workspace = true
+# `Sandboxes.bake`: the compose project, packed for upload.
+tar = "0.4"
+flate2 = "1"
 async-trait.workspace = true
 cua-host = { workspace = true, optional = true }
 cua-daemon = { workspace = true, features = ["client"] }
 cua-home.workspace = true
-cua-spaces = { path = "../cua-spaces", optional = true }
+cua-spaces = { workspace = true, optional = true }
 pbjson-types = { workspace = true, optional = true }
 tokio = { workspace = true }
 tonic = { workspace = true, default-features = false, features = ["codegen"] }
@@ -83,18 +86,28 @@ base64.workspace = true
 sha2.workspace = true
 hex.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+# Raising the open-file limit when the SDK runtime starts.
+libc = "0.2"
+
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 http-body-util.workspace = true
 cua-sandbox-core = { workspace = true, features = ["testing"] }
-cua-spaces = { path = "../cua-spaces" }
+cua-spaces.workspace = true
+cua-cluster.workspace = true
 cua-host = { workspace = true, features = ["testing"] }
 serde_json.workspace = true
+humantime.workspace = true
 cua-spacesd-client = { workspace = true, features = ["testing"] }
 cua-daemon = { workspace = true, features = ["server", "client", "test-fixtures"] }
 tempfile.workspace = true
 # Paused time for the keyframe ticker test.
 tokio = { workspace = true, features = ["test-util"] }
 prost-types.workspace = true
+# A daemon older than this SDK, served in-process (tests/fail_closed.rs).
+tonic = { workspace = true, default-features = false, features = ["codegen", "server", "router"] }
+tower.workspace = true
+tokio-stream = { workspace = true, features = ["net"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # The browser runs one thread: futures need not be `Send`.

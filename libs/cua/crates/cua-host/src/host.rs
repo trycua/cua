@@ -1,10 +1,15 @@
 //! [`Host`]: setup / status / stop / start / remove.
 
 use crate::driver::{self, DriverSource};
+use crate::helper_migration::{
+    self, LegacyService, MigrationFacts, MigrationPlan, MigrationRecord, ServiceMigration,
+    VerifyTiming,
+};
 use crate::preflight::{self, SessionProbe};
 use crate::relay::{AccountTokens, ConnectedClient, MachinePatch, RegisterRequest, RelayClient};
 use crate::service::{self, RunnerKind, ServiceManager, ServiceSpec, ServiceState};
 use crate::{Error, Result};
+use cua_home::channel::{CUA_CHANNEL_VAR, CuaChannel};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -54,6 +59,21 @@ pub enum HostMode {
     },
 }
 
+/// The file under `<home>/host` that keeps this computer's registrations
+/// under other accounts than the signed-in one.
+const REGISTRATIONS_FILE: &str = "registrations.json";
+
+/// A relay registration of this computer under one account.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct StoredRegistration {
+    machine_id: String,
+    machine_token: String,
+}
+
+/// Account id -> the registration of this computer under it, for accounts
+/// that signed in here before and are not signed in now.
+type Registrations = std::collections::BTreeMap<String, StoredRegistration>;
+
 /// Options for [`Host::setup`].
 #[derive(Clone, Debug)]
 pub struct SetupOptions {
@@ -72,9 +92,13 @@ pub struct SetupOptions {
     /// [`crate::HostProfile`]).
     pub share_desktop: bool,
     /// Accept Space create, list and delete requests and run them on this
-    /// machine's runtimes (default off): from the owner's enrolled devices
-    /// in relay mode, from the env token holder in direct mode.
-    pub provide_spaces: bool,
+    /// machine's runtimes: from the owner's enrolled devices in relay mode,
+    /// from the env token holder in direct mode. `None` (the default) is
+    /// [`default_provide_spaces`]: on for a new relay setup, off for a new
+    /// direct one, and what the machine already has when it was set up
+    /// before (an earlier choice, or an earlier version's default, is never
+    /// changed by setting up again).
+    pub provide_spaces: Option<bool>,
     /// Provided Spaces at once (`None`: [`crate::provided::DEFAULT_MAX_SPACES`]).
     pub max_spaces: Option<u32>,
     /// The `cua` CLI the driver starts the host's cua daemon with when it
@@ -86,9 +110,39 @@ pub struct SetupOptions {
     /// Tailscale and private LAN addresses, and allow a public listen
     /// address (see [`crate::direct`]). Default off.
     pub allow_any_address: bool,
+    /// Direct mode: also join this relay in static-token mode (a
+    /// self-hosted `cua-relay --tokens ...`), so callers that cannot reach
+    /// the direct address reach this machine at `<relay>/m/<machine id>`
+    /// with its env token. No account is involved.
+    pub static_relay: Option<StaticRelay>,
+    /// Direct mode on your own tailnet (Tailscale or Headscale): callers
+    /// are identified by their tailnet login (the owner is this machine's
+    /// tailnet user; `allow` names other tailnet users), so they need no
+    /// env token. See [`crate::direct::tailnet_login`].
+    pub tailnet: bool,
     /// Install the driver before registering (a single-use pairing code is
     /// then spent only once the download worked). Default off.
     pub download_first: bool,
+    /// The machine exists only for Cua work (a cloud instance made for it,
+    /// such as a `cua cloud add aws` host): it offers its own Space to jobs
+    /// (`kind = "machine"`), where they run with its GPU and drivers as
+    /// they are. Never for a computer you also use; default off.
+    pub dedicated: bool,
+    /// This device's relay session, when it is enrolled for the account
+    /// (relay mode). Registering with it is the proof the relay vouches
+    /// for ("an enrolled device's signature"), so the Mac the user just
+    /// signed in on is not listed as a new, unconfirmed computer. `None`
+    /// (not enrolled, or a pairing code) leaves the relay to flag it.
+    pub device_session: Option<String>,
+}
+
+/// A relay in static-token mode ([`SetupOptions::static_relay`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StaticRelay {
+    /// Relay base URL.
+    pub url: String,
+    /// One of its machine-registration tokens.
+    pub token: String,
 }
 
 impl SetupOptions {
@@ -101,11 +155,15 @@ impl SetupOptions {
             driver_bin: None,
             runner: RunnerKind::Auto,
             share_desktop: true,
-            provide_spaces: false,
+            provide_spaces: None,
             max_spaces: None,
             cua_bin: None,
             allow_any_address: false,
+            static_relay: None,
+            tailnet: false,
             download_first: false,
+            dedicated: false,
+            device_session: None,
         }
     }
 
@@ -124,12 +182,31 @@ impl SetupOptions {
             driver_bin: None,
             runner: RunnerKind::Auto,
             share_desktop: true,
-            provide_spaces: false,
+            provide_spaces: None,
             max_spaces: None,
             cua_bin: None,
             allow_any_address: false,
+            static_relay: None,
+            tailnet: false,
             download_first: false,
+            dedicated: false,
+            device_session: None,
         }
+    }
+}
+
+/// Whether a setup that does not say provides Spaces
+/// ([`SetupOptions::provide_spaces`] `None`): a machine set up before keeps
+/// what it has (`existing`: its `config.json`, else its `host.json`, as
+/// read; one that could not be read counts as off), so neither an earlier
+/// choice nor an earlier version's default (off) ever flips. A new setup
+/// provides Spaces in relay mode, where the owner's devices reach it, and
+/// not in direct mode, where it is a plaintext listener to opt into.
+pub fn default_provide_spaces(mode: &HostMode, existing: Option<Result<bool>>) -> bool {
+    match existing {
+        Some(Ok(provide)) => provide,
+        Some(Err(_)) => false,
+        None => matches!(mode, HostMode::Relay { .. }),
     }
 }
 
@@ -177,6 +254,25 @@ pub struct HostPolicy {
     /// this machine's address on a forwarded port. `None` in relay mode.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub direct: Option<DirectHosting>,
+    /// Identify tailnet callers by their tailnet login (`--tailnet`): the
+    /// owner email and `allow` / `viewers` then name tailnet users.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub tailnet_identity: bool,
+    /// The machine exists only for Cua work (`--dedicated`, which `cua cloud add
+    /// aws` hosts are set up with): jobs may run in its own Space
+    /// (`kind = "machine"`). Off by default, and never on a computer you
+    /// also use.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub dedicated: bool,
+    /// Forward `/share/...` requests to the cua daemon's share gateway
+    /// (`cua share`): links to ports, files and folders the owner shares,
+    /// reached through the relay. Off until the first `cua share` (or a
+    /// relay-mode setup) turns it on; it takes effect on the next request.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub shares: bool,
+    /// The daemon's share gateway socket (`<cua home>/share/gateway.sock`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shares_gateway: Option<String>,
 }
 
 /// How a host in direct mode provides Spaces (see [`crate::direct`]).
@@ -268,9 +364,13 @@ pub struct HostConfig {
     pub listen: Option<String>,
     /// Display name.
     pub name: String,
-    /// Machine id (relay mode).
+    /// Machine id (relay mode, and direct mode with a static relay).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub machine_id: Option<String>,
+    /// Direct mode: the static-token relay this machine also joins
+    /// ([`SetupOptions::static_relay`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub static_relay: Option<String>,
     /// Runner (`systemd`, `launchd`, `windows-task`, `process`).
     pub runner: String,
     /// Installed driver binary.
@@ -292,12 +392,25 @@ pub struct HostConfig {
     /// [`Host::resume_signed_in`] can bring it back.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub paused_signed_out: bool,
+    /// Sharing stopped because both settings were turned off (nothing to
+    /// share): turning either on again shares again.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stopped_for_nothing: bool,
+    /// Direct mode on the owner's tailnet with tailnet identity
+    /// (`--tailnet`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub tailnet: bool,
     /// `CUA_MESH` as it was set where `cua host setup` ran (an explicit
     /// opt-in to the WireGuard®-based mesh, or out of it): passed on to the
-    /// service. Unset, the service follows its own default (off unless the
-    /// Cua Spaces app's channel turns it on).
+    /// service. Unset, the service follows its own default (prefer).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mesh: Option<String>,
+    /// `CUA_HOST_USD_PER_HOUR` as it was set where `cua host setup` ran:
+    /// what this machine costs per hour (a cloud host's on-demand price),
+    /// passed on to the service, which shows it to the pool. Unset: an owned
+    /// machine ($0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usd_per_hour: Option<String>,
 }
 
 /// `CUA_MESH` where setup runs, when set.
@@ -328,7 +441,9 @@ pub fn permission_hints(os: &str, driver: &Path) -> Vec<PermissionHint> {
     if os != "macos" {
         return vec![];
     }
-    let d = driver.display();
+    let d = service_name(driver);
+    // The app's executable runs the service: both are "Cua Spaces".
+    let screen = d.clone();
     vec![
         PermissionHint {
             id: "screen-recording".into(),
@@ -337,7 +452,7 @@ pub fn permission_hints(os: &str, driver: &Path) -> Vec<PermissionHint> {
                 "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
                     .into(),
             instructions: format!(
-                "System Settings → Privacy & Security → Screen & System Audio Recording: turn on cua-spacesd ({d}), so people you share with can see this screen."
+                "System Settings → Privacy & Security → Screen & System Audio Recording: turn on {screen}, so people you share with can see this screen."
             ),
         },
         PermissionHint {
@@ -347,10 +462,20 @@ pub fn permission_hints(os: &str, driver: &Path) -> Vec<PermissionHint> {
                 "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
                     .into(),
             instructions: format!(
-                "System Settings → Privacy & Security → Accessibility: turn on cua-spacesd ({d}), so they can control the mouse and keyboard."
+                "System Settings → Privacy & Security → Accessibility: turn on {d}, so they can control the mouse and keyboard."
             ),
         },
     ]
+}
+
+/// How System Settings lists the host service: "Cua Spaces" when the app
+/// runs it, else "cua-spacesd (<path>)".
+fn service_name(driver: &Path) -> String {
+    if crate::service::is_app_helper_launcher(driver) {
+        crate::service::app_helper_name().to_string()
+    } else {
+        format!("cua-spacesd ({})", driver.display())
+    }
 }
 
 /// What a Mac that provides Spaces must allow in Local Network privacy, or
@@ -368,20 +493,30 @@ pub fn local_network_hint(os: &str, provide_spaces: bool, driver: &Path) -> Opti
     if os != "macos" || !provide_spaces {
         return None;
     }
-    let d = driver.display();
+    let d = service_name(driver);
+    let short = if crate::service::is_app_helper_launcher(driver) {
+        crate::service::app_helper_name()
+    } else {
+        "cua-spacesd"
+    };
     Some(PermissionHint {
         id: "local-network".into(),
         title: "Local Network".into(),
         settings_url:
             "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork".into(),
         instructions: format!(
-            "macOS Spaces on this Mac need Local Network access for cua-spacesd ({d}). When \
-             macOS asks \"Allow cua-spacesd to find devices on local networks?\" on this Mac's \
-             screen, click Allow; or turn on cua-spacesd in System Settings → Privacy & \
-             Security → Local Network. If the cua daemon was started from Terminal or over SSH, \
-             run `cua daemon stop` so the host service starts it at the next create (over SSH \
-             nothing can grant it). Without it, macOS Space creates fail with \"No route to \
-             host\"; Linux Spaces don't need it."
+            "macOS Spaces on this Mac need Local Network access for {d}. When \
+             macOS asks \"Allow {short} to find devices on local networks?\" on this Mac's \
+             screen, click Allow; or turn on {short} in System Settings → Privacy & \
+             Security → Local Network. If the {cli} daemon was started from Terminal or over SSH, \
+             run `{cli} daemon stop` so the host service starts it at the next create. If nobody sits \
+             at this Mac (it is used over SSH), nothing can click Allow: run `sudo defaults write \
+             com.apple.network.local-network AllowedEthernetLocalNetworkAddresses -array \
+             192.168.64.0/24`, the same with `AllowedWiFiLocalNetworkAddresses`, then `sudo \
+             shutdown -r now` (every app on this Mac can then reach its virtual computers). \
+             Without it, macOS Space creates fail with \"No route to host\"; Linux Spaces don't \
+             need it.",
+            cli = crate::cli()
         ),
     })
 }
@@ -401,6 +536,22 @@ pub const META_OS: &str = "cua.host.os";
 /// The relay machine meta key with this machine's architecture (`arm64`,
 /// `amd64`: the names Spaces use), as of its last setup.
 pub const META_ARCH: &str = "cua.host.arch";
+
+/// The relay machine meta key with the cloud a pool host runs in
+/// (`hetzner`, `aws`...), from `CUA_HOST_CLOUD` where `cua host setup` ran
+/// (the cloud-init of a machine the pool added sets it). Whichever machine
+/// coordinates the pool places `--on <cloud>` work on it by this.
+pub const META_CLOUD: &str = "cua.host.cloud";
+
+/// `CUA_HOST_CLOUD`, when it names a cloud (lowercase letters and digits).
+fn host_cloud() -> Option<String> {
+    cloud_word(std::env::var("CUA_HOST_CLOUD").ok())
+}
+
+fn cloud_word(v: Option<String>) -> Option<String> {
+    let v = v?.trim().to_ascii_lowercase();
+    (!v.is_empty() && v.len() <= 32 && v.chars().all(|c| c.is_ascii_alphanumeric())).then_some(v)
+}
 
 /// This build's OS family, as Spaces name it.
 fn os_family() -> &'static str {
@@ -431,6 +582,9 @@ fn host_meta(provide_spaces: bool) -> std::collections::BTreeMap<String, String>
         if !value.is_empty() {
             meta.insert(key.to_string(), value.to_string());
         }
+    }
+    if let Some(cloud) = host_cloud() {
+        meta.insert(META_CLOUD.to_string(), cloud);
     }
     meta
 }
@@ -506,6 +660,14 @@ pub struct HostStatus {
     /// The owner's email, when the relay gave one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner_email: Option<String>,
+    /// macOS: a Cua Spaces app that can run the host service is
+    /// installed, so the host service can run as it.
+    #[serde(default)]
+    pub helper_available: bool,
+    /// macOS: the old hand-written LaunchAgent
+    /// (`com.trycua.spacesd.host`) is still there (loaded or its plist).
+    #[serde(default)]
+    pub legacy_service: bool,
 }
 
 /// Files under `<home>/host`.
@@ -543,6 +705,10 @@ impl HostPaths {
     /// `env-token` (0600).
     pub fn env_token(&self) -> PathBuf {
         self.dir.join("env-token")
+    }
+    /// `relay-token` (0600): a static relay's registration token.
+    pub fn relay_token(&self) -> PathBuf {
+        self.dir.join("relay-token")
     }
     /// `relay-jwks.json`: the relay keys returned at registration.
     pub fn relay_jwks(&self) -> PathBuf {
@@ -657,6 +823,25 @@ fn valid_machine_id(id: &str) -> bool {
         && !id.ends_with('-')
 }
 
+/// The environment variables of cua-spacesd's `--port` and `--quic-port`.
+const PORT_ENV: &str = "CUA_ENV_PORT";
+const QUIC_PORT_ENV: &str = "CUA_ENV_QUIC_PORT";
+
+/// The environment variable with this machine's cost per hour (US
+/// dollars), passed on to the host service.
+pub const HOST_USD_PER_HOUR: &str = "CUA_HOST_USD_PER_HOUR";
+
+/// [`HOST_USD_PER_HOUR`] where setup runs, when it is a non-negative
+/// number.
+fn host_usd_per_hour() -> Option<String> {
+    let v = std::env::var(HOST_USD_PER_HOUR).ok()?;
+    let v = v.trim();
+    v.parse::<f64>()
+        .ok()
+        .filter(|p| p.is_finite() && *p >= 0.0)
+        .map(|_| v.to_string())
+}
+
 /// Loads `path` or creates a random id there (same format as the driver).
 fn load_or_create_machine_id(path: &Path) -> Result<String> {
     if let Ok(existing) = std::fs::read_to_string(path) {
@@ -729,13 +914,7 @@ fn strip_local_suffix(host: &str) -> String {
     host.to_string()
 }
 
-/// The LAN address a direct client would use for an unspecified bind.
-fn lan_ip() -> Option<std::net::IpAddr> {
-    // No packet is sent: connecting a UDP socket only picks a route.
-    let s = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
-    s.connect("192.0.2.1:9").ok()?;
-    s.local_addr().ok().map(|a| a.ip())
-}
+use crate::direct::lan_ip;
 
 fn direct_url(listen: &str) -> Option<String> {
     let addr: SocketAddr = listen.parse().ok()?;
@@ -788,6 +967,13 @@ pub struct Host {
     paths: HostPaths,
     manager: Option<Arc<dyn ServiceManager>>,
     preflight: Option<Arc<dyn SessionProbe>>,
+    /// The Cua Spaces app with the helper (tests; else found).
+    helper_app: Option<PathBuf>,
+    /// The helper's runner (tests; else [`service::AppHelper`]).
+    helper: Option<Arc<dyn ServiceManager>>,
+    /// The old LaunchAgent (tests; else [`service::Launchd`]).
+    legacy: Option<Arc<dyn LegacyService>>,
+    verify: VerifyTiming,
 }
 
 impl std::fmt::Debug for Host {
@@ -805,6 +991,57 @@ impl Host {
             home,
             manager: None,
             preflight: None,
+            helper_app: None,
+            helper: None,
+            legacy: None,
+            verify: VerifyTiming::default(),
+        }
+    }
+
+    /// Uses `app` as the installed Cua Spaces app with its helper, run by
+    /// `helper`, and `legacy` as the old LaunchAgent (tests).
+    pub fn with_app_helper(
+        mut self,
+        app: PathBuf,
+        helper: Arc<dyn ServiceManager>,
+        legacy: Arc<dyn LegacyService>,
+    ) -> Self {
+        self.helper_app = Some(app);
+        self.helper = Some(helper);
+        self.legacy = Some(legacy);
+        self
+    }
+
+    /// How long a moved host service has to prove itself (tests).
+    pub fn with_verify_timing(mut self, timing: VerifyTiming) -> Self {
+        self.verify = timing;
+        self
+    }
+
+    /// The installed Cua Spaces app with its helper.
+    fn helper_app(&self) -> Option<PathBuf> {
+        if self.helper.is_some() {
+            return self.helper_app.clone();
+        }
+        service::find_app_helper()
+    }
+
+    /// The helper's runner for `app`.
+    fn helper_manager(&self, app: &Path) -> Arc<dyn ServiceManager> {
+        match &self.helper {
+            Some(h) => h.clone(),
+            None => Arc::new(service::AppHelper::for_current_user(
+                app.to_path_buf(),
+                &user_home(&self.home),
+            )),
+        }
+    }
+
+    /// The old LaunchAgent.
+    fn legacy(&self) -> Arc<dyn LegacyService> {
+        match &self.legacy {
+            Some(l) => l.clone(),
+            None => Arc::new(service::Launchd::for_current_user(&user_home(&self.home))),
         }
     }
 
@@ -844,6 +1081,11 @@ impl Host {
     }
 
     fn manager(&self, runner: RunnerKind) -> Arc<dyn ServiceManager> {
+        if runner == RunnerKind::AppHelper
+            && let (Some(h), Some(_)) = (&self.helper, &self.helper_app)
+        {
+            return h.clone();
+        }
         if let Some(m) = &self.manager {
             return m.clone();
         }
@@ -860,6 +1102,13 @@ impl Host {
 
     /// The command line the service runs.
     pub fn service_spec(&self, config: &HostConfig) -> ServiceSpec {
+        self.service_spec_for(config, CuaChannel::current())
+    }
+
+    /// [`Host::service_spec`] for a build of `channel`: the ports it
+    /// serves on are the channel's, so Cua Spaces Local's host runs beside
+    /// the Stable one.
+    pub(crate) fn service_spec_for(&self, config: &HostConfig, channel: CuaChannel) -> ServiceSpec {
         let p = &self.paths;
         let s = |p: PathBuf| p.to_string_lossy().into_owned();
         let mut args: Vec<String> = match config.mode.as_str() {
@@ -885,6 +1134,24 @@ impl Host {
                     .flatten(),
             )
             .collect(),
+            _ if config.static_relay.is_some() => {
+                // Direct and through a static relay at once: the driver
+                // serves its direct listener and joins the relay, with the
+                // policy that makes it a host on both.
+                vec![
+                    "join".into(),
+                    "--relay".into(),
+                    config.static_relay.clone().unwrap_or_default(),
+                    "--relay-token-file".into(),
+                    s(p.relay_token()),
+                    "--host-policy".into(),
+                    s(p.policy()),
+                    "--machine-id-file".into(),
+                    s(p.machine_id.clone()),
+                    "--listen".into(),
+                    config.listen.clone().unwrap_or_default(),
+                ]
+            }
             _ => {
                 let mut args: Vec<String> = vec![
                     "serve".into(),
@@ -897,6 +1164,11 @@ impl Host {
                 // driver that predates the flag.
                 if config.provide_spaces && p.policy().is_file() {
                     args.extend(["--direct-host-policy".to_string(), s(p.policy())]);
+                }
+                // Your tailnet vouches for who calls (Tailscale or
+                // Headscale `whois`), per the policy's owner and shares.
+                if config.tailnet && p.policy().is_file() {
+                    args.extend(["--tailnet-identity-policy".to_string(), s(p.policy())]);
                 }
                 args
             }
@@ -918,8 +1190,36 @@ impl Host {
             ]);
         }
         let mut env = vec![("CUA_ENV_LOG".into(), "info".into())];
+        // A Local build's host service is told its channel and ports, so it
+        // runs beside a Stable one (3211 TCP, 3212 QUIC). Nothing is passed
+        // for Stable: its service is the one it has always been, on
+        // cua-spacesd's own defaults.
+        //
+        // The ports go twice. `--port` (the listener of a joined host;
+        // `--listen` names a direct one) and `--quic-port` are on the
+        // command line, where they show in `ps` and win; the environment
+        // carries the same for everything the service starts, which reads
+        // `CUA_ENV_PORT` and `CUA_CHANNEL`. The mesh media port is not
+        // passed: it is 3212 for every channel, by design (a port of the
+        // mesh's own network that guest Spaces and older cua-spacesd builds
+        // fix, so two hosts on one Mac do not compete for it).
+        let (ports, stable) = (channel.ports(), CuaChannel::Stable.ports());
+        if ports.tcp != stable.tcp {
+            args.extend(["--port".to_string(), ports.tcp.to_string()]);
+            env.push((PORT_ENV.into(), ports.tcp.to_string()));
+        }
+        if ports.quic != stable.quic {
+            args.extend(["--quic-port".to_string(), ports.quic.to_string()]);
+            env.push((QUIC_PORT_ENV.into(), ports.quic.to_string()));
+        }
+        if channel != CuaChannel::Stable {
+            env.push((CUA_CHANNEL_VAR.into(), channel.name().into()));
+        }
         if let Some(mesh) = &config.mesh {
             env.push(("CUA_MESH".into(), mesh.clone()));
+        }
+        if let Some(usd) = &config.usd_per_hour {
+            env.push((HOST_USD_PER_HOUR.into(), usd.clone()));
         }
         ServiceSpec {
             program: config.driver_bin.clone(),
@@ -962,16 +1262,35 @@ impl Host {
         tokens: &dyn AccountTokens,
         stage: &mut SetupStage,
     ) -> Result<HostStatus> {
-        let runner = match &self.manager {
-            Some(m) => m.kind(),
-            None => opts.runner.resolve(),
+        let runner = match (&self.manager, opts.runner) {
+            (_, RunnerKind::Auto) if self.helper.is_some() => RunnerKind::AppHelper,
+            (Some(m), _) => m.kind(),
+            (None, r) => r.resolve(),
+        };
+        // The app's helper runs the cua-spacesd sealed in the app; its
+        // launcher is the driver the config names (and the permission
+        // checks ask).
+        let helper_launcher = match runner {
+            RunnerKind::AppHelper => Some(
+                self.helper_app()
+                    .map(|app| service::app_helper_launcher(&app))
+                    .ok_or_else(|| {
+                        Error::Service(format!(
+                            "the host service runs inside the Cua Spaces app, which is not \
+                             installed; install it, or run `{} host setup --runner launchd`",
+                            crate::cli()
+                        ))
+                    })?,
+            ),
+            _ => None,
         };
         let name = opts
             .name
             .clone()
             .filter(|n| !n.trim().is_empty())
             .unwrap_or_else(friendly_name);
-        if !opts.share_desktop && !opts.provide_spaces {
+        let provide_spaces = self.resolve_provide_spaces(&opts);
+        if !opts.share_desktop && !provide_spaces {
             return Err(Error::InvalidArgument(
                 "with neither the desktop nor Spaces there is nothing to share; turn on \
                  --desktop or --provide-spaces"
@@ -983,13 +1302,18 @@ impl Host {
         // (set up over ssh with nobody logged in at the console). Checked
         // first so a doomed setup never registers with the relay,
         // downloads the driver, or leaves a config file behind.
-        if runner == RunnerKind::Launchd {
-            preflight::check(self.preflight_probe().as_ref(), &self.paths.driver_bin())?;
+        if runner == RunnerKind::Launchd || runner == RunnerKind::AppHelper {
+            preflight::check(
+                self.preflight_probe().as_ref(),
+                helper_launcher
+                    .as_deref()
+                    .unwrap_or(&self.paths.driver_bin()),
+            )?;
         }
         // Hosting Spaces on the plaintext direct listener: never on a
         // public address without --allow-any-address.
         if let HostMode::Direct { listen } = &opts.mode
-            && opts.provide_spaces
+            && provide_spaces
             && let Some(warning) = crate::direct::check_listen(*listen, opts.allow_any_address)?
         {
             tracing::warn!("{warning}");
@@ -1002,20 +1326,26 @@ impl Host {
         let mut config = HostConfig {
             name: name.clone(),
             runner: runner.as_str().into(),
-            driver_bin: self.paths.driver_bin(),
+            driver_bin: helper_launcher
+                .clone()
+                .unwrap_or_else(|| self.paths.driver_bin()),
             sharing: true,
             share_desktop: opts.share_desktop,
-            provide_spaces: opts.provide_spaces,
+            provide_spaces,
             mesh: mesh_env(),
+            usd_per_hour: host_usd_per_hour(),
             ..Default::default()
         };
-        if opts.download_first {
+        if opts.download_first && helper_launcher.is_none() {
             *stage = SetupStage::Download;
             install_driver(opts.driver_bin.as_deref(), &config.driver_bin).await?;
         }
         match &opts.mode {
             HostMode::Relay { url } => {
                 let relay = RelayClient::new(url)?;
+                let relay_with_device = relay
+                    .clone()
+                    .with_device_session(opts.device_session.clone());
                 *stage = SetupStage::Token;
                 let token = tokens.access_token().await?;
                 *stage = SetupStage::Register;
@@ -1024,7 +1354,7 @@ impl Host {
                 // machine token; the account session is used only for this
                 // call and never stored under the host directory.
                 let current = read_secret(&self.paths.machine_token()).ok();
-                let reg = relay
+                let reg = relay_with_device
                     .register_as_machine(
                         &token,
                         current.as_deref(),
@@ -1033,7 +1363,7 @@ impl Host {
                             name: name.clone(),
                             allow: opts.allow.clone(),
                             host: None,
-                            meta: host_meta(opts.provide_spaces),
+                            meta: host_meta(provide_spaces),
                         },
                     )
                     .await?;
@@ -1053,13 +1383,17 @@ impl Host {
                         trust_relay_allowlist: true,
                         sharing: true,
                         share_desktop: opts.share_desktop,
-                        provide_spaces: opts.provide_spaces,
+                        provide_spaces,
                         max_spaces: opts
                             .max_spaces
                             .unwrap_or(crate::provided::DEFAULT_MAX_SPACES),
                         max_macos_vms: crate::provided::MACOS_VM_LICENSE_LIMIT,
                         spaces_daemon: Some(self.spaces_daemon(opts.cua_bin.as_deref())),
                         direct: None,
+                        tailnet_identity: false,
+                        dedicated: opts.dedicated,
+                        shares: true,
+                        shares_gateway: Some(self.shares_gateway()),
                     },
                 )?;
                 config.mode = "relay".into();
@@ -1078,30 +1412,97 @@ impl Host {
                     d.allow_any_address = opts.allow_any_address;
                 }
                 policy.share_desktop = opts.share_desktop;
-                policy.provide_spaces = opts.provide_spaces;
+                policy.provide_spaces = provide_spaces;
+                policy.dedicated = opts.dedicated;
                 if let Some(m) = opts.max_spaces {
                     policy.max_spaces = m;
                 }
+                if opts.tailnet {
+                    // The tailnet's identity: this machine's tailnet user
+                    // owns it, `--allow` names other tailnet users.
+                    policy.tailnet_identity = true;
+                    policy.owner_email = crate::direct::tailnet_login();
+                    policy.allow = opts.allow.clone();
+                    config.tailnet = true;
+                }
                 write_json(&self.paths.policy(), &policy)?;
+                match &opts.static_relay {
+                    Some(r) => {
+                        write_secret(&self.paths.relay_token(), &r.token)?;
+                        config.static_relay = Some(r.url.trim_end_matches('/').to_string());
+                        config.machine_id =
+                            Some(load_or_create_machine_id(&self.paths.machine_id)?);
+                    }
+                    None => {
+                        let _ = std::fs::remove_file(self.paths.relay_token());
+                    }
+                }
             }
         }
-        if !opts.download_first {
+        if !opts.download_first && helper_launcher.is_none() {
             *stage = SetupStage::Download;
             install_driver(opts.driver_bin.as_deref(), &config.driver_bin).await?;
         }
+        // Before a service is installed to restart it forever: a binary
+        // whose shared libraries are missing never starts.
+        let missing = missing_libraries(&config.driver_bin);
+        if !missing.is_empty() {
+            return Err(Error::Service(missing_libraries_message(&missing)));
+        }
         *stage = SetupStage::Service;
         write_json(&self.paths.config(), &config)?;
+        if runner == RunnerKind::AppHelper {
+            // Never two services: the old LaunchAgent (and its binary)
+            // goes before the helper starts.
+            self.retire_legacy()?;
+        }
         let manager = self.manager(runner);
         manager.install(&self.service_spec(&config))?;
         manager.start()?;
+        if let Err(e) = confirm_running(manager.as_ref(), &self.paths.log()).await {
+            let _ = manager.stop();
+            return Err(e);
+        }
         let _ = crate::provided::audit(
             &self.paths.dir,
             "config",
             "local",
             &config.name,
-            &settings_detail(config.share_desktop, config.provide_spaces),
+            &if opts.dedicated {
+                format!(
+                    "{} dedicated=on",
+                    settings_detail(config.share_desktop, config.provide_spaces)
+                )
+            } else {
+                settings_detail(config.share_desktop, config.provide_spaces)
+            },
         );
         self.status().await
+    }
+
+    /// Whether a setup with `opts` provides Spaces: what it says, else
+    /// [`default_provide_spaces`] for this machine (what it already has
+    /// when it was set up before; on for a new relay setup).
+    pub fn resolve_provide_spaces(&self, opts: &SetupOptions) -> bool {
+        if let Some(p) = opts.provide_spaces {
+            return p;
+        }
+        let existing = if self.paths.config().exists() {
+            Some(
+                self.config()
+                    .and_then(|c| c.ok_or_else(|| Error::NotFound("config.json".into())))
+                    .map(|c| c.provide_spaces),
+            )
+        } else if self.paths.policy().exists() {
+            Some(
+                self.policy()
+                    .and_then(|p| p.ok_or_else(|| Error::NotFound("host.json".into())))
+                    .map(|p| p.provide_spaces),
+            )
+        } else {
+            None
+        };
+        default_provide_spaces(&opts.mode, existing)
     }
 
     /// The policy of a host in direct mode listening on `listen`: the env
@@ -1124,6 +1525,10 @@ impl Host {
                 listen: listen.to_string(),
                 allow_any_address: false,
             }),
+            tailnet_identity: false,
+            dedicated: false,
+            shares: false,
+            shares_gateway: None,
         }
     }
 
@@ -1154,6 +1559,15 @@ impl Host {
         } else {
             listen.ip()
         };
+        if config.tailnet {
+            // Tailnet identity: whoever the policy names adds it without a
+            // token (their tailnet login is the credential).
+            return Ok(Some(crate::direct::tailnet_pairing_command(
+                &crate::direct::authority(ip, listen.port()),
+                &config.name,
+                config.provide_spaces,
+            )));
+        }
         let token = read_secret(&self.paths.env_token())?;
         Ok(Some(crate::direct::pairing_command(
             &crate::direct::authority(ip, listen.port()),
@@ -1172,6 +1586,50 @@ impl Host {
             cua_home: self.home.to_string_lossy().into_owned(),
             cua_bin: find_cua_bin(cua_bin).map(|p| p.to_string_lossy().into_owned()),
         }
+    }
+
+    /// The socket of the cua daemon's share gateway in this cua home.
+    pub fn shares_gateway(&self) -> String {
+        self.home
+            .join("share")
+            .join("gateway.sock")
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    /// Turns on forwarding of `/share/...` to the daemon's share gateway
+    /// (`cua share`). The driver reads the policy on every request, so no
+    /// restart is needed. Only a machine on the relay can share links: a
+    /// machine that is not set up (or is in direct mode without a relay)
+    /// gets an error that says how to join one. Returns whether the policy
+    /// changed.
+    pub fn enable_shares(&self) -> Result<bool> {
+        let config = self.config()?.ok_or_else(|| {
+            Error::NotFound(format!(
+                "this machine is not on your cua.ai relay; set it up with `{} host setup`",
+                crate::cli()
+            ))
+        })?;
+        if config.mode != "relay" {
+            return Err(Error::InvalidArgument(format!(
+                "this machine is not on your cua.ai relay (direct mode); links need the relay: `{} host setup`",
+                crate::cli()
+            )));
+        }
+        let mut policy = self.policy()?.ok_or_else(|| {
+            Error::NotFound(format!(
+                "this machine has no host policy; run `{} host setup`",
+                crate::cli()
+            ))
+        })?;
+        let gateway = self.shares_gateway();
+        if policy.shares && policy.shares_gateway.as_deref() == Some(gateway.as_str()) {
+            return Ok(false);
+        }
+        policy.shares = true;
+        policy.shares_gateway = Some(gateway);
+        write_json(&self.paths.policy(), &policy)?;
+        Ok(true)
     }
 
     /// Changes this machine's Spaces settings (`cua host config`, the app's
@@ -1267,7 +1725,16 @@ impl Host {
         if nothing && config.sharing {
             // Stop advertising: the relay lists it as not sharing (other
             // devices say it shares neither its desktop nor Spaces).
+            config.stopped_for_nothing = true;
+            write_json(&self.paths.config(), &config)?;
             return self.stop_sharing().await;
+        }
+        if !nothing && !config.sharing && config.stopped_for_nothing {
+            // It stopped only because there was nothing to share: there is
+            // again, so it shares again (a stop the owner asked for stays).
+            config.stopped_for_nothing = false;
+            write_json(&self.paths.config(), &config)?;
+            return self.start_sharing().await;
         }
         self.status().await
     }
@@ -1315,6 +1782,10 @@ impl Host {
             status.owner_email = p.owner_email.clone();
         }
         status.paused_signed_out = config.paused_signed_out;
+        if cfg!(target_os = "macos") || self.helper.is_some() {
+            status.helper_available = self.helper_app().is_some();
+            status.legacy_service = self.legacy().found().present();
+        }
         if let (Some(url), Some(id)) = (&config.relay_url, &config.machine_id) {
             match recall_relay_view(url, id, self.relay_machine(url, id).await) {
                 Ok(m) => {
@@ -1405,9 +1876,28 @@ impl Host {
         RelayClient::new(url)?.machine(&token, id).await
     }
 
+    /// Takes `name` as this machine's display name when `machine_id` is
+    /// this machine's relay registration (after the owner renamed it on
+    /// the relay from an enrolled device). Returns whether it did: another
+    /// machine, or a machine not set up, is left alone.
+    pub fn adopt_name(&self, machine_id: &str, name: &str) -> Result<bool> {
+        let Some(mut config) = self.config()? else {
+            return Ok(false);
+        };
+        if config.machine_id.as_deref() != Some(machine_id) || name.trim().is_empty() {
+            return Ok(false);
+        }
+        config.name = name.trim().to_string();
+        write_json(&self.paths.config(), &config)?;
+        Ok(true)
+    }
+
     fn require_config(&self) -> Result<HostConfig> {
         self.config()?.ok_or_else(|| {
-            Error::NotFound("this computer is not set up for access (run `cua host setup`)".into())
+            Error::NotFound(format!(
+                "this computer is not set up for access (run `{} host setup`)",
+                crate::cli()
+            ))
         })
     }
 
@@ -1446,11 +1936,11 @@ impl Host {
     pub async fn start_sharing(&self) -> Result<HostStatus> {
         let mut config = self.require_config()?;
         if !config.share_desktop && !config.provide_spaces {
-            return Err(Error::InvalidArgument(
+            return Err(Error::InvalidArgument(format!(
                 "there is nothing to share: turn on the desktop or Spaces first \
-                 (`cua host config --desktop on` or `--provide-spaces on`)"
-                    .into(),
-            ));
+                 (`{} host config --desktop on` or `--provide-spaces on`)",
+                crate::cli()
+            )));
         }
         match (&config.relay_url, &config.machine_id) {
             (Some(url), Some(id)) => {
@@ -1459,6 +1949,7 @@ impl Host {
                 self.set_policy_sharing(true)?;
                 // An explicit start (`cua host start`) ends a pause too.
                 config.paused_signed_out = false;
+                config.stopped_for_nothing = false;
                 // The service stays up while sharing is stopped; one that
                 // went down (a failed start) is started again here.
                 let manager = self.manager_for_config(&config);
@@ -1512,8 +2003,9 @@ impl Host {
     /// Undoes [`Host::pause_signed_out`] once the owner is signed in again:
     /// `account` is the signed-in account's id (or email). Another account
     /// is refused: it cannot use this registration, and sharing the old
-    /// account's machine under it would be wrong; remove the host setup and
-    /// set it up again for that account. Sharing comes back as the owner
+    /// account's machine under it would be wrong
+    /// ([`Host::resume_or_switch_account`] registers it again for that
+    /// account instead). Sharing comes back as the owner
     /// left it (stopped stays stopped, but online).
     pub async fn resume_signed_in(&self, account: &str) -> Result<HostStatus> {
         let mut config = self.require_config()?;
@@ -1525,8 +2017,8 @@ impl Host {
             && !owned_by(p, account)
         {
             return Err(Error::InvalidArgument(
-                "this computer is shared with another Cua account; remove the host setup \
-                 and set it up again to share it with this one"
+                "this computer was set up for another Cua account; sign in to that \
+                 account, or register this computer again for this one"
                     .into(),
             ));
         }
@@ -1534,11 +2026,28 @@ impl Host {
             p.sharing = config.sharing;
             write_json(&self.paths.policy(), &p)?;
         }
+        // Stopped stays stopped, but online: a registration made while the
+        // owner had stopped sharing starts as sharing on the relay, so the
+        // stop is sent again (it changes nothing when the relay has it).
+        if !config.sharing
+            && let (Some(url), Some(id)) = (&config.relay_url, &config.machine_id)
+            && let Ok(token) = read_secret(&self.paths.machine_token())
+        {
+            RelayClient::new(url)?.stop_sharing(&token, id).await?;
+        }
+        let manager = self.manager_for_config(&config);
+        if let Err(e) = manager
+            .install(&self.service_spec(&config))
+            .and_then(|()| manager.start())
+        {
+            // Still paused (and refusing clients), so the next sign-in
+            // check tries again instead of finding a sharing host that is
+            // not running.
+            self.set_policy_sharing(false)?;
+            return Err(e);
+        }
         config.paused_signed_out = false;
         write_json(&self.paths.config(), &config)?;
-        let manager = self.manager_for_config(&config);
-        manager.install(&self.service_spec(&config))?;
-        manager.start()?;
         let _ = crate::provided::audit(
             &self.paths.dir,
             "config",
@@ -1547,6 +2056,203 @@ impl Host {
             "relay sharing resumed: signed in",
         );
         self.status().await
+    }
+
+    /// [`Host::resume_signed_in`] that also follows a switch of account:
+    /// when `account` is not the machine's owner, this computer is
+    /// registered again for the signed-in account (behind `tokens`), so
+    /// signing in as someone else needs no manual remove and set up. The
+    /// relay still decides: it only accepts the registration of the account
+    /// that signed in. Direct mode is left alone.
+    pub async fn resume_or_switch_account(
+        &self,
+        account: &str,
+        tokens: &dyn AccountTokens,
+    ) -> Result<HostStatus> {
+        let config = self.require_config()?;
+        if config.mode == "relay"
+            && let Some(p) = self.policy()?
+            && !owned_by(&p, account)
+        {
+            return self.switch_account(tokens).await;
+        }
+        self.resume_signed_in(account).await
+    }
+
+    /// Registers this computer again for the account behind `tokens`, which
+    /// is not the one it was set up for. The old registration belongs to
+    /// the previous account (the relay refuses its id, and the machine's
+    /// mesh key was bound to it), so this computer registers under a machine
+    /// id of the new account and takes a new mesh key; its name, what it
+    /// shares and the Provide Spaces setting stay. The previous account's
+    /// allowlist is not carried over. While it still runs Spaces for the
+    /// previous account it stays paused instead (they are not handed to
+    /// another account). The registration it leaves is kept
+    /// (see [`Registrations`]) for when that account signs in again, so
+    /// switching back reuses it: no machines pile up on the relay, and what
+    /// is tied to the machine (its provided Spaces) stays with it.
+    async fn switch_account(&self, tokens: &dyn AccountTokens) -> Result<HostStatus> {
+        let mut config = self.require_config()?;
+        if config.relay_url.is_none() || self.policy()?.is_none() {
+            return Err(Error::InvalidArgument(
+                "this computer is not set up on a relay".into(),
+            ));
+        }
+        // Off the relay first, as when signing out: if the new registration
+        // fails, the previous account's access stays closed and the next
+        // reconcile tries again (paused, with another account signed in).
+        if !config.paused_signed_out {
+            self.pause_signed_out().await?;
+            config = self.require_config()?;
+        }
+        let (Some(url), Some(mut policy)) = (config.relay_url.clone(), self.policy()?) else {
+            return Err(Error::InvalidArgument(
+                "this computer is not set up on a relay".into(),
+            ));
+        };
+        // The Spaces it provides were made for the previous account's
+        // devices and are tied to its registration: they are not handed to
+        // another account. It stays paused until they are deleted (or that
+        // account signs in again).
+        let provided = crate::provided::load_provided(&self.paths.dir)?;
+        if !provided.is_empty() {
+            return Err(Error::InvalidArgument(format!(
+                "this computer still runs {} Space{} for the account that was signed in \
+                 before; delete {} (or sign in to that account again) to share this \
+                 computer with the account you are signed in to now",
+                provided.len(),
+                if provided.len() == 1 { "" } else { "s" },
+                if provided.len() == 1 { "it" } else { "them" },
+            )));
+        }
+        let relay = RelayClient::new(&url)?;
+        let token = tokens.access_token().await?;
+        let mut kept = self.registrations();
+        // The registration being left, kept for its account.
+        if !policy.owner.is_empty()
+            && let (Some(id), Ok(machine_token)) = (
+                config.machine_id.clone(),
+                read_secret(&self.paths.machine_token()),
+            )
+        {
+            kept.insert(
+                policy.owner.clone(),
+                StoredRegistration {
+                    machine_id: id,
+                    machine_token,
+                },
+            );
+        }
+        let request = |id: String| RegisterRequest {
+            id,
+            name: config.name.clone(),
+            allow: vec![],
+            host: None,
+            meta: host_meta(config.provide_spaces),
+        };
+        // This account's earlier registration of this computer, if any (the
+        // token says whose it is); else, or when the relay no longer takes
+        // it, a new machine id. Another account's id is never tried: if its
+        // record is gone from the relay it would register here and clash
+        // with the saved one.
+        let earlier: Vec<StoredRegistration> = crate::device::token_subject(&token)
+            .and_then(|sub| kept.get(&sub).cloned())
+            .into_iter()
+            .collect();
+        let mut reg = None;
+        for r in earlier {
+            match relay
+                .register_as_machine(&token, Some(&r.machine_token), &request(r.machine_id))
+                .await
+            {
+                Ok(r) => {
+                    reg = Some(r);
+                    break;
+                }
+                Err(
+                    Error::Unauthenticated(_)
+                    | Error::PermissionDenied(_)
+                    | Error::NotFound(_)
+                    | Error::Conflict(_),
+                ) => {}
+                Err(e) => return Err(e),
+            }
+        }
+        let reg = match reg {
+            Some(r) => r,
+            None => {
+                relay
+                    .register_as_machine(&token, None, &request(random_hex(16)))
+                    .await?
+            }
+        };
+        // The new registration is kept before anything else can fail, so a
+        // retry reuses it instead of making another machine.
+        kept.insert(
+            reg.machine.owner.id.clone(),
+            StoredRegistration {
+                machine_id: reg.machine.id.clone(),
+                machine_token: reg.machine_token.clone(),
+            },
+        );
+        self.save_registrations(&kept)?;
+        // The relay's sharing state follows this computer's own choice
+        // (a reused registration keeps whatever it had under its account;
+        // a new one starts as sharing). Before anything local changes, so a
+        // failure leaves this paused with the old owner and the next check
+        // tries it all again.
+        if config.sharing {
+            relay
+                .start_sharing(&reg.machine_token, &reg.machine.id)
+                .await?;
+        } else {
+            relay
+                .stop_sharing(&reg.machine_token, &reg.machine.id)
+                .await?;
+        }
+
+        write_secret(&self.paths.machine_id, &format!("{}\n", reg.machine.id))?;
+        write_secret(&self.paths.machine_token(), &reg.machine_token)?;
+        if reg.jwks.is_null() {
+            let _ = std::fs::remove_file(self.paths.relay_jwks());
+        } else {
+            write_json(&self.paths.relay_jwks(), &reg.jwks)?;
+        }
+        // The old machine's mesh key is bound to its machine id: a new
+        // machine takes a new one, which the service makes on its start.
+        let _ = std::fs::remove_file(self.paths.driver_data.join("mesh").join("identity.json"));
+        policy.owner = reg.machine.owner.id.clone();
+        policy.owner_email = reg.machine.owner.email.clone();
+        policy.allow = vec![];
+        policy.viewers = vec![];
+        // Still paused (not sharing) until the service is up.
+        policy.sharing = false;
+        write_json(&self.paths.policy(), &policy)?;
+        config.machine_id = Some(reg.machine.id.clone());
+        write_json(&self.paths.config(), &config)?;
+        // Committed: the active registration is not kept; the others are
+        // (until here it stays kept, so a crash or a failed write retries
+        // with it instead of making another machine).
+        kept.remove(&reg.machine.owner.id);
+        self.save_registrations(&kept)?;
+        // Registered for the new account and paused: resuming installs and
+        // starts the service with the new registration (and keeps a stopped
+        // host stopped on the relay), and is what a retry does if that fails.
+        self.resume_signed_in(&reg.machine.owner.id).await
+    }
+
+    /// The registrations of this computer under accounts that are not the
+    /// signed-in one (`<home>/host/registrations.json`, 0600).
+    fn registrations(&self) -> Registrations {
+        read_secret(&self.paths.dir.join(REGISTRATIONS_FILE))
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .unwrap_or_default()
+    }
+
+    fn save_registrations(&self, kept: &Registrations) -> Result<()> {
+        let text = serde_json::to_string(kept).map_err(|e| Error::Internal(e.to_string()))?;
+        write_secret(&self.paths.dir.join(REGISTRATIONS_FILE), &text)
     }
 
     /// Renames the machine and/or replaces its allowlist (relay mode; the
@@ -1632,6 +2338,261 @@ impl Host {
         crate::provided::load_provided(&self.paths.dir)
     }
 
+    // ------------------------------------------------- the app's helper
+
+    /// Moves the host service from the old hand-written LaunchAgent to the
+    /// Cua Spaces app (its login item, under the app's own name), keeping the machine
+    /// (config, machine id and token, policy, provided Spaces); see
+    /// [`helper_migration`]. `app_version` is the app's (a failed move is
+    /// not tried again by itself with the same version); `force` tries
+    /// again anyway. Never fails for a move that did not work: the old
+    /// agent is put back and the outcome says so (`rolled-back`).
+    pub async fn migrate_service(
+        &self,
+        force: bool,
+        app_version: &str,
+    ) -> Result<ServiceMigration> {
+        let config = self.config()?;
+        let app = self.helper_app();
+        let legacy = self.legacy();
+        let facts = MigrationFacts {
+            helper_available: app.is_some(),
+            configured: config.is_some(),
+            runner: config
+                .as_ref()
+                .and_then(|c| RunnerKind::parse(&c.runner).ok()),
+            paused: config.as_ref().is_some_and(|c| c.paused_signed_out),
+            legacy: legacy.found(),
+            legacy_binary: self.paths.driver_bin().is_file(),
+            last: read_json(&self.paths.dir.join(helper_migration::RECORD_FILE))
+                .ok()
+                .flatten(),
+            app_version: app_version.to_string(),
+            force,
+        };
+        let plan = helper_migration::plan(&facts);
+        let (Some(app), Some(mut config)) = (app, config) else {
+            if let MigrationPlan::Nothing(why) = plan {
+                return Ok(ServiceMigration::new("not-needed", why, false));
+            }
+            return Ok(ServiceMigration::new(
+                "not-needed",
+                "nothing to move",
+                false,
+            ));
+        };
+        let launcher = service::app_helper_launcher(&app);
+        match plan {
+            MigrationPlan::Nothing(why) => Ok(ServiceMigration::new("not-needed", why, false)),
+            MigrationPlan::KeepAfterFailure => Ok(ServiceMigration::new(
+                "kept",
+                format!(
+                    "moving into the Cua Spaces app failed before with this version; the old host \
+                     service keeps running (`{} host migrate --force` tries again)",
+                    crate::cli()
+                ),
+                false,
+            )),
+            MigrationPlan::RemoveLeftovers => {
+                self.retire_legacy()?;
+                Ok(ServiceMigration::new(
+                    "cleaned-up",
+                    "removed what was left of the old host service",
+                    false,
+                ))
+            }
+            MigrationPlan::SwitchPaused => {
+                config.runner = RunnerKind::AppHelper.as_str().into();
+                config.driver_bin = launcher;
+                write_json(&self.paths.config(), &config)?;
+                self.retire_legacy()?;
+                self.record_migration("done", app_version, None);
+                Ok(ServiceMigration::new(
+                    "switched",
+                    "the host service will run inside the Cua Spaces app when sharing resumes",
+                    config.share_desktop,
+                ))
+            }
+            MigrationPlan::Move => self.move_to_helper(config, &app, legacy, app_version).await,
+        }
+    }
+
+    async fn move_to_helper(
+        &self,
+        config: HostConfig,
+        app: &Path,
+        legacy: Arc<dyn LegacyService>,
+        app_version: &str,
+    ) -> Result<ServiceMigration> {
+        let helper = self.helper_manager(app);
+        let mut next = config.clone();
+        next.runner = RunnerKind::AppHelper.as_str().into();
+        next.driver_bin = service::app_helper_launcher(app);
+        // Direct mode with sharing stopped keeps the service stopped.
+        let run = config.mode == "relay" || config.sharing;
+        let before = self.relay_session(&config).await;
+        let found = legacy.found();
+        self.record_migration("in-progress", app_version, None);
+
+        // 1. The old agent out (its plist kept aside, so a restart in the
+        //    middle never runs two services).
+        if let Err(e) = legacy.bootout() {
+            let why = format!("the old host service did not stop: {e}");
+            self.record_migration("rolled-back", app_version, Some(&why));
+            return Ok(ServiceMigration::new("rolled-back", why, false));
+        }
+        let plist = legacy.plist();
+        let backup = self.paths.dir.join(helper_migration::LEGACY_PLIST_BACKUP);
+        let moved = plist.is_file() && move_file(&plist, &backup).is_ok();
+
+        // 2. The helper in, and proved.
+        let mut result = helper.install(&self.service_spec(&next));
+        if result.is_ok() {
+            result = if run { helper.start() } else { helper.stop() };
+        }
+        if result.is_ok() && run {
+            result = self.verify_helper(helper.as_ref(), &next, before).await;
+        }
+
+        match result {
+            Ok(()) => {
+                write_json(&self.paths.config(), &next)?;
+                let _ = std::fs::remove_file(&backup);
+                self.remove_legacy_binary();
+                self.record_migration("done", app_version, None);
+                let _ = crate::provided::audit(
+                    &self.paths.dir,
+                    "config",
+                    "local",
+                    &next.name,
+                    "host service moved into the Cua Spaces app",
+                );
+                let needs = next.share_desktop && !self.missing_permissions(&next).is_empty();
+                Ok(ServiceMigration::new(
+                    "migrated",
+                    "the host service now runs inside the Cua Spaces app; this machine kept its id, \
+                     its registration and its Spaces",
+                    needs,
+                ))
+            }
+            Err(e) => {
+                let _ = helper.uninstall();
+                if moved {
+                    let _ = move_file(&backup, &plist);
+                }
+                let mut why = format!("the Cua Spaces app's host service did not take over: {e}");
+                if found.loaded
+                    && let Err(e) = legacy.bootstrap()
+                {
+                    why.push_str(&format!(
+                        "; restarting the old host service failed too: {e}"
+                    ));
+                }
+                self.record_migration("rolled-back", app_version, Some(&why));
+                Ok(ServiceMigration::new(
+                    "rolled-back",
+                    format!("{why}. The old host service runs as before."),
+                    false,
+                ))
+            }
+        }
+    }
+
+    /// The relay's view of this machine's session: `(online, connected_at)`
+    /// (relay mode; `None` when it could not be read). Read fresh, never
+    /// the remembered answer [`Host::status`] shows during a hiccup.
+    async fn relay_session(&self, config: &HostConfig) -> Option<(bool, Option<u64>)> {
+        let (Some(url), Some(id)) = (&config.relay_url, &config.machine_id) else {
+            return None;
+        };
+        if config.mode != "relay" || config.paused_signed_out {
+            return None;
+        }
+        self.relay_machine(url, id)
+            .await
+            .ok()
+            .map(|m| (m.online, m.connected_at))
+    }
+
+    /// The helper keeps running, and, when the old service was online at
+    /// the relay, a new session of this machine is online there.
+    async fn verify_helper(
+        &self,
+        helper: &dyn ServiceManager,
+        config: &HostConfig,
+        before: Option<(bool, Option<u64>)>,
+    ) -> Result<()> {
+        let t = self.verify;
+        let start = std::time::Instant::now();
+        let mut stable_since: Option<std::time::Instant> = None;
+        let was_online = matches!(before, Some((true, _)));
+        let mut last = "it did not start".to_string();
+        loop {
+            if helper.state().running {
+                let since = *stable_since.get_or_insert_with(std::time::Instant::now);
+                if since.elapsed() >= t.stable {
+                    match self.relay_session(config).await {
+                        Some((true, at))
+                            if !was_online || at.is_none() || at != before.and_then(|b| b.1) =>
+                        {
+                            return Ok(());
+                        }
+                        _ if !was_online && start.elapsed() >= t.offline_grace => return Ok(()),
+                        Some(_) => last = "it is not online at the relay yet".into(),
+                        None if was_online => last = "the relay did not answer".into(),
+                        None => {}
+                    }
+                }
+            } else {
+                if stable_since.is_some() {
+                    last = "it stopped after starting".into();
+                }
+                stable_since = None;
+            }
+            if start.elapsed() >= t.timeout {
+                return Err(Error::Service(format!(
+                    "{last} (checked for {} s)",
+                    t.timeout.as_secs()
+                )));
+            }
+            tokio::time::sleep(t.poll).await;
+        }
+    }
+
+    /// Stops and removes the old LaunchAgent and its binary (the helper
+    /// replaced them).
+    fn retire_legacy(&self) -> Result<()> {
+        let legacy = self.legacy();
+        legacy.bootout()?;
+        let plist = legacy.plist();
+        if plist.is_file() {
+            std::fs::remove_file(&plist)?;
+        }
+        self.remove_legacy_binary();
+        Ok(())
+    }
+
+    fn remove_legacy_binary(&self) {
+        let bin = self.paths.driver_bin();
+        let _ = std::fs::remove_file(&bin);
+        if let Some(dir) = bin.parent() {
+            // Only when empty.
+            let _ = std::fs::remove_dir(dir);
+        }
+    }
+
+    fn record_migration(&self, state: &str, app_version: &str, reason: Option<&str>) {
+        let _ = write_json(
+            &self.paths.dir.join(helper_migration::RECORD_FILE),
+            &MigrationRecord {
+                state: state.into(),
+                app_version: app_version.into(),
+                at_ms: now_ms(),
+                reason: reason.map(Into::into),
+            },
+        );
+    }
+
     async fn remove_inner(&self, uninstalling: bool) -> Result<()> {
         let Some(config) = self.config()? else {
             return Ok(());
@@ -1640,7 +2601,7 @@ impl Host {
         let provided = crate::provided::load_provided(&self.paths.dir)?;
         if !provided.is_empty() && !uninstalling {
             return Err(Error::InvalidArgument(format!(
-                "this computer still provides {} Space{} ({}); delete {} first (`cua spaces delete <local:name>`)",
+                "this computer still provides {} Space{} ({}); delete {} first (`{} spaces delete <local:name>`)",
                 provided.len(),
                 if provided.len() == 1 { "" } else { "s" },
                 provided
@@ -1649,6 +2610,7 @@ impl Host {
                     .collect::<Vec<_>>()
                     .join(", "),
                 if provided.len() == 1 { "it" } else { "them" },
+                crate::cli(),
             )));
         }
         let mut relay_error = None;
@@ -1679,13 +2641,43 @@ impl Host {
         {
             note(e);
         }
+        // Its registrations under other accounts go too: nothing of this
+        // computer stays listed anywhere.
+        if let Some(url) = &config.relay_url {
+            for r in self.registrations().values() {
+                if let Err(e) = RelayClient::new(url)?
+                    .delete(&r.machine_token, &r.machine_id)
+                    .await
+                {
+                    note(e);
+                }
+            }
+        }
         self.manager_for_config(&config).uninstall()?;
+        if config.runner == RunnerKind::AppHelper.as_str() {
+            // Whatever an interrupted move left of the old agent.
+            let _ = self.retire_legacy();
+        }
         remove_dir_retrying(&self.paths.dir).await?;
         match relay_error {
             Some(e) => Err(Error::Relay(format!(
                 "removed locally, but the relay could not be told: {e}"
             ))),
             None => Ok(()),
+        }
+    }
+}
+
+/// Renames `from` to `to`, copying across volumes.
+fn move_file(from: &Path, to: &Path) -> std::io::Result<()> {
+    if let Some(dir) = to.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    match std::fs::rename(from, to) {
+        Ok(()) => Ok(()),
+        Err(_) => {
+            std::fs::copy(from, to)?;
+            std::fs::remove_file(from)
         }
     }
 }
@@ -1739,6 +2731,77 @@ pub fn owned_by(policy: &HostPolicy, account: &str) -> bool {
             .is_some_and(|e| e.eq_ignore_ascii_case(account))
 }
 
+/// Shared libraries `bin` needs and the system lacks (Linux, via `ldd`);
+/// empty where that cannot be checked.
+fn missing_libraries(bin: &Path) -> Vec<String> {
+    if !cfg!(target_os = "linux") {
+        return vec![];
+    }
+    match std::process::Command::new("ldd").arg(bin).output() {
+        Ok(o) => parse_missing_libraries(&String::from_utf8_lossy(&o.stdout)),
+        Err(_) => vec![],
+    }
+}
+
+/// The `name => not found` lines of `ldd` output.
+fn parse_missing_libraries(ldd: &str) -> Vec<String> {
+    ldd.lines()
+        .filter(|l| l.contains("not found"))
+        .filter_map(|l| l.split("=>").next())
+        .map(|n| n.trim().to_string())
+        .filter(|n| !n.is_empty())
+        .collect()
+}
+
+fn missing_libraries_message(missing: &[String]) -> String {
+    let hint = if missing
+        .iter()
+        .any(|m| m.starts_with("libX") || m.starts_with("libxcb"))
+    {
+        " On Debian or Ubuntu: sudo apt install libxi6 libxtst6 libx11-6 libxcb1 (the host service links the X libraries even without a desktop)."
+    } else {
+        ""
+    };
+    format!(
+        "cua-spacesd cannot start: this machine lacks {}.{hint} Install them and run `{} host setup` again.",
+        missing.join(", "),
+        crate::cli()
+    )
+}
+
+/// After starting the service: it must still be running a few seconds
+/// later (a service that exits at once is restarted by its runner and looks
+/// "activating"), or setup fails with the reason instead of reporting
+/// success.
+async fn confirm_running(manager: &dyn crate::service::ServiceManager, log: &Path) -> Result<()> {
+    if manager.state().kind == "fake" {
+        return Ok(());
+    }
+    let settle = std::env::var("CUA_HOST_START_SETTLE_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(4000);
+    let step = std::time::Duration::from_millis((settle / 3).max(1));
+    for _ in 0..3 {
+        tokio::time::sleep(step).await;
+        let st = manager.state();
+        if !st.running {
+            let tail = std::fs::read_to_string(log)
+                .map(|t| {
+                    let lines: Vec<&str> = t.lines().rev().take(3).collect();
+                    lines.into_iter().rev().collect::<Vec<_>>().join(" | ")
+                })
+                .unwrap_or_default();
+            return Err(Error::Service(format!(
+                "the host service did not stay running ({}); last log lines: {}",
+                st.detail.trim(),
+                if tail.is_empty() { "none" } else { &tail }
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Locates (or downloads) cua-spacesd and installs it at `dest`.
 async fn install_driver(explicit: Option<&Path>, dest: &Path) -> Result<()> {
     let source = driver::locate(explicit)?;
@@ -1772,7 +2835,28 @@ async fn remove_dir_retrying(dir: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn missing_libraries_are_read_from_ldd() {
+        let out = "\tlinux-vdso.so.1 (0x00007ffd)\n\tlibXi.so.6 => not found\n\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x1)\n\tlibXtst.so.6 => not found\n";
+        assert_eq!(
+            super::parse_missing_libraries(out),
+            vec!["libXi.so.6", "libXtst.so.6"]
+        );
+        let m = super::missing_libraries_message(&["libXi.so.6".into()]);
+        assert!(m.contains("libXi.so.6") && m.contains("apt install"));
+        assert!(super::parse_missing_libraries("\tlibc.so.6 => /lib/libc.so.6\n").is_empty());
+    }
+
+    #[test]
     fn a_host_registers_its_os_and_arch() {
+        // A pool host's cloud, as its cloud-init names it; anything else is
+        // left out.
+        assert_eq!(
+            super::cloud_word(Some(" Hetzner ".into())).as_deref(),
+            Some("hetzner")
+        );
+        assert_eq!(super::cloud_word(Some("aws; rm".into())), None);
+        assert_eq!(super::cloud_word(Some(String::new())), None);
+        assert_eq!(super::cloud_word(None), None);
         let meta = super::host_meta(true);
         assert_eq!(meta[super::META_PROVIDES_SPACES], "on");
         #[cfg(target_os = "macos")]
@@ -1829,6 +2913,38 @@ mod tests {
                 .contains("Privacy & Security → Local Network")
         );
         assert!(h.instructions.contains("`cua daemon stop`"));
+    }
+
+    #[test]
+    fn permission_hints_name_the_app_helper() {
+        let helper = Path::new("/Applications/Cua Spaces.app/Contents/MacOS/CuaSpacesMac");
+        for h in permission_hints("macos", helper) {
+            assert!(
+                h.instructions.contains("turn on Cua Spaces,"),
+                "{}",
+                h.instructions
+            );
+            assert!(
+                !h.instructions.contains("cua-spacesd"),
+                "{}",
+                h.instructions
+            );
+        }
+        let ln = local_network_hint("macos", true, helper).unwrap();
+        assert!(
+            ln.instructions.contains("Allow Cua Spaces to find devices"),
+            "{}",
+            ln.instructions
+        );
+        let old = Path::new("/Users/ada/.cua/host/bin/cua-spacesd");
+        for h in permission_hints("macos", old) {
+            assert!(
+                h.instructions
+                    .contains("cua-spacesd (/Users/ada/.cua/host/bin/cua-spacesd)"),
+                "{}",
+                h.instructions
+            );
+        }
     }
 
     #[test]

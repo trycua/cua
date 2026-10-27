@@ -21,13 +21,21 @@ import subprocess
 import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
+
+from desktop_runtime import stop_group, tool
 
 
 class McpStdioClient:
     """Minimal MCP client over a child process' stdio (newline-delimited JSON-RPC)."""
 
-    def __init__(self, argv: list[str], env: dict[str, str]) -> None:
+    def __init__(
+        self,
+        argv: list[str],
+        env: dict[str, str],
+        elicitation: Callable[[str], dict[str, Any]] | None = None,
+    ) -> None:
+        self.elicitation = elicitation
         self.proc = subprocess.Popen(
             argv,
             env=env,
@@ -43,16 +51,22 @@ class McpStdioClient:
         self._cond = threading.Condition()
         self._reader = threading.Thread(target=self._pump, daemon=True)
         self._reader.start()
-        self.request(
-            "initialize",
-            {
-                "protocolVersion": "2025-06-18",
-                "capabilities": {},
-                "clientInfo": {"name": "cdb-bench-recorder", "version": "1"},
-            },
-            timeout=30,
-        )
-        self._send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        try:
+            reply = self.request(
+                "initialize",
+                {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {"elicitation": {}} if elicitation else {},
+                    "clientInfo": {"name": "cdb-bench-recorder", "version": "1"},
+                },
+                timeout=30,
+            )
+            if reply.get("error"):
+                raise RuntimeError(str(reply["error"])[:300])
+            self._send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        except Exception:
+            self.close()
+            raise
 
     def _pump(self) -> None:
         assert self.proc.stdout is not None
@@ -61,7 +75,10 @@ class McpStdioClient:
                 obj = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if "id" in obj and ("result" in obj or "error" in obj):
+            if "id" in obj and obj.get("method") == "elicitation/create" and self.elicitation:
+                answer = self.elicitation((obj.get("params") or {}).get("message", ""))
+                self._send({"jsonrpc": "2.0", "id": obj["id"], "result": answer})
+            elif "id" in obj and ("result" in obj or "error" in obj):
                 with self._cond:
                     self._responses[int(obj["id"])] = obj
                     self._cond.notify_all()
@@ -110,7 +127,8 @@ class McpStdioClient:
         try:
             self.proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            self.proc.kill()
+            stop_group(self.proc.pid)
+            self.proc.wait(timeout=5)
 
 
 class NullRecorder:
@@ -135,6 +153,7 @@ class CuaRecorder:
         self.binary, self.socket, self.env = binary, socket, env
         self.client: McpStdioClient | None = None
         self.active_dir: Path | None = None
+        self.last_video: Path | None = None
         self.last_error: str | None = None
 
     def _connect(self) -> McpStdioClient:
@@ -151,7 +170,8 @@ class CuaRecorder:
             state = client.call_tool(
                 "start_recording", {"output_dir": str(out_dir), "record_video": True}, timeout=30
             )
-            self.active_dir = out_dir
+            self.active_dir = out_dir if state.get("video_active") else None
+            self.last_video = None
             self.last_error = state.get("last_error")
             return bool(state.get("video_active"))
         except (OSError, TimeoutError, RuntimeError) as error:
@@ -160,32 +180,75 @@ class CuaRecorder:
             return False
 
     def stop(self) -> Path | None:
+        if self.active_dir is None:
+            return self.last_video
         try:
             client = self._connect()
             state = client.call_tool("stop_recording", {}, timeout=60)
+            self.active_dir = None
             path = state.get("last_video_path")
             if not path:
                 state = client.call_tool("get_recording_state", {}, timeout=15)
                 path = state.get("last_video_path")
             self.last_error = state.get("last_error") or self.last_error
             if path and Path(path).is_file():
-                return Path(path)
+                self.last_video = Path(path)
+                return self.last_video
         except (OSError, TimeoutError, RuntimeError) as error:
             self.last_error = f"{type(error).__name__}: {error}"
             self.client = None
         return None
 
     def close(self) -> None:
+        if self.active_dir is not None:
+            self.stop()
         if self.client is not None:
             self.client.close()
             self.client = None
+
+
+def capture_detail(path: Path, ffmpeg: str | None = None) -> str:
+    ffmpeg = ffmpeg or tool("ffmpeg")
+    done = subprocess.run(
+        [
+            ffmpeg,
+            "-nostdin",
+            "-v",
+            "error",
+            "-i",
+            str(path),
+            "-frames:v",
+            "1",
+            "-f",
+            "image2pipe",
+            "-vcodec",
+            "ppm",
+            "-pix_fmt",
+            "rgb24",
+            "pipe:1",
+        ],
+        capture_output=True,
+        timeout=30,
+    )
+    if done.returncode or not done.stdout:
+        raise RuntimeError("capture decode failed or empty image")
+    try:
+        magic, dimensions, maximum, pixels = done.stdout.split(b"\n", 3)
+        w, h = map(int, dimensions.split())
+        if magic != b"P6" or maximum != b"255" or len(pixels) != w * h * 3 or not pixels:
+            raise ValueError("invalid RGB frame")
+    except ValueError as error:
+        raise RuntimeError("capture decode failed") from error
+    if pixels == pixels[:3] * (w * h):
+        raise RuntimeError("blank image (uniform RGB frame)")
+    return f"{w}x{h} bytes={path.stat().st_size} path={path}"
 
 
 def ffprobe_duration(path: Path) -> float | None:
     try:
         done = subprocess.run(
             [
-                "/opt/homebrew/bin/ffprobe",
+                tool("ffprobe"),
                 "-v",
                 "error",
                 "-show_entries",
@@ -203,11 +266,10 @@ def ffprobe_duration(path: Path) -> float | None:
         return None
 
 
-def compress_video(
-    raw: Path, dest_dir: Path, ffmpeg: str = "/opt/homebrew/bin/ffmpeg"
-) -> dict[str, Any]:
+def compress_video(raw: Path, dest_dir: Path, ffmpeg: str | None = None) -> dict[str, Any]:
     """H.264 (libx264, crf 28, yuv420p, faststart) full-size copy plus a 720p copy; delete the raw
     file only when both copies exist and decode to a plausible duration."""
+    ffmpeg = ffmpeg or tool("ffmpeg")
     dest_dir.mkdir(parents=True, exist_ok=True)
     full = dest_dir / "video.mp4"
     small = dest_dir / "video-720p.mp4"

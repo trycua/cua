@@ -5,7 +5,9 @@
 //! the `cua.env.v1` contract over native gRPC and gRPC-Web plus the HTTP side
 //! channels; `join` additionally exposes it through a `cua-relay`.
 
+#[cfg(not(cua_headless))]
 mod doctor;
+#[cfg(not(cua_headless))]
 mod legacy;
 #[cfg(target_os = "linux")]
 mod volume_mount;
@@ -34,6 +36,9 @@ struct Cli {
     serve: ServeArgs,
 }
 
+// Parsed once at startup: the size of the largest variant does not matter
+// (on Windows `JoinArgs` is far larger than the rest).
+#[allow(clippy::large_enum_variant)]
 #[derive(Subcommand, Debug)]
 enum Command {
     /// Serve on the local port (the default).
@@ -49,13 +54,38 @@ enum Command {
     #[cfg(target_os = "linux")]
     #[command(hide = true)]
     VolumeMount(volume_mount::VolumeMountArgs),
+    /// Bind a folder of the mounted Cua Volume at another path, or undo one
+    /// (Linux; run as root by the driver, through `sudo -n` if need be).
+    #[cfg(target_os = "linux")]
+    #[command(hide = true)]
+    VolumeBind(volume_mount::VolumeBindArgs),
     /// The root service that mounts Cua Volume for the driver (Linux; run
     /// by the image's init as root).
     #[cfg(target_os = "linux")]
     #[command(hide = true)]
     VolumeHelper(volume_mount::VolumeHelperArgs),
+    /// Apply `Init{new_machine}` to the guest as root (entropy credit and
+    /// CRNG reseed, clock, /etc/machine-id): reads the request as JSON on
+    /// stdin, prints the report (Linux; run by the driver through
+    /// `sudo -n`).
+    #[cfg(target_os = "linux")]
+    #[command(hide = true)]
+    NewMachine,
+    /// PID 1 of an OCI image that has no cua-spacesd (Cua injects this
+    /// binary into it): runs the image's command as a supervised child
+    /// with the image's user and working directory, serves cua-spacesd
+    /// beside it, reaps zombies and forwards signals. Unix only.
+    #[cfg(unix)]
+    Supervise(SuperviseArgs),
+    /// The file helper behind `FilesystemService` `run_as`: drops to
+    /// `--user`, then serves the file service on the socket it was started
+    /// with (stdin). Started by the driver as root or through `sudo -n`.
+    #[cfg(unix)]
+    #[command(hide = true)]
+    FsAs(FsAsArgs),
     /// Check this guest against its image's claims and print one report
     /// (exit 0 pass, 1 fail, 2 the doctor itself failed).
+    #[cfg(not(cua_headless))]
     Doctor(doctor::DoctorArgs),
     /// Print what this binary was built with (version, protocol revision,
     /// linked cua-driver, tool schema hash, compiled encoders) as JSON. Image
@@ -71,6 +101,7 @@ enum Command {
     #[command(hide = true)]
     CheckPermissions,
     /// Pre-consolidation daemon modes (Unix socket, QUIC, remote shares).
+    #[cfg(not(cua_headless))]
     #[command(disable_help_flag = true)]
     Legacy {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -158,6 +189,13 @@ struct ServeArgs {
     /// address (0 = no QUIC; media stays on the /media WebSocket).
     #[arg(long, env = "CUA_ENV_QUIC_PORT", default_value_t = cua_proto::SPACESD_DEFAULT_QUIC_PORT)]
     quic_port: u16,
+    /// Mesh UDP port that reaches the QUIC media listener over the mesh
+    /// (`join`, when the relay coordinates a mesh). Peers dial the same
+    /// number, so leave it at the default unless every peer is told too.
+    /// A port of the mesh's own network, not of the operating system, so
+    /// two hosts on one machine do not compete for it.
+    #[arg(long, env = "CUA_ENV_MESH_UDP_PORT", default_value_t = config::DEFAULT_MESH_UDP_PORT)]
+    mesh_udp_port: u16,
     /// Default per-process scrollback in bytes.
     #[arg(long, env = "CUA_ENV_SCROLLBACK_BYTES", default_value_t = config::DEFAULT_SCROLLBACK_BYTES)]
     scrollback_bytes: u64,
@@ -168,9 +206,93 @@ struct ServeArgs {
     /// policy allows any address.
     #[arg(long, env = "CUA_ENV_DIRECT_HOST_POLICY")]
     direct_host_policy: Option<PathBuf>,
+    /// Identify callers on your tailnet (Tailscale or Headscale) by their
+    /// tailnet login, per this host policy's owner and share lists (`cua
+    /// host setup --tailnet` writes it). Others still use the env token.
+    #[arg(long, env = "CUA_TAILNET_IDENTITY_POLICY")]
+    tailnet_identity_policy: Option<PathBuf>,
     /// Print the effective configuration as JSON (never the token) and exit.
     #[arg(long)]
     print_config: bool,
+}
+
+/// What `supervise` does when the image's command exits by itself.
+#[cfg(unix)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+enum SuperviseExit {
+    /// The Space ends with the command's exit status.
+    Exit,
+    /// The Space keeps serving (an image's default `CMD` such as `/bin/sh`
+    /// exits at once without a terminal).
+    Serve,
+}
+
+#[cfg(unix)]
+#[derive(Args, Debug, Clone)]
+struct SuperviseArgs {
+    /// The image's `User` (`name`, `uid`, `name:group`, `uid:gid`), looked up
+    /// in the image's /etc/passwd and /etc/group. Default: the current user.
+    #[arg(long)]
+    user: Option<String>,
+    /// The image's working directory.
+    #[arg(long)]
+    workdir: Option<PathBuf>,
+    /// What an exit of the command by itself means.
+    #[arg(long, value_enum, default_value_t = SuperviseExit::Exit)]
+    on_exit: SuperviseExit,
+    /// Variables the command must not see (the Space's token).
+    #[arg(
+        long,
+        value_delimiter = ',',
+        default_value = "CUA_ENV_TOKEN,CUA_SPACESD_TOKEN,CUA_GUESTD_TOKEN"
+    )]
+    hide_env: Vec<String>,
+    /// The image's ENTRYPOINT and CMD. Empty serves cua-spacesd alone.
+    #[arg(last = true)]
+    command: Vec<String>,
+}
+
+#[cfg(unix)]
+fn supervise(args: SuperviseArgs) -> i32 {
+    use cua_spacesd_supervise as sup;
+    let program = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("cua-spacesd supervise: cannot find itself: {e}");
+            return 1;
+        }
+    };
+    sup::run(sup::Config {
+        workload: (!args.command.is_empty()).then_some(sup::Workload {
+            argv: args.command,
+            user: args.user,
+            workdir: args.workdir,
+            env_remove: args.hide_env,
+        }),
+        server: Some(sup::Server {
+            program,
+            args: vec!["serve".into()],
+            // A guest image without a desktop: core services only.
+            env_defaults: vec![
+                ("CUA_ENV_NO_DESKTOP".into(), "true".into()),
+                ("CUA_ENV_NO_DRIVER".into(), "true".into()),
+                ("CUA_ENV_QUIC_PORT".into(), "0".into()),
+            ],
+        }),
+        on_exit: match args.on_exit {
+            SuperviseExit::Exit => sup::OnExit::Exit,
+            SuperviseExit::Serve => sup::OnExit::Serve,
+        },
+        stop_grace: Duration::from_secs(5),
+    })
+}
+
+#[cfg(unix)]
+#[derive(Args, Debug, Clone)]
+struct FsAsArgs {
+    /// The guest user to act as.
+    #[arg(long)]
+    user: String,
 }
 
 #[cfg(unix)]
@@ -273,13 +395,38 @@ fn promote_spacesd_env_vars() {
 }
 
 fn main() {
+    // Before any thread or child: only this process keeps the capabilities
+    // it was started with (see `cua_spacesd_server::privilege`).
+    #[cfg(unix)]
+    cua_spacesd_server::privilege::confine();
     cua_driver_core::build_info::init(GIT_SHA);
     promote_spacesd_env_vars();
     let cli = Cli::parse();
     let command = cli.command.unwrap_or(Command::Serve(cli.serve));
+    #[cfg(not(cua_headless))]
     if let Command::Legacy { args } = command {
         legacy::main(args);
         return;
+    }
+    #[cfg(target_os = "linux")]
+    if let Command::NewMachine = command {
+        if let Err(error) = cua_spacesd_server::identity::run_helper_main() {
+            eprintln!("cua-spacesd new-machine: {error}");
+            std::process::exit(1);
+        }
+        return;
+    }
+    #[cfg(unix)]
+    if let Command::FsAs(args) = &command {
+        if let Err(error) = cua_spacesd_server::filesystem::runas::run_helper_main(&args.user) {
+            eprintln!("cua-spacesd fs-as: {error}");
+            std::process::exit(1);
+        }
+        return;
+    }
+    #[cfg(unix)]
+    if let Command::Supervise(args) = command {
+        std::process::exit(supervise(args));
     }
     if let Command::BuildInfo = command {
         println!(
@@ -335,6 +482,7 @@ fn run(command: Command) -> Result<Exit, BoxError> {
                 let serve_args = join.serve.clone();
                 serve(serve_args, Some(join)).await
             }
+            #[cfg(not(cua_headless))]
             Command::Doctor(args) => {
                 let code = doctor::run(args).await;
                 std::process::exit(code);
@@ -345,13 +493,26 @@ fn run(command: Command) -> Result<Exit, BoxError> {
                 std::process::exit(code);
             }
             #[cfg(target_os = "linux")]
+            Command::VolumeBind(args) => {
+                let code = volume_mount::run_bind(args);
+                std::process::exit(code);
+            }
+            #[cfg(target_os = "linux")]
             Command::VolumeHelper(args) => {
                 let code = volume_mount::run_helper(args).await;
                 std::process::exit(code);
             }
             #[cfg(target_os = "macos")]
             Command::CheckPermissions => unreachable!(),
-            Command::Legacy { .. } | Command::BuildInfo => unreachable!(),
+            #[cfg(target_os = "linux")]
+            Command::NewMachine => unreachable!(),
+            #[cfg(unix)]
+            Command::Supervise(_) => unreachable!(),
+            #[cfg(unix)]
+            Command::FsAs(_) => unreachable!(),
+            #[cfg(not(cua_headless))]
+            Command::Legacy { .. } => unreachable!(),
+            Command::BuildInfo => unreachable!(),
         }
     })
 }
@@ -375,12 +536,34 @@ enum Exit {
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
+/// The log filter spec for `CUA_ENV_LOG` (`None`: not set): the spec, or
+/// `info`, without the WireGuard library's own timer messages (`boringtun`)
+/// unless the spec names it. It logs a warning every few seconds while a mesh
+/// peer that went away is retried and an error when it gives up: normal churn
+/// that would otherwise fill a host's log (every short-lived `cua` client
+/// leaves one), including for hosts whose service was installed with
+/// `CUA_ENV_LOG=info`. `CUA_ENV_LOG=info,boringtun=debug` brings them back.
+fn log_filter_spec(env: Option<&str>) -> String {
+    let base = env
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("info");
+    if base.contains("boringtun") {
+        base.to_owned()
+    } else {
+        format!("{base},boringtun=off")
+    }
+}
+
+fn log_filter() -> tracing_subscriber::EnvFilter {
+    let spec = log_filter_spec(std::env::var("CUA_ENV_LOG").ok().as_deref());
+    tracing_subscriber::EnvFilter::try_new(&spec)
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(log_filter_spec(None)))
+}
+
 fn init_tracing() {
     let _ = tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_env("CUA_ENV_LOG")
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
+        .with_env_filter(log_filter())
         .with_writer(std::io::stderr)
         .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
         .try_init();
@@ -434,14 +617,29 @@ fn build_config(
         allow_guest_power: args.allow_guest_power,
         runtime_override: args.runtime.clone(),
         media_quic_port: args.quic_port,
+        mesh_udp_port: args.mesh_udp_port,
         downloads_dir: args.downloads_dir.clone(),
         force_poll_watcher: args.poll_watcher,
         cursor_probe: args.cursor_probe,
         access_log: !args.no_access_log,
+        machine_id_files: machine_id_files(),
         ..ServerConfig::default()
     };
     config::check_bind_policy(config.listen, has_token, config.insecure_bootstrap)?;
     Ok((config, resolved.map(|r| r.token)))
+}
+
+/// The machine-id files `Init{new_machine}` rewrites: systemd's and dbus's
+/// on Linux, none elsewhere.
+fn machine_id_files() -> Vec<PathBuf> {
+    if cfg!(target_os = "linux") {
+        cua_spacesd_server::identity::MACHINE_ID_PATHS
+            .iter()
+            .map(PathBuf::from)
+            .collect()
+    } else {
+        Vec::new()
+    }
 }
 
 /// `--await-token-file`: no token at start-up (the server reads and watches
@@ -480,10 +678,12 @@ fn build_await_config(
         allow_guest_power: args.allow_guest_power,
         runtime_override: args.runtime.clone(),
         media_quic_port: args.quic_port,
+        mesh_udp_port: args.mesh_udp_port,
         downloads_dir: args.downloads_dir.clone(),
         force_poll_watcher: args.poll_watcher,
         cursor_probe: args.cursor_probe,
         access_log: !args.no_access_log,
+        machine_id_files: machine_id_files(),
         ..ServerConfig::default()
     };
     config::check_bind_policy(config.listen, false, true)?;
@@ -569,20 +769,29 @@ fn build_info() -> serde_json::Value {
 
 /// The cua-driver tool registry for this platform.
 pub(crate) fn platform_tools() -> Option<Arc<dyn cua_driver_core::server::ToolProvider>> {
-    #[cfg(target_os = "linux")]
-    let registry = platform_linux::register_tools();
-    #[cfg(target_os = "macos")]
-    let registry = platform_macos::register_tools();
-    #[cfg(target_os = "windows")]
-    let registry = platform_windows::register_tools();
-    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-    return None;
-    #[allow(unreachable_code)]
+    // The static headless build has no desktop to drive.
+    #[cfg(any(
+        all(target_os = "linux", not(cua_headless)),
+        target_os = "macos",
+        target_os = "windows"
+    ))]
     {
+        #[cfg(target_os = "linux")]
+        let registry = platform_linux::register_tools();
+        #[cfg(target_os = "macos")]
+        let registry = platform_macos::register_tools();
+        #[cfg(target_os = "windows")]
+        let registry = platform_windows::register_tools();
         let registry = Arc::new(registry);
         registry.init_self_weak();
         Some(registry)
     }
+    #[cfg(not(any(
+        all(target_os = "linux", not(cua_headless)),
+        target_os = "macos",
+        target_os = "windows"
+    )))]
+    None
 }
 
 async fn serve(args: ServeArgs, join: Option<JoinArgs>) -> Result<Exit, BoxError> {
@@ -615,9 +824,23 @@ async fn serve(args: ServeArgs, join: Option<JoinArgs>) -> Result<Exit, BoxError
     }
     init_tracing();
     let mut config = config;
+    // No display to serve: run the core services only. Without this, the
+    // desktop services start anyway and keep polling for a display that
+    // never comes (about a tenth of a core per idle guest under gVisor).
+    let no_desktop = args.no_desktop
+        || cfg!(cua_headless)
+        || {
+            let display = display_available();
+            if !display {
+                tracing::info!(
+                "no display (no X11 socket for $DISPLAY, no Wayland socket); serving the core services only"
+            );
+            }
+            !display
+        };
     // Bind the QUIC media socket before publishing the config so
     // `media_quic_port` is the port actually in use (0 when unavailable).
-    let quic_socket = if args.no_desktop || config.media_quic_port == 0 {
+    let quic_socket = if no_desktop || config.media_quic_port == 0 {
         config.media_quic_port = 0;
         None
     } else {
@@ -643,26 +866,36 @@ async fn serve(args: ServeArgs, join: Option<JoinArgs>) -> Result<Exit, BoxError
     // Presence and the /media socket). The provider also supplies the
     // cua-driver registry it drives, so the Driver service and /mcp share one
     // registry (and one cursor overlay) with it.
-    let desktop = if args.no_desktop {
-        None
-    } else {
-        match cua_spacesd_desktop::grpc::DesktopServiceProvider::for_host(ctx.clone()) {
-            Ok(provider) => Some(provider),
-            Err(error) => {
-                tracing::warn!(%error, "desktop services unavailable; serving the core services only");
-                None
+    #[cfg(not(cua_headless))]
+    let desktop_tools = {
+        let desktop = if no_desktop {
+            None
+        } else {
+            match cua_spacesd_desktop::grpc::DesktopServiceProvider::for_host(ctx.clone()) {
+                Ok(provider) => Some(provider),
+                Err(error) => {
+                    tracing::warn!(%error, "desktop services unavailable; serving the core services only");
+                    None
+                }
             }
+        };
+        let desktop_tools = desktop.is_some();
+        if let Some(provider) = desktop {
+            if let Some(socket) = quic_socket {
+                if let Err(error) = provider.start_quic_on(socket) {
+                    tracing::warn!(%error, "QUIC media listener failed; media stays on the /media WebSocket");
+                }
+            }
+            builder = builder.provider(Arc::new(provider));
         }
+        desktop_tools
     };
-    let desktop_tools = desktop.is_some();
-    if let Some(provider) = desktop {
-        if let Some(socket) = quic_socket {
-            if let Err(error) = provider.start_quic_on(socket) {
-                tracing::warn!(%error, "QUIC media listener failed; media stays on the /media WebSocket");
-            }
-        }
-        builder = builder.provider(Arc::new(provider));
-    }
+    // The static headless build has no desktop services (and so no QUIC).
+    #[cfg(cua_headless)]
+    let desktop_tools = {
+        drop(quic_socket);
+        false
+    };
     if !args.no_driver && !desktop_tools {
         if let Some(tools) = platform_tools() {
             builder = builder.tools(tools);
@@ -685,10 +918,13 @@ async fn serve(args: ServeArgs, join: Option<JoinArgs>) -> Result<Exit, BoxError
         ));
     }
     // SystemService.Diagnose runs the doctor against this server.
-    builder = builder.diagnoser(Arc::new(cua_spacesd_doctor::ServerDiagnoser {
-        manifest_path: None,
-        artifacts_dir: None,
-    }));
+    #[cfg(not(cua_headless))]
+    {
+        builder = builder.diagnoser(Arc::new(cua_spacesd_doctor::ServerDiagnoser {
+            manifest_path: None,
+            artifacts_dir: None,
+        }));
+    }
     let server = builder.build();
     let listener = cua_spacesd_server::bind(&ctx).await?;
     let addr = listener.local_addr()?;
@@ -713,6 +949,15 @@ async fn serve(args: ServeArgs, join: Option<JoinArgs>) -> Result<Exit, BoxError
             tracing::info!("signal received; shutting down");
             ctx.request_shutdown(false);
         });
+    }
+    if join.is_none() {
+        if let Some(policy) = &args.tailnet_identity_policy {
+            tracing::info!(policy = %policy.display(), "tailnet callers are identified by their tailnet login");
+            ctx.auth()
+                .set_external(Arc::new(cua_spacesd_server::tailnet::TailnetAuth::new(
+                    policy.clone(),
+                )));
+        }
     }
     if let Some(join) = join {
         let id_file = join
@@ -795,10 +1040,86 @@ async fn serve(args: ServeArgs, join: Option<JoinArgs>) -> Result<Exit, BoxError
     }
     server.serve(listener).await?;
     Ok(if ctx.restart_requested() {
+        // The restarted process reads its token from the environment first.
+        // A token installed while running (a warm-pool claim, an `Init`
+        // rotation) must win, or the Space comes back with the token it was
+        // booted with and rejects its own clients.
+        let current = ctx.auth().token();
+        for key in restart_token_vars(&ctx.config().token_source, |k| {
+            std::env::var_os(k).is_some()
+        }) {
+            if let Some(token) = &current {
+                std::env::set_var(key, &**token);
+            }
+        }
         Exit::Restart
     } else {
         Exit::Done
     })
+}
+
+/// The environment variables that carry the token the process started with
+/// (`token_source` is `env:CUA_ENV_TOKEN` then), and so must carry the
+/// current one across a restart. A token from a file or a flag is not in the
+/// environment, and `CUA_SPACESD_TOKEN`, when set, overrides `CUA_ENV_TOKEN`
+/// at start-up, so it is updated too.
+fn restart_token_vars(token_source: &str, is_set: impl Fn(&str) -> bool) -> Vec<&'static str> {
+    if !token_source.starts_with("env:") {
+        return Vec::new();
+    }
+    ["CUA_ENV_TOKEN", "CUA_SPACESD_TOKEN", "CUA_GUESTD_TOKEN"]
+        .into_iter()
+        .filter(|k| *k == "CUA_ENV_TOKEN" || is_set(k))
+        .collect()
+}
+
+/// Whether this machine has a display for the desktop services: always off
+/// Linux; on Linux, a Wayland socket (`$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY`)
+/// or the X11 socket of a local `$DISPLAY` (a remote `host:N` display is
+/// taken as present). A desktop image starts cua-spacesd after its display
+/// (`start-spacesd.sh` waits for it), so a missing socket means a headless
+/// guest, not a display that is still starting.
+fn display_available() -> bool {
+    if !cfg!(target_os = "linux") {
+        return true;
+    }
+    let var = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
+    linux_display_available(
+        var("DISPLAY").as_deref(),
+        var("WAYLAND_DISPLAY").as_deref(),
+        var("XDG_RUNTIME_DIR").as_deref(),
+        std::path::Path::new("/tmp/.X11-unix"),
+    )
+}
+
+fn linux_display_available(
+    display: Option<&str>,
+    wayland: Option<&str>,
+    runtime_dir: Option<&str>,
+    x11_dir: &std::path::Path,
+) -> bool {
+    if let Some(w) = wayland {
+        let socket = if w.starts_with('/') {
+            PathBuf::from(w)
+        } else {
+            match runtime_dir {
+                Some(dir) => std::path::Path::new(dir).join(w),
+                None => PathBuf::from(w),
+            }
+        };
+        if socket.exists() {
+            return true;
+        }
+    }
+    let Some(display) = display else {
+        return false;
+    };
+    let (host, rest) = display.split_once(':').unwrap_or((display, ""));
+    if !host.is_empty() && host != "unix" {
+        return true;
+    }
+    let number = rest.split('.').next().unwrap_or("");
+    !number.is_empty() && x11_dir.join(format!("X{number}")).exists()
 }
 
 async fn wait_for_signal() {
@@ -862,12 +1183,125 @@ fn write_private_file(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<(
     std::fs::rename(&tmp, path)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(cua_headless)))]
 mod tests {
+    #[test]
+    fn a_display_needs_its_socket() {
+        let dir = tempfile::tempdir().unwrap();
+        let x11 = dir.path().join("x11");
+        std::fs::create_dir_all(&x11).unwrap();
+        let avail = |d, w, r| super::linux_display_available(d, w, r, &x11);
+        // A headless guest: DISPLAY is set by the image, but no X server runs.
+        assert!(!avail(Some(":1"), None, None));
+        assert!(!avail(None, None, None));
+        std::fs::write(x11.join("X1"), b"").unwrap();
+        assert!(avail(Some(":1"), None, None));
+        assert!(avail(Some(":1.0"), None, None));
+        assert!(avail(Some("unix:1"), None, None));
+        assert!(!avail(Some(":2"), None, None));
+        // A remote display cannot be checked locally.
+        assert!(avail(Some("10.0.0.2:0"), None, None));
+        // Wayland: the socket in XDG_RUNTIME_DIR.
+        let rt = dir.path().join("run");
+        std::fs::create_dir_all(&rt).unwrap();
+        let rt_s = rt.to_str().unwrap();
+        assert!(!avail(None, Some("wayland-0"), Some(rt_s)));
+        std::fs::write(rt.join("wayland-0"), b"").unwrap();
+        assert!(avail(None, Some("wayland-0"), Some(rt_s)));
+    }
+
     use super::*;
+
+    /// The WireGuard library's retry/expiry messages stay out of the log
+    /// (also when a service was installed with `CUA_ENV_LOG=info`), unless
+    /// the filter names them.
+    #[test]
+    fn the_log_filter_hides_the_wireguard_timers_unless_asked_for() {
+        use std::io::Write;
+        #[derive(Clone, Default)]
+        struct Buf(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+        impl Write for Buf {
+            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(b);
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Buf {
+            type Writer = Buf;
+            fn make_writer(&'a self) -> Buf {
+                self.clone()
+            }
+        }
+        let run = |spec: Option<&str>| {
+            let buf = Buf::default();
+            let subscriber = tracing_subscriber::fmt()
+                .with_env_filter(tracing_subscriber::EnvFilter::new(log_filter_spec(spec)))
+                .with_writer(buf.clone())
+                .finish();
+            tracing::subscriber::with_default(subscriber, || {
+                tracing::warn!(target: "boringtun::noise::timers", "HANDSHAKE(REKEY_TIMEOUT)");
+                tracing::error!(target: "boringtun::noise::timers", "CONNECTION_EXPIRED(REKEY_ATTEMPT_TIME)");
+                tracing::warn!(target: "cua_mesh::node", "kept warning");
+            });
+            let bytes = buf.0.lock().unwrap().clone();
+            String::from_utf8(bytes).unwrap()
+        };
+        for spec in [None, Some(""), Some("info"), Some("debug"), Some(" warn ")] {
+            let out = run(spec);
+            assert!(
+                !out.contains("HANDSHAKE") && !out.contains("CONNECTION_EXPIRED"),
+                "{spec:?}: {out}"
+            );
+            assert!(out.contains("kept warning"), "{spec:?}: {out}");
+        }
+        let out = run(Some("info,boringtun=debug"));
+        assert!(
+            out.contains("HANDSHAKE") && out.contains("CONNECTION_EXPIRED"),
+            "{out}"
+        );
+    }
 
     fn parse(args: &[&str]) -> Cli {
         Cli::try_parse_from(std::iter::once("cua-spacesd").chain(args.iter().copied())).unwrap()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn supervise_takes_the_images_command_after_the_dashes() {
+        let cli = parse(&[
+            "supervise",
+            "--user",
+            "node",
+            "--workdir",
+            "/app",
+            "--on-exit",
+            "serve",
+            "--",
+            "docker-entrypoint.sh",
+            "node",
+            "--inspect",
+        ]);
+        let Some(Command::Supervise(a)) = cli.command else {
+            panic!("not supervise")
+        };
+        assert_eq!(a.user.as_deref(), Some("node"));
+        assert_eq!(a.workdir, Some(PathBuf::from("/app")));
+        assert_eq!(a.on_exit, SuperviseExit::Serve);
+        assert_eq!(a.command, ["docker-entrypoint.sh", "node", "--inspect"]);
+        assert_eq!(
+            a.hide_env,
+            ["CUA_ENV_TOKEN", "CUA_SPACESD_TOKEN", "CUA_GUESTD_TOKEN"],
+            "the Space's token is kept from the command"
+        );
+        // No command at all: cua-spacesd alone, and the Space ends with the
+        // command by default.
+        let Some(Command::Supervise(bare)) = parse(&["supervise"]).command else {
+            panic!("not supervise")
+        };
+        assert!(bare.command.is_empty() && bare.on_exit == SuperviseExit::Exit);
     }
 
     #[test]
@@ -876,6 +1310,72 @@ mod tests {
         assert!(cli.command.is_none());
         assert_eq!(cli.serve.port, 4000);
         assert!(cli.serve.print_config);
+    }
+
+    /// Cua Spaces Local runs its host next to a Stable one: its ports come
+    /// from flags, and the defaults stay what every release has used.
+    #[test]
+    fn the_ports_follow_the_flags_and_default_to_3211_3212_3212() {
+        let dir = tempfile::tempdir().unwrap();
+        let token_file = dir.path().join("env-token");
+        let token_file = token_file.to_str().unwrap();
+        let (config, _) =
+            build_config(&parse(&["--token-file", token_file]).serve, false, None).unwrap();
+        assert_eq!(config.listen.port(), 3211);
+        assert_eq!(config.media_quic_port, 3212);
+        assert_eq!(config.mesh_udp_port, 3212);
+        assert_eq!(
+            serde_json::to_value(&config).unwrap()["mesh_udp_port"],
+            3212,
+            "--print-config shows it"
+        );
+
+        let local = parse(&[
+            "--token-file",
+            token_file,
+            "--port",
+            "3221",
+            "--quic-port",
+            "3222",
+            "--mesh-udp-port",
+            "3222",
+        ]);
+        assert_eq!(local.serve.mesh_udp_port, 3222);
+        let (config, _) = build_config(&local.serve, false, None).unwrap();
+        assert_eq!(config.listen.port(), 3221);
+        assert_eq!(config.media_quic_port, 3222);
+        assert_eq!(config.mesh_udp_port, 3222);
+
+        // The same flags on `join` (what the host service runs), and in
+        // await-token-file mode.
+        let cli = parse(&[
+            "join",
+            "--relay",
+            "wss://relay.example",
+            "--relay-token",
+            "r",
+            "--token-file",
+            token_file,
+            "--mesh-udp-port",
+            "3222",
+        ]);
+        let Some(Command::Join(join)) = cli.command else {
+            panic!("not join")
+        };
+        let (config, _) = build_config(&join.serve, true, None).unwrap();
+        assert_eq!(config.mesh_udp_port, 3222);
+        let args = parse(&[
+            "--await-token-file",
+            "--token-file",
+            token_file,
+            "--mesh-udp-port",
+            "3222",
+        ])
+        .serve;
+        let (config, _) = build_await_config(&args, false, None).unwrap();
+        assert_eq!(config.mesh_udp_port, 3222);
+
+        assert!(Cli::try_parse_from(["cua-spacesd", "--mesh-udp-port", "no"]).is_err());
     }
 
     #[test]
@@ -1092,5 +1592,35 @@ mod tests {
             panic!()
         };
         assert_eq!(args, ["--socket", "/tmp/x.sock"]);
+    }
+}
+
+#[cfg(test)]
+mod restart_token_tests {
+    use super::restart_token_vars;
+
+    #[test]
+    fn a_token_from_the_environment_is_carried_across_a_restart() {
+        assert_eq!(
+            restart_token_vars("env:CUA_ENV_TOKEN", |_| false),
+            vec!["CUA_ENV_TOKEN"]
+        );
+        // The spellings that override it at start-up follow when they are set.
+        assert_eq!(
+            restart_token_vars("env:CUA_ENV_TOKEN", |k| k == "CUA_SPACESD_TOKEN"),
+            vec!["CUA_ENV_TOKEN", "CUA_SPACESD_TOKEN"]
+        );
+    }
+
+    #[test]
+    fn a_token_from_a_file_or_a_flag_is_left_alone() {
+        for source in [
+            "file:/run/cua/env-token",
+            "flag",
+            "none",
+            "generated (join)",
+        ] {
+            assert!(restart_token_vars(source, |_| true).is_empty(), "{source}");
+        }
     }
 }

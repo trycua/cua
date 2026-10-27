@@ -47,7 +47,9 @@ export function linkRelay(input: string): string | null {
 
 /** `cua`'s arguments for joining with `code` (the canonical code, so nothing typed reaches the command line as is). */
 export function joinArgs(code: string, relay: string | null): string[] {
-  return ["host", "setup", "--pair", code, ...(relay ? ["--relay", relay] : [])];
+  // It provides Spaces and keeps its screen private, as a computer added by
+  // signing in does; sharing its desktop is a choice on its page.
+  return ["host", "setup", "--pair", code, ...(relay ? ["--relay", relay] : []), "--no-desktop", "--provide-spaces"];
 }
 
 /** The line to show for a failed run: the last one the command wrote to stderr, else the exit status. */

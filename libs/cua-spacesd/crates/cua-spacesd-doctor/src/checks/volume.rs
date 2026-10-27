@@ -153,6 +153,7 @@ async fn round_trip(
         .attach_volume(pb::AttachVolumeRequest {
             mount_path: mount.to_string_lossy().into_owned(),
             ticket_ttl: None,
+            binds: Vec::new(),
         })
         .await
         .map_err(|s| format!("AttachVolume: {}", s.message()))?

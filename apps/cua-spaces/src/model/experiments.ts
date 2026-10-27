@@ -19,7 +19,7 @@ export interface Experiments {
   sharing: boolean;
 }
 
-export const NO_EXPERIMENTS: Experiments = { cuaVolume: false, yourCloud: false, sharing: true };
+export const NO_EXPERIMENTS: Experiments = { cuaVolume: false, yourCloud: true, sharing: true };
 
 /** The Experiments tab: a switch and one line per experiment. */
 export function experimentsPage(experiments: Experiments): SettingsPage {

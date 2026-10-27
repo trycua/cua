@@ -91,7 +91,11 @@ jobs:
           go-version-file: libs/cua/crates/cua-contrib/modal-helper/go.mod
       - if: steps.key.outputs.run == 'true' && matrix.provider == 'modal'
         working-directory: libs/cua/crates/cua-contrib/modal-helper
+        env:
+          # Fallback proxy: a slow proxy.golang.org must not fail the lane.
+          GOPROXY: https://proxy.golang.org|https://goproxy.io|direct
         run: |
+          for attempt in 1 2 3 4; do go mod download && break; sleep $((attempt * 15)); done
           go build -o "$RUNNER_TEMP/bin/cua-modal-helper" .
           echo "CUA_MODAL_HELPER=$RUNNER_TEMP/bin/cua-modal-helper" >>"$GITHUB_ENV"
       - id: sandbox

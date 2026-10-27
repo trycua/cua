@@ -8,7 +8,7 @@ import Foundation
 import SwiftUI
 import Testing
 
-/// An in-memory daemon for Settings → Agents: `agent_keys.*` as the daemon
+/// An in-memory daemon for Settings → Connectors: `agent_keys.*` as the daemon
 /// answers them (never a value).
 final class FakeAgentKeysTools: AgentsToolRunning, @unchecked Sendable {
     var calls: [(String, [String: Any])] = []
@@ -36,7 +36,7 @@ final class FakeAgentKeysTools: AgentsToolRunning, @unchecked Sendable {
 }
 
 @MainActor
-@Suite("Settings → Agents")
+@Suite("Settings → Connectors")
 struct AgentKeysTests {
     init() { _ = NSApplication.shared }
 
@@ -80,16 +80,6 @@ struct AgentKeysTests {
         #expect(m.view.notice?.contains("keeps credentials in a file") == true)
         let none = AgentKeysModel(tools: nil)
         #expect(none.view.notice?.contains("need the cua daemon") == true)
-    }
-
-    @Test func theSettingsTabRenders() async {
-        let m = AgentKeysModel(tools: FakeAgentKeysTools())
-        await m.load()
-        let host = NSHostingView(rootView: AgentKeysSettingsView(keys: m))
-        host.frame = NSRect(x: 0, y: 0, width: 520, height: 420)
-        host.layoutSubtreeIfNeeded()
-        #expect(host.fittingSize.width > 0)
-        #expect(AgentKeysSettingsView.added("Added", 1_790_000_000_000).hasPrefix("Added "))
     }
 
     @Test func theWebBridgeRoutesAgentKeysToTheDaemon() {

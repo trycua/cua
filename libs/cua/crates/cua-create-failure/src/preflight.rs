@@ -116,6 +116,10 @@ pub struct Facts {
     pub engine: Engine,
     /// macOS Local Network privacy blocked a connect to a running VM.
     pub local_network_blocked: bool,
+    /// Local Network access is on, but a VPN or firewall keeps this Mac
+    /// from its own VM network ([`crate::local_network`]).
+    #[serde(default)]
+    pub local_network_vpn: bool,
     pub virtualization: Option<VirtGap>,
 }
 
@@ -128,7 +132,11 @@ pub enum IssueKind {
     EngineMissing,
     EngineNotRunning,
     EnginePermission,
+    /// macOS Local Network access is off (or not yet allowed) for the app.
     LocalNetwork,
+    /// Local Network access is on, but a VPN or firewall blocks this Mac's
+    /// own VM network.
+    LocalNetworkVpn,
     VirtualizationUnavailable,
 }
 
@@ -140,8 +148,18 @@ impl IssueKind {
             Self::EngineMissing => "runtime_missing",
             Self::EngineNotRunning => "runtime_not_running",
             Self::EnginePermission => "runtime_permission",
-            Self::LocalNetwork => "local_network",
+            Self::LocalNetwork | Self::LocalNetworkVpn => "local_network",
             Self::VirtualizationUnavailable => "virtualization_unavailable",
+        }
+    }
+
+    /// The finer telemetry word under [`Self::error_kind`]
+    /// (`cua_telemetry::schema::ERROR_SUBCLASSES`), where there is one.
+    pub fn error_subclass(self) -> Option<&'static str> {
+        match self {
+            Self::LocalNetwork => Some(crate::local_network::DENIED),
+            Self::LocalNetworkVpn => Some(crate::local_network::VPN),
+            _ => None,
         }
     }
 
@@ -158,7 +176,9 @@ impl IssueKind {
             Some(Self::EngineNotRunning)
         } else if has("isn't allowed to use docker") {
             Some(Self::EnginePermission)
-        } else if has("find devices on your network") {
+        } else if has(VPN_MARK) {
+            Some(Self::LocalNetworkVpn)
+        } else if has(DENIED_MARK) || has("find devices on your network") {
             Some(Self::LocalNetwork)
         } else if has("hypervisor platform")
             || has("virtualization is turned off")
@@ -171,6 +191,26 @@ impl IssueKind {
     }
 }
 
+/// What [`IssueKind::of_text`] finds in [`local_network_denied`]'s sentence
+/// (lowercase).
+const DENIED_MARK: &str = "privacy & security \u{203a} local network";
+/// What [`IssueKind::of_text`] finds in [`LOCAL_NETWORK_VPN`] (lowercase).
+const VPN_MARK: &str = "a vpn or firewall is blocking this mac's own network";
+
+/// The sentence for a Mac where `app` may not use the local network, so it
+/// cannot reach the macOS Spaces on this Mac: what to allow, and where.
+pub fn local_network_denied(app: &str) -> String {
+    format!(
+        "{app} can't connect to macOS Spaces on this Mac. Allow {app} in System Settings \u{203a} \
+         Privacy & Security \u{203a} Local Network, then try again."
+    )
+}
+
+/// The sentence for a Mac whose VPN or firewall blocks its own VM network
+/// while Local Network access is on.
+pub const LOCAL_NETWORK_VPN: &str = "A VPN or firewall is blocking this Mac's own network, so \
+     Cua Spaces can't connect to macOS Spaces. Turn off the VPN and try again.";
+
 /// A System Settings page or Windows dialog a fix opens.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -179,6 +219,18 @@ pub enum Pane {
     LocalNetwork,
     /// Windows: Turn Windows features on or off.
     WindowsFeatures,
+}
+
+impl Pane {
+    /// The URL that opens it, where there is one (`NSWorkspace.open`).
+    pub fn url(self) -> Option<&'static str> {
+        match self {
+            Self::LocalNetwork => {
+                Some("x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork")
+            }
+            Self::WindowsFeatures => None,
+        }
+    }
 }
 
 /// What the fix button does.
@@ -225,6 +277,16 @@ fn fix(label: &str, action: FixAction) -> Option<Fix> {
         label: label.into(),
         action,
     })
+}
+
+/// The issue for Local Network access that is off for `app`, with the
+/// button that opens its settings.
+pub fn local_network_issue(app: &str) -> Issue {
+    Issue::new(
+        IssueKind::LocalNetwork,
+        local_network_denied(app),
+        fix("Open Settings", FixAction::OpenSettings(Pane::LocalNetwork)),
+    )
 }
 
 /// Whole gigabytes, rounded up, for a sentence.
@@ -300,13 +362,16 @@ pub fn evaluate(req: &Request, facts: &Facts) -> Vec<Issue> {
         }
     }
 
-    if req.host == Host::Macos && req.guest == Guest::Macos && facts.local_network_blocked {
-        out.push(Issue::new(
-            IssueKind::LocalNetwork,
-            "Cua needs permission to find devices on your network to reach this Mac computer. \
-             Turn on Cua in Local Network settings, then try again.",
-            fix("Open Settings", FixAction::OpenSettings(Pane::LocalNetwork)),
-        ));
+    if req.host == Host::Macos && req.guest == Guest::Macos {
+        if facts.local_network_vpn {
+            out.push(Issue::new(
+                IssueKind::LocalNetworkVpn,
+                LOCAL_NETWORK_VPN,
+                None,
+            ));
+        } else if facts.local_network_blocked {
+            out.push(local_network_issue("Cua Spaces"));
+        }
     }
 
     if req.runs == Runs::Vm
@@ -455,6 +520,57 @@ mod tests {
     }
 
     #[test]
+    fn local_network_says_what_to_allow_and_where() {
+        let i = local_network_issue("Cua Spaces");
+        assert_eq!(
+            i.message,
+            "Cua Spaces can't connect to macOS Spaces on this Mac. Allow Cua Spaces in System \
+             Settings \u{203a} Privacy & Security \u{203a} Local Network, then try again."
+        );
+        assert_eq!(i.fix.as_ref().unwrap().label, "Open Settings");
+        assert_eq!(
+            Pane::LocalNetwork.url(),
+            Some("x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork")
+        );
+        assert_eq!(IssueKind::LocalNetwork.error_kind(), "local_network");
+        assert_eq!(
+            IssueKind::LocalNetwork.error_subclass(),
+            Some("local_network_denied")
+        );
+        // Another app's name is recognised the same way.
+        assert_eq!(
+            IssueKind::of_text(&local_network_denied("Cua Spaces Dev")),
+            Some(IssueKind::LocalNetwork)
+        );
+    }
+
+    #[test]
+    fn a_vpn_is_told_apart_from_missing_permission() {
+        let facts = Facts {
+            local_network_blocked: true,
+            local_network_vpn: true,
+            ..Default::default()
+        };
+        let i = first(&req(Host::Macos, Guest::Macos, Runs::Vm), &facts);
+        assert_eq!(i.kind, IssueKind::LocalNetworkVpn);
+        assert!(i.message.contains("Turn off the VPN"), "{}", i.message);
+        assert!(i.fix.is_none());
+        assert_eq!(i.kind.error_kind(), "local_network");
+        assert_eq!(i.kind.error_subclass(), Some("local_network_vpn"));
+        // Only one of the two is shown.
+        assert_eq!(
+            evaluate(&req(Host::Macos, Guest::Macos, Runs::Vm), &facts).len(),
+            1
+        );
+        // A Facts from an older daemon (no `local_network_vpn`) still reads.
+        let old: Facts = serde_json::from_str(
+            r#"{"free_bytes":null,"engine":"not_checked","local_network_blocked":true,"virtualization":null}"#,
+        )
+        .unwrap();
+        assert!(old.local_network_blocked && !old.local_network_vpn);
+    }
+
+    #[test]
     fn virtualization_prerequisites_by_host() {
         let gap = |g| Facts {
             virtualization: Some(g),
@@ -490,6 +606,7 @@ mod tests {
             free_bytes: Some(0),
             engine: Engine::Missing,
             local_network_blocked: true,
+            local_network_vpn: false,
             virtualization: Some(VirtGap::HypervisorPlatformOff),
         };
         let mut seen = Vec::new();
@@ -567,7 +684,17 @@ mod tests {
                 seen.push(i.kind);
             }
         }
+        let vpn = evaluate(
+            &req(Host::Macos, Guest::Macos, Runs::Vm),
+            &Facts {
+                local_network_vpn: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(IssueKind::of_text(&vpn[0].message), Some(vpn[0].kind));
+        seen.push(vpn[0].kind);
         for k in [
+            IssueKind::LocalNetworkVpn,
             IssueKind::InsufficientDisk,
             IssueKind::EngineMissing,
             IssueKind::EngineNotRunning,

@@ -228,6 +228,7 @@ final class RelayAnswering: DevicesRunning, @unchecked Sendable {
     func rename(id: String, name: String) async throws { try await fixture.rename(id: id, name: name) }
     func revoke(id: String) async throws { try await fixture.revoke(id: id) }
     func confirmMachine(id: String) async throws { try await fixture.confirmMachine(id: id) }
+    func renameMachine(id: String, name: String) async throws { try await fixture.renameMachine(id: id, name: name) }
     func createPairingCode(team: String?) async throws -> PairingCode { try await fixture.createPairingCode(team: team) }
     func pairingCodes() async throws -> [PairingCode] { try await fixture.pairingCodes() }
     func revokePairingCode(id: String) async throws { try await fixture.revokePairingCode(id: id) }
@@ -293,6 +294,37 @@ struct RelayUsageTests {
         #expect(notice.upgradeUrl?.hasSuffix("/buy/teams?from=plan_limit") == true)
         m.dismissRelayNotice()
         #expect(m.relayNotice == nil)
+    }
+
+    /// CUA-1881: a refused create shown is `cua_plan_limit_shown` at
+    /// `app_create`; Upgrade is `cua_upgrade_link_opened` and opens the page
+    /// with `?from=app_create`. With usage data off, nothing is recorded.
+    @Test func aRefusalShownAndItsUpgradeAreUsageEventsWithFrom() async throws {
+        let (m, _) = model(FixtureDevices())
+        let telemetry = FixtureTelemetry()
+        m.telemetry = telemetry
+        m.noteRefusal("relay: You're using 2 of 2 live sessions on the free plan. Close one or upgrade to Pro.", surface: "app_create")
+        let notice = try #require(m.relayNotice)
+        #expect(notice.kind == "sessions")
+        #expect(notice.plan == "free")
+        m.recordNoticeShown(notice)
+        let url = try #require(m.openUpgrade(notice))
+        #expect(url.absoluteString.hasSuffix("/buy/pro?from=app_create"))
+        #expect(telemetry.recorded == [
+            .planLimitShown(surface: "app_create", kind: "sessions", plan: "free"),
+            .upgradeLinkOpened(surface: "app_create", kind: "sessions", plan: "free"),
+        ])
+        // The plan card's link says where it was opened.
+        let card = try #require(m.openPlanLink("https://app.cua.ai/billing?from=app_plan_card"))
+        #expect(card.absoluteString == "https://app.cua.ai/billing?from=app_plan_card")
+        #expect(telemetry.recorded.contains(.upgradeLinkOpened(surface: "app_plan_card", kind: "none", plan: "unknown")))
+
+        let off = FixtureTelemetry()
+        off.current.enabled = false
+        m.telemetry = off
+        m.recordNoticeShown(notice)
+        _ = m.openUpgrade(notice)
+        #expect(off.recorded.isEmpty)
     }
 
     @Test func atEightyPercentOfHoursAFreePlanGetsAHeadsUpThatWaitsForLiveSessions() async throws {

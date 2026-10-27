@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-// Settings → Agents' provider keys (`agentKeys.*`), kept by the daemon in the
+// Settings → Connectors' provider keys (`agentKeys.*`), kept by the daemon in the
 // system's credential store (the SwiftUI host's `AgentKeysModel`). The key
 // travels once, in `agentKeys.set`'s arguments; answers never carry one.
 import type { BridgeContext } from "./context";

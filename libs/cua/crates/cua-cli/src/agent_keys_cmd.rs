@@ -1,5 +1,5 @@
 //! `cua agent keys`: the provider keys agents get, kept in the Keychain by
-//! the Cua daemon (what Cua Spaces → Settings → Agents shows).
+//! the Cua daemon (what Cua Spaces → Settings → Connectors shows).
 //!
 //! ```text
 //! cua agent keys                          # list (provider, variable, last 4, added)
@@ -116,7 +116,9 @@ fn lines(report: &serde_json::Value) -> Vec<String> {
     }
     let keys = report["keys"].as_array().cloned().unwrap_or_default();
     if keys.is_empty() {
-        v.push("No agent keys saved. Add one with: pbpaste | cua agent keys set anthropic".into());
+        v.push(crate::util::hint(
+            "No agent keys saved. Add one with: pbpaste | cua agent keys set anthropic",
+        ));
     }
     for k in keys {
         let last4 = k["last4"].as_str().unwrap_or("");

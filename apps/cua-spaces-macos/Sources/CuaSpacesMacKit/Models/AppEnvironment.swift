@@ -11,9 +11,17 @@ import Foundation
 /// views captures and UI tests use.
 @MainActor
 public enum AppEnvironment {
+    /// Whether this is a Local build ("Cua Spaces Local", Info.plist
+    /// `CuaChannel` = `local`, stamped by `scripts/build-app.sh --channel
+    /// local`). Tests and every other build are Stable.
+    static let isLocalChannel =
+        ((Bundle.main.object(forInfoDictionaryKey: "CuaChannel") as? String) ?? "")
+        .trimmingCharacters(in: .whitespaces).lowercased() == "local"
+
     /// The bundle identity (the Keyvault's trusted-caller requirement names
-    /// it; see README "Keyvault identity").
-    public static let bundleIdentifier = "com.trycua.spaces.macos"
+    /// it; see README "Keyvault identity"). A Local build keeps its settings
+    /// in its own folder, `com.trycua.spaces.macos.local`, never Stable's.
+    public static let bundleIdentifier = isLocalChannel ? "com.trycua.spaces.macos.local" : "com.trycua.spaces.macos"
 
     /// `$HOME`, so a temp HOME (tests, captures) keeps every file away from
     /// the account's real Library (`FileManager` ignores `$HOME`).
@@ -73,6 +81,7 @@ public enum AppEnvironment {
             let fixture = FixtureSpacesBackend(rows: FixtureSpacesBackend.rows(environment: env))
             fixture.fixtureRuns["local:aurora"] = FixtureSpacesBackend.sampleRuns
             fixture.fixtureEvents = FixtureSpacesBackend.sampleEvents
+            fixture.fixtureHealth = FixtureSpacesBackend.peerHealth(environment: env)
             backend = fixture
         } else {
             backend = PendingSpacesBackend(gate: gate)
@@ -82,7 +91,7 @@ public enum AppEnvironment {
             // Icons: caches survive restarts; fixtures never resolve apps or
             // touch the network.
             let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
-                .appendingPathComponent("com.trycua.cua-spaces/icons")
+                .appendingPathComponent(isLocalChannel ? "com.trycua.cua-spaces.local/icons" : "com.trycua.cua-spaces/icons")
             keyvault.appIcons = AppIconCache(dir: caches?.appendingPathComponent("apps"))
             keyvault.siteIconStore = SiteIconStore(dir: caches?.appendingPathComponent("sites"))
             keyvault.iconScale = Int(NSScreen.main?.backingScaleFactor ?? 2)
@@ -90,7 +99,7 @@ public enum AppEnvironment {
         // Fixtures never touch the host service, the account, the telemetry
         // config or the coding agents' configs.
         let host: HostRunning = fixtures ? FixtureHost() : PendingHost(gate: gate)
-        let account: AccountRunning = fixtures ? FixtureAccount() : PendingAccount(gate: gate)
+        let account: AccountRunning = fixtures ? FixtureAccount(identity: env["CUA_SPACES_FIXTURE_PEER_CUA"] != nil ? "ellie@example.com" : nil) : PendingAccount(gate: gate)
         let telemetry: TelemetryRunning = fixtures ? FixtureTelemetry() : LiveTelemetry()
         let agents: AgentSetupRunning = fixtures ? FixtureAgentSetup() : PendingAgentSetup(gate: gate)
         // The first run's pages are the web UI's; this is its state file.
@@ -102,17 +111,19 @@ public enum AppEnvironment {
         let model = AppModel(backend: backend, keyvault: keyvault, onboarding: onboarding,
                              settingsPath: settingsPath,
                              host: host, account: account, telemetry: telemetry, agentSetup: agents,
-                             billing: fixtures ? FixtureBilling() : PendingBilling(gate: gate),
                              devices: devices,
                              presence: fixtures ? FixturePresence() : LivePresence(),
                              loginItem: fixtures ? fixtureLoginItem(env["CUA_SPACES_LOGIN_ITEM"]) : MainAppLoginItem(),
                              startup: startup,
-                             // Fixtures (UI tests, captures) keep the classic UI
-                             // unless they turn the New UI on.
                              appVersion: fixtures ? nil : info.version)
         if fixtures { model.teamsReader = FixtureTeams() }
         if !fixtures {
-            LiveLocalNetworkPermission().request()
+            // Local Network access is asked for before the first macOS
+            // Space on this Mac, and when this Mac starts providing Spaces
+            // (macOS Spaces your other devices create here need it), after
+            // the core's explanation (not at launch, where the prompt came
+            // without a reason).
+            model.localNetworkGate = LocalNetworkGate(probe: LiveLocalNetworkProbe())
             // Signed out is nil (setup signs in first); anything else (no
             // network, the credential vault) is the error itself, never a
             // silent nil that reads as "not signed in".
@@ -153,6 +164,11 @@ public enum AppEnvironment {
         let updater: UpdaterDriving? = fixtures && env["CUA_SPACES_UPDATER"] != "live"
             ? FixtureUpdater(lastCheck: Date().addingTimeInterval(-2 * 3600))
             : SparkleUpdater.start(channels: appAboutAllowedChannels(channel: channel))
+        // `CUA_SPACES_FIXTURE_UPDATE=<version>` (fixtures): that update is found and downloaded.
+        if let fixture = updater as? FixtureUpdater, let version = env["CUA_SPACES_FIXTURE_UPDATE"] {
+            fixture.simulateFound(version: version)
+            fixture.simulateDownloaded()
+        }
         model.updates = UpdatesModel(updater: updater, channel: channel)
         model.updates.telemetry = telemetry
         model.updates.saveChannel = { [weak model] channel in model?.setUpdateChannel(channel) }
@@ -176,7 +192,7 @@ public enum AppEnvironment {
             return LiveServices(
                 backend: live, live: live, account: LiveAccount(auth: auth),
                 agentSetup: LiveAgentSetup(inner: live.cua.agentSetup(), cuaBinary: bundledCuaPath),
-                billing: LiveBilling(cua: live.cua), devices: LiveDevices.make(auth: auth),
+                devices: LiveDevices.make(auth: auth),
                 host: CuaSDK.Host(cuaHome: nil), daemonError: daemonError)
         } catch {
             // Say so: an empty list (and an empty notch) would look like
@@ -390,6 +406,16 @@ public enum AppEnvironment {
         }
     }
 
+    /// The Settings page a `settings-*` start view names.
+    static func settingsRoute(_ view: String) -> MainUIRoute {
+        switch view {
+        case "settings-devices": return .path("/settings/devices")
+        case "settings-about": return .path("/settings/about")
+        case "settings-experiments": return .path("/settings/experiments")
+        default: return .settings
+        }
+    }
+
     private static func find<T: NSView>(_ type: T.Type, in view: NSView?) -> T? {
         guard let view else { return nil }
         if let hit = view as? T { return hit }
@@ -397,15 +423,13 @@ public enum AppEnvironment {
         return nil
     }
 
-    /// `CUA_SPACES_START_VIEW`: `new-space`, `new-space-picker`, `new-space-resources`, `keyvault`, `keyvault-waiting`,
-    /// `approval`, `onboarding` (the first run, in the New UI window), `this-machine`, `host-setup`,
-    /// `host-configured`, `settings`, `settings-devices` (Settings on its
-    /// Devices tab), `settings-about` (on its About tab), `settings-experiments`
-    /// (on its Experiments tab), `device-approval` (the approval sheet for the first
-    /// device asking; `CUA_SPACES_APPROVE_CODE` types its code),
-    /// `device-enroll` (the enroll sheet), `device-enroll-code` (it, having
-    /// chosen Approve from another device), `space`, `space-window` (the selected
-    /// Space's own window), the notch states `notch-open`
+    /// `CUA_SPACES_START_VIEW` opens the web UI window at a page: `new-space`
+    /// (also `new-space-picker`, `new-space-resources`), `keyvault`,
+    /// `keyvault-waiting`, `approval` (Access), `onboarding`, `drive`, `this-machine`
+    /// (also `host-setup`, `host-configured`: Machines), `settings`,
+    /// `settings-devices`, `settings-about`, `settings-experiments`,
+    /// `settings-storage`, `device-approval`, `device-enroll`,
+    /// `device-enroll-code` (Settings, Devices), `space`; or the notch states `notch-open`
     /// (`notch`; 1.5 s after launch), `notch-hover`, `notch-permission`,
     /// `notch-drag-target` (`notch-prompt`) and `notch-drop`; `notch-menu` (the notch
     /// open and the menu bar menu) and `menu` (the menu alone; `menu-popup`
@@ -420,6 +444,7 @@ public enum AppEnvironment {
     /// start states only.
     static func applyStartView(_ model: AppModel, notch: NotchController) {
         let env = DevHooks.environment
+        let web = { (route: MainUIRoute) in WebUIWindowController.show(model: model, at: route) }
         Task {
             await model.refresh()
             await model.keyvault.refresh()
@@ -445,84 +470,38 @@ public enum AppEnvironment {
             case "webui":
                 WebUIWindowController.show(model: model)
                 WebUIWindowController.startVideoHarness(model: model)
-            case "new-space":
-                await model.openNativeNewSpace()
-            case "new-space-picker":
-                await model.openNativeNewSpace()
-                model.wizard.send(.openImageSuggestions)
-            case "new-space-resources":
-                // The Resources step for `CUA_SPACES_WIZARD_IMAGE` on this
-                // Mac (or `CUA_SPACES_WIZARD_ON=cloud`), with
-                // `CUA_SPACES_WIZARD_DISK` GB when its disk grows and
-                // `CUA_SPACES_WIZARD_CPUS` / `CUA_SPACES_WIZARD_MEMORY` (GB).
-                // Your cloud needs its experiment (this run only).
+            case "new-space", "new-space-picker", "new-space-resources":
+                // The web wizard (`CUA_SPACES_WIZARD_ON=yours`: Your cloud's
+                // experiment on for this run, and "Run on" there).
                 if env["CUA_SPACES_WIZARD_ON"] == "yours" { model.settings.experiments.yourCloud = true }
-                await model.openNativeNewSpace()
-                let w = model.wizard
-                if let image = env["CUA_SPACES_WIZARD_IMAGE"] { w.send(.chooseImage(imageRef: image)) }
-                w.send(.setPlacement(placement: env["CUA_SPACES_WIZARD_ON"] == "cloud" ? .cloud
-                                   : env["CUA_SPACES_WIZARD_ON"] == "yours" ? .yours : .local))
-                w.send(.next)
-                if let disk = env["CUA_SPACES_WIZARD_DISK"].flatMap(UInt32.init) { w.send(.setDisk(diskGb: disk)) }
-                if let cpus = env["CUA_SPACES_WIZARD_CPUS"].flatMap(UInt32.init) { w.send(.setCpus(cpus: cpus)) }
-                if let memory = env["CUA_SPACES_WIZARD_MEMORY"].flatMap(UInt32.init) { w.send(.setMemory(memoryGb: memory)) }
-            case "keyvault":
-                model.selection = .keyvault(.category(category: .all))
-            case "keyvault-waiting":
-                model.selection = .keyvault(.category(category: .waiting))
+                WebUIWindowController.showNewSpace(model: model, on: env["CUA_SPACES_WIZARD_ON"])
+            case "keyvault", "keyvault-waiting":
+                web(.keyvault)
             case "approval":
-                model.selection = .keyvault(.category(category: .waiting))
-                if let first = model.keyvault.overview.pending.first { model.keyvault.openApproval(first.id) }
+                web(.access)
             case "onboarding":
-                // The first run is the web page's: its window opens on it
-                // (`RootView`) once the launch is ready.
+                // The first run again, on its page.
                 model.onboarding.restart()
+                web(.onboarding)
             case "drive":
                 // The Volume page shows with Cua Volume on (this run only).
                 model.settings.experiments.cuaVolume = true
-                model.selection = .drive
+                web(.drive)
             case "settings", "settings-devices", "settings-storage", "settings-about", "settings-experiments":
-                if env["CUA_SPACES_START_VIEW"] == "settings-devices" { model.settingsTab = .devices }
-                if env["CUA_SPACES_START_VIEW"] == "settings-about" { model.settingsTab = .about }
-                if env["CUA_SPACES_START_VIEW"] == "settings-experiments" { model.settingsTab = .experiments }
-                if env["CUA_SPACES_START_VIEW"] == "settings-storage" {
-                    // Storage shows with the Cua Volume experiment on (this
-                    // run only; the settings file is not written).
-                    model.settings.experiments.cuaVolume = true
-                    model.settingsSection = "storage"
-                }
-                try? await Task.sleep(for: .seconds(2))
-                NSApp.activate()
-                if let item = NSApp.mainMenu?.items.first?.submenu?.items.first(where: { $0.keyEquivalent == "," }),
-                   let action = item.action {
-                    NSApp.sendAction(action, to: item.target, from: item)
-                }
-            case "device-approval":
-                // The approval sheet for the first device asking (it opens
-                // on its own once the relay lists one).
+                // Storage shows with the Cua Volume experiment on (this run
+                // only; the settings file is not written).
+                if env["CUA_SPACES_START_VIEW"] == "settings-storage" { model.settings.experiments.cuaVolume = true }
+                MainUIRouter(model: model).openSettings(Self.settingsRoute(env["CUA_SPACES_START_VIEW"] ?? "settings"))
+            case "device-approval", "device-enroll", "device-enroll-code":
+                // The web Devices page has the enroll and approval sheets.
                 await model.devices.refresh()
-                if model.devices.approval == nil, let first = model.devices.view.approvals.first {
-                    model.devices.openApproval(first, in: .main)
-                }
-                if let code = env["CUA_SPACES_APPROVE_CODE"] { model.devices.setCode(code) }
-            case "device-enroll":
-                model.devices.startEnroll(in: .main)
-            case "device-enroll-code":
-                // "Approve from another device": register, show the code, wait.
-                model.devices.startEnroll(in: .main)
-                await model.devices.chooseEnroll(.approve)
+                web(.path("/settings/devices"))
             case "space":
                 model.select("local:aurora")
-            case "this-machine":
+                web(.space("local:aurora"))
+            case "this-machine", "host-setup", "host-configured":
                 model.select("this-mac")
-            case "host-setup":
-                model.select("this-mac")
-                model.host.openForm()
-            case "host-configured":
-                model.select("this-mac")
-                model.host.openForm()
-                model.host.send(.setName(name: "Studio"))
-                await model.host.submit()
+                web(.machines)
             case "notch", "notch-open":
                 // Closed first, then open once after 1.5 s, so a capture
                 // sees the spring.
@@ -561,7 +540,7 @@ public enum AppEnvironment {
                 model.notch.setActivity(hotspot: false, transfer: AppNotchTransfer(sent: 600, total: 1000))
             case "notch-activity-provisioning":
                 if var s = model.notch.spaces.first(where: { $0.id != "this-mac" }) {
-                    s.id = "cloud:starter"
+                    s.id = "direct:starter"
                     s.name = "Starter"
                     s.status = .provisioning
                     s.startedAt = Int64(Date().timeIntervalSince1970 * 1000) - 40_000

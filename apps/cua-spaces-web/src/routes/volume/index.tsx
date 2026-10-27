@@ -7,11 +7,15 @@ import type { ReactNode } from "react";
 
 import { useExperimentFlags, useVolume, useVolumePins, type ConflictView, type DriveAction, type LineView } from "@/bridge";
 import { EmptyState, Page, PageHeader } from "@/components/page";
+import { StorageSection } from "@/components/settings/storage-section";
 import { Button } from "@/components/ui/button";
+import { GroupedSection, SectionHeading } from "@/components/ui/grouped";
 import { cn } from "@/lib/utils";
 import { volumeUnavailableNote } from "@/lib/volume-notes";
+import { useFlag } from "@/bridge/flags";
+import { LegacyVolumePage } from "@/legacy/routes/volume/index";
 
-export const Route = createFileRoute("/volume/")({ component: VolumePage });
+export const Route = createFileRoute("/volume/")({ component: VolumePageSwitch });
 
 /**
  * Volume, as the SwiftUI app's `DrivePageView` lays it out: Open in Finder
@@ -28,7 +32,7 @@ function VolumePage() {
       <Page className="max-w-3xl">
         <PageHeader title="Volume" />
         <EmptyState icon={<HardDriveIcon />} title="Cua Volume is off">
-          It's an experiment for now. Turn it on in Settings, Experiments.
+          It's an experiment for now. Turn it on in Settings, Advanced.
         </EmptyState>
       </Page>
     );
@@ -149,6 +153,8 @@ function VolumeBody() {
             {view.error}
           </p>
         ) : null}
+
+        <StorageSection />
       </div>
     </Page>
   );
@@ -157,12 +163,8 @@ function VolumeBody() {
 function Section({ title, kind, children }: { title?: string; kind?: string; children: ReactNode }) {
   return (
     <section className="mb-6" data-drive-section={kind}>
-      {title ? (
-        <h2 className="mb-2 px-1 text-xs font-semibold text-muted-foreground" data-drive-section-title="">
-          {title}
-        </h2>
-      ) : null}
-      <div className="divide-y overflow-hidden rounded-xl border bg-card shadow-xs">{children}</div>
+      {title ? <SectionHeading data-drive-section-title="">{title}</SectionHeading> : null}
+      <GroupedSection>{children}</GroupedSection>
     </section>
   );
 }
@@ -185,7 +187,7 @@ function Line({ line, busy, onAction, onSecondary, primary }: { line: LineView; 
         </Button>
       ) : null}
       {line.actionLabel && onAction ? (
-        <Button variant={primary ? "default" : "outline"} size="sm" disabled={busy} onClick={onAction} data-line-action="">
+        <Button variant={primary ? "default" : "secondary"} size="sm" disabled={busy} onClick={onAction} data-line-action="">
           {line.actionLabel}
         </Button>
       ) : null}
@@ -207,9 +209,14 @@ function Conflict({ conflict: c, busy, onOpen, onResolve }: { conflict: Conflict
           {c.openLabel}
         </Button>
       ) : null}
-      <Button variant="outline" size="sm" disabled={busy} onClick={onResolve} data-conflict-resolve="">
+      <Button variant="secondary" size="sm" disabled={busy} onClick={onResolve} data-conflict-resolve="">
         {c.resolveLabel}
       </Button>
     </div>
   );
+}
+
+/** The redesign behind `spaces_redesign` (Settings → Advanced → Labs); off, the page as it was. */
+function VolumePageSwitch() {
+  return useFlag("spaces_redesign") ? <VolumePage /> : <LegacyVolumePage />;
 }

@@ -3303,6 +3303,10 @@ fn background_virtual_key(
     modifiers: &[&str],
 ) -> anyhow::Result<crate::input::KeyboardDeliveryReport> {
     if let Some(popup) = crate::input::popup_of_pid(pid) {
+        match crate::input::send_popup_keyboard_key(popup.window, key, modifiers) {
+            Err(error) if error.is::<crate::input::PopupOwnerGone>() => {}
+            delivered => return delivered,
+        }
         return crate::input::send_keys_under_popup_grab(pid, popup, || {
             crate::input::send_key_xtest(key, modifiers)
         });
@@ -3318,6 +3322,10 @@ fn background_virtual_text(
     text: &str,
 ) -> anyhow::Result<crate::input::KeyboardDeliveryReport> {
     if let Some(popup) = crate::input::popup_of_pid(pid) {
+        match crate::input::send_popup_keyboard_text(popup.window, text) {
+            Err(error) if error.is::<crate::input::PopupOwnerGone>() => {}
+            delivered => return delivered,
+        }
         return crate::input::send_keys_under_popup_grab(pid, popup, || {
             crate::input::send_type_text_xtest(text)
         });
@@ -5662,7 +5670,7 @@ async fn overlay_glide_to_target_for(cursor_id: &str, sx: f64, sy: f64, target: 
         return;
     }
     let pos = crate::overlay::current_position_for(cursor_id);
-    if pos.0 < 0.0 && pos.1 < 0.0 {
+    if pos.is_none() {
         crate::overlay::send_command_for(
             cursor_id.to_owned(),
             cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy },

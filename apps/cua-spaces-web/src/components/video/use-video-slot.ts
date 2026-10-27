@@ -81,6 +81,10 @@ export function useVideoSlot(
     return () => {
       stop();
       setId(null);
+      // The slot's last word dies with it: a slot that comes back (picture in
+      // picture closed, Try again) starts at connecting, never flashing the
+      // old one's failure or live state.
+      setStatus(CONNECTING);
     };
   }, [ref, on, slots, spaceId, tier, interactive, radius, inset, os, windowId, epoch, attempt]);
 

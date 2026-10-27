@@ -5,7 +5,7 @@
  * Account, daemon, machine, onboarding, telemetry and Settings shapes.
  *
  * Hand-written mirror of the Tauri app's adapters (`apps/cua-spaces/src/
- * native/fleet.ts`, `native/host.ts`, `native/telemetry.ts`,
+ * native/account.ts`, `native/host.ts`, `native/telemetry.ts`,
  * `components/desktop/NewSpaceWizard.tsx`) and of the app core's
  * `settings` module (`libs/cua/crates/cua-spaces-app-core/src/settings.rs`).
  * Rust is the source of truth; these are its JSON (camelCase) shapes.
@@ -15,7 +15,7 @@ import type { AgentSetupRow } from "./agents";
 import type { MachineAccessNotice } from "./devices";
 import type { Location, Runtime, SpaceKind } from "./spaces";
 
-/* ---- Account (fleet_status, begin_sign_in) ------------------------------ */
+/* ---- Account (account_status, begin_sign_in) ------------------------------ */
 
 /** What starting a sign-in returns. `browser`: finish in the tab that just
  * opened. `device`: enter `userCode` at `verificationUri`. */
@@ -25,17 +25,13 @@ export interface SignInStart {
   verificationUri: string;
 }
 
-/** Cua Cloud account status. */
-export interface FleetStatus {
+/** The signed-in account (`account_status`). */
+export interface AccountStatus {
   configured: boolean;
   authMode: "user" | "client-credentials" | "static-token" | "none";
-  baseUrl: string;
-  tokenUrl: string;
   clientId?: string;
   /** Signed-in user identity (email/subject), when a user session is active. */
   identity?: string;
-  namespaces?: string[];
-  probeError?: string;
 }
 
 /** The local `cua daemon` the app shares Spaces with. */
@@ -52,7 +48,7 @@ export interface DaemonStatus {
 /** `create_space`'s config (the SDK's create options). */
 export interface SpaceCreateConfig {
   image?: string;
-  /** `local`, `cloud`, `host:<machine>`, or a connected cloud's word. */
+  /** `local`, `host:<machine>`, or a connected cloud's word. */
   on?: Location | string;
   kind?: SpaceKind | "auto";
   runtime?: Runtime;
@@ -86,6 +82,10 @@ export interface CreateProgress {
   bytesPerSecond?: number | null;
   /** The id the Space will have, when known. */
   space?: string | null;
+  /** The host's create failed for a reason that usually passes and the
+   * host runs it once more by itself: the page applies the same failure
+   * (its core then shows "Retrying…"). Never on a final failure. */
+  retry?: { error: string; errorVariant?: string } | null;
 }
 
 /** What turning a Space off or on did (the SDK's `SpacePower`). */
@@ -185,6 +185,237 @@ export interface MachinePageRow {
   spacesLabel?: string;
 }
 
+/** A confirmation (`host::HostConfirm`). */
+export interface HostConfirm {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  cancelLabel: string;
+}
+
+/** One of a machine's two switches (`machines_view::MachinesViewToggle`). */
+export interface MachinesViewToggle {
+  /** `spaces` or `desktop`. */
+  id: string;
+  label: string;
+  help: string;
+  on: boolean;
+  /** Changed here (This machine); another machine's are read-only. */
+  editable: boolean;
+  enabled: boolean;
+  /** What flipping it runs, in order (`host.action` ids). */
+  actions: HostActionId[];
+  /** Before setup: flipping it opens the setup form with this profile. */
+  setup?: string | null;
+}
+
+/** A machine's own desktop, the first row of its Spaces when it shares it: a Space row with a quiet label (`machines_view::MachinesViewDesktop`). */
+export interface MachinesViewDesktop {
+  /** The Space's id (its page). */
+  id: string;
+  name: string;
+  os: string;
+  status: string;
+  running: boolean;
+  /** "Desktop". */
+  label: string;
+}
+
+/** A Space on a machine: a link to its page (`machines_view::MachinesViewSpace`). */
+export interface MachinesViewSpace {
+  id: string;
+  name: string;
+  os: string;
+  status: string;
+  running: boolean;
+}
+
+/** New Space here (`machines_view::MachinesViewNewSpace`). */
+export interface MachinesViewNewSpace {
+  label: string;
+  /** The wizard's placement (`local`, `host:<id>`). */
+  on: string;
+  enabled: boolean;
+  help?: string | null;
+}
+
+/** Rename (`machines_view::MachinesViewRename`). */
+export interface MachinesViewRename {
+  /** `host`, `machine` or `device`. */
+  target: string;
+  id: string;
+  title: string;
+  confirmLabel: string;
+}
+
+/** Remove from account (`machines_view::MachinesViewRemove`). */
+export interface MachinesViewRemove {
+  label: string;
+  enabled: boolean;
+  help?: string | null;
+  /** This machine: its host setup is removed (`host.action` `remove`). */
+  host: boolean;
+  /** Another machine: it leaves the relay directory. */
+  machine?: string | null;
+  /** The device on it, revoked too. */
+  device?: string | null;
+  confirm: HostConfirm;
+}
+
+/** What fixes an issue (`machines_health::MachinesViewIssueAction`). */
+export interface MachinesViewIssueAction {
+  /** "Open Local Network settings", "Free disk space", "Restart service". */
+  label: string;
+  /** A System Settings pane to open (`host.openSettings`). */
+  url?: string | null;
+  /** A host action to run (`host.action`). */
+  hostAction?: HostActionId | null;
+  /** Restart into the Cua Spaces update already downloaded (the sidebar's "Restart to update"). */
+  appUpdate?: boolean;
+}
+
+/** One issue on a machine's page (`machines_health::MachinesViewIssue`). */
+export interface MachinesViewIssue {
+  /** The check it comes from (`machine.disk`, `service`, `version`). */
+  id: string;
+  /** `warn` or `fail`; `info` is a note that is no problem. */
+  level: string;
+  /** One plain sentence. */
+  text: string;
+  action?: MachinesViewIssueAction | null;
+}
+
+/** One machine's row and page (`machines_view::MachinesViewMachine`). */
+export interface MachinesViewMachine {
+  id: string;
+  name: string;
+  badge?: string | null;
+  /** The row's one muted line. */
+  line: string;
+  /** Usable now (the green dot). */
+  online: boolean;
+  /** The dot's tint for its issues: `warn`, `fail`, or empty. */
+  health?: string;
+  /** What the host passes to `Spaces.machine_health` (empty: This Mac); null when it can't be checked from here. */
+  healthTarget?: string | null;
+  /** "Issues". */
+  issuesTitle?: string;
+  /** What is wrong, one sentence each; empty when healthy or offline. */
+  issues?: MachinesViewIssue[];
+  os: string;
+  current: boolean;
+  team: boolean;
+  /** The page's status line. */
+  status: string;
+  sharedBy?: string | null;
+  rename?: MachinesViewRename | null;
+  notice?: string | null;
+  noticeAction?: HostAction | null;
+  toggles: MachinesViewToggle[];
+  togglesNote?: string | null;
+  spacesTitle: string;
+  spaces: MachinesViewSpace[];
+  /** Its own desktop, when it shares it (above `spaces`; not one of the Spaces counted). */
+  desktop?: MachinesViewDesktop | null;
+  spacesEmpty?: string | null;
+  newSpace: MachinesViewNewSpace;
+  detailsTitle: string;
+  details: { label: string; value: string }[];
+  remove?: MachinesViewRemove | null;
+}
+
+/** A group of the list (`machines_view::MachinesViewGroup`). */
+export interface MachinesViewGroup {
+  /** `yours`, `old` or `team`. */
+  id: string;
+  title: string;
+  collapsed: boolean;
+  ids: string[];
+  removeAll?: { label: string; confirm: HostConfirm; removes: MachinesViewRemove[] } | null;
+}
+
+/** The clouds, as the page reads `cloud_status` (`cloud_page::CloudsInput`). */
+export interface CloudsInput {
+  providers: Record<string, unknown>[];
+  machines: Record<string, unknown>[];
+  canApprove: boolean;
+  now: number;
+}
+
+/** A button on a cloud's page (`cloud_page::CloudAction`). */
+export interface CloudAction {
+  /** `raise-budget`, `set-up-again`, `new-token`, `review`, `open`, `reconnect`, `switch-oidc` or `change-limits`. */
+  id: string;
+  label: string;
+  url: string | null;
+}
+
+export interface CloudIssue {
+  id: string;
+  level: "fail" | "warn";
+  text: string;
+  action: CloudAction | null;
+}
+
+/** One cloud's page (`cloud_page::CloudPage`). */
+export interface CloudPage {
+  id: string;
+  name: string;
+  logo: string;
+  status: string;
+  health: "ok" | "warn" | "fail";
+  issuesTitle: string;
+  issues: CloudIssue[];
+  spend: { amount: string; ofBudget: string; resets: string; percent: number; tone: "ok" | "warn"; note: string } | null;
+  running: { title: string; machines: { id: string; name: string; by: string; cost: string }[] } | null;
+  token: {
+    title: string;
+    lock: string;
+    note: string;
+    holdersLabel: string;
+    holders: string;
+    revokeLabel: string;
+    revokeHelp: string;
+    replace: CloudAction;
+  } | null;
+  settingsTitle: string;
+  settings: { id: string; label: string; help: string; value: string }[];
+  /** "Change limits…". */
+  limits: CloudAction | null;
+  /** "Switch to OIDC" on a CLI sign-in link that could link without a stored key. */
+  switchAuth: CloudAction | null;
+  approval: {
+    title: string;
+    intro: string;
+    rows: { label: string; value: string }[];
+    note: string;
+    approveLabel: string;
+    denyLabel: string;
+  } | null;
+  disconnect: { label: string; confirm: HostConfirm; delete: boolean } | null;
+}
+
+/** The Clouds group and each cloud's page (`cloud_page::CloudsView`). */
+export interface CloudsView {
+  group: {
+    title: string;
+    rows: { id: string; name: string; logo: string; line: string; health: "ok" | "warn" | "fail" }[];
+    connectLabel: string;
+  };
+  pages: CloudPage[];
+}
+
+/** The Machines page as every UI draws it (`machines_view::MachinesView`). */
+export interface MachinesView {
+  summary: string;
+  groups: MachinesViewGroup[];
+  machines: MachinesViewMachine[];
+  /** The Clouds group under the machines; a host that predates it sends none. */
+  clouds?: CloudsView;
+  /** The list's sections, top to bottom (`clouds`, then each group's id); a host that predates it sends none. */
+  order?: string[];
+}
+
 export interface ServiceState {
   installed: boolean;
   running: boolean;
@@ -271,7 +502,9 @@ export interface HostStatus {
   account?: HostAccount | null;
   /** What a running setup (or Sign In) waits for, such as finishing the
    * sign-in in the browser (the SwiftUI app's `HostModel.progress`). */
-  progress?: string | null;
+  progress?: string | null;  /** The name System Settings lists the app under ("Cua Spaces", "Cua
+   * Spaces Local"): the Mac app's own name, for the permissions screen. */
+  appName?: string | null;
 }
 
 /** The account signed in to Cua in the app (`host::HostAccount`). */
@@ -439,14 +672,55 @@ export interface TelemetryView {
   docsUrl: string;
 }
 
+/**
+ * `crashReporting.config`: whether the page may report its own errors, and
+ * the settings to do it with. The host decides: `allowed` is true only while
+ * usage data is on and its first-run notice was shown, and the DSN, release
+ * and channel are the app's (config/spaces-crash-reporting.json). A host
+ * with no answer (`unsupported`, `unimplemented`, an error) means off.
+ */
+export interface CrashReportingConfig {
+  allowed: boolean;
+  /** The public ingest key; empty means crash reporting is not configured in this build. */
+  dsn: string;
+  /** `cua-spaces-desktop@<app version>`. */
+  release: string;
+  /** The channel: `stable`, `beta` or `local`. */
+  environment: string;
+  /** Which app hosts the page: `electron` or `swift`. */
+  shell: string;
+  /** A local build's forced-crash request (CUA_CRASH_TEST=ui): throw once after start. Never set on `stable` or `beta`. */
+  crashTest?: "ui";
+}
+
 /* ---- Settings page (app core `settings::page`) --------------------------- */
+
+/** Why a sign-in did not finish (`sign_in::SignInFailure`). */
+export type SignInFailure = "notConfirmed" | "declined" | "codeRejected" | "offline" | "serviceUnavailable" | "couldNotSave" | "unknown";
 
 /** Where the Account section's sign-in stands (`settings::SignInPhase`). */
 export type SignInPhase =
   | { kind: "idle" }
   | { kind: "starting" }
-  | { kind: "waiting"; userCode?: string | null }
-  | { kind: "failed"; message: string };
+  | { kind: "waiting"; userCode?: string | null; opened?: boolean }
+  /** `message` is the core's line; `detail` the error's own words (Details). */
+  | { kind: "failed"; reason?: SignInFailure; message: string; detail?: string | null };
+
+/** The sidebar's foot (`sign_in::SignInFooter`): every sign-in state in one place. */
+export interface SignInFooter {
+  state: "signedOut" | "starting" | "waiting" | "failed" | "signedIn";
+  text: string;
+  identity: string | null;
+  code: string | null;
+  codeLabel: string;
+  reopenLabel: string | null;
+  cancelLabel: string | null;
+  actionLabel: string | null;
+  reason: SignInFailure | null;
+  detail: string | null;
+  detailsLabel: string;
+  toast: { title: string; body: string | null } | null;
+}
 
 /** `settings::SettingsInput` (the fields the bridge fills; the rest default). */
 export interface SettingsInput {
@@ -455,8 +729,6 @@ export interface SettingsInput {
   signIn?: SignInPhase;
   canSignOut?: boolean;
   menuBar?: boolean;
-  defaultLocation?: "cloud" | "local" | "yours" | "host";
-  locationLockedBy?: string | null;
   telemetry?: { enabled: boolean; lockedBy?: string | null } | null;
   /** The Keyvault's auto-wipe (none: no Keyvault section). */
   keyvaultAutoWipe?: boolean | null;
@@ -478,6 +750,8 @@ export interface SettingsInput {
   agentsBusy?: boolean;
   /** The agents with a change running ("working…"). */
   agentsPending?: string[];
+  /** Settings, General's Show tips (`!AppSettings.tips.off`; the core's default: on). */
+  showTips?: boolean;
 }
 
 export type SettingsRowKind =

@@ -35,7 +35,7 @@ pub struct Key {
 }
 
 /// Every setting, in display order.
-pub const KEYS: [Key; 7] = [
+pub const KEYS: [Key; 13] = [
     Key {
         name: "default.on",
         env: "CUA_DEFAULT_ON",
@@ -46,7 +46,7 @@ pub const KEYS: [Key; 7] = [
         name: "default.kind",
         env: "CUA_DEFAULT_KIND",
         default: "auto",
-        description: "the kind when --kind is not given (auto, container, vm)",
+        description: "the kind when --kind is not given (auto, container, vm, microvm)",
     },
     Key {
         name: "default.runtime",
@@ -71,6 +71,42 @@ pub const KEYS: [Key; 7] = [
         env: "CUA_RUNTIME_LINUX",
         default: "auto",
         description: "the engine local Linux Spaces run on, on a Mac: auto (a working Docker engine on this Mac, else built-in; built-in once it exists), builtin (cua's own VM with Docker and gVisor, set up on first use) or system (only this Mac's own engine; nothing is downloaded)",
+    },
+    Key {
+        name: "runtime.linux_cpus",
+        env: "CUA_RUNTIME_LINUX_CPUS",
+        default: "4",
+        description: "CPUs of the built-in Linux runtime VM on a Mac, which every local Linux Space shares (at most this Mac's; applies when the VM next starts)",
+    },
+    Key {
+        name: "runtime.linux_memory_gib",
+        env: "CUA_RUNTIME_LINUX_MEMORY_GIB",
+        default: "4",
+        description: "memory (GiB) of the built-in Linux runtime VM on a Mac (4 GiB always stays with the Mac; applies when the VM next starts)",
+    },
+    Key {
+        name: "pool.auto",
+        env: "CUA_POOL_AUTO",
+        default: "on",
+        description: "keep Spaces ready only where this machine's own creates pay for it (bursts, batches, periodic jobs; never for occasional creates, nor on battery), so those creates take about 0.1 s (off: only explicit pools)",
+    },
+    Key {
+        name: "placement.overflow",
+        env: "CUA_PLACEMENT_OVERFLOW",
+        default: "on",
+        description: "when no location is given and a linked cloud has a budget (`cua cloud budget`), Spaces go to this machine first and overflow into your clouds when it is full, never past the budget (off: this machine only)",
+    },
+    Key {
+        name: "pool.memory_percent",
+        env: "CUA_POOL_MEMORY_PERCENT",
+        default: "15",
+        description: "most memory ready Spaces may hold, as a percentage of this machine's (of the built-in Linux runtime VM's for containers on a Mac); none starts when memory runs short",
+    },
+    Key {
+        name: "pool.warm",
+        env: "CUA_POOL_WARM",
+        default: "none",
+        description: "images kept ready regardless of use, as IMAGE[=COUNT] separated by commas (a dedicated host: `ghcr.io/trycua/linux:24.04-slim=8`)",
     },
     Key {
         name: "nudges.risky_actions",
@@ -273,7 +309,17 @@ impl Settings {
         if !self.doc.contains_table(section) {
             self.doc[section] = toml_edit::table();
         }
-        self.doc[section][name] = toml_edit::value(value.clone());
+        let item = match key.name {
+            "runtime.linux_cpus" | "runtime.linux_memory_gib" | "pool.memory_percent" => {
+                toml_edit::value(
+                    value
+                        .parse::<i64>()
+                        .map_err(|e| SettingsError(e.to_string()))?,
+                )
+            }
+            _ => toml_edit::value(value.clone()),
+        };
+        self.doc[section][name] = item;
         self.save()?;
         Ok(value)
     }
@@ -333,6 +379,20 @@ impl Settings {
         Ok((on, src))
     }
 
+    /// Whether an omitted location may overflow from this machine into a
+    /// linked cloud that has a budget (`placement.overflow`, default on).
+    pub fn overflow(&self) -> bool {
+        key("placement.overflow")
+            .map(|k| self.entry(k).value)
+            .map(|v| {
+                !matches!(
+                    v.trim().to_ascii_lowercase().as_str(),
+                    "off" | "false" | "0" | "no"
+                )
+            })
+            .unwrap_or(true)
+    }
+
     /// The default kind and where it came from.
     pub fn default_kind(&self) -> Result<(Kind, Source), SettingsError> {
         self.parsed(KEYS[1], Kind::parse)
@@ -363,6 +423,75 @@ pub fn normalize(key: Key, value: &str) -> Result<String, SettingsError> {
         }
         "default.kind" => Kind::parse(v).map_err(bad)?.to_string(),
         "default.runtime" => Runtime::parse(v).map_err(bad)?.to_string(),
+        "runtime.linux_cpus" | "runtime.linux_memory_gib" => {
+            let n: u32 = v.parse().map_err(|_| {
+                SettingsError(format!("{}: expected a number, got {v:?}", key.name))
+            })?;
+            if n == 0 {
+                return Err(SettingsError(format!("{}: must be at least 1", key.name)));
+            }
+            n.to_string()
+        }
+        "placement.overflow" => match v.to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => "on".into(),
+            "0" | "false" | "no" | "off" => "off".into(),
+            _ => {
+                return Err(SettingsError(format!(
+                    "placement.overflow: expected on or off, got {v:?}"
+                )));
+            }
+        },
+        "pool.auto" => match v.to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => "on".into(),
+            "0" | "false" | "no" | "off" => "off".into(),
+            _ => {
+                return Err(SettingsError(format!(
+                    "pool.auto: expected on or off, got {v:?}"
+                )));
+            }
+        },
+        "pool.memory_percent" => {
+            let n: u32 = v.parse().map_err(|_| {
+                SettingsError(format!("pool.memory_percent: expected a number, got {v:?}"))
+            })?;
+            if n > 90 {
+                return Err(SettingsError(
+                    "pool.memory_percent: at most 90 (memory must stay free for Spaces in use)"
+                        .into(),
+                ));
+            }
+            n.to_string()
+        }
+        "pool.warm" => {
+            let mut out = Vec::new();
+            for e in v.split(',').map(str::trim).filter(|e| !e.is_empty()) {
+                if e.eq_ignore_ascii_case("none") {
+                    continue;
+                }
+                let (img, n) = match e.rsplit_once('=') {
+                    Some((i, n)) => (i.trim(), n.trim()),
+                    None => (e, "1"),
+                };
+                let n: u32 = n.parse().map_err(|_| {
+                    SettingsError(format!(
+                        "pool.warm: {e:?}: expected IMAGE or IMAGE=COUNT (a number)"
+                    ))
+                })?;
+                if img.is_empty() {
+                    return Err(SettingsError(format!("pool.warm: {e:?}: no image")));
+                }
+                out.push(if n == 1 {
+                    img.to_string()
+                } else {
+                    format!("{img}={n}")
+                });
+            }
+            if out.is_empty() {
+                "none".into()
+            } else {
+                out.join(",")
+            }
+        }
         "runtime.lume" => cua_vmm::lume::builtin::LumeSource::parse(v)
             .ok_or_else(|| {
                 SettingsError(format!(

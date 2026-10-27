@@ -39,6 +39,7 @@ export const WEBKIT_PAGE_OPS = [
   "clouds.status",
   "clouds.test",
   "clouds.connect",
+  "clouds.disconnect",
   "teleport.catalog",
   "teleport.entryForPath",
   "teleport.windows",
@@ -211,6 +212,7 @@ export function webkitPageOps(request: Request, toHostStatus: (h: WkHostState) =
     "clouds.status": async () => (await request<OpResult<"clouds.status"> | null>("clouds.status")) ?? { providers: [] },
     "clouds.test": call("clouds.test"),
     "clouds.connect": call("clouds.connect"),
+    "clouds.disconnect": call("clouds.disconnect"),
 
     "teleport.catalog": async ({ spaceId }) => arr(await request("teleport.catalog", { spaceId })).map((e) => entryFromWk(e as Json)),
     "teleport.entryForPath": async ({ path }) => entryFromWk(await request<Json>("teleport.entryForPath", { path })),

@@ -119,6 +119,7 @@ from cua_sandbox.transport.env import EnvTransport, env_url
 if TYPE_CHECKING:
     from cua_sandbox.interfaces.services import ServiceHandle
     from cua_sandbox.runtime.base import Runtime, RuntimeInfo
+    from cua_sandbox.sandbox_pool import SandboxPool
 
 logger = logging.getLogger(__name__)
 
@@ -173,8 +174,46 @@ def validate_server_port(server_port: Any) -> None:
         raise ValueError("server_port must be an integer between 1 and 65535")
 
 
+async def _sandbox_pool(pool: Any, *, on: Optional[str], local: Optional[bool]) -> "Any":
+    """The pool of this machine ``pool`` names (a :class:`SandboxPool`, or
+    the name of one) when the create runs here, else ``None`` (a name
+    nothing here has, or a create elsewhere; :func:`_reject_pool` then
+    refuses it)."""
+    from cua_sandbox.sandbox_pool import SandboxPool, get_pool
+
+    if isinstance(pool, SandboxPool):
+        if local is False or (on is not None and str(on).strip().lower() not in ("", "local")):
+            raise InvalidArgument(
+                f"pool {pool.name!r} runs on this machine; drop on=/local= or use on='local'"
+            )
+        return pool
+    if not isinstance(pool, str) or local is False:
+        return None
+    if on is not None and str(on).strip().lower() not in ("", "local"):
+        return None
+    try:
+        return await get_pool(pool)
+    except Exception:  # noqa: BLE001 - no daemon: no pools here
+        return None
+
+
+def _pool_args(sp: Any, image: Any, cpu: Any, memory_mb: Any, kind: Any, runtime: Any) -> Any:
+    """A create's image, size, kind and runtime from pool ``sp`` (the daemon
+    refuses an image or size other than the pool's)."""
+    if image is None:
+        image = Image.from_registry(sp.image)
+    return (
+        image,
+        cpu if cpu is not None else sp.cpus,
+        memory_mb if memory_mb is not None else sp.memory_mb,
+        kind or (sp.kind or None),
+        runtime if runtime is not None else (sp.runtime or None),
+    )
+
+
 def _reject_pool(pool: Optional[str]) -> None:
-    """``pool=`` named a Cua Cloud pool, and Cua Cloud has ended."""
+    """``pool=`` named no pool of this machine: only a Cua Cloud pool could
+    be meant, and Cua Cloud has ended."""
     if pool is not None:
         raise CloudEnded()
 
@@ -259,7 +298,7 @@ def _apply_on(
 ) -> "tuple[Optional[str], Optional[bool], Any]":
     """Route ``on=`` to a provider when it names one: a contrib platform
     (``"e2b"``, ``"daytona"``, ``"modal"``; opt-in SDK builds) or your own
-    cloud (``"aws"``, ``"gcp"``, ``"modal"``; connect it with ``cua cloud
+    cloud (``"aws"``, ``"gcp"``, ``"hetzner"``, ``"modal"``; connect it with ``cua cloud
     connect``). ``"local"``, ``"direct:<addr>"`` and ``"relay:<id>"`` fall
     through to the placement model (:mod:`cua_sandbox._placement`); so does
     ``"cloud"``, which raises :class:`CloudEnded`. Returns
@@ -914,7 +953,7 @@ class Sandbox:
         cls,
         image: Image | None = None,
         *,
-        pool: Optional[str] = None,
+        pool: "SandboxPool | str | None" = None,
         name: Optional[str] = None,
         on: Optional[str] = None,
         local: Optional[bool] = None,
@@ -945,8 +984,8 @@ class Sandbox:
           user default applies (``CUA_DEFAULT_ON``, else ``cua config set
           default.on`` in ``$CUA_HOME/config.toml``, else local, with a
           one-time notice that ``CUA_QUIET_DEFAULT=1`` hides). Cua Cloud has
-          ended: ``on="cloud"``, ``local=False`` and ``pool=`` raise
-          :class:`CloudEnded`.
+          ended: ``on="cloud"``, ``local=False`` and ``pool=`` naming no pool
+          of this machine raise :class:`CloudEnded`.
         * ``kind``: ``"auto"``, ``"container"`` or ``"vm"``. Unset: the
           image's ``kind`` when it has one, else ``default.kind``, else auto
           (macOS and Windows images are VMs, a container rootfs is a
@@ -986,12 +1025,24 @@ class Sandbox:
           it is restarted. If it fails, the sandbox is deleted and the error
           raised. See :meth:`overlay`.
 
+        ``pool``: a pool of this machine (a :class:`SandboxPool` from
+        :func:`create_pool`, or its name) gives the sandbox the pool's image
+        and size and takes one of its ready sandboxes (about 0.1 s).
+
         ``server_port`` names a port your image serves itself: it becomes the
         readiness probe. Leave it unset for the default, daemon-agnostic
         readiness (the provider reports the sandbox running; cua-spacesd on
         3211 is used by the interfaces when the image has it).
         """
         validate_server_port(server_port)
+        # A pool of this machine: the sandbox gets its image and size and
+        # takes one of its ready sandboxes.
+        local_pool = await _sandbox_pool(pool, on=on, local=local)
+        if local_pool is not None:
+            image, cpu, memory_mb, kind, runtime = _pool_args(
+                local_pool, image, cpu, memory_mb, kind, runtime
+            )
+            pool, local = None, True
         _reject_pool(pool)
         on, local, runtime = _apply_on(
             on,
@@ -1017,6 +1068,7 @@ class Sandbox:
         created = await cls._create(
             image=image,
             name=name,
+            local_pool=local_pool.name if local_pool is not None else None,
             ephemeral=False,
             local=True,
             runtime=runtime,
@@ -1118,7 +1170,7 @@ class Sandbox:
         cls,
         image: Image | None = None,
         *,
-        pool: Optional[str] = None,
+        pool: "SandboxPool | str | None" = None,
         name: Optional[str] = None,
         on: Optional[str] = None,
         local: Optional[bool] = None,
@@ -1141,10 +1193,18 @@ class Sandbox:
     ) -> AsyncIterator["Sandbox"]:
         """A local sandbox that is deleted when the ``async with`` block exits.
 
-        Takes the same ``on``/``local``, ``kind``, ``runtime``, ``command``,
+        Takes the same ``pool``, ``on``/``local``, ``kind``, ``runtime``, ``command``,
         ``env``, ``services``, ``wait_for``, ``memory`` and ``network``
         options as :meth:`create`.
         """
+        # A pool of this machine: the sandbox gets its image and size and
+        # takes one of its ready sandboxes.
+        local_pool = await _sandbox_pool(pool, on=on, local=local)
+        if local_pool is not None:
+            image, cpu, memory_mb, kind, runtime = _pool_args(
+                local_pool, image, cpu, memory_mb, kind, runtime
+            )
+            pool, local = None, True
         _reject_pool(pool)
         on, local, runtime = _apply_on(
             on,
@@ -1171,6 +1231,7 @@ class Sandbox:
             image=image,
             name=name,
             ephemeral=True,
+            local_pool=local_pool.name if local_pool is not None else None,
             local=True,
             runtime=runtime,
             cpu=cpu,
@@ -1575,6 +1636,7 @@ class Sandbox:
         env: Optional[dict[str, str]] = None,
         services: Optional[dict[str, int]] = None,
         wait_for: Optional[list[Probe]] = None,
+        local_pool: Optional[str] = None,
     ) -> "Sandbox":
         """Internal factory that validates server_port before selecting a transport.
 
@@ -1696,6 +1758,15 @@ class Sandbox:
             if network == "none":
                 _require_network_none_support(runtime)
                 start_opts["network"] = "none"
+            if local_pool is not None:
+                # A pool of this machine (`create_pool`) to take a ready
+                # sandbox from.
+                if not _sdk_backed(runtime):
+                    raise Unsupported(
+                        f"{type(runtime).__name__} does not take sandboxes from a pool; "
+                        "omit runtime= to use the pool"
+                    )
+                start_opts["pool"] = local_pool
             rt_info = await runtime.start(image, sb_name, ephemeral=bool(ephemeral), **start_opts)
             if rt_info.environment == "android" and not rt_info.qmp_port:
                 if rt_info.grpc_port:

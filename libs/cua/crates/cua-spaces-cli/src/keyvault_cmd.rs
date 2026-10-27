@@ -27,12 +27,32 @@ fn connect_error(e: ConnectError) -> CuaError {
             "the Cua Keyvault is not running at {} (start the daemon: `cua daemon start`)",
             p.display()
         )),
-        ConnectError::Impostor { path, who } => CuaError::Unauthenticated(format!(
-            "the process serving {} is not the Cua daemon ({who}); refusing to talk to it",
-            path.display()
-        )),
+        ConnectError::Impostor { path, who } => {
+            CuaError::Unauthenticated(impostor_message(&path, &who, cfg!(target_os = "linux")))
+        }
         ConnectError::Other(m) => CuaError::Transport(format!("keyvault: {m}")),
     }
+}
+
+/// The refusal when the socket's server is not recognised as the Cua daemon.
+/// On Linux the Keyvault recognises Cua only by where it is installed (a
+/// root-owned install root such as `/opt/Cua Spaces`), because a same-user
+/// binary cannot be told from a copy; a daemon started from a build or from
+/// the home directory is therefore refused, which the plain message hides.
+fn impostor_message(path: &std::path::Path, who: &str, linux: bool) -> String {
+    let base = format!(
+        "the process serving {} is not the Cua daemon ({who}); refusing to talk to it",
+        path.display()
+    );
+    if !linux {
+        return base;
+    }
+    format!(
+        "{base}. On Linux the Keyvault trusts only a daemon run from the installed Cua package \
+         (under {}, in a tree only root can change). Run the daemon from the package; a debug \
+         build of cua can set CUA_KEYVAULT_ALLOW_UNVERIFIED_DAEMON=1 for this command",
+        cua_keyvault::caller::LINUX_INSTALL_ROOTS.join(", ")
+    )
 }
 
 fn kv_error(e: KvError) -> CuaError {
@@ -621,5 +641,17 @@ mod tests {
     fn only_the_line_ending_is_stripped() {
         let s = strip_newline(Zeroizing::new("  two spaces  \r\n".into()));
         assert_eq!(s.as_str(), "  two spaces  ");
+    }
+
+    #[test]
+    fn linux_refusal_says_where_the_daemon_must_run_from() {
+        let p = std::path::Path::new("/h/.cua/keyvault.sock");
+        let who = "/home/u/bin/cua (signature not checked on this OS, UNTRUSTED)";
+        let linux = impostor_message(p, who, true);
+        assert!(linux.contains("refusing to talk to it"));
+        assert!(linux.contains("/opt/Cua Spaces"));
+        assert!(linux.contains("CUA_KEYVAULT_ALLOW_UNVERIFIED_DAEMON"));
+        let mac = impostor_message(p, who, false);
+        assert!(!mac.contains("/opt/"));
     }
 }

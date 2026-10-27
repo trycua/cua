@@ -1,5 +1,92 @@
 # Changelog
 
+## [0.16.0](https://github.com/trycua/cua/compare/cua-spaces-v0.15.0...cua-spaces-v0.16.0) (2026-10-25)
+
+
+### Features
+
+* **spaces:** link System Status from Help, Settings About and the troubleshoot guide (CUA-2228) ([#5902](https://github.com/trycua/cua/issues/5902)) ([aab2775](https://github.com/trycua/cua/commit/aab27757205bf1dba41e9ea4d91df61a22b92764))
+* **spaces:** new app icon, the terracotta koala keycap ([#5914](https://github.com/trycua/cua/issues/5914)) ([ef78ec8](https://github.com/trycua/cua/commit/ef78ec83775111c9f9ed12dc97cb265d05919e4c))
+* **spaces:** onboarding v2 PostHog funnel events (CUA-2292) ([#5951](https://github.com/trycua/cua/issues/5951)) ([feafec6](https://github.com/trycua/cua/commit/feafec648a406d0cffba14c0b4d84aaa29662f86))
+
+
+### Bug Fixes
+
+* **cua-cli:** Cua Spaces Local's hints and errors name cua-local, not cua ([#5892](https://github.com/trycua/cua/issues/5892)) ([5309f1e](https://github.com/trycua/cua/commit/5309f1edd49be0edd06a6f0a91c5a171f3f29be2))
+* **spaces-macos:** uninstall-local.sh also removes the Local preferences, caches and web view data (CUA-2207) ([#5880](https://github.com/trycua/cua/issues/5880)) ([929be2a](https://github.com/trycua/cua/commit/929be2a6766229fceb54686f039b90ac09d275a6))
+* **spaces-macos:** uninstall-local.sh takes this Mac off the relay and Local's entries out of your coding agents (CUA-2212, CUA-2222) ([#5882](https://github.com/trycua/cua/issues/5882)) ([b43f30b](https://github.com/trycua/cua/commit/b43f30bd667ebba0c188f6cce541124c3fd5703d))
+* **spaces:** "Skip for now" sticks across launches, and Local's agent setup names are guarded (CUA-2221) ([#5889](https://github.com/trycua/cua/issues/5889)) ([59cf287](https://github.com/trycua/cua/commit/59cf2877722c49671ebf7b697cec706fa71ef00f))
+* **spaces:** app icon gets its own charcoal background, so macOS 26 stops adding a grey plate (CUA-2244) ([#5924](https://github.com/trycua/cua/issues/5924)) ([c9a8ead](https://github.com/trycua/cua/commit/c9a8eadb93fb8215522c4716cbcfc9a014615f6a))
+* **spaces:** Cua Spaces Local uses the bundle id com.trycua.spaces.macos.local ([#5884](https://github.com/trycua/cua/issues/5884)) ([152a565](https://github.com/trycua/cua/commit/152a5653b482cbfbd01520343d0f6243f1fca467))
+* **spaces:** dogfooding polish (welcome copy first) ([#5893](https://github.com/trycua/cua/issues/5893)) ([928fe85](https://github.com/trycua/cua/commit/928fe850d48b3a9d591ba7b18e93fd4f8db239a1))
+* **spaces:** never show an empty Spaces page while computers are still answering ([#5905](https://github.com/trycua/cua/issues/5905)) ([a0f98b1](https://github.com/trycua/cua/commit/a0f98b1a35dcce9aac11653efab82a9972484aad))
+* **spaces:** sign-in that never comes back offers a code (CUA-2291) ([#5950](https://github.com/trycua/cua/issues/5950)) ([3cc240d](https://github.com/trycua/cua/commit/3cc240d9f2f2c3aefc670fc20ee915f5ec96372b))
+* **spaces:** signing in as another account recovers the daemon session, host registration and mesh key (CUA-2295) ([#5961](https://github.com/trycua/cua/issues/5961)) ([3c0c264](https://github.com/trycua/cua/commit/3c0c26456d176672b5ce6880e0f80eac3b51c00e))
+* **spaces:** submit again when notarytool crashes before it returns a submission id ([#5874](https://github.com/trycua/cua/issues/5874)) ([411c273](https://github.com/trycua/cua/commit/411c273b16c38652a5ec16ec98a5c110fe70711b))
+* **spaces:** the notch counts only running or starting Spaces and collapses at zero ([#5872](https://github.com/trycua/cua/issues/5872)) ([3a31781](https://github.com/trycua/cua/commit/3a317816793479208da4c7b138680f9a438de6d6))
+* **spaces:** the permissions guide closes itself once access is granted (CUA-2274) ([#5927](https://github.com/trycua/cua/issues/5927)) ([80146f5](https://github.com/trycua/cua/commit/80146f54f52bc7864b657a81a817a6eaeefde64c))
+* **spaces:** the web page's usage signals reach the SwiftUI app before Settings is opened (CUA-2291) ([#5953](https://github.com/trycua/cua/issues/5953)) ([c3addc0](https://github.com/trycua/cua/commit/c3addc03209690fdc77911dcc46738e9070c72a8))
+
+## [0.15.0](https://github.com/trycua/cua/compare/cua-spaces-v0.14.0...cua-spaces-v0.15.0) (2026-10-24)
+
+
+### Features
+
+* **cua-home:** CuaChannel, the names that keep Cua Spaces Local apart from stable (CUA-1776) ([#5800](https://github.com/trycua/cua/issues/5800)) ([e896967](https://github.com/trycua/cua/commit/e896967501382d6dc26ef6d96282c0f8af882648))
+* **spaces:** agent-first onboarding and a quieter Home ([#5869](https://github.com/trycua/cua/issues/5869)) ([be2dad3](https://github.com/trycua/cua/commit/be2dad3345b53b6195192505a63db0538fcc035d))
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle cua 0.9.0 in Cua Spaces ([#5873](https://github.com/trycua/cua/issues/5873)) ([c74795a](https://github.com/trycua/cua/commit/c74795a3d558a67a350d0b08ce3ed5966d09eb66))
+* **spaces-macos:** run cua-spacesd from Contents/Helpers so opening the app shows a window ([#5871](https://github.com/trycua/cua/issues/5871)) ([92c4cbe](https://github.com/trycua/cua/commit/92c4cbe2241190b5f5a1488ba2a94859e7e51829))
+
+## [0.14.0](https://github.com/trycua/cua/compare/cua-spaces-v0.13.1...cua-spaces-v0.14.0) (2026-10-24)
+
+
+### Features
+
+* compat gateways for E2B and Daytona, Hetzner as your own cloud, the elastic pool, cua share and the public relay ([#5778](https://github.com/trycua/cua/issues/5778)) ([d4f3f80](https://github.com/trycua/cua/commit/d4f3f8063d7b30a3b3bda2b4c05c565a9dfcb460))
+* **spaces:** onboarding agents step: pick any agents or none, per computer, with Codex's ChatGPT sign-in (CUA-1995) ([#5707](https://github.com/trycua/cua/issues/5707)) ([4a44f4d](https://github.com/trycua/cua/commit/4a44f4d39677c2d906d588b5b205a85aa8353354))
+
+
+### Bug Fixes
+
+* **cua:** stabilize the known flaky release-gate tests ([#5538](https://github.com/trycua/cua/issues/5538)) ([c3b557e](https://github.com/trycua/cua/commit/c3b557e1dced1238bf5b479af876aad9ea409498))
+* **spaces-macos:** bundle cua 0.8.0 in Cua Spaces ([#5811](https://github.com/trycua/cua/issues/5811)) ([c9321b9](https://github.com/trycua/cua/commit/c9321b92679305f103f5ffb336e953d788b1af80))
+* **spaces-macos:** restart a daemon that dies before it is watched; stable create-watchdog tests ([#5825](https://github.com/trycua/cua/issues/5825)) ([f06f203](https://github.com/trycua/cua/commit/f06f203291c6c5a12e7c9134ec6b1b918acaf5d1))
+
+## [0.13.1](https://github.com/trycua/cua/compare/cua-spaces-v0.13.0...cua-spaces-v0.13.1) (2026-10-22)
+
+
+### Bug Fixes
+
+* **spaces-macos:** newer-Cua note with a real action, shared desktop listed first, bundle new cua in Cua Spaces (CUA-1989) ([#5702](https://github.com/trycua/cua/issues/5702)) ([b131466](https://github.com/trycua/cua/commit/b131466103eccede0c65213a59ef2d082813fb9e))
+* **spaces:** show every sign-in state, with a reason and Try again ([#5708](https://github.com/trycua/cua/issues/5708)) ([c2a21e7](https://github.com/trycua/cua/commit/c2a21e764e2cc8b3a0a187aa9ca7d688265fe389))
+
+## [0.13.0](https://github.com/trycua/cua/compare/cua-spaces-v0.12.1...cua-spaces-v0.13.0) (2026-10-22)
+
+
+### Features
+
+* **spaces-macos:** run the host service as the Cua Spaces app itself, one name in System Settings (CUA-1885) ([#5494](https://github.com/trycua/cua/issues/5494)) ([cd134c2](https://github.com/trycua/cua/commit/cd134c2431ee9c88118080b5a40a0b120eaaecd1))
+
+## [0.12.1](https://github.com/trycua/cua/compare/cua-spaces-v0.12.0...cua-spaces-v0.12.1) (2026-10-20)
+
+
+### Bug Fixes
+
+* **spaces-macos:** document the failed-payment notice and plain plan errors ([#5632](https://github.com/trycua/cua/issues/5632)) ([fe6498d](https://github.com/trycua/cua/commit/fe6498dbfa0869a1a64f45376c0bb411fa12f34c))
+
+## [0.12.0](https://github.com/trycua/cua/compare/cua-spaces-v0.11.0...cua-spaces-v0.12.0) (2026-10-20)
+
+
+### Features
+
+* **spaces:** core returns message codes for teleport opt-ins (CUA-1928) ([#5599](https://github.com/trycua/cua/issues/5599)) ([12720d6](https://github.com/trycua/cua/commit/12720d6ab44e99550728d3b54500004b85183046))
+* **spaces:** core returns message codes for the sidebar (CUA-1928) ([#5608](https://github.com/trycua/cua/issues/5608)) ([4cddeec](https://github.com/trycua/cua/commit/4cddeec8308871eedb0f26e57f76f3fff065505c))
+* **spaces:** each computer's issues on the Machines page from its own health checks, cua doctor --machine (CUA-1820) ([#5379](https://github.com/trycua/cua/issues/5379)) ([904436a](https://github.com/trycua/cua/commit/904436adc45435959566f911290d9e56dd79c516))
+
 ## [0.11.0](https://github.com/trycua/cua/compare/cua-spaces-v0.10.0...cua-spaces-v0.11.0) (2026-10-20)
 
 

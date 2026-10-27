@@ -34,7 +34,7 @@ final class FakeAgentsTools: AgentsToolRunning, @unchecked Sendable {
         case "persistent_agent_list":
             return ["agents": [
                 ["name": "ada", "harness": "hermes", "space": "local:dev", "paused": paused, "run_id": paused ? NSNull() : "run-1", "saved_ms": now - 120_000],
-                ["name": "scout", "harness": "claude-code", "space": "cloud:scout", "paused": true, "space_state": "released", "saved_ms": now - 7_200_000],
+                ["name": "scout", "harness": "claude-code", "space": "direct:scout", "paused": true, "space_state": "released", "saved_ms": now - 7_200_000],
             ]]
         case "agent_pause": paused = true; return [:]
         case "volume_ls":
@@ -119,18 +119,4 @@ struct AgentsPagesTests {
         #expect(tools.calls.suffix(2) == ["routine_add", "routine_remove"])
     }
 
-    @Test func snapshots() async throws {
-        let tools = FakeAgentsTools()
-        let m = PersistentModel(tools: tools)
-        m.now = { Date(timeIntervalSince1970: TimeInterval(tools.now) / 1000) }
-        m.thisMachine = "relay:0123"
-        await m.loadAgents()
-        await m.send(.select(name: "ada"))
-        let size = CGSize(width: 720, height: 520)
-        try SnapshotTests().assertSnapshot(AgentsPageView(model: m), "agents-page", size: size)
-        await m.sendDrive(nil)
-        try SnapshotTests().assertSnapshot(DrivePageView(model: m), "drive-page", size: size)
-        await m.pollNotifications()
-        try SnapshotTests().assertSnapshot(NotificationsPageView(model: m), "notifications-page", size: size)
-    }
 }

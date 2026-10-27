@@ -3,6 +3,7 @@
   "pages": [
     "index",
     "spaces",
-    "agents"
+    "agents",
+    "threads"
   ]
 }

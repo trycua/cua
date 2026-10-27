@@ -44,6 +44,8 @@ pub const HOMES_DIR: &str = "cua-volume/agents";
 pub const BRIDGE_DIR: &str = "bridge";
 /// The MCP server name of the host bridge.
 pub const BRIDGE_SERVER: &str = "cua";
+/// The variable a copied Codex ChatGPT sign-in (`auth.json`) travels as.
+pub const CODEX_AUTH_ENV: &str = "CODEX_AUTH_JSON";
 /// Largest events page read at once.
 pub const PAGE_BYTES: u64 = 512 * 1024;
 const RS: &str = "\x1e--cua--\x1e";
@@ -121,6 +123,10 @@ pub struct RunOptions {
     /// Give the agent the host bridge (MCP server `cua`: a pipe the host
     /// answers as the persistent agent, see `runner/bridge.mjs`).
     pub bridge: bool,
+    /// Make the run durable (see [`crate::durable`]): an epoch-fenced
+    /// journal, a tool ledger, resume with a recovery note. Implies
+    /// `exit_when_idle`.
+    pub durable: Option<crate::durable::DurableOptions>,
 }
 
 /// `meta.json`.
@@ -345,7 +351,7 @@ fn credential_check(h: &Harness, probe: Option<&str>) -> Result<Option<String>> 
     )))
 }
 
-fn valid_env_name(k: &str) -> Result<()> {
+pub(crate) fn valid_env_name(k: &str) -> Result<()> {
     if k.is_empty()
         || !k.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
         || k.as_bytes()[0].is_ascii_digit()
@@ -633,6 +639,8 @@ impl Agents {
             app_dirs: vec![],
             os: cua_agent_setup::Os::Linux,
             run_agent_clis: false,
+            // The guest's own cua: the bundled names, whatever the host is.
+            channel: cua_agent_setup::CuaChannel::Stable,
         };
         let dir = loc.resolve(&env).to_string_lossy().replace('\\', "/");
         let mut done = vec![];
@@ -844,7 +852,7 @@ impl Agents {
             }
             e
         });
-        let launch = harness::launch_with_home(
+        let mut launch = harness::launch_with_home(
             h,
             endpoint.as_ref(),
             opts.model.as_deref(),
@@ -852,6 +860,9 @@ impl Agents {
             &cwd,
             home_dir.as_deref(),
         )?;
+        if opts.durable.as_ref().is_some_and(|d| d.guard) {
+            launch.env.extend(crate::durable::guard_env(h));
+        }
         for f in &launch.files {
             let path = if f.rel.starts_with('/') {
                 f.rel.clone()
@@ -862,6 +873,18 @@ impl Agents {
         }
         // Secrets: the caller's env, plus MCP header values.
         let mut secrets: BTreeMap<String, String> = opts.env.clone();
+        // A ChatGPT sign-in copied from the person's Mac becomes the guest's
+        // own `~/.codex/auth.json` (0600) when it has none; it never reaches
+        // the agent's environment.
+        if let Some(auth) = secrets.remove(CODEX_AUTH_ENV)
+            && h.id == "openai-codex"
+            && !auth.trim().is_empty()
+        {
+            let file = format!("{}/.codex/auth.json", self.home.trim_end_matches('/'));
+            if self.read(&file, 0, 1).await?.is_none_or(|b| b.is_empty()) {
+                self.write(&file, auth.into_bytes(), 0o600).await?;
+            }
+        }
         let mut mcp: Vec<Value> = vec![];
         let mut servers = opts.mcp_servers.clone();
         if opts.sandbox_mcp.unwrap_or(h.sandbox_mcp)
@@ -956,12 +979,16 @@ impl Agents {
             "prompt": prompt,
             "files": files,
             "mcpServers": mcp,
-            "exitWhenIdle": opts.exit_when_idle,
+            "exitWhenIdle": opts.exit_when_idle || opts.durable.is_some(),
             "idleExitSecs": opts.idle_exit_secs.unwrap_or(1800),
             "authMethod": h.auth_method,
+            "authHint": h.auth_hint(),
             "keyCheck": harness::key_check(h, &opts.env, endpoint.is_some()),
             "mcpBridge": format!("{}/.cua/bin/mcp-remote", self.home),
             "modeKinds": h.mode_kinds,
+            "guardModeKinds": crate::durable::guard_mode_kinds(h),
+            "secretEnv": opts.durable.as_ref().map(|_| opts.env.keys().collect::<Vec<_>>()),
+            "durable": opts.durable.as_ref().map(|d| d.run_section(Some(&rdir))),
         });
         self.write(
             &format!("{rdir}/run.json"),
@@ -991,6 +1018,21 @@ impl Agents {
             0o600,
         )
         .await?;
+        if let Some(d) = &opts.durable {
+            // A journal restored from the Cua Volume goes in before the
+            // runner starts (its fence and plan read it at start).
+            let state_dir = d.state_dir.clone().unwrap_or_else(|| rdir.clone());
+            for (name, body) in &d.restore {
+                if !crate::durable::JOURNAL_FILES.contains(&name.as_str()) {
+                    return Err(Error::Invalid(format!(
+                        "{name} is not a journal file ({})",
+                        crate::durable::JOURNAL_FILES.join(", ")
+                    )));
+                }
+                self.write(&format!("{state_dir}/{name}"), body.clone(), 0o600)
+                    .await?;
+            }
+        }
         let runner_dir = self.runner_dir().await?;
         let script = Self::launch_script(
             &self.home,
@@ -1013,6 +1055,36 @@ impl Agents {
             cwd,
             run_dir: rdir,
             notes,
+        })
+    }
+
+    /// Starts a durable run again at a higher `epoch`: the same run
+    /// directory and journal, a new runner. The new runner raises the epoch
+    /// fence first, so a runner that is still alive somewhere is cut off; it
+    /// resumes the agent's session and sends it a recovery note. The caller
+    /// (a re-driver) owns the epoch counter; the run's secrets are still in
+    /// the run directory.
+    pub async fn redrive(&self, run_id: &str, epoch: u64) -> Result<Started> {
+        let rdir = self.run_dir(run_id);
+        let raw = self
+            .read(&format!("{rdir}/run.json"), 0, 0)
+            .await?
+            .ok_or_else(|| Error::NotFound(format!("run {run_id}")))?;
+        let next = crate::durable::redrive_run_json(&raw, epoch)?;
+        self.write(&format!("{rdir}/run.json"), next, 0o600).await?;
+        let meta: RunMeta = self
+            .json_file(&format!("{rdir}/meta.json"))
+            .await?
+            .and_then(|v| serde_json::from_value(v).ok())
+            .ok_or_else(|| Error::NotFound(format!("run {run_id} metadata")))?;
+        let tag = self.spawn_run(run_id).await?;
+        Ok(Started {
+            run_id: run_id.into(),
+            harness: meta.harness,
+            process_tag: tag,
+            cwd: meta.cwd,
+            run_dir: rdir,
+            notes: vec![],
         })
     }
 
@@ -1162,9 +1234,15 @@ impl Agents {
         if before.alive == Some(false) {
             // Restart: installs are cached, the runner resumes the session.
             if before.status == RunStatus::Failed {
+                let mut state = self
+                    .json_file(&format!("{rdir}/state.json"))
+                    .await?
+                    .unwrap_or_else(|| json!({}));
+                state["status"] = json!("starting");
+                state["error"] = Value::Null;
                 self.write(
                     &format!("{rdir}/state.json"),
-                    br#"{"status":"starting","error":null}"#.to_vec(),
+                    serde_json::to_vec(&state)?,
                     0o600,
                 )
                 .await?;
@@ -1391,11 +1469,12 @@ mod tests {
                 "{e}"
             );
             assert!(
-                e.contains("Authentication required") && e.contains("`claude`"),
+                e.contains("Authentication required")
+                    && e.contains("`~/.cua/bin/claude` inside the Space"),
                 "{e}"
             );
             assert!(
-                e.contains("Add an Anthropic API key in Cua Spaces → Settings → Agents"),
+                e.contains("Add an Anthropic API key in Cua Spaces → Settings → Connectors"),
                 "{e}"
             );
         }
@@ -1407,7 +1486,7 @@ mod tests {
             "{e}"
         );
         assert!(
-            e.contains("Add an OpenAI API key in Cua Spaces → Settings → Agents"),
+            e.contains("Add an OpenAI API key in Cua Spaces → Settings → Connectors"),
             "{e}"
         );
         // A key in the guest environment, or a sign-in file: allowed.

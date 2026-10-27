@@ -15,15 +15,22 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SettingsRouteRouteImport } from './routes/settings/route'
 import { Route as AgentsIndexRouteImport } from './routes/agents/index'
+import { Route as AgentsAllRouteImport } from './routes/agents/all'
+import { Route as HomeIndexRouteImport } from './routes/home/index'
+import { Route as HomeTaskIdRouteImport } from './routes/home/$taskId'
 import { Route as KeyvaultIndexRouteImport } from './routes/keyvault/index'
 import { Route as MachinesIndexRouteImport } from './routes/machines/index'
 import { Route as NotificationsIndexRouteImport } from './routes/notifications/index'
 import { Route as OnboardingIndexRouteImport } from './routes/onboarding/index'
 import { Route as SettingsIndexRouteImport } from './routes/settings/index'
 import { Route as SettingsAboutRouteImport } from './routes/settings/about'
+import { Route as SettingsAdvancedRouteImport } from './routes/settings/advanced'
 import { Route as SettingsAgentsRouteImport } from './routes/settings/agents'
+import { Route as SettingsConnectedAppsRouteImport } from './routes/settings/connected-apps'
+import { Route as SettingsConnectorsRouteImport } from './routes/settings/connectors'
 import { Route as SettingsDevicesRouteImport } from './routes/settings/devices'
 import { Route as SettingsExperimentsRouteImport } from './routes/settings/experiments'
+import { Route as SettingsGeneralRouteImport } from './routes/settings/general'
 import { Route as SpacesIndexRouteImport } from './routes/spaces/index'
 import { Route as SpacesSpaceIdRouteImport } from './routes/spaces/$spaceId'
 import { Route as VolumeIndexRouteImport } from './routes/volume/index'
@@ -41,6 +48,21 @@ const SettingsRouteRoute = SettingsRouteRouteImport.update({
 const AgentsIndexRoute = AgentsIndexRouteImport.update({
   id: '/agents/',
   path: '/agents/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AgentsAllRoute = AgentsAllRouteImport.update({
+  id: '/agents/all',
+  path: '/agents/all',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HomeIndexRoute = HomeIndexRouteImport.update({
+  id: '/home/',
+  path: '/home/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HomeTaskIdRoute = HomeTaskIdRouteImport.update({
+  id: '/home/$taskId',
+  path: '/home/$taskId',
   getParentRoute: () => rootRouteImport,
 } as any)
 const KeyvaultIndexRoute = KeyvaultIndexRouteImport.update({
@@ -73,9 +95,24 @@ const SettingsAboutRoute = SettingsAboutRouteImport.update({
   path: '/about',
   getParentRoute: () => SettingsRouteRoute,
 } as any)
+const SettingsAdvancedRoute = SettingsAdvancedRouteImport.update({
+  id: '/advanced',
+  path: '/advanced',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
 const SettingsAgentsRoute = SettingsAgentsRouteImport.update({
   id: '/agents',
   path: '/agents',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsConnectedAppsRoute = SettingsConnectedAppsRouteImport.update({
+  id: '/connected-apps',
+  path: '/connected-apps',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsConnectorsRoute = SettingsConnectorsRouteImport.update({
+  id: '/connectors',
+  path: '/connectors',
   getParentRoute: () => SettingsRouteRoute,
 } as any)
 const SettingsDevicesRoute = SettingsDevicesRouteImport.update({
@@ -86,6 +123,11 @@ const SettingsDevicesRoute = SettingsDevicesRouteImport.update({
 const SettingsExperimentsRoute = SettingsExperimentsRouteImport.update({
   id: '/experiments',
   path: '/experiments',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsGeneralRoute = SettingsGeneralRouteImport.update({
+  id: '/general',
+  path: '/general',
   getParentRoute: () => SettingsRouteRoute,
 } as any)
 const SpacesIndexRoute = SpacesIndexRouteImport.update({
@@ -107,12 +149,19 @@ const VolumeIndexRoute = VolumeIndexRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/settings': typeof SettingsRouteRouteWithChildren
+  '/agents/all': typeof AgentsAllRoute
+  '/home/$taskId': typeof HomeTaskIdRoute
   '/settings/about': typeof SettingsAboutRoute
+  '/settings/advanced': typeof SettingsAdvancedRoute
   '/settings/agents': typeof SettingsAgentsRoute
+  '/settings/connected-apps': typeof SettingsConnectedAppsRoute
+  '/settings/connectors': typeof SettingsConnectorsRoute
   '/settings/devices': typeof SettingsDevicesRoute
   '/settings/experiments': typeof SettingsExperimentsRoute
+  '/settings/general': typeof SettingsGeneralRoute
   '/spaces/$spaceId': typeof SpacesSpaceIdRoute
   '/agents/': typeof AgentsIndexRoute
+  '/home/': typeof HomeIndexRoute
   '/keyvault/': typeof KeyvaultIndexRoute
   '/machines/': typeof MachinesIndexRoute
   '/notifications/': typeof NotificationsIndexRoute
@@ -123,12 +172,19 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/agents/all': typeof AgentsAllRoute
+  '/home/$taskId': typeof HomeTaskIdRoute
   '/settings/about': typeof SettingsAboutRoute
+  '/settings/advanced': typeof SettingsAdvancedRoute
   '/settings/agents': typeof SettingsAgentsRoute
+  '/settings/connected-apps': typeof SettingsConnectedAppsRoute
+  '/settings/connectors': typeof SettingsConnectorsRoute
   '/settings/devices': typeof SettingsDevicesRoute
   '/settings/experiments': typeof SettingsExperimentsRoute
+  '/settings/general': typeof SettingsGeneralRoute
   '/spaces/$spaceId': typeof SpacesSpaceIdRoute
   '/agents': typeof AgentsIndexRoute
+  '/home': typeof HomeIndexRoute
   '/keyvault': typeof KeyvaultIndexRoute
   '/machines': typeof MachinesIndexRoute
   '/notifications': typeof NotificationsIndexRoute
@@ -141,12 +197,19 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/settings': typeof SettingsRouteRouteWithChildren
+  '/agents/all': typeof AgentsAllRoute
+  '/home/$taskId': typeof HomeTaskIdRoute
   '/settings/about': typeof SettingsAboutRoute
+  '/settings/advanced': typeof SettingsAdvancedRoute
   '/settings/agents': typeof SettingsAgentsRoute
+  '/settings/connected-apps': typeof SettingsConnectedAppsRoute
+  '/settings/connectors': typeof SettingsConnectorsRoute
   '/settings/devices': typeof SettingsDevicesRoute
   '/settings/experiments': typeof SettingsExperimentsRoute
+  '/settings/general': typeof SettingsGeneralRoute
   '/spaces/$spaceId': typeof SpacesSpaceIdRoute
   '/agents/': typeof AgentsIndexRoute
+  '/home/': typeof HomeIndexRoute
   '/keyvault/': typeof KeyvaultIndexRoute
   '/machines/': typeof MachinesIndexRoute
   '/notifications/': typeof NotificationsIndexRoute
@@ -160,12 +223,19 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/settings'
+    | '/agents/all'
+    | '/home/$taskId'
     | '/settings/about'
+    | '/settings/advanced'
     | '/settings/agents'
+    | '/settings/connected-apps'
+    | '/settings/connectors'
     | '/settings/devices'
     | '/settings/experiments'
+    | '/settings/general'
     | '/spaces/$spaceId'
     | '/agents/'
+    | '/home/'
     | '/keyvault/'
     | '/machines/'
     | '/notifications/'
@@ -176,12 +246,19 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/agents/all'
+    | '/home/$taskId'
     | '/settings/about'
+    | '/settings/advanced'
     | '/settings/agents'
+    | '/settings/connected-apps'
+    | '/settings/connectors'
     | '/settings/devices'
     | '/settings/experiments'
+    | '/settings/general'
     | '/spaces/$spaceId'
     | '/agents'
+    | '/home'
     | '/keyvault'
     | '/machines'
     | '/notifications'
@@ -193,12 +270,19 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/settings'
+    | '/agents/all'
+    | '/home/$taskId'
     | '/settings/about'
+    | '/settings/advanced'
     | '/settings/agents'
+    | '/settings/connected-apps'
+    | '/settings/connectors'
     | '/settings/devices'
     | '/settings/experiments'
+    | '/settings/general'
     | '/spaces/$spaceId'
     | '/agents/'
+    | '/home/'
     | '/keyvault/'
     | '/machines/'
     | '/notifications/'
@@ -211,8 +295,11 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   SettingsRouteRoute: typeof SettingsRouteRouteWithChildren
+  AgentsAllRoute: typeof AgentsAllRoute
+  HomeTaskIdRoute: typeof HomeTaskIdRoute
   SpacesSpaceIdRoute: typeof SpacesSpaceIdRoute
   AgentsIndexRoute: typeof AgentsIndexRoute
+  HomeIndexRoute: typeof HomeIndexRoute
   KeyvaultIndexRoute: typeof KeyvaultIndexRoute
   MachinesIndexRoute: typeof MachinesIndexRoute
   NotificationsIndexRoute: typeof NotificationsIndexRoute
@@ -242,6 +329,27 @@ declare module '@tanstack/react-router' {
       path: '/agents'
       fullPath: '/agents/'
       preLoaderRoute: typeof AgentsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/agents/all': {
+      id: '/agents/all'
+      path: '/agents/all'
+      fullPath: '/agents/all'
+      preLoaderRoute: typeof AgentsAllRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/home/': {
+      id: '/home/'
+      path: '/home'
+      fullPath: '/home/'
+      preLoaderRoute: typeof HomeIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/home/$taskId': {
+      id: '/home/$taskId'
+      path: '/home/$taskId'
+      fullPath: '/home/$taskId'
+      preLoaderRoute: typeof HomeTaskIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/keyvault/': {
@@ -286,11 +394,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsAboutRouteImport
       parentRoute: typeof SettingsRouteRoute
     }
+    '/settings/advanced': {
+      id: '/settings/advanced'
+      path: '/advanced'
+      fullPath: '/settings/advanced'
+      preLoaderRoute: typeof SettingsAdvancedRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
     '/settings/agents': {
       id: '/settings/agents'
       path: '/agents'
       fullPath: '/settings/agents'
       preLoaderRoute: typeof SettingsAgentsRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/connected-apps': {
+      id: '/settings/connected-apps'
+      path: '/connected-apps'
+      fullPath: '/settings/connected-apps'
+      preLoaderRoute: typeof SettingsConnectedAppsRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/connectors': {
+      id: '/settings/connectors'
+      path: '/connectors'
+      fullPath: '/settings/connectors'
+      preLoaderRoute: typeof SettingsConnectorsRouteImport
       parentRoute: typeof SettingsRouteRoute
     }
     '/settings/devices': {
@@ -305,6 +434,13 @@ declare module '@tanstack/react-router' {
       path: '/experiments'
       fullPath: '/settings/experiments'
       preLoaderRoute: typeof SettingsExperimentsRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/general': {
+      id: '/settings/general'
+      path: '/general'
+      fullPath: '/settings/general'
+      preLoaderRoute: typeof SettingsGeneralRouteImport
       parentRoute: typeof SettingsRouteRoute
     }
     '/spaces/': {
@@ -333,17 +469,25 @@ declare module '@tanstack/react-router' {
 
 interface SettingsRouteRouteChildren {
   SettingsAboutRoute: typeof SettingsAboutRoute
+  SettingsAdvancedRoute: typeof SettingsAdvancedRoute
   SettingsAgentsRoute: typeof SettingsAgentsRoute
+  SettingsConnectedAppsRoute: typeof SettingsConnectedAppsRoute
+  SettingsConnectorsRoute: typeof SettingsConnectorsRoute
   SettingsDevicesRoute: typeof SettingsDevicesRoute
   SettingsExperimentsRoute: typeof SettingsExperimentsRoute
+  SettingsGeneralRoute: typeof SettingsGeneralRoute
   SettingsIndexRoute: typeof SettingsIndexRoute
 }
 
 const SettingsRouteRouteChildren: SettingsRouteRouteChildren = {
   SettingsAboutRoute: SettingsAboutRoute,
+  SettingsAdvancedRoute: SettingsAdvancedRoute,
   SettingsAgentsRoute: SettingsAgentsRoute,
+  SettingsConnectedAppsRoute: SettingsConnectedAppsRoute,
+  SettingsConnectorsRoute: SettingsConnectorsRoute,
   SettingsDevicesRoute: SettingsDevicesRoute,
   SettingsExperimentsRoute: SettingsExperimentsRoute,
+  SettingsGeneralRoute: SettingsGeneralRoute,
   SettingsIndexRoute: SettingsIndexRoute,
 }
 
@@ -354,8 +498,11 @@ const SettingsRouteRouteWithChildren = SettingsRouteRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   SettingsRouteRoute: SettingsRouteRouteWithChildren,
+  AgentsAllRoute: AgentsAllRoute,
+  HomeTaskIdRoute: HomeTaskIdRoute,
   SpacesSpaceIdRoute: SpacesSpaceIdRoute,
   AgentsIndexRoute: AgentsIndexRoute,
+  HomeIndexRoute: HomeIndexRoute,
   KeyvaultIndexRoute: KeyvaultIndexRoute,
   MachinesIndexRoute: MachinesIndexRoute,
   NotificationsIndexRoute: NotificationsIndexRoute,

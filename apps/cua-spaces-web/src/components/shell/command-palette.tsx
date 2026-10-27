@@ -4,7 +4,6 @@
 import { useNavigate, useRouter } from "@tanstack/react-router";
 import {
   CornerDownLeftIcon,
-  ListChecksIcon,
   LockIcon,
   LogInIcon,
   LogOutIcon,
@@ -13,13 +12,14 @@ import {
   PanelLeftIcon,
   PlusIcon,
   SearchIcon,
+  SettingsIcon,
   SparklesIcon,
   SunIcon,
   type LucideIcon,
 } from "lucide-react";
 import { useState, type KeyboardEvent } from "react";
 
-import { useBridge, useChecklist, useKeyvault, useMachines, useSession, useSpaces } from "@/bridge";
+import { useBridge, useKeyvault, useMachines, useSession, useSpaces } from "@/bridge";
 import { OsIcon } from "@/components/os-icon";
 import { Dialog, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { Kbd, Shortcut } from "@/components/ui/kbd";
@@ -27,6 +27,7 @@ import { toast, toastError } from "@/components/ui/toast";
 import { filterCommands, type PaletteCommand } from "@/lib/commands";
 import { machineName, osLabel, paletteKeywords, realSpaces, spaceState } from "@/lib/spaces";
 import { bindingFor } from "@/lib/keybindings";
+import { SETTINGS_TABS } from "@/lib/settings-tabs";
 import { useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 import { useNewSpace } from "@/hooks/use-new-space";
@@ -60,7 +61,6 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
   const { data: session, signIn, signOut } = useSession();
   const { preference, resolved, setPreference } = useTheme();
   const toggleSidebar = useUiStore((s) => s.toggleSidebar);
-  const checklist = useChecklist();
   const { core } = useBridge();
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
@@ -134,18 +134,16 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
       icon: icon(n.icon),
       run: () => void navigate({ to: n.to }),
     })),
-    { id: "nav:onboarding", group: "Go to", label: "Onboarding", keywords: "welcome setup", icon: icon(SparklesIcon), run: () => void navigate({ to: "/onboarding" }) },
-    {
-      id: "nav:checklist",
+    // Each Settings tab, so Cmd+K finds "Connectors" or "Trusted devices" by name.
+    ...SETTINGS_TABS.filter((t) => t.to !== "/settings").map((t) => ({
+      id: `settings:${t.to}`,
       group: "Go to",
-      label: "Getting started",
-      keywords: "checklist steps tour help first",
-      icon: icon(ListChecksIcon),
-      run: () => {
-        checklist.reopen();
-        void navigate({ to: "/spaces" });
-      },
-    },
+      label: `Settings: ${t.label}`,
+      keywords: t.to === "/settings/connectors" ? "preferences options connected apps coding agents" : "preferences options",
+      icon: icon(SettingsIcon),
+      run: () => void navigate({ to: t.to }),
+    })),
+    { id: "nav:onboarding", group: "Go to", label: "Onboarding", keywords: "welcome setup", icon: icon(SparklesIcon), run: () => void navigate({ to: "/onboarding" }) },
     ...realSpaces(spaces).flatMap((s): Command[] => {
       const state = spaceState(s);
       const meta = { group: "Spaces", hint: osLabel(s), keywords: paletteKeywords(s, state, machineName(machines, s)), icon: <OsIcon os={s.os} className="size-3.5 text-muted-foreground" /> };

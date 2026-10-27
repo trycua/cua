@@ -17,7 +17,10 @@ import type {
   HostPanelView,
   HostSetupChoice,
   HostStatus,
+  MachinePageRow,
   MachineRow,
+  CloudsInput,
+  MachinesView,
   SettingsInput,
   SettingsPage,
 } from "./contracts/host";
@@ -32,7 +35,7 @@ import type {
   VaultState,
   VaultView,
 } from "./contracts/keyvault";
-import type { CreateAction, CreatesState, PendingCreate, Space, SpaceOs, SpaceRow, SpaceStatus } from "./contracts/spaces";
+import type { CreateAction, CreatesState, ListStatus, ListView, PendingCreate, Space, SpaceOs, SpaceRow, SpaceStatus } from "./contracts/spaces";
 import type { RelayAllowanceNotice, RelayUsage, RelayUsageView } from "./ops/relay-usage";
 import type { SessionSnapshot, SettingsSnapshot } from "./protocol";
 import { notSharingOf, realLimits } from "./sharing";
@@ -117,8 +120,24 @@ const PHASE_LABEL: Record<string, string> = {
   connecting: "Connecting…",
 };
 
-/** "12.4 of 30.0 GB · 85 MB/s · about 4 min" (`creating::transfer_text`). */
-export function transferText(p: Pick<PendingCreate, "bytesDone" | "bytesTotal" | "bytesPerSecond">): string | null {
+/** What follows a download (`creating::Later`): bytes still to fetch, seconds
+ * of work that move none, and a measured pace to assume until a rate is known. */
+export interface Later {
+  bytes: number;
+  secs: number;
+  pace?: number;
+}
+
+/** Measured on a Mac mini, 25 Oct 2026 (CUA-2281): `wizard::FIRST_RUN_BYTES_PER_SEC`. */
+export const FIRST_RUN_BYTES_PER_SEC = 9_100_000;
+/** `wizard::CACHED_START_SECS`: a Linux Space starting from a cached image. */
+export const CACHED_START_SECS = 6;
+
+/** "12.4 of 30.0 GB · 85 MB/s · about 4 min" (`creating::transfer_text_with`). */
+export function transferText(
+  p: Pick<PendingCreate, "bytesDone" | "bytesTotal" | "bytesPerSecond">,
+  later: Later = { bytes: 0, secs: 0 },
+): string | null {
   if (p.bytesDone == null) return null;
   const unit = (n: number): [number, string] =>
     n >= 2 ** 30 ? [2 ** 30, "GB"] : n >= 2 ** 20 ? [2 ** 20, "MB"] : n >= 1024 ? [1024, "KB"] : [1, "bytes"];
@@ -135,37 +154,38 @@ export function transferText(p: Pick<PendingCreate, "bytesDone" | "bytesTotal" |
     const u = unit(p.bytesDone);
     out = `${scaled(p.bytesDone, u, 100)} ${u[1]}`;
   }
-  const rate = p.bytesPerSecond != null && Number.isFinite(p.bytesPerSecond) && p.bytesPerSecond > 0 ? p.bytesPerSecond : null;
-  if (rate) {
-    const u = unit(Math.floor(rate));
-    out += ` · ${scaled(Math.floor(rate), u, 10)} ${u[1]}/s`;
-    if (total > 0) {
-      const secs = Math.max(0, total - p.bytesDone) / rate;
-      const mins = Math.round(secs / 60);
-      out +=
-        secs < 60
-          ? " · less than a minute"
-          : mins < 60
-            ? ` · about ${mins} min`
-            : mins % 60 === 0
-              ? ` · about ${mins / 60} h`
-              : ` · about ${Math.floor(mins / 60)} h ${mins % 60} min`;
-    }
+  const measured = p.bytesPerSecond != null && Number.isFinite(p.bytesPerSecond) && p.bytesPerSecond > 0 ? p.bytesPerSecond : null;
+  if (measured) {
+    const u = unit(Math.floor(measured));
+    out += ` · ${scaled(Math.floor(measured), u, 10)} ${u[1]}/s`;
+  }
+  // Without a rate nothing is promised, unless a measured pace stands in.
+  const pace = measured ?? later.pace ?? null;
+  if (pace && total > 0) {
+    const secs = (Math.max(0, total - p.bytesDone) + later.bytes) / pace + later.secs;
+    const mins = Math.round(secs / 60);
+    out +=
+      secs < 60
+        ? " · less than a minute"
+        : mins < 60
+          ? ` · about ${mins} min`
+          : mins % 60 === 0
+            ? ` · about ${mins / 60} h`
+            : ` · about ${Math.floor(mins / 60)} h ${mins % 60} min`;
   }
   return out;
 }
 
 /** The step a create is on, in its kind of Space's words (`creating::stage_label`). */
-function stageLabel(p: Pick<PendingCreate, "os" | "provider" | "kind" | "phase">): string {
-  const here = p.provider !== "cloud";
+function stageLabel(p: Pick<PendingCreate, "os" | "kind" | "phase">): string {
   const vm = p.os === "macos" || p.os === "windows" || p.kind === "vm";
   const container = !vm && p.kind === "container";
   const os = p.os === "macos" ? "macOS" : p.os === "windows" ? "Windows" : p.os === "linux" ? "Linux" : "";
   if (p.phase === "pulling" && p.os === "macos") return "Downloading macOS (first time only)…";
-  if (p.phase === "creating" && here && vm) return "Preparing the disk…";
-  if (p.phase === "creating" && here && container) return "Creating the container…";
-  if (p.phase === "booting" && here && vm && os) return `Booting ${os}…`;
-  if (p.phase === "booting" && here && container) return "Starting the container…";
+  if (p.phase === "creating" && vm) return "Preparing the disk…";
+  if (p.phase === "creating" && container) return "Creating the container…";
+  if (p.phase === "booting" && vm && os) return `Booting ${os}…`;
+  if (p.phase === "booting" && container) return "Starting the container…";
   return PHASE_LABEL[p.phase] ?? "Starting…";
 }
 
@@ -268,13 +288,16 @@ function fallbackCompose(spaces: Space[], state: CreatesState): Space[] {
       lastUsedAt: p.startedAt,
       startedAt: p.startedAt,
       scene: SCENES[p.os],
-      provider: p.provider === "relay" ? "relay" : p.provider,
+      provider: p.provider,
       progress: {
         phase: p.phase,
         permille: p.permille,
         label: p.error ? "Failed" : stageLabel(p),
         error: p.error ?? undefined,
-        transfer: !p.error && p.phase === "pulling" ? (transferText(p) ?? undefined) : undefined,
+        transfer:
+          !p.error && p.phase === "pulling"
+            ? (transferText(p, p.os === "linux" ? { bytes: 0, secs: CACHED_START_SECS, pace: FIRST_RUN_BYTES_PER_SEC } : { bytes: 0, secs: 0 }) ?? undefined)
+            : undefined,
         cancellable: !p.error && !p.cancelling,
         cancelling: p.cancelling,
       },
@@ -339,6 +362,62 @@ export interface Machine {
   /** This machine only: signed in, but it cannot open the account's
    * machines (not enrolled): each machine's detail says why. */
   accessNotice?: MachineAccessNotice;
+}
+
+/** One Machines row as the core lists it, from the page's own machine
+ * (an older host's rows, merged here): the core draws the page from it. */
+function pageRowOf(m: Machine, spaces: readonly Space[]): MachinePageRow {
+  const own = m.current ? spaces.find((s) => s.id === "this-mac") : spaces.find((s) => s.id === `relay:${m.id}`);
+  // The Spaces on it, never its own desktop (`machines::page_rows`).
+  const n = spaces.filter((s) => (m.current ? s.provider === "local" && s.id !== "this-mac" : s.host === m.id)).length;
+  return {
+    id: m.id,
+    name: m.name,
+    online: m.online,
+    os: m.os,
+    via: m.current ? "local" : "relay",
+    current: m.current,
+    device: m.device ? m.id : null,
+    deviceOnly: Boolean(m.device),
+    spaceId: own?.id ?? null,
+    stoppedSharing: Boolean(m.online && m.notSharing),
+    lastSeen: m.lastSeen ?? null,
+    status: m.status ?? (!m.online ? "Offline" : m.notSharing ? "Not sharing" : "Online"),
+    spaces: n,
+    spacesLabel: m.spacesLabel ?? (m.device ? "" : n === 0 ? "No Spaces" : `${n} Space${n === 1 ? "" : "s"}`),
+  };
+}
+
+/**
+ * The Machines page as every UI draws it (`machines.view`): the host's own
+ * when it sent one (what the SwiftUI page shows), else the core's from the
+ * rows listed here. Null without the core.
+ */
+export function machinesView(
+  core: CoreClient | undefined,
+  input: {
+    hostView: MachinesView | null;
+    machines: readonly Machine[];
+    spaces: readonly Space[];
+    host: object | null;
+    nowSecs?: number;
+    /** The clouds (`cloud_status`, read by `cloudsInput`): the Clouds group. */
+    clouds?: CloudsInput | null;
+  },
+): MachinesView | null {
+  if (input.hostView) return input.hostView;
+  const current = input.machines.find((m) => m.current);
+  const hostOs = current && ["macos", "linux", "windows"].includes(current.os) ? current.os : "macos";
+  return (
+    core?.tryCall<MachinesView>("machines.view", {
+      input: {
+        page: { hostOs, spaces: input.spaces, now: input.nowSecs ?? Math.floor(Date.now() / 1000) },
+        rows: input.machines.map((m) => pageRowOf(m, input.spaces)),
+        host: input.host,
+        clouds: input.clouds ?? null,
+      },
+    }) ?? null
+  );
 }
 
 /** Which machine a Space runs on: its relay host, the machine itself for
@@ -556,7 +635,7 @@ function fallbackPanel(s: HostStatus | null): HostPanelView {
 const FALLBACK_INTRO =
   "This is the computer you’re using now. Set it up so you, your teammates and your AI agents can use it from other devices. Cua connects them for you, with no network setup.";
 const FALLBACK_CHOICES: HostSetupChoice[] = [
-  { id: "desktop", label: "Use this computer from my other devices", buttonLabel: "Set Up…" },
+  { id: "desktop", label: "Let my other devices use this computer", buttonLabel: "Set Up…" },
   { id: "spare", label: "Run Spaces here and keep its screen private", buttonLabel: "Set Up…" },
 ];
 
@@ -590,15 +669,12 @@ export function settingsPage(
   /** Settings, AI agents: the coding agents read from the host (null: not yet, an empty section). */
   agents?: Pick<SettingsInput, "agents" | "agentsBusy" | "agentsPending">,
 ): SettingsPage | null {
-  const loc = settings.values.defaultLocation;
   const input: SettingsInput = {
-    identity: session?.fleet.identity ?? null,
-    apiKeyClient: session?.fleet.authMode === "client-credentials" ? (session.fleet.clientId ?? null) : null,
+    identity: session?.account.identity ?? null,
+    apiKeyClient: session?.account.authMode === "client-credentials" ? (session.account.clientId ?? null) : null,
     signIn: signIn ?? { kind: "idle" },
-    canSignOut: session?.fleet.authMode === "user",
+    canSignOut: session?.account.authMode === "user",
     menuBar: settings.values.menuBar,
-    defaultLocation: loc === "cloud" || loc === "local" ? "local" : loc.startsWith("host:") ? "host" : "yours",
-    locationLockedBy: settings.defaultLocation?.source === "env" ? (settings.defaultLocation.env ?? null) : null,
     telemetry: settings.telemetry
       ? {
           enabled: settings.telemetry.enabled,
@@ -619,6 +695,8 @@ export function settingsPage(
     agents: agents?.agents ?? null,
     agentsBusy: agents?.agentsBusy ?? false,
     agentsPending: agents?.agentsPending ?? [],
+    // General's Show tips (`AppSettings.tips.off`; on by default).
+    showTips: !(settings.values.tips?.off ?? false),
   };
   return core.tryCall<SettingsPage>("settings.page", { input }) ?? null;
 }
@@ -770,4 +848,26 @@ export function relayUsageView(core: CoreClient, usage: RelayUsage, accountApp: 
  * for any other error, or without the core. */
 export function planLimitNotice(core: CoreClient, error: string, accountApp: string | null = null): RelayAllowanceNotice | null {
   return core.tryCall<RelayAllowanceNotice | null>("relayUsage.planLimit", accountApp ? { error, accountApp } : { error }) ?? null;
+}
+
+/**
+ * The Spaces page's empty state and "Reaching N computers…" line
+ * (`spaces.listView`): "Create your first Space" only for a complete list
+ * with no Space, so a daemon still starting or computers still answering
+ * never read as an empty account.
+ */
+export function listView(core: CoreClient, status: ListStatus, count: number): ListView {
+  const input = { loaded: status.loaded, incomplete: status.incomplete, reaching: status.reaching, count };
+  return core.tryCall<ListView>("spaces.listView", { input }) ?? fallbackListView(input);
+}
+
+function fallbackListView(i: { loaded: boolean; incomplete: boolean; reaching: number; count: number }): ListView {
+  const reachingLine = !i.loaded
+    ? "Loading Spaces…"
+    : !i.incomplete
+      ? null
+      : i.reaching === 0
+        ? "Reaching your computers…"
+        : `Reaching ${i.reaching} computer${i.reaching === 1 ? "" : "s"}…`;
+  return { empty: i.loaded && !i.incomplete && i.count === 0, reachingLine };
 }

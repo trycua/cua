@@ -29,6 +29,10 @@ function sameRect(a: SurfaceRect | null, b: SurfaceRect | null): boolean {
   return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
 }
 
+function sameRects(a: readonly SurfaceRect[], b: readonly SurfaceRect[]): boolean {
+  return a.length === b.length && a.every((r, i) => sameRect(r, b[i] ?? null));
+}
+
 /** Whether a surface report changes anything the host draws. */
 export function sameSurface(a: SurfaceState | null, b: SurfaceState): boolean {
   return (
@@ -40,20 +44,39 @@ export function sameSurface(a: SurfaceState | null, b: SurfaceState): boolean {
     a.occluded === b.occluded &&
     a.radius === b.radius &&
     sameRect(a.rect, b.rect) &&
-    sameRect(a.clip, b.clip)
+    sameRect(a.clip, b.clip) &&
+    sameRects(a.holes ?? [], b.holes ?? [])
   );
 }
 
-/** Page UI that covers video when it overlaps a slot (portals: dialogs, menus, popovers, toasts). */
-export const OCCLUDER_SELECTOR = [
+/** Page UI that hides the video entirely when it overlaps a slot: a dialog
+ * takes the keyboard and dims the page, so the video under it goes. */
+export const OCCLUDER_SELECTOR = ['[role="dialog"]', '[role="alertdialog"]'].join(",");
+
+/**
+ * Small page UI that floats over a slot (menus, popovers, tooltips, toasts,
+ * the viewer's own key bar): the host cuts the video out under each one
+ * (`holes`) and the rest keeps playing. Hiding the whole video for a menu
+ * turned the desktop black while the menu was open.
+ */
+export const HOLE_SELECTOR = [
   "[data-video-occluder]",
-  '[role="dialog"]',
-  '[role="alertdialog"]',
+  "[data-video-hole]",
   '[role="menu"]',
   '[role="listbox"]',
   '[role="tooltip"]',
   "[data-toast]",
 ].join(",");
+
+/** Where a slot's own controls live (a Space tile): a `[data-video-hole]`
+ * inside one counts only for the slot in the same scope, and only while it
+ * shows (a hover control sits at `opacity: 0` until then). */
+export const HOLE_SCOPE_SELECTOR = "[data-video-hole-scope]";
+
+/** Transparent layers that only catch outside clicks (Base UI's
+ * `InternalBackdrop` under an open menu or popover): they paint nothing, so
+ * they never cover video. */
+export const INERT_SELECTOR = "[data-base-ui-inert]";
 
 /**
  * Reports every mounted video slot to the host in one message per frame
@@ -109,6 +132,9 @@ interface Slot extends SlotOptions {
   status: SlotStatus;
   listener: (status: SlotStatus) => void;
 }
+
+/** Events after which a tile's hover controls may have shown or hidden. */
+const POINTER_FOCUS = ["pointerover", "pointerout", "focusin", "focusout"] as const;
 
 /** Frames to keep measuring after something changed (follows transitions). */
 const SETTLE_FRAMES = 20;
@@ -215,6 +241,7 @@ export class VideoSlotReporter {
       clip,
       radius: Math.max(0, slot.radius - inset),
       occluded: shown && clip ? isOccluded(slot.el, clip, this.win.document, slot.radius) : false,
+      holes: shown && clip ? videoHoles(slot.el, clip, this.win.document).map(roundRect) : [],
       visible: shown,
     };
   }
@@ -260,10 +287,13 @@ export class VideoSlotReporter {
         childList: true,
         subtree: true,
         attributes: true,
-        attributeFilter: ["data-open", "data-closed", "data-state", "open", "hidden", "style"],
+        // `class`: a tile's controls (holes) show and hide by class (selection mode).
+        attributeFilter: ["data-open", "data-closed", "data-state", "open", "hidden", "style", "class"],
       });
     }
     w.addEventListener("scroll", this.schedule, { capture: true, passive: true });
+    // Hover and focus show a tile's controls by CSS alone (no DOM change): measure their holes.
+    for (const type of POINTER_FOCUS) w.addEventListener(type, this.schedule, { passive: true });
     w.addEventListener("resize", this.schedule);
     w.addEventListener("cua:event", this.onHostEvent);
     w.document.addEventListener("visibilitychange", this.schedule);
@@ -280,6 +310,7 @@ export class VideoSlotReporter {
     this.mutations?.disconnect();
     this.mutations = null;
     w.removeEventListener("scroll", this.schedule, { capture: true });
+    for (const type of POINTER_FOCUS) w.removeEventListener(type, this.schedule);
     w.removeEventListener("resize", this.schedule);
     w.removeEventListener("cua:event", this.onHostEvent);
     w.document.removeEventListener("visibilitychange", this.schedule);
@@ -309,9 +340,12 @@ export function visiblePart(el: Element, rect: SurfaceRect, win: Window = window
 }
 
 /**
- * Whether page UI covers any of `clip`: an open dialog, menu, popover or
- * toast overlapping it, or anything else on top at a few sample points (a
- * dialog's backdrop, a sticky bar).
+ * Whether page UI covers `clip` so the video must go: an open dialog
+ * overlapping it, or anything else on top at a few sample points (a
+ * dialog's backdrop, a sticky bar). Floating UI that gets a hole instead
+ * (`HOLE_SELECTOR`), click-catching layers that paint nothing
+ * (`INERT_SELECTOR`) and the slot's own ancestors (hit when an open modal
+ * menu made the page `inert`) don't count.
  */
 export function isOccluded(el: Element, clip: SurfaceRect, doc: Document = document, radius = 0): boolean {
   for (const o of doc.querySelectorAll(OCCLUDER_SELECTOR)) {
@@ -319,7 +353,7 @@ export function isOccluded(el: Element, clip: SurfaceRect, doc: Document = docum
     const r = o.getBoundingClientRect();
     if (r.width > 0 && r.height > 0 && intersect(clip, { x: r.x, y: r.y, width: r.width, height: r.height })) return true;
   }
-  if (typeof doc.elementFromPoint !== "function") return false;
+  if (typeof doc.elementsFromPoint !== "function" && typeof doc.elementFromPoint !== "function") return false;
   // Inside the rounded corners, which hit-test as the element's parent.
   const dx = Math.min(clip.width / 2, Math.ceil(radius * 0.3) + 2);
   const dy = Math.min(clip.height / 2, Math.ceil(radius * 0.3) + 2);
@@ -327,11 +361,63 @@ export function isOccluded(el: Element, clip: SurfaceRect, doc: Document = docum
   const ys = [clip.y + dy, clip.y + clip.height / 2, clip.y + clip.height - dy];
   for (const x of xs) {
     for (const y of ys) {
-      const hit = doc.elementFromPoint(x, y);
-      if (hit && hit !== el && !el.contains(hit)) return true;
+      const hit = topmostPainted(doc, x, y);
+      // An ancestor of the slot can't paint over it: it is what hit-testing
+      // reaches when the slot itself takes no hits (a modal menu makes the
+      // rest of the page `inert`).
+      if (hit && !hit.contains(el) && !el.contains(hit) && !hit.closest(HOLE_SELECTOR)) return true;
     }
   }
   return false;
+}
+
+/** The topmost element at a point that paints: inert click catchers are looked through. */
+function topmostPainted(doc: Document, x: number, y: number): Element | null {
+  const all = typeof doc.elementsFromPoint === "function" ? doc.elementsFromPoint(x, y) : [doc.elementFromPoint(x, y)];
+  for (const hit of all) {
+    if (!hit) continue;
+    if (hit.closest(INERT_SELECTOR)) continue;
+    return hit;
+  }
+  return null;
+}
+
+/**
+ * The floating UI over `clip` (menus, popovers, tooltips, toasts, the
+ * viewer's key bar, a tile's checkbox and power button while they show),
+ * each clipped to it: the host draws no video there.
+ */
+export function videoHoles(el: Element, clip: SurfaceRect, doc: Document = document): SurfaceRect[] {
+  const holes: SurfaceRect[] = [];
+  const win = doc.defaultView;
+  for (const o of doc.querySelectorAll(HOLE_SELECTOR)) {
+    // Floating UI inside the slot counts only when it asks (`data-video-hole`).
+    if (o.contains(el) || (el.contains(o) && !o.hasAttribute("data-video-hole"))) continue;
+    if (o.hasAttribute("data-video-hole")) {
+      // Another tile's control, or one hidden until hover: no hole.
+      const scope = o.closest(HOLE_SCOPE_SELECTOR);
+      if (scope && !scope.contains(el)) continue;
+      if (win && !showsNow(o, scope, win)) continue;
+    }
+    // One hole for a nested pair (a menu inside a marked popup).
+    if (o.parentElement?.closest(HOLE_SELECTOR)) continue;
+    const r = o.getBoundingClientRect();
+    if (r.width <= 0 || r.height <= 0) continue;
+    const hole = intersect(clip, { x: r.x, y: r.y, width: r.width, height: r.height });
+    if (hole) holes.push(hole);
+  }
+  return holes;
+}
+
+/** Laid out, not hidden and not fully transparent (itself or an ancestor up to `scope`). */
+function showsNow(o: Element, scope: Element | null, win: Window): boolean {
+  if (win.getComputedStyle(o).visibility === "hidden") return false;
+  const stop = scope?.parentElement ?? null;
+  for (let a: Element | null = o; a && a !== stop; a = a.parentElement) {
+    const style = win.getComputedStyle(a);
+    if (style.display === "none" || Number.parseFloat(style.opacity) === 0) return false;
+  }
+  return true;
 }
 
 let shared: VideoSlotReporter | null | undefined;

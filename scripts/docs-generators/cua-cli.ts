@@ -98,7 +98,7 @@ export const CLI_GROUPS: CliGroup[] = [
     title: 'Spaces, computers and teams',
     summary:
       'Your Spaces and machines, unattended access on this machine, devices, teams, your remote use this month, and a cua-spacesd by URL',
-    commands: ['spaces', 'host', 'devices', 'team', 'usage', 'spacesd', 'share'],
+    commands: ['spaces', 'machines', 'host', 'devices', 'team', 'usage', 'spacesd', 'share'],
   },
   {
     slug: 'files-teleport-and-keys',

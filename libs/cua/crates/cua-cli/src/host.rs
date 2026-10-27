@@ -265,6 +265,26 @@ pub enum HostCmd {
     },
 }
 
+/// `cua machines`: your computers on the relay.
+#[derive(Subcommand, Debug)]
+pub enum MachinesCmd {
+    /// Remove a computer that is gone: its row leaves your relay directory,
+    /// then the signed-in device with exactly its name is revoked (never this
+    /// device; nothing when several match). A computer that is connected now
+    /// is refused: run `cua host remove` on it.
+    #[command(after_help = "Examples:
+  cua machines rm old-laptop
+  cua machines rm relay:0123abcd4567ef89 --yes --json")]
+    Rm {
+        /// The computer's name, machine id or `relay:<id>` (`cua spaces ls`).
+        #[arg(value_name = "NAME")]
+        name: String,
+        /// Remove without asking.
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
+}
+
 #[derive(Subcommand, Debug)]
 pub enum SpacesCmd {
     /// Registered Spaces and your computers on the relay.
@@ -1600,6 +1620,175 @@ impl AccountTokens for SessionTokens {
     async fn signed_in(&self) -> bool {
         !matches!(auth::session().credentials(), Ok(None))
     }
+}
+
+/// `cua machines rm`: removes a computer that is gone (its relay row, then
+/// the one signed-in device named like it). The caller folds `--yes` into
+/// `confirm`.
+pub async fn remove_machine(
+    cua: &cua_sdk::Cua,
+    auth: &DeviceAuth,
+    tokens: &dyn AccountTokens,
+    name: &str,
+    confirm: &dyn Fn(&str) -> bool,
+    json: bool,
+    out: &mut dyn Write,
+) -> Result<i32, CuaError> {
+    use cua_host::DeviceState;
+    // Fresh from the relay: the Space resolver reads a possibly cold cache.
+    let relay = RelayClient::new(auth.relay_url()).map_err(host_err)?;
+    let token = tokens.access_token().await.map_err(host_err)?;
+    let machines = auth.machines_for(&relay, &token).await.map_err(host_err)?;
+    let mut hits: Vec<_> = machines
+        .iter()
+        .filter(|m| m.id == name || format!("relay:{}", m.id) == name || m.name == name)
+        .collect();
+    hits.sort_by(|a, b| a.id.cmp(&b.id));
+    let m = match hits.as_slice() {
+        [] => {
+            return Err(CuaError::NotFound(format!(
+                "no computer named {name:?} in your relay directory (`cua spaces ls` lists them)"
+            )));
+        }
+        [m] => *m,
+        many => {
+            let ids: Vec<_> = many.iter().map(|m| format!("relay:{}", m.id)).collect();
+            return Err(CuaError::InvalidArgument(format!(
+                "several computers are named {name:?}: pass one of {}",
+                ids.join(", ")
+            )));
+        }
+    };
+    let rid = format!("relay:{}", m.id);
+    if m.role != "owner" {
+        return Err(CuaError::PermissionDenied(format!(
+            "{rid} is shared with you; only its owner can remove it"
+        )));
+    }
+    let hosted = m.host.as_deref().is_some_and(|h| !h.is_empty());
+    let cloud = m
+        .meta
+        .get(cua_sandbox_core::byoc::meta::PROVIDER)
+        .is_some_and(|p| !p.is_empty());
+    let registered = !hosted
+        && !m.meta.contains_key(cua_host::META_PROVIDES_SPACES)
+        && m.id.starts_with("space-");
+    if hosted || cloud || registered {
+        return Err(CuaError::InvalidArgument(format!(
+            "{rid} is a Space, not a computer; manage it with `cua spaces`"
+        )));
+    }
+    if m.online {
+        return Err(CuaError::InvalidArgument(format!(
+            "{rid} ({}) is connected now; run `cua host remove` on that computer",
+            m.name
+        )));
+    }
+    if !confirm(&format!(
+        "Remove {} ({rid}) from your relay directory and revoke the signed-in device named {}?",
+        m.name, m.name
+    )) {
+        return Err(CuaError::PermissionDenied(
+            "not removed (pass --yes to remove without a prompt)".into(),
+        ));
+    }
+    // Refuses again if the computer connected meanwhile.
+    let removed = cua.spaces().relay_unregister(rid.clone()).await?;
+    let report = |out: &mut dyn Write, status: &str, ids: &[String], text: String| {
+        if json {
+            let v = serde_json::json!({
+                "machine": { "id": rid, "name": m.name },
+                "removed": removed,
+                "device": { "status": status, "ids": ids },
+            });
+            line(out, v.to_string());
+        } else {
+            if removed {
+                line(
+                    out,
+                    format!("Removed {} ({rid}) from your relay directory.", m.name),
+                );
+            } else {
+                line(
+                    out,
+                    format!("{rid} was already gone from your relay directory."),
+                );
+            }
+            line(out, text);
+        }
+    };
+    if !removed {
+        report(out, "not_attempted", &[], "No device was touched.".into());
+        return Ok(0);
+    }
+    let this = auth.device_id().ok().flatten();
+    let found = auth.devices().await.map(|all| {
+        let mut ids: Vec<_> = all
+            .into_iter()
+            .filter(|d| {
+                !m.name.is_empty()
+                    && d.name == m.name
+                    && !d.current
+                    && Some(&d.id) != this.as_ref()
+                    && d.state != DeviceState::Revoked
+            })
+            .map(|d| d.id)
+            .collect();
+        ids.sort();
+        ids
+    });
+    let fail = |out: &mut dyn Write, e: cua_host::Error| {
+        report(
+            out,
+            "failed",
+            &[],
+            "Finish with `cua devices ls` and `cua devices revoke <id>`.".into(),
+        );
+        host_err(e)
+    };
+    let ids = match found {
+        Ok(ids) => ids,
+        Err(e) => return Err(fail(out, e)),
+    };
+    match ids.as_slice() {
+        [] => report(
+            out,
+            "not_found",
+            &[],
+            format!(
+                "No signed-in device named {}; no device was revoked.",
+                m.name
+            ),
+        ),
+        [id] => match crate::devices_cmd::revoke_device(auth, id).await {
+            Ok(d) => report(
+                out,
+                "revoked",
+                &ids,
+                format!("Revoked {} ({}).", d.name, d.id),
+            ),
+            Err(e) => {
+                report(
+                    out,
+                    "failed",
+                    &ids,
+                    "Finish with `cua devices ls` and `cua devices revoke <id>`.".into(),
+                );
+                return Err(e);
+            }
+        },
+        many => report(
+            out,
+            "ambiguous",
+            many,
+            format!(
+                "Several devices are named {} ({}): revoke the right one with `cua devices revoke <id>`.",
+                m.name,
+                many.join(", ")
+            ),
+        ),
+    }
+    Ok(0)
 }
 
 pub fn host_err(e: cua_host::Error) -> CuaError {
@@ -4708,6 +4897,273 @@ mod tests {
             ])
             .is_err()
         );
+    }
+
+    mod machines_rm {
+        use super::*;
+        use cua_host::MemoryKeySlot;
+        use cua_host::relay::{DeviceState, RegisterRequest};
+        use std::cell::Cell;
+
+        const ID: &str = "0123abcd4567ef89";
+
+        struct Fx {
+            _env: crate::util::test_env::Guard,
+            relay: FakeRelay,
+            cua: Arc<cua_sdk::Cua>,
+            _dir: tempfile::TempDir,
+            auth: Arc<DeviceAuth>,
+            laptop: String,
+            remote: Vec<String>,
+        }
+
+        async fn device(relay: &FakeRelay, name: &str, i: usize) -> (Arc<DeviceAuth>, String) {
+            let d = Arc::new(
+                DeviceAuth::new(
+                    &relay.url,
+                    Arc::new(StaticToken("acct".into())),
+                    Arc::new(MemoryKeySlot::default()),
+                    name,
+                )
+                .unwrap()
+                .with_machine_id(Some(format!("machine-of-{i}"))),
+            );
+            relay.fresh_sign_in("user-1");
+            d.enroll().await.unwrap();
+            let id = d.device_id().unwrap().unwrap();
+            (d, id)
+        }
+
+        async fn register(
+            relay: &FakeRelay,
+            id: &str,
+            name: &str,
+            host: Option<&str>,
+            meta: std::collections::BTreeMap<String, String>,
+        ) {
+            RelayClient::new(&relay.url)
+                .unwrap()
+                .register(
+                    "acct",
+                    &RegisterRequest {
+                        id: id.into(),
+                        name: name.into(),
+                        allow: vec![],
+                        host: host.map(Into::into),
+                        meta,
+                    },
+                )
+                .await
+                .unwrap();
+        }
+
+        async fn fx(remote_names: &[&str]) -> Fx {
+            let env = crate::util::test_env::isolated();
+            let relay = FakeRelay::start().await;
+            relay.add_account("acct", "user-1", Some("ada@example.com"));
+            relay.require_devices(true);
+            relay.fresh_sign_in("user-1");
+            let (auth, laptop) = device(&relay, "laptop", 0).await;
+            let mut remote = vec![];
+            for (i, n) in remote_names.iter().enumerate() {
+                remote.push(device(&relay, n, i + 1).await.1);
+            }
+            register(&relay, ID, "old-laptop", None, Default::default()).await;
+            let dir = tempfile::tempdir().unwrap();
+            let cua = cua_sdk::Cua::embedded(cua_sdk::CuaConfig {
+                state_dir: Some(dir.path().join("sandboxes").display().to_string()),
+                spaces_home: Some(dir.path().join("cua").display().to_string()),
+                ..Default::default()
+            })
+            .unwrap();
+            let (url, dev) = (relay.url.clone(), auth.clone());
+            attach_relay_account(&cua, || {
+                cua_spaces::RelayAccount::new(url, Arc::new(StaticToken("acct".into())))
+                    .with_device(dev)
+            });
+            Fx {
+                _env: env,
+                relay,
+                cua,
+                _dir: dir,
+                auth,
+                laptop,
+                remote,
+            }
+        }
+
+        /// Runs `rm`; returns the result, the output and the prompt count.
+        async fn rm(
+            f: &Fx,
+            arg: &str,
+            json: bool,
+            answer: impl Fn() -> bool,
+        ) -> (Result<i32, CuaError>, String, u32) {
+            let asked = Cell::new(0);
+            let mut out = Vec::new();
+            let r = remove_machine(
+                &f.cua,
+                &f.auth,
+                &StaticToken("acct".into()),
+                arg,
+                &|_| {
+                    asked.set(asked.get() + 1);
+                    answer()
+                },
+                json,
+                &mut out,
+            )
+            .await;
+            (r, String::from_utf8(out).unwrap(), asked.get())
+        }
+
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn machines_rm_removes_a_gone_computer_then_revokes_its_device() {
+            let f = fx(&["old-laptop"]).await;
+            let (r, text, _) = rm(&f, "old-laptop", false, || true).await;
+            assert_eq!(r.unwrap(), 0, "{text}");
+            assert!(f.relay.machine(ID).is_none());
+            assert_eq!(
+                f.relay.device_state(&f.remote[0]),
+                Some(DeviceState::Revoked)
+            );
+            assert_eq!(f.relay.device_state(&f.laptop), Some(DeviceState::Enrolled));
+            assert!(
+                text.contains("Removed old-laptop (relay:0123abcd4567ef89)"),
+                "{text}"
+            );
+            assert!(text.contains("Revoked old-laptop ("), "{text}");
+        }
+
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn machines_rm_by_bare_id_reports_json() {
+            let f = fx(&["old-laptop"]).await;
+            let (r, text, _) = rm(&f, ID, true, || true).await;
+            assert_eq!(r.unwrap(), 0, "{text}");
+            let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+            assert_eq!(v["removed"], true, "{text}");
+            assert_eq!(v["machine"]["id"], "relay:0123abcd4567ef89");
+            assert_eq!(v["device"]["status"], "revoked", "{text}");
+            assert_eq!(v["device"]["ids"], serde_json::json!([f.remote[0]]));
+        }
+
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn machines_rm_refuses_a_connected_computer() {
+            let f = fx(&["old-laptop"]).await;
+            f.relay.set_online(ID, true, "1.0");
+            let (r, _, asked) = rm(&f, "old-laptop", false, || true).await;
+            let Err(CuaError::InvalidArgument(m)) = r else {
+                panic!("{r:?}")
+            };
+            assert!(
+                m.contains("is connected now") && m.contains("cua host remove"),
+                "{m}"
+            );
+            assert_eq!(asked, 0);
+            assert!(f.relay.machine(ID).is_some());
+            assert_eq!(
+                f.relay.device_state(&f.remote[0]),
+                Some(DeviceState::Enrolled)
+            );
+        }
+
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn machines_rm_unknown_name_is_not_found() {
+            let f = fx(&["old-laptop"]).await;
+            let (r, text, asked) = rm(&f, "no-such-box", false, || true).await;
+            let Err(CuaError::NotFound(m)) = r else {
+                panic!("{r:?}")
+            };
+            assert!(m.contains("no-such-box"), "{m}");
+            assert_eq!(asked, 0);
+            assert!(text.is_empty());
+            assert!(f.relay.machine(ID).is_some());
+            assert_eq!(
+                f.relay.device_state(&f.remote[0]),
+                Some(DeviceState::Enrolled)
+            );
+        }
+
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn machines_rm_rechecks_after_confirmation() {
+            let f = fx(&["old-laptop"]).await;
+            let (r, _, asked) = rm(&f, "old-laptop", false, || {
+                f.relay.set_online(ID, true, "1.0");
+                true
+            })
+            .await;
+            assert!(matches!(r, Err(CuaError::InvalidArgument(_))), "{r:?}");
+            assert_eq!(asked, 1);
+            assert!(f.relay.machine(ID).is_some());
+            assert_eq!(
+                f.relay.device_state(&f.remote[0]),
+                Some(DeviceState::Enrolled)
+            );
+        }
+
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn machines_rm_never_revokes_this_device_or_guesses() {
+            // (a) A machine named like this device: this device stays.
+            let f = fx(&[]).await;
+            let other = "fedcba9876543210";
+            register(&f.relay, other, "laptop", None, Default::default()).await;
+            let (r, text, _) = rm(&f, "laptop", false, || true).await;
+            assert_eq!(r.unwrap(), 0, "{text}");
+            assert!(f.relay.machine(other).is_none());
+            assert_eq!(f.relay.device_state(&f.laptop), Some(DeviceState::Enrolled));
+            assert!(text.contains("no device was revoked"), "{text}");
+            drop(f); // releases the isolated environment
+
+            // (b) Two devices share the name: neither is revoked.
+            let f = fx(&["old-laptop", "old-laptop"]).await;
+            let (r, text, _) = rm(&f, "old-laptop", false, || true).await;
+            assert_eq!(r.unwrap(), 0, "{text}");
+            assert!(f.relay.machine(ID).is_none());
+            for id in &f.remote {
+                assert_eq!(f.relay.device_state(id), Some(DeviceState::Enrolled));
+                assert!(text.contains(id.as_str()), "{text}");
+            }
+            assert!(text.contains("cua devices revoke <id>"), "{text}");
+        }
+
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn machines_rm_declined_changes_nothing() {
+            let f = fx(&["old-laptop"]).await;
+            let (r, _, asked) = rm(&f, "old-laptop", false, || false).await;
+            let Err(CuaError::PermissionDenied(m)) = r else {
+                panic!("{r:?}")
+            };
+            assert!(m.contains("pass --yes"), "{m}");
+            assert_eq!(asked, 1);
+            assert!(f.relay.machine(ID).is_some());
+            assert_eq!(
+                f.relay.device_state(&f.remote[0]),
+                Some(DeviceState::Enrolled)
+            );
+        }
+
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn machines_rm_refuses_spaces() {
+            let f = fx(&[]).await;
+            let none = Default::default;
+            register(&f.relay, "space-hosted1", "hosted", Some(ID), none()).await;
+            let meta = [("cua.cloud.provider".to_string(), "hetzner".to_string())].into();
+            register(&f.relay, "space-cloud001", "cloudy", None, meta).await;
+            register(&f.relay, "space-selfreg1", "selfreg", None, none()).await;
+            for (id, name) in [
+                ("space-hosted1", "hosted"),
+                ("space-cloud001", "cloudy"),
+                ("space-selfreg1", "selfreg"),
+            ] {
+                let (r, _, asked) = rm(&f, name, false, || true).await;
+                let Err(CuaError::InvalidArgument(m)) = r else {
+                    panic!("{name}: {r:?}")
+                };
+                assert!(m.contains("not a computer"), "{m}");
+                assert_eq!(asked, 0);
+                assert!(f.relay.machine(id).is_some());
+            }
+        }
     }
 
     /// `cua mcp` without a daemon (embedded) sees the account's relay

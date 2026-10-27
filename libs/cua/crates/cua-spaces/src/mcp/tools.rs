@@ -1387,7 +1387,7 @@ async fn space_service(s: &crate::Space, a: i::SpaceService) -> Result<Value> {
             };
             serde_json::to_value(s.put_service(&def).await?).unwrap_or(Value::Null)
         }
-        "list" => json!({ "services": s.services().await? }),
+        "list" => json!({ "services": s.kept_services().await? }),
         "start" => serde_json::to_value(s.control_service(&name()?, ServiceControl::Start).await?)
             .unwrap_or(Value::Null),
         "stop" => serde_json::to_value(s.control_service(&name()?, ServiceControl::Stop).await?)

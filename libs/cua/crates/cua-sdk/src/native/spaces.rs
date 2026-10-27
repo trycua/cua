@@ -4700,7 +4700,7 @@ impl Space {
     /// This Space's services.
     pub async fn services(&self) -> Result<Vec<SpaceServiceInfo>> {
         let s = self.inner.clone();
-        run(async move { via_json(&s.services().await?) }).await
+        run(async move { via_json(&s.kept_services().await?) }).await
     }
 
     /// Starts a stopped service.

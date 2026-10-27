@@ -272,7 +272,7 @@ impl Space {
     }
 
     /// This Space's services.
-    pub async fn services(&self) -> Result<Vec<ServiceInfo>> {
+    pub async fn kept_services(&self) -> Result<Vec<ServiceInfo>> {
         self.require(SERVICES_FEATURE)?;
         let r = self
             .spacesd()?

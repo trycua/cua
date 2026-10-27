@@ -4601,17 +4601,30 @@ mod tests {
 
     #[tokio::test]
     async fn retained_process_runner_without_auto_detection_does_not_warn() {
+        let relay = FakeRelay::start().await;
+        relay.add_account("acct", "user-1", Some("ada@example.com"));
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path().join(".cua");
         let driver = dir.path().join("drv");
         std::fs::write(&driver, b"x").unwrap();
         let manager = Arc::new(FakeServiceManager::default());
-        let args = direct_args(driver.to_str().unwrap(), &["--runner", "process"]);
-        run_fake(&home, &manager, &args).await;
-        // Default setup on a machine where auto would pick systemd.
-        let args = direct_args(driver.to_str().unwrap(), &[]);
-        let (o, e) = run_fake_io(&home, &manager, &args, false, RunnerKind::Systemd).await;
+        let setup = ["setup", "--relay", relay.url.as_str(), "--name", "lab-box"];
+        let first = [
+            &setup[..],
+            &[
+                "--driver-bin",
+                driver.to_str().unwrap(),
+                "--runner",
+                "process",
+            ],
+        ]
+        .concat();
+        run_fake(&home, &manager, &first).await;
+        // Default rerun (unchanged path) where auto detection would pick systemd.
+        let (o, e) = run_fake_io(&home, &manager, &setup, false, RunnerKind::Systemd).await;
         assert!(!o.contains("will not come back") && e.is_empty(), "{o}{e}");
+        let host = Host::new(&home).with_service_manager(manager.clone());
+        assert_eq!(host.config().unwrap().unwrap().runner, "process");
     }
 
     #[tokio::test]

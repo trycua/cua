@@ -533,7 +533,7 @@ cua cloud connect [OPTIONS] <PROVIDER>
 | <span id="cua-cloud-connect--token-stdin"></span>`--token-stdin` | boolean | `false` | Hetzner or Modal: read the API token from stdin (Hetzner: a Read & Write project token, otherwise `HCLOUD_TOKEN`, the saved token or the hcloud CLI's context; Modal: `<token id>:<token secret>`). Once the checks pass it is sealed to your devices, or with --no-sealed saved in this device's Cua credential store (Hetzner). |
 | <span id="cua-cloud-connect--default"></span>`--default` | boolean | `false` | Also make it the default location (`default.on`). |
 | <span id="cua-cloud-connect--oidc"></span>`--oidc` | boolean | `false` | Link without a stored key: Cua's issuer signs 15-minute tokens your account trusts (AWS, Google Cloud; Azure always). |
-| <span id="cua-cloud-connect--sealed"></span>`--sealed` | boolean | `false` | Hetzner, Modal: seal the API token to your devices (the token given on stdin, else the one this device has). The default when this device has the account's pool keys and a budget is given. |
+| <span id="cua-cloud-connect--sealed"></span>`--sealed` | boolean |  | Hetzner, Modal: seal the API token to your devices (the token given on stdin, else the one this device has). The default when this device has the account's pool keys and a budget is given. |
 | <span id="cua-cloud-connect--no-sealed"></span>`--no-sealed` | boolean | `false` | Hetzner: keep the API token on this device only (in the Cua credential store), as before sealing. |
 | <span id="cua-cloud-connect--check"></span>`--check` | boolean | `false` | With --oidc (and Azure): prove the link works (a check token, the exchange with the cloud, a dry run, permission check or validate; nothing is created) and save it. |
 

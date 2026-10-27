@@ -206,6 +206,10 @@ struct InputExperiment::Impl {
     // action without moving compositor pointer focus or the cursor.
     std::vector<WP<CWLPointerResource>> primary_pointers;
     WP<CWLSurfaceResource> primary_surface;
+    std::vector<WP<CWLKeyboardResource>> primary_keyboards;
+    WP<CWLSurfaceResource> primary_keyboard_surface;
+    Clock::time_point primary_keyboard_idle{};
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> primary_held; // agent code -> person's keycode
     std::uint64_t primary_dispatches = 0;
     std::vector<std::unique_ptr<Touch>> touches;
     Client* lease = nullptr;
@@ -676,6 +680,7 @@ struct InputExperiment::Impl {
         drag.reset();
         finish_foreground();
         primary_leave();
+        primary_keyboard_leave();
         if (retain_pointer) release_pointer_button(); else leave_pointer();
         leave_keyboard(); retire_grant();
     }
@@ -1127,7 +1132,96 @@ struct InputExperiment::Impl {
             }
             ++count;
         }
+        if (!count && primary_keyboard_enter(root)) count = 1;
         return count > 0;
+    }
+    bool primary_keyboard_enter(const SP<CWLSurfaceResource>& root) {
+        if (!g_primary_seat_fallback.load()) return false;
+        // Never share a client with the person's own keyboard focus.
+        const auto focus = g_pSeatManager->m_state.keyboardFocus.lock();
+        if (focus && focus->client() == root->client()) return false;
+        // Typing continues on the same target without a focus flap per key.
+        if (!primary_keyboards.empty() && primary_keyboard_surface.lock() == root) return true;
+        primary_keyboard_leave();
+        const auto seat = g_pSeatManager->seatResourceForClient(root->client());
+        if (!seat || !seat->good()) return false;
+        for (const auto& k : seat->m_keyboards) {
+            if (!k || !k->good()) continue;
+            // The client keeps the person's keymap; agent keycodes are US
+            // evdev codes, which match it for letters and digits.
+            wl_array keys{};
+            k->sendEnter(root, &keys);
+            k->sendMods(0, 0, 0, 0);
+            primary_keyboards.push_back(k);
+        }
+        primary_keyboard_surface = root;
+        return !primary_keyboards.empty();
+    }
+    void primary_keyboard_leave() {
+        if (primary_keyboards.empty()) return;
+        for (const auto& weak : primary_keyboards) {
+            const auto k = weak.lock();
+            if (!k || !k->good()) continue;
+            k->sendMods(0, 0, 0, 0);
+            k->sendLeave();
+        }
+        primary_keyboards.clear();
+        primary_keyboard_surface.reset();
+        ++primary_dispatches;
+    }
+    // The client interprets keycodes with the person's keymap. Translate the
+    // character the agent's US keymap produces into the person's key and level.
+    std::optional<std::pair<std::uint32_t, xkb_mod_mask_t>> primary_translate(std::uint32_t code) const {
+        if (!physical_keymap || !keyboard_state) return std::nullopt;
+        const auto wanted = xkb_state_key_get_one_sym(keyboard_state, code + 8);
+        if (wanted == XKB_KEY_NoSymbol) return std::nullopt;
+        const auto max = xkb_keymap_max_keycode(physical_keymap);
+        for (xkb_keycode_t kc = xkb_keymap_min_keycode(physical_keymap); kc <= max; ++kc) {
+            const auto levels = xkb_keymap_num_levels_for_key(physical_keymap, kc, 0);
+            for (xkb_level_index_t level = 0; level < levels; ++level) {
+                const xkb_keysym_t* syms = nullptr;
+                if (xkb_keymap_key_get_syms_by_level(physical_keymap, kc, 0, level, &syms) != 1 || syms[0] != wanted) continue;
+                xkb_mod_mask_t masks[4] = {};
+                if (level > 0 && xkb_keymap_key_get_mods_for_level(physical_keymap, kc, 0, level, masks, 4) < 1) continue;
+                return std::pair{kc - 8, level > 0 ? masks[0] : xkb_mod_mask_t{0}};
+            }
+        }
+        return std::nullopt;
+    }
+    // Ctrl, Alt and Super the agent holds, as a mask in the person's keymap.
+    xkb_mod_mask_t primary_chord_mods() const {
+        xkb_mod_mask_t mask = 0;
+        if (!physical_keymap || !keyboard_state) return mask;
+        for (const char* name : {XKB_MOD_NAME_CTRL, XKB_MOD_NAME_ALT, XKB_MOD_NAME_LOGO}) {
+            if (xkb_state_mod_name_is_active(keyboard_state, name, XKB_STATE_MODS_EFFECTIVE) <= 0) continue;
+            const auto index = xkb_keymap_mod_get_index(physical_keymap, name);
+            if (index != XKB_MOD_INVALID) mask |= xkb_mod_mask_t{1} << index;
+        }
+        return mask;
+    }
+    void primary_key(std::uint32_t code, bool pressed) {
+        const bool modifier = code == 42 || code == 54 || code == 29 || code == 97 || code == 56 || code == 100 || code == 125 || code == 126;
+        std::uint32_t sent = code; xkb_mod_mask_t level = 0;
+        if (!modifier) {
+            if (pressed) {
+                const auto translated = primary_translate(code);
+                if (!translated) return; // the person's keymap cannot produce this character
+                sent = translated->first; level = translated->second;
+                primary_held.emplace_back(code, sent);
+            } else {
+                const auto held = std::ranges::find_if(primary_held, [&](const auto& p) { return p.first == code; });
+                if (held == primary_held.end()) return;
+                sent = held->second; primary_held.erase(held);
+            }
+        }
+        const xkb_mod_mask_t mods = primary_chord_mods() | (pressed && !modifier ? level : 0);
+        for (const auto& weak : primary_keyboards) {
+            const auto k = weak.lock();
+            if (!k || !k->good()) continue;
+            if (!modifier) k->sendMods(mods, 0, 0, 0);
+            k->sendKey(event_ms(), sent, pressed ? WL_KEYBOARD_KEY_STATE_PRESSED : WL_KEYBOARD_KEY_STATE_RELEASED);
+            k->sendMods(primary_chord_mods(), 0, 0, 0);
+        }
     }
     void key(std::uint32_t code, bool pressed) {
         xkb_state_update_key(keyboard_state, code + 8, pressed ? XKB_KEY_DOWN : XKB_KEY_UP);
@@ -1140,6 +1234,7 @@ struct InputExperiment::Impl {
                 xkb_state_serialize_mods(keyboard_state, XKB_STATE_MODS_LOCKED),
                 xkb_state_serialize_layout(keyboard_state, XKB_STATE_LAYOUT_EFFECTIVE));
         }
+        if (!primary_keyboards.empty()) primary_key(code, pressed);
     }
     void request(Client& c, const std::vector<std::string>& f) {
         if (!foreground_started) c.foreground_attempted = false;
@@ -1295,6 +1390,7 @@ struct InputExperiment::Impl {
             for (unsigned i = 0; i < 4; ++i) if ((mods & (1u << i)) && keys[i] != code) key(keys[i], true);
             key(code, true); key(code, false);
             for (int i = 3; i >= 0; --i) if ((mods & (1u << i)) && keys[i] != code) key(keys[i], false);
+            if (!primary_keyboards.empty()) primary_keyboard_idle = Clock::now() + std::chrono::milliseconds(800);
         } else {
             const auto x = real(f[4]), y = real(f[5]);
             if (!point(c, x, y)) { send(c, refusal("invalid_request")); return; }
@@ -1439,6 +1535,12 @@ struct InputExperiment::Impl {
     }
     void step() {
         if (!retired) sync_keymap();
+        if (!primary_keyboards.empty()) {
+            const auto target = primary_keyboard_surface.lock();
+            const auto person = g_pSeatManager->m_state.keyboardFocus.lock();
+            if (!target || Clock::now() >= primary_keyboard_idle || (person && person->client() == target->client()))
+                primary_keyboard_leave();
+        }
         for (auto& c : clients) if (c->deadline.expired(c->hello, Clock::now())) c->dead = true;
         guard_targets();
         if (drag) {

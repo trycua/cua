@@ -92,6 +92,7 @@ struct Lane {
     void send(Client&, const std::string& response) { responses.push_back(response); }
     void finish_foreground() { foreground_started = false; }
     void primary_leave() {} // primary-seat fallback: no primary resources in this fixture
+    void primary_keyboard_leave() {} // primary-seat fallback: no primary resources in this fixture
     void release_pointer_button() { if (held_button) ++releases; held_button = 0; }
     void leave_pointer() {
         release_pointer_button(); ++leaves; pointer_target.reset();

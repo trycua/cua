@@ -116,7 +116,12 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
 
     // Groups, with the old machines collapsed.
     const groups = [...document.querySelectorAll("[data-machine-group]")].map((g) => g.getAttribute("data-machine-group"));
-    expect(groups).toEqual(["yours", "old", "team"]);
+    expect(groups).toEqual(["yours", "devices", "old", "team"]);
+    const devices = document.querySelector<HTMLElement>('[data-machine-group="devices"]')!;
+    expect(devices.textContent).toContain("Your devices");
+    const lap = devices.querySelector<HTMLElement>('[data-machine-id="dev_lap"]')!;
+    expect(lap.hidden).toBe(false);
+    expect(lap.querySelector("[data-machine-line]")?.textContent).toBe("Signed-in device, not shared");
     const old = document.querySelector<HTMLElement>('[data-machine-id="old1"]')!;
     expect(old.hidden).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: /Offline for 30\+ days/ }));

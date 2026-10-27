@@ -2,7 +2,9 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 //! The Machines page as every UI draws it: the list in groups ("Your
-//! machines", a collapsed "Offline for 30+ days", "Team machines"), one
+//! machines", "Your devices" (signed-in devices that are none of the
+//! machines, whatever their age), a collapsed "Offline for 30+ days", "Team
+//! machines"), one
 //! muted line per row, and each machine's page (its name and rename, the
 //! one "Let my other devices use this computer" switch, the Spaces on it as
 //! links, New Space here, Details, and Remove from account).
@@ -356,6 +358,12 @@ pub struct MachinesView {
 pub const DESKTOP_LABEL: &str = "Desktop";
 /// "Your machines".
 pub const YOURS_TITLE: &str = "Your machines";
+/// "Your devices": the group of signed-in devices that are none of your
+/// machines, whatever their age.
+pub const DEVICES_TITLE: &str = "Your devices";
+/// The line of a row that is only a signed-in device: it can't run Spaces
+/// and nothing is shared from it.
+pub const DEVICE_LINE: &str = "Signed-in device, not shared";
 /// "Team machines".
 pub const TEAM_TITLE: &str = "Team machines";
 /// The button that removes a machine.
@@ -573,6 +581,7 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
     let host = input.host.as_ref();
     let mut list = Vec::with_capacity(rows.len());
     let mut yours = vec![];
+    let mut devices = vec![];
     let mut old = vec![];
     let mut team_ids = vec![];
     let mut old_removes = vec![];
@@ -631,12 +640,12 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
 
         // The row's one line.
         // One short label: no "a · b" chains (the switches show the rest).
-        let line = if !row.online {
+        let line = if row.device_only {
+            DEVICE_LINE.into()
+        } else if !row.online {
             machines::OFFLINE.into()
         } else if row.stopped_sharing {
             machines::NOT_SHARING.into()
-        } else if row.device_only {
-            machines::ONLINE.into()
         } else {
             let mut parts = vec![];
             if n_running > 0 {
@@ -878,7 +887,9 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
             && row
                 .last_seen
                 .is_some_and(|t| t > 0 && now.saturating_sub(t) >= OLD_AFTER_SECS);
-        if team {
+        if row.device_only {
+            devices.push(row.id.clone());
+        } else if team {
             team_ids.push(row.id.clone());
         } else if is_old {
             old.push(row.id.clone());
@@ -969,6 +980,15 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
             title: YOURS_TITLE.into(),
             collapsed: false,
             ids: yours,
+            remove_all: None,
+        });
+    }
+    if !devices.is_empty() {
+        groups.push(MachinesViewGroup {
+            id: "devices".into(),
+            title: DEVICES_TITLE.into(),
+            collapsed: false,
+            ids: devices,
             remove_all: None,
         });
     }
@@ -1086,6 +1106,13 @@ mod tests {
             last_seen: Some(seen),
             state: "enrolled".into(),
             ..Default::default()
+        }
+    }
+
+    fn device_never_seen(id: &str, name: &str) -> DeviceIn {
+        DeviceIn {
+            last_seen: None,
+            ..device(id, name, 0)
         }
     }
 
@@ -1229,6 +1256,99 @@ mod tests {
         assert_eq!(all.label, "Remove old machines");
         assert_eq!(all.removes[0].machine.as_deref(), Some("old1"));
         assert_eq!(all.removes[0].device.as_deref(), Some("dev_old1"));
+    }
+
+    fn with_devices() -> MachinesViewInput {
+        let mut input = mockup();
+        input.page.devices.extend([
+            device("dev_lap", "Ana's laptop", NOW - 120),
+            device("dev_away", "Away laptop", NOW - 3 * DAY),
+            device("dev_stale", "Stale laptop", NOW - 41 * DAY),
+        ]);
+        input
+    }
+
+    #[test]
+    fn a_device_that_is_only_signed_in_is_under_your_devices() {
+        let base = with_devices();
+        let shell = MachinesViewInput {
+            rows: Some(machines::page_rows(&base.page)),
+            ..base.clone()
+        };
+        for input in [base, shell] {
+            let v = view(&input);
+            let groups: Vec<(&str, &str, bool, Vec<&str>)> = v
+                .groups
+                .iter()
+                .map(|g| {
+                    (
+                        g.id.as_str(),
+                        g.title.as_str(),
+                        g.collapsed,
+                        g.ids.iter().map(String::as_str).collect(),
+                    )
+                })
+                .collect();
+            assert_eq!(
+                groups,
+                [
+                    (
+                        "yours",
+                        "Your machines",
+                        false,
+                        vec!["this-mac", "studio", "byoc"]
+                    ),
+                    (
+                        "devices",
+                        "Your devices",
+                        false,
+                        vec!["dev_lap", "dev_away", "dev_stale"]
+                    ),
+                    ("old", "Offline for 30+ days (1)", true, vec!["old1"]),
+                    ("team", "Team machines", false, vec!["team"]),
+                ]
+            );
+            assert!(v.groups[1].remove_all.is_none());
+            let flat: Vec<&str> = v
+                .groups
+                .iter()
+                .flat_map(|g| g.ids.iter().map(String::as_str))
+                .collect();
+            assert_eq!(
+                flat,
+                v.machines.iter().map(|m| m.id.as_str()).collect::<Vec<_>>()
+            );
+            let all = v.groups[2].remove_all.as_ref().unwrap();
+            assert_eq!(all.removes.len(), 1);
+            assert_eq!(all.removes[0].machine.as_deref(), Some("old1"));
+            assert_eq!(all.removes[0].device.as_deref(), Some("dev_old1"));
+        }
+    }
+
+    #[test]
+    fn a_device_of_its_own_reads_signed_in_device_not_shared() {
+        let mut input = with_devices();
+        input
+            .page
+            .devices
+            .push(device_never_seen("dev_never", "Never seen"));
+        let v = view(&input);
+        let devs = ["dev_lap", "dev_away", "dev_stale", "dev_never"];
+        for id in devs {
+            let m = by_id(&v, id);
+            assert_eq!(m.line, "Signed-in device, not shared", "{id}");
+            assert_eq!(m.online, id == "dev_lap", "{id}");
+            assert_eq!(
+                m.status,
+                if id == "dev_lap" { "Online" } else { "Offline" },
+                "{id}"
+            );
+            let rm = m.remove.as_ref().unwrap();
+            assert!(rm.enabled, "{id}");
+            assert!(rm.device.is_some() && rm.machine.is_none(), "{id}");
+        }
+        assert_eq!(by_id(&v, "byoc").line, "Offline");
+        assert!(v.machines.iter().all(|m| m.line != "Not set up for access"));
     }
 
     #[test]

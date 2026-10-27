@@ -26,10 +26,14 @@ export const CONNECTION_LABEL: Record<"relay" | "direct", string> = {
   direct: "Direct",
 };
 
+/** A row that is only a signed-in device (`machines_view::DEVICE_LINE`). */
+export const DEVICE_LINE = "Signed-in device, not shared";
+
 /** How other devices reach it, in words. */
 export function connectionLabel(m: Pick<Machine, "connection" | "current"> & Pick<Partial<Machine>, "device">): string {
   if (m.connection) return CONNECTION_LABEL[m.connection];
-  return m.current || m.device ? "Not set up for access" : "Unknown";
+  if (m.device) return DEVICE_LINE;
+  return m.current ? "Not set up for access" : "Unknown";
 }
 
 /** The list row's second line: OS, then how it is reached. */

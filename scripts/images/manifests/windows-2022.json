@@ -36,6 +36,7 @@
   "features_optional": [
     "hotspot",
     "spawn",
+    "process.services",
     "relay_attach",
     "teleport.*",
     "audio.desktop",

@@ -33,6 +33,7 @@
     "guides/agent-schedules",
     "guides/keep-an-agent-running",
     "guides/child-spaces",
+    "guides/keep-a-command-running",
     "---Keep it working---",
     "guides/troubleshoot",
     "guides/experiments",

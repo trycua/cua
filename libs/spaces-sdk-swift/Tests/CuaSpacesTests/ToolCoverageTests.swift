@@ -82,6 +82,7 @@ import Testing
         // --- The Space's own MCP services -----------------------------------
         _ = try await space.services.tools()                    // list_tools
         _ = try await space.services.call("screenshot")         // call_tool
+        _ = try await space.keepRunning.service("list")         // space_service
 
         // --- Agents ----------------------------------------------------------
         let run = try await space.startAgent(prompt: "x")       // agent_start

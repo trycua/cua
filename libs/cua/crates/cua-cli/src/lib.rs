@@ -1824,6 +1824,7 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
             | host::SpacesCmd::Children { .. }
             | host::SpacesCmd::Budget { .. }
             | host::SpacesCmd::Orphans
+            | host::SpacesCmd::Service(..)
             | host::SpacesCmd::Prewarm { .. }
             | host::SpacesCmd::Share { .. }
             | host::SpacesCmd::Unshare { .. }

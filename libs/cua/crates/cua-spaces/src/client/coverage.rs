@@ -34,6 +34,7 @@ const SYMBOLS: [(&str, &str); 115] = [
     ("resize_space", "Space::resize"),
     ("space_bash", "Space::bash"),
     ("space_write", "Space::write_text"),
+    ("space_service", "Space::keep_service"),
     ("upload", "Space::upload"),
     ("send_file", "Space::send_file"),
     ("download", "Space::download"),

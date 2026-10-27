@@ -2059,6 +2059,9 @@ pub async fn run_host_to(
                 && opts.driver_bin.is_none()
                 && opts.allow.is_empty()
                 && opts.max_spaces.is_none()
+                // `--share none` is always refused, even by a computer that
+                // `host config` set to share nothing.
+                && share != Some(HostShare::None)
             {
                 // Only what this command line says: a re-run that leaves out
                 // the profile keeps what the machine shares.
@@ -4969,10 +4972,13 @@ mod tests {
             e.to_string()
                 .contains("[possible values: desktop, spaces, both, none]")
         );
-        let paired =
-            try_parse(&["setup", "--pair", "K7QM-4XPB-2RHD", "--share", "spaces"]).unwrap();
-        let text = format!("{paired:?}");
-        assert!(text.contains("share: Some(Spaces)") && text.contains("K7QM-4XPB-2RHD"));
+        match try_parse(&["setup", "--pair", "K7QM-4XPB-2RHD", "--share", "spaces"]).unwrap() {
+            HostCmd::Setup { pair, share, .. } => assert_eq!(
+                (pair.as_deref(), share),
+                (Some("K7QM-4XPB-2RHD"), Some(HostShare::Spaces))
+            ),
+            other => panic!("{other:?}"),
+        }
         // Help shows only --share.
         let help = <HostCmd as clap::Subcommand>::augment_subcommands(clap::Command::new("host"))
             .find_subcommand_mut("setup")
@@ -4988,6 +4994,48 @@ mod tests {
         ] {
             assert!(!help.contains(old), "{old} is hidden: {help}");
         }
+    }
+
+    /// A computer configured to share nothing (`host config`) still refuses
+    /// `--share none`; the unchanged shortcut must not answer for it.
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn share_none_is_refused_even_by_a_host_configured_to_share_nothing() {
+        let _env = crate::util::test_env::isolated();
+        let relay = FakeRelay::start().await;
+        relay.add_account("acct", "user-1", None);
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join(".cua");
+        let driver = fixture_driver(dir.path());
+        // SAFETY: test_env::isolated holds the environment lock.
+        unsafe { std::env::set_var("CUA_SPACESD_BIN", &driver) };
+        let manager = Arc::new(FakeServiceManager::default());
+        setup_run(&home, &manager, &["setup", "--relay", &relay.url], true)
+            .await
+            .unwrap();
+        Host::new(&home)
+            .with_service_manager(manager.clone())
+            .configure(cua_host::HostSettingsChange {
+                share_desktop: Some(false),
+                provide_spaces: Some(false),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let e = setup_run(
+            &home,
+            &manager,
+            &["setup", "--relay", &relay.url, "--share", "none"],
+            true,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(crate::exit_code(&e), 2, "{e}");
+        assert!(
+            e.to_string()
+                .contains("use --share desktop, spaces or both"),
+            "{e}"
+        );
     }
 
     /// Setup again with `--share` applies both settings, and changes

@@ -708,6 +708,7 @@ class PreflightTest(unittest.TestCase):
                     ),
                 ) as capture,
                 mock.patch.object(rb, "reset_needs_apps") as reset,
+                mock.patch.object(rb, "capture_subject", contextlib.nullcontext),
                 mock.patch.object(rb, "mcp_list_tools") as probe,
                 mock.patch.object(rb, "ensure_agent_daemon") as daemon,
             ):

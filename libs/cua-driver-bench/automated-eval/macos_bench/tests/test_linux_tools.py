@@ -70,6 +70,68 @@ class PlatformConstantsTest(unittest.TestCase):
         self.assertEqual(ca.CLAUDE_ENV_ALLOW, ("HOME", "PATH", "USER", "LANG", "TMPDIR", "TERM"))
 
 
+class LinuxSingleBuildTest(unittest.TestCase):
+    def test_explicit_binary_keeps_the_run_steps_only_arms_without_run_script(self) -> None:
+        # One explicit driver backs every arm on Linux; it ships run_script, which only the script arm may expose.
+        with tempfile.TemporaryDirectory() as tmp:
+            saved = dict(ca.CUA_BUILDS)
+            saved_globals = (ca.PINS_FILE, ca.CUA_BIN, ca.CUA_SKILLS)
+            try:
+                args = rb.build_parser().parse_args(
+                    ["preflight", "--bench-v2", "--cua-bin", "/bin/true", "--cua-skills", tmp,
+                     "--pins", str(Path(tmp) / "p.json"), "--runs-dir", tmp,
+                     "--arms", *ca.CUA_ARMS]
+                )  # fmt: skip
+                with mock.patch.object(rb.Ctx, "__init__", return_value=None):
+                    rb.make_ctx(args)
+                for arm, build in ca.CUA_BUILDS.items():
+                    self.assertEqual(
+                        ca.SCRIPT_FLAG in build.daemon_env, arm == "cc-cua-driver-script", arm
+                    )
+                    self.assertEqual(
+                        ca.NO_SCRIPT_FLAG in build.daemon_env, arm != "cc-cua-driver-script", arm
+                    )
+            finally:
+                ca.CUA_BUILDS.clear()
+                ca.CUA_BUILDS.update(saved)
+                ca.PINS_FILE, ca.CUA_BIN, ca.CUA_SKILLS = saved_globals
+
+
+class LinuxCaptureSubjectTest(unittest.TestCase):
+    def test_preflight_capture_shows_a_window_and_removes_it(self) -> None:
+        seen: list[str] = []
+        proc = mock.Mock(pid=4242)
+
+        def capture(ctx, arm):
+            seen.append("window" if started else "empty")
+            return arm, "pass", ""
+
+        started: list[object] = []
+        with (
+            mock.patch.object(rb.desktop, "detect_platform", return_value="linux"),
+            mock.patch.object(rb.desktop, "start_app", side_effect=lambda *a, **k: started.append(a) or proc),
+            mock.patch.object(rb.desktop, "stop_group") as stop,
+            mock.patch.object(rb, "real_capture_check", side_effect=capture),
+        ):
+            with tempfile.TemporaryDirectory() as tmp:
+                with rb.capture_subject(Path(tmp)):
+                    capture(None, "x")
+            self.assertEqual(seen, ["window"])
+            argv = started[0][0]
+            self.assertTrue(argv[-1].endswith("benchlab.py") or "benchlab.py" in " ".join(argv))
+            stop.assert_called_once_with(4242)
+            proc.wait.assert_called_once()
+
+    def test_not_used_on_macos(self) -> None:
+        with (
+            mock.patch.object(rb.desktop, "detect_platform", return_value="macos"),
+            mock.patch.object(rb.desktop, "start_app", side_effect=AssertionError),
+            tempfile.TemporaryDirectory() as tmp,
+        ):
+            with rb.capture_subject(Path(tmp)):
+                pass
+
+
 class DiskFloorTest(unittest.TestCase):
     def test_flag_lowers_the_floor(self) -> None:
         with (

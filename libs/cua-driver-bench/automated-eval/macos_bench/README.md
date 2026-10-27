@@ -51,6 +51,7 @@ runs any command inside it, and writes its evidence (`launch.log`, component log
 `at-spi-address.txt`, `pids.jsonl`, `exit`) to a directory outside the checkout, exported
 as `CDB_SESSION_DIR`. It stops only the processes it started, fails if any recorded
 process outlives the session, and passes the command's exit status through.
+`CDB_SESSION_TIMEOUT` and `CDB_SESSION_GRACE` (seconds, default 10) bound the run: on timeout, SIGTERM or SIGINT the command group gets TERM, then KILL after the grace; a timeout exits 124.
 
 ```sh
 export CDB_BENCH_WORK="$HOME/cua-bench-work"

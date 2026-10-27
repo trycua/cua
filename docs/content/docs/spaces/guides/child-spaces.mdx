@@ -24,7 +24,7 @@ turn it on yourself.
     ```
   </Tab>
   <Tab value="SDK">
-    ```python
+    ```python skip="no-runner"
     import cua
 
     spaces = cua.auto().spaces()
@@ -42,7 +42,7 @@ made keep running until they are deleted or their time runs out.
 Nothing to set up. The same commands and tools work, and every Space they
 make is a child of this one:
 
-```bash
+```bash skip="no-runner"
 cua spaces create linux --name worker
 cua spaces ls
 cua sb exec worker -- make test

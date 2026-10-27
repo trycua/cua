@@ -195,6 +195,11 @@ and gRPC-Web-only networks.
   guest loopback relays each outbound connection over the client's
   WebSocket, and the client dials it from its own network. Replaces the
   unauthenticated rcdp-socks.
+- Spawn: the guest-to-host channel of child Spaces. A listener on guest
+  loopback relays each connection over the WebSocket of the host that runs
+  the Space, which serves this Space's own children (create, list, delete)
+  and nothing else. The host knows which Space a connection comes from by
+  the WebSocket it opened, never by anything the guest says.
 
 | RPC | Request | Response | Kind |
 | --- | --- | --- | --- |
@@ -204,6 +209,9 @@ and gRPC-Web-only networks.
 | [`StartHotspot`](#tunnelservicestarthotspot) | [`StartHotspotRequest`](#starthotspotrequest) | [`StartHotspotResponse`](#starthotspotresponse) | unary |
 | [`StopHotspot`](#tunnelservicestophotspot) | [`StopHotspotRequest`](#stophotspotrequest) | [`StopHotspotResponse`](#stophotspotresponse) | unary |
 | [`GetHotspotStatus`](#tunnelservicegethotspotstatus) | [`GetHotspotStatusRequest`](#gethotspotstatusrequest) | [`GetHotspotStatusResponse`](#gethotspotstatusresponse) | unary |
+| [`StartSpawn`](#tunnelservicestartspawn) | [`StartSpawnRequest`](#startspawnrequest) | [`StartSpawnResponse`](#startspawnresponse) | unary |
+| [`StopSpawn`](#tunnelservicestopspawn) | [`StopSpawnRequest`](#stopspawnrequest) | [`StopSpawnResponse`](#stopspawnresponse) | unary |
+| [`GetSpawnStatus`](#tunnelservicegetspawnstatus) | [`GetSpawnStatusRequest`](#getspawnstatusrequest) | [`GetSpawnStatusResponse`](#getspawnstatusresponse) | unary |
 
 ### TunnelService.Forward
 
@@ -241,6 +249,26 @@ Stops the hotspot.
 `/cua.env.v1.TunnelService/GetHotspotStatus`, unary: [`GetHotspotStatusRequest`](#gethotspotstatusrequest) to [`GetHotspotStatusResponse`](#gethotspotstatusresponse).
 
 Reports hotspot state and counters.
+
+### TunnelService.StartSpawn
+
+`/cua.env.v1.TunnelService/StartSpawn`, unary: [`StartSpawnRequest`](#startspawnrequest) to [`StartSpawnResponse`](#startspawnresponse).
+
+Starts the spawn channel and installs the Space's spawn capability.
+Only a caller holding the Space's own token (the host that runs it) may
+call it; starting it again replaces the channel and the capability.
+
+### TunnelService.StopSpawn
+
+`/cua.env.v1.TunnelService/StopSpawn`, unary: [`StopSpawnRequest`](#stopspawnrequest) to [`StopSpawnResponse`](#stopspawnresponse).
+
+Stops the spawn channel and removes the capability from the guest.
+
+### TunnelService.GetSpawnStatus
+
+`/cua.env.v1.TunnelService/GetSpawnStatus`, unary: [`GetSpawnStatusRequest`](#getspawnstatusrequest) to [`GetSpawnStatusResponse`](#getspawnstatusresponse).
+
+Reports the spawn channel's state.
 
 ## VolumeService
 
@@ -1170,6 +1198,61 @@ Response for `TunnelService.GetHotspotStatus`.
 | `active_connections` | 5 | `uint32` | Open relayed connections. |
 | `bytes_out` | 6 | `uint64` | Bytes sent from the guest through the hotspot. |
 | `bytes_in` | 7 | `uint64` | Bytes received into the guest through the hotspot. |
+
+### StartSpawnRequest
+
+Request for `TunnelService.StartSpawn`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `capability` | 1 | `string` | The Space's spawn capability, minted by its host. The guest writes it to the token file (0600, owner: the user cua-spacesd runs as) for clients in the Space to present on the spawn listener. |
+| `ticket_ttl` | 2 | `google.protobuf.Duration` | How long the ticket accepts the host's WebSocket. Unset means 60 seconds. |
+| `space_id` | 3 | `string` | The Space's id, for the environment of new processes (`CUA_SPACE`). |
+
+### StartSpawnResponse
+
+Response for `TunnelService.StartSpawn`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `spawn_id` | 1 | `string` | Spawn channel id. |
+| `ticket` | 2 | `string` | Ticket for the spawn WebSocket. |
+| `ws_path` | 3 | `string` | WebSocket path relative to the spacesd base URL, including the ticket, for example "/spawn?ticket=…". The host keeps this socket open; the listener refuses connections while it is closed. |
+| `address` | 4 | `string` | Guest-side listener, as a URL clients in the Space use as their cua daemon, for example "http://127.0.0.1:41234". |
+| `token_path` | 5 | `string` | Where the guest wrote the capability. |
+| `address_path` | 6 | `string` | Where the guest wrote the listener's address (one line). |
+
+### StopSpawnRequest
+
+Request for `TunnelService.StopSpawn`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `spawn_id` | 1 | `string` | Which channel. Empty stops the current one. |
+
+### StopSpawnResponse
+
+Response for `TunnelService.StopSpawn`.
+
+No fields.
+
+### GetSpawnStatusRequest
+
+Request for `TunnelService.GetSpawnStatus`.
+
+No fields.
+
+### GetSpawnStatusResponse
+
+Response for `TunnelService.GetSpawnStatus`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `started` | 1 | `bool` | A channel is started. |
+| `attached` | 2 | `bool` | The host's WebSocket is attached. |
+| `spawn_id` | 3 | `string` | Channel id, when started. |
+| `address` | 4 | `string` | Guest-side listener URL, when started. |
+| `active_connections` | 5 | `uint32` | Open relayed connections. |
 
 ### HotspotState
 

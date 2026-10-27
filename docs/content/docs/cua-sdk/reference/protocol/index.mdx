@@ -48,7 +48,7 @@ Tickets go in `?ticket=` or the WebSocket subprotocol `cua.ticket.<ticket>`. Tic
 | [`StreamService`](/cua-sdk/reference/protocol/env-stream#streamservice) | `cua.env.v1` | [Streams, teleport and tunnels](/cua-sdk/reference/protocol/env-stream) | 5 |
 | [`PresenceService`](/cua-sdk/reference/protocol/env-stream#presenceservice) | `cua.env.v1` | [Streams, teleport and tunnels](/cua-sdk/reference/protocol/env-stream) | 3 |
 | [`TeleportService`](/cua-sdk/reference/protocol/env-stream#teleportservice) | `cua.env.v1` | [Streams, teleport and tunnels](/cua-sdk/reference/protocol/env-stream) | 7 |
-| [`TunnelService`](/cua-sdk/reference/protocol/env-stream#tunnelservice) | `cua.env.v1` | [Streams, teleport and tunnels](/cua-sdk/reference/protocol/env-stream) | 6 |
+| [`TunnelService`](/cua-sdk/reference/protocol/env-stream#tunnelservice) | `cua.env.v1` | [Streams, teleport and tunnels](/cua-sdk/reference/protocol/env-stream) | 9 |
 | [`VolumeService`](/cua-sdk/reference/protocol/env-stream#volumeservice) | `cua.env.v1` | [Streams, teleport and tunnels](/cua-sdk/reference/protocol/env-stream) | 3 |
 | [`HostSpacesService`](/cua-sdk/reference/protocol/env-host-spaces#hostspacesservice) | `cua.env.v1` | [Host Spaces](/cua-sdk/reference/protocol/env-host-spaces) | 9 |
 | [`HostJobsService`](/cua-sdk/reference/protocol/env-host-spaces#hostjobsservice) | `cua.env.v1` | [Host Spaces](/cua-sdk/reference/protocol/env-host-spaces) | 4 |
@@ -59,7 +59,7 @@ Tickets go in `?ticket=` or the WebSocket subprotocol `cua.ticket.<ticket>`. Tic
 | [`SandboxService`](/cua-sdk/reference/protocol/daemon#sandboxservice) | `cua.daemon.v1` | [Cua daemon: sandboxes and runtimes](/cua-sdk/reference/protocol/daemon) | 27 |
 | [`PoolService`](/cua-sdk/reference/protocol/daemon#poolservice) | `cua.daemon.v1` | [Cua daemon: sandboxes and runtimes](/cua-sdk/reference/protocol/daemon) | 4 |
 | [`RuntimeService`](/cua-sdk/reference/protocol/daemon#runtimeservice) | `cua.daemon.v1` | [Cua daemon: sandboxes and runtimes](/cua-sdk/reference/protocol/daemon) | 5 |
-| [`SpaceService`](/cua-sdk/reference/protocol/daemon-spaces#spaceservice) | `cua.daemon.v1` | [Daemon: Spaces and service](/cua-sdk/reference/protocol/daemon-spaces) | 33 |
+| [`SpaceService`](/cua-sdk/reference/protocol/daemon-spaces#spaceservice) | `cua.daemon.v1` | [Daemon: Spaces and service](/cua-sdk/reference/protocol/daemon-spaces) | 34 |
 | [`DaemonService`](/cua-sdk/reference/protocol/daemon-spaces#daemonservice) | `cua.daemon.v1` | [Daemon: Spaces and service](/cua-sdk/reference/protocol/daemon-spaces) | 3 |
 
 ## Metadata and HTTP routes
@@ -75,6 +75,12 @@ Well-known metadata keys and HTTP paths (`cua_proto::metadata`).
 | `MEDIA_WS_PATH` | `/media` | Media WebSocket path (ticket-authenticated). |
 | `TUNNEL_WS_PATH` | `/tunnel` | TCP-over-WebSocket tunnel path (ticket-authenticated). |
 | `HOTSPOT_WS_PATH` | `/hotspot` | Reverse-SOCKS hotspot WebSocket path (ticket-authenticated). |
+| `SPAWN_WS_PATH` | `/spawn` | Spawn channel WebSocket path (ticket-authenticated): the host that runs the Space serves its child-Space API over it. |
+| `SPAWN_TOKEN_FILE` | `spawn-token` | File (in a [`spawn_dirs`] directory) holding a Space's spawn capability. |
+| `SPAWN_ADDRESS_FILE` | `spawn-address` | File (in a [`spawn_dirs`] directory) holding the spawn listener's URL. |
+| `ENV_SPACE` | `CUA_SPACE` | Environment of processes in a Space: its id. |
+| `ENV_SPAWN` | `CUA_SPAWN` | Environment of processes in a Space: the spawn listener's URL. |
+| `ENV_SPAWN_TOKEN_FILE` | `CUA_SPAWN_TOKEN_FILE` | Environment of processes in a Space: the capability's file. |
 | `VOLUME_WS_PATH` | `/volume` | Cua Volume WebSocket path (ticket-authenticated): the client serves the guest's volume mount over it. |
 | `FILES_PATH` | `/files` | Signed-URL file route. |
 | `MCP_PATH` | `/mcp` | Streamable-HTTP MCP endpoint for the cua-driver tool registry. |

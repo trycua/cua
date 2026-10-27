@@ -2662,6 +2662,7 @@ dependencies = [
  "cua-vmm",
  "flate2",
  "futures-util",
+ "hmac 0.12.1",
  "http",
  "http-body-util",
  "humantime",

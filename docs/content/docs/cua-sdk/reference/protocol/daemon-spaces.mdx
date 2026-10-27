@@ -54,6 +54,7 @@ without touching it.
 | [`DeleteBuild`](#spaceservicedeletebuild) | [`DeleteBuildRequest`](/cua-sdk/reference/protocol/daemon-builds#deletebuildrequest) | [`DeleteBuildResponse`](/cua-sdk/reference/protocol/daemon-builds#deletebuildresponse) | unary |
 | [`SetSpaceLifetime`](#spaceservicesetspacelifetime) | [`SetSpaceLifetimeRequest`](#setspacelifetimerequest) | [`SetSpaceLifetimeResponse`](#setspacelifetimeresponse) | unary |
 | [`SetSpaceEgress`](#spaceservicesetspaceegress) | [`SetSpaceEgressRequest`](/cua-sdk/reference/protocol/daemon-egress#setspaceegressrequest) | [`SetSpaceEgressResponse`](/cua-sdk/reference/protocol/daemon-egress#setspaceegressresponse) | unary |
+| [`SetSpaceChildren`](#spaceservicesetspacechildren) | [`SetSpaceChildrenRequest`](#setspacechildrenrequest) | [`SetSpaceChildrenResponse`](#setspacechildrenresponse) | unary |
 | [`ConnectSpace`](#spaceserviceconnectspace) | [`ConnectSpaceRequest`](#connectspacerequest) | [`ConnectSpaceResponse`](#connectspaceresponse) | unary |
 | [`ListSpaceTools`](#spaceservicelistspacetools) | [`ListSpaceToolsRequest`](#listspacetoolsrequest) | [`ListSpaceToolsResponse`](#listspacetoolsresponse) | unary |
 | [`CallSpaceTool`](#spaceservicecallspacetool) | [`CallSpaceToolRequest`](#callspacetoolrequest) | [`CallSpaceToolResponse`](#callspacetoolresponse) | unary |
@@ -239,6 +240,14 @@ one). When it passes, this daemon deletes the Space (or turns it off,
 
 Replaces a Space's egress policy (empty removes it).
 
+### SpaceService.SetSpaceChildren
+
+`/cua.daemon.v1.SpaceService/SetSpaceChildren`, unary: [`SetSpaceChildrenRequest`](#setspacechildrenrequest) to [`SetSpaceChildrenResponse`](#setspacechildrenresponse).
+
+Lets a Space make child Spaces of its own, or stops it. Turning it off
+ends the Space's spawn capability at once; children it already made
+keep running until they are deleted or their lifetime ends.
+
 ### SpaceService.ConnectSpace
 
 `/cua.daemon.v1.SpaceService/ConnectSpace`, unary: [`ConnectSpaceRequest`](#connectspacerequest) to [`ConnectSpaceResponse`](#connectspaceresponse).
@@ -423,6 +432,7 @@ A registered Space.
 | `image_config` | 28 | `string` | JSON image configuration of a Space made from a build. |
 | `sharing` | 32 | [`SpaceSharing`](#spacesharing) | A Space that is a machine on the relay: who owns it and who else has it, as this account sees it. Unset for other Spaces. Filled in when listed, not stored. |
 | `display_name` | 33 | `string` | The name it was given with `RenameSpace`; empty when it keeps the one it was created with (`name`). Apps show this one when it is set. A Space that is a machine on the relay is renamed there, so its `name` changes instead. |
+| `children` | 41 | `bool` | The Space may make child Spaces of its own (`SetSpaceChildren`): `cua`, the SDKs and the agent's tools in it create, list and delete Spaces that belong to it, on a channel only it can reach. |
 
 ### SpaceSharing
 
@@ -991,6 +1001,24 @@ Request for `SpaceService.CreateSpace`.
 | `volumes` | 25 | repeated [`VolumeMount`](/cua-sdk/reference/protocol/env-stream#volumemount) | Named volumes of Cua Volume to mount in the Space. |
 | `instance_type` | 26 | `string` | Cloud host machine type (a pin). |
 | `region` | 27 | `string` | Cloud host region (a pin). |
+| `children` | 31 | optional `bool` | Let the Space make child Spaces of its own (`SetSpaceChildren`). Unset: off. |
+
+### SetSpaceChildrenRequest
+
+Request for `SpaceService.SetSpaceChildren`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `space` | 1 | `string` | Id or name. |
+| `enabled` | 2 | `bool` | On or off. |
+
+### SetSpaceChildrenResponse
+
+Response for `SpaceService.SetSpaceChildren`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `space` | 1 | [`Space`](#space) | The Space as it is now. |
 
 ### CreateSpaceStreamRequest
 

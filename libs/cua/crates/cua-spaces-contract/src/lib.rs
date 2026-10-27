@@ -1003,6 +1003,18 @@ pub fn tools() -> Vec<Tool> {
             ..Spec::new("call_tool", "Call a service tool inside the Space.")
         }
         .with::<i::CallTool>(),
+        Spec {
+            category: Category::Services,
+            result: "JSON: `add`, `start`, `stop` and `restart` give the service (`name`, `command`, `state`, `pid`, `restarts`, `last_end`, `probe_error`, `restart`, `start_on_boot`, `log_path`); `list` gives `services`; `logs` gives `logs` (text); `remove` gives `removed`.",
+            errors: &["capability_missing", "invalid_argument", "not_found"],
+            instructions: "Keeps a command running in the Space: cua-spacesd starts it at once, starts it again by its `restart` policy when it ends (waiting longer after each quick failure, up to a minute), restarts it when its health check (`http`, `tcp` or `check`, one of them) fails 3 times in a row, starts it when the Space boots unless start_on_boot is false, and keeps its output in a log file in the Space (`logs`). `stop` keeps it stopped, across a reboot too, until `start`. `add` with a name that exists replaces it.",
+            capabilities: &["space.services.keep"],
+            annotations: Annotations::mutating(),
+            sdk_symbol: "space.keepRunning.service(_:)",
+            rust_symbol: "Space::keep_service",
+            ..Spec::new("space_service", "Keep a command running in the Space: restarts, health checks, start on boot, logs.")
+        }
+        .with::<i::SpaceService>(),
         // --- Agents ------------------------------------------------------------
         Spec {
             category: Category::Agents,

@@ -1,0 +1,85 @@
+---
+title: Keep a command running
+description: 'Run a server, a worker or a bot in a Space and have it restarted when it stops, checked while it runs, and started again when the Space boots.'
+---
+
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+
+A service is a command a Space keeps running. Its cua-spacesd starts it,
+starts it again when it ends, restarts it when its health check fails,
+starts it when the Space boots, and keeps its output in a log file in the
+Space.
+
+## Add a service
+
+<Tabs items={['CLI', 'MCP', 'SDK']}>
+  <Tab value="CLI">
+    ```bash test="cli-shape" id="service-add"
+    cua spaces service add studio web -- python3 -m http.server 8080
+    cua spaces service add studio web --http http://127.0.0.1:8080/ -- python3 -m http.server 8080
+    cua spaces service add studio job --restart on-failure -- ./run.sh
+    ```
+
+    The command comes after `--`. `--restart` is `always` (the default),
+    `on-failure` or `never`. `--http`, `--tcp` or `--check` adds a health
+    check. `--no-boot` leaves it off when the Space boots.
+  </Tab>
+  <Tab value="MCP">
+    ```text output
+    space_service {space: "studio", action: "add", name: "web",
+                   command: "python3 -m http.server 8080",
+                   http: "http://127.0.0.1:8080/"}
+    ```
+  </Tab>
+  <Tab value="SDK">
+    ```python
+    import cua
+
+    space = await cua.auto().spaces().space("studio")
+    await space.put_service(cua.SpaceServiceDef(
+        name="web",
+        command="python3 -m http.server 8080",
+        probe=cua.SpaceServiceProbe(http="http://127.0.0.1:8080/"),
+    ))
+    ```
+  </Tab>
+</Tabs>
+
+Adding a name that exists replaces that service. The old process is
+stopped first.
+
+## Check on it
+
+```bash test="cli-shape" id="service-check"
+cua spaces service ls studio
+cua spaces service logs studio web
+```
+
+`ls` shows each service's state: `running`, `unhealthy`, `backoff` (it
+ended and waits to start again), `stopped`, `exited` (its policy does not
+start it again) or `failed` (it could not start). It also shows how many
+times it restarted and how its last run ended.
+
+## How restarts work
+
+- **When it ends.** With `always` it starts again however it ended. With
+  `on-failure` it starts again after a non-zero exit, a signal or a failed
+  health check.
+- **Waiting.** The wait before a restart starts at 1 second and doubles
+  after each quick failure, up to a minute. A run of a minute or more
+  resets it.
+- **Health checks.** A check runs every 10 seconds. Three failures in a
+  row stop the process (TERM, then KILL after 10 seconds), and its policy
+  starts it again. Checks in its first 10 seconds don't count.
+
+## Stop, start, remove
+
+```bash test="cli-shape" id="service-control"
+cua spaces service stop studio web
+cua spaces service start studio web
+cua spaces service restart studio web
+cua spaces service rm studio web
+```
+
+A stopped service stays stopped, also after the Space reboots, until you
+start it. `rm` stops it and removes its logs.

@@ -64,6 +64,7 @@
     ],
     "features_optional": [
       "hotspot",
+      "process.services",
       "relay_attach",
       "h264_hw",
       "audio.desktop",

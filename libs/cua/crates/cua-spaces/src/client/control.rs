@@ -753,6 +753,13 @@ impl Space {
         })
     }
 
+    /// `space_service`: keeps a command running in the Space (restarts,
+    /// health checks, start on boot, logs). `arguments` are the tool's own
+    /// (`action`, `name`, `command`, ...); the Space is filled in.
+    pub fn keep_service(&self, arguments: Value) -> Result<Value> {
+        self.call("space_service", self.arguments(arguments))
+    }
+
     /// `upload`. Reports the path it actually wrote — `FRICTION.md` §13:
     /// *"`upload` overwrites its destination silently … and no returned
     /// path"*. The collision-safe placement keeps the user's filename intact

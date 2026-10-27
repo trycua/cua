@@ -134,6 +134,12 @@ impl ServerBuilder {
 
         // Core services.
         let processes = ProcessManager::new(ctx.clone());
+        // Services this guest keeps running; the ones that start on boot
+        // start now.
+        let services = crate::process::services::ServiceManager::start(
+            processes.clone(),
+            &ctx.config().data_dir,
+        );
         let fs = FsState::new(ctx.clone());
         let tunnel = TunnelState::new(ctx.clone());
         let volume = VolumeShared::new(ctx.clone());
@@ -219,6 +225,8 @@ impl ServerBuilder {
         // `StartProcessRequest.request_id` / `epoch`, `GetExecRecord` and
         // `AdvanceEpoch`: idempotent, fenced execs for durable harnesses.
         core_features.push(feature(crate::process::EXEC_LEDGER_FEATURE, true, ""));
+        // `ProcessService.PutService` and the rest: commands kept running.
+        core_features.push(feature(crate::process::services::FEATURE, true, ""));
         let system = SystemServiceImpl::new(ctx.clone(), providers.clone(), core_features)
             .with_diagnose(DiagnoseState::new(ctx.clone(), self.diagnoser));
 
@@ -232,7 +240,11 @@ impl ServerBuilder {
             .expect("valid descriptor set");
 
         let mut routes = tonic::service::Routes::new(system.into_server())
-            .add_service(ProcessServiceImpl::new(processes).into_server())
+            .add_service(
+                ProcessServiceImpl::new(processes)
+                    .with_services(services)
+                    .into_server(),
+            )
             .add_service(FilesystemServiceImpl::new(fs.clone()).into_server())
             .add_service(DriverServiceImpl::new(tools.clone()).into_server())
             .add_service(teleport.into_server())

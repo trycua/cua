@@ -316,6 +316,9 @@ actor FakeSpacesBackend: SpacesTransport {
             // own desktop, not a structured result. Nothing to render.
             return .string("Pinned \(arguments["space"]?.stringValue ?? "") on your desktop.")
 
+        case "space_service":
+            return .object(["services": .array([])])
+
         case "space_write":
             let path = arguments["path"]?.stringValue ?? ""
             files.insert(Self.expand(path))

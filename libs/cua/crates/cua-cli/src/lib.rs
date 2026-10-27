@@ -1775,6 +1775,7 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
             | host::SpacesCmd::Resize { .. }
             | host::SpacesCmd::Start { .. }
             | host::SpacesCmd::Egress { .. }
+            | host::SpacesCmd::Service(..)
             | host::SpacesCmd::Prewarm { .. }
             | host::SpacesCmd::Share { .. }
             | host::SpacesCmd::Unshare { .. }

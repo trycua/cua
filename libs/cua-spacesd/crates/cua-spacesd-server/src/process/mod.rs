@@ -8,6 +8,7 @@
 mod conpty;
 pub mod ledger;
 pub mod ring;
+pub mod services;
 pub mod spawn;
 
 use std::collections::{BTreeMap, HashMap};
@@ -101,6 +102,39 @@ pub struct ProcessEntry {
 }
 
 impl ProcessEntry {
+    /// The process id.
+    pub fn pid(&self) -> u32 {
+        self.pid
+    }
+
+    /// Its output ring.
+    pub fn output(&self) -> &Arc<Output> {
+        &self.output
+    }
+
+    /// Waits until it has ended, and how.
+    pub async fn ended(&self) -> ProcessEnd {
+        let mut progress = self.output.subscribe();
+        loop {
+            if let Some(end) = self.end_event() {
+                return end;
+            }
+            if progress.borrow().closed {
+                // The ring closes just before the end is recorded.
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                continue;
+            }
+            if progress.changed().await.is_err() {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        }
+    }
+
+    /// Sends `signal` to the process group (see `SignalProcess`).
+    pub fn signal_group(&self, signal: Signal) -> Result<(), Status> {
+        self.send_signal(signal, true)
+    }
+
     fn running(&self) -> bool {
         self.end.lock().expect("end lock").is_none()
     }
@@ -868,6 +902,17 @@ impl ProcessManager {
             .map_err(|e| crate::error::internal(format!("exec ledger: {e}")))
     }
 
+    /// Running processes whose tag is exactly `tag`.
+    pub fn running_with_tag(&self, tag: &str) -> Vec<Arc<ProcessEntry>> {
+        self.entries
+            .lock()
+            .expect("entries lock")
+            .iter()
+            .filter(|e| e.tag == tag && e.running())
+            .cloned()
+            .collect()
+    }
+
     /// Lists processes, newest first.
     pub fn list(&self, include_exited: bool, tag_prefix: &str) -> Vec<ProcessInfo> {
         let entries = self.entries.lock().expect("registry lock");
@@ -1216,12 +1261,28 @@ async fn apply_input(
 #[derive(Clone)]
 pub struct ProcessServiceImpl {
     manager: Arc<ProcessManager>,
+    services: Option<Arc<services::ServiceManager>>,
 }
 
 impl ProcessServiceImpl {
     /// Creates the service over a manager.
     pub fn new(manager: Arc<ProcessManager>) -> Self {
-        Self { manager }
+        Self {
+            manager,
+            services: None,
+        }
+    }
+
+    /// Serves `PutService` and the other service calls from `services`.
+    pub fn with_services(mut self, services: Arc<services::ServiceManager>) -> Self {
+        self.services = Some(services);
+        self
+    }
+
+    fn services(&self) -> Result<&Arc<services::ServiceManager>, Status> {
+        self.services.as_ref().ok_or_else(|| {
+            crate::error::unsupported(services::FEATURE, "services are not kept by this server")
+        })
     }
 
     /// Tonic server with the driver's message limits.
@@ -1457,6 +1518,62 @@ impl ProcessService for ProcessServiceImpl {
         Ok(Response::new(AdvanceEpochResponse {
             epoch: self.manager.epoch()?,
             killed,
+        }))
+    }
+
+    async fn put_service(
+        &self,
+        request: Request<cua_proto::env::v1::PutServiceRequest>,
+    ) -> Result<Response<cua_proto::env::v1::PutServiceResponse>, Status> {
+        let spec = request
+            .into_inner()
+            .spec
+            .ok_or_else(|| crate::error::invalid("spec is required"))?;
+        let service = self.services()?.put(spec).await?;
+        Ok(Response::new(cua_proto::env::v1::PutServiceResponse {
+            service: Some(service),
+        }))
+    }
+
+    async fn delete_service(
+        &self,
+        request: Request<cua_proto::env::v1::DeleteServiceRequest>,
+    ) -> Result<Response<cua_proto::env::v1::DeleteServiceResponse>, Status> {
+        self.services()?.delete(&request.into_inner().name).await?;
+        Ok(Response::new(cua_proto::env::v1::DeleteServiceResponse {}))
+    }
+
+    async fn list_services(
+        &self,
+        _request: Request<cua_proto::env::v1::ListServicesRequest>,
+    ) -> Result<Response<cua_proto::env::v1::ListServicesResponse>, Status> {
+        Ok(Response::new(cua_proto::env::v1::ListServicesResponse {
+            services: self.services()?.list(),
+        }))
+    }
+
+    async fn control_service(
+        &self,
+        request: Request<cua_proto::env::v1::ControlServiceRequest>,
+    ) -> Result<Response<cua_proto::env::v1::ControlServiceResponse>, Status> {
+        let r = request.into_inner();
+        let action = cua_proto::env::v1::ServiceAction::try_from(r.action)
+            .unwrap_or(cua_proto::env::v1::ServiceAction::Unspecified);
+        let service = self.services()?.control(&r.name, action).await?;
+        Ok(Response::new(cua_proto::env::v1::ControlServiceResponse {
+            service: Some(service),
+        }))
+    }
+
+    async fn get_service_logs(
+        &self,
+        request: Request<cua_proto::env::v1::GetServiceLogsRequest>,
+    ) -> Result<Response<cua_proto::env::v1::GetServiceLogsResponse>, Status> {
+        let r = request.into_inner();
+        let (data, truncated) = self.services()?.logs(&r.name, r.tail_bytes)?;
+        Ok(Response::new(cua_proto::env::v1::GetServiceLogsResponse {
+            data,
+            truncated,
         }))
     }
 }

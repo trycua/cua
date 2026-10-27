@@ -79,6 +79,7 @@ pub mod groups;
 pub mod host_jobs;
 pub mod host_spaces;
 pub mod id;
+pub mod keep;
 pub mod lifetimes;
 pub mod list_watch;
 pub mod listing;

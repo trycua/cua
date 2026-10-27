@@ -35,6 +35,7 @@
   ],
   "features_optional": [
     "hotspot",
+    "process.services",
     "relay_attach",
     "teleport.*",
     "audio.desktop",

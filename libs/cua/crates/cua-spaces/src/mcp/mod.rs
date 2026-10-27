@@ -484,6 +484,7 @@ pub async fn call_on(space: &Space, tool: &str, arguments: Value) -> ToolOutcome
 pub const SPACE_SCOPED_TOOLS: &[&str] = &[
     "space_bash",
     "space_write",
+    "space_service",
     "upload",
     "download",
     "send_file",

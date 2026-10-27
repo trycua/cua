@@ -124,6 +124,7 @@ async fn capabilities_report_contract_and_limitations() {
             "desktop_stream",
             "audio.uplink",
             "process.exec_ledger",
+            "process.services",
             "fs.run_as",
             "fs.xattr",
             "files.multipart",
@@ -1840,6 +1841,162 @@ async fn hotspot_egress_goes_through_the_peer() {
         .unwrap()
         .into_inner();
     assert_eq!(status.state, HotspotState::Stopped as i32);
+    t.cleanup().await;
+}
+
+#[tokio::test]
+async fn a_service_is_kept_running_logged_checked_and_stopped() {
+    let t = target().await;
+    let c = t.client(TransportPreference::Native).await;
+    let name = format!("svc-{}", std::process::id());
+    let ms = |n: u64| {
+        Some(cua_proto::wkt::Duration {
+            seconds: (n / 1000) as i64,
+            nanos: ((n % 1000) * 1_000_000) as i32,
+        })
+    };
+    let put = c
+        .process()
+        .put_service(PutServiceRequest {
+            spec: Some(ServiceSpec {
+                name: name.clone(),
+                config: Some(ProcessConfig {
+                    command: "sh".into(),
+                    args: vec!["-c".into(), "echo started-once; exit 3".into()],
+                    ..Default::default()
+                }),
+                restart: RestartPolicy::OnFailure as i32,
+                backoff_min: ms(100),
+                backoff_max: ms(200),
+                ..Default::default()
+            }),
+        })
+        .await
+        .unwrap()
+        .into_inner()
+        .service
+        .unwrap();
+    assert_eq!(put.spec.unwrap().name, name);
+    // It fails, so the policy starts it again, and again.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let status = loop {
+        let list = c
+            .process()
+            .list_services(ListServicesRequest {})
+            .await
+            .unwrap()
+            .into_inner();
+        let s = list
+            .services
+            .into_iter()
+            .find(|s| s.spec.as_ref().is_some_and(|p| p.name == name))
+            .unwrap();
+        if s.restarts >= 2 {
+            break s;
+        }
+        assert!(Instant::now() < deadline, "not restarted: {s:?}");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
+    assert_eq!(status.last_end.unwrap().exit_code, Some(3));
+    let logs = c
+        .process()
+        .get_service_logs(GetServiceLogsRequest {
+            name: name.clone(),
+            tail_bytes: 0,
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    let text = String::from_utf8_lossy(&logs.data);
+    assert!(text.matches("started-once").count() >= 2, "{text}");
+    assert!(text.contains("[cua] exited with code 3"), "{text}");
+    // Stopped by a caller: it stays stopped.
+    let stopped = c
+        .process()
+        .control_service(ControlServiceRequest {
+            name: name.clone(),
+            action: ServiceAction::Stop as i32,
+        })
+        .await
+        .unwrap()
+        .into_inner()
+        .service
+        .unwrap();
+    assert_eq!(stopped.state, ServiceState::Stopped as i32);
+    c.process()
+        .delete_service(DeleteServiceRequest { name: name.clone() })
+        .await
+        .unwrap();
+    let e = c
+        .process()
+        .get_service_logs(GetServiceLogsRequest {
+            name: name.clone(),
+            tail_bytes: 0,
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(e.code(), Code::NotFound);
+    t.cleanup().await;
+}
+
+#[tokio::test]
+async fn a_failing_health_check_restarts_a_service() {
+    let t = target().await;
+    let c = t.client(TransportPreference::Native).await;
+    let name = format!("probe-{}", std::process::id());
+    let ms = |n: u64| {
+        Some(cua_proto::wkt::Duration {
+            seconds: (n / 1000) as i64,
+            nanos: ((n % 1000) * 1_000_000) as i32,
+        })
+    };
+    // Port 9 (discard) answers nothing on a guest's loopback.
+    c.process()
+        .put_service(PutServiceRequest {
+            spec: Some(ServiceSpec {
+                name: name.clone(),
+                config: Some(ProcessConfig {
+                    command: "sleep".into(),
+                    args: vec!["600".into()],
+                    ..Default::default()
+                }),
+                backoff_min: ms(100),
+                probe: Some(HealthProbe {
+                    tcp: "127.0.0.1:9".into(),
+                    interval: ms(200),
+                    timeout: ms(200),
+                    failure_threshold: 2,
+                    start_period: ms(0),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+        })
+        .await
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let s = c
+            .process()
+            .list_services(ListServicesRequest {})
+            .await
+            .unwrap()
+            .into_inner()
+            .services
+            .into_iter()
+            .find(|s| s.spec.as_ref().is_some_and(|p| p.name == name))
+            .unwrap();
+        if s.restarts >= 1 {
+            assert!(s.probe_error.contains("127.0.0.1:9"), "{s:?}");
+            break;
+        }
+        assert!(Instant::now() < deadline, "not restarted: {s:?}");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    c.process()
+        .delete_service(DeleteServiceRequest { name })
+        .await
+        .unwrap();
     t.cleanup().await;
 }
 

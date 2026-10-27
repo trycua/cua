@@ -481,3 +481,42 @@ public struct SiteLogin: Sendable, Equatable {
     public let targetID: String?
     public let tabID: String?
 }
+
+// MARK: - Keep running
+
+/// Commands the Space keeps running: restarted by their policy when they end
+/// or fail their health check, started when the Space boots, their output
+/// kept in a log file in the Space.
+public struct KeepRunning: Sendable {
+    let space: Space
+
+    /// Calls `space_service` with `action` and its arguments, and returns
+    /// the tool's JSON answer (`services`, a service, `logs` or `removed`).
+    @discardableResult
+    public func service(_ action: String, _ arguments: [String: JSONValue] = [:]) async throws -> JSONValue {
+        var args = arguments
+        args["space"] = .string(space.id.rawValue)
+        args["action"] = .string(action)
+        return try await space.connection.callTool("space_service", args)
+    }
+
+    /// Keeps `command` running as `name` (replacing a service of that name).
+    @discardableResult
+    public func add(_ name: String, command: String, restart: String = "always") async throws -> JSONValue {
+        try await service("add", ["name": .string(name), "command": .string(command),
+                                  "restart": .string(restart)])
+    }
+
+    /// The Space's services.
+    public func list() async throws -> JSONValue { try await service("list") }
+
+    /// Stops a service and forgets it.
+    public func remove(_ name: String) async throws {
+        _ = try await service("remove", ["name": .string(name)])
+    }
+}
+
+extension Space {
+    /// Commands this Space keeps running (`space_service`).
+    public var keepRunning: KeepRunning { KeepRunning(space: self) }
+}

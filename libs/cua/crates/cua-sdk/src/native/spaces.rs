@@ -1219,6 +1219,113 @@ pub struct SpaceWriteReport {
     pub sha256: String,
 }
 
+/// A command a Space keeps running ([`Space::put_service`]).
+#[derive(Debug, Clone, Default, PartialEq, uniffi::Record, Serialize, Deserialize)]
+pub struct SpaceServiceDef {
+    /// Name: lowercase letters, digits, `-`, `_`, `.` (1 to 63).
+    pub name: String,
+    /// The shell command line it runs.
+    pub command: String,
+    /// Extra environment.
+    #[uniffi(default)]
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+    /// Working directory.
+    #[uniffi(default = None)]
+    #[serde(default)]
+    pub cwd: Option<String>,
+    /// When it is started again: `always` (default), `on-failure` or
+    /// `never`.
+    #[uniffi(default = None)]
+    #[serde(default)]
+    pub restart: Option<String>,
+    /// A health check; failing it restarts the service.
+    #[uniffi(default = None)]
+    #[serde(default)]
+    pub probe: Option<SpaceServiceProbe>,
+    /// Start it when the Space boots. `None`: yes.
+    #[uniffi(default = None)]
+    #[serde(default)]
+    pub start_on_boot: Option<bool>,
+}
+
+/// A health check: exactly one of `http`, `tcp`, `command`.
+#[derive(Debug, Clone, Default, PartialEq, uniffi::Record, Serialize, Deserialize)]
+pub struct SpaceServiceProbe {
+    /// A URL that answers 2xx or 3xx.
+    #[uniffi(default = None)]
+    #[serde(default)]
+    pub http: Option<String>,
+    /// `host:port` that accepts a TCP connection.
+    #[uniffi(default = None)]
+    #[serde(default)]
+    pub tcp: Option<String>,
+    /// A shell command that exits 0 when healthy.
+    #[uniffi(default = None)]
+    #[serde(default)]
+    pub command: Option<String>,
+    /// Seconds between checks (default 10).
+    #[uniffi(default = None)]
+    #[serde(default)]
+    pub interval_secs: Option<u64>,
+    /// Failed checks in a row that restart it (default 3).
+    #[uniffi(default = None)]
+    #[serde(default)]
+    pub failures: Option<u32>,
+}
+
+/// A service and how it is doing ([`Space::services`]).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, Serialize, Deserialize)]
+pub struct SpaceServiceInfo {
+    /// Name.
+    pub name: String,
+    /// The command line.
+    pub command: String,
+    /// `starting`, `running`, `unhealthy`, `backoff`, `stopped`, `exited`
+    /// or `failed`.
+    pub state: String,
+    /// Its process, while it runs.
+    pub pid: u32,
+    /// Starts after the first.
+    pub restarts: u32,
+    /// How the last process ended, if one did.
+    pub last_end: String,
+    /// The last failed health check, if the last one failed.
+    pub probe_error: String,
+    /// `always`, `on-failure` or `never`.
+    pub restart: String,
+    /// Starts when the Space boots.
+    pub start_on_boot: bool,
+    /// Its log file in the Space.
+    pub log_path: String,
+}
+
+impl SpaceServiceDef {
+    fn core(self) -> Result<cua_spaces::keep::ServiceDef> {
+        let restart = match self.restart.as_deref() {
+            None => cua_spaces::keep::Restart::Always,
+            Some(r) => cua_spaces::keep::Restart::parse(r).ok_or_else(|| {
+                CuaError::InvalidArgument(format!("restart {r:?}: use always, on-failure or never"))
+            })?,
+        };
+        Ok(cua_spaces::keep::ServiceDef {
+            name: self.name,
+            command: self.command,
+            env: self.env.into_iter().collect(),
+            cwd: self.cwd,
+            restart,
+            probe: self.probe.map(|p| cua_spaces::keep::Probe {
+                http: p.http,
+                tcp: p.tcp,
+                command: p.command,
+                interval_secs: p.interval_secs,
+                failures: p.failures,
+            }),
+            start_on_boot: self.start_on_boot.unwrap_or(true),
+        })
+    }
+}
+
 /// Result of [`Space::upload`] / [`Space::download`].
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, Deserialize)]
 pub struct SpaceTransferReport {
@@ -4578,6 +4685,70 @@ impl Space {
     pub async fn write(&self, path: String, content: Vec<u8>) -> Result<SpaceWriteReport> {
         let s = self.inner.clone();
         run(async move { via_json(&s.write(&path, content).await?) }).await
+    }
+
+    // ---- keep running
+
+    /// Keeps a command running in this Space (replacing a service of that
+    /// name): restarted by its policy when it ends or fails its health
+    /// check, started when the Space boots, its output kept in a log file.
+    pub async fn put_service(&self, def: SpaceServiceDef) -> Result<SpaceServiceInfo> {
+        let s = self.inner.clone();
+        run(async move { via_json(&s.put_service(&def.core()?).await?) }).await
+    }
+
+    /// This Space's services.
+    pub async fn services(&self) -> Result<Vec<SpaceServiceInfo>> {
+        let s = self.inner.clone();
+        run(async move { via_json(&s.services().await?) }).await
+    }
+
+    /// Starts a stopped service.
+    pub async fn start_service(&self, name: String) -> Result<SpaceServiceInfo> {
+        let s = self.inner.clone();
+        run(async move {
+            via_json(
+                &s.control_service(&name, cua_spaces::keep::ServiceControl::Start)
+                    .await?,
+            )
+        })
+        .await
+    }
+
+    /// Stops a service and keeps it stopped (also across a reboot).
+    pub async fn stop_service(&self, name: String) -> Result<SpaceServiceInfo> {
+        let s = self.inner.clone();
+        run(async move {
+            via_json(
+                &s.control_service(&name, cua_spaces::keep::ServiceControl::Stop)
+                    .await?,
+            )
+        })
+        .await
+    }
+
+    /// Restarts a service.
+    pub async fn restart_service(&self, name: String) -> Result<SpaceServiceInfo> {
+        let s = self.inner.clone();
+        run(async move {
+            via_json(
+                &s.control_service(&name, cua_spaces::keep::ServiceControl::Restart)
+                    .await?,
+            )
+        })
+        .await
+    }
+
+    /// Stops a service and forgets it (its logs go too).
+    pub async fn delete_service(&self, name: String) -> Result<()> {
+        let s = self.inner.clone();
+        run(async move { Ok(s.delete_service(&name).await?) }).await
+    }
+
+    /// The end of a service's log (`tail_bytes` `None`: 64 KiB).
+    pub async fn service_logs(&self, name: String, tail_bytes: Option<u64>) -> Result<String> {
+        let s = self.inner.clone();
+        run(async move { Ok(s.service_logs(&name, tail_bytes.unwrap_or(0)).await?) }).await
     }
 
     /// The Space user's home directory.

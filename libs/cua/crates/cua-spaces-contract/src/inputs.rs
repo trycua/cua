@@ -277,6 +277,42 @@ pub struct SpaceWrite {
     pub content: String,
 }
 
+/// `space_service`: keep a command running in a Space.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct SpaceService {
+    /// Space id or name.
+    pub space: SpaceArg,
+    /// `add` (or replace), `list`, `start`, `stop`, `restart`, `remove` or
+    /// `logs`.
+    pub action: String,
+    /// Service name (every action but `list`): lowercase letters, digits,
+    /// `-`, `_` and `.`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// `add`: the shell command line to keep running.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    /// `add`: when to start it again: `always` (default), `on-failure` or
+    /// `never`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restart: Option<String>,
+    /// `add`: health check, a URL that answers 2xx or 3xx.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http: Option<String>,
+    /// `add`: health check, `host:port` that accepts a connection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tcp: Option<String>,
+    /// `add`: health check, a shell command that exits 0 when healthy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check: Option<String>,
+    /// `add`: start it when the Space boots (default true).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_on_boot: Option<bool>,
+    /// `logs`: bytes from the end (default 64 KiB).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tail_bytes: Option<u64>,
+}
+
 /// `upload`: copy a host file or folder into the Space.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct Upload {

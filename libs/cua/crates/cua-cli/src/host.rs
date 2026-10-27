@@ -496,6 +496,11 @@ Examples:
         #[arg(long, conflicts_with_all = ["deny", "allow"])]
         clear: bool,
     },
+    /// Keep a command running in a Space: started again when it exits or
+    /// fails its health check (with a backoff), started when the Space
+    /// boots, its output kept in a log file in the Space.
+    #[command(subcommand)]
+    Service(ServiceCmd),
     /// Cancel a create that is still running (here, in the daemon, or in
     /// another terminal): it stops and what it made is removed. Finished
     /// image downloads stay cached. Ctrl-C during `cua spaces create` does
@@ -924,6 +929,7 @@ pub async fn run_spaces_sdk(
 ) -> Result<i32, CuaError> {
     let spaces = cua.spaces();
     match cmd {
+        SpacesCmd::Service(cmd) => run_service(&spaces, cmd, json, out).await?,
         SpacesCmd::Add {
             url,
             token,
@@ -4459,4 +4465,224 @@ mod tests {
         // Already attached: left alone.
         assert!(!attach_relay_account(&cua, || unreachable!()));
     }
+}
+
+/// `cua spaces service`.
+#[derive(Debug, Clone, Subcommand)]
+pub enum ServiceCmd {
+    /// Keep a command running (replaces a service of that name).
+    #[command(after_help = "Examples:
+  cua spaces service add studio web -- python3 -m http.server 8080
+  cua spaces service add studio web --http http://127.0.0.1:8080/ -- python3 -m http.server 8080
+  cua spaces service add studio job --restart on-failure -- ./run.sh")]
+    Add {
+        /// Space id or name.
+        space: String,
+        /// Service name (lowercase letters, digits, `-`, `_`, `.`).
+        name: String,
+        /// When to start it again: always, on-failure or never.
+        #[arg(long, default_value = "always", value_parser = ["always", "on-failure", "never"])]
+        restart: String,
+        /// Health check: a URL that answers 2xx or 3xx.
+        #[arg(long, conflicts_with_all = ["tcp", "check"])]
+        http: Option<String>,
+        /// Health check: `host:port` that accepts a connection.
+        #[arg(long, conflicts_with_all = ["http", "check"])]
+        tcp: Option<String>,
+        /// Health check: a shell command that exits 0 when healthy.
+        #[arg(long, conflicts_with_all = ["http", "tcp"])]
+        check: Option<String>,
+        /// Do not start it when the Space boots.
+        #[arg(long)]
+        no_boot: bool,
+        /// `KEY=VALUE` for its environment (repeat for more).
+        #[arg(long = "env", value_name = "KEY=VALUE")]
+        env: Vec<String>,
+        /// Working directory in the Space.
+        #[arg(long)]
+        cwd: Option<String>,
+        /// The command (after `--`).
+        #[arg(last = true, required = true)]
+        command: Vec<String>,
+    },
+    /// List a Space's services.
+    Ls {
+        /// Space id or name.
+        space: String,
+    },
+    /// Show the end of a service's log.
+    Logs {
+        /// Space id or name.
+        space: String,
+        /// Service name.
+        name: String,
+        /// Bytes from the end.
+        #[arg(long, default_value_t = 65536)]
+        tail: u64,
+    },
+    /// Start a stopped service.
+    Start {
+        /// Space id or name.
+        space: String,
+        /// Service name.
+        name: String,
+    },
+    /// Stop a service and keep it stopped.
+    Stop {
+        /// Space id or name.
+        space: String,
+        /// Service name.
+        name: String,
+    },
+    /// Restart a service.
+    Restart {
+        /// Space id or name.
+        space: String,
+        /// Service name.
+        name: String,
+    },
+    /// Stop a service and forget it.
+    Rm {
+        /// Space id or name.
+        space: String,
+        /// Service name.
+        name: String,
+    },
+}
+
+fn service_line(s: &cua_sdk::SpaceServiceInfo) -> String {
+    let mut l = format!("{:<20} {:<10}", s.name, s.state);
+    if s.pid > 0 {
+        l.push_str(&format!(" pid {}", s.pid));
+    }
+    if s.restarts > 0 {
+        l.push_str(&format!(", {} restarts", s.restarts));
+    }
+    if !s.last_end.is_empty() {
+        l.push_str(&format!(", last {}", s.last_end));
+    }
+    if !s.probe_error.is_empty() {
+        l.push_str(&format!(", check: {}", s.probe_error));
+    }
+    l.push_str(&format!("  {}", s.command));
+    l
+}
+
+/// `cua spaces service ...`.
+pub async fn run_service(
+    spaces: &cua_sdk::Spaces,
+    cmd: ServiceCmd,
+    json: bool,
+    out: &mut dyn Write,
+) -> Result<(), CuaError> {
+    let one = |s: cua_sdk::SpaceServiceInfo, out: &mut dyn Write| {
+        if json {
+            line(out, serde_json::to_string(&s).unwrap_or_default());
+        } else {
+            line(out, service_line(&s));
+        }
+    };
+    match cmd {
+        ServiceCmd::Add {
+            space,
+            name,
+            restart,
+            http,
+            tcp,
+            check,
+            no_boot,
+            env,
+            cwd,
+            command,
+        } => {
+            let env = env
+                .iter()
+                .map(|kv| {
+                    kv.split_once('=')
+                        .map(|(k, v)| (k.to_owned(), v.to_owned()))
+                        .ok_or_else(|| {
+                            CuaError::InvalidArgument(format!("--env {kv:?}: use KEY=VALUE"))
+                        })
+                })
+                .collect::<Result<_, _>>()?;
+            let probe = (http.is_some() || tcp.is_some() || check.is_some()).then(|| {
+                cua_sdk::SpaceServiceProbe {
+                    http,
+                    tcp,
+                    command: check,
+                    ..Default::default()
+                }
+            });
+            let def = cua_sdk::SpaceServiceDef {
+                name,
+                command: shell_words(&command),
+                env,
+                cwd,
+                restart: Some(restart),
+                probe,
+                start_on_boot: Some(!no_boot),
+            };
+            let s = spaces.space(space).await?;
+            one(s.put_service(def).await?, out);
+        }
+        ServiceCmd::Ls { space } => {
+            let list = spaces.space(space).await?.services().await?;
+            if json {
+                line(out, serde_json::json!({ "services": list }).to_string());
+            } else if list.is_empty() {
+                line(out, "No services.");
+            } else {
+                for s in &list {
+                    line(out, service_line(s));
+                }
+            }
+        }
+        ServiceCmd::Logs { space, name, tail } => {
+            let text = spaces
+                .space(space)
+                .await?
+                .service_logs(name, Some(tail))
+                .await?;
+            let _ = out.write_all(text.as_bytes());
+        }
+        ServiceCmd::Start { space, name } => {
+            one(spaces.space(space).await?.start_service(name).await?, out);
+        }
+        ServiceCmd::Stop { space, name } => {
+            one(spaces.space(space).await?.stop_service(name).await?, out);
+        }
+        ServiceCmd::Restart { space, name } => {
+            one(spaces.space(space).await?.restart_service(name).await?, out);
+        }
+        ServiceCmd::Rm { space, name } => {
+            spaces
+                .space(space)
+                .await?
+                .delete_service(name.clone())
+                .await?;
+            if json {
+                line(out, serde_json::json!({ "deleted": name }).to_string());
+            } else {
+                line(out, format!("Removed service {name}."));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Joins argv into one shell line, quoting words that need it.
+fn shell_words(argv: &[String]) -> String {
+    argv.iter()
+        .map(|w| {
+            if !w.is_empty()
+                && w.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"-_./:=@%+,".contains(&b))
+            {
+                w.clone()
+            } else {
+                format!("'{}'", w.replace('\'', "'\\''"))
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }

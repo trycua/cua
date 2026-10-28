@@ -683,17 +683,8 @@ fn app_row(input: &ConnectorsInput, a: &ConnectorAppInput) -> ConnectorAppRow {
             (!a.installed && !a.configured).then(|| "Runs in your Spaces".to_string()),
             None,
         )
-    } else if !a.installed && !a.configured {
-        (
-            "not-connected",
-            if app_expired(input, &a.agent) {
-                Some("The sign-in expired. Reconnect.".to_string())
-            } else {
-                needs
-            },
-            Some(button("connect", "Connect", true)),
-        )
-    } else if a.configured {
+    } else if a.configured || !a.installed {
+        // Cua's tools are in it (or it is not on this machine): what it still needs.
         (
             "not-connected",
             if app_expired(input, &a.agent) {

@@ -705,7 +705,7 @@ impl Agents {
                 hasher.update(skill.name.as_bytes());
                 hasher.update(rel.as_bytes());
                 hasher.update((bytes.len() as u64).to_le_bytes());
-                hasher.update(&bytes[..]);
+                hasher.update(bytes);
                 writes.push((format!("{dir}/{}/{rel}", skill.name), bytes.to_vec()));
             }
             done.push(format!("{dir}/{}", skill.name));

@@ -4,6 +4,7 @@
 
 use std::path::Path;
 
+#[cfg(unix)]
 const GB: u64 = 1024 * 1024 * 1024;
 
 /// Total physical memory in GB (rounded to the nearest).

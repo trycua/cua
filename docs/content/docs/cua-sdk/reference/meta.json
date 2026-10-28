@@ -3,7 +3,9 @@
   "pages": [
     "---Sandboxes---",
     "cua",
+    "runtime-kinds",
     "sandbox",
+    "share",
     "image",
     "os-image-catalog",
     "image-software",

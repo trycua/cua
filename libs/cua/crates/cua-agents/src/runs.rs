@@ -44,6 +44,8 @@ pub const HOMES_DIR: &str = "cua-volume/agents";
 pub const BRIDGE_DIR: &str = "bridge";
 /// The MCP server name of the host bridge.
 pub const BRIDGE_SERVER: &str = "cua";
+/// The variable a copied Codex ChatGPT sign-in (`auth.json`) travels as.
+pub const CODEX_AUTH_ENV: &str = "CODEX_AUTH_JSON";
 /// Largest events page read at once.
 pub const PAGE_BYTES: u64 = 512 * 1024;
 const RS: &str = "\x1e--cua--\x1e";
@@ -121,6 +123,10 @@ pub struct RunOptions {
     /// Give the agent the host bridge (MCP server `cua`: a pipe the host
     /// answers as the persistent agent, see `runner/bridge.mjs`).
     pub bridge: bool,
+    /// Make the run durable (see [`crate::durable`]): an epoch-fenced
+    /// journal, a tool ledger, resume with a recovery note. Implies
+    /// `exit_when_idle`.
+    pub durable: Option<crate::durable::DurableOptions>,
 }
 
 /// `meta.json`.
@@ -139,6 +145,57 @@ pub struct RunMeta {
     /// The persistent agent this run belongs to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home: Option<String>,
+    /// A hash of the credentials this run was started with
+    /// ([`credential_hash`]; never the values). A caller that would start
+    /// the run with different ones restarts it instead of reusing it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cred_hash: Option<String>,
+}
+
+/// Whether the forwarded Codex `auth.json` should replace the guest's: the
+/// guest has none, or its own copy is older (`last_refresh`, UTC) or
+/// unreadable. A guest copy that is as new, or newer (Codex refreshed it in
+/// the Space), is kept.
+fn codex_auth_replaces(forwarded: &str, existing: &[u8]) -> bool {
+    if existing.iter().all(u8::is_ascii_whitespace) {
+        return true;
+    }
+    let stamp = |v: &Value| {
+        v.get("last_refresh")
+            .and_then(Value::as_str)
+            .map(|t| t.chars().take(19).collect::<String>())
+            .filter(|t| t.len() == 19)
+    };
+    let new = serde_json::from_str::<Value>(forwarded)
+        .ok()
+        .and_then(|v| stamp(&v));
+    let old = serde_json::from_slice::<Value>(existing)
+        .ok()
+        .and_then(|v| stamp(&v));
+    match (new, old) {
+        (Some(n), Some(o)) => n > o,
+        (Some(_), None) => true,
+        (None, _) => false,
+    }
+}
+
+/// A hash of the credentials in `env` (the names and values of the keys
+/// `harness` reads, nothing else). Equal when the same credentials would be
+/// forwarded, so a run started with older ones can be told from a fresh
+/// start. Reveals nothing about the values.
+pub fn credential_hash(harness: &str, env: &BTreeMap<String, String>) -> String {
+    use sha2::{Digest, Sha256};
+    let keys: &[&str] = harness::harness(harness).map(|h| h.keys).unwrap_or(&[]);
+    let mut h = Sha256::new();
+    for (k, v) in env {
+        if keys.contains(&k.as_str()) || k == CODEX_AUTH_ENV {
+            h.update(k.as_bytes());
+            h.update([0]);
+            h.update(v.as_bytes());
+            h.update([0]);
+        }
+    }
+    hex::encode(&h.finalize()[..12])
 }
 
 /// One status vocabulary for every harness. `idle` means "no turn is
@@ -329,23 +386,25 @@ fn needs_probe(h: &Harness, opts: &RunOptions) -> bool {
 }
 
 /// Decides on the guest probe's output ([`Harness::auth_probe`]; `None`
-/// when it could not run): refused when no credential was found and cua
-/// knows every source, a note when it does not, nothing otherwise.
+/// when it could not run): refused when no credential was found, nothing
+/// otherwise. The refusal is typed (`needs_connect`, see [`crate::failure`]).
 fn credential_check(h: &Harness, probe: Option<&str>) -> Result<Option<String>> {
     if probe.map(str::trim) != Some(harness::PROBE_NONE) {
         return Ok(None);
     }
-    if h.logins.is_some() {
-        return Err(Error::NoCredential(h.missing_credential()));
+    match h.logins {
+        // Every harness lists the files of its own setup now; `None` stays
+        // for one added without them, which only gets a note.
+        None => Ok(Some(format!(
+            "no provider key reached this run; unless {} is configured inside the Space it fails with \"Authentication required\": {}",
+            h.name,
+            h.auth_hint()
+        ))),
+        Some(_) => Err(Error::NoCredential(h.missing_credential())),
     }
-    Ok(Some(format!(
-        "no provider key reached this run; unless {} is configured inside the Space it fails with \"Authentication required\": {}",
-        h.name,
-        h.auth_hint()
-    )))
 }
 
-fn valid_env_name(k: &str) -> Result<()> {
+pub(crate) fn valid_env_name(k: &str) -> Result<()> {
     if k.is_empty()
         || !k.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
         || k.as_bytes()[0].is_ascii_digit()
@@ -633,6 +692,8 @@ impl Agents {
             app_dirs: vec![],
             os: cua_agent_setup::Os::Linux,
             run_agent_clis: false,
+            // The guest's own cua: the bundled names, whatever the host is.
+            channel: cua_agent_setup::CuaChannel::Stable,
         };
         let dir = loc.resolve(&env).to_string_lossy().replace('\\', "/");
         let mut done = vec![];
@@ -844,7 +905,7 @@ impl Agents {
             }
             e
         });
-        let launch = harness::launch_with_home(
+        let mut launch = harness::launch_with_home(
             h,
             endpoint.as_ref(),
             opts.model.as_deref(),
@@ -852,6 +913,9 @@ impl Agents {
             &cwd,
             home_dir.as_deref(),
         )?;
+        if opts.durable.as_ref().is_some_and(|d| d.guard) {
+            launch.env.extend(crate::durable::guard_env(h));
+        }
         for f in &launch.files {
             let path = if f.rel.starts_with('/') {
                 f.rel.clone()
@@ -862,6 +926,19 @@ impl Agents {
         }
         // Secrets: the caller's env, plus MCP header values.
         let mut secrets: BTreeMap<String, String> = opts.env.clone();
+        // A ChatGPT sign-in copied from the person's Mac becomes the guest's
+        // own `~/.codex/auth.json` (0600) when it has none; it never reaches
+        // the agent's environment.
+        if let Some(auth) = secrets.remove(CODEX_AUTH_ENV)
+            && h.id == "openai-codex"
+            && !auth.trim().is_empty()
+        {
+            let file = format!("{}/.codex/auth.json", self.home.trim_end_matches('/'));
+            let existing = self.read(&file, 0, 0).await?.unwrap_or_default();
+            if codex_auth_replaces(&auth, &existing) {
+                self.write(&file, auth.into_bytes(), 0o600).await?;
+            }
+        }
         let mut mcp: Vec<Value> = vec![];
         let mut servers = opts.mcp_servers.clone();
         if opts.sandbox_mcp.unwrap_or(h.sandbox_mcp)
@@ -956,12 +1033,16 @@ impl Agents {
             "prompt": prompt,
             "files": files,
             "mcpServers": mcp,
-            "exitWhenIdle": opts.exit_when_idle,
+            "exitWhenIdle": opts.exit_when_idle || opts.durable.is_some(),
             "idleExitSecs": opts.idle_exit_secs.unwrap_or(1800),
             "authMethod": h.auth_method,
+            "authHint": h.auth_hint(),
             "keyCheck": harness::key_check(h, &opts.env, endpoint.is_some()),
             "mcpBridge": format!("{}/.cua/bin/mcp-remote", self.home),
             "modeKinds": h.mode_kinds,
+            "guardModeKinds": crate::durable::guard_mode_kinds(h),
+            "secretEnv": opts.durable.as_ref().map(|_| opts.env.keys().collect::<Vec<_>>()),
+            "durable": opts.durable.as_ref().map(|d| d.run_section(Some(&rdir))),
         });
         self.write(
             &format!("{rdir}/run.json"),
@@ -984,6 +1065,7 @@ impl Agents {
             label: opts.label.clone(),
             repo: opts.repo.clone(),
             home: opts.home.clone(),
+            cred_hash: Some(credential_hash(h.id, &opts.env)),
         };
         self.write(
             &format!("{rdir}/meta.json"),
@@ -991,6 +1073,21 @@ impl Agents {
             0o600,
         )
         .await?;
+        if let Some(d) = &opts.durable {
+            // A journal restored from the Cua Volume goes in before the
+            // runner starts (its fence and plan read it at start).
+            let state_dir = d.state_dir.clone().unwrap_or_else(|| rdir.clone());
+            for (name, body) in &d.restore {
+                if !crate::durable::JOURNAL_FILES.contains(&name.as_str()) {
+                    return Err(Error::Invalid(format!(
+                        "{name} is not a journal file ({})",
+                        crate::durable::JOURNAL_FILES.join(", ")
+                    )));
+                }
+                self.write(&format!("{state_dir}/{name}"), body.clone(), 0o600)
+                    .await?;
+            }
+        }
         let runner_dir = self.runner_dir().await?;
         let script = Self::launch_script(
             &self.home,
@@ -1013,6 +1110,36 @@ impl Agents {
             cwd,
             run_dir: rdir,
             notes,
+        })
+    }
+
+    /// Starts a durable run again at a higher `epoch`: the same run
+    /// directory and journal, a new runner. The new runner raises the epoch
+    /// fence first, so a runner that is still alive somewhere is cut off; it
+    /// resumes the agent's session and sends it a recovery note. The caller
+    /// (a re-driver) owns the epoch counter; the run's secrets are still in
+    /// the run directory.
+    pub async fn redrive(&self, run_id: &str, epoch: u64) -> Result<Started> {
+        let rdir = self.run_dir(run_id);
+        let raw = self
+            .read(&format!("{rdir}/run.json"), 0, 0)
+            .await?
+            .ok_or_else(|| Error::NotFound(format!("run {run_id}")))?;
+        let next = crate::durable::redrive_run_json(&raw, epoch)?;
+        self.write(&format!("{rdir}/run.json"), next, 0o600).await?;
+        let meta: RunMeta = self
+            .json_file(&format!("{rdir}/meta.json"))
+            .await?
+            .and_then(|v| serde_json::from_value(v).ok())
+            .ok_or_else(|| Error::NotFound(format!("run {run_id} metadata")))?;
+        let tag = self.spawn_run(run_id).await?;
+        Ok(Started {
+            run_id: run_id.into(),
+            harness: meta.harness,
+            process_tag: tag,
+            cwd: meta.cwd,
+            run_dir: rdir,
+            notes: vec![],
         })
     }
 
@@ -1162,9 +1289,15 @@ impl Agents {
         if before.alive == Some(false) {
             // Restart: installs are cached, the runner resumes the session.
             if before.status == RunStatus::Failed {
+                let mut state = self
+                    .json_file(&format!("{rdir}/state.json"))
+                    .await?
+                    .unwrap_or_else(|| json!({}));
+                state["status"] = json!("starting");
+                state["error"] = Value::Null;
                 self.write(
                     &format!("{rdir}/state.json"),
-                    br#"{"status":"starting","error":null}"#.to_vec(),
+                    serde_json::to_vec(&state)?,
                     0o600,
                 )
                 .await?;
@@ -1360,6 +1493,46 @@ pub fn summarize(run_id: &str, status: RunStatus, evs: &[AgentEvent]) -> RunResu
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_newer_forwarded_codex_sign_in_replaces_the_guests() {
+        let new = r#"{"last_refresh":"2026-10-27T10:00:00.5Z","tokens":{}}"#;
+        let old = r#"{"last_refresh":"2026-10-26T10:00:00Z","tokens":{}}"#;
+        assert!(codex_auth_replaces(new, b""));
+        assert!(codex_auth_replaces(new, old.as_bytes()));
+        assert!(!codex_auth_replaces(old, new.as_bytes()));
+        assert!(!codex_auth_replaces(old, old.as_bytes()));
+        assert!(codex_auth_replaces(new, b"not json"));
+        assert!(!codex_auth_replaces(r#"{"tokens":{}}"#, old.as_bytes()));
+    }
+
+    #[test]
+    fn the_credential_hash_changes_with_the_credentials_only() {
+        let env = |pairs: &[(&str, &str)]| -> BTreeMap<String, String> {
+            pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect()
+        };
+        let a = credential_hash("claude-code", &env(&[("CLAUDE_CODE_OAUTH_TOKEN", "one")]));
+        assert_eq!(
+            a,
+            credential_hash("claude-code", &env(&[("CLAUDE_CODE_OAUTH_TOKEN", "one")]))
+        );
+        assert_ne!(
+            a,
+            credential_hash("claude-code", &env(&[("CLAUDE_CODE_OAUTH_TOKEN", "two")]))
+        );
+        // A variable the harness does not read does not count.
+        assert_eq!(
+            a,
+            credential_hash(
+                "claude-code",
+                &env(&[("CLAUDE_CODE_OAUTH_TOKEN", "one"), ("HOME_X", "y")])
+            )
+        );
+        assert!(!a.contains("one"));
+    }
+
     fn probe(h: &Harness, home: &std::path::Path, env: &[(&str, &str)]) -> String {
         let out = std::process::Command::new("/bin/sh")
             .arg("-c")
@@ -1391,11 +1564,12 @@ mod tests {
                 "{e}"
             );
             assert!(
-                e.contains("Authentication required") && e.contains("`claude`"),
+                e.contains("Authentication required")
+                    && e.contains("`~/.cua/bin/claude` inside the Space"),
                 "{e}"
             );
             assert!(
-                e.contains("Add an Anthropic API key in Cua Spaces → Settings → Agents"),
+                e.contains("Add an Anthropic API key in Cua Spaces → Settings → Connectors"),
                 "{e}"
             );
         }
@@ -1407,7 +1581,7 @@ mod tests {
             "{e}"
         );
         assert!(
-            e.contains("Add an OpenAI API key in Cua Spaces → Settings → Agents"),
+            e.contains("Add an OpenAI API key in Cua Spaces → Settings → Connectors"),
             "{e}"
         );
         // A key in the guest environment, or a sign-in file: allowed.
@@ -1425,9 +1599,32 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
         // A probe that could not run decides nothing.
         assert_eq!(credential_check(codex, None).unwrap(), None);
-        // A harness configurable through its own files: a note, not a refusal.
-        let goose = harness::harness("goose").unwrap();
-        let note = credential_check(goose, Some("none")).unwrap().unwrap();
+        // Every harness lists the files of its own setup, so each is refused
+        // before the install when it has neither a key nor one of them.
+        for h in harness::HARNESSES.iter().filter(|h| h.logins.is_some()) {
+            let e = credential_check(h, Some("none")).unwrap_err();
+            assert!(matches!(e, Error::NoCredential(_)), "{}", h.id);
+            let typed = crate::failure::classify(h.id, &e.to_string());
+            assert_eq!(
+                typed.class,
+                crate::failure::FailureClass::NeedsConnect,
+                "{}",
+                h.id
+            );
+        }
+        // The subscription sign-ins stay with Claude Code and Codex.
+        let hermes = harness::harness("hermes").unwrap();
+        assert!(!hermes.keys.contains(&"CLAUDE_CODE_OAUTH_TOKEN"));
+        assert!(!hermes.keys.contains(&"CODEX_AUTH_JSON"));
+        for h in harness::HARNESSES.iter().filter(|h| h.id != "claude-code") {
+            assert!(!h.keys.contains(&"CLAUDE_CODE_OAUTH_TOKEN"), "{}", h.id);
+        }
+        // A harness added without a list of its own files only gets a note.
+        let open = Harness {
+            logins: None,
+            ..*harness::harness("goose").unwrap()
+        };
+        let note = credential_check(&open, Some("none")).unwrap().unwrap();
         assert!(note.contains("OPENAI_API_KEY"), "{note}");
     }
 

@@ -77,7 +77,7 @@ on:
 permissions:
   contents: write
   id-token: write
-  issues: read
+  issues: write # the rolling unresolved-attribution issue
   pull-requests: read
 
 concurrency:
@@ -435,6 +435,8 @@ jobs:
       - name: Sign Windows binaries
         uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
         with:
+          # Install the module on every run: a cached one skipped the install and was not found (#5838).
+          cache-dependencies: 'false'
           endpoint: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
           signing-account-name: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME }}
           certificate-profile-name: ${{ vars.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME }}
@@ -1539,6 +1541,7 @@ jobs:
             --release-metadata-path libs/cua-driver/typescript/package-lock.json \
             --changelog libs/cua-driver/rust/CHANGELOG.md \
             --asset-dir release-upload \
+            --report-issue \
             --output release-metadata/release-manifest.json
 
       - name: Render release body and announcement draft

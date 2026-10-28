@@ -104,7 +104,13 @@ test('tiers match their tags and list every canonical tier with its status', () 
   const tiers = renderTiers(list);
   assert.match(tiers, /`ghcr\.io\/trycua\/linux:24\.04-slim` \| slim \| `Image\.linux\(tier="slim"\)`/);
   assert.match(tiers, /macos:26-xcode` \| xcode/);
-  assert.doesNotMatch(tiers, /-disk`/);
+  // The VM-only docker tier is named by its disk; every other tier by its rootfs.
+  assert.match(tiers, /`ghcr\.io\/trycua\/linux:24\.04-docker-disk` \| docker \| `Image\.linux\(tier="docker"\)`/);
+  assert.doesNotMatch(tiers.replace(/^.*-docker-disk`.*$/m, ''), /-disk`/);
+  assert.doesNotMatch(tiers, /linux:24\.04-docker`/);
+  const dockerMac = clone();
+  dockerMac.images.find((i: { ref: string }) => i.ref.endsWith('macos:26-slim')).tier = 'docker';
+  assert.throws(() => validateImageList(dockerMac, source), /Linux only|does not match tier/);
 });
 
 test('benchmark entries carry their lock and benchmarks; others carry neither', () => {

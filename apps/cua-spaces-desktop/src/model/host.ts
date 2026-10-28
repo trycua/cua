@@ -18,7 +18,7 @@ import { sleep } from "./time";
 
 /** Why relay setup could not get an account token (`HostSetupAuthError`); worded as "Sign in to Cua". */
 export class HostSetupAuthError extends Error {
-  static readonly signedOut = "Not signed in to Cua: sign in to set up this computer for access.";
+  static readonly signedOut = "Not signed in to Cua: sign in to set up this machine for access.";
   static readonly signInNotFinished = "Not signed in to Cua: the sign-in did not finish.";
   constructor(readonly reason: "signedOut" | "signInNotFinished") {
     super(HostSetupAuthError[reason]);
@@ -140,7 +140,7 @@ export class HostModel {
    */
   async setUp(request: AppHostSetupRequest): Promise<void> {
     const host = this.host;
-    if (!host) throw new Error("This computer can't be set up for access in this build");
+    if (!host) throw new Error("This machine can't be set up for access in this build");
     try {
       const status = request.mode === "relay" ? await this.setUpRelay(host, request) : await this.setup(host, request, undefined);
       this.apply(status);
@@ -337,6 +337,10 @@ export class HostModel {
         this.error = words(error);
         this.actionFailure = presentHostFailure(words(error), this.platform);
         this.failedAction = this.native.AppHostActionId.ResumeSharing;
+        // What the failure left behind: a switch of account pauses the old
+        // registration first, so Retry goes through the sign-in check again,
+        // never straight to starting the old one.
+        await this.refresh();
       }
     } finally {
       this.reconciling = false;

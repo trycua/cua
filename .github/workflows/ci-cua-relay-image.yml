@@ -1,0 +1,54 @@
+name: "CI: cua-relay image"
+
+# CUA-2029: the relay image must build byte-for-byte the same twice (see
+# libs/cua-spacesd/crates/cua-relay/README.md, "Verify the relay image").
+
+on:
+  pull_request:
+    paths:
+      - "libs/cua-spacesd/crates/cua-relay/**"
+      - "libs/cua/rust-toolchain.toml"
+      - "libs/cua/Cargo.lock"
+      - ".github/workflows/ci-cua-relay-image.yml"
+  push:
+    branches: [main]
+    paths:
+      - "libs/cua-spacesd/crates/cua-relay/**"
+      - "libs/cua/rust-toolchain.toml"
+      - ".github/workflows/ci-cua-relay-image.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-cua-relay-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  reproducible:
+    name: reproducible image (linux/amd64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Rust tag matches rust-toolchain.toml
+        run: |
+          want=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' libs/cua/rust-toolchain.toml)
+          grep -q "^ARG RUST_IMAGE=rust:${want}-bookworm@sha256:" libs/cua-spacesd/crates/cua-relay/Dockerfile \
+            || { echo "Dockerfile RUST_IMAGE must be rust:${want}-bookworm@sha256:..." >&2; exit 1; }
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Build twice per variant (default, hosted), compare digests
+        run: libs/cua-spacesd/crates/cua-relay/scripts/check-reproducible.sh linux/amd64
+      - name: Smoke (read-only, non-root)
+        run: |
+          docker buildx build --load -t cua-relay:ci -f libs/cua-spacesd/crates/cua-relay/Dockerfile libs
+          docker run -d --name relay --read-only --user 65532:65532 \
+            --tmpfs /var/lib/cua-relay:uid=65532,gid=65532 \
+            -p 127.0.0.1:18080:8080 -e CUA_RELAY_TOKENS=dummy cua-relay:ci
+          for i in $(seq 1 30); do
+            [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18080/healthz)" = 204 ] && break
+            sleep 1
+          done
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18080/healthz)" = 204
+          curl -sf http://127.0.0.1:18080/v1/info
+          docker logs relay

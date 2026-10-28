@@ -16,7 +16,7 @@ one Space instead, see [Send a file into a Space](#send-a-file-into-a-space).
 | Folder | What it holds |
 |--------|---------------|
 | `public/` | Shared reference: docs, datasets, house rules, skills |
-| `agents/<agent>/` | One [persistent agent](/spaces/guides/persistent-agents)'s home: memory, `outputs/`, `inbox/` |
+| `agents/<agent>/` | One [named agent](/spaces/guides/agent-memory-and-identity)'s home: memory, `outputs/`, `inbox/` |
 | `spaces/<space>/` | Per-Space scratch and outputs (`local:work` is `spaces/local-work/`) |
 
 Every write is a new version. Deletes leave a marker, so history and restore
@@ -206,6 +206,47 @@ not need to reconnect the Space:
   is `soft`, interruptible and times out in seconds, and the system marks it
   dead and unmounts it (`deadtimeout`).
 
+## Named volumes: share a folder between Spaces
+
+A named volume is the folder `volumes/<name>/` of your Cua Volume. Any number
+of Spaces, of any kind (containers, microVMs and VMs on Linux, and macOS
+VMs), can mount it at a path of their choosing, read-write or read-only, and
+the files outlive every one of them. A Space sees only the volumes it
+mounted; the access rules, versioning and audit log of the drive apply to
+them like to any other folder.
+
+```bash skip="no-runner"
+cua volume named create shared
+cua spaces create --volume shared:/mnt/shared                 # read-write
+cua spaces create --volume shared:/mnt/shared:ro              # read-only
+cua spaces create --volume shared/inputs:/data:ro             # one folder of it
+cua volume named ls                                           # and which Spaces mount each
+cua volume named rm shared                                    # refused while a Space mounts it; --force
+```
+
+```python skip="cua-spaces"
+await spaces.create_volume("shared")
+space = (await spaces.create(cua.SpaceCreateOptions(
+    volumes=[cua.VolumeMount(name="shared", path="/mnt/shared", read_only=True)],
+))).space
+```
+
+The files of a volume are the drive's files under `volumes/<name>/`
+(`cua volume ls volumes/shared/`, `volume_read`, `volume_write`).
+
+- **Linux guests** bind-mount the folder at the path, read-only when asked
+  (a write fails with `EROFS`). The path is created when it is missing; the
+  usual data roots (`/mnt`, `/data`, `/srv`, `/workspace`) and folders the
+  Space's user owns are accepted, system directories are not.
+- **macOS guests** get a symbolic link at the path to the folder under
+  `~/Cua Volume`. A link cannot be read-only; a read-only mount is enforced
+  by the drive instead (writes fail with a permission error).
+- The mounts are part of the Space's record. They come back when the guest's
+  cua-spacesd restarts or the Space stops and starts, and a fork mounts the
+  same volumes.
+- A create fails, and leaves nothing behind, when a volume does not exist,
+  when two mounts overlap, or when the guest cannot mount (a container
+  without `/dev/fuse`, an older cua-spacesd without `volume.binds`).
 ## Send a file into a Space
 
 To copy a one-off file or folder into one Space, without keeping it on the

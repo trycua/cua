@@ -144,7 +144,10 @@ message GuestUsage {
   bool memory_limited = 6;
   // Disk in use in bytes.
   uint64 disk_used = 7;
-  // Disk size in bytes.
+  // Disk size in bytes; 0 when the guest's file system has no size of its
+  // own (gVisor's root overlay says "unlimited") or did not say. Readers
+  // treat any size at or above 2^60 bytes the same way: a sentinel, never a
+  // size.
   uint64 disk_total = 8;
   // `disk_total` is the guest's own disk.
   bool disk_limited = 9;
@@ -176,6 +179,25 @@ message SpaceResources {
   uint64 disk_allocated = 5;
   // The guest's own numbers; unset while it is off or unreachable.
   GuestUsage usage = 6;
-  // What it costs this computer; unset for a container.
+  // What it costs this computer: its own data only, never the base it
+  // shares; unset when there is nothing to measure.
   DiskOnHost disk_on_host = 7;
+  // The base image it is a copy-on-write copy of; unset when it has none or
+  // the runtime cannot tell it apart.
+  SharedBase base = 8;
+}
+
+// A base image several Spaces share copy-on-write: a container image's
+// layers, the image a virtual machine's disk was cloned from.
+message SharedBase {
+  // Which base: Spaces with the same key share the same blocks.
+  string key = 1;
+  // The image reference it came from, for example
+  // `ghcr.io/trycua/linux:24.04`.
+  string image = 2;
+  // What it takes on this computer, once for all its Spaces. Unset when the
+  // runtime cannot tell it apart from the Spaces' own data.
+  optional uint64 bytes = 3;
+  // Local Spaces that use it, this one included.
+  uint32 shared_with = 4;
 }

@@ -25,7 +25,10 @@ name: "CD: Cua Spaces"
 # item is the notarized DMG of a release, EdDSA-signed by Sparkle's
 # generate_appcast (apps/cua-spaces-macos/scripts/make-appcast.sh, checked
 # by verify-appcast.sh). X.Y.Z-suffix versions go to the `beta` channel
-# (apps set to "Update to: Beta"). Only with the CUA_SPACES_SPARKLE_ED_PRIVATE_KEY
+# (apps set to "Update to: Beta"). A beta is a production build with a
+# prerelease version, not a staging build: it is built exactly like a stable
+# release, so it talks to production (CUA_ENV=staging at launch selects
+# staging for any build). Only with the CUA_SPACES_SPARKLE_ED_PRIVATE_KEY
 # secret and a Developer ID build: without it no appcast is made or
 # published and every other step is unchanged. The macOS job writes the
 # appcast (merged into the published one) as a workflow artifact; the last
@@ -289,12 +292,28 @@ jobs:
       - uses: ./.github/actions/spaces-rust-slice
         with:
           triple: ${{ matrix.triple }}
+      # microVMs on Apple silicon: the static aarch64 guest init the app
+      # bundles (build-release.sh --skip-cargo takes it from here).
+      - name: Build the microVM guest init (arm64)
+        if: matrix.arch == 'arm64'
+        working-directory: libs/cua
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: rust-lld
+        run: |
+          set -euo pipefail
+          rustup target add aarch64-unknown-linux-musl
+          cargo build --locked --release -p cua-microvm-init --target aarch64-unknown-linux-musl
+          init=target/aarch64-unknown-linux-musl/release/cua-microvm-init
+          file "$init" | grep -q "statically linked" || { echo "::error::cua-microvm-init is not static"; exit 1; }
+          cp "$init" "target/${{ matrix.triple }}/release/"
       - uses: actions/upload-artifact@v4
         with:
           name: macos-rust-${{ matrix.arch }}
           path: |
             libs/cua/target/${{ matrix.triple }}/release/libcua_spaces_ffi.dylib
             libs/cua/target/${{ matrix.triple }}/release/cua-spaces-cli
+            libs/cua/target/${{ matrix.triple }}/release/cua-microvm-init
           if-no-files-found: error
           retention-days: 3
 
@@ -402,8 +421,11 @@ jobs:
           set -euo pipefail
           tag="cua-spaces-v${VERSION}"
           if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # Release Please's draft is untagged, so it is not found above: carry
+            # its notes over instead of the generic line.
+            .github/scripts/spaces_release_notes.sh "$VERSION" > "$RUNNER_TEMP/release-notes.md"
             flags=(--draft --verify-tag --title "Cua Spaces v${VERSION}"
-              --notes "Automated Cua Spaces release.")
+              --notes-file "$RUNNER_TEMP/release-notes.md")
             [ "$PRERELEASE" = true ] && flags+=(--prerelease)
             gh release create "$tag" --repo "$GITHUB_REPOSITORY" "${flags[@]}"
           fi
@@ -423,6 +445,10 @@ jobs:
             cp "$RUNNER_TEMP/macos-rust/macos-rust-${pair%%:*}/"* "$dir/"
             chmod +x "$dir/cua-spaces-cli"
           done
+          # The microVM guest init, where build-release.sh --skip-cargo looks.
+          musl=libs/cua/target/aarch64-unknown-linux-musl/release
+          mkdir -p "$musl"
+          mv libs/cua/target/aarch64-apple-darwin/release/cua-microvm-init "$musl/"
 
       # A throwaway keychain holds the Developer ID Application identity for
       # this job only (deleted in the last step).
@@ -459,8 +485,17 @@ jobs:
           name: spaces-web-dist
           path: apps/cua-spaces-web/dist
 
+      # An OCI image without cua-spacesd gets a static one injected on
+      # containers and microVMs; the app carries it (Contents/Resources),
+      # from the cua-spacesd release it pins.
+      - name: Fetch the static cua-spacesd
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .github/scripts/fetch_static_spacesd.sh "$GITHUB_REPOSITORY" aarch64,x86_64 "$RUNNER_TEMP/static-spacesd"
+
       - name: Build and sign Cua Spaces.app (universal)
         env:
+          CUA_SPACESD_STATIC_DIR: ${{ runner.temp }}/static-spacesd
           VERSION: ${{ steps.version.outputs.version }}
           SIGNED: ${{ steps.signing.outputs.apple }}
           DEVELOPER_NAME: ${{ secrets.DEVELOPER_NAME }}
@@ -470,7 +505,8 @@ jobs:
           identity="-"
           [ "$SIGNED" = true ] && identity="Developer ID Application: $DEVELOPER_NAME ($TEAM_ID)"
           # The updater's feed is this repository's (staging updates from
-          # staging).
+          # staging). Stable and beta versions are built the same way, and
+          # production is the build default.
           apps/cua-spaces-macos/scripts/build-release.sh --version "$VERSION" \
             --build-number "$GITHUB_RUN_NUMBER" --arch universal --skip-cargo \
             --sign "$identity" --out "$RUNNER_TEMP/spaces-app" \
@@ -485,6 +521,15 @@ jobs:
           path: ${{ runner.temp }}/spaces-app/cua-spaces-*-dSYMs.zip
           if-no-files-found: error
           retention-days: 90
+
+      # Crash reports (CUA-2343) are readable only with these symbols in Sentry.
+      - name: Upload the macOS dSYMs to Sentry
+        uses: ./.github/actions/sentry-upload
+        with:
+          token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          version: ${{ steps.version.outputs.version }}
+          kind: debug-files
+          path: ${{ runner.temp }}/spaces-app/cua-spaces-*-dSYMs.zip
 
       - name: Notarize and staple the app
         if: steps.signing.outputs.apple == 'true'
@@ -775,6 +820,8 @@ jobs:
         if: runner.os == 'Windows' && vars.AZURE_CLIENT_ID != ''
         uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
         with:
+          # Install the module on every run: a cached one skipped the install and was not found (#5838).
+          cache-dependencies: 'false'
           endpoint: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
           signing-account-name: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME }}
           certificate-profile-name: ${{ vars.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME }}
@@ -798,6 +845,8 @@ jobs:
         if: runner.os == 'Windows' && vars.AZURE_CLIENT_ID != ''
         uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
         with:
+          # Install the module on every run: a cached one skipped the install and was not found (#5838).
+          cache-dependencies: 'false'
           endpoint: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
           signing-account-name: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME }}
           certificate-profile-name: ${{ vars.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME }}
@@ -1073,9 +1122,27 @@ jobs:
           node-version: 22
       - name: Build the web UI
         working-directory: apps/cua-spaces-web
+        env:
+          # Hidden source maps next to the bundles, uploaded to Sentry below and
+          # deleted before the artifact, so they never ship in the app.
+          CUA_SOURCEMAPS: "1"
         run: |
           pnpm install --ignore-workspace --frozen-lockfile
           pnpm build
+      - name: Resolve version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then VERSION="${{ github.event.inputs.version }}"; else VERSION="${GITHUB_REF_NAME#cua-spaces-v}"; fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Upload the web UI source maps to Sentry
+        uses: ./.github/actions/sentry-upload
+        with:
+          token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          version: ${{ steps.version.outputs.version }}
+          kind: sourcemaps
+          path: apps/cua-spaces-web/dist
+          url-prefix: "~/"
+          delete-maps: "true"
       - uses: actions/upload-artifact@v4
         with:
           name: spaces-web-dist
@@ -1093,7 +1160,7 @@ jobs:
     needs: electron-plan
     if: needs.electron-plan.outputs.desktop == 'true'
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 120
+    timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:
@@ -1503,8 +1570,14 @@ jobs:
           $ErrorActionPreference = 'Stop'
           foreach ($i in 1..4) {
             try {
-              Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser | Out-Null
-              Install-Module -Name TrustedSigning -Scope CurrentUser -Force -Repository PSGallery
+              # PSResourceGet (in PowerShell 7) needs no NuGet package provider; the
+              # provider bootstrap behind Install-PackageProvider stopped resolving.
+              if (Get-Command Install-PSResource -ErrorAction SilentlyContinue) {
+                Install-PSResource -Name TrustedSigning -Repository PSGallery -TrustRepository -Scope CurrentUser -Reinstall
+              } else {
+                Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser | Out-Null
+                Install-Module -Name TrustedSigning -Scope CurrentUser -Force -Repository PSGallery
+              }
               Import-Module TrustedSigning
               Write-Host "TrustedSigning $((Get-Module TrustedSigning).Version) ready"
               exit 0
@@ -1663,9 +1736,10 @@ jobs:
         with:
           name: electron-native-linux-${{ matrix.arch }}
           path: apps/cua-spaces-desktop/native/linux-${{ matrix.arch }}
-      # Artifacts drop the executable bit; the daemon starts from this cua.
+      # Artifacts drop the executable bit; the daemon starts from this cua,
+      # and a Space without cua-spacesd runs the static one beside it.
       - name: The bundled cua is executable
-        run: chmod +x native/linux-${{ matrix.arch }}/cua
+        run: chmod +x native/linux-${{ matrix.arch }}/cua native/linux-${{ matrix.arch }}/cua-spacesd-linux-*
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       # No OS code signing on Linux; electron-updater checks each file's sha512.
@@ -1674,6 +1748,18 @@ jobs:
           CUA_SPACES_VERSION: ${{ needs.electron-plan.outputs.version }}
           CUA_SPACES_BUILD_NUMBER: ${{ github.run_number }}
         run: pnpm dist:linux
+      # The Electron main process's source maps stay out of the app (electron-builder
+      # drops *.map): Sentry gets them here, matched by release and file URL.
+      - name: Upload the Electron main source maps to Sentry
+        if: matrix.arch == 'x64'
+        uses: ./.github/actions/sentry-upload
+        with:
+          token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          version: ${{ needs.electron-plan.outputs.version }}
+          kind: sourcemaps
+          path: apps/cua-spaces-desktop/dist-electron
+          url-prefix: "app:///dist-electron"
+          inject: "false"
       - name: Collect the assets
         env:
           ARCH: ${{ matrix.arch }}
@@ -1686,6 +1772,9 @@ jobs:
             echo "electron-linux: updater sha512 only (no OS code signing on Linux)" > electron-assets/signing-electron-linux.txt
           fi
           sha256sum electron-assets/*
+      - name: Check the deb ships the static cua-spacesd next to cua
+        working-directory: .
+        run: .github/scripts/check_static_spacesd_packaged.sh apps/cua-spaces-desktop/electron-assets
       - uses: actions/upload-artifact@v4
         with:
           name: electron-linux-${{ matrix.arch }}
@@ -1759,8 +1848,9 @@ jobs:
           tag="cua-spaces-v${VERSION}"
           # build-macos normally made the draft; a hand-pushed tag may race it.
           if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            .github/scripts/spaces_release_notes.sh "$VERSION" > "$RUNNER_TEMP/release-notes.md"
             gh release create "$tag" --repo "$GITHUB_REPOSITORY" --draft --prerelease --verify-tag \
-              --title "Cua Spaces v${VERSION}" --notes "Automated Cua Spaces release." \
+              --title "Cua Spaces v${VERSION}" --notes-file "$RUNNER_TEMP/release-notes.md" \
               || gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null
           fi
           mkdir -p feed signing
@@ -1915,8 +2005,11 @@ jobs:
     name: Staging smoke is green
     if: startsWith(github.ref, 'refs/tags/cua-spaces-v')
     runs-on: ubuntu-latest
-    # Waits up to 30 minutes for the smoke that request-staging-smoke starts.
-    timeout-minutes: 40
+    # Waits up to 2 hours for the smoke that request-staging-smoke starts:
+    # the smoke can sit in trycua/cloud's queue for half an hour before it
+    # runs (v0.17.0-beta.2's posted 35 minutes after the request, after a
+    # 30-minute wait had given up), and the release builds take longer still.
+    timeout-minutes: 130
     defaults:
       run:
         working-directory: .
@@ -1930,7 +2023,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SKIP_STAGING_GATE: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_staging_gate }}
           SKIP_REASON: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_staging_reason || '' }}
-          WAIT_MINUTES: "30"
+          WAIT_MINUTES: "120"
         run: .github/scripts/require_staging_smoke.sh cua-spaces "$GITHUB_SHA"
 
   verify-release:
@@ -2160,6 +2253,15 @@ jobs:
               echo "Every asset has a keyless Sigstore bundle (identity: https://github.com/$GITHUB_REPOSITORY/.github/workflows/cd-cua-spaces.yml@$GITHUB_REF)."
             } > notes.md
             flags+=(--title "Cua Spaces v$VERSION ($label)" --notes-file notes.md)
+          fi
+          # A release made with the generic line (a hand-pushed tag, a race)
+          # gets the real notes now. Staging notes above stay as they are.
+          if ! printf '%s ' "${flags[@]}" | grep -q -- '--notes-file'; then
+            current="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body)"
+            if [ -z "${current//[[:space:]]/}" ] || [ "$current" = "Automated Cua Spaces release." ]; then
+              .github/scripts/spaces_release_notes.sh "$VERSION" > real-notes.md
+              flags+=(--notes-file real-notes.md)
+            fi
           fi
           gh release edit "$TAG" "${flags[@]}" --repo "$GITHUB_REPOSITORY"
       # Say which platforms a patch release contains (CUA-2068). A full release

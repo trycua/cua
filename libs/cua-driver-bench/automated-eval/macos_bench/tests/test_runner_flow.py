@@ -8,6 +8,8 @@ finalize. No GUI, no model."""
 from __future__ import annotations
 
 import argparse
+import base64
+import os
 import contextlib
 import json
 import sys
@@ -16,6 +18,8 @@ import time
 import unittest
 from pathlib import Path
 from unittest import mock
+
+import pytest
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
@@ -86,6 +90,7 @@ def test_browser_cli_auth_rejected_before_provisioning(tmp_path):
             rb.make_ctx(args)
 
 
+@pytest.mark.skipif(sys.platform != "darwin", reason="browser CLI arm is macOS-only")
 def test_browser_cli_run_fails_closed(tmp_path):
     with tempfile.TemporaryDirectory() as tmp:
         ctx = make_ctx(tmp, no_model_preflight=True, build_dir=None)
@@ -195,7 +200,7 @@ class CodexAuthPreflightTest(unittest.TestCase):
                     self.assertNotIn(secret, json.dumps(checks))
 
     def test_native_trial_removes_auth_link_and_flags_replacement(self) -> None:
-        for replaced in (False, True):
+        for replaced in (False, True, "setup"):
             with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as stack:
                 ctx = make_ctx(
                     tmp,
@@ -230,11 +235,16 @@ class CodexAuthPreflightTest(unittest.TestCase):
                 stack.enter_context(
                     mock.patch.dict(
                         "os.environ",
-                        {"CDB_CODEX_AUTH": "chatgpt", "CDB_CODEX_AUTH_FILE": str(source)},
+                        {
+                            "CDB_CODEX_AUTH": "chatgpt",
+                            "CDB_CODEX_AUTH_FILE": str(source),
+                            "DISPLAY": os.environ.get("DISPLAY") or ":99",
+                        },
                     )
                 )
                 ctx.versions["codex_native"] = rb.cxn.observed(Path("/nonexistent"))
                 for owner, name, result in (
+                    (rb.desktop, "capture_screenshot", None),
                     (rb, "task_spec", {}),
                     (rb, "kill_bench_apps", None),
                     (rb, "reset_needs_apps", None),
@@ -257,15 +267,41 @@ class CodexAuthPreflightTest(unittest.TestCase):
                 def run_codex(cmd, env, *args, **kwargs):
                     link = Path(env["CODEX_HOME"]) / "auth.json"
                     self.assertTrue(link.is_symlink())
-                    if replaced:
+                    if replaced is True:
                         link.unlink()
                         link.write_text("FAKE_TOKEN")
+                    if replaced == "setup":
+                        events = [
+                            {"type": "system", "subtype": "init"},
+                            {
+                                "type": "user",
+                                "message": {
+                                    "content": [
+                                        {
+                                            "type": "tool_result",
+                                            "is_error": True,
+                                            "content": "screen_recording_permission_denied",
+                                        }
+                                    ]
+                                },
+                            },
+                            {"type": "result", "result": "DONE"},
+                        ]
+                        args[5].write_text("\n".join(json.dumps(e) for e in events))
                     return {"returncode": 0, "result_seen": True, "wall_s": 0}
 
                 stack.enter_context(mock.patch.object(rb.cxn, "run_codex", side_effect=run_codex))
                 row = rb.run_attempt(ctx, entry, 1)
-                self.assertEqual(row["infra_failure"] == "harness_exception", replaced)
-                if replaced:
+                self.assertIn("infra_pattern", row)
+                if replaced == "setup":
+                    self.assertEqual(row["infra_pattern"], "screen_recording")
+                    self.assertEqual(row["infra_failure"], "tool_setup")
+                    self.assertFalse(row["passed"])
+                    self.assertTrue(row["excluded"])
+                else:
+                    self.assertIsNone(row["infra_pattern"])
+                self.assertEqual(row["infra_failure"] == "harness_exception", replaced is True)
+                if replaced is True:
                     self.assertIn("symlink replaced", row["infra_message"])
                 link = ctx.run_dir / "trials" / entry["trial_id"] / "a1/codex-home/.codex/auth.json"
                 self.assertFalse(link.is_symlink())
@@ -291,6 +327,132 @@ class CodexAuthPreflightTest(unittest.TestCase):
                     [label for label, status, _ in checks if status == "pass"],
                 )
                 fetch.assert_called_once()
+
+    def linux_evidence_trial(self, *, replace_link: bool, screenshot_error, copy_error=None):
+        with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as stack:
+            ctx = make_ctx(
+                tmp,
+                timeout_s=60,
+                max_turns=3,
+                effort="low",
+                idle_min=0,
+                no_sentinel=True,
+                build_dir=tmp,
+                check_occlusion=False,
+                tell_budget=False,
+            )
+            ctx.tasks["MB-01"] = argparse.Namespace(id="MB-01", tags=[], timeout_s=60)
+            arm = "cx-codex-cu"
+            entry = {**ENTRY, "arm": arm}
+            source = Path(tmp) / "shared-auth.json"
+            source.write_text("FAKE_TOKEN")
+            mcp = Path(tmp) / "mcp.json"
+            mcp.write_text(
+                json.dumps(
+                    {
+                        "mcpServers": {
+                            "sky": {
+                                "command": "node",
+                                "env": {"CUA_REPL_ENABLED_SURFACES": "computer"},
+                            }
+                        }
+                    }
+                )
+            )
+            ctx.mcp[arm] = (mcp, "cua_repl")
+            stack.enter_context(
+                mock.patch.dict(
+                    "os.environ",
+                    {
+                        "CDB_CODEX_AUTH": "chatgpt",
+                        "CDB_CODEX_AUTH_FILE": str(source),
+                        "DISPLAY": ":99",
+                    },
+                )
+            )
+            ctx.versions["codex_native"] = rb.cxn.observed(Path("/nonexistent"))
+            mocks = {}
+            for owner, name, result in (
+                (rb.desktop, "detect_platform", "linux"),
+                (rb, "task_spec", {}),
+                (rb, "kill_bench_apps", None),
+                (rb, "reset_needs_apps", None),
+                (rb.subprocess, "run", None),
+                (rb.pilot, "hid_idle_seconds", 1000),
+                (rb.pilot, "sweep_processes", 0),
+                (rb.pilot, "prepare_probe", ("BRIEF", {})),
+                (rb.pilot, "launch_lab", None),
+                (rb.ca, "prepare_cwd", Path(tmp)),
+                (rb, "apps_running", {}),
+                (rb, "evaluate_probe", {"passed": True}),
+                (rb, "FrontWatcher", None),
+            ):
+                mocks[name] = stack.enter_context(
+                    mock.patch.object(owner, name, return_value=result)
+                )
+            sentinel = stack.enter_context(mock.patch.object(rb.pilot, "Sentinel"))
+            sentinel.return_value.enabled = False
+            sentinel.return_value.summary.return_value = {}
+            stack.enter_context(mock.patch.object(rb.pilot, "IdleSampler"))
+
+            def capture(display, path):
+                if path.name == "startup.png":
+                    return None
+                if screenshot_error is not None:
+                    raise screenshot_error
+
+            stack.enter_context(
+                mock.patch.object(rb.desktop, "capture_screenshot", side_effect=capture)
+            )
+            log = Path(tmp) / "recorder.log"
+            log.write_text("log")
+            stack.enter_context(mock.patch.object(rb.ca, "RECORDER_STATE", Path(tmp)))
+            Path(tmp, "daemon.log").write_text("log")
+            if copy_error is not None:
+                stack.enter_context(
+                    mock.patch.object(rb.shutil, "copyfile", side_effect=copy_error)
+                )
+
+            def run_codex(cmd, env, *args, **kwargs):
+                link = Path(env["CODEX_HOME"]) / "auth.json"
+                self.assertTrue(link.is_symlink())
+                if replace_link:
+                    link.unlink()
+                    link.write_text("FAKE_TOKEN")
+                return {"returncode": 0, "result_seen": True, "wall_s": 0}
+
+            stack.enter_context(mock.patch.object(rb.cxn, "run_codex", side_effect=run_codex))
+            row = rb.run_attempt(ctx, entry, 1)
+            trial = ctx.run_dir / "trials" / entry["trial_id"] / "a1"
+            link = trial / "codex-home/.codex/auth.json"
+            self.assertFalse(link.is_symlink())
+            self.assertEqual(source.read_text(), "FAKE_TOKEN")
+            mocks["sweep_processes"].assert_called()
+            mocks["kill_bench_apps"].assert_called()
+            errors = trial / "artifacts" / "screenshot-error.txt"
+            return row, (errors.read_text() if errors.is_file() else None)
+
+    def test_linux_screenshot_failure_still_unlinks_auth(self) -> None:
+        row, errors = self.linux_evidence_trial(
+            replace_link=False, screenshot_error=AttributeError("secret /path")
+        )
+        self.assertNotEqual(row["infra_failure"], "harness_exception")
+        self.assertEqual(errors, "screenshot: AttributeError")
+
+    def test_linux_log_copy_failure_still_unlinks_auth(self) -> None:
+        row, errors = self.linux_evidence_trial(
+            replace_link=False, screenshot_error=None, copy_error=OSError("secret /path")
+        )
+        self.assertNotEqual(row["infra_failure"], "harness_exception")
+        self.assertIn("recorder log: OSError", errors)
+        self.assertNotIn("secret", errors)
+
+    def test_linux_evidence_failure_keeps_credential_integrity_error(self) -> None:
+        row, _ = self.linux_evidence_trial(
+            replace_link=True, screenshot_error=AttributeError("boom")
+        )
+        self.assertEqual(row["infra_failure"], "harness_exception")
+        self.assertIn("shared ChatGPT credential symlink replaced", row["infra_message"])
 
 
 def attempt_row(
@@ -320,8 +482,198 @@ def attempt_row(
     return row
 
 
+class RealCaptureTest(unittest.TestCase):
+    def test_each_family_validates_capture_bytes_and_closes_client(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = make_ctx(tmp)
+            ffmpeg = Path(tmp) / "ffmpeg"
+            ffmpeg.write_text(
+                '#!/usr/bin/env python3\nimport sys\nfrom pathlib import Path\nsys.stdout.buffer.write(Path(sys.argv[sys.argv.index("-i")+1]).read_bytes())\n'
+            )
+            ffmpeg.chmod(0o755)
+            image = b"P6\n2 1\n255\n" + b"\x00\x01\x02\xff\xfe\xfd"
+            capture_detail = rb.rec.capture_detail
+            families = [
+                "cc-cua-driver",
+                "cc-codex-cu",
+                "cc-claude-cu-helper",
+                "cx-cua-driver",
+                "cx-codex-cu",
+                "cx-claude-cu-helper",
+            ]
+            for arm in families:
+                source = rb.cxn.SOURCE_ARM.get(arm, arm)
+                tools = [
+                    {"name": n}
+                    for n in ["list_apps", "get_desktop_state", "js", "js_reset", "run_script"]
+                    + [f"tool{i}" for i in range(50)]
+                ]
+                if source in rb.ca.CU_HELPER_ARMS:
+                    tools = [{"name": n} for n in rb.ca.load_pins()["claude_cu_helper"]["tools"]]
+                elif (
+                    source in rb.ca.CUA_ARMS
+                    and rb.ca.SCRIPT_FLAG not in rb.ca.CUA_BUILDS[source].daemon_env
+                ):
+                    tools = [t for t in tools if t["name"] != "run_script"]
+                ctx.mcp[arm] = (Path(tmp) / f"{arm}.json", "server")
+                for payload, message in [
+                    (image, None),
+                    ("file", None),
+                    ("legacy", None),
+                    (b"", "no image block"),
+                    (b"garbage", "decode failed"),
+                    (b"P6\n2 1\n255\n" + b"\x00" * 6, "blank image"),
+                    (b"P6\n2 1\n255\n" + b"\xff" * 6, "blank image"),
+                    (None, "no image block"),
+                    ("error", "could not create image from window"),
+                    ("rpc", "permission denied"),
+                    ("windows", "no layer-0 Calculator window"),
+                ]:
+                    if payload == "windows" and source not in rb.ca.CU_HELPER_ARMS:
+                        continue
+                    if payload in ("file", "legacy") and source not in rb.ca.CUA_ARMS:
+                        continue
+                    advertised = [
+                        {
+                            **t,
+                            "inputSchema": {
+                                "properties": {"screenshot_out_file": {"type": "string"}}
+                            },
+                        }
+                        if t["name"] == "get_desktop_state" and payload == "file"
+                        else {"name": "screenshot"}
+                        if t["name"] == "get_desktop_state" and payload == "legacy"
+                        else t
+                        for t in tools
+                    ]
+                    calls = []
+                    client = mock.Mock()
+
+                    def request(method, params, **kwargs):
+                        calls.append((method, params))
+                        if method == "tools/list":
+                            return {"result": {"tools": advertised}}
+                        if params["name"] == "check_permissions":
+                            return {"result": {"content": []}}
+                        if params["name"] == "app_list_windows":
+                            return {
+                                "result": {
+                                    "content": [
+                                        {
+                                            "type": "text",
+                                            "text": json.dumps(
+                                                []
+                                                if payload == "windows"
+                                                else [{"app": "Calculator", "window_id": 7}]
+                                            ),
+                                        }
+                                    ]
+                                }
+                            }
+                        if payload == "error":
+                            return {
+                                "result": {
+                                    "isError": True,
+                                    "content": [
+                                        {
+                                            "type": "text",
+                                            "text": "could not create image from window",
+                                        }
+                                    ],
+                                }
+                            }
+                        if payload == "rpc":
+                            return {"error": {"message": "permission denied"}}
+                        if payload == "file":
+                            Path(params["arguments"]["screenshot_out_file"]).write_bytes(image)
+                            return {"result": {"content": None}}
+                        return {
+                            "result": {
+                                "content": None
+                                if payload is None
+                                else [
+                                    {
+                                        "type": "image",
+                                        "data": base64.b64encode(
+                                            image if payload == "legacy" else payload
+                                        ).decode(),
+                                    }
+                                ]
+                            }
+                        }
+
+                    client.request.side_effect = request
+                    with (
+                        self.subTest(arm=arm, message=message),
+                        mock.patch.object(rb.rec, "McpStdioClient", return_value=client),
+                        mock.patch.object(rb, "ensure_agent_daemon") as daemon,
+                        mock.patch.object(rb, "mcp_entry", return_value=("mcp", [], {})),
+                        mock.patch.object(
+                            rb.cxn,
+                            "server_entry",
+                            return_value={"command": "native", "args": [], "env": {}},
+                        ) as native,
+                        mock.patch.object(
+                            rb.rec,
+                            "capture_detail",
+                            side_effect=lambda path: capture_detail(path, str(ffmpeg)),
+                        ),
+                    ):
+                        name, status, detail = rb.real_capture_check(ctx, arm)
+                        self.assertEqual(name, f"{arm} real capture")
+                        self.assertEqual(status, "fail" if message else "pass")
+                        self.assertIn(message or "2x1 bytes=", detail)
+                        self.assertLess(len(detail), 500)
+                        client.close.assert_called_once()
+                        if arm in rb.cxn.ARMS:
+                            native.assert_called_once_with(ctx.mcp[arm][0], arm)
+                        if source in rb.ca.CUA_ARMS:
+                            daemon.assert_called_once_with(ctx, source)
+                            self.assertEqual(
+                                [p["name"] for m, p in calls if m == "tools/call"],
+                                [
+                                    "check_permissions",
+                                    "screenshot" if payload == "legacy" else "get_desktop_state",
+                                ],
+                            )
+                        if source == "cc-codex-cu":
+                            code = calls[-1][1]["arguments"]["code"]
+                            self.assertIn('cua.getApp("Calculator")', code)
+                            self.assertIn("await app.getScreenshot()", code)
+                            self.assertNotIn("emitImage", code)
+                            self.assertNotIn(".screenshot()", code)
+            with self.assertRaises(FileNotFoundError):
+                capture_detail(Path(tmp) / "missing.png", str(Path(tmp) / "missing-ffmpeg"))
+
+    def test_stdio_client_answers_calculator_elicitation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            script = Path(tmp) / "server.py"
+            script.write_text("""import json, sys
+for line in sys.stdin:
+    req = json.loads(line)
+    if req.get("method") == "initialize":
+        assert req["params"]["capabilities"] == {"elicitation": {}}
+        print(json.dumps({"id": req["id"], "result": {}}), flush=True)
+    elif req.get("method") == "tools/call":
+        pending = req["id"]
+        print(json.dumps({"id": "approval", "method": "elicitation/create", "params": {"message": 'Allow Computer Use to use "Calculator"?'}}), flush=True)
+    elif req.get("id") == "approval":
+        print(json.dumps({"id": pending, "result": req["result"]}), flush=True)
+""")
+            client = rb.rec.McpStdioClient(
+                [sys.executable, str(script)],
+                dict(os.environ),
+                elicitation=lambda text: rb.claude_driver.answer_elicitation(text, {"calculator"}),
+            )
+            try:
+                reply = client.request("tools/call", {"name": "js", "arguments": {}}, timeout=3)
+                self.assertEqual(reply["result"]["action"], "accept")
+            finally:
+                client.close()
+
+
 class PreflightTest(unittest.TestCase):
-    def test_native_mcp_is_live_only_online(self) -> None:
+    def test_offline_captures_every_native_arm_without_models(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ctx = make_ctx(tmp, offline=True, allow_non_terminal=True)
             ctx.task_ids = []
@@ -345,6 +697,16 @@ class PreflightTest(unittest.TestCase):
                 mock.patch.object(rb.ca, "check_cu_helper_pins", return_value=[]),
                 mock.patch.object(rb, "cu_helper_live_checks", return_value=[]),
                 mock.patch.object(rb, "native_codex_checks", return_value=[]) as native,
+                mock.patch.object(
+                    rb,
+                    "real_capture_check",
+                    side_effect=lambda ctx, arm: (
+                        f"{arm} real capture",
+                        "fail" if arm == rb.cxn.ARMS[0] else "pass",
+                        "capture",
+                    ),
+                ) as capture,
+                mock.patch.object(rb, "reset_needs_apps") as reset,
                 mock.patch.object(rb, "mcp_list_tools") as probe,
                 mock.patch.object(rb, "ensure_agent_daemon") as daemon,
             ):
@@ -355,20 +717,14 @@ class PreflightTest(unittest.TestCase):
                         ctx.args.offline = True
                         probe.reset_mock()
                         daemon.reset_mock()
-                        probe.side_effect = AssertionError("offline MCP probe")
-                        daemon.side_effect = AssertionError("offline daemon")
+                        capture.reset_mock()
                         rows = rb.preflight(ctx)
                         probe.assert_not_called()
                         daemon.assert_not_called()
                         native.assert_called_with(ctx, arm, False)
-                        self.assertIn(
-                            (
-                                "daemons, MCP servers, recording, model calls",
-                                "warn",
-                                "skipped (--offline)",
-                            ),
-                            rows,
-                        )
+                        capture.assert_called_once_with(ctx, arm)
+                        self.assertTrue(any(name == f"{arm} real capture" for name, _, _ in rows))
+                        reset.assert_called_with(["Calculator"])
                         ctx.args.offline = False
                         probe.side_effect = None
                         probe.return_value = [
@@ -379,23 +735,60 @@ class PreflightTest(unittest.TestCase):
                         ] + rb.ca.load_pins()["claude_cu_helper"]["tools"]
                         daemon.side_effect = None
                         rows = rb.preflight(ctx)
-                        probe.assert_called_once_with("mcp", [], {})
-                        source = rb.cxn.SOURCE_ARM[arm]
-                        if source in rb.ca.CUA_ARMS:
-                            daemon.assert_called_once_with(ctx, source)
-                        else:
-                            daemon.assert_not_called()
-                        self.assertTrue(
-                            any(
-                                name.startswith(f"{arm} ")
-                                and "MCP server lists" in name
-                                and status == "pass"
-                                for name, status, _ in rows
-                            )
-                        )
+                        self.assertEqual(capture.call_count, 2)
+                ctx.arm_names = list(rb.cxn.MCP_ARMS)
+                ctx.args.offline = True
+                capture.reset_mock()
+                rows = rb.preflight(ctx)
+                self.assertEqual(capture.call_count, len(ctx.arm_names))
+                self.assertEqual(
+                    len([r for r in rows if r[0].endswith(" real capture")]), len(ctx.arm_names)
+                )
+                ctx.recorder = mock.Mock(name="recording")
+                raw = Path(tmp) / "video.mov"
+                raw.write_bytes(b"video")
+                ctx.recorder.stop.return_value = raw
+                for blank in (True, False):
+                    with (
+                        mock.patch.object(rb.time, "sleep"),
+                        mock.patch.object(rb.rec, "ffprobe_duration", return_value=3),
+                        mock.patch.object(
+                            rb.rec,
+                            "capture_detail",
+                            side_effect=RuntimeError("blank image") if blank else None,
+                            return_value=f"2x1 bytes=5 path={raw}",
+                        ),
+                    ):
+                        rows = rb.preflight(ctx)
+                    recording = next(r for r in rows if r[0].startswith("recorder real capture"))
+                    self.assertEqual(recording[1], "fail" if blank else "pass")
 
 
 class ExecuteTrialTest(unittest.TestCase):
+    def setUp(self) -> None:
+        disk = mock.patch.object(rb.rec, "free_gb", return_value=100.0)
+        disk.start()
+        self.addCleanup(disk.stop)
+
+    def test_daemon_setup_failure_retries_with_restart_then_excludes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = make_ctx(tmp)
+            rows = [
+                attempt_row(i, "tool_setup", infra_pattern="daemon_not_running") for i in (1, 2)
+            ]
+            with (
+                mock.patch.object(rb.rec, "free_gb", return_value=1000),
+                mock.patch.object(rb, "ensure_agent_daemon") as restart,
+            ):
+                row, pauses, error = self.run_trial(ctx, rows)
+            self.assertIsNone(error)
+            self.assertEqual(row["infra_pattern"], "daemon_not_running")
+            self.assertTrue(row["excluded"])
+            self.assertFalse(row["passed"])
+            self.assertEqual(row["attempt"], 2)
+            self.assertEqual(len(pauses), 1)
+            restart.assert_called_once_with(ctx, ENTRY["arm"])
+
     def run_trial(
         self, ctx: rb.Ctx, rows: list[dict]
     ) -> tuple[dict | None, list[tuple[str, float]], Exception | None]:
@@ -503,6 +896,11 @@ class ExecuteTrialTest(unittest.TestCase):
 
 
 class GateTest(unittest.TestCase):
+    def setUp(self) -> None:
+        disk = mock.patch.object(rb.rec, "free_gb", return_value=100.0)
+        disk.start()
+        self.addCleanup(disk.stop)
+
     def test_quota_stop_rule_blocks_new_trials(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ctx = make_ctx(tmp)
@@ -620,6 +1018,63 @@ class FinalizeTest(unittest.TestCase):
             {"trial_id": "c", "smoke": True, "final": True},
         ]
         self.assertEqual(core.completed_trial_ids(rows), {"a"})
+
+
+class LinuxSetupTest(unittest.TestCase):
+    def test_macos_arms_are_skipped_before_setup(self) -> None:
+        import contextlib
+        import io
+        import desktop_runtime as desktop
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        args = rb.build_parser().parse_args(
+            [
+                "dry-run",
+                "--ledger",
+                str(Path(tmp.name) / "ledger.jsonl"),
+                "--bench-v2",
+                "--arms",
+                "cc-cua-driver",
+                "cc-codex-cu",
+                "cc-claude-cu-helper",
+            ]
+        )
+        output = io.StringIO()
+        with (
+            mock.patch.object(desktop, "detect_platform", return_value="linux"),
+            contextlib.redirect_stderr(output),
+        ):
+            ctx = rb.make_ctx(args)
+        self.assertEqual(ctx.arm_names, ["cc-cua-driver"])
+        self.assertIn("unsupported-platform: cc-codex-cu requires macOS", output.getvalue())
+        self.assertIn(
+            "unsupported-platform: cc-claude-cu-helper requires macOS",
+            ctx.versions["unsupported_arms"],
+        )
+
+    def test_no_supported_arms_fails_clearly(self) -> None:
+        import desktop_runtime as desktop
+
+        args = rb.build_parser().parse_args(["dry-run", "--arms", "cc-codex-cu"])
+        with (
+            mock.patch.object(desktop, "detect_platform", return_value="linux"),
+            self.assertRaisesRegex(SystemExit, "no supported arms remain"),
+        ):
+            rb.make_ctx(args)
+
+    def test_linux_pack_descriptor_selection(self) -> None:
+        import cdb_adapter
+        import desktop_runtime as desktop
+
+        with mock.patch.object(desktop, "detect_platform", return_value="linux"):
+            descriptor = cdb_adapter._descriptor({"pack_task": "shared/cdb-s02"})
+        self.assertEqual(descriptor["platform"], "linux")
+        self.assertTrue(any("libreoffice" in " ".join(a["command"]) for a in descriptor["apps"]))
+        with mock.patch.object(desktop, "detect_platform", return_value="macos"):
+            self.assertEqual(
+                cdb_adapter._descriptor({"pack_task": "shared/cdb-s02"})["platform"], "macos"
+            )
 
 
 class MiscTest(unittest.TestCase):

@@ -1,15 +1,22 @@
 # Cua Driver Bench task pack (public)
 
-The multi-app tasks of the public Bench v2 task set. Bench v2 runs each one as a
-GUI-only task (no coding tools) under the ids in the table; the harness reads
+The multi-app tasks of the public Bench v2 task set, plus separately selectable
+web tasks. These run GUI-only (no coding tools) under the ids in the table; the harness reads
 them from here (`CDB_TASKPACK`, see
 [`../automated-eval/macos_bench/cdb_adapter.py`](../automated-eval/macos_bench/cdb_adapter.py)).
 
-| Pack task | Bench v2 id | Apps |
+| Pack task | Bench id | Apps |
 | --- | --- | --- |
 | [`tasks/shared/cdb-s02`](tasks/shared/cdb-s02) | CDB-G02 | Copperfield Mail, Signal Quay Chat and Daymark Calendar (Electron), LibreOffice Calc |
 | [`tasks/shared/cdb-s03`](tasks/shared/cdb-s03) | CDB-G03 | Ledger Lantern Mail (Electron), LibreOffice Calc, GnuCash |
 | [`tasks/shared/cdb-s04`](tasks/shared/cdb-s04) | CDB-G04 | Rillwatch Cases and Margin Lantern Manual (Electron), the Morrowglass Archive site in Chrome, a log file |
+| [`tasks/shared/web-01`](tasks/shared/web-01) | WEB-01 (separate) | Fern signup in Chrome |
+| [`tasks/shared/web-02`](tasks/shared/web-02) | WEB-02 (separate) | Pebble checkout in Chrome |
+
+WEB-01 and WEB-02 are Amendment 24.3 originals, not members of `bench_v2.V2_TASKS`.
+Select them explicitly with `--tasks WEB-01 WEB-02`; `run_bench.WEB_TASKS` lists them.
+They use a Node built-in-only loopback service, task-local routes and checks,
+and a fresh workspace-local Chrome profile. No internet or external assets are used.
 
 Each task directory holds:
 
@@ -24,7 +31,7 @@ Each task directory holds:
 
 ## Source and changes
 
-These tasks were written by Cua in its private benchmark repository and are
+The three `cdb-s0*` tasks were written by Cua in its private benchmark repository and are
 copied from revision `16a1937a79ff2ee2e48f5b5d9bb5e6f944119b5a`, the revision
 every registered Bench v2 run used. The copy differs from that revision only in
 licence and provenance metadata:
@@ -39,8 +46,8 @@ licence and provenance metadata:
   pinned digests of the archive site's `package.json` and `package-lock.json`
   are updated to the relicensed files.
 
-Briefs, apps, fixtures, reset scripts, launch descriptors, evaluators and the
-rest of the oracles are byte-identical to the source revision. The tree digests
+For those three tasks, briefs, apps, fixtures, reset scripts, launch descriptors,
+evaluators and the rest of the oracles are byte-identical to the source revision. The tree digests
 of the registered runs are kept in `pins.json` `cdb_pack.registered_runs_tree_sha256`;
 `pins.json` `cdb_pack.tree_sha256` holds the digests of this copy, which the
 preflight checks.
@@ -60,11 +67,20 @@ the tests above, and `tools/validate_cdb.py` from the harness in a VM, then
 update `pins.json` `cdb_pack.tree_sha256`. A change to a task that a registered
 run used needs a dated amendment before the next run.
 
+For web tasks, shared helpers live in `tasks/shared/web-common` (not a task).
+After changing `common.py`, regenerate task-local evaluator helpers with
+`python3 tasks/shared/web-common/vendor_evaluator.py`. Run each web task's own
+`tools/refresh_manifest_digests.py`, then its `--check`. Both manifests enumerate
+shared runtime inputs; reset verification rehashes those inputs every trial,
+because a task tree pin alone does not cover sibling files. Refresh tree pins with
+`python3 tools/check_pack_pins.py --write` from the harness directory.
+
 ## Adding tasks
 
-New multi-app tasks go into `tasks/<platform>/<id>/` with the layout above and a
+New tasks go into `tasks/<platform>/<id>/` with the layout above and a
 `PROVENANCE.md`, plus a selector in `../automated-eval/macos_bench/probes/<ID>/task.json`
-(`"kind": "cdb"`, `"pack_task"`, `"category"`, `"coding_tools": false`) and the
+(`"kind": "cdb"`, `"pack_task"`, `"category"`, `"coding_tools": false`, and
+`"browser": true` for web tasks) and the
 tree digest in `pins.json`. They join `bench_v2.V2_TASKS` only through an
 amendment registered before their first trial.
 

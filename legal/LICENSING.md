@@ -33,6 +33,7 @@ notices declare.
 | [`libs/cua-spacesd/LICENSE`](../libs/cua-spacesd/LICENSE)                                                                                                         | FSL-1.1-MIT                                                                                              | cua-spacesd and cua-relay                                                                                                                                                                                     |
 | [`libs/cua/crates/cua-spaces-app-core/LICENSE`](../libs/cua/crates/cua-spaces-app-core/LICENSE)                                                                   | FSL-1.1-MIT                                                                                              | Spaces app core (the apps' view models)                                                                                                                                                                       |
 | [`libs/cua/crates/cua-keyvault/LICENSE`](../libs/cua/crates/cua-keyvault/LICENSE)                                                                                 | FSL-1.1-MIT                                                                                              | Cua Keyvault                                                                                                                                                                                                  |
+| [`libs/cua/crates/cua-compat/modal-proto/LICENSE-modal`](../libs/cua/crates/cua-compat/modal-proto/LICENSE-modal)                                                 | Apache-2.0                                                                                               | Third party: Modal's protobuf descriptors used by the Modal gateway (their licence file, unmodified)                                                                                                          |
 | [`libs/cua/crates/cua-teleport/LICENSE`](../libs/cua/crates/cua-teleport/LICENSE)                                                                                 | FSL-1.1-MIT                                                                                              | Teleport providers and the app-teleport UX                                                                                                                                                                    |
 | [`libs/cua/crates/cua-teleport-bundle/LICENSE`](../libs/cua/crates/cua-teleport-bundle/LICENSE)                                                                   | FSL-1.1-MIT                                                                                              | Teleport bundle format                                                                                                                                                                                        |
 | [`libs/cua/crates/cua-machine-seal/LICENSE`](../libs/cua/crates/cua-machine-seal/LICENSE)                                                                   | FSL-1.1-MIT                                                                                              | End-to-end sealing of secrets to a Space (machine key, pinning)                                                                                                                                                                                        |
@@ -40,6 +41,7 @@ notices declare.
 | [`libs/cua/crates/cua-spaces-ext/LICENSE`](../libs/cua/crates/cua-spaces-ext/LICENSE)                                                                             | FSL-1.1-MIT                                                                                              | Cua Spaces extensions: teleport, the Cua Volume (`cua-volume`) tools, persistent agents, the streaming client behind `StreamSession`, and the daemon extension (Keyvault broker, site login, volume backends) |
 | [`libs/cua/crates/cua-spaces-ffi/LICENSE`](../libs/cua/crates/cua-spaces-ffi/LICENSE)                                                                             | FSL-1.1-MIT                                                                                              | The Spaces app export: the SDK plus the app core, teleport, the Keyvault client and decoded media (BGRA frames, PCM audio), for the SwiftUI app                                                               |
 | [`libs/cua/crates/cua-spaces-cli/LICENSE`](../libs/cua/crates/cua-spaces-cli/LICENSE)                                                                             | FSL-1.1-MIT                                                                                              | The Cua Spaces build of `cua` (`cua-spaces-cli`), including `cua viewer` and the decoding `cua sb stream-probe`                                                                                               |
+| [`libs/cua/crates/cua-spaces-cluster/LICENSE`](../libs/cua/crates/cua-spaces-cluster/LICENSE)                                                                         | FSL-1.1-MIT                                                                                              | The Cua Spaces build of `cua` (`cua-spaces-cli`), including `cua viewer` and the decoding `cua sb stream-probe`                                                                                               |
 | [`libs/cua/crates/cua-media-protocol/LICENSE`](../libs/cua/crates/cua-media-protocol/LICENSE)                                                                     | FSL-1.1-MIT                                                                                              | Streaming                                                                                                                                                                                                     | `cua-spaces`: `stream::StreamClient` / `StreamConnection` behind `StreamSession` (input crosses as JSON; without a registered client it fails with `host_capability_missing`); `cua-sdk`: `MediaSession` (encoded frames); `cua-cli`: `CliExtension::viewer` and `open_media_decoded`; `cua-proto` (`StreamService`) | `cua-spaces-ext::stream::MediaStreams` (the RCDP client over `cua-media-client`, `cua-media-protocol`, `cua-media-transport`); `cua-spaces-ffi::media_decode` (decoded BGRA and PCM); `cua-spaces-cli` (`cua viewer`, the decoding stream probe); `CuaSpacesStreaming` |
 | Presence cursors                                                                                                                                               | `cua-spaces`: `presence::PresenceDatagrams` (without it cursors ride the Join stream and `UpdateCursor`) | `cua-spaces-ext::presence_datagrams::QuicPresence` (the `cua-presence/1` QUIC datagram channel)                                                                                                               |
 | [`libs/cua/crates/cua-media-transport/LICENSE`](../libs/cua/crates/cua-media-transport/LICENSE)                                                                   | FSL-1.1-MIT                                                                                              | Streaming transport: RCDP framing and pinned QUIC                                                                                                                                                             |
@@ -65,6 +67,10 @@ notices declare.
 | [`libs/python/cua-sandbox/LICENSE`](../libs/python/cua-sandbox/LICENSE)                                                                                           | MIT                                                                                                      | Package; `THIRD_PARTY_NOTICES.md` beside it lists derived code                                                                                                                                                |
 | [`libs/python/som/LICENSE`](../libs/python/som/LICENSE)                                                                                                           | AGPL-3.0-or-later                                                                                        | Package; `-or-later` per `pyproject.toml`                                                                                                                                                                     |
 | [`libs/typescript/core/LICENSE`](../libs/typescript/core/LICENSE)                                                                                                 | MIT                                                                                                      | Package                                                                                                                                                                                                       |
+| [`libs/cua/crates/cua-chromium-storage/LICENSE`](../libs/cua/crates/cua-chromium-storage/LICENSE) | FSL-1.1-MIT | Chromium localStorage read and written as Keyvault items (Keyvault and teleport) |
+| [`libs/cua/bench/streaming/LICENSE`](../libs/cua/bench/streaming/LICENSE) | FSL-1.1-MIT | Streaming benchmark driver for the cua-spacesd media plane |
+| [`libs/typescript/cursor-motion/LICENSE`](../libs/typescript/cursor-motion/LICENSE) | MIT | Package (not published) |
+| [`libs/cua-driver/rust/crates/cua-cursor-motion/LICENSE`](../libs/cua-driver/rust/crates/cua-cursor-motion/LICENSE) | MIT | Package |
 | [`libs/cua-driver/rust/crates/cua-perception/tests/quality-corpus/LICENSE`](../libs/cua-driver/rust/crates/cua-perception/tests/quality-corpus/LICENSE)           | MIT                                                                                                      | Test corpus; Cua-authored synthetic data (see its `PROVENANCE.md`)                                                                                                                                            |
 | [`libs/cua-driver/rust/crates/cua-perception/models/licenses/AGPL-3.0-only.txt`](../libs/cua-driver/rust/crates/cua-perception/models/licenses/AGPL-3.0-only.txt) | AGPL-3.0-only                                                                                            | Third-party model licence text; see [`THIRD_PARTY_NOTICES.md`](../libs/cua-driver/rust/crates/cua-perception/models/THIRD_PARTY_NOTICES.md)                                                                      |
 | [`libs/cua-driver/rust/crates/cua-perception/models/licenses/Apache-2.0.txt`](../libs/cua-driver/rust/crates/cua-perception/models/licenses/Apache-2.0.txt)       | Apache-2.0                                                                                               | Third-party model licence text; see [`THIRD_PARTY_NOTICES.md`](../libs/cua-driver/rust/crates/cua-perception/models/THIRD_PARTY_NOTICES.md)                                                                      |
@@ -87,7 +93,7 @@ client and its codecs and viewers (`cua-media-client`, `cua-media-codec`,
 `cua-viewer`, `cua-spacesd-html5`, `cua-logging`, the Swift
 `CuaSpacesStreaming`), and the glue that plugs them into the MIT runtime
 (`cua-spaces-ext`, `cua-spaces-ffi`, `cua-spaces-cli`,
-`libs/spaces-app-swift`). The samples that link those pieces are FSL too:
+`libs/spaces-app-swift`), and the pool coordinator (`cua-spaces-cluster`). The samples that link those pieces are FSL too:
 Cua Bots (`examples/cua-bots-macos`, `examples/cua-bots-ios`), Infinite Canvas
 and the OpenKoalaBots Swift and Tauri samples.
 
@@ -100,11 +106,14 @@ its encoded frames and audio packets) and `@trycua/cua/spaces/pip` (a
 picture-in-picture wrapper around a canvas you paint) stay MIT.
 
 The WireGuard®-based mesh node (`cua-mesh`: userspace tunnels, NAT
-traversal, the encrypted relay client, QUIC streams and the coordinator
-protocol) is MIT and depends only on MIT, Apache-2.0 and BSD code (the
-WireGuard protocol through Cloudflare's BSD-3-Clause `boringtun`). A hosted
-machine's side of it is part of cua-spacesd (FSL). No GPL or AGPL code is
-linked: not the WireGuard kernel module or `wireguard-tools`.
+traversal, the relay client, QUIC streams and the coordinator protocol) is
+MIT and depends only on MIT, Apache-2.0 and BSD code (the WireGuard protocol
+through Cloudflare's BSD-3-Clause `boringtun`). Its coordinator, the
+encrypted fallback relay and the rules that turn accounts, devices and share
+lists into mesh peers are part of `cua-relay` and cua-spacesd (FSL). No GPL
+or AGPL code is linked: not the WireGuard kernel module or `wireguard-tools`,
+and the tailnet integration (`cua host setup --tailnet`) runs the official
+`tailscale` CLI as a separate program.
 
 ## Commercial use and trademarks
 
@@ -133,7 +142,13 @@ Spaces, including Spaces on your own machines (`cua host setup
 --provide-spaces`, `cua spaces create --on host:<name>`, the host's limits
 and audit: `cua-spaces::host_spaces`, `cua-host`, the daemon's
 `HostSpacesService`), is in the MIT crates; the cua-spacesd and relay side
-of it is FSL like the rest of cua-spacesd.
+of it is FSL like the rest of cua-spacesd. So is a machine's part of batch
+runs on all your machines: its job runner (`cua-cluster`, the daemon's
+`HostJobsService`), placement scoring, `on="auto"` for a Space, and `cua sb
+run` itself, which asks the daemon. The coordinator that schedules runs on
+your machines and the pool agent in the daemon (`cua-spaces-cluster`) are
+FSL, as is the relay's pool lease and log; an MIT `cua daemon` answers that
+it does not have them.
 
 ## What ships under which licence
 

@@ -304,6 +304,7 @@ async fn rotation_ends_streams_and_forwards_opened_with_the_old_token() {
                 path: dir.path().to_string_lossy().into_owned(),
                 recursive: false,
                 keepalive_interval: None,
+                ..Default::default()
             })
             .await
             .unwrap()

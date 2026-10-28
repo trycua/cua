@@ -30,9 +30,12 @@ pub const TOKEN: &str = "cua-spaces-test-token";
 /// `libs/cua/spaces-contract/manifest.json`). The suites compare the tool
 /// lists every surface serves to this, so adding a tool to the contract
 /// needs no edit here.
+/// Every contract tool an MCP server lists (a person-only tool, such as
+/// `cloud_approve`, is never served over MCP).
 pub fn contract_tool_names() -> Vec<String> {
     cua_spaces::contract::tools()
         .into_iter()
+        .filter(|tool| !cua_spaces::contract::person_only(tool.name))
         .map(|tool| tool.name.to_string())
         .collect()
 }

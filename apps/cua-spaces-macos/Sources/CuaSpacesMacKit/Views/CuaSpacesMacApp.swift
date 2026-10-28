@@ -8,8 +8,12 @@ import Observation
 import CuaSpacesStreaming
 import SwiftUI
 
-/// Cua Spaces for macOS: the main window, Settings, the menu bar extra and
-/// the notch panel, all over one `AppModel`.
+/// Cua Spaces for macOS: a thin Swift shell around the shared web UI. The
+/// main window is the web UI's (`WebUIWindowController`); the scenes here are
+/// what stays native: a Space's desktop in its own window (video), the menu
+/// bar extra, and the app's menus (Settings is the page's). The notch panel, permission
+/// prompts, Touch ID, the Keychain, launch at login, the updater, URL schemes
+/// and notifications are wired in `AppDelegate`, all over one `AppModel`.
 public struct CuaSpacesMacApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @State private var model: AppModel
@@ -29,34 +33,8 @@ public struct CuaSpacesMacApp: App {
     }
 
     public var body: some Scene {
-        Window("Cua Spaces", id: "main") {
-            RootView(model: model)
-                .environment(\.presenceName, model.presenceName)
-                .onAppear { delegate.start(model) }
-        }
-        .defaultSize(width: 980, height: 660)
-        // Open at every launch (see `ignoreSavedWindowState`), except while
-        // New UI is on or the first run is due: then the New UI window opens
-        // instead (`AppDelegate.start`).
-        .defaultLaunchBehavior(Self.opensWebUIAtLaunch(model) ? .suppressed : .presented)
-        .commands {
-            CommandGroup(replacing: .newItem) {
-                Button(model.chrome.newSpaceLabel) { Task { await model.openNewSpace() } }
-                    .keyboardShortcut("n")
-            }
-            // No `.appSettings` group here: the `Settings` scene's item is the
-            // app menu's one "Settings…". The New UI window answers its
-            // action itself (`WebUIAppWindow`), so ⌘, opens its Settings.
-            CommandGroup(before: .sidebar) {
-                NavigationCommands(model: model)
-                Divider()
-            }
-            CommandGroup(after: .help) {
-                GettingStartedCommand(model: model)
-            }
-        }
-
-        // A Space's desktop in its own window ("Open"); never at launch.
+        // A Space's desktop in its own window ("Open"); never at launch. The
+        // main window is the web UI's, opened by `AppDelegate.start`.
         WindowGroup(id: "space", for: String.self) { $id in
             if let id {
                 SpaceWindowView(model: model, spaceId: id)
@@ -65,9 +43,25 @@ public struct CuaSpacesMacApp: App {
         }
         .defaultLaunchBehavior(.suppressed)
         .restorationBehavior(.disabled)
-
-        Settings {
-            SettingsScene(model: model)
+        .commands {
+            CommandGroup(replacing: .newItem) {
+                Button(model.chrome.newSpaceLabel) { Task { await model.openNewSpace() } }
+                    .keyboardShortcut("n")
+            }
+            // The app menu's "Settings…" (⌘,): the page's Settings, the one
+            // Settings there is (no `Settings` scene).
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") { MainUIRouter(model: model).openSettings() }
+                    .keyboardShortcut(",")
+            }
+            CommandGroup(before: .sidebar) {
+                NavigationCommands(model: model)
+                Divider()
+            }
+            CommandGroup(after: .help) {
+                GettingStartedCommand(model: model)
+                SystemStatusCommand(model: model)
+            }
         }
 
         // Not inserted in an offscreen run (`OffscreenRun`).
@@ -77,18 +71,11 @@ public struct CuaSpacesMacApp: App {
             MenuBarLabel(model: model)
         }
     }
-
-    /// New UI is on, or the first run is due (it is the web UI's onboarding):
-    /// a launch opens the New UI window rather than the native main window.
-    static func opensWebUIAtLaunch(_ model: AppModel) -> Bool {
-        opensWebUIAtLaunch(webUi: model.settings.experiments.webUi, onboarded: model.onboarding.completed)
-    }
-
-    static func opensWebUIAtLaunch(webUi: Bool, onboarded: Bool) -> Bool { webUi || !onboarded }
 }
 
-/// The menu bar icon. It is there from launch, so it also hands the New UI
-/// window the scenes' actions when the main window never opened.
+/// The menu bar icon. It is there from launch, so it hands the web UI
+/// window the scenes' actions (a Space's own window). An offscreen run has
+/// no menu bar item, so no Space window opens there (captures need none).
 struct MenuBarLabel: View {
     let model: AppModel
     @Environment(\.openWindow) private var openWindow
@@ -109,59 +96,29 @@ struct MenuBarLabel: View {
     }
 }
 
-/// The main window. The first run is not drawn here: it is the shared web
-/// onboarding, in the New UI window (see `MainWindowSwitch`).
-struct RootView: View {
-    @Bindable var model: AppModel
-    @Environment(\.dismissWindow) private var dismissWindow
-    @Environment(\.openWindow) private var openWindow
-
-    var body: some View {
-        if !model.startup.isReady {
-            // The launch (the keychain, the daemon) until the live services
-            // are in; then the first run or the main window.
-            StartupView(startup: model.startup)
-                .onAppear {
-                    if model.onboarding.completed, AppDelegate.takeQuietStart() { dismissWindow(id: "main") }
-                }
-        } else if model.onboarding.completed {
-            MainWindow(model: model)
-                // New UI on: whatever opened this window gets New UI in its place.
-                .background(WindowReader { MainWindowSwitch.nativeAppeared($0, model: model) })
-                .onAppear {
-                    // The New UI window's bridge opens these scenes.
-                    WebUIWindowController.actions = .make(openWindow: openWindow)
-                    // Opened at login: the menu bar item and the notch only,
-                    // as after the window is closed (once per launch).
-                    if AppDelegate.takeQuietStart() { dismissWindow(id: "main"); return }
-                    MainWindowSwitch.nativeAppeared(nil, model: model)
-                }
-        } else {
-            // First run: the web onboarding opens in this window's place.
-            Color.clear
-                .background(WindowReader { MainWindowSwitch.firstRunAppeared($0, model: model) })
-                .onAppear {
-                    WebUIWindowController.actions = .make(openWindow: openWindow)
-                    MainWindowSwitch.firstRunAppeared(nil, model: model)
-                }
-        }
-    }
-}
-
-/// Help, Getting Started: the checklist again, in the main window.
+/// Help, Getting Started: the checklist again, on the Spaces page.
 struct GettingStartedCommand: View {
     let model: AppModel
-    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Button("Getting Started") {
             guard model.startup.isReady, model.onboarding.completed else { return }
             model.openGettingStarted()
-            // New UI shows the checklist on its Spaces page.
-            MainUIRouter(model: model).open(.home) {
-                NSApp.activate()
-                openWindow(id: "main")
-            }
+            MainUIRouter(model: model).open(.home)
+        }
+    }
+}
+
+/// Help, System Status: the public status page, in the browser. The address is
+/// the About pane's own link (the core's `appAboutView`), so both open the same page.
+struct SystemStatusCommand: View {
+    let model: AppModel
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        if let link = model.updates.view.links.first(where: { $0.id == .status }),
+           let url = link.url.flatMap(URL.init(string:)) {
+            Button(link.label) { openURL(url) }
         }
     }
 }
@@ -170,15 +127,13 @@ struct GettingStartedCommand: View {
 struct MenuBarContent: View {
     let model: AppModel
     var disk: LowDiskMonitor = .shared
-    @Environment(\.openWindow) private var openWindow
-    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         // This Mac is short of space: the warning, with the Cua key, first.
         // Nothing when there's room. It opens the Spaces, biggest first.
         if let text = disk.warning.menuText {
             Button {
-                MainUIRouter(model: model).open(.path("/spaces?sort=size")) { activate(); openWindow(id: "main") }
+                MainUIRouter(model: model).open(.path("/spaces?sort=size"))
             } label: {
                 if let key = MenuBarKey.image {
                     Label { Text(text) } icon: { Image(nsImage: key) }
@@ -211,24 +166,16 @@ struct MenuBarContent: View {
     private func run(_ id: AppMenuItemId) {
         let router = MainUIRouter(model: model)
         switch id {
-        case .open: router.open(.home) { activate(); openWindow(id: "main") }
+        case .open: router.openMain()
         case .newSpace:
-            activate()
-            // The native sheet needs the main window; New UI opens its own.
-            if !model.settings.experiments.webUi { openWindow(id: "main") }
+            NSApp.activate()
             Task { await model.openNewSpace() }
-        case .settings: router.open(.settings) { activate(); openSettings() }
-        case .volumeConflicts:
-            router.open(.drive) {
-                activate(); openWindow(id: "main")
-                model.selection = .drive
-            }
+        case .settings: router.openSettings()
+        case .volumeConflicts: router.open(.drive)
         case .quit: NSApp.terminate(nil)
         case .status, .separator: break
         }
     }
-
-    private func activate() { NSApp.activate() }
 }
 
 /// The Cua key at menu item size, for the low-disk warning.
@@ -272,17 +219,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var notch: NotchController?
     private var started = false
 
-    /// The system opened the app at login (read as the launch begins).
+    /// The system opened the app at login (read as the launch begins): no
+    /// window, only the menu bar item and the notch.
     private(set) static var launchedAtLogin = false
-    private static var quietStartTaken = false
-
-    /// Once per launch: whether the main window should close because the
-    /// app was opened at login.
-    static func takeQuietStart() -> Bool {
-        guard launchedAtLogin, !quietStartTaken else { return false }
-        quietStartTaken = true
-        return true
-    }
 
     /// Whether a launch brings the app to the front: a user's launch does,
     /// one at login never does, a fixtures run only with
@@ -297,24 +236,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // The host service still running from before an update: onto this build (CUA-2457).
+        HelperService.restartIfStale()
         start(Self.model)
         // The menu bar's low-disk warning: read now, then every 5 minutes.
         LowDiskMonitor.shared.start()
     }
 
     /// The Dock icon (or opening the app again) with no window up: the main
-    /// UI in use, New UI while it is on. The notch and the menu bar item's
-    /// panels don't count as windows.
+    /// window (the first run while it is due). The notch and the menu bar
+    /// item's panels don't count as windows.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        let model = Self.model
-        guard model.startup.isReady, model.onboarding.completed else { return true }
         guard !NSApp.windows.contains(where: { $0.isVisible && $0.canBecomeMain }) else { return true }
-        MainUIRouter(model: model).open(.home) { WebUIWindowController.actions?.openMain() }
+        MainUIRouter(model: Self.model).openMain()
         return false
     }
 
-    /// `cua://add/<CODE>` links: the page's Machines at the code, which it
-    /// confirms before joining. Never joins by itself.
+    /// `cua://add/<CODE>` links (`cua-local://` in Cua Spaces Local, which
+    /// answers to its own scheme only): the page's Machines at the code,
+    /// which it confirms before joining. Never joins by itself.
     func application(_ application: NSApplication, open urls: [URL]) {
         guard let route = urls.lazy.compactMap(JoinWithCode.route(for:)).first else { return }
         NSApp.activate()
@@ -327,65 +267,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // The one-time move of the host service into this app (Cua Spaces
         // Helper): its own window, over whichever UI is up.
         HelperMoveWindow.follow(model.host, loginLaunch: Self.launchedAtLogin)
-        // New Space opens New UI's wizard while its experiment is on.
+        // New Space: the web UI's wizard, in its window.
         model.openWebNewSpace = { on in WebUIWindowController.showNewSpace(model: model, on: on) }
-        // New UI on and off: one window, its frame kept, never two.
-        model.openWebUI = { MainWindowSwitch.switchToWebUI(model: model) }
-        model.closeWebUI = { WebUIWindowController.closeShared() }
-        // "Show again" for the first run: the web onboarding's window.
+        // "Show again" for the first run: the web onboarding's page.
         model.openOnboarding = { WebUIWindowController.show(model: model, at: .onboarding) }
         let controller = NotchController(model: model.notch)
         controller.sidebar = model.dropTargets
         controller.pageTiles = model.pageDropTargets
-        controller.showMain = { WebUIWindowController.actions?.openMain() }
-        // Each of these shows its result in the main window (the New UI
-        // window while its experiment is on): open it when it was closed
-        // (the notch stays up without it), or a drop would commit to
-        // nothing visible.
+        // Each of these shows its result in the web UI window, opening it
+        // when it was closed (the notch stays up without it), or a drop
+        // would commit to nothing visible.
         let router = MainUIRouter(model: model)
-        controller.onOpenSpace = { [weak controller] id in
+        controller.showMain = { router.openMain() }
+        controller.onOpenSpace = { id in
             model.select(id)
-            router.open(.space(id)) {
-                NSApp.activate()
-                controller?.showMain?()
-            }
+            router.open(.space(id))
         }
-        controller.onOpenList = { [weak controller] in
-            router.open(.home) { controller?.showMain?() }
-        }
-        controller.onOpenSettings = { [weak controller] in
-            router.open(.settings) { controller?.showSettings?() }
-        }
-        controller.onOpenAccess = { [weak controller] in
-            router.open(.access) {
-                model.selection = .keyvault(.category(category: .access))
-                NSApp.activate()
-                controller?.showMain?()
-            }
-        }
+        controller.onOpenList = { router.openMain() }
+        controller.onOpenSettings = { router.openSettings() }
+        controller.onOpenAccess = { router.open(.access) }
         controller.onDismissAccess = { model.keyvault.dismiss() }
-        controller.onTeleport = { [weak controller] spaceId, entry in
+        controller.onTeleport = { spaceId, entry in
             model.select(spaceId)
             // The page opens Teleport at the app as for a drop of it.
             let app = entry?.hostPath.map { URL(fileURLWithPath: $0) }
-            router.open(.space(spaceId, dropped: app.map { [$0] } ?? [])) {
-                model.pendingTeleport = PendingTeleport(spaceId: spaceId, entry: entry, files: [])
-                NSApp.activate()
-                controller?.showMain?()
-            }
+            router.open(.space(spaceId, dropped: app.map { [$0] } ?? []))
         }
-        controller.onDropURLs = { [weak controller] spaceId, urls in
+        controller.onDropURLs = { spaceId, urls in
             model.select(spaceId)
-            router.open(.space(spaceId, dropped: urls)) {
-                Task {
-                    guard let context = try? await model.backend.teleportContext(id: spaceId) else { return }
-                    let parsed = context.0.parseDrop(items: urls.map(\.path))
-                    let entry = parsed.apps.first.flatMap { try? context.0.catalogEntryForPath(path: $0, options: nil) }
-                    model.pendingTeleport = PendingTeleport(spaceId: spaceId, entry: entry, files: parsed.files)
-                    NSApp.activate()
-                    controller?.showMain?()
-                }
-            }
+            router.open(.space(spaceId, dropped: urls))
         }
         // "Spaces tab in the notch": applied now and on every change (an
         // offscreen run never puts the notch up).
@@ -412,12 +322,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // ⌘⇧Space from any app: the window of the UI in use, in front.
         if !OffscreenRun.isOn { GlobalShortcut.install(model) }
         AppEnvironment.applyStartView(model, notch: controller)
-        // New UI on, or the first run due: the New UI window is the one a
-        // launch opens (the main window is suppressed), the first run at
-        // `/onboarding`; not when opened at login.
-        if CuaSpacesMacApp.opensWebUIAtLaunch(model), !Self.launchedAtLogin {
-            if !model.onboarding.completed {
-                WebUIWindowController.show(model: model, at: .onboarding)
+        // The web UI window is the one a launch opens, the first run at
+        // `/onboarding` while it is due; not when opened at login, and not
+        // for a start view (`applyStartView` opens its own page). The page
+        // draws the launch (`startup.get`) until the live services are in.
+        if !Self.launchedAtLogin {
+            if let route = MainUIRouter.launchRoute(onboarded: model.onboarding.completed) {
+                WebUIWindowController.show(model: model, at: route)
             } else if DevHooks.value("CUA_SPACES_START_VIEW") == nil {
                 WebUIWindowController.show(model: model)
             }
@@ -427,6 +338,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // fresh from here rather than from the window.
         // Bounded, and it reconnects to the daemon when the list goes stale.
         _ = model.startListPoll()
+        // ... and the daemon says when it changed, so a Space starting or
+        // stopping on another computer shows within a second or two.
+        Task { @MainActor in await model.startListWatch() }
         // Keyvault access is never silent: the notch indicator and the menu
         // bar line follow live deliveries even with the main window closed.
         Task { @MainActor in
@@ -435,19 +349,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 await model.keyvault.refresh()
             }
         }
-        // A device asking to join is announced (a notification and the
-        // approval sheet) even with the window closed; this Mac's own
-        // enrollment shows as the main window's banner. Nothing else asks.
+        // A device asking to join is announced (a notification) even with
+        // the window closed; this Mac's own enrollment shows as the page's
+        // banner. Nothing else asks.
         model.devices.notify = { DeviceNotifier.shared.post($0) }
-        // A click on one of the app's notifications: the main UI in use
-        // (a Space that came up: its page).
+        // A click on one of the app's notifications: its page.
         DeviceNotifier.shared.onOpen = { id in
-            if let spaceId = SpaceReadyNote.spaceId(fromIdentifier: id) {
-                model.select(spaceId)
-                router.open(.space(spaceId)) { WebUIWindowController.actions?.openMain() }
-                return
-            }
-            router.open(id.hasPrefix("agent-") ? .agents : .home) { WebUIWindowController.actions?.openMain() }
+            if let spaceId = SpaceReadyNote.spaceId(fromIdentifier: id) { model.select(spaceId) }
+            router.open(MainUIRouter.route(forNotification: id))
         }
         // Persistent agents' answers and requests, from the daemon's feed,
         // while the app runs (the daemon keeps them while it does not).

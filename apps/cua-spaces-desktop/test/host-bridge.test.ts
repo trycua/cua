@@ -206,6 +206,7 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
       ["host.openSettings", { url: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture" }],
       ["settings.get", {}],
       ["settings.choose", { row: "telemetry", option: "off" }],
+      ["settings.update", { tips: { off: false, done: ["try-agent"] } }],
     ];
     const problems: string[] = [];
     for (const [method, args] of cases) problems.push(...shapeProblems(method, await call(method, args)));
@@ -398,6 +399,39 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(s.pausedSignedOut).toBe(false);
   });
 
+  it("moves the host to another account that signs in, with no manual step", async () => {
+    const account = new FakeAccountTokens();
+    account.token = "tok";
+    account.wire(model.host);
+    model.host.currentAccount = () => ({ id: "user-1", email: "ada@example.com", display: "Ada" });
+    await call("host.setUp", { request: { mode: "relay" } });
+    account.token = null;
+    await model.host.reconcileAccount();
+    expect(host.calls).toContain("pause");
+    account.signInGives = "tok-bob";
+    model.host.currentAccount = () => ({ id: "user-2", email: "bob@example.com", display: "Bob" });
+    const s = (await call("host.action", { action: "sign-in" })) as Record<string, unknown>;
+    expect(host.calls.at(-1)).toBe("resume:user-2");
+    expect(s.pausedSignedOut).toBe(false);
+    expect(s.owner).toBe("user-2");
+  });
+
+  it("a failed switch leaves the host paused, and Retry never starts the old registration", async () => {
+    const account = new FakeAccountTokens();
+    account.token = "tok";
+    account.wire(model.host);
+    model.host.currentAccount = () => ({ id: "user-1", email: "ada@example.com", display: "Ada" });
+    await call("host.setUp", { request: { mode: "relay" } });
+    host.failResume = "this computer still runs 1 Space for the account that was signed in before";
+    model.host.currentAccount = () => ({ id: "user-2", email: "bob@example.com", display: "Bob" });
+    await model.host.reconcileAccount();
+    const s = (await call("host.status")) as Record<string, unknown>;
+    expect(s.pausedSignedOut).toBe(true);
+    await model.host.retryFailedAction();
+    expect(host.calls).not.toContain("start");
+    expect(host.calls.at(-1)).toBe("resume:user-2");
+  });
+
   it("without an account wired, Sign In leaves the status as it is", async () => {
     await make({ account: null });
     await call("host.status");
@@ -474,7 +508,7 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     await model.devices.refresh();
     const notes = system.notes.filter((n) => n.id.startsWith("device-"));
     expect(notes.map((n) => n.id)).toEqual(["device-dev_work", "device-dev_old"]);
-    expect(notes[0]).toMatchObject({ route: "/settings/devices" });
+    expect(notes[0]).toMatchObject({ route: "/machines" });
     expect(notes[0]!.title.length).toBeGreaterThan(0);
     started.stop();
   });
@@ -495,10 +529,19 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     };
     const rows = s.page.sections.flatMap((x) => x.rows.map((r) => r.id));
     expect(rows).toEqual(expect.arrayContaining(["account", "notch", "auto-connect", "welcome", "teams", "teams-manage", "teams-billing", "telemetry", "telemetry-note", "launch-at-login"]));
-    expect(rows).toEqual(expect.arrayContaining(["macos-runtime", "linux-runtime"]));
+    // One runtime row per kind, on every system.
+    expect(rows).toEqual(expect.arrayContaining(["runtime:container", "runtime:vm", "runtime:microvm"]));
     expect(s.updateChannel).toBe("stable");
     // Another app holds ⌘⇧Space: the page says so.
     expect(s.globalShortcut).toEqual({ label: "\u2318\u21e7Space", registered: false });
+  });
+
+  it("changes the global shortcut from General, and says when another app holds the keys", async () => {
+    await call("settings.choose", { row: "global-shortcut", option: "Control+Alt+K" });
+    expect(system.shortcutChanges).toEqual(["Control+Alt+K"]);
+    expect(((await call("settings.get")) as { globalShortcut: unknown }).globalShortcut).toEqual({ label: "Control+Alt+K", registered: true });
+    expect(await code("settings.choose", { row: "global-shortcut", option: "Command+K" })).toBe("failed");
+    expect(system.shortcutChanges).toEqual(["Control+Alt+K"]);
   });
 
   it("chooses each row as the Swift app does", async () => {
@@ -510,9 +553,6 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(model.settings.autoConnect).toBe(false);
     await call("settings.choose", { row: "team-current", option: "org-2" });
     expect(model.settings.currentTeamId).toBe("org-2");
-    await call("settings.choose", { row: "default-location", option: "cloud" });
-    // Cua Cloud has ended: the default stays on this machine.
-    expect(model.settings.defaultLocation).toBe(native.AppLocation.Local);
     await call("settings.choose", { row: "telemetry", option: "off" });
     expect(model.telemetry?.status().enabled).toBe(false);
     await call("settings.choose", { row: "launch-at-login", option: "on" });
@@ -527,6 +567,27 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(settingsEvents).toBeGreaterThan(0);
   });
 
+  it("keeps the page's tips in the app settings (`settings.update`), and Show tips and Reset tips", async () => {
+    const before = (await call("settings.get")) as { tips: unknown };
+    expect(before.tips).toEqual({ off: false, done: [] });
+    const after = (await call("settings.update", { tips: { off: false, done: ["try-agent", "power"] } })) as typeof before;
+    expect(after.tips).toEqual({ off: false, done: ["try-agent", "power"] });
+    // Saved with the rest of the app's settings (a launch reads them back).
+    expect(native.appSettingsLoad(model.settingsPath).tips.done).toEqual(["try-agent", "power"]);
+    // Only what is sent changes.
+    expect(model.settings.tips.done).toEqual(["try-agent", "power"]);
+    expect(await code("settings.update", {})).toBe("bad_args");
+    expect(await code("settings.update", { tips: { off: "no", done: [] } })).toBe("bad_args");
+    // General's Show tips (the core lays it out) and Reset tips.
+    await call("settings.choose", { row: "tips", option: "off" });
+    expect(model.settings.tips).toEqual({ off: true, done: ["try-agent", "power"] });
+    const page = (await call("settings.get")) as { page: { sections: { rows: { id: string; options: { id: string; active: boolean }[] }[] }[] } };
+    const show = page.page.sections.flatMap((s) => s.rows).find((r) => r.id === "tips")!;
+    expect(show.options.find((o) => o.active)?.id).toBe("off");
+    await call("settings.choose", { row: "reset-tips", option: "press" });
+    expect(model.settings.tips).toEqual({ off: false, done: [] });
+  });
+
   it("offers every experiment but the New UI switch (Use classic UI), which this app is", async () => {
     const s = (await call("settings.get")) as { experiments: { sections: { rows: { id: string }[] }[] } };
     const rows = s.experiments.sections.flatMap((x) => x.rows.map((r) => r.id));
@@ -537,20 +598,25 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(await code("settings.choose", { row: "experiment:classic_ui", option: "on" })).toBe("unsupported");
   });
 
-  it("New Space's \u201cUse built-in Lume\u201d and \u201cUse built-in runtime\u201d change the Runtimes rows", async () => {
-    const set: string[] = [];
-    Object.assign(backend, { setLumeSource: async (v: string) => void set.push(`lume=${v}`) });
-    backend.lumeSource = async () => "builtin";
-    Object.assign(backend, { setLinuxSource: async (v: string) => void set.push(`linux=${v}`) });
-    backend.linuxSource = async () => "builtin";
-    // The wizard's switch (`RUNTIME_SWITCH_ROW`): the same choice as Settings, Runtimes.
-    const s = (await call("settings.choose", { row: "macos-runtime", option: "builtin" })) as { page: { sections: { rows: { id: string; options: { id: string; active: boolean }[] }[] }[] } };
-    await call("settings.choose", { row: "linux-runtime", option: "builtin" });
-    expect(set).toEqual(["lume=builtin", "linux=builtin"]);
-    expect(model.lumeSource).toBe("builtin");
-    expect(model.linuxSource).toBe("builtin");
-    const row = s.page.sections.flatMap((x) => x.rows).find((r) => r.id === "macos-runtime")!;
-    expect(row.options.find((o) => o.active)?.id).toBe("builtin");
+  it("New Space's \u201cUse built-in Lume\u201d and Settings' kind rows write the per-kind runtime settings", async () => {
+    const fixture = backend as unknown as { runtimeSettings: Map<string, string> };
+    // The wizard's switch (`RUNTIME_SWITCH_ROW`): the same choice as Settings, Advanced.
+    const s = (await call("settings.choose", { row: "runtime:vm", option: "builtin" })) as { page: { sections: { rows: { id: string; label: string; value?: string; options: { id: string; active: boolean }[] }[] }[] } };
+    expect(fixture.runtimeSettings.get("runtime.vm")).toBe("builtin");
+    const rows = () => s.page.sections.flatMap((x) => x.rows);
+    expect(rows().find((r) => r.id === "runtime:vm")!.options.find((o) => o.active)?.id).toBe("builtin");
+    // Already installed: what is installed and the path in use.
+    const t = (await call("settings.choose", { row: "runtime:container", option: "system" })) as typeof s;
+    const path = t.page.sections.flatMap((x) => x.rows).find((r) => r.id === "runtime-path:container")!;
+    expect([path.label, path.value]).toEqual(["Detected", "/usr/local/bin/docker"]);
+    await call("settings.choose", { row: "runtime-path:container", option: "/opt/homebrew/bin/podman" });
+    expect(fixture.runtimeSettings.get("runtime.container_path")).toBe("/opt/homebrew/bin/podman");
+    await call("settings.choose", { row: "runtime-path:container", option: "" });
+    expect(fixture.runtimeSettings.has("runtime.container_path")).toBe(false);
+    // A typed path, checked before it is saved.
+    expect(await call("runtimes.check", { kind: "container", path: "/usr/local/bin/docker" })).toMatchObject({ tool: "docker", version: "27.3.1" });
+    // "Browse…" is the app's file panel (none in this fixture UI).
+    expect(await code("runtimes.browse", { kind: "container" })).toBe("unsupported");
   });
 
   it("lists the coding agents under AI agents, and a row's button sets one up", async () => {
@@ -564,7 +630,7 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
   it("asks for Local Network access when a Space is created on this machine", async () => {
     let asked = 0;
     model.host.localNetwork = { request: () => asked++ };
-    await call("spaces.create", { config: { image: "ghcr.io/trycua/linux:24.04", kind: "container", on: "cloud" }, pendingId: "pending:c1", os: "linux" });
+    await call("spaces.create", { config: { image: "ghcr.io/trycua/linux:24.04", kind: "container", on: "host:mini" }, pendingId: "pending:c1", os: "linux" });
     expect(asked).toBe(0);
     await call("spaces.create", { config: { image: "ghcr.io/trycua/linux:24.04", kind: "container", on: "local" }, pendingId: "pending:l1", os: "linux" });
     expect(asked).toBe(1);
@@ -851,7 +917,8 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(real.map((s) => s.id)).toContain("relay:m1/space-1");
     expect(model.spaces.some((s) => isMachineDesktop(s))).toBe(true);
     const items = menuItems(bridge.context);
-    expect(items[0]!.label).toBe(native.appStatusLine(real.length));
+    // The count is the Spaces on or starting among them (never a stopped one).
+    expect(items[0]!.label).toBe(native.appOnStatusLine(native.appOnCount(model.spaces)));
     expect(items.map((i) => i.id)).toEqual(expect.arrayContaining(["open", "newSpace", "settings", "quit"]));
   });
 
@@ -877,7 +944,8 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(ids.some((id) => isMachineDesktop(model.spaces.find((s) => s.id === id)!))).toBe(false);
     // The list and the menu's count are the same Spaces.
     expect(ids.sort()).toEqual(realSpaces(model.spaces).map((s) => s.id).sort());
-    expect(view.tab.count).toBe(String(ids.length));
+    // The tab counts the Spaces on or starting (never a stopped one), though it lists them all.
+    expect(view.tab.count).toBe(String(native.appOnCount(model.spaces)));
   });
 
   it("says the launch is still waiting first", async () => {

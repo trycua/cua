@@ -28,6 +28,7 @@ tokio-util = { version = "0.7", features = ["io"] }
 tracing = "0.1"
 
 [dev-dependencies]
+proptest = "1"
 jsonschema = { version = "0.33", default-features = false }
 tempfile = "3"
 tokio = { version = "1", features = ["full"] }

@@ -22,6 +22,18 @@ on:
       - "apps/cua-spaces-macos/Sources/CuaSpacesMacKit/WebHost/**"
       - "libs/cua/crates/cua-spaces-app-core/**"
       - ".github/workflows/ci-cua-spaces-web.yml"
+      - ".github/flaky/**"
+      - ".github/scripts/flaky/**"
+      - ".github/actions/flaky-upload/**"
+  push:
+    branches: [main]
+    paths:
+      - "apps/cua-spaces-web/**"
+      - "apps/cua-spaces-desktop/**"
+      - "apps/cua-spaces/core-wasm/**"
+      - "apps/cua-spaces-macos/Sources/CuaSpacesMacKit/WebHost/**"
+      - "libs/cua/crates/cua-spaces-app-core/**"
+      - ".github/workflows/ci-cua-spaces-web.yml"
   workflow_dispatch:
 
 permissions:
@@ -29,7 +41,7 @@ permissions:
 
 concurrency:
   group: ci-cua-spaces-web-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_NET_RETRY: "10"
@@ -45,15 +57,15 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust, the wasm32 target and wasm-bindgen
+      - name: Install Rust and the wasm32 target
         working-directory: apps/cua-spaces/core-wasm
         run: |
           rustup show active-toolchain || rustup toolchain install
           rustup target add wasm32-unknown-unknown
-          cargo install wasm-bindgen-cli --version 0.2.126 --locked
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: apps/cua-spaces/core-wasm
+      - uses: ./.github/actions/wasm-bindgen
       # pnpm from the Electron shell's packageManager (pnpm@11.20.0); the
       # root package.json pins pnpm 9 for the rest of the repo.
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
@@ -68,17 +80,35 @@ jobs:
           # Its own pnpm-workspace.yaml (allowBuilds: Electron's download); with
           # --ignore-workspace pnpm skips it and fails on electron-winstaller.
           (cd apps/cua-spaces-desktop && pnpm install --frozen-lockfile)
-      - name: Web UI typecheck and tests (with the bridge contract)
+      - name: Web UI typecheck
         working-directory: apps/cua-spaces-web
-        run: pnpm check
+        run: pnpm typecheck
+      # One retry; a test that passes only on it is reported and gets a `flaky`
+      # issue (.github/flaky/). The bridge contract tests run here too.
+      - name: Web UI tests (with the bridge contract)
+        working-directory: apps/cua-spaces-web
+        env:
+          FLAKY_RESULTS_OUT: ${{ runner.temp }}/flaky-vitest/web.json
+        run: |
+          cp "$GITHUB_WORKSPACE/.github/flaky/vitest-reporter.mjs" ./.flaky-vitest-reporter.mjs
+          "$GITHUB_WORKSPACE/.github/scripts/flaky/flaky.sh" run --suite spaces-web-vitest --format vitest --results "$FLAKY_RESULTS_OUT" -- \
+            pnpm test -- --retry=1 --reporter=default --reporter=./.flaky-vitest-reporter.mjs
       - name: Web UI build
         working-directory: apps/cua-spaces-web
         run: pnpm build
       - name: Electron shell typecheck, tests (router contract) and build (channel check)
         working-directory: apps/cua-spaces-desktop
+        env:
+          FLAKY_RESULTS_OUT: ${{ runner.temp }}/flaky-vitest/desktop.json
         run: |
-          pnpm test
+          cp "$GITHUB_WORKSPACE/.github/flaky/vitest-reporter.mjs" ./.flaky-vitest-reporter.mjs
+          "$GITHUB_WORKSPACE/.github/scripts/flaky/flaky.sh" run --suite spaces-desktop-vitest --format vitest --results "$FLAKY_RESULTS_OUT" -- \
+            pnpm test -- --retry=1 --reporter=default --reporter=./.flaky-vitest-reporter.mjs
           pnpm build
+      - uses: ./.github/actions/flaky-upload
+        if: always()
+        with:
+          suite: spaces-web-test
 
   parity:
     name: parity flows (${{ matrix.host }})
@@ -90,15 +120,15 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust, the wasm32 target and wasm-bindgen
+      - name: Install Rust and the wasm32 target
         working-directory: apps/cua-spaces/core-wasm
         run: |
           rustup show active-toolchain || rustup toolchain install
           rustup target add wasm32-unknown-unknown
-          cargo install wasm-bindgen-cli --version 0.2.126 --locked
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: apps/cua-spaces/core-wasm
+      - uses: ./.github/actions/wasm-bindgen
       # pnpm from the Electron shell's packageManager (pnpm@11.20.0); the
       # root package.json pins pnpm 9 for the rest of the repo.
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
@@ -116,9 +146,11 @@ jobs:
       - name: Parity flows in the browser
         if: matrix.host == 'browser'
         working-directory: apps/cua-spaces-web
+        env:
+          FLAKY_RESULTS_OUT: ${{ runner.temp }}/flaky-playwright/parity.json
         run: |
           npx playwright install --with-deps chromium
-          pnpm parity
+          "$GITHUB_WORKSPACE/.github/scripts/flaky/flaky.sh" run --suite spaces-web-parity-browser --format playwright --results "$FLAKY_RESULTS_OUT" -- pnpm parity
       # Layout shift of every route's first load (CUA-1951): fails at 0.05 or more, or a first render over its loose budget.
       - name: Layout shift per route
         if: matrix.host == 'browser'
@@ -127,9 +159,15 @@ jobs:
       - name: Parity flows and the bridge on the Electron shell (demo mode)
         if: matrix.host == 'electron'
         working-directory: apps/cua-spaces-web
+        env:
+          FLAKY_RESULTS_OUT: ${{ runner.temp }}/flaky-playwright/parity.json
         run: |
           sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb libnss3 libgbm1 libasound2t64
-          xvfb-run -a pnpm parity:electron
+          "$GITHUB_WORKSPACE/.github/scripts/flaky/flaky.sh" run --suite spaces-web-parity-electron --format playwright --results "$FLAKY_RESULTS_OUT" -- xvfb-run -a pnpm parity:electron
+      - uses: ./.github/actions/flaky-upload
+        if: always()
+        with:
+          suite: spaces-web-parity-${{ matrix.host }}
       # The parity table (parity-summary) and, for a failure, its traces.
       - name: Upload the Playwright results
         if: ${{ !cancelled() }}

@@ -130,7 +130,7 @@ pub fn ensure_started() -> bool {
                 }
                 // No frame will ever be painted again: unblock every pointer
                 // action still waiting for its glide to arrive.
-                crate::overlay::release_arrivals();
+                crate::overlay::release_all_arrivals();
             })
             .expect("spawn cua-overlay-wl thread");
         tx
@@ -787,7 +787,7 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
         // a pointer action lands after the viewer saw the glide end (the X11
         // renderer's contract).
         for key in arrived {
-            crate::overlay::fire_arrival(&key);
+            crate::overlay::arrival_fire(&key);
         }
         frame_tick_needed = next_frame_tick_needed;
     }

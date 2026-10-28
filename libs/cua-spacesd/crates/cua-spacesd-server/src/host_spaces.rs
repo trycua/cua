@@ -20,14 +20,26 @@
 //! When the daemon's socket does not answer, the driver starts it with the
 //! `cua` CLI named in the policy (`cua daemon start`), once per call, and
 //! waits a bounded time for it.
+//!
+//! `HostJobsService` (cluster jobs: each runs once in a fresh Space the
+//! daemon creates and deletes) is forwarded the same way, to the same
+//! callers, under the same policy.
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use cua_proto::env::v1::host_jobs_service_client::HostJobsServiceClient;
+use cua_proto::env::v1::host_jobs_service_server::{HostJobsService, HostJobsServiceServer};
+use cua_proto::env::v1::host_snapshots_service_client::HostSnapshotsServiceClient;
+use cua_proto::env::v1::host_snapshots_service_server::{
+    HostSnapshotsService, HostSnapshotsServiceServer,
+};
 use cua_proto::env::v1::host_spaces_service_client::HostSpacesServiceClient;
 use cua_proto::env::v1::host_spaces_service_server::{HostSpacesService, HostSpacesServiceServer};
+use cua_proto::env::v1::host_thread_service_client::HostThreadServiceClient;
+use cua_proto::env::v1::host_thread_service_server::{HostThreadService, HostThreadServiceServer};
 use cua_proto::env::v1::*;
 use tonic::{Code, Request, Response, Status};
 
@@ -44,6 +56,15 @@ pub const CALLER_METADATA: &str = "x-cua-host-caller";
 
 /// The feature `GetCapabilities` reports while this host provides Spaces.
 pub const HOST_SPACES_FEATURE: &str = "host_spaces";
+
+/// The feature `GetCapabilities` reports while this host serves the
+/// threads of the Spaces it provides to other people (`HostThreadService`):
+/// whenever it provides Spaces.
+pub const HOST_THREAD_FEATURE: &str = "host_thread";
+
+/// The feature `GetCapabilities` reports while this host runs cluster jobs
+/// (`HostJobsService`): whenever it provides Spaces.
+pub const HOST_JOBS_FEATURE: &str = "host_jobs";
 
 /// How long a forwarded create may run: a macOS VM's first create
 /// downloads a 20+ GB image before it boots, which on a slow connection
@@ -63,9 +84,84 @@ pub struct HostSpacesProvider {
 impl HostSpacesProvider {
     /// A provider reading the host policy at `policy_file` on every call.
     pub fn new(policy_file: impl Into<PathBuf>) -> Self {
-        Self {
-            policy_file: policy_file.into(),
+        let policy_file = policy_file.into();
+        if let Some(dir) = policy_file.parent() {
+            let _ = ROUTED_HOST_DIR.set(dir.to_path_buf());
         }
+        Self { policy_file }
+    }
+}
+
+/// The host directory (next to the policy) whose `provided-spaces.json`
+/// lists the routed Spaces this host forwards on loopback.
+static ROUTED_HOST_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Whether `port` is the loopback forward of a routed Space this host
+/// provides that `account` may use (it created it, or owns this machine).
+pub(crate) fn routed_port_allowed(port: u16, account: &str, owner: bool) -> bool {
+    let Some(dir) = ROUTED_HOST_DIR.get() else {
+        return false;
+    };
+    routed_port_allowed_in(dir, port, account, owner)
+}
+
+/// [`routed_port_allowed`] for the host directory `dir`.
+pub(crate) fn routed_port_allowed_in(dir: &Path, port: u16, account: &str, owner: bool) -> bool {
+    /// The fields of a `provided-spaces.json` row this check reads (the
+    /// host's cua writes the file: `cua_host::provided::ProvidedSpace`).
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Provided {
+        #[serde(default)]
+        routed: bool,
+        #[serde(default)]
+        direct_port: u16,
+        #[serde(default)]
+        created_by_account: String,
+    }
+    let Ok(raw) = std::fs::read(dir.join("provided-spaces.json")) else {
+        return false;
+    };
+    let Ok(all) = serde_json::from_slice::<Vec<Provided>>(&raw) else {
+        return false;
+    };
+    all.iter().any(|s| {
+        s.routed
+            && s.direct_port == port
+            && port != 0
+            && (owner || (!account.is_empty() && s.created_by_account == account))
+    })
+}
+
+#[cfg(test)]
+mod routed_tests {
+    use super::*;
+
+    #[test]
+    fn only_a_routed_spaces_own_port_is_forwarded() {
+        let dir = tempfile::tempdir().unwrap();
+        let rec = |port: u16, routed: bool, acct: &str| cua_host::provided::ProvidedSpace {
+            local_space: format!("local:s{port}"),
+            name: format!("s{port}"),
+            image: "linux".into(),
+            created_by: "ada".into(),
+            created_by_account: acct.into(),
+            direct_port: port,
+            routed,
+            ..Default::default()
+        };
+        cua_host::provided::save_provided(
+            dir.path(),
+            &[rec(40001, true, "ada"), rec(40002, false, "ada")],
+        )
+        .unwrap();
+        let ok = |p, a: &str, o| routed_port_allowed_in(dir.path(), p, a, o);
+        assert!(ok(40001, "ada", false));
+        assert!(!ok(40001, "bob", false), "another account's Space");
+        assert!(ok(40001, "bob", true), "the machine's owner");
+        assert!(!ok(40002, "ada", false), "a direct Space is not routed");
+        assert!(!ok(22, "ada", true), "never another port");
+        assert!(!ok(40001, "", false));
     }
 }
 
@@ -91,15 +187,16 @@ impl ServiceProvider for HostSpacesProvider {
         let providing = read_policy(&self.policy_file)
             .map(|p| p.provide_spaces && p.spaces_daemon.is_some())
             .unwrap_or(false);
-        vec![feature(
-            HOST_SPACES_FEATURE,
-            providing,
-            if providing {
-                ""
-            } else {
-                "this computer does not provide Spaces (on it: `cua host config --provide-spaces on`)"
-            },
-        )]
+        let limitation = if providing {
+            ""
+        } else {
+            "this computer does not provide Spaces (on it: `cua host config --provide-spaces on`)"
+        };
+        vec![
+            feature(HOST_SPACES_FEATURE, providing, limitation),
+            feature(HOST_JOBS_FEATURE, providing, limitation),
+            feature(HOST_THREAD_FEATURE, providing, limitation),
+        ]
     }
 
     fn register(
@@ -107,22 +204,196 @@ impl ServiceProvider for HostSpacesProvider {
         routes: tonic::service::Routes,
         _ctx: &ServerContext,
     ) -> tonic::service::Routes {
-        routes.add_service(HostSpacesServiceServer::new(HostSpacesImpl {
+        let host = HostSpacesImpl {
             policy_file: Arc::new(self.policy_file.clone()),
-        }))
+        };
+        routes
+            .add_service(HostJobsServiceServer::new(HostJobsImpl(host.clone())))
+            .add_service(
+                HostSnapshotsServiceServer::new(HostSnapshotsImpl(host.clone()))
+                    .max_decoding_message_size(64 * 1024 * 1024)
+                    .max_encoding_message_size(64 * 1024 * 1024),
+            )
+            .add_service(HostThreadServiceServer::new(HostThreadImpl(host.clone())))
+            .add_service(HostSpacesServiceServer::new(host))
     }
 
     fn http_routes(&self) -> Option<axum::Router> {
-        None
+        // The checkpoint files this host exported, to the holders of a read
+        // grant the host's daemon issued (it signs them with a key in its
+        // cua home, which the route verifies), from the peers a host call
+        // is taken from.
+        let policy_file = self.policy_file.clone();
+        let home: cua_snapshot_sync::serve::HomeFn = Arc::new(move || {
+            let p = read_policy(&policy_file).ok()?;
+            if !p.provide_spaces {
+                return None;
+            }
+            let d = p.spaces_daemon?;
+            Some(if d.cua_home.is_empty() {
+                std::path::PathBuf::from(std::env::var_os("HOME")?).join(".cua")
+            } else {
+                std::path::PathBuf::from(d.cua_home)
+            })
+        });
+        let policy_file = self.policy_file.clone();
+        let allow: cua_snapshot_sync::serve::AllowFn = Arc::new(move |req| {
+            let policy = read_policy(&policy_file).map_err(|s| s.message().to_string())?;
+            let peer = req.extensions().get::<crate::peer::PeerAddr>().map(|p| p.0);
+            match peer_refusal(&policy, peer) {
+                Some(refused) => Err(refused.message().to_string()),
+                None => Ok(()),
+            }
+        });
+        Some(cua_snapshot_sync::serve::router(home, allow))
     }
 
     fn services(&self) -> Vec<&'static str> {
-        vec!["cua.env.v1.HostSpacesService"]
+        vec![
+            "cua.env.v1.HostSpacesService",
+            "cua.env.v1.HostJobsService",
+            "cua.env.v1.HostSnapshotsService",
+            "cua.env.v1.HostThreadService",
+        ]
+    }
+
+    fn http_paths(&self) -> Vec<&'static str> {
+        vec![cua_proto::metadata::SNAPSHOT_BLOBS_PATH]
     }
 }
 
+#[derive(Clone)]
 struct HostSpacesImpl {
     policy_file: Arc<PathBuf>,
+}
+
+/// `HostJobsService`, forwarded like `HostSpacesService`.
+struct HostJobsImpl(HostSpacesImpl);
+
+/// How long a forwarded job call may take besides its own wait (a batch
+/// of job acceptances is written to the host's ledger first).
+const JOBS_CALL: Duration = Duration::from_secs(60);
+
+impl HostJobsImpl {
+    async fn client<T>(
+        &self,
+        req: &Request<T>,
+    ) -> Result<(HostJobsServiceClient<tonic::transport::Channel>, String), Status> {
+        let policy = read_policy(&self.0.policy_file)?;
+        if let Some(refusal) = peer_refusal(&policy, crate::peer::peer_of(req)) {
+            return Err(refusal);
+        }
+        let who = caller_json(req)?;
+        if !policy.provide_spaces {
+            return Err(status(
+                Code::FailedPrecondition,
+                ErrorReason::FeatureUnsupported,
+                "this machine does not provide Spaces, so it runs no jobs (on it: `cua host config --provide-spaces on`)",
+            ));
+        }
+        let daemon = policy.spaces_daemon.ok_or_else(|| {
+            status(
+                Code::FailedPrecondition,
+                ErrorReason::NotInitialized,
+                "this host's policy names no cua daemon; run `cua host setup` on it again",
+            )
+        })?;
+        let channel = daemon_channel(&daemon).await?;
+        Ok((
+            HostJobsServiceClient::new(channel)
+                .max_decoding_message_size(64 * 1024 * 1024)
+                .max_encoding_message_size(64 * 1024 * 1024),
+            who,
+        ))
+    }
+}
+
+#[tonic::async_trait]
+impl HostJobsService for HostJobsImpl {
+    async fn run_host_jobs(
+        &self,
+        request: Request<RunHostJobsRequest>,
+    ) -> Result<Response<RunHostJobsResponse>, Status> {
+        let (mut client, who) = self.client(&request).await?;
+        client
+            .run_host_jobs(with_caller(request.into_inner(), &who, Some(JOBS_CALL))?)
+            .await
+    }
+
+    async fn get_host_job(
+        &self,
+        request: Request<GetHostJobRequest>,
+    ) -> Result<Response<GetHostJobResponse>, Status> {
+        let (mut client, who) = self.client(&request).await?;
+        client
+            .get_host_job(with_caller(request.into_inner(), &who, Some(JOBS_CALL))?)
+            .await
+    }
+
+    async fn list_host_jobs(
+        &self,
+        request: Request<ListHostJobsRequest>,
+    ) -> Result<Response<ListHostJobsResponse>, Status> {
+        let (mut client, who) = self.client(&request).await?;
+        let r = request.into_inner();
+        let wait = Duration::from_millis(u64::from(r.wait_ms.min(30_000)));
+        client
+            .list_host_jobs(with_caller(r, &who, Some(JOBS_CALL + wait))?)
+            .await
+    }
+
+    async fn cancel_host_job(
+        &self,
+        request: Request<CancelHostJobRequest>,
+    ) -> Result<Response<CancelHostJobResponse>, Status> {
+        let (mut client, who) = self.client(&request).await?;
+        client
+            .cancel_host_job(with_caller(request.into_inner(), &who, Some(JOBS_CALL))?)
+            .await
+    }
+}
+
+/// `HostThreadService`: the threads of the Spaces this host provides, for
+/// the people it is shared with (view-only shares too: they read only).
+/// Forwarded to the daemon like `HostSpacesService`, with the verified
+/// caller; the daemon decides what each caller may do.
+struct HostThreadImpl(HostSpacesImpl);
+
+/// How long a forwarded thread call may take: a `thread_read` long poll
+/// waits up to 25 s on the daemon, plus the call itself.
+const THREAD_CALL: Duration = Duration::from_secs(60);
+
+#[tonic::async_trait]
+impl HostThreadService for HostThreadImpl {
+    async fn call_thread_tool(
+        &self,
+        request: Request<CallThreadToolRequest>,
+    ) -> Result<Response<CallThreadToolResponse>, Status> {
+        let policy = read_policy(&self.0.policy_file)?;
+        if let Some(refusal) = peer_refusal(&policy, crate::peer::peer_of(&request)) {
+            return Err(refusal);
+        }
+        let who = caller_json_of(&request)?;
+        if !policy.provide_spaces {
+            return Err(status(
+                Code::FailedPrecondition,
+                ErrorReason::FeatureUnsupported,
+                "this computer does not provide Spaces (on it: `cua host config --provide-spaces on`)",
+            ));
+        }
+        let daemon = policy.spaces_daemon.ok_or_else(|| {
+            status(
+                Code::FailedPrecondition,
+                ErrorReason::NotInitialized,
+                "this host's policy names no cua daemon; run `cua host setup` on it again",
+            )
+        })?;
+        let channel = daemon_channel(&daemon).await?;
+        // Never the arguments or the result here: they carry messages.
+        HostThreadServiceClient::new(channel)
+            .call_thread_tool(with_caller(request.into_inner(), &who, Some(THREAD_CALL))?)
+            .await
+    }
 }
 
 // Keep the JSON readable as ASCII gRPC metadata without losing Unicode names.
@@ -147,20 +418,46 @@ impl serde_json::ser::Formatter for AsciiJsonFormatter {
     }
 }
 
-/// The verified caller as the daemon receives it.
+/// The verified caller as the daemon receives it. A view-only share is
+/// refused.
 fn caller_json<T>(req: &Request<T>) -> Result<String, Status> {
-    let who = caller(req);
-    if who.viewer.is_some() {
+    if caller(req).account.is_some_and(|a| a.space.is_some()) {
+        return Err(status(
+            Code::PermissionDenied,
+            ErrorReason::PermissionDenied,
+            "a Space shared with you reaches only its thread on this host",
+        ));
+    }
+    if caller(req).viewer.is_some() {
         return Err(status(
             Code::PermissionDenied,
             ErrorReason::PermissionDenied,
             "a view-only share cannot create or delete Spaces on this host",
         ));
     }
+    caller_json_of(req)
+}
+
+/// The verified caller as the daemon receives it, a view-only share as
+/// role `viewer` (the daemon lets it read only).
+fn caller_json_of<T>(req: &Request<T>) -> Result<String, Status> {
+    let who = caller(req);
+    let viewer = who.viewer.is_some();
     let value = match (&who.account, who.asserted, who.token_verified) {
+        (Some(a), true, _) if a.space.is_some() => serde_json::json!({
+            "account": a.account, "email": a.email, "name": a.name,
+            "role": a.role, "space": a.space, "via": "relay",
+        }),
         (Some(a), true, _) => serde_json::json!({
             "account": a.account, "email": a.email, "name": a.name,
-            "role": a.role, "via": "relay",
+            "role": if viewer { "viewer" } else { a.role.as_str() },
+            // Who vouched: the relay (an assertion, also over the mesh) or
+            // the host's tailnet (`--tailnet`).
+            "via": if who.principal.as_ref().is_some_and(|p| p.id.starts_with("tailnet:")) {
+                "tailnet"
+            } else {
+                "relay"
+            },
         }),
         (None, false, true) => serde_json::json!({
             "account": "local", "role": "owner", "via": "token",
@@ -342,8 +639,11 @@ pub async fn wake_daemon(policy_file: PathBuf) {
         }
     };
     let who = serde_json::json!({"account": "local", "role": "owner", "via": "token"}).to_string();
-    let Ok(request) = with_caller(GetHostSpacesRequest {}, &who, Some(Duration::from_secs(60)))
-    else {
+    let Ok(request) = with_caller(
+        GetHostSpacesRequest::default(),
+        &who,
+        Some(Duration::from_secs(60)),
+    ) else {
         return;
     };
     if let Err(error) = HostSpacesServiceClient::new(channel)
@@ -365,6 +665,152 @@ fn with_caller<T>(message: T, who: &str, timeout: Option<Duration>) -> Result<Re
         out.set_timeout(t);
     }
     Ok(out)
+}
+
+/// `HostSnapshotsService`, forwarded like `HostSpacesService`.
+struct HostSnapshotsImpl(HostSpacesImpl);
+
+/// How long a forwarded snapshot copy may take (gigabytes over the LAN, or
+/// from the fallback).
+const SNAPSHOT_COPY: Duration = Duration::from_secs(2 * 60 * 60);
+
+impl HostSnapshotsImpl {
+    async fn client<T>(
+        &self,
+        req: &Request<T>,
+    ) -> Result<
+        (
+            HostSnapshotsServiceClient<tonic::transport::Channel>,
+            String,
+        ),
+        Status,
+    > {
+        let policy = read_policy(&self.0.policy_file)?;
+        if let Some(refusal) = peer_refusal(&policy, crate::peer::peer_of(req)) {
+            return Err(refusal);
+        }
+        let who = caller_json(req)?;
+        if !policy.provide_spaces {
+            return Err(status(
+                Code::FailedPrecondition,
+                ErrorReason::FeatureUnsupported,
+                "this machine does not provide Spaces (on it: `cua host config --provide-spaces on`)",
+            ));
+        }
+        let daemon = policy.spaces_daemon.ok_or_else(|| {
+            status(
+                Code::FailedPrecondition,
+                ErrorReason::NotInitialized,
+                "this host's policy names no cua daemon; run `cua host setup` on it again",
+            )
+        })?;
+        let channel = daemon_channel(&daemon).await?;
+        Ok((
+            HostSnapshotsServiceClient::new(channel)
+                .max_decoding_message_size(64 * 1024 * 1024)
+                .max_encoding_message_size(64 * 1024 * 1024),
+            who,
+        ))
+    }
+}
+
+type Forwarded<T> = std::pin::Pin<Box<dyn tokio_stream::Stream<Item = Result<T, Status>> + Send>>;
+
+#[tonic::async_trait]
+impl HostSnapshotsService for HostSnapshotsImpl {
+    async fn list_host_snapshots(
+        &self,
+        request: Request<ListHostSnapshotsRequest>,
+    ) -> Result<Response<ListHostSnapshotsResponse>, Status> {
+        let (mut client, who) = self.client(&request).await?;
+        client
+            .list_host_snapshots(with_caller(
+                request.into_inner(),
+                &who,
+                Some(Duration::from_secs(60)),
+            )?)
+            .await
+    }
+
+    async fn export_host_snapshot(
+        &self,
+        request: Request<ExportHostSnapshotRequest>,
+    ) -> Result<Response<ExportHostSnapshotResponse>, Status> {
+        let (mut client, who) = self.client(&request).await?;
+        client
+            .export_host_snapshot(with_caller(
+                request.into_inner(),
+                &who,
+                // Hashing a checkpoint the first time reads all of it.
+                Some(Duration::from_secs(30 * 60)),
+            )?)
+            .await
+    }
+
+    async fn create_host_snapshot(
+        &self,
+        request: Request<CreateHostSnapshotRequest>,
+    ) -> Result<Response<CreateHostSnapshotResponse>, Status> {
+        let (mut client, who) = self.client(&request).await?;
+        client
+            .create_host_snapshot(with_caller(
+                request.into_inner(),
+                &who,
+                // Saving a VM's memory takes a while on a busy host.
+                Some(Duration::from_secs(10 * 60)),
+            )?)
+            .await
+    }
+
+    async fn delete_host_snapshot(
+        &self,
+        request: Request<DeleteHostSnapshotRequest>,
+    ) -> Result<Response<DeleteHostSnapshotResponse>, Status> {
+        let (mut client, who) = self.client(&request).await?;
+        client
+            .delete_host_snapshot(with_caller(
+                request.into_inner(),
+                &who,
+                Some(Duration::from_secs(5 * 60)),
+            )?)
+            .await
+    }
+
+    type PullHostSnapshotStream = Forwarded<PullHostSnapshotResponse>;
+
+    async fn pull_host_snapshot(
+        &self,
+        request: Request<PullHostSnapshotRequest>,
+    ) -> Result<Response<Self::PullHostSnapshotStream>, Status> {
+        let (mut client, who) = self.client(&request).await?;
+        let s = client
+            .pull_host_snapshot(with_caller(
+                request.into_inner(),
+                &who,
+                Some(SNAPSHOT_COPY),
+            )?)
+            .await?
+            .into_inner();
+        Ok(Response::new(Box::pin(s)))
+    }
+
+    type PublishHostSnapshotStream = Forwarded<PublishHostSnapshotResponse>;
+
+    async fn publish_host_snapshot(
+        &self,
+        request: Request<PublishHostSnapshotRequest>,
+    ) -> Result<Response<Self::PublishHostSnapshotStream>, Status> {
+        let (mut client, who) = self.client(&request).await?;
+        let s = client
+            .publish_host_snapshot(with_caller(
+                request.into_inner(),
+                &who,
+                Some(SNAPSHOT_COPY),
+            )?)
+            .await?
+            .into_inner();
+        Ok(Response::new(Box::pin(s)))
+    }
 }
 
 #[tonic::async_trait]
@@ -466,6 +912,37 @@ impl HostSpacesService for HostSpacesImpl {
                 request.into_inner(),
                 &who,
                 // Turning on waits for a VM's boot and its driver.
+                Some(Duration::from_secs(5 * 60)),
+            )?)
+            .await
+    }
+
+    async fn set_host_warm(
+        &self,
+        request: Request<cua_proto::env::v1::SetHostWarmRequest>,
+    ) -> Result<Response<cua_proto::env::v1::SetHostWarmResponse>, Status> {
+        let (mut client, who) = self.forward_to(&request).await?;
+        client
+            .set_host_warm(with_caller(
+                request.into_inner(),
+                &who,
+                // An image pull may come first.
+                Some(Duration::from_secs(5 * 60)),
+            )?)
+            .await
+    }
+
+    async fn set_host_space_egress(
+        &self,
+        request: Request<SetHostSpaceEgressRequest>,
+    ) -> Result<Response<SetHostSpaceEgressResponse>, Status> {
+        let (mut client, who) = self.forward_to(&request).await?;
+        client
+            .set_host_space_egress(with_caller(
+                request.into_inner(),
+                &who,
+                // A QEMU VM moves into its network namespace (its memory
+                // is streamed to a new process).
                 Some(Duration::from_secs(5 * 60)),
             )?)
             .await
@@ -598,12 +1075,14 @@ mod tests {
         let path = dir.path().join("host.json");
         let p = HostSpacesProvider::new(&path);
         assert!(!p.capabilities()[0].supported, "no policy");
+        assert_eq!(p.capabilities()[1].name, HOST_JOBS_FEATURE);
         std::fs::write(
             &path,
             r#"{"owner":"ada","provide_spaces":true,"spaces_daemon":{"socket":"/x/cua.sock"}}"#,
         )
         .unwrap();
         assert!(p.capabilities()[0].supported);
+        assert!(p.capabilities()[1].supported, "jobs follow Spaces");
         std::fs::write(&path, r#"{"owner":"ada","provide_spaces":false}"#).unwrap();
         assert!(!p.capabilities()[0].supported);
     }

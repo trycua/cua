@@ -10,7 +10,7 @@
 //! first, and asks you to confirm); see `lib.rs`. The relay's old
 //! `team-…` teams are not used: a server without Teams says so.
 
-use crate::util::{self, line};
+use crate::util::{self, hint_line, line};
 use clap::Subcommand;
 use cua_host::AccountTokens;
 use cua_host::spaces_api::{
@@ -265,7 +265,7 @@ fn print_devices(org: &ApiOrg, devices: &[ApiDeviceApproval], out: &mut dyn Writ
         line(out, format!("  {}  {}  {}", d.device_id, d.sub, d.state));
     }
     if org.manages() && devices.iter().any(|d| d.state == "pending") {
-        line(
+        hint_line(
             out,
             format!("Approve one with `cua team approve {} <device>`.", org.id),
         );
@@ -326,7 +326,7 @@ pub async fn run_with(
             } else {
                 line(out, format!("Created team {} ({}).", t.label(), t.id));
                 line(out, "Next:");
-                line(
+                hint_line(
                     out,
                     "  cua auth login                 (your session lists the team after a new sign-in)",
                 );
@@ -334,8 +334,8 @@ pub async fn run_with(
                     out,
                     "  buy Teams for it at app.cua.ai (team computers and device approval need it)",
                 );
-                line(out, format!("  cua team invite {} <email>", t.id));
-                line(out, format!("  cua team add-machine {} <space>", t.id));
+                hint_line(out, format!("  cua team invite {} <email>", t.id));
+                hint_line(out, format!("  cua team add-machine {} <space>", t.id));
             }
         }
         TeamCmd::Ls => {
@@ -345,7 +345,7 @@ pub async fn run_with(
                 return Ok(0);
             }
             if me.orgs.is_empty() {
-                line(
+                hint_line(
                     out,
                     "You are in no team. Create one with `cua team create <name>` (or at app.cua.ai).",
                 );
@@ -417,7 +417,7 @@ pub async fn run_with(
             }
             line(out, format!("Computers ({}):", machines.len()));
             if machines.is_empty() {
-                line(
+                hint_line(
                     out,
                     "  none yet: `cua team add-machine <team> <space>` (owner or admin)",
                 );
@@ -455,7 +455,7 @@ pub async fn run_with(
                     &serde_json::json!({ "team": id, "email": email.trim(), "role": role }),
                 );
             } else {
-                line(
+                hint_line(
                     out,
                     format!(
                         "Invited {} to {} as {role}: cua.ai emails them an invitation. They accept it, sign in again (`cua auth login`), and run `cua team join {}`.",
@@ -482,7 +482,7 @@ pub async fn run_with(
                     out,
                     format!("You are in {} ({}) as {role}.", org.label(), org.id),
                 );
-                line(
+                hint_line(
                     out,
                     format!(
                         "If the team approves devices, ask for this one: `cua team request {}`.",

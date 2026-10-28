@@ -2,33 +2,42 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { Link } from "@tanstack/react-router";
-import { useEffect, useRef, useState, type PointerEvent } from "react";
+import { useEffect, useRef, useState, type PointerEvent, type ReactNode } from "react";
 
-import { Loader2Icon, LogOutIcon, TriangleAlertIcon } from "lucide-react";
+import { Loader2Icon, TriangleAlertIcon } from "lucide-react";
 
 import type { SignInFooter, Space } from "@/bridge";
 import { spokenName } from "@/bridge/space-names";
 
-import { signInFooter, useBridge, useMachines, useNotifications, useRelayUsageView, useSession, useSpaces, useTrackPlanClick } from "@/bridge";
+import { signInFooter, useBridge, useFeatureRecorded, useMachines, useNotifications, useSession, useSpaces } from "@/bridge";
 import { CuaKey } from "@/components/cua-key";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
-import { Tooltip } from "@/components/ui/tooltip";
 import { bindingFor } from "@/lib/keybindings";
-import { realSpaces, spaceState } from "@/lib/spaces";
+import { useListedSpaces } from "@/components/spaces/listed";
+import { spaceState } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
 import { SIDEBAR_DEFAULT, useUiStore } from "@/stores/ui";
 import { Shortcut } from "@/components/ui/kbd";
 import { SignInLink } from "@/components/sign-in-link";
 import { useNavItems } from "./nav";
-import { SidebarUpdateIndicator } from "./update-indicator";
+import { SidebarUpdateButton } from "./update-indicator";
+import { SidebarTip } from "@/components/tips";
+import { useMachinesAccount } from "@/components/machines/account-parts";
+import { AccountLine, ProBanner } from "./account-area";
 
 export function Sidebar() {
   const width = useUiStore((s) => s.sidebarWidth);
-  const { data: spaces } = useSpaces();
+  const { data: spaces, listStatus } = useSpaces();
   const { data: machines } = useMachines();
   const notifications = useNotifications();
-  const counts: Partial<Record<string, number>> = { "/spaces": spaces && realSpaces(spaces).length, "/machines": machines?.length };
+  // No count before the list was read (not "0" while the daemon starts); while computers still answer, the
+  // Spaces known so far.
+  const { counted } = useListedSpaces(spaces);
+  const spacesCount = spaces && listStatus.loaded ? counted.length : undefined;
+  // Machines waiting to be added show beside the item, so they are seen from every page.
+  const { pending } = useMachinesAccount();
+  const counts: Partial<Record<string, number>> = { "/spaces": spacesCount, "/machines": machines?.length };
   const navItems = useNavItems();
   const unread = notifications.data?.unread ?? 0;
 
@@ -49,7 +58,7 @@ export function Sidebar() {
             <Link
               key={item.to}
               to={item.to}
-              className="group flex h-7 items-center gap-2.5 rounded-md px-2 text-[13px] outline-none hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-ring/60 data-[status=active]:bg-foreground/[0.07] data-[status=active]:font-medium data-[status=active]:text-foreground dark:data-[status=active]:bg-white/[0.08]"
+              className="group flex h-7 items-center gap-2.5 rounded-lg px-2 text-[13px] outline-none hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-ring/60 data-[status=active]:bg-foreground/[0.07] data-[status=active]:font-medium data-[status=active]:text-foreground dark:data-[status=active]:bg-white/[0.08]"
             >
               {({ isActive }) => (
                 <>
@@ -62,6 +71,11 @@ export function Sidebar() {
                       <span className="text-2xs font-medium tabular-nums text-foreground">{unread}</span>
                     </span>
                   ) : null}
+                  {item.to === "/machines" && pending.length > 0 ? (
+                    <span data-pending-badge className="rounded-full bg-warning/20 px-1.5 text-2xs font-medium tabular-nums text-foreground" aria-label={`${pending.length} waiting to be added`}>
+                      {pending.length}
+                    </span>
+                  ) : null}
                   {counts[item.to] !== undefined ? (
                     <span className="text-2xs tabular-nums text-muted-foreground group-hover:hidden">{counts[item.to]}</span>
                   ) : null}
@@ -72,11 +86,15 @@ export function Sidebar() {
           );
         })}
       </nav>
-      <div className="mt-auto">
-        <SidebarCreating spaces={spaces ?? []} />
-        <SidebarUpdateIndicator />
-        <AccountFooter />
-      </div>
+      {/* A spacer, not a wrapper pushed down: what appears at the foot (a tip, the account) grows
+          upward without moving anything already drawn (CUA-1951). */}
+      <div className="flex-1" />
+      <SidebarCreating spaces={spaces ?? []} />
+      <SidebarTip />
+      {/* Free only: "Run more Spaces at once with Pro", right above the account line. */}
+      <ProBanner />
+      {/* A ready update is a compact button at the end of the account line. */}
+      <AccountFooter trailing={<SidebarUpdateButton />} />
       <ResizeHandle />
     </aside>
   );
@@ -114,77 +132,62 @@ function SidebarCreating({ spaces }: { spaces: Space[] }) {
 }
 
 /** The account and its sign-in, every state in one place (the core's
- * `signIn.footer`): signed in as, waiting for the browser with the code,
+ * `signIn.footer`): the account line (`AccountLine`), waiting for the browser with the code,
  * Open again and Cancel, or why it failed with Try again and a toast. And a
- * way back into a first run left halfway. */
-export function AccountFooter() {
+ * way back into a first run left halfway. `trailing` (the update button)
+ * sits at the far right of its first row. */
+export function AccountFooter({ trailing }: { trailing?: ReactNode }) {
   const { core } = useBridge();
-  const { data: session, signIn, signOut, cancelSignIn, openExternal } = useSession();
-  const plan = useRelayUsageView()?.planCard;
-  const trackPlanClick = useTrackPlanClick();
+  const { data: session, signIn, cancelSignIn, openExternal } = useSession();
   const [details, setDetails] = useState(false);
   const footer = session
     ? signInFooter(core, {
         identity: session.signedIn ? (session.identity ?? "") : null,
-        cloudConfigured: session.fleet.configured,
+        cloudConfigured: session.account.configured,
         canSignIn: true,
         signIn: session.signIn,
         hasUrl: Boolean(session.signInUrl),
       })
     : null;
   useSignInFailureToast(footer);
-  if (!session || !footer) return <div className="mt-auto h-12 border-t" />;
+  // A browser sign-in that has not come back for a while: offer a code.
+  const waitingOnBrowser = footer?.state === "waiting" && !footer.code;
+  const stuck = useAfter(waitingOnBrowser, STILL_WAITING_MS);
+  useFeatureRecorded("sign_in_still_waiting", stuck);
+  // The last attempt used a code: another code would not help.
+  const triedCode = useRef(false);
+  if (footer?.state === "waiting" && footer.code) triedCode.current = true;
+  if (!session || !footer) return <div className="mt-auto flex h-12 items-center justify-end border-t px-3">{trailing}</div>;
 
   const unfinished = !session.onboarding.completed;
-  const run = (f: () => Promise<unknown>, what: string) =>
-    f().catch((e: unknown) => toast(what, { description: e instanceof Error ? e.message : String(e) }));
   // A failure is shown here with its reason (and the toast): nothing to add.
   const startSignIn = () => {
     setDetails(false);
+    triedCode.current = false;
     void signIn().catch(() => {});
+  };
+  // For when the browser never gets back to the app (another browser, a
+  // blocked connection): a code to type on any device.
+  const startWithCode = () => {
+    setDetails(false);
+    void signIn({ code: true }).catch(() => {});
   };
   const identity = footer.identity || (session.signedIn ? "Signed in" : null);
 
   return (
-    <div className="mt-auto border-t px-3 py-2.5" data-signin={footer.state}>
+    <div className={cn("mt-auto", footer.state === "signedIn" ? "px-2.5 pt-1 pb-2.5" : "border-t px-3 py-2.5")} data-signin={footer.state}>
       {unfinished ? (
         <Link to="/onboarding" className="mb-2 block text-xs text-muted-foreground hover:text-foreground">
           Finish setting up
         </Link>
       ) : null}
       {footer.state === "signedIn" && identity ? (
-        <div className="flex items-center gap-2.5">
-          <div className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-2xs font-semibold text-muted-foreground uppercase">
-            {identity.slice(0, 1)}
+        // One line: the initial and the name (or email); its menu has Settings, Plan and Sign out.
+        <div className="flex items-center gap-1">
+          <div className="min-w-0 flex-1">
+            <AccountLine identity={identity} />
           </div>
-          <div className="min-w-0 flex-1 leading-tight">
-            <div className="truncate text-xs" title={footer.text} data-signin-identity="">
-              <span className="block text-2xs text-muted-foreground">Signed in as </span>
-              <span className="block truncate font-medium">{identity}</span>
-            </div>
-            {plan?.primary ? (
-              // The current plan, always visible; on Free it opens Pro's checkout.
-              <button
-                type="button"
-                data-account-plan={plan.plan}
-                className="block max-w-full truncate text-left text-2xs text-muted-foreground hover:text-foreground"
-                onClick={() => {
-                  trackPlanClick("account_menu");
-                  void openExternal(plan.primary!.url.replace("from=app_plan_card", "from=app_account_menu")).catch(() => {});
-                }}
-              >
-                {plan.label}
-                {plan.plan === "free" ? " · Upgrade" : ""}
-              </button>
-            ) : null}
-          </div>
-          {session.fleet.authMode === "user" ? (
-            <Tooltip content="Sign out" side="top">
-              <Button variant="ghost" size="icon-sm" aria-label="Sign out" onClick={() => void run(signOut, "Couldn't sign out")}>
-                <LogOutIcon className="size-3.5 text-muted-foreground" />
-              </Button>
-            </Tooltip>
-          ) : null}
+          {trailing}
         </div>
       ) : footer.state === "starting" || footer.state === "waiting" ? (
         // The code to confirm, the page to open again if the tab was
@@ -192,7 +195,8 @@ export function AccountFooter() {
         <div>
           <p className="flex items-center gap-2 text-xs" role="status">
             <Loader2Icon className="size-3.5 shrink-0 animate-spin text-muted-foreground" aria-hidden />
-            <span className="truncate">{footer.text}</span>
+            <span className="min-w-0 flex-1 truncate">{footer.text}</span>
+            <span className="shrink-0">{trailing}</span>
           </p>
           <div className="mt-1 flex flex-wrap items-center gap-x-1 pl-5.5 text-2xs text-muted-foreground">
             {footer.code ? (
@@ -222,6 +226,14 @@ export function AccountFooter() {
               </button>
             ) : null}
           </div>
+          {stuck ? (
+            <div className="mt-1.5 pl-5.5 text-2xs text-muted-foreground" data-signin-stuck="">
+              <p>Still waiting? If the page won&apos;t finish, get a code and sign in from any browser or phone.</p>
+              <button type="button" className="mt-0.5 underline underline-offset-2 hover:text-foreground" onClick={startWithCode} data-signin-code="">
+                Get a code instead
+              </button>
+            </div>
+          ) : null}
           {/* No browser opened: the page, to copy to any device. */}
           {session.signIn.kind === "waiting" && session.signIn.opened === false && session.signInUrl ? (
             <SignInLink url={session.signInUrl} compact />
@@ -237,6 +249,16 @@ export function AccountFooter() {
             <Button size="sm" onClick={startSignIn} data-signin-retry="">
               {footer.actionLabel}
             </Button>
+            {footer.reason === "notConfirmed" && !triedCode.current ? (
+              <button
+                type="button"
+                className="text-2xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                onClick={startWithCode}
+                data-signin-code=""
+              >
+                Get a code instead
+              </button>
+            ) : null}
             {footer.detail ? (
               <button
                 type="button"
@@ -248,6 +270,7 @@ export function AccountFooter() {
                 {footer.detailsLabel}
               </button>
             ) : null}
+            <span className="ml-auto">{trailing}</span>
           </div>
           {details && footer.detail ? (
             <pre className="mt-2 max-h-28 overflow-auto rounded-md bg-muted px-2 py-1.5 font-mono text-2xs break-words whitespace-pre-wrap text-muted-foreground select-text">
@@ -258,11 +281,14 @@ export function AccountFooter() {
       ) : (
         <div className="flex items-center justify-between gap-2">
           <span className="truncate text-xs text-muted-foreground">{footer.text}</span>
-          {footer.actionLabel ? (
-            <Button variant="outline" size="sm" onClick={startSignIn}>
-              {footer.actionLabel}
-            </Button>
-          ) : null}
+          <div className="flex shrink-0 items-center gap-1.5">
+            {footer.actionLabel ? (
+              <Button variant="outline" size="sm" onClick={startSignIn}>
+                {footer.actionLabel}
+              </Button>
+            ) : null}
+            {trailing}
+          </div>
         </div>
       )}
     </div>
@@ -271,6 +297,23 @@ export function AccountFooter() {
 
 /** A failed sign-in also toasts, once per failure, so it is seen wherever
  * the person is looking. */
+/** How long a browser sign-in waits before the page offers a code. */
+const STILL_WAITING_MS = 45_000;
+
+/** True once `active` has stayed true for `ms`; false again when it stops. */
+function useAfter(active: boolean, ms: number): boolean {
+  const [late, setLate] = useState(false);
+  useEffect(() => {
+    if (!active) {
+      setLate(false);
+      return;
+    }
+    const t = setTimeout(() => setLate(true), ms);
+    return () => clearTimeout(t);
+  }, [active, ms]);
+  return late;
+}
+
 function useSignInFailureToast(footer: SignInFooter | null) {
   const shown = useRef<string | null>(null);
   const key = footer?.state === "failed" ? `${footer.reason}:${footer.text}:${footer.detail ?? ""}` : null;

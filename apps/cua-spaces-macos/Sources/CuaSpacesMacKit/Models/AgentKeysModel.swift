@@ -5,12 +5,12 @@ import CuaSpacesFFI
 import Foundation
 import Observation
 
-/// Settings → Agents: the provider keys agents get. The cua daemon keeps
+/// Settings → Connectors: the provider keys agents get. The cua daemon keeps
 /// them in the Keychain (`agent_keys.list/set/remove`, its app methods; no
 /// MCP tool reaches them) and answers only the provider, the variable, the
 /// last four characters and when each was added. Every word and rule is the
 /// app core's (`appAgentKeysView`, `appAgentKeyForm`); the web UI's
-/// Settings → Agents draws the same.
+/// Settings → Connectors draws the same.
 ///
 /// A key passes through here once, in `save`, and is never kept.
 @MainActor @Observable
@@ -34,7 +34,8 @@ public final class AgentKeysModel {
     func call(_ method: String, _ args: [String: Any] = [:]) async throws -> Any {
         guard let tools else { throw AgentsToolError(message: "Agent keys need the cua daemon") }
         let r = try await tools.agentsTool(method, args)
-        if let r = r as? [String: Any] {
+        // Every method answers the list after it, except agent_keys.shell (names your shell has).
+        if method != "agent_keys.shell", let r = r as? [String: Any] {
             report = r
             error = nil
         }
@@ -69,7 +70,8 @@ public final class AgentKeysModel {
         let keys = (report?["keys"] as? [Any] ?? []).compactMap { $0 as? [String: Any] }.map { k in
             AppAgentKeyInput(provider: k["provider"] as? String ?? "other", env: k["env"] as? String ?? "",
                              last4: k["last4"] as? String ?? "",
-                             addedMs: (k["added_ms"] as? NSNumber)?.uint64Value ?? 0)
+                             addedMs: (k["added_ms"] as? NSNumber)?.uint64Value ?? 0,
+                             expired: k["expired"] as? Bool ?? false)
         }
         let unavailable = report?["available"] as? Bool == false
             ? (report?["unavailable"] as? String ?? "this computer can't keep keys") : nil

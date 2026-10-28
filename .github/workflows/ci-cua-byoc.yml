@@ -16,6 +16,15 @@ on:
       - "libs/cua/crates/cua-spaces/src/cloud.rs"
       - "libs/cua/crates/cua-contrib/modal-helper/**"
       - ".github/workflows/ci-cua-byoc.yml"
+  push:
+    branches: [main]
+    paths:
+      - "libs/cua/crates/cua-byoc/**"
+      - "libs/cua/crates/cua-sandbox-core/**"
+      - "libs/cua/crates/cua-daemon/**"
+      - "libs/cua/crates/cua-spaces/src/cloud.rs"
+      - "libs/cua/crates/cua-contrib/modal-helper/**"
+      - ".github/workflows/ci-cua-byoc.yml"
   workflow_dispatch:
 
 permissions:
@@ -47,7 +56,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.97.1
         with:
           components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua
           key: cua-byoc

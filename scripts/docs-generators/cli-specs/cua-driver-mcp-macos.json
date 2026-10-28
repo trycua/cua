@@ -105,9 +105,23 @@
       "description": "Case-insensitive substring filter: returns matching rows plus ancestors; element_index values are not renumbered. Try this before a full read.",
       "type": "string"
      },
-     "screenshot_out_file": {
-      "description": "When set, write the PNG to this file path (~ expanded) instead of embedding base64 in the response. The structured output will contain screenshot_file_path instead.",
+     "screenshot_format": {
+      "description": "Encoding of the returned screenshot. Default \"png\". \"jpeg\" is smaller, drops alpha, and mints no capture_id (capture_id-bound tools need a PNG read); pixel coordinates are unchanged.",
+      "enum": [
+       "png",
+       "jpeg"
+      ],
       "type": "string"
+     },
+     "screenshot_out_file": {
+      "description": "When set, write the screenshot (PNG, or JPEG with screenshot_format:\"jpeg\") to this file path (~ expanded) instead of embedding base64 in the response. The structured output will contain screenshot_file_path instead.",
+      "type": "string"
+     },
+     "screenshot_quality": {
+      "description": "JPEG quality, 1-95, with screenshot_format:\"jpeg\" only. Default 85.",
+      "maximum": 95,
+      "minimum": 1,
+      "type": "integer"
      },
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
@@ -545,6 +559,14 @@
       "description": "Target process ID. Optional with element_token (it carries the pid).",
       "type": "integer"
      },
+     "post_action_wait": {
+      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. Only paths that already observe window changes are affected; for example a right_click that does not watch is unchanged.",
+      "enum": [
+       "default",
+       "none"
+      ],
+      "type": "string"
+     },
      "scope": {
       "description": "Default \"window\". \"desktop\": x,y with no pid/window_id are true screen pixels from get_desktop_state.",
       "enum": [
@@ -632,6 +654,14 @@
       "description": "Target process ID. Optional with element_token (the token carries the pid).",
       "type": "integer"
      },
+     "post_action_wait": {
+      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. Only paths that already observe window changes are affected; for example a right_click that does not watch is unchanged.",
+      "enum": [
+       "default",
+       "none"
+      ],
+      "type": "string"
+     },
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
       "type": "string"
@@ -685,6 +715,14 @@
      "pid": {
       "description": "Target process ID. Optional with element_token (the token carries the pid).",
       "type": "integer"
+     },
+     "post_action_wait": {
+      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. Only paths that already observe window changes are affected; for example a right_click that does not watch is unchanged.",
+      "enum": [
+       "default",
+       "none"
+      ],
+      "type": "string"
      },
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
@@ -761,6 +799,14 @@
      "pid": {
       "description": "Target process ID.",
       "type": "integer"
+     },
+     "post_action_wait": {
+      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. Only paths that already observe window changes are affected; for example a right_click that does not watch is unchanged.",
+      "enum": [
+       "default",
+       "none"
+      ],
+      "type": "string"
      },
      "scope": {
       "default": "window",
@@ -867,6 +913,14 @@
       "description": "Target process ID.",
       "type": "integer"
      },
+     "post_action_wait": {
+      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. Only paths that already observe window changes are affected; for example a right_click that does not watch is unchanged.",
+      "enum": [
+       "default",
+       "none"
+      ],
+      "type": "string"
+     },
      "scope": {
       "default": "window",
       "description": "\"desktop\" with no pid/window_id types into the frontmost app.",
@@ -972,6 +1026,14 @@
       "description": "Target process ID.",
       "type": "integer"
      },
+     "post_action_wait": {
+      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. Only paths that already observe window changes are affected; for example a right_click that does not watch is unchanged.",
+      "enum": [
+       "default",
+       "none"
+      ],
+      "type": "string"
+     },
      "scope": {
       "default": "window",
       "description": "\"desktop\" with no pid/window_id sends to the frontmost app.",
@@ -1070,6 +1132,14 @@
       "description": "Target process ID. Required with x, y; optional with element_token (the token carries the pid).",
       "type": "integer"
      },
+     "post_action_wait": {
+      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. Only paths that already observe window changes are affected; for example a right_click that does not watch is unchanged.",
+      "enum": [
+       "default",
+       "none"
+      ],
+      "type": "string"
+     },
      "scope": {
       "default": "window",
       "description": "Use desktop with no pid/window_id to send the chord to the frontmost application.",
@@ -1152,6 +1222,14 @@
       "description": "Target process ID. Optional with element_token (the token carries the pid).",
       "type": "integer"
      },
+     "post_action_wait": {
+      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. Only paths that already observe window changes are affected; for example a right_click that does not watch is unchanged.",
+      "enum": [
+       "default",
+       "none"
+      ],
+      "type": "string"
+     },
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
@@ -1220,6 +1298,14 @@
      "pid": {
       "description": "Target process ID. Required unless scope is \"desktop\" or element_token is supplied.",
       "type": "integer"
+     },
+     "post_action_wait": {
+      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. Only paths that already observe window changes are affected; for example a right_click that does not watch is unchanged.",
+      "enum": [
+       "default",
+       "none"
+      ],
+      "type": "string"
      },
      "scope": {
       "default": "window",

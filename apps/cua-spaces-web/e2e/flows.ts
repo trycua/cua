@@ -12,7 +12,7 @@
  * does not name.
  */
 
-/** The page a flow opens on: `spaces`, `keyvault`, the Settings tabs,
+/** The page a flow opens on: `spaces`, `keyvault`, the Settings tabs (Account is `settings`),
  * `notifications`, `machines` (This machine), `agents`, `volume`,
  * `onboarding`, a Space's detail (`space-detail`, opened from Spaces), or a
  * sheet over Spaces (`new-space`, `teleport`, `share`). */
@@ -20,10 +20,10 @@ export type ParityScreen =
   | "spaces"
   | "keyvault"
   | "settings"
+  | "settings/general"
   | "settings/about"
-  | "settings/agents"
-  | "settings/devices"
-  | "settings/experiments"
+  | "settings/advanced"
+  | "settings/connected-apps"
   | "notifications"
   | "machines"
   | "agents"
@@ -45,6 +45,7 @@ export const FLOW_PLAN: Record<string, FlowPlan> = {
   "create-space": { status: "run", screen: "new-space" },
   "create-resources": { status: "run", screen: "new-space" },
   "create-gpu": { status: "run", screen: "new-space" },
+  "create-microvm": { status: "run", screen: "new-space" },
   "create-cancel": { status: "run", screen: "spaces" },
   "teleport-review": { status: "run", screen: "teleport" },
   "teleport-sign-ins": { status: "run", screen: "teleport" },
@@ -61,8 +62,9 @@ export const FLOW_PLAN: Record<string, FlowPlan> = {
   "space-power": { status: "run", screen: "spaces" },
   "create-progress": { status: "run", screen: "spaces" },
   "create-stages": { status: "run", screen: "spaces" },
-  devices: { status: "run", screen: "settings/devices" },
-  "driver-card": { status: "run", screen: "settings" },
+  "create-retry": { status: "run", screen: "spaces" },
+  devices: { status: "run", screen: "machines" },
+  "driver-card": { status: "run", screen: "settings/connected-apps" },
   "share-sheet": { status: "run", screen: "share" },
   "agents-page": { status: "run", screen: "agents" },
   "drive-page": { status: "run", screen: "volume" },
@@ -71,19 +73,41 @@ export const FLOW_PLAN: Record<string, FlowPlan> = {
     status: "skip",
     reason: "The 0.10.0 first run has no Cua Volume page (connect the agent, then this computer); Cua Volume is set up from its own page (drive-page, drive-storage)",
   },
-  "drive-storage": { status: "run", screen: "settings" },
+  "drive-storage": { status: "run", screen: "volume" },
   notifications: { status: "run", screen: "notifications" },
   about: { status: "run", screen: "settings/about" },
-  "agent-keys": { status: "run", screen: "settings/agents" },
+  "agent-keys": { status: "run", screen: "settings/connected-apps" },
+  connectors: {
+    status: "skip",
+    reason: "The redesign's Connectors page, an app's page, the @ picker and the agent list draw connectors.*, summon.* and agentList.view as is; the webview parity test replays this flow on the wasm core, and src/__tests__/connectors-redesign.test.tsx, ask-first-in-space.test.tsx and home-agents.test.tsx drive the screens",
+  },
   "your-cloud": { status: "run", screen: "new-space" },
   "telemetry-funnel": { status: "run", screen: "spaces" },
-  "launch-at-login": { status: "run", screen: "settings" },
-  experiments: { status: "run", screen: "settings/experiments" },
+  "launch-at-login": { status: "run", screen: "settings/general" },
+  experiments: { status: "run", screen: "settings/advanced" },
   "placement-picker": { status: "run", screen: "new-space" },
   machines: { status: "run", screen: "machines" },
   "first-run": {
     status: "skip",
     reason: "The page draws firstRun.view as is; src/__tests__/first-run-parity.test.ts replays this flow on the wasm core and src/__tests__/first-run.test.tsx drives the screen",
+  },
+  // The Spaces page (CUA-2204): bridge/__tests__/spaces-page.test.ts replays these flows through
+  // bridge/spaces-page.ts on the wasm core; page tests drive the menus and bulk actions.
+  "spaces-menu": {
+    status: "skip",
+    reason: "The page draws spaces.menu as is for each Space (components/spaces/space-menu.tsx); bridge/__tests__/spaces-page.test.ts replays this flow on the wasm core and src/__tests__/spaces-page-bulk.test.tsx drives the menus",
+  },
+  "bulk-confirm": {
+    status: "skip",
+    reason: "The page draws spaces.bulkConfirm, bulkProgress and bulkDone as is (components/spaces/bulk-remove.tsx); bridge/__tests__/spaces-page.test.ts replays this flow on the wasm core and src/__tests__/spaces-page-bulk.test.tsx drives the confirm, count and toast",
+  },
+  tips: {
+    status: "skip",
+    reason: "The page draws tips.view as is (components/tips.tsx); src/__tests__/tips.test.tsx drives it, and bridge/__tests__/spaces-page.test.ts replays this flow through bridge/spaces-page.ts",
+  },
+  "pro-banner": {
+    status: "skip",
+    reason: "The Pro banner and account menu are not drawn yet; bridge/__tests__/spaces-page.test.ts replays this flow through bridge/spaces-page.ts",
   },
   checklist: {
     status: "skip",

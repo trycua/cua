@@ -1,0 +1,61 @@
+name: "Artifact Signing module (Windows)"
+description: >-
+  Install the ArtifactSigning PowerShell module that azure/artifact-signing-action
+  runs, retrying the PowerShell Gallery download, and prove in a fresh PowerShell
+  process (the way the action starts) that Invoke-ArtifactSigning resolves. A
+  module that is missing or unusable fails the job here, in seconds, with a
+  message that says so, and not at the signing step after a build of 30 minutes
+  or more (#5838: "The term 'Invoke-ArtifactSigning' is not recognized").
+  Windows runners only. Put it before the long build.
+
+inputs:
+  module-version:
+    description: >-
+      ArtifactSigning module version. Keep it equal to
+      ARTIFACT_SIGNING_MODULE_VERSION in azure/artifact-signing-action at the
+      commit the workflows pin (0.1.8 at v2.0.0).
+    default: "0.1.8"
+  attempts:
+    description: "PowerShell Gallery attempts, 5 s then 10 s apart."
+    default: "3"
+
+runs:
+  using: composite
+  steps:
+    - name: Install ArtifactSigning and check Invoke-ArtifactSigning resolves
+      shell: pwsh
+      env:
+        MODULE_VERSION: ${{ inputs.module-version }}
+        ATTEMPTS: ${{ inputs.attempts }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $version = $env:MODULE_VERSION
+        $attempts = [int]$env:ATTEMPTS
+        $command = $null
+        $lastError = ''
+        for ($attempt = 1; $attempt -le $attempts -and -not $command; $attempt++) {
+          try {
+            Install-Module -Name ArtifactSigning -RequiredVersion $version -Force -Repository PSGallery
+            Import-Module -Name ArtifactSigning -RequiredVersion $version -Force
+            $command = Get-Command -Name Invoke-ArtifactSigning -ErrorAction SilentlyContinue
+            if (-not $command) { throw 'the module imported but it has no Invoke-ArtifactSigning' }
+          } catch {
+            $lastError = $_.Exception.Message
+            Write-Warning "ArtifactSigning $version, attempt $attempt of ${attempts}: $lastError"
+            if ($attempt -lt $attempts) { Start-Sleep -Seconds (5 * $attempt) }
+          }
+        }
+        if (-not $command) {
+          Write-Host "::error title=Artifact Signing module::ArtifactSigning $version is not usable after $attempts attempts ($lastError). Signing would fail with 'Invoke-ArtifactSigning is not recognized', so stopping before the build."
+          exit 1
+        }
+        Write-Host "Invoke-ArtifactSigning comes from module $($command.Source) $($command.Version)"
+
+        # azure/artifact-signing-action runs its signing script in a new
+        # PowerShell and relies on module auto-loading. Check exactly that.
+        & pwsh -NoProfile -NonInteractive -Command 'if (Get-Command -Name Invoke-ArtifactSigning -ErrorAction SilentlyContinue) { exit 0 } else { exit 1 }'
+        if ($LASTEXITCODE -ne 0) {
+          Write-Host "::error title=Artifact Signing module::ArtifactSigning $version installed, but a new PowerShell process does not find Invoke-ArtifactSigning (module path: $env:PSModulePath). The signing action would fail the same way, so stopping before the build."
+          exit 1
+        }
+        Write-Host "A new PowerShell process resolves Invoke-ArtifactSigning."

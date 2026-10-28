@@ -204,8 +204,10 @@ impl AgentSetup {
     fn server(&self, s: Option<AgentMcpServer>) -> cua_agent_setup::McpServer {
         match s {
             Some(s) => cua_agent_setup::McpServer {
+                // No name: the channel's (`cua`, or `cua-local` for the
+                // Local app), so the Local app never writes Stable's entry.
                 name: if s.name.trim().is_empty() {
-                    cua_agent_setup::MCP_SERVER_NAME.into()
+                    self.inner.env().channel.mcp_server_name().into()
                 } else {
                     s.name
                 },
@@ -291,7 +293,8 @@ impl AgentSetup {
     }
 
     /// Configures the MCP server (default: `cua mcp`, `cua` resolved on
-    /// PATH) for `agents`.
+    /// PATH; `cua-local mcp` named `cua-local` for the Local app) for
+    /// `agents`. A server without a name gets the channel's.
     pub async fn configure_mcp(
         &self,
         agents: Vec<String>,
@@ -364,6 +367,251 @@ impl AgentSetup {
     }
 }
 
+/// Keyvault on This Mac as the connection status and Connect's sign-in
+/// copy see it: the Keychain-backed agent keys (`cua_spaces::agents::keys`),
+/// which runs in your Spaces read at run time. Values never leave this
+/// process except into a run's env.
+#[cfg(feature = "spaces")]
+pub struct KeyvaultSignIns(&'static cua_spaces::agents::keys::AgentKeys);
+
+#[cfg(feature = "spaces")]
+impl KeyvaultSignIns {
+    /// This process's store.
+    pub fn global() -> Self {
+        KeyvaultSignIns(cua_spaces::agents::keys::global())
+    }
+}
+
+#[cfg(feature = "spaces")]
+impl cua_agent_setup::SignInVault for KeyvaultSignIns {
+    fn imported(&self) -> std::result::Result<Vec<cua_agent_setup::ImportedSignIn>, String> {
+        Ok(self
+            .0
+            .imported()
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .filter_map(|k| {
+                Some(cua_agent_setup::ImportedSignIn {
+                    source: k.source?,
+                    label: k.label.unwrap_or_default(),
+                    env: k.env,
+                    expires_ms: k.expires_ms,
+                    added_ms: k.added_ms,
+                })
+            })
+            .collect())
+    }
+
+    fn save(
+        &self,
+        c: &cua_agent_setup::SignInCopy,
+    ) -> std::result::Result<cua_agent_setup::ImportedSignIn, String> {
+        let k = self
+            .0
+            .import(&c.source, &c.env, &c.label, &c.value, c.expires_ms)
+            .map_err(|e| e.to_string())?;
+        cua_telemetry::global().capture(cua_telemetry::events::agent_signin_imported(&c.source));
+        Ok(cua_agent_setup::ImportedSignIn {
+            source: c.source.clone(),
+            env: k.env,
+            label: c.label.clone(),
+            expires_ms: c.expires_ms,
+            added_ms: k.added_ms,
+        })
+    }
+
+    fn remove(&self, source: &str) -> std::result::Result<Vec<String>, String> {
+        self.0.remove_imported(source).map_err(|e| e.to_string())
+    }
+}
+
+/// The vault this build uses, when it has one.
+pub fn sign_in_vault() -> Option<Box<dyn cua_agent_setup::SignInVault>> {
+    #[cfg(feature = "spaces")]
+    {
+        Some(Box::new(KeyvaultSignIns::global()))
+    }
+    #[cfg(not(feature = "spaces"))]
+    {
+        None
+    }
+}
+
+/// Device sign-ins waiting to be approved, by id (started and waited in two calls).
+fn device_logins() -> &'static std::sync::Mutex<
+    std::collections::HashMap<String, cua_agent_setup::signin::DeviceSignIn>,
+> {
+    static L: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, cua_agent_setup::signin::DeviceSignIn>>,
+    > = std::sync::OnceLock::new();
+    L.get_or_init(Default::default)
+}
+
+fn to_json<T: serde::Serialize>(v: &T) -> Result<String> {
+    serde_json::to_string(v).map_err(|e| CuaError::Internal(e.to_string()))
+}
+
+#[uniffi::export]
+impl AgentSetup {
+    /// Whether each agent is really connected (CONTRACT §4: `{agents,
+    /// checked_at_ms}`), as JSON, the same JSON `cua connect status --json`
+    /// prints and the `connect_status` MCP tool answers. `expected` is the
+    /// MCP server this app writes (an entry launching another cua is
+    /// `stale`); `refresh` skips the few-second cache (window focus).
+    pub fn connection_status_json(
+        &self,
+        expected: Option<AgentMcpServer>,
+        refresh: bool,
+    ) -> String {
+        let opts = cua_agent_setup::StatusOptions {
+            expected: expected.map(|e| self.server(Some(e))),
+            refresh,
+            ..Default::default()
+        };
+        let vault = sign_in_vault();
+        let r = self.inner.connection_status(&opts, vault.as_deref());
+        serde_json::to_string(&r).unwrap_or_default()
+    }
+
+    /// Connect (and Reconnect) for `agents`: Cua's skills and MCP entry
+    /// (`server`, default this channel's cua), and with `sign_in` the
+    /// agent's sign-in copied into Keyvault on This Mac (Claude Code waits
+    /// for its one browser approval). JSON: one result per agent.
+    pub async fn connect_json(
+        &self,
+        agents: Vec<String>,
+        server: Option<AgentMcpServer>,
+        skills: bool,
+        mcp: bool,
+        sign_in: bool,
+    ) -> Result<String> {
+        let server = self.server(server);
+        self.blocking(move |s| {
+            let vault = sign_in_vault();
+            let r = s.connect(
+                &agents,
+                &server,
+                cua_agent_setup::connection::ConnectParts {
+                    skills,
+                    mcp,
+                    sign_in,
+                },
+                vault.as_deref(),
+                cua_agent_setup::signin::SETUP_TOKEN_WAIT,
+            )?;
+            to_json(&r)
+        })
+        .await
+    }
+
+    /// Disconnect of some parts only (an app's page's switches): Cua's skills
+    /// and/or its MCP entry, and with `sign_in` the copy in Keyvault. JSON
+    /// `{outcomes, removed_sign_ins}`.
+    pub async fn disconnect_parts_json(
+        &self,
+        agents: Vec<String>,
+        skills: bool,
+        mcp: bool,
+        sign_in: bool,
+    ) -> Result<String> {
+        self.blocking(move |s| {
+            let vault = sign_in_vault();
+            let (outcomes, removed) = s.disconnect(
+                &agents,
+                cua_agent_setup::Parts { skills, mcp },
+                cua_agent_setup::RemoveOptions::default(),
+                sign_in,
+                vault.as_deref(),
+            )?;
+            to_json(&serde_json::json!({"outcomes": outcomes, "removed_sign_ins": removed}))
+        })
+        .await
+    }
+
+    /// Starts `agent`'s device-code sign-in made for Cua (Codex: `codex login
+    /// --device-auth` in a folder Cua owns). JSON `{id, url, code}`: show the
+    /// link and the code, then wait with [`Self::device_sign_in_wait_json`].
+    pub async fn device_sign_in_start_json(&self, agent: String) -> Result<String> {
+        self.blocking(move |s| {
+            let login = s
+                .start_device_sign_in(&agent)
+                .map_err(|r| CuaError::Internal(r.line().to_string()))?;
+            let id = format!(
+                "{agent}-{}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis())
+                    .unwrap_or(0)
+            );
+            let out = serde_json::json!({"id": id, "url": login.url, "code": login.code});
+            device_logins()
+                .lock()
+                .map_err(|e| CuaError::Internal(e.to_string()))?
+                .insert(id, login);
+            to_json(&out)
+        })
+        .await
+    }
+
+    /// Waits for a device sign-in to be approved and saves it into Keyvault on
+    /// This Mac. JSON: `{imported, refused, line}` (as Connect's `sign_in`).
+    pub async fn device_sign_in_wait_json(&self, id: String) -> Result<String> {
+        self.blocking(move |s| {
+            let login = device_logins()
+                .lock()
+                .map_err(|e| CuaError::Internal(e.to_string()))?
+                .remove(&id)
+                .ok_or_else(|| {
+                    CuaError::InvalidArgument(format!("no sign-in {id:?} is waiting"))
+                })?;
+            let vault = sign_in_vault();
+            let r = match vault.as_deref() {
+                None => cua_agent_setup::connection::SignInResult {
+                    imported: None,
+                    refused: Some("failed".into()),
+                    line: Some("Keyvault isn't available here.".into()),
+                },
+                Some(v) => match s.finish_device_sign_in(
+                    login,
+                    v,
+                    cua_agent_setup::signin::DEVICE_SIGN_IN_WAIT,
+                ) {
+                    Ok(i) => cua_agent_setup::connection::SignInResult {
+                        imported: Some(i),
+                        refused: None,
+                        line: None,
+                    },
+                    Err(r) => cua_agent_setup::connection::SignInResult {
+                        imported: None,
+                        refused: Some(r.kind().into()),
+                        line: Some(r.line().into()),
+                    },
+                },
+            };
+            to_json(&r)
+        })
+        .await
+    }
+
+    /// Disconnect: what Connect did, undone (the previous config entry back
+    /// from Cua's record, the skills, and with `sign_in` the copy in
+    /// Keyvault). JSON `{outcomes, removed_sign_ins}`.
+    pub async fn disconnect_json(&self, agents: Vec<String>, sign_in: bool) -> Result<String> {
+        self.blocking(move |s| {
+            let vault = sign_in_vault();
+            let (outcomes, removed) = s.disconnect(
+                &agents,
+                cua_agent_setup::Parts::ALL,
+                cua_agent_setup::RemoveOptions::default(),
+                sign_in,
+                vault.as_deref(),
+            )?;
+            to_json(&serde_json::json!({"outcomes": outcomes, "removed_sign_ins": removed}))
+        })
+        .await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -400,9 +648,19 @@ mod tests {
         assert!(st.cua_configured && st.cua_managed);
         let out = s.update(Some(server)).await.unwrap();
         assert!(out.iter().all(|o| o.change == AgentSetupChange::Unchanged));
+        // Cua Spaces' entries go; the cua-driver skill (one of the bundled
+        // ones) is Cua Driver's and stays.
         let out = s.remove(vec!["codex".into()], true, true).await.unwrap();
         assert!(
-            out.iter().all(|o| o.change == AgentSetupChange::Removed),
+            out.iter()
+                .filter(|o| o.item != "cua-driver")
+                .all(|o| o.change == AgentSetupChange::Removed),
+            "{out:?}"
+        );
+        assert!(
+            out.iter()
+                .filter(|o| o.item == "cua-driver")
+                .all(|o| o.change == AgentSetupChange::Skipped),
             "{out:?}"
         );
         assert!(
@@ -415,6 +673,63 @@ mod tests {
         assert!(!s.onboarding_declined());
         s.set_onboarding_declined(true).unwrap();
         assert!(s.onboarding_declined());
+    }
+
+    #[tokio::test]
+    async fn sdk_local_agent_setup_registers_cua_local_beside_stables_cua() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(d.path().join(".codex")).unwrap();
+        let env = cua_agent_setup::HostEnv::isolated(d.path());
+        let stable = AgentSetup::with_env(env.clone());
+        let local = AgentSetup::with_env(env.with_channel(cua_agent_setup::CuaChannel::Local));
+        let server = |command: &str| AgentMcpServer {
+            // No name: each channel registers its own.
+            name: String::new(),
+            command: command.into(),
+            args: vec!["mcp".into()],
+            env: HashMap::new(),
+        };
+        let out = stable
+            .configure_mcp(
+                vec!["codex".into()],
+                Some(server("/Applications/Cua Spaces.app/Contents/MacOS/cua")),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            (out[0].item.as_str(), out[0].change),
+            ("cua", AgentSetupChange::Created)
+        );
+        let local_cua = "/Users/a/Applications/Cua Spaces Local.app/Contents/MacOS/cua";
+        let out = local
+            .configure_mcp(vec!["codex".into()], Some(server(local_cua)))
+            .await
+            .unwrap();
+        assert_eq!(
+            (out[0].item.as_str(), out[0].change),
+            ("cua-local", AgentSetupChange::Created)
+        );
+        let toml = std::fs::read_to_string(d.path().join(".codex/config.toml")).unwrap();
+        assert!(toml.contains("[mcp_servers.cua]"), "{toml}");
+        assert!(toml.contains("[mcp_servers.cua-local]"), "{toml}");
+        assert!(toml.contains("/Applications/Cua Spaces.app/Contents/MacOS/cua"));
+        assert!(toml.contains(local_cua));
+        // Each reads its own entry as its own.
+        let st = |s: &Arc<AgentSetup>| s.status().into_iter().find(|a| a.id == "codex").unwrap();
+        assert!(st(&stable).cua_configured && st(&local).cua_configured);
+        // Local's skills are `-local` copies beside Stable's.
+        let skills: Vec<String> = local.skills().into_iter().map(|s| s.name).collect();
+        assert!(skills.iter().all(|n| n.ends_with("-local")), "{skills:?}");
+        local
+            .install_skills(vec!["codex".into()], vec![], false)
+            .await
+            .unwrap();
+        assert!(
+            d.path()
+                .join(".agents/skills/cua-spaces-local/SKILL.md")
+                .is_file()
+        );
+        assert!(!d.path().join(".agents/skills/cua-spaces").exists());
     }
 
     #[tokio::test]

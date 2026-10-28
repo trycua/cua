@@ -1,0 +1,57 @@
+{
+  "platform": "macos",
+  "descriptor_version": "1",
+  "semantics": {
+    "task_id": "cua.shared.web-01",
+    "task_version": "1.0.0",
+    "brief": "${workspace}/.runtime/brief.md",
+    "manifest": "task.cuabench.json",
+    "variant": "seeded",
+    "reset": {
+      "setup": ["${python}", "reset/setup.py", "--workspace", "${workspace}", "--seed", "${seed}"],
+      "verify": ["${python}", "reset/verify.py", "--workspace", "${workspace}", "--seed", "${seed}"]
+    },
+    "evaluate": [
+      "${python}",
+      "evaluator/evaluate.py",
+      "--workspace",
+      "${workspace}",
+      "--artifacts",
+      "${artifacts}",
+      "--result",
+      "${result}",
+      "--agent-exit-code",
+      "${agent_exit_code}"
+    ]
+  },
+  "workspace_root": "${HOME}/cdb-bench-work/web-01",
+  "apps": [
+    {
+      "id": "site",
+      "kind": "web-server",
+      "command": [
+        "${evaluator_node}",
+        "${bundle}/../web-common/server.js",
+        "--workspace",
+        "${workspace}",
+        "--bundle",
+        "${bundle}"
+      ],
+      "ready": {
+        "http": "http://127.0.0.1:4191/healthz",
+        "timeout_seconds": 20
+      }
+    },
+    {
+      "id": "browser",
+      "kind": "browser",
+      "command": [
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "--user-data-dir=${workspace}/.runtime/browser",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "http://127.0.0.1:4191/"
+      ]
+    }
+  ]
+}

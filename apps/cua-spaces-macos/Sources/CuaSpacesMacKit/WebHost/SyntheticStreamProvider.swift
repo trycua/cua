@@ -241,18 +241,18 @@ extension FixtureSpacesBackend {
         // `m1`) shares its desktop and runs that Cua (see `peerHealth`).
         if environment["CUA_SPACES_FIXTURE_PEER_CUA"] != nil {
             base.append(AppSpaceRow(
-                id: "relay:m1", name: "ellieln", provider: "relay", spacesdVersion: "0.7.0",
+                id: "relay:m1", name: "ellieln", displayName: nil, provider: "relay", spacesdVersion: "0.7.0",
                 features: ["desktop_stream", "window_stream", "host_spaces"], addedAt: nil,
                 os: .linux, osName: "Ubuntu", osPrettyName: "Ubuntu 24.04.3 LTS", image: nil, imageDigest: nil,
                 kind: nil, arch: nil, reachable: true, error: nil, host: nil, hostName: nil,
-                power: nil, powerState: "running", cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil))
+                power: nil, powerState: "running", cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil))
             // A Space it provides, for comparison with its desktop row.
             base.append(AppSpaceRow(
-                id: "relay:m1/xm1", name: "0123456789ab", provider: "relay", spacesdVersion: "0.7.0",
+                id: "relay:m1/xm1", name: "0123456789ab", displayName: nil, provider: "relay", spacesdVersion: "0.7.0",
                 features: ["desktop_stream"], addedAt: nil,
                 os: .linux, osName: "Ubuntu", osPrettyName: "Ubuntu 24.04.3 LTS", image: nil, imageDigest: nil,
                 kind: nil, arch: nil, reachable: true, error: nil, host: "m1", hostName: "ellieln",
-                power: nil, powerState: "running", cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil))
+                power: nil, powerState: "running", cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil))
         }
         guard let n = environment["CUA_SPACES_FIXTURE_SPACES"].flatMap(Int.init), n > 0,
               let template = base.first else { return base }

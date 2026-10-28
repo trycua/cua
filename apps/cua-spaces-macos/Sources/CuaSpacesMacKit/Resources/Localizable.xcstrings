@@ -100,17 +100,6 @@
         }
       }
     },
-    "spaces.sidebar.section.cloud": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Cua Cloud"
-          }
-        }
-      }
-    },
     "spaces.sidebar.section.this_mac": {
       "extractionState": "manual",
       "localizations": {
@@ -139,7 +128,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "My computers"
+            "value": "My machines"
           }
         }
       }

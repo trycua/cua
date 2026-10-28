@@ -90,12 +90,17 @@ pub struct WriteReport {
 }
 
 impl Space {
-    /// A shell command for this guest (`/bin/sh -c` or `cmd /C`).
+    /// A shell command for this guest (`/bin/sh -c` or `cmd /C`). In a
+    /// Space made from a build it runs with the image's environment,
+    /// working directory and user ([`Space::image_config`]).
     pub fn shell_command(&self, line: &str) -> Command {
         if self.is_windows() {
             Command::new("cmd.exe").arg("/C").arg(line)
         } else {
-            Command::shell(line)
+            match self.image_config() {
+                Some(config) => Command::shell(config.wrap_shell(line)),
+                None => Command::shell(line),
+            }
         }
     }
 

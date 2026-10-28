@@ -144,6 +144,18 @@ class GuardTest(unittest.TestCase):
         self.assertTrue(guard.stop.is_set())
         self.assertEqual(guard.violations[0]["detail"], "front:Terminal")
 
+    def test_open_linux_terminal_is_not_a_violation(self) -> None:
+        guard, _ = self.make([None], procs={"xterm"})
+        guard.sample()
+        self.assertFalse(guard.stop.is_set())
+        self.assertEqual(guard.violations, [])
+
+    def test_linux_terminal_in_front_is_a_violation(self) -> None:
+        guard, _ = self.make(["xterm"] * 3)
+        for _ in range(3):
+            guard.sample()
+        self.assertEqual(guard.violations[0]["detail"], "front:xterm")
+
     def test_scripting_process_is_a_violation(self) -> None:
         guard, _ = self.make([None], procs={"Script Editor"})
         guard.sample()
@@ -203,6 +215,18 @@ class GuardTest(unittest.TestCase):
         guard.sample()
         guard.sample()
         self.assertEqual(guard.violations, [])
+
+    def test_linux_terminal_ptys_exclude_runner_descendants(self) -> None:
+        rows = [
+            (100, 1, "?", "/usr/bin/gnome-terminal-server"),
+            (101, 100, "pts/0", "bash"),
+            (102, 101, "pts/0", "python3"),
+            (103, 102, "pts/8", "bash"),
+            (200, 1, "?", "/usr/bin/xterm"),
+            (201, 200, "pts/1", "bash"),
+            (300, 1, "pts/2", "sshd"),
+        ]
+        self.assertEqual(v2.terminal_session_ttys(rows, exclude_pid=102), {"/dev/pts/1"})
 
     def test_terminal_session_ttys_skip_the_runner_and_non_terminal_ttys(self) -> None:
         rows = [
@@ -286,7 +310,11 @@ class BackgroundTest(unittest.TestCase):
 
 class SelectionTest(unittest.TestCase):
     def ctx(self, *argv: str) -> rb.Ctx:
-        args = rb.build_parser().parse_args(["dry-run", *argv])
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        args = rb.build_parser().parse_args(
+            ["dry-run", "--ledger", str(Path(tmp.name) / "ledger.jsonl"), *argv]
+        )
         return rb.make_ctx(args)
 
     def test_v2_selects_the_registered_list_in_order(self) -> None:

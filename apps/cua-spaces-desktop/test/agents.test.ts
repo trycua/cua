@@ -162,7 +162,7 @@ describe.skipIf(!built)("agents", () => {
     await p.send(new A.Select({ name: "ada" }));
     expect(p.view(now).detail?.memory.map((l) => l.text)).toEqual(["hermes/MEMORY.md"]);
     await p.send(new A.AllowComputer({ machine: "relay:0123" }));
-    expect(p.view(now).detail?.access.map((l) => l.text)).toEqual(["This computer"]);
+    expect(p.view(now).detail?.access.map((l) => l.text)).toEqual(["This machine"]);
     await p.send(new A.Resume({ name: "ada" }));
     expect(daemon.calls).toContain("agent_resume");
     expect(p.view(now).rows[0]!.state).toBe("Running");
@@ -233,10 +233,26 @@ describe.skipIf(!built)("agents", () => {
     expect(await code(bridge, "agents.events", { runId: "r" })).toBe("bad_args");
   });
 
+  it("starts a run in a Space and sends it a reply", async () => {
+    const { bridge } = makeBridge();
+    const run = (await call(bridge, "agents.start", { spaceId: "local:dev", agent: "claude-code", prompt: "Run the tests", repo: "https://github.com/trycua/cua" })) as Record<string, unknown>;
+    expect(run).toMatchObject({ run_id: "run-2", agent: "claude-code" });
+    expect(daemon.calls.at(-1)).toBe("agent_start");
+    expect(daemon.args.at(-1)).toEqual({ space: "local:dev", agent: "claude-code", prompt: "Run the tests", repo: "https://github.com/trycua/cua" });
+    expect(shapeProblems("agents.start", run)).toEqual([]);
+    const sent = await call(bridge, "agents.message", { spaceId: "local:dev", runId: "run-2", text: "Use Python 3.13", force: true });
+    expect(daemon.args.at(-1)).toEqual({ space: "local:dev", run_id: "run-2", text: "Use Python 3.13", force: true });
+    expect(shapeProblems("agents.message", sent)).toEqual([]);
+    expect(await code(bridge, "agents.start", { spaceId: "local:dev" })).toBe("bad_args");
+    expect(await code(bridge, "agents.message", { spaceId: "local:dev", runId: "run-2" })).toBe("bad_args");
+  });
+
   it("is unsupported without the daemon or the coding-agent setup", async () => {
     const { bridge } = makeBridge({ tools: null, setup: null });
     expect(await code(bridge, "agents.list")).toBe("unsupported");
     expect(await code(bridge, "agents.events", { spaceId: "s", runId: "r", cursor: 0 })).toBe("unsupported");
+    expect(await code(bridge, "agents.start", { spaceId: "s", agent: "claude-code", prompt: "hi" })).toBe("unsupported");
+    expect(await code(bridge, "agents.message", { spaceId: "s", runId: "r", text: "hi" })).toBe("unsupported");
     expect(await code(bridge, "agents.setup")).toBe("unsupported");
     expect(await code(bridge, "agents.configure", {})).toBe("unsupported");
     expect(await code(bridge, "agents.setupDriver", { agents: ["codex"] })).toBe("unsupported");
@@ -258,6 +274,23 @@ describe.skipIf(!built)("agents", () => {
     expect(configured.find((r) => r.agent === "claude-code")?.configured).toBe(true);
     expect(shapeProblems("agents.configure", configured)).toEqual([]);
     expect(await code(bridge, "agents.configure", { agents: "codex" })).toBe("bad_args");
+  });
+
+  it("answers the connection status, connects and disconnects (CUA-2268)", async () => {
+    const { bridge } = makeBridge();
+    type Status = { agents: { id: string; state: string }[] };
+    const before = (await call(bridge, "agents.status", { refresh: true })) as Status;
+    expect(shapeProblems("agents.status", before)).toEqual([]);
+    const id = before.agents.find((a) => a.state === "not_connected")!.id;
+    const connected = await call(bridge, "agents.connect", { agents: [id] });
+    expect(shapeProblems("agents.connect", connected)).toEqual([]);
+    expect(setup.calls).toContain(`connect:${id}:false`);
+    const after = (await call(bridge, "agents.status", {})) as Status;
+    expect(after.agents.find((a) => a.id === id)?.state).not.toBe("not_connected");
+    const gone = await call(bridge, "agents.disconnect", { agents: [id] });
+    expect(shapeProblems("agents.disconnect", gone)).toEqual([]);
+    const last = (await call(bridge, "agents.status", {})) as Status;
+    expect(last.agents.find((a) => a.id === id)?.state).toBe("not_connected");
   });
 
   it("starts an agent's own sign-in on this computer, and the rows say when it is done", async () => {
@@ -360,7 +393,7 @@ describe.skipIf(!built)("agents", () => {
     await live.remove(["codex"]);
     expect(seen).toEqual([
       ["skills", ["codex"], [], false],
-      ["mcp", ["codex"], { name: "cua", command: "/Applications/Cua Spaces.app/Contents/MacOS/cua", args: ["mcp"], env: new Map() }],
+      ["mcp", ["codex"], { name: "", command: "/Applications/Cua Spaces.app/Contents/MacOS/cua", args: ["mcp"], env: new Map() }],
       ["driver", ["codex"], undefined, true, true],
       ["remove", ["codex"], true, true],
     ]);
@@ -419,6 +452,10 @@ describe.skipIf(!built)("agents", () => {
     const { bridge } = makeBridge();
     const listed = (await call(bridge, "agentKeys.list")) as { keys: { env: string }[] };
     expect(listed.keys.map((k) => k.env)).toEqual(["OPENAI_API_KEY"]);
+    // The check is the daemon's `agent_keys.check` (the providers are asked there), answered like the list.
+    const checked = (await call(bridge, "agentKeys.check")) as { keys: { env: string }[] };
+    expect(keys.calls.at(-1)).toEqual(["agent_keys.check", {}]);
+    expect(checked.keys.map((k) => k.env)).toEqual(["OPENAI_API_KEY"]);
     const set = await call(bridge, "agentKeys.set", { provider: "anthropic", value: "sk-ant-test-0000" });
     expect(keys.calls.at(-1)).toEqual(["agent_keys.set", { provider: "anthropic", value: "sk-ant-test-0000" }]);
     expect(JSON.stringify(set)).not.toContain("sk-ant");

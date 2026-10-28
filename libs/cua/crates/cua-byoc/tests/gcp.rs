@@ -29,8 +29,12 @@ struct Fake {
     firewalls: Vec<Value>,
     calls: Vec<String>,
     tokens: Vec<String>,
+    /// What the serial console of every instance shows.
+    serial: Option<String>,
     /// Answer the next call with 401 (an expired token).
     expire_next: bool,
+    /// Answer the next calls with this status (`429`, `503`), this many times.
+    throttle: Option<(u16, u32)>,
 }
 
 type S = Arc<Mutex<Fake>>;
@@ -62,6 +66,18 @@ async fn handle(
         return (
             StatusCode::UNAUTHORIZED,
             axum::Json(json!({"error": {"message": "expired"}})),
+        )
+            .into_response();
+    }
+    if let Some((code, n)) = f.throttle
+        && n > 0
+        && method == Method::GET
+        && path.ends_with("/instances/slow")
+    {
+        f.throttle = Some((code, n - 1));
+        return (
+            StatusCode::from_u16(code).unwrap(),
+            axum::Json(json!({"error": {"message": "try later"}})),
         )
             .into_response();
     }
@@ -118,6 +134,26 @@ async fn handle(
             ok(json!({"quotas": [
             {"metric": "CPUS", "limit": 24.0, "usage": 0.0},
             {"metric": "IN_USE_ADDRESSES", "limit": 8.0, "usage": 0.0}]}))
+        }
+        (
+            "GET",
+            [
+                "compute",
+                "v1",
+                "projects",
+                "p",
+                "zones",
+                "us-central1-a",
+                "instances",
+                n,
+                "serialPort",
+            ],
+        ) => {
+            if f.instances.contains_key(*n) {
+                ok(json!({"contents": f.serial.clone().unwrap_or_default(), "next": "9"}))
+            } else {
+                not_found()
+            }
         }
         ("GET", ["compute", "v1", "projects", "p", "global", "networks", n]) => {
             match f.networks.get(*n) {
@@ -555,4 +591,102 @@ async fn an_expired_token_is_refreshed_once() {
     };
     assert!(gcp.describe(&c, &r).await.unwrap().is_none());
     assert_eq!(s.lock().unwrap().calls.len(), 2, "one retry");
+}
+
+#[tokio::test]
+async fn a_throttled_call_is_retried_a_few_times_then_gives_up() {
+    let (gcp, s) = start().await;
+    let c = conn(&gcp);
+    let r = Resource {
+        provider: "gcp".into(),
+        id: "slow".into(),
+        resource_type: "instance".into(),
+        ..Default::default()
+    };
+    // 429 twice, then the cloud answers (not found: a normal answer).
+    s.lock().unwrap().throttle = Some((429, 2));
+    assert!(gcp.describe(&c, &r).await.unwrap().is_none());
+    assert_eq!(s.lock().unwrap().calls.len(), 3);
+    // 503 for good: three retries, then the error is the cloud's.
+    s.lock().unwrap().calls.clear();
+    s.lock().unwrap().throttle = Some((503, 100));
+    let e = gcp.describe(&c, &r).await.unwrap_err();
+    assert!(e.to_string().contains("try later"), "{e}");
+    assert_eq!(s.lock().unwrap().calls.len(), 4);
+}
+
+/// The elastic pool's provider conformance suite against the fake Compute
+/// Engine API.
+#[tokio::test]
+async fn gcp_conforms_to_the_elastic_contract() {
+    use cua_byoc::conformance::{CreateCall, lifecycle_checks, static_checks};
+    let (gcp, s) = start().await;
+    let c = conn(&gcp);
+    let bad = static_checks(&gcp, &c).await;
+    assert!(bad.is_empty(), "{bad:#?}");
+    let s2 = s.clone();
+    let seen = move || {
+        s2.lock()
+            .unwrap()
+            .instances
+            .values()
+            .map(|b| CreateCall {
+                machine_type: b["machineType"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or_default()
+                    .into(),
+                region: b["zone"]
+                    .as_str()
+                    .map(|z| z.rsplit('/').next().unwrap_or_default().to_string())
+                    .unwrap_or_else(|| "us-central1-a".into()),
+                user_data: b["metadata"]["items"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .find(|i| i["key"] == "user-data" || i["key"] == "startup-script")
+                    .and_then(|i| i["value"].as_str())
+                    .unwrap_or_default()
+                    .into(),
+                tags: b["labels"]
+                    .as_object()
+                    .map(|o| {
+                        o.iter()
+                            .map(|(k, v)| (k.clone(), v.as_str().unwrap_or_default().to_string()))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                ssh_key: b["metadata"]["items"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .any(|i| i["key"] == "ssh-keys"),
+            })
+            .collect()
+    };
+    let bad = lifecycle_checks(&gcp, &c, "owner1", &seen).await;
+    assert!(bad.is_empty(), "{bad:#?}");
+}
+
+#[tokio::test]
+async fn the_boot_log_is_the_serial_console() {
+    let (gcp, s) = start().await;
+    let c = conn(&gcp);
+    let made = gcp
+        .provision(&c, &spec("cua-gcp-bbbb", "owner1"))
+        .await
+        .unwrap();
+    assert_eq!(gcp.boot_log(&c, &made[0]).await.unwrap(), None);
+    s.lock().unwrap().serial = Some("kernel: panic\n".into());
+    assert_eq!(
+        gcp.boot_log(&c, &made[0]).await.unwrap().as_deref(),
+        Some("kernel: panic\n")
+    );
+    // The network is not a machine; an instance that is gone has no log.
+    assert_eq!(gcp.boot_log(&c, &made[1]).await.unwrap(), None);
+    let mut gone = made[0].clone();
+    gone.id = "cua-gcp-zzzz".into();
+    assert_eq!(gcp.boot_log(&c, &gone).await.unwrap(), None);
 }

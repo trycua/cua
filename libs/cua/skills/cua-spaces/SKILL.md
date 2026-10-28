@@ -64,7 +64,7 @@ user's Tailscale, or the LAN):
 3. Sign in on the mini: `cua auth login --remote` prints a device code and a
    URL. Show both to the user and have them approve it (on another signed-in
    device or at the URL).
-4. `cua host setup --profile spare --name "<name>"` hosts Spaces only (no
+4. `cua host setup --share spaces --name "<name>"` hosts Spaces only (no
    desktop sharing), through the cua.ai relay.
 5. Tell the user: the mini needs an active GUI login session (cua-spacesd
    runs as a LaunchAgent in the Aqua session, so it won't start at the
@@ -85,3 +85,10 @@ running at that address (`add_space`) and cannot host new ones.
 - Only start a hotspot when the Space needs the host's network (VPN,
   intranet), and stop it afterwards.
 - Name the Space you used in your answer.
+
+## Links to things you ran
+
+Any link to something you ran (preview, dashboard, file): use `cua share`, never localhost; open it once to check it works before sending.
+
+The `share` tool (or `cua share 3000`, `cua share space:dev:3000`, `cua share ./report.html`) returns a link that opens on the user's other signed-in devices, phone included. It checks the link loads and reports `check.ok`; do not send a link whose check failed. Links are private by default; use `access: "public"` with a `ttl` only when the user wants anyone to open it. `share_list` and `share_stop` manage them.
+

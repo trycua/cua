@@ -12,8 +12,8 @@ import { cn } from "@/lib/utils";
 /**
  * This device needs enrolling or re-verifying: one bar above every page,
  * the core's words and its Enroll… (the SwiftUI app's `DevicesBanner`).
- * Settings, Devices says the same under its own row, so the bar stays off
- * that page.
+ * This machine's page says the same under its own name, so the bar stays off
+ * the Machines page.
  */
 export function DevicesBanner() {
   const { data: session } = useSession();
@@ -21,23 +21,23 @@ export function DevicesBanner() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const banner = shellDevicesBanner(devices.data, session?.signedIn);
-  if (!banner || pathname.startsWith("/settings/devices")) return null;
+  if (!banner || pathname.startsWith("/machines")) return null;
 
   const critical = banner.tone === "critical";
   const Icon = critical ? TriangleAlertIcon : CircleAlertIcon;
-  // The enroll sheet is the Devices page's.
+  // The sheet is the Machines page's.
   const enroll = () => {
     devices.startEnroll();
-    void navigate({ to: "/settings/devices" });
+    void navigate({ to: "/machines" });
   };
   return (
-    <div role="status" data-shell-devices-banner={banner.tone} className="flex shrink-0 items-center gap-2 border-b px-4 py-1.5 text-xs">
+    <div role="status" data-shell-devices-banner={banner.tone} className="flex shrink-0 items-center gap-2 bg-muted/60 px-4 py-1.5 text-xs">
       <Icon className={cn("size-3.5 shrink-0", critical ? "text-destructive" : "text-warning")} />
       <span className="min-w-0 flex-1 truncate" title={banner.text}>
         {banner.text}
       </span>
       {banner.actionLabel ? (
-        <Button size="sm" variant="outline" className="h-6" onClick={enroll} data-shell-banner-enroll>
+        <Button size="sm" variant="secondary" className="h-6" onClick={enroll} data-shell-banner-enroll>
           {banner.actionLabel}
         </Button>
       ) : null}

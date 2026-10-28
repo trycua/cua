@@ -94,10 +94,16 @@
       "audio.uplink",
       "audio.opus",
       "audio.per_app",
-      "teleport.*"
+      "teleport.*",
+      "files.multipart",
+      "fs.run_as",
+      "fs.xattr",
+      "process.exec_ledger",
+      "process.run_as"
     ],
     "features_not_applicable": [
-      "volume.mount"
+      "volume.mount",
+      "volume.binds"
     ],
     "codecs_required": [],
     "auth_modes": [

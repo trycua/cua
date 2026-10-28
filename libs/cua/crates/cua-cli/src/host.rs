@@ -3146,7 +3146,8 @@ fn ls_json(list: &[cua_spaces::SpaceInfo]) -> Vec<serde_json::Value> {
 /// `cua spaces ls` rows: every Space (its id, then its name as the apps
 /// show it), with the Spaces a machine provides indented under it (or,
 /// when that machine is not listed, marked with its name), and how loaded
-/// each of your computers is (`load`, by machine).
+/// each of your computers is (`load`, by machine). This computer's own
+/// row says "(this computer)".
 /// [`grouped_lines_with`] for the tests of `resources_view`.
 #[cfg(test)]
 pub(crate) fn grouped_lines_for_tests(
@@ -3165,13 +3166,15 @@ fn grouped_lines(
 }
 
 /// [`grouped_lines`] with the CPU, MEMORY and DISK ON THIS MAC columns (and
-/// their header) when `columns` is given.
+/// their header) when `columns` is given; their `own_machine` (this
+/// install's relay machine id) is the row tagged "(this computer)".
 fn grouped_lines_with(
     list: &[cua_spaces::SpaceInfo],
     columns: Option<&crate::resources_view::Columns<'_>>,
     load: &std::collections::HashMap<String, String>,
 ) -> Vec<String> {
     use crate::resources_view::{CPU_WIDTH, MEMORY_WIDTH};
+    let this_computer = columns.and_then(|c| c.own_machine.as_deref());
     let row = |s: &cua_spaces::SpaceInfo, indent: &str| {
         let key = s.id.strip_prefix("relay:").unwrap_or(&s.name);
         let s_load = load.get(key).filter(|l| !l.is_empty());
@@ -3197,6 +3200,14 @@ fn grouped_lines_with(
                     cells.disk,
                 )
             }
+        };
+        // The computer this runs on says so, not a Space on it.
+        let line = if s.host.is_empty()
+            && this_computer.is_some_and(|m| s.id.strip_prefix("relay:") == Some(m))
+        {
+            format!("{} (this computer)", line.trim_end())
+        } else {
+            line
         };
         // A durable Space says so (it moves when its machine goes away).
         let line = if s.durable.is_empty() {
@@ -3894,9 +3905,10 @@ mod tests {
         assert_eq!(json[0]["power_state"], "suspended");
     }
 
-    #[test]
-    fn spaces_on_a_host_list_under_it() {
-        let space = |id: &str, host: &str| cua_spaces::SpaceInfo {
+    /// A relay row for the `cua spaces ls` list tests: `host` set means a
+    /// Space on that machine.
+    fn space(id: &str, host: &str) -> cua_spaces::SpaceInfo {
+        cua_spaces::SpaceInfo {
             id: id.into(),
             name: id.into(),
             display_name: String::new(),
@@ -3934,7 +3946,11 @@ mod tests {
             egress_enforced: None,
             sharing: None,
             stop_reason: String::new(),
-        };
+        }
+    }
+
+    #[test]
+    fn spaces_on_a_host_list_under_it() {
         let none = std::collections::HashMap::new();
         let lines = grouped_lines(
             &[
@@ -3990,6 +4006,62 @@ mod tests {
             lines[0].ends_with("· 2 running · 40% CPU · 55% memory"),
             "{lines:?}"
         );
+    }
+
+    #[test]
+    fn this_computers_own_row_says_so() {
+        let resources = cua_spaces::resources::Resources::default();
+        let lines = |list: &[cua_spaces::SpaceInfo], own: Option<&str>| {
+            let columns = crate::resources_view::Columns {
+                resources: &resources,
+                own_machine: own.map(str::to_string),
+            };
+            grouped_lines_for_tests(list, Some(&columns))
+        };
+        let tagged = |lines: &[String]| {
+            lines
+                .iter()
+                .filter(|l| l.contains("(this computer)"))
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        // With this computer in the list: its own row, and only that row.
+        let with = [
+            space("relay:space-1", "studio99"),
+            space("relay:studio99", ""),
+            space("relay:mini1234", ""),
+        ];
+        let out = lines(&with, Some("studio99"));
+        let own = tagged(&out);
+        assert_eq!(own.len(), 1, "{out:?}");
+        assert!(own[0].starts_with("relay:studio99 "), "{out:?}");
+        assert!(
+            out.iter().any(|l| l.starts_with("  relay:space-1")),
+            "{out:?}"
+        );
+        assert!(
+            out.iter().any(|l| l.starts_with("relay:mini1234")),
+            "{out:?}"
+        );
+        // A Space on another machine whose id reads like this computer's
+        // is not this computer.
+        let child = [
+            space("relay:mini1234", ""),
+            space("relay:studio99", "mini1234"),
+        ];
+        let out = lines(&child, Some("studio99"));
+        assert!(
+            out.iter().any(|l| l.starts_with("  relay:studio99")),
+            "{out:?}"
+        );
+        assert!(tagged(&out).is_empty(), "{out:?}");
+        // Without this computer in the list (or no machine id at all): the
+        // rows are what they were.
+        let without = [space("relay:mini1234", ""), space("local:aurora", "")];
+        let out = lines(&without, Some("studio99"));
+        assert!(tagged(&out).is_empty(), "{out:?}");
+        assert_eq!(out, lines(&without, None));
+        assert!(tagged(&lines(&with, None)).is_empty());
     }
 
     #[test]
@@ -4316,6 +4388,22 @@ mod tests {
         assert!(v["resources"]["thisMac"]["memoryTotal"].as_u64().unwrap() > 0);
         let id = v["machineId"].as_str().unwrap().to_string();
 
+        // Another of the owner's computers, on the same relay account.
+        cua_host::RelayClient::new(&relay.url)
+            .unwrap()
+            .register(
+                "acct",
+                &cua_host::relay::RegisterRequest {
+                    id: "bbbb000000000002".into(),
+                    name: "other-box".into(),
+                    allow: vec![],
+                    host: None,
+                    meta: Default::default(),
+                },
+            )
+            .await
+            .unwrap();
+
         // `cua spaces ls` as the owner shows the machine.
         let mut out = Vec::new();
         // No --relay: the relay this machine joined.
@@ -4344,6 +4432,36 @@ mod tests {
         let row = text.lines().find(|l| l.contains("lab-box")).unwrap();
         assert!(row.contains(" busy"), "{row}");
         assert!(row.contains(" free of "), "{row}");
+        // This computer's own row says so; the other computer's does not.
+        assert!(row.contains("(this computer)"), "{text}");
+        assert_eq!(text.matches("(this computer)").count(), 1, "{text}");
+        let other = text.lines().find(|l| l.contains("other-box")).unwrap();
+        assert!(!other.contains("(this computer)"), "{text}");
+
+        // The same account listed from a computer that is not set up as one
+        // of them: no row is this computer.
+        let elsewhere = tempfile::tempdir().unwrap();
+        let mut out = Vec::new();
+        run_spaces(
+            SpacesCmd::Ls {
+                relay: Some(relay.url.clone()),
+                label: vec![],
+                no_size: true,
+            },
+            &elsewhere.path().join(".cua"),
+            Some(Arc::new(StaticToken("acct".into()))),
+            None,
+            false,
+            &mut out,
+        )
+        .await
+        .unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(
+            text.contains("lab-box") && text.contains("other-box"),
+            "{text}"
+        );
+        assert!(!text.contains("(this computer)"), "{text}");
 
         // `--json` carries the same numbers.
         let mut out = Vec::new();

@@ -70,7 +70,7 @@ describe.skipIf(!wasmBuilt)("Settings tabs (real routes, wasm core)", () => {
     await waitFor(() => expect(document.querySelector("[data-connectors-providers]")).not.toBeNull(), { timeout: 8000 });
     const text = tab("connectors")!.textContent!;
     expect(text).toContain("Providers");
-    expect(text).toContain("Add a key for another AI company");
+    expect(document.querySelector("[data-agent-key-add-other]")).not.toBeNull();
     expect(text).not.toMatch(/provider key/i);
   });
 

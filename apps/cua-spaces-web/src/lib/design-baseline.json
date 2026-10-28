@@ -33,15 +33,13 @@
     "partial-line": 1
   },
   "components/ask-first/ask-box.tsx": {
-    "dot-chain": 1,
     "outlined-box": 6,
     "radius": 5,
     "partial-line": 1
   },
   "components/ask-first/home.tsx": {
-    "radius": 5,
-    "outlined-box": 4,
-    "partial-line": 1
+    "radius": 1,
+    "outlined-box": 1
   },
   "components/ask-first/task-view.tsx": {
     "partial-line": 5,

@@ -751,16 +751,19 @@ class PreflightTest(unittest.TestCase):
                 raw.write_bytes(b"video")
                 ctx.recorder.stop.return_value = raw
                 for blank in (True, False):
-                    with (
-                        mock.patch.object(rb.time, "sleep"),
-                        mock.patch.object(rb.rec, "ffprobe_duration", return_value=3),
-                        mock.patch.object(
-                            rb.rec,
-                            "capture_detail",
-                            side_effect=RuntimeError("blank image") if blank else None,
-                            return_value=f"2x1 bytes=5 path={raw}",
-                        ),
-                    ):
+                    with contextlib.ExitStack() as patches:
+                        patches.enter_context(mock.patch.object(rb.time, "sleep"))
+                        patches.enter_context(
+                            mock.patch.object(rb.rec, "ffprobe_duration", return_value=3)
+                        )
+                        patches.enter_context(
+                            mock.patch.object(
+                                rb.rec,
+                                "capture_detail",
+                                side_effect=RuntimeError("blank image") if blank else None,
+                                return_value=f"2x1 bytes=5 path={raw}",
+                            )
+                        )
                         rows = rb.preflight(ctx)
                     recording = next(r for r in rows if r[0].startswith("recorder real capture"))
                     self.assertEqual(recording[1], "fail" if blank else "pass")

@@ -107,7 +107,12 @@ def _x11_ready() -> bool:
 
 
 def _benchlab_running() -> bool:
-    return subprocess.run(["pgrep", "-f", r"^/usr/bin/python3 \S*linux/benchlab\.py"], capture_output=True).returncode == 0
+    return (
+        subprocess.run(
+            ["pgrep", "-f", r"^/usr/bin/python3 \S*linux/benchlab\.py"], capture_output=True
+        ).returncode
+        == 0
+    )
 
 
 @unittest.skipUnless(_x11_ready(), "headless X11 session required")
@@ -282,9 +287,10 @@ class RecordPidTest(unittest.TestCase):
                 os.kill(os.getpid(), signal.SIGTERM)  # lands before the caller owns proc
                 return proc
 
-            with mock.patch.object(desktop, "start_app", start_then_term), self.assertRaises(
-                SystemExit
-            ) as raised:
+            with (
+                mock.patch.object(desktop, "start_app", start_then_term),
+                self.assertRaises(SystemExit) as raised,
+            ):
                 desktop.main(["doctor", "--cua-bin", str(fake), "--out", str(Path(tmp) / "out")])
             self.assertEqual(raised.exception.code, 143)
             daemon = int(pidfile.read_text())
@@ -310,9 +316,10 @@ class RecordPidTest(unittest.TestCase):
                 return proc
 
             handler = signal.getsignal(signal.SIGTERM)
-            with mock.patch.object(desktop, "start_app", start_then_term), self.assertRaises(
-                SystemExit
-            ) as raised:
+            with (
+                mock.patch.object(desktop, "start_app", start_then_term),
+                self.assertRaises(SystemExit) as raised,
+            ):
                 desktop.main(["doctor", "--cua-bin", str(fake), "--out", str(Path(tmp) / "o1")])
             self.assertEqual(raised.exception.code, 143)
             self.assertIs(signal.getsignal(signal.SIGTERM), handler)
@@ -327,7 +334,9 @@ class RecordPidTest(unittest.TestCase):
                 proc.wait(5)
 
             with mock.patch("sys.stdout"):
-                code = desktop.main(["doctor", "--cua-bin", str(fake), "--out", str(Path(tmp) / "o2")])
+                code = desktop.main(
+                    ["doctor", "--cua-bin", str(fake), "--out", str(Path(tmp) / "o2")]
+                )
             self.assertIn(code, (0, 1))
             report = json.loads((Path(tmp) / "o2" / "doctor.json").read_text())
             self.assertEqual(report["daemon"], "private")

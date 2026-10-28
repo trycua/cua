@@ -75,7 +75,9 @@ elif "health_report" in a:
 """
 
 
-@unittest.skipUnless(_has_session_tools(), "Xvfb, dbus-daemon, openbox, picom, xprop and gdbus required")
+@unittest.skipUnless(
+    _has_session_tools(), "Xvfb, dbus-daemon, openbox, picom, xprop and gdbus required"
+)
 class LinuxLauncherTest(unittest.TestCase):
     script = HERE.parent / "launch" / "linux_session.sh"
 
@@ -103,7 +105,9 @@ class LinuxLauncherTest(unittest.TestCase):
             address = (ev / "at-spi-address.txt").read_text()
             self.assertTrue("unix:path=" in address or "unix:abstract=" in address, address)
             entries = [json.loads(x) for x in (ev / "pids.jsonl").read_text().splitlines()]
-            self.assertEqual({e["role"] for e in entries}, {"xvfb", "dbus", "openbox", "picom", "command"})
+            self.assertEqual(
+                {e["role"] for e in entries}, {"xvfb", "dbus", "openbox", "picom", "command"}
+            )
             for entry in entries:
                 with self.assertRaises(ProcessLookupError):
                     os.kill(entry["pid"], 0)
@@ -167,7 +171,7 @@ class LinuxLauncherTest(unittest.TestCase):
             "d=os.environ['CDB_SESSION_DIR']\n"
             "c=subprocess.Popen(['sleep','300'],start_new_session=True)\n"
             "open(d+'/child.pid','w').write(str(c.pid))\n"
-            "open(d+'/pids.jsonl','a').write('{\"pid\":%d,\"pgid\":%d,\"role\":\"child\"}\\n'%(c.pid,c.pid))\n"
+            'open(d+\'/pids.jsonl\',\'a\').write(\'{"pid":%d,"pgid":%d,"role":"child"}\\n\'%(c.pid,c.pid))\n'
             "def h(*a):\n"
             "    time.sleep(2); c.kill(); c.wait(); open(d+'/cleaned','w').write('1'); sys.exit(143)\n"
             "signal.signal(signal.SIGTERM,h)\n"
@@ -204,7 +208,7 @@ class LinuxLauncherTest(unittest.TestCase):
             "d=os.environ['CDB_SESSION_DIR']\n"
             "c=subprocess.Popen(['sleep','300'],start_new_session=True)\n"
             "open(d+'/child.pid','w').write(str(c.pid))\n"
-            "open(d+'/pids.jsonl','a').write('{\"pid\":%d,\"pgid\":%d,\"role\":\"child\"}\\n'%(c.pid,c.pid))\n"
+            'open(d+\'/pids.jsonl\',\'a\').write(\'{"pid":%d,"pgid":%d,"role":"child"}\\n\'%(c.pid,c.pid))\n'
             "def h(*a):\n"
             "    time.sleep(2); c.kill(); c.wait(); open(d+'/cleaned','w').write('1'); sys.exit(143)\n"
             "signal.signal(signal.SIGTERM,h)\n"
@@ -390,7 +394,9 @@ class LinuxSessionSupervisorTest(unittest.TestCase):
         self.assertIn("command publication failed", (self.ev / "launch.log").read_text())
         self.assertTrue((self.ev / "command.pid").is_dir())
         ledger = self._ledger()
-        self.assertEqual([e["role"] for e in ledger], ["xvfb", "dbus", "openbox", "picom", "command"])
+        self.assertEqual(
+            [e["role"] for e in ledger], ["xvfb", "dbus", "openbox", "picom", "command"]
+        )
         self.assertTrue(all(e["pgid"] == e["pid"] for e in ledger))
         self.assertEqual(out.splitlines()[-1], f"evidence: {self.ev.resolve()}")
         self._assert_reaped()
@@ -427,7 +433,9 @@ class LinuxSessionSupervisorTest(unittest.TestCase):
             "open(d+'/ready','w').write('1')\n"
             "time.sleep(300)\n"
         )
-        proc = self._spawn(sys.executable, "-c", script, CDB_SESSION_TIMEOUT="8", CDB_SESSION_GRACE="1")
+        proc = self._spawn(
+            sys.executable, "-c", script, CDB_SESSION_TIMEOUT="8", CDB_SESSION_GRACE="1"
+        )
         self.assertEqual(proc.wait(60), 124)
         self.assertTrue((self.ev / "ready").exists())
         self.assertEqual((self.ev / "exit").read_text().strip(), "command=124 evidence=0")
@@ -453,7 +461,9 @@ class LinuxSessionSupervisorTest(unittest.TestCase):
         self.assertTrue(any(x.startswith("DBUS_SESSION_BUS_ADDRESS=unix:") for x in env))
         self.assertIn("XDG_SESSION_TYPE=x11", env)
         self.assertTrue(any(x.startswith("XAUTHORITY=") and len(x) > 11 for x in env))
-        self.assertFalse(any(x.startswith(("AT_SPI_BUS_ADDRESS=", "WAYLAND_DISPLAY=")) for x in env))
+        self.assertFalse(
+            any(x.startswith(("AT_SPI_BUS_ADDRESS=", "WAYLAND_DISPLAY=")) for x in env)
+        )
         self.assertEqual(
             {e["role"] for e in self._ledger()}, {"xvfb", "dbus", "openbox", "picom", "command"}
         )
@@ -529,7 +539,9 @@ class LinuxSessionSupervisorTest(unittest.TestCase):
             "open(d+'/ready','w').write('1')\n"
             "time.sleep(300)\n"
         )
-        proc = self._spawn(sys.executable, "-c", script, CDB_SESSION_TIMEOUT="8", CDB_SESSION_GRACE="1")
+        proc = self._spawn(
+            sys.executable, "-c", script, CDB_SESSION_TIMEOUT="8", CDB_SESSION_GRACE="1"
+        )
         self.assertEqual(proc.wait(60), 124)
         self.assertTrue((self.ev / "ready").exists())
         self.assertIn("SIGKILL after grace", (self.ev / "launch.log").read_text())

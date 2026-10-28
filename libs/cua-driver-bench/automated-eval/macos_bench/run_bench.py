@@ -561,7 +561,11 @@ def capture_subject(work: Path):
     proc = desktop.start_app(args, work, work / "lab.log")
     try:
         deadline = time.monotonic() + 20
-        while time.monotonic() < deadline and not (work / "state.json").exists() and proc.poll() is None:
+        while (
+            time.monotonic() < deadline
+            and not (work / "state.json").exists()
+            and proc.poll() is None
+        ):
             time.sleep(0.2)
         yield
     finally:

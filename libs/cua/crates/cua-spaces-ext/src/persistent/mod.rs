@@ -1688,6 +1688,19 @@ impl Persistent {
         self.renew_claims(&rec, &agents, &run).await?;
         let rec = self.get(&rec.name)?.session(rec.k());
         let (ended, failed) = turn_outcome(&page.events);
+        // A harness may answer a refused credential as an ordinary turn (Hermes does, with its own
+        // advice): read the reply as the failed turn it is, so the person's message is not "Done",
+        // the reply is the standard Connect card and the credential reads as needing a reconnect.
+        let failed = match (&failed, ended) {
+            (None, Some(turn)) if turn > rec.saved_turn => agents
+                .result(&run)
+                .await
+                .ok()
+                .map(|r| r.text)
+                .filter(|text| ag::failure::is_auth_failure_reply(&rec.harness, text))
+                .map(|text| (turn, text.trim().to_string())),
+            _ => failed,
+        };
         // The thread task this run's turn worked on: its reply and state.
         let mut anchor = None;
         let mut task_ended = false;
@@ -1717,6 +1730,9 @@ impl Persistent {
                 anchor = self.finish_task(&rec, &inflight, None, Some(why)).await?;
                 task_ended = true;
             }
+        }
+        if let Some((_, err)) = &failed {
+            members::note_rejected(&rec, &members::failure_for(&rec, err));
         }
         if let Some((turn, err)) = &failed {
             // One notification per failed turn, posted before anything

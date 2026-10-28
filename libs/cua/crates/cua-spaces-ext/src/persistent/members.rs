@@ -681,6 +681,7 @@ impl Persistent {
                 // complete error (and a Connect button when it needs a
                 // sign-in) in `failure`.
                 let failure = failure_for(rec, &e.to_string());
+                note_rejected(rec, &failure);
                 let mut reply = Draft::new(
                     Author::agent(&rec.name),
                     EntryKind::Message,
@@ -1967,13 +1968,24 @@ pub(crate) fn failure_for(rec: &AgentRecord, e: &str) -> ag::failure::Failure {
     f
 }
 
-/// A failed member's status line: "Not connected" when it needs a sign-in,
-/// else the error's first line, whole.
+/// A run that was refused its credential: what its harness read from the saved keys for that
+/// provider reads as needing a reconnect in Settings, and no run is given it again until it is saved
+/// again.
+pub(crate) fn note_rejected(rec: &AgentRecord, f: &ag::failure::Failure) {
+    if f.class == ag::failure::FailureClass::NeedsConnect
+        && let Some(provider) = f.provider.as_deref()
+    {
+        ag::keys::mark_rejected_for_run(&rec.harness, provider);
+    }
+}
+
+/// A failed member's status: one short word ("Not connected" when it needs a sign-in, else "Stopped").
+/// The error itself is never the status; the member's `failure` carries its complete text for Show
+/// details.
 fn failed_line(harness: &str, e: &str) -> String {
-    let f = ag::failure::classify(harness, e);
-    match f.class {
+    match ag::failure::classify(harness, e).class {
         ag::failure::FailureClass::NeedsConnect => "Not connected".into(),
-        ag::failure::FailureClass::Error => super::notify::reason(e),
+        ag::failure::FailureClass::Error => "Stopped".into(),
     }
 }
 
@@ -2033,7 +2045,8 @@ pub fn session_state(
         "failed" => s.last_error.as_deref().map(|e| failed_line(&s.harness, e)),
         _ => None,
     };
-    // An error is never cut: only a working line is clipped.
+    // A failed session's word is short already; a working line is clipped. (The error is not cut
+    // anywhere: its complete text is the session's `failure`.)
     let activity = if state == "failed" {
         activity
     } else {

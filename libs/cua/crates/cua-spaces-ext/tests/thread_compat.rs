@@ -1535,6 +1535,105 @@ async fn a_failed_turn_fails_its_task_and_the_notification_points_at_it() {
     assert!(p.get("ada").unwrap().task.is_none());
 }
 
+/// Hermes answers a refused key as an ordinary turn, with its own advice. The thread reads it as the
+/// failed turn it is: the person's message fails (never "Done"), the reply is the standard Connect
+/// card in plain words without Hermes' advice, and the complete text stays under Show details.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_refused_key_answered_as_text_is_a_failed_turn() {
+    let fx = setup().await;
+    let (p, _proc) = member_with_idle_run(&fx).await;
+    edit_record(&fx, "ada", |r| r["harness"] = json!("hermes"));
+    let posted = call(
+        &fx.mcp,
+        "thread_post",
+        json!({"space": fx.space, "text": "@ada hello"}),
+    )
+    .await
+    .unwrap();
+    let task = posted["entry"]["seq"].as_u64().unwrap();
+    Box::pin(p.tick()).await;
+    let said = "Anthropic rejected your API key, so the model can't be reached. Update it in Settings -> Providers, or run `hermes setup` in a terminal. Provider said: HTTP 401: OAuth access token is invalid.";
+    events(
+        &fx,
+        &[
+            ("turn_started", 2, None),
+            ("message", 2, Some(said)),
+            ("turn_ended", 2, None),
+        ],
+    );
+    run_state(&fx, json!({"status": "idle", "turn": 2}));
+    Box::pin(p.tick()).await;
+    let t = call(&fx.mcp, "thread_read", json!({"space": fx.space}))
+        .await
+        .unwrap();
+    let e = entries(&t);
+    let reply = e
+        .iter()
+        .find(|x| x["reply_to"] == task && x["kind"] == "message")
+        .expect("a reply");
+    assert_eq!(
+        reply["text"],
+        "Anthropic rejected the key Hermes used. Update it, then try again."
+    );
+    assert!(!reply["text"].as_str().unwrap().contains("hermes setup"));
+    assert_eq!(reply["failure"]["class"], "needs_connect");
+    assert_eq!(reply["failure"]["provider"], "anthropic");
+    assert_eq!(reply["failure"]["message"], said);
+    let update = e.iter().rev().find(|x| x["kind"] == "task_update").unwrap();
+    assert_eq!(update["update"]["state"], "failed");
+    // One notification, the failure's (not "Finished").
+    let notes = p.feed().list(false, None).unwrap();
+    assert!(notes.iter().any(|n| n.kind == "error" && n.body == said));
+    assert!(!notes.iter().any(|n| n.kind == "turn_ended"));
+}
+
+/// An ordinary answer that merely talks about authentication stays an answer.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_answer_that_mentions_a_401_is_still_an_answer() {
+    let fx = setup().await;
+    let (p, _proc) = member_with_idle_run(&fx).await;
+    edit_record(&fx, "ada", |r| r["harness"] = json!("hermes"));
+    let posted = call(
+        &fx.mcp,
+        "thread_post",
+        json!({"space": fx.space, "text": "@ada why does login fail"}),
+    )
+    .await
+    .unwrap();
+    let task = posted["entry"]["seq"].as_u64().unwrap();
+    Box::pin(p.tick()).await;
+    events(
+        &fx,
+        &[
+            ("turn_started", 2, None),
+            (
+                "message",
+                2,
+                Some(
+                    "The endpoint answers 401 Unauthorized when the token is missing, so I added the header.",
+                ),
+            ),
+            ("turn_ended", 2, None),
+        ],
+    );
+    run_state(&fx, json!({"status": "idle", "turn": 2}));
+    Box::pin(p.tick()).await;
+    let t = call(&fx.mcp, "thread_read", json!({"space": fx.space}))
+        .await
+        .unwrap();
+    let reply = entries(&t)
+        .into_iter()
+        .find(|x| x["reply_to"] == task && x["kind"] == "message")
+        .expect("a reply");
+    assert!(reply["failure"].is_null());
+    assert!(
+        reply["text"]
+            .as_str()
+            .unwrap()
+            .starts_with("The endpoint answers 401")
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_read_without_after_is_the_newest_page_and_pages_back() {
     let fx = setup().await;

@@ -364,7 +364,7 @@ pub fn theme_store_root() -> Result<PathBuf> {
         let root = std::env::var_os("LOCALAPPDATA")
             .map(PathBuf::from)
             .ok_or_else(|| anyhow!("LOCALAPPDATA is unavailable"))?;
-        return Ok(root.join("Cua Driver").join("cursor-themes"));
+        Ok(root.join("Cua Driver").join("cursor-themes"))
     }
     #[cfg(target_os = "macos")]
     {

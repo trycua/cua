@@ -22,3 +22,17 @@
 - Proof correction: against the earlier launcher (6daeee479), `test_timeout_when_leader_exits_before_term_ignoring_child` passes; it is additional coverage and a mutation check (leader-only stop), not a regression that was red there. The automated base probe was skipped (merge in range), so it supplies no red evidence.
 - Removed the vacuous empty-directory assertion in `test_noop_without_variable`.
 - Not run: the full four-arm Linux run. It needs the desktop packages (openbox, picom, gdbus), an agent CLI and a built driver, none of which this host has; it remains to be done in a provisioned environment before merge.
+
+## Fix round 4
+
+- Doctor cancellation is scoped to one invocation. A small scope object replaces the module-global `_cancel`; `main()` restores the previous scope and SIGTERM handler on every exit path. A deferred cancel is now also honoured when the private daemon start fails with a handled error. Regression `test_doctor_cancel_then_retry_starts_cleanly` (cancelled doctor start, then a healthy `start_driver()` and a second doctor run in the same process) fails against the retained head with a stale `SystemExit(143)` and passes now. `test_cancel_helpers_are_inert_outside_doctor` covers the no-op outside a doctor run.
+- The real-desktop launcher suite ran for real: openbox, picom, x11-utils, libglib2.0-bin and the other desktop packages were installed. `LinuxLauncherTest` has no skips. Run bare, 7 of 8 pass and the one that needs a display skips; run inside the launcher, `test_linux_session.py` and `test_linux_tools.py` give 55 passed, 0 skipped, and the launcher `exit` reads `command=0 evidence=0`.
+- The first real preflight found two defects the stubbed tests could not, both fixed with regressions that fail against the retained head and pass now:
+  - With one explicit Linux driver, `cc-cua-driver` kept `run_script` enabled, so preflight rejected its tool list. The `--cua-bin` override now disables `run_script` for every arm except the script arm (`LinuxSingleBuildTest`).
+  - The Linux capture check looked at an empty desktop and rightly rejected the uniform frame. It now shows a BenchLab window for the duration of the check and stops it afterwards (`LinuxCaptureSubjectTest`); the offline-capture flow test stubs it.
+- One earlier full-run attempt was discarded and rerun from scratch: the CDB tasks failed in the harness because `npx` was not on the session `PATH`, which the evidence check reported as `recording not started`. That was an environment error in the run setup, not a repository defect.
+- Full run: one driver built from source at the base commit, pins written from the in-session doctor, the four Cua Driver setups, both conditions (foreground and background), default phase counts, each inside the launcher with `--check-run` on its run directory. Both run directories reached `DONE` and both launcher `exit` files read `evidence=0`. No trial was excluded.
+- Skipped, not failed: `CDB-S03` (`CDB-G03` in Bench v2) needs GnuCash, which this host does not have. It was excluded from the run and is recorded as skipped. All other Bench v2 tasks ran.
+- The scoped repository checks pass (355 passed, 24 skipped; em-dash check clean).
+- Not run here: macOS-only bench paths (Swift BenchLab) and Windows; PR CI covers them. Run results stay outside the repository.
+

@@ -851,8 +851,21 @@ mod tests {
         assert_eq!(default_motion.idle_hide_ms, 500.0);
         assert!(map.is_enabled("s"));
         assert_eq!(map.motion("s"), default_motion);
-        let theme = map.theme_state("s").expect("default theme state");
-        assert_eq!(theme.4, map.cursors[DEFAULT_CURSOR_KEY].visual);
+        let default = &mut map.cursors[DEFAULT_CURSOR_KEY];
+        default.theme = Some(test_theme("test.default", "1.0.0", "test-default"));
+        default.theme_fallback = Some("installed theme unreadable".into());
+        default.visual.requested_action = crate::CursorAction::Observe;
+        let default_visual = default.visual.clone();
+        assert_eq!(
+            map.theme_state("s"),
+            Some((
+                "test.default".to_owned(),
+                "1.0.0".to_owned(),
+                "test-default".to_owned(),
+                Some("installed theme unreadable".to_owned()),
+                default_visual.clone(),
+            ))
+        );
 
         map.cursors[DEFAULT_CURSOR_KEY].visible = false;
         assert!(
@@ -865,6 +878,41 @@ mod tests {
         assert!(map.is_enabled("s"), "a session's own cursor answers for it");
         assert_eq!(map.motion("s").idle_hide_ms, 900.0);
         assert_eq!(map.motion(DEFAULT_CURSOR_KEY).idle_hide_ms, 500.0);
+
+        let own = map.cursor_mut("s").unwrap();
+        own.theme = Some(test_theme("test.session", "2.0.0", "test-session"));
+        own.theme_fallback = None;
+        own.visual.requested_action = crate::CursorAction::Click;
+        let own_visual = own.visual.clone();
+        assert_ne!(own_visual, default_visual);
+        assert_eq!(
+            map.theme_state("s"),
+            Some((
+                "test.session".to_owned(),
+                "2.0.0".to_owned(),
+                "test-session".to_owned(),
+                None,
+                own_visual,
+            ))
+        );
+        assert_eq!(
+            map.theme_state(DEFAULT_CURSOR_KEY).map(|state| state.0),
+            Some("test.default".to_owned())
+        );
+    }
+
+    fn test_theme(id: &str, version: &str, profile: &str) -> std::sync::Arc<crate::CompiledTheme> {
+        std::sync::Arc::new(crate::CompiledTheme {
+            id: id.to_owned(),
+            name: id.to_owned(),
+            version: version.to_owned(),
+            author: String::new(),
+            license: String::new(),
+            profile: profile.to_owned(),
+            source_hash: [0; 32],
+            hotspot: [0, 0],
+            actions: Default::default(),
+        })
     }
 
     #[test]

@@ -66,7 +66,7 @@ describe.skipIf(!wasmBuilt)("Settings, Connectors (redesign)", () => {
     await click(btn);
     await waitFor(() => expect(q("[data-connector-app=claude-code]")!.dataset.state).toBe("connected"));
     await waitFor(() => expect(q("[data-connector-provider=anthropic]")!.dataset.state).toBe("connected"));
-    expect(q("[data-connector-provider=anthropic]")!.textContent).toContain("Claude sign-in, for Claude Code");
+    expect(q("[data-connector-provider=anthropic]")!.textContent).toContain("Claude Code sign-in");
     const connects = calls.filter((c) => c.op === "agents.connect").map((c) => c.args as { agents: string[]; signIn: boolean });
     expect(connects).toEqual([{ agents: ["claude-code"], signIn: true }]);
   });

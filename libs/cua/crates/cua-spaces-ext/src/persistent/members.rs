@@ -671,7 +671,7 @@ impl Persistent {
                 let mut reply = Draft::new(
                     Author::agent(&rec.name),
                     EntryKind::Message,
-                    ag::failure::plain(&failure),
+                    ag::failure::plain(&failure, &rec.harness),
                 );
                 reply.reply_to = Some(task.seq);
                 reply.failure = Some(failure);
@@ -864,7 +864,7 @@ impl Persistent {
                 let failure = error.as_deref().map(|e| failure_for(rec, e));
                 let text = match (&failure, &answer) {
                     // Plain words; the complete error rides along as `failure`.
-                    (Some(f), _) => ag::failure::plain(f),
+                    (Some(f), _) => ag::failure::plain(f, &rec.harness),
                     (None, Some(a)) if !a.trim().is_empty() => a.trim().to_string(),
                     _ => "Finished.".to_string(),
                 };

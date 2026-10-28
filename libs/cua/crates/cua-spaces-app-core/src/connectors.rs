@@ -92,7 +92,7 @@ const PROVIDERS: &[Provider] = &[
         label: "Anthropic",
         env: "ANTHROPIC_API_KEY",
         also: &["CLAUDE_CODE_OAUTH_TOKEN"],
-        used_by: "Claude Code, Hermes and other apps that use Claude.",
+        used_by: "Claude Code. Hermes and other apps that use Claude need an API key.",
         key_help: "Create a key at console.anthropic.com. Every app that uses Claude can use it.",
         placeholder: "sk-ant-…",
         ways: &[CLAUDE_TOKEN, Way::Key, Way::Shell],
@@ -160,13 +160,8 @@ const APPS: &[AppSignIn] = &[
         app: "hermes",
         providers: &["anthropic", "openai"],
         way: None,
-        // Not CODEX_AUTH_JSON: Hermes has no reader for the ChatGPT sign-in.
-        reads: &[
-            "OPENROUTER_API_KEY",
-            "ANTHROPIC_API_KEY",
-            "CLAUDE_CODE_OAUTH_TOKEN",
-            "OPENAI_API_KEY",
-        ],
+        // API keys only: the Claude Code and ChatGPT sign-ins are not Hermes'.
+        reads: &["OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"],
     },
     AppSignIn {
         app: "t3code",
@@ -325,7 +320,7 @@ fn dots(k: &AgentKeyInput) -> String {
 /// How a saved credential reads on its provider's row.
 fn credential_text(p: &Provider, k: &AgentKeyInput) -> String {
     match k.env.as_str() {
-        "CLAUDE_CODE_OAUTH_TOKEN" => "Claude sign-in, for Claude Code".into(),
+        "CLAUDE_CODE_OAUTH_TOKEN" => "Claude Code sign-in".into(),
         "CODEX_AUTH_JSON" => "ChatGPT sign-in, for Codex".into(),
         e if e == p.env => format!("API key {}", dots(k)),
         e => format!("{e} {}", dots(k)),
@@ -376,7 +371,7 @@ pub struct ConnectorProviderRow {
     pub label: String,
     /// `connected`, `not-connected`, `connecting`, `failed`.
     pub state: String,
-    /// "Not connected", "API key •••• 3f9a", "Claude sign-in, for Claude Code",
+    /// "Not connected", "API key •••• 3f9a", "Claude Code sign-in",
     /// "Approve in your browser…".
     pub status: String,
     /// Who uses it.
@@ -445,12 +440,19 @@ fn app_row(input: &ConnectorsInput, a: &ConnectorAppInput) -> ConnectorAppRow {
     let signed_in = app_signed_in(input, &a.agent);
     let done = a.configured && signed_in;
     let needs = app_sign_in(&a.agent).filter(|_| !signed_in).map(|s| {
-        s.providers
+        let names = s
+            .providers
             .iter()
             .filter_map(|p| provider(p))
             .map(|p| p.label)
             .collect::<Vec<_>>()
-            .join(" or ")
+            .join(" or ");
+        // An app with no sign-in of its own takes API keys: say so.
+        if s.way.is_none() && !s.reads.is_empty() {
+            format!("Needs an API key for {names}.")
+        } else {
+            format!("Needs a sign-in to {names}.")
+        }
     });
     let (state, line, btn) = if let Some(step) = busy {
         let line = match step {
@@ -483,7 +485,7 @@ fn app_row(input: &ConnectorsInput, a: &ConnectorAppInput) -> ConnectorAppRow {
             if app_expired(input, &a.agent) {
                 Some("The sign-in expired. Reconnect.".to_string())
             } else {
-                needs.map(|n| format!("Needs a sign-in to {n}."))
+                needs
             },
             Some(button("connect", "Connect", true)),
         )
@@ -833,7 +835,7 @@ pub struct ConnectorToggle {
 pub struct ConnectorSignIn {
     /// "Signs in with Anthropic".
     pub title: String,
-    /// The provider row's status for it ("Claude sign-in, for Claude Code", "Not connected").
+    /// The provider row's status for it ("Claude Code sign-in", "Not connected").
     pub status: String,
     pub connected: bool,
     /// How Connect signs it in ("Claude sign-in, through claude setup-token").
@@ -1091,8 +1093,13 @@ mod tests {
         assert!(app_signed_in(&k, "hermes"));
         let mut t = input();
         t.keys.keys.push(key("CLAUDE_CODE_OAUTH_TOKEN", "AAAA"));
-        assert!(app_signed_in(&t, "hermes") && app_signed_in(&t, "claude-code"));
+        // The Claude Code sign-in is Claude Code's alone.
+        assert!(app_signed_in(&t, "claude-code"));
+        assert!(!app_signed_in(&t, "hermes"));
         assert!(!app_signed_in(&t, "codex"));
+        let mut a = input();
+        a.keys.keys.push(key("ANTHROPIC_API_KEY", "AAAA"));
+        assert!(app_signed_in(&a, "hermes") && app_signed_in(&a, "claude-code"));
     }
 
     #[test]
@@ -1154,7 +1161,7 @@ mod tests {
         assert_eq!(v.apps[0].state, "connected");
         let a = &v.providers[0];
         assert_eq!(a.state, "connected");
-        assert_eq!(a.status, "Claude sign-in, for Claude Code");
+        assert_eq!(a.status, "Claude Code sign-in");
         assert_eq!(a.button.label, "Sign out");
         assert_eq!(a.sign_out_envs, ["CLAUDE_CODE_OAUTH_TOKEN"]);
         // The sign-in token is the provider's, not an Other key.

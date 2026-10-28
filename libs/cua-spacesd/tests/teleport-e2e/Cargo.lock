@@ -1357,6 +1357,7 @@ dependencies = [
  "cua-proto",
  "cua-spacesd-client",
  "flate2",
+ "futures-util",
  "hex",
  "rand 0.9.5",
  "serde",

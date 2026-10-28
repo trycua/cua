@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: FSL-1.1-MIT
-// Copyright (c) 2026 Cua AI, Inc.
 
 //! This machine's memory and disk in whole GB, to show next to the limits a
 //! host sets for the Spaces others create on it. 0 when the system does not

@@ -2492,6 +2492,20 @@
        "usage": "cua agent keys set [OPTIONS] <PROVIDER>"
       },
       {
+       "abstract": "Ask each provider whether the saved API keys still work (a cheap read-only request; nothing is sent that is not a key's own request). A key the provider refuses is listed as needing a reconnect, and runs are not given it until it is saved again",
+       "after_help": "Examples:\n  cua agent keys check",
+       "aliases": [],
+       "arguments": [],
+       "flags": [],
+       "hidden": false,
+       "hidden_aliases": [],
+       "name": "check",
+       "options": [],
+       "subcommand_optional": false,
+       "subcommands": [],
+       "usage": "cua agent keys check [OPTIONS]"
+      },
+      {
        "abstract": "Remove the key a run gets as ENV",
        "after_help": "Examples:\n  cua agent keys rm ANTHROPIC_API_KEY",
        "aliases": [],

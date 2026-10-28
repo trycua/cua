@@ -521,7 +521,8 @@ async fn each_session_shows_its_state_and_activity() {
     let s = sessions(&fx).await;
     assert_eq!(s[0]["state"], "working", "{s:?}");
     assert_eq!(s[0]["task_seq"], a);
-    assert_eq!(s[0]["activity"], "cargo test -p flaky");
+    // The stage in words (a tool as "Using ..."), never the task text.
+    assert_eq!(s[0]["activity"], "Using cargo test -p flaky");
     assert_eq!(s[1]["state"], "waiting", "{s:?}");
     assert_eq!(s[1]["task_seq"], b);
     assert!(

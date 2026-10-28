@@ -328,7 +328,10 @@ impl Persistent {
             "id": out.id,
             "code": code,
             "url": url,
-            "line": format!("Join my Cua Space \"{}\": {url}", self.space_name(&id)),
+            "line": format!(
+                "Join my Cua Space \"{}\": {url} Then set your name with thread_join, keep watching the thread with thread_inbox in a loop, reply with thread_post as yourself, and never @mention yourself.",
+                self.space_name(&id)
+            ),
             "expires_at_ms": out.expires_ms,
         }))
     }
@@ -670,6 +673,21 @@ impl Persistent {
             "owner": owner,
             "device": {"id": device.id, "name": device.name},
             "key": key,
+            // For an agent that calls the tool itself: pass this as `_member`
+            // on each later call to act as the member (its posts then show
+            // as the agent, not as the person who signed in).
+            "member_credential": {"member_id": member_id, "key": key},
+            "next_steps": format!(
+                "You joined {} as @{}.{} {}",
+                self.space_name(&code.space),
+                rec.name,
+                if ask {
+                    " The Space's owner or an admin lets you in first; until then your calls say you are waiting."
+                } else {
+                    ""
+                },
+                cua_spaces_contract::JOIN_NEXT_STEPS
+            ),
         }))
     }
 

@@ -153,6 +153,9 @@ struct PixelDecoder {
     green_mask: u32,
     blue_mask: u32,
     direct_colors: Option<Vec<[u8; 3]>>,
+    // Off-screen padding is black in output space, including DirectColor maps
+    // where pixel value zero need not decode to black.
+    visible: Option<(u16, u16, u16, u16)>,
 }
 
 impl PixelCatalog {
@@ -260,6 +263,7 @@ impl PixelCatalog {
             green_mask: visual.green_mask,
             blue_mask: visual.blue_mask,
             direct_colors,
+            visible: None,
         })
     }
 }
@@ -353,6 +357,16 @@ fn packed_zpixmap_to_png(data: &[u8], w: u32, h: u32, decoder: PixelDecoder) -> 
     for y in 0..h as usize {
         let row = &data[y * decoder.layout.stride..(y + 1) * decoder.layout.stride];
         for x in 0..w as usize {
+            if let Some((left, top, width, height)) = decoder.visible {
+                if x < usize::from(left)
+                    || y < usize::from(top)
+                    || x >= usize::from(left) + usize::from(width)
+                    || y >= usize::from(top) + usize::from(height)
+                {
+                    rgba.extend_from_slice(&[0, 0, 0, 255]);
+                    continue;
+                }
+            }
             let start = x * decoder.layout.bytes_per_pixel;
             let bytes = &row[start..start + decoder.layout.bytes_per_pixel];
             let pixel = if decoder.layout.byte_order == ImageOrder::LSB_FIRST {
@@ -384,6 +398,102 @@ fn packed_zpixmap_to_png(data: &[u8], w: u32, h: u32, decoder: PixelDecoder) -> 
 
 fn xid_to_window(xid: u64) -> Result<u32> {
     u32::try_from(xid).map_err(|_| anyhow!("X11 window id {xid} does not fit u32"))
+}
+
+/// Rectangle readable from a viewable window. X11 GetImage requires every
+/// requested pixel to lie on the root drawable, even when the window is larger.
+struct VisibleWindow {
+    width: u32,
+    height: u32,
+    x: u16,
+    y: u16,
+    visible_width: u16,
+    visible_height: u16,
+}
+
+fn visible_window(
+    conn: &x11rb::rust_connection::RustConnection,
+    window: u32,
+    geom: &x11rb::protocol::xproto::GetGeometryReply,
+) -> Result<VisibleWindow> {
+    use x11rb::protocol::xproto::ConnectionExt as _;
+    let width = u32::from(geom.width);
+    let height = u32::from(geom.height);
+    checked_capture_dimensions(width, height)?;
+    // Translate rather than using geom.x/y: a window manager may reparent the
+    // client into a frame. Query current root geometry to handle display resize.
+    let origin = conn
+        .translate_coordinates(window, geom.root, 0, 0)?
+        .reply()?;
+    let root = conn.get_geometry(geom.root)?.reply()?;
+    if !origin.same_screen {
+        bail!("window and root are on different screens");
+    }
+    let left = i32::from(origin.dst_x);
+    let top = i32::from(origin.dst_y);
+    let x = 0.max(-left);
+    let y = 0.max(-top);
+    let right = (width as i32).min(i32::from(root.width) - left);
+    let bottom = (height as i32).min(i32::from(root.height) - top);
+    if right <= x || bottom <= y {
+        bail!("window has no visible pixels on the root drawable");
+    }
+    Ok(VisibleWindow {
+        width,
+        height,
+        x: x as u16,
+        y: y as u16,
+        visible_width: (right - x) as u16,
+        visible_height: (bottom - y) as u16,
+    })
+}
+
+/// Keep the original window-local input coordinate system. Missing off-screen
+/// pixels are black; cropping the returned canvas itself would shift clicks for
+/// windows extending above or left of the screen.
+fn visible_frame(
+    pixels: &PixelCatalog,
+    area: &VisibleWindow,
+    data: Vec<u8>,
+    depth: u8,
+    mut decoder: PixelDecoder,
+) -> Result<RawFrame> {
+    let visible = pixels.packed_layout(
+        u32::from(area.visible_width),
+        u32::from(area.visible_height),
+        depth,
+    )?;
+    if data.len() != visible.len {
+        bail!(
+            "visible image length {} != expected {}",
+            data.len(),
+            visible.len
+        );
+    }
+    let data = if area.x == 0
+        && area.y == 0
+        && u32::from(area.visible_width) == area.width
+        && u32::from(area.visible_height) == area.height
+    {
+        data
+    } else {
+        decoder.visible = Some((area.x, area.y, area.visible_width, area.visible_height));
+        let mut canvas = vec![0; decoder.layout.len];
+        let row_bytes = usize::from(area.visible_width) * visible.bytes_per_pixel;
+        for row in 0..usize::from(area.visible_height) {
+            let source = row * visible.stride;
+            let dest = (row + usize::from(area.y)) * decoder.layout.stride
+                + usize::from(area.x) * visible.bytes_per_pixel;
+            canvas[dest..dest + row_bytes].copy_from_slice(&data[source..source + row_bytes]);
+        }
+        canvas
+    };
+    Ok(RawFrame {
+        data,
+        w: area.width,
+        h: area.height,
+        decoder,
+    })
 }
 
 fn current_display() -> String {
@@ -627,8 +737,9 @@ impl XShmSession {
             .map_err(|e| anyhow!("get_geometry request: {e}"))?
             .reply()
             .map_err(|e| anyhow!("get_geometry reply: {e}"))?;
-        let w = u32::from(geom.width);
-        let h = u32::from(geom.height);
+        let area = visible_window(&self.conn, window, &geom)?;
+        let w = u32::from(area.visible_width);
+        let h = u32::from(area.visible_height);
         let layout = self.pixels.packed_layout(w, h, geom.depth)?;
         let need = layout.len;
 
@@ -648,10 +759,10 @@ impl XShmSession {
             .conn
             .shm_get_image(
                 window,
-                0,
-                0,
-                geom.width,
-                geom.height,
+                area.x as i16,
+                area.y as i16,
+                area.visible_width,
+                area.visible_height,
                 !0u32,
                 u8::from(ImageFormat::Z_PIXMAP),
                 seg,
@@ -687,16 +798,14 @@ impl XShmSession {
                 .ok_or_else(|| anyhow!("SHM buffer missing after get_image"))?;
             buf.map[..size].to_vec()
         };
-        Ok(RawFrame {
-            data,
-            w,
-            h,
-            decoder: self
-                .pixels
-                .decoder(w, h, reply.depth, reply.visual, |visual| {
-                    query_direct_colors(&self.conn, window, visual)
-                })?,
-        })
+        let decoder = self.pixels.decoder(
+            area.width,
+            area.height,
+            reply.depth,
+            reply.visual,
+            |visual| query_direct_colors(&self.conn, window, visual),
+        )?;
+        visible_frame(&self.pixels, &area, data, reply.depth, decoder)
     }
 }
 
@@ -884,8 +993,9 @@ impl XGetImageSession {
             .map_err(|e| anyhow!("get_geometry request: {e}"))?
             .reply()
             .map_err(|e| anyhow!("get_geometry reply: {e}"))?;
-        let w = u32::from(geom.width);
-        let h = u32::from(geom.height);
+        let area = visible_window(&self.conn, window, &geom)?;
+        let w = u32::from(area.visible_width);
+        let h = u32::from(area.visible_height);
         let layout = self.pixels.packed_layout(w, h, geom.depth)?;
         let need = layout.len;
 
@@ -894,10 +1004,10 @@ impl XGetImageSession {
             .get_image(
                 ImageFormat::Z_PIXMAP,
                 window,
-                0,
-                0,
-                geom.width,
-                geom.height,
+                area.x as i16,
+                area.y as i16,
+                area.visible_width,
+                area.visible_height,
                 !0u32,
             )
             .map_err(|e| anyhow!("get_image request: {e}"))?
@@ -917,14 +1027,12 @@ impl XGetImageSession {
             );
         }
 
-        Ok(RawFrame {
-            data: img.data,
-            w,
-            h,
-            decoder: self.pixels.decoder(w, h, img.depth, img.visual, |visual| {
-                query_direct_colors(&self.conn, window, visual)
-            })?,
-        })
+        let decoder =
+            self.pixels
+                .decoder(area.width, area.height, img.depth, img.visual, |visual| {
+                    query_direct_colors(&self.conn, window, visual)
+                })?;
+        visible_frame(&self.pixels, &area, img.data, img.depth, decoder)
     }
 }
 
@@ -1125,6 +1233,7 @@ mod tests {
             green_mask: 0x0000_ff00,
             blue_mask: 0x0000_00ff,
             direct_colors: None,
+            visible: None,
         };
         // Width 3 at 24bpp with 32-bit scanline padding: 9 payload bytes +
         // 3 ignored padding bytes per row. Colors are deliberately varied.
@@ -1155,6 +1264,7 @@ mod tests {
             green_mask: 0x07e0,
             blue_mask: 0x001f,
             direct_colors: None,
+            visible: None,
         };
         let packed = [0xf8, 0x00, 0x07, 0xe0];
         let png = packed_zpixmap_to_png(&packed, 2, 1, decoder).expect("decode big-endian");
@@ -1613,7 +1723,8 @@ mod tests {
     #[ignore = "requires a live X11 server with DirectColor and MIT-SHM 1.2"]
     fn live_directcolor_capture_tracks_window_colormap() {
         use x11rb::protocol::xproto::{
-            ColorFlag, Coloritem, ColormapAlloc, ConnectionExt as _, CreateWindowAux, WindowClass,
+            ColorFlag, Coloritem, ColormapAlloc, ConfigureWindowAux, ConnectionExt as _,
+            CreateWindowAux, WindowClass,
         };
         use x11rb::rust_connection::RustConnection;
 
@@ -1709,6 +1820,33 @@ mod tests {
         }
         fixture
             .conn
+            .configure_window(window, &ConfigureWindowAux::new().x(-10).y(-5))
+            .unwrap()
+            .check()
+            .unwrap();
+        paint_live_fixture(&fixture, 67, 43);
+        for frame in [
+            shm.capture_raw(u64::from(window)),
+            xget.capture_raw(u64::from(window)),
+        ] {
+            let image = image::load_from_memory(&raw_frame_png(frame.unwrap()))
+                .unwrap()
+                .to_rgba8();
+            assert_eq!(image.dimensions(), (67, 43));
+            assert_eq!(image.get_pixel(9, 5).0, [0, 0, 0, 255]);
+            assert_eq!(image.get_pixel(10, 4).0, [0, 0, 0, 255]);
+            assert_eq!(
+                image.get_pixel(10, 5).0,
+                [
+                    0x17 + 73 + 19,
+                    255 - 0x5b,
+                    ((0xa8u16 * 3 + 31) % 256) as u8,
+                    255
+                ]
+            );
+        }
+        fixture
+            .conn
             .destroy_window(window)
             .unwrap()
             .check()
@@ -1719,6 +1857,140 @@ mod tests {
             .unwrap()
             .check()
             .unwrap();
+    }
+
+    /// Off-screen pixels in a window GetImage request produce X11 BadMatch.
+    #[test]
+    #[ignore = "requires Xvfb with MIT-SHM 1.2"]
+    fn live_partial_windows_preserve_window_coordinates() {
+        use x11rb::protocol::xproto::{ConfigureWindowAux, ConnectionExt as _};
+        let display = format!(":{}", 1000 + std::process::id() % 10000);
+        let _server = XvfbServer::start(&display);
+        let fixture = create_live_fixture(&display, 200, 150);
+        let mut shm = XShmSession::connect(display.clone()).expect("SHM session");
+        let mut plain = XGetImageSession::connect(display).expect("XGetImage session");
+        for (x, y, w, h) in [
+            (30, 20, 200, 150),
+            (600, 450, 200, 150),
+            (-40, 20, 200, 150),
+            (30, -40, 200, 150),
+            (-40, -30, 200, 150),
+            (0, 0, 800, 600),
+        ] {
+            fixture
+                .conn
+                .configure_window(
+                    fixture.window,
+                    &ConfigureWindowAux::new().x(x).y(y).width(w).height(h),
+                )
+                .unwrap()
+                .check()
+                .unwrap();
+            paint_live_fixture(&fixture, w as u16, h as u16);
+            for frame in [
+                shm.capture_raw(u64::from(fixture.window)),
+                plain.capture_raw(u64::from(fixture.window)),
+            ] {
+                let frame = frame.unwrap_or_else(|e| panic!("window ({x},{y}) {w}x{h}: {e:#}"));
+                let png = raw_frame_png(frame);
+                let image = image::load_from_memory(&png).unwrap().to_rgba8();
+                assert_eq!(image.dimensions(), (w, h), "input origin must not shift");
+                for py in 0..h {
+                    for px in 0..w {
+                        let visible = (0..640).contains(&(x + px as i32))
+                            && (0..480).contains(&(y + py as i32));
+                        let rgb = if !visible {
+                            [0, 0, 0]
+                        } else if px < w / 3 {
+                            [0x17, 0x5b, 0xa8]
+                        } else if px < w * 2 / 3 {
+                            [0xc4, 0x3d, 0x52]
+                        } else {
+                            [0x2d, 0xb8, 0x71]
+                        };
+                        assert_eq!(
+                            image.get_pixel(px, py).0,
+                            [rgb[0], rgb[1], rgb[2], 255],
+                            "window ({x},{y}) {w}x{h}, pixel ({px},{py})"
+                        );
+                    }
+                }
+            }
+        }
+        // Reparented clients have parent-local geometry; clipping must use the
+        // translated root origin rather than mistaking x=5,y=5 for screen space.
+        let parent = create_live_fixture(&shm.display, 300, 250);
+        parent
+            .conn
+            .configure_window(parent.window, &ConfigureWindowAux::new().x(580).y(430))
+            .unwrap()
+            .check()
+            .unwrap();
+        fixture
+            .conn
+            .reparent_window(fixture.window, parent.window, 5, 5)
+            .unwrap()
+            .check()
+            .unwrap();
+        fixture
+            .conn
+            .configure_window(
+                fixture.window,
+                &ConfigureWindowAux::new().width(200).height(150),
+            )
+            .unwrap()
+            .check()
+            .unwrap();
+        fixture
+            .conn
+            .map_window(fixture.window)
+            .unwrap()
+            .check()
+            .unwrap();
+        paint_live_fixture(&fixture, 200, 150);
+        for frame in [
+            shm.capture_raw(u64::from(fixture.window)),
+            plain.capture_raw(u64::from(fixture.window)),
+        ] {
+            let png = raw_frame_png(frame.expect("reparented visible client"));
+            let image = image::load_from_memory(&png).unwrap().to_rgba8();
+            assert_eq!(image.dimensions(), (200, 150));
+            assert_eq!(image.get_pixel(54, 44).0, [0x17, 0x5b, 0xa8, 255]);
+            assert_eq!(image.get_pixel(55, 44).0, [0, 0, 0, 255]);
+            assert_eq!(image.get_pixel(54, 45).0, [0, 0, 0, 255]);
+        }
+        // Move the client back to the root before testing invisible positions.
+        fixture
+            .conn
+            .reparent_window(fixture.window, fixture.conn.setup().roots[0].root, 0, 0)
+            .unwrap()
+            .check()
+            .unwrap();
+        fixture
+            .conn
+            .map_window(fixture.window)
+            .unwrap()
+            .check()
+            .unwrap();
+        // A completely invisible window has no truthful pixels to return.
+        // Reject it rather than sampling unrelated root pixels or fabricating
+        // an all-black successful capture.
+        for (x, y) in [(640, 0), (-200, 0), (0, -150), (0, 480)] {
+            fixture
+                .conn
+                .configure_window(fixture.window, &ConfigureWindowAux::new().x(x).y(y))
+                .unwrap()
+                .check()
+                .unwrap();
+            fixture.conn.get_input_focus().unwrap().reply().unwrap();
+            for frame in [
+                shm.capture_raw(u64::from(fixture.window)),
+                plain.capture_raw(u64::from(fixture.window)),
+            ] {
+                let error = frame.err().expect("invisible window must be rejected");
+                assert!(error.to_string().contains("no visible pixels"), "{error:#}");
+            }
+        }
     }
 
     fn raw_frame_png(frame: RawFrame) -> Vec<u8> {

@@ -189,6 +189,12 @@ jobs:
         run: |
           xvfb-run -a cargo test -p platform-linux --test key_input_x11 \
             --locked -- --ignored --nocapture --test-threads=1
+      - name: Run X11 visible regression
+        working-directory: libs/cua-driver/rust
+        run: |
+          xvfb-run -a cargo test -p platform-linux --lib \
+            capture::tests::live_partial_windows_preserve_window_coordinates \
+            --locked -- --ignored --exact --nocapture --test-threads=1
       - name: Run X11 overlay click-through regression
         working-directory: libs/cua-driver/rust
         run: |

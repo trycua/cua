@@ -29,6 +29,7 @@ before sharing.
 | `stale_element_token` | Call `get_window_state` again and use a fresh `element_token`. The refusal lists the process's current snapshots, so you can tell whether you already hold a newer one. The accessibility route still works. |
 | `screenshot_context_missing` | A window-relative pixel action came before a screenshot read of that window in the same session. Call `get_window_state` (with its screenshot) first, using the same `session` label for one-shot CLI calls. |
 | `invalid_arguments` (`unknown argument element_index`) | Action tools take `element_token` only; read it from the latest `get_window_state` row. |
+| Every character of desktop-scope `type_text` on macOS arrives as `a` | A keyboard event tap is dropping the typed text. See [Keyboard event taps turn typed text into `a`](#keyboard-event-taps-turn-typed-text-into-a). |
 | `desktop_scope_disabled` | A legacy window-less call: pass a window target, or `target: {kind: "desktop", display_id: "primary"}`. |
 
 ## Extra copies of CuaDriver.app
@@ -126,6 +127,32 @@ AppKit app. AppKit windows are not affected.
 On macOS, Return, Space, or Tab sent to a field in a minimized window does
 nothing. Use `set_value` to write the field, or click the commit button by
 element.
+
+### Keyboard event taps turn typed text into `a`
+
+On macOS, desktop-scope `type_text` sends each character as a Unicode string on
+the `a` key. A tool that intercepts keyboard events and posts them again from
+the key code alone drops the string, so every character arrives as `a`.
+Karabiner-Elements does this when its CGEventTap option is on. `press_key` and
+`hotkey` are not affected.
+
+Set `CUA_DRIVER_TEXT_KEY_EVENTS=physical` in the daemon's environment to send
+US-keyboard key presses instead, then restart the daemon. For a
+[LaunchAgent daemon](/cua-driver/guides/operate#keep-it-running), add it to the plist's
+`EnvironmentVariables`. A daemon that CuaDriver.app starts on demand reads it
+from your login session, until you log out:
+
+```bash skip="host-install"
+launchctl setenv CUA_DRIVER_TEXT_KEY_EVENTS physical
+cua-driver stop
+```
+
+The input source must be U.S., and only printable ASCII, Tab, and Return can
+be typed: other text is refused with `physical_key_unavailable` before any key
+is sent. Window-targeted
+`type_text` and Cua Spaces remote control still send Unicode. To restore the
+default, remove the variable (`launchctl unsetenv CUA_DRIVER_TEXT_KEY_EVENTS`)
+and restart the daemon.
 
 ### Native Wayland keyboard input is focus-bound
 

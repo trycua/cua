@@ -39,6 +39,7 @@ use crate::focus_guard;
 use crate::window_change_detector::WindowChangeDetector;
 use core_foundation::base::CFRelease;
 use cua_driver_core::background_input::BackgroundRefusal;
+use cua_driver_core::text_key_events::{TextKeyEvents, TEXT_KEY_EVENTS_ENV};
 
 use super::ToolState;
 
@@ -122,6 +123,51 @@ fn screen_sharing_delivery_error(
     )
 }
 
+/// The host's `CUA_DRIVER_TEXT_KEY_EVENTS` choice for desktop-scope text,
+/// read once: like the key gap, it is a launch-time knob.
+fn host_text_key_events() -> Result<TextKeyEvents, String> {
+    static MODE: std::sync::OnceLock<Result<TextKeyEvents, String>> = std::sync::OnceLock::new();
+    MODE.get_or_init(cua_driver_core::text_key_events::text_key_events_from_env)
+        .clone()
+}
+
+/// The key events desktop-scope `type_text` sends for `text`, or a refusal
+/// returned before any key is posted: the host setting is unreadable, or
+/// physical key events cannot type one of the characters.
+fn desktop_text_key_events(
+    host_setting: Result<TextKeyEvents, String>,
+    text: &str,
+) -> Result<TextKeyEvents, ToolResult> {
+    let key_events = host_setting.map_err(|error| {
+        ToolResult::error(format!("desktop type_text refused: {error}")).with_structured(
+            serde_json::json!({
+                "code": "text_key_events_invalid",
+                "scope": "desktop",
+                "effect": "refused",
+                "delivered_chars": 0,
+            }),
+        )
+    })?;
+    if key_events == TextKeyEvents::Physical {
+        if let Some(ch) = crate::input::keyboard::first_char_without_physical_key(text) {
+            let codepoint = format!("U+{:04X}", ch as u32);
+            return Err(ToolResult::error(format!(
+                "desktop type_text refused before typing: {TEXT_KEY_EVENTS_ENV}=physical \
+                 sends US-keyboard keys, and {ch:?} ({codepoint}) has none"
+            ))
+            .with_structured(serde_json::json!({
+                "code": "physical_key_unavailable",
+                "scope": "desktop",
+                "effect": "refused",
+                "character": ch.to_string(),
+                "codepoint": codepoint,
+                "delivered_chars": 0,
+            })));
+        }
+    }
+    Ok(key_events)
+}
+
 #[async_trait]
 impl Tool for TypeTextTool {
     fn def(&self) -> &ToolDef {
@@ -142,15 +188,22 @@ impl Tool for TypeTextTool {
                 cua_driver_core::text_sanitize::strip_trailing_agent_protocol_tags(&input.text)
                     .into_owned();
             let delay_ms = args.u64_or("delay_ms", 30).min(200);
-            if let Some(refusal) = synthesis_preflight(
-                TextDeliveryRoute::UnicodeSynthesis,
-                text.chars().count(),
-                delay_ms,
-            ) {
+            let key_events = match desktop_text_key_events(host_text_key_events(), &text) {
+                Ok(key_events) => key_events,
+                Err(refusal) => return refusal,
+            };
+            let route = match key_events {
+                TextKeyEvents::Unicode => TextDeliveryRoute::UnicodeSynthesis,
+                TextKeyEvents::Physical => TextDeliveryRoute::PhysicalSynthesis,
+            };
+            if let Some(refusal) = synthesis_preflight(route, text.chars().count(), delay_ms) {
                 return synthesis_refusal_result("hid", &refusal, AxAttempt::NotAttempted);
             }
-            let result = tokio::task::spawn_blocking(move || {
-                crate::input::keyboard::type_text_global(&text, delay_ms)
+            let result = tokio::task::spawn_blocking(move || match key_events {
+                TextKeyEvents::Unicode => crate::input::keyboard::type_text_global(&text, delay_ms),
+                TextKeyEvents::Physical => {
+                    crate::input::keyboard::type_text_physical_global(&text, delay_ms)
+                }
             })
             .await;
             return match result {
@@ -159,6 +212,7 @@ impl Tool for TypeTextTool {
                         .with_structured(serde_json::json!({
                             "scope": "desktop",
                             "path": "hid",
+                            "key_events": key_events.as_str(),
                             "effect": "unverifiable"
                         }))
                 }
@@ -2312,5 +2366,41 @@ mod tests {
         }
         assert!(screen_sharing_delivery_error(true, true, Some(7)).is_none());
         assert!(screen_sharing_delivery_error(false, false, None).is_none());
+    }
+
+    #[test]
+    fn desktop_text_takes_the_host_selected_key_events() {
+        assert_eq!(
+            desktop_text_key_events(Ok(TextKeyEvents::Unicode), "naïve 🙂").ok(),
+            Some(TextKeyEvents::Unicode)
+        );
+        assert_eq!(
+            desktop_text_key_events(Ok(TextKeyEvents::Physical), "Hi xyz!\n").ok(),
+            Some(TextKeyEvents::Physical)
+        );
+    }
+
+    #[test]
+    fn physical_desktop_text_refuses_a_character_without_a_us_key() {
+        let result = desktop_text_key_events(Ok(TextKeyEvents::Physical), "café 🙂")
+            .expect_err("a character without a US key must be refused");
+        assert_eq!(result.is_error, Some(true));
+        let structured = result.structured_content.unwrap();
+        assert_eq!(structured["code"], "physical_key_unavailable");
+        assert_eq!(structured["effect"], "refused");
+        assert_eq!(structured["character"], "é");
+        assert_eq!(structured["codepoint"], "U+00E9");
+        assert_eq!(structured["delivered_chars"], 0);
+    }
+
+    #[test]
+    fn invalid_text_key_events_setting_refuses_desktop_text() {
+        let result = desktop_text_key_events(Err("bad value".to_owned()), "xyz")
+            .expect_err("an unreadable host setting must be refused");
+        assert_eq!(result.is_error, Some(true));
+        let structured = result.structured_content.unwrap();
+        assert_eq!(structured["code"], "text_key_events_invalid");
+        assert_eq!(structured["effect"], "refused");
+        assert_eq!(structured["delivered_chars"], 0);
     }
 }

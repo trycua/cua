@@ -325,6 +325,14 @@ Python exposes the same objects:
   macOS reads it. Some targets drop key events that arrive too close together,
   so read the field back before relying on a low value.
 
+- **Type desktop text through a keyboard event tap.** Some tools that remap
+  keys on macOS, such as Karabiner-Elements with its CGEventTap option on,
+  turn every character of desktop-scope `type_text` into `a`. Set
+  `CUA_DRIVER_TEXT_KEY_EVENTS=physical` in the same launch environment to send
+  US-keyboard key presses instead; `EmbeddedCuaDriverHost` admits it. Text
+  with a character a US keyboard cannot type is refused with
+  `physical_key_unavailable`. Only macOS reads it.
+
 Without the SDK, the equivalent low-level launch is:
 
 ```sh test="cli-shape" id="cua-driver-serve"

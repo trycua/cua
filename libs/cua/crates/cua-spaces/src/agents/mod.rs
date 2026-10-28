@@ -7,7 +7,7 @@
 //! run only as explicit per-run env (`RunOptions::env`, or on the MCP
 //! surface `env_from_host` naming known provider key variables), written
 //! 0600 inside the run and redacted from its event log. Keys saved in Cua
-//! Spaces (Settings → Agents, [`keys`]) reach only the runs whose harness
+//! Spaces (Settings → Connectors, [`keys`]) reach only the runs whose harness
 //! reads them ([`run_env`]). Moving a signed-in agent session is teleport's
 //! job, behind its consent gate.
 
@@ -18,8 +18,8 @@ use std::collections::BTreeMap;
 pub mod keys;
 pub use cua_agents::{
     AgentEvent, Agents, Artifact, Attachment, Endpoint, EventPage, McpServer, RunInfo, RunOptions,
-    RunResult, RunStatus, Started, Transcript, TranscriptItem, Wire, events, harness, installables,
-    quote, runs, transcript,
+    RunResult, RunStatus, Started, Transcript, TranscriptItem, Wire, events, failure, harness,
+    installables, quote, runs, transcript,
 };
 
 impl From<cua_agents::Error> for Error {
@@ -168,6 +168,23 @@ pub mod telemetry {
 /// or one of its turns fails.
 pub const WATCH_OP: &str = "agent_start.watch";
 
+/// The extension operation the run tools (`agent_message`, `agent_status`,
+/// `agent_events`, `agent_interrupt`, `agent_stop`) call when given an agent
+/// member's `name` instead of a `run_id`: `{tool, space, name, text?,
+/// force?}`. It answers `{run_id}` (the member's current run), or, for
+/// `agent_message`, delivers the message through the member and answers
+/// the tool's result.
+pub const MEMBER_OP: &str = "agent_member.run";
+
+/// The run tools that take an agent member's `name`.
+pub const MEMBER_RUN_TOOLS: &[&str] = &[
+    "agent_message",
+    "agent_status",
+    "agent_events",
+    "agent_interrupt",
+    "agent_stop",
+];
+
 /// `agent_capabilities`.
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct CapabilitiesReport {
@@ -200,7 +217,7 @@ pub fn capabilities() -> CapabilitiesReport {
 }
 
 /// The first of `h`'s keys this server can give a run: one saved in Cua
-/// Spaces (Settings → Agents), or one set in this process's environment
+/// Spaces (Settings → Connectors), or one set in this process's environment
 /// (`env_from_host` forwards it).
 pub fn host_key(h: &harness::Harness) -> Option<&'static str> {
     host_key_with(h, &keys::global().names())
@@ -252,7 +269,7 @@ pub fn env_from_host_with(
         if !allowed.contains(&n.as_str()) && !saved_names.contains(n) {
             return Err(Error::InvalidArgument(format!(
                 "{n} is not a provider key variable this server forwards; allowed: {} \
-                 (or a key saved in Cua Spaces → Settings → Agents)",
+                 (or a key saved in Cua Spaces → Settings → Connectors)",
                 allowed.join(", ")
             )));
         }
@@ -563,7 +580,7 @@ mod tests {
             let info = claude.info_with_host_key(None);
             assert!(!info.ready);
             let hint = info.auth_hint.unwrap();
-            assert!(hint.contains("Settings → Agents"), "{hint}");
+            assert!(hint.contains("Settings → Connectors"), "{hint}");
         }
         let gemini = harness::harness("gemini-cli").unwrap();
         if host_key_with(gemini, &[]).is_none() {

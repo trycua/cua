@@ -1,0 +1,62 @@
+name: "CI: pi-durable crash campaign"
+
+# The fast subset of the pi-durable crash campaign (libs/cua/typescript/integrations/
+# pi-durable/test/crash): real SQLite logs, real worker processes killed with
+# SIGKILL or frozen with SIGSTOP, against the local cua-spacesd stand-in, for the
+# transactional, auto, checkpoint and stale-epoch modes, with fixed seeds. No
+# Docker. Runs when the durable layer, the ACP runner or the re-driver changes.
+#
+# The re-driver (session_* requests, epochs, backoff, attempt cap, coordinator
+# restart) is covered by `cargo test -p cua-spaces-cluster --test sessions`, which
+# the "CI: cua SDK" workflow runs in its Rust job (it tests -p cua-spaces-cluster
+# with all its targets), and the redrive mode of the campaign in real Spaces is a
+# lab run (see the pi-durable guide), not a CI job.
+
+on:
+  pull_request:
+    paths:
+      - "libs/cua/typescript/integrations/pi-durable/**"
+      - "libs/cua/crates/cua-agents/runner/**"
+      - "libs/cua/crates/cua-spaces-cluster/src/coordinator/sessions.rs"
+      - ".github/workflows/ci-pi-durable-crash.yml"
+  push:
+    branches: [main]
+    paths:
+      - "libs/cua/typescript/integrations/pi-durable/**"
+      - "libs/cua/crates/cua-agents/runner/**"
+      - "libs/cua/crates/cua-spaces-cluster/src/coordinator/sessions.rs"
+      - ".github/workflows/ci-pi-durable-crash.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-pi-durable-crash-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  crash-subset:
+    name: crash campaign (fast subset)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: libs/cua/typescript/integrations/pi-durable
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: libs/cua/typescript/integrations/pi-durable/package-lock.json
+      - name: Install
+        run: npm ci --ignore-scripts
+      - name: Crash campaign, fast subset (transactional, auto, checkpoint, stale)
+        run: npm run test:crash:ci
+        env:
+          CRASH_SEED_BASE: "1000"
+      # Fault-point list, markers, modes, scripts and guide stay in step; the
+      # redrive runner logic against a stand-in coordinator.
+      - name: Campaign drift guard and redrive runner self-test
+        run: node --test test/crash-drift.test.mjs test/crash-redrive-fake.test.mjs

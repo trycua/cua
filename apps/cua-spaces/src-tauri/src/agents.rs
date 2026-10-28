@@ -51,6 +51,7 @@ mod tests {
                 label: None,
                 repo: None,
                 home: None,
+                cred_hash: None,
             }),
         };
         let run = space_agent_run(&info);

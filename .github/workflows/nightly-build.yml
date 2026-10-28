@@ -1,0 +1,109 @@
+name: "Nightly: Spaces.build on QEMU"
+
+# A three-step Dockerfile built in a real QEMU Linux Space
+# (libs/cua/crates/cua-daemon/tests/build_qemu.rs): the layers are pinned
+# checkpoints, a rebuild is a cache hit that runs nothing, a changed context
+# file rebuilds from its COPY, a Space made from the tag has the image's
+# files, owners, environment, working directory and user, and a failing step
+# names its command and exit code and leaves no builder behind.
+#
+#   linux-kvm   GitHub-hosted Ubuntu with KVM and the published Linux disk
+#               (CUA_IMAGE_LINUX), so the build needs no registry.
+#   macos-hvf   the self-hosted Apple-silicon Mac of the nightly Lume lane
+#               (vars.CUA_E2E_LUME_RUNNER), QEMU on HVF.
+#
+# Pull requests that touch the build code run the Linux lane.
+
+on:
+  schedule:
+    - cron: "41 6 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "libs/cua/crates/cua-spaces/src/build/**"
+      - "libs/cua/crates/cua-daemon/tests/build_qemu.rs"
+      - "libs/cua/crates/cua-image/src/dockerfile.rs"
+      - ".github/workflows/nightly-build.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: "10"
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+  # The published Linux Spaces disk (slim tier), as a containerDisk.
+  BUILD_DISK_REF: ghcr.io/trycua/linux:24.04-slim-disk
+
+jobs:
+  linux-kvm:
+    name: linux-kvm
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/linux-rust-prep
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: ./.github/actions/rust-cache
+        with:
+          workspaces: libs/cua
+          shared-key: libs-cua-qemu-tests
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
+        with:
+          go-version: "1.24"
+      - name: Install QEMU, firmware and crane
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends qemu-utils qemu-system-x86 ovmf genisoimage
+          sudo chmod 666 /dev/kvm
+          go install github.com/google/go-containerregistry/cmd/crane@v0.20.6
+          echo "$(go env GOPATH)/bin" >>"$GITHUB_PATH"
+      - name: Fetch the Linux disk
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/disk/disk"
+          crane export --platform linux/amd64 "$BUILD_DISK_REF" - | tar -x -C "$RUNNER_TEMP/disk" disk/disk.img
+      - name: Build, cache, fork, fail
+        working-directory: libs/cua
+        env:
+          CUA_BUILD_E2E: "1"
+          CUA_BUILD_E2E_BASE: linux
+          CUA_IMAGE_LINUX: ${{ runner.temp }}/disk/disk/disk.img
+        run: cargo test -p cua-daemon --test build_qemu -- --nocapture --test-threads=1
+
+  macos-hvf:
+    name: macos-hvf (self-hosted)
+    if: vars.CUA_E2E_LUME_RUNNER != '' && github.event_name != 'pull_request'
+    runs-on: ["self-hosted", "macOS", "${{ vars.CUA_E2E_LUME_RUNNER }}"]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: QEMU and crane
+        run: |
+          command -v qemu-system-aarch64 >/dev/null || brew install qemu
+          command -v crane >/dev/null || brew install crane
+          command -v protoc >/dev/null || brew install protobuf
+      - name: Fetch the Linux disk
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/disk"
+          crane export --platform linux/arm64 "$BUILD_DISK_REF" - | tar -x -C "$RUNNER_TEMP/disk" disk/disk.img
+      - name: Build, cache, fork, fail
+        working-directory: libs/cua
+        env:
+          CUA_BUILD_E2E: "1"
+          CUA_BUILD_E2E_BASE: linux
+          CUA_IMAGE_LINUX: ${{ runner.temp }}/disk/disk/disk.img
+        run: cargo test -p cua-daemon --test build_qemu -- --nocapture --test-threads=1

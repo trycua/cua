@@ -11,12 +11,15 @@
 //! Works over any [`cua_spacesd_client::SpacesdClient`]: a Space, a local container or
 //! VM, or a machine reached by URL.
 
+pub mod durable;
 pub mod events;
+pub mod failure;
 pub mod harness;
 pub mod installables;
 pub mod runs;
 pub mod transcript;
 
+pub use durable::{DriverSpec, DurableOptions, Policy, durable_driver_spec};
 pub use events::{AgentEvent, EventPage};
 pub use harness::{Endpoint, Harness, Wire};
 pub use runs::{

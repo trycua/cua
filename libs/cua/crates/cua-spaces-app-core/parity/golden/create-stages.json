@@ -34,7 +34,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Starting… 1%",
               "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -77,7 +76,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Starting… 1%",
               "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -120,7 +118,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Downloading macOS (first time only)…",
               "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -163,7 +160,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Downloading macOS (first time only)…",
               "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -206,7 +202,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Downloading macOS (first time only)…",
               "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -249,7 +244,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Downloading macOS (first time only)…",
               "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -292,7 +286,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Preparing the disk… 84%",
               "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -335,7 +328,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Booting macOS… 86%",
               "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -378,7 +370,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Booting macOS… 88%",
               "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -421,7 +412,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Starting Cua inside the Space… 90%",
               "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -464,7 +454,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Connecting… 98%",
               "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -507,7 +496,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Starting… 1%",
               "Image: ghcr.io/trycua/linux:24.04-slim-disk [copy ghcr.io/trycua/linux:24.04-slim-disk doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -529,7 +517,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Connecting… 98%",
               "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -575,7 +562,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Downloading image…",
               "Image: ghcr.io/trycua/linux:24.04-slim-disk [copy ghcr.io/trycua/linux:24.04-slim-disk doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -597,7 +583,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Connecting… 98%",
               "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -643,7 +628,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Preparing the disk… 53%",
               "Image: ghcr.io/trycua/linux:24.04-slim-disk [copy ghcr.io/trycua/linux:24.04-slim-disk doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -665,7 +649,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Connecting… 98%",
               "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -711,7 +694,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Booting Linux… 53%",
               "Image: ghcr.io/trycua/linux:24.04-slim-disk [copy ghcr.io/trycua/linux:24.04-slim-disk doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -733,7 +715,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Connecting… 98%",
               "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -779,7 +760,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Starting… 1%",
               "Image: ghcr.io/trycua/linux:24.04-slim [copy ghcr.io/trycua/linux:24.04-slim doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -801,7 +781,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Booting Linux… 53%",
               "Image: ghcr.io/trycua/linux:24.04-slim-disk [copy ghcr.io/trycua/linux:24.04-slim-disk doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -823,7 +802,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Connecting… 98%",
               "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -872,7 +850,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Creating the container… 5%",
               "Image: ghcr.io/trycua/linux:24.04-slim [copy ghcr.io/trycua/linux:24.04-slim doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -894,7 +871,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Booting Linux… 53%",
               "Image: ghcr.io/trycua/linux:24.04-slim-disk [copy ghcr.io/trycua/linux:24.04-slim-disk doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -916,7 +892,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Connecting… 98%",
               "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -965,7 +940,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Starting the container… 12%",
               "Image: ghcr.io/trycua/linux:24.04-slim [copy ghcr.io/trycua/linux:24.04-slim doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -987,7 +961,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Booting Linux… 53%",
               "Image: ghcr.io/trycua/linux:24.04-slim-disk [copy ghcr.io/trycua/linux:24.04-slim-disk doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1009,7 +982,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Connecting… 98%",
               "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1058,7 +1030,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Starting Cua inside the Space… 17%",
               "Image: ghcr.io/trycua/linux:24.04-slim [copy ghcr.io/trycua/linux:24.04-slim doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1080,7 +1051,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Booting Linux… 53%",
               "Image: ghcr.io/trycua/linux:24.04-slim-disk [copy ghcr.io/trycua/linux:24.04-slim-disk doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1102,7 +1072,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Connecting… 98%",
               "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1151,7 +1120,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Starting Cua inside the Space… 17%",
               "Image: ghcr.io/trycua/linux:24.04-slim [copy ghcr.io/trycua/linux:24.04-slim doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1173,7 +1141,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Booting Linux… 53%",
               "Image: ghcr.io/trycua/linux:24.04-slim-disk [copy ghcr.io/trycua/linux:24.04-slim-disk doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1195,7 +1162,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Connecting… 98%",
               "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",

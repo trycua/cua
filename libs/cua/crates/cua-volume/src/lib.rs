@@ -54,6 +54,7 @@ pub mod fs;
 #[cfg(all(feature = "fuse", target_os = "linux"))]
 pub mod fuse;
 pub mod guest;
+pub mod journal;
 pub mod lease;
 #[cfg(feature = "nfs")]
 pub mod nfs;
@@ -67,7 +68,7 @@ pub mod stream;
 pub mod sync;
 pub mod vfs;
 
-pub use acl::{Context, Grant, Mode, Principal};
+pub use acl::{Context, Grant, Mode, MountAccess, Principal};
 pub use backend::{Backend, Condition, ObjectMeta, VersionInfo};
 pub use drive::{AccessRequest, Drive, Entry, Presence, Session};
 

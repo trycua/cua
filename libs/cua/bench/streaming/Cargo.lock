@@ -404,7 +404,7 @@ dependencies = [
 
 [[package]]
 name = "cua-media-client"
-version = "0.6.0"
+version = "0.9.0"
 dependencies = [
  "cua-media-codec",
  "cua-media-protocol",
@@ -414,7 +414,7 @@ dependencies = [
 
 [[package]]
 name = "cua-media-codec"
-version = "0.6.0"
+version = "0.9.0"
 dependencies = [
  "audiopus_sys",
  "libloading",
@@ -429,7 +429,7 @@ dependencies = [
 
 [[package]]
 name = "cua-media-protocol"
-version = "0.6.0"
+version = "0.9.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -437,7 +437,7 @@ dependencies = [
 
 [[package]]
 name = "cua-media-transport"
-version = "0.6.0"
+version = "0.9.0"
 dependencies = [
  "cua-media-protocol",
  "quinn",
@@ -450,7 +450,7 @@ dependencies = [
 
 [[package]]
 name = "cua-proto"
-version = "0.6.0"
+version = "0.9.0"
 dependencies = [
  "pbjson-build",
  "pbjson-types",
@@ -464,12 +464,13 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-client"
-version = "0.6.0"
+version = "0.9.0"
 dependencies = [
  "base64 0.22.1",
  "bytes",
  "cua-proto",
  "futures-util",
+ "h2",
  "hex",
  "http",
  "http-body",
@@ -1959,6 +1960,16 @@ dependencies = [
  "cfg-if",
  "cpufeatures 0.2.17",
  "digest",
+ "sha2-asm",
+]
+
+[[package]]
+name = "sha2-asm"
+version = "0.6.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b845214d6175804686b2bd482bcffe96651bb2d1200742b712003504a2dac1ab"
+dependencies = [
+ "cc",
 ]
 
 [[package]]
@@ -2074,7 +2085,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",

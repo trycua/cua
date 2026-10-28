@@ -129,7 +129,7 @@ export function readExperiments(raw: string | undefined): Experiments {
     const stored = raw ? (JSON.parse(raw) as Partial<Record<keyof Experiments, unknown>>) : {};
     return {
       cuaVolume: stored.cuaVolume === true,
-      yourCloud: stored.yourCloud === true,
+      yourCloud: stored.yourCloud !== false,
       sharing: stored.sharing !== false,
       webUi: stored.webUi === true,
     };

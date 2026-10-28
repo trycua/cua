@@ -18,7 +18,6 @@ import {
 
 function renderWizard(overrides: Partial<NewSpaceWizardProps> = {}) {
   const props: NewSpaceWizardProps = {
-    cloudAvailable: true,
     localAvailable: true,
     onCreate: vi.fn(),
     onAddByAddress: vi.fn(async () => {}),
@@ -53,6 +52,7 @@ const entries = () =>
     .getAllByRole("option")
     .map((o) => `${o.textContent}${(o as HTMLOptionElement).disabled ? " (disabled)" : ""}`);
 const YOUR_CLOUD = { cuaVolume: false, yourCloud: true, sharing: false };
+const NO_CLOUD = { cuaVolume: false, yourCloud: false, sharing: false };
 const MINI: SpaceHost = { id: "m-mini", name: "Mac mini", via: "relay", online: true, os: "macos", limits: [] };
 const STUDIO: SpaceHost = { id: "m-studio", name: "Studio", via: "relay", online: false, os: "", limits: [] };
 const suggestionRefs = () =>
@@ -189,16 +189,16 @@ describe("New Space wizard", () => {
     );
   });
 
-  it("lists This Mac and your machines; your clouds and Connect a cloud only with Your cloud", () => {
+  it("lists This Mac and your machines; your clouds and Connect a cloud unless Your cloud is off", () => {
     const onConnectCloud = vi.fn();
-    renderWizard({ clouds: [AWS], hosts: [MINI, STUDIO], onConnectCloud });
-    expect(entries()).toEqual(["This Mac", "Mac mini", "Studio (offline) (disabled)"]);
+    renderWizard({ clouds: [AWS], hosts: [MINI, STUDIO], onConnectCloud, experiments: NO_CLOUD });
+    expect(entries()).toEqual(["Auto", "This Mac", "Mac mini", "Studio (offline) (disabled)"]);
     expect(runOnMenu()).toHaveValue("local");
     expect(screen.queryByText(/Cua Cloud/)).toBeNull();
     expect(screen.queryByRole("button", { name: /Connect a cloud/ })).toBeNull();
     cleanup();
     renderWizard({ clouds: [AWS], hosts: [MINI, STUDIO], onConnectCloud, experiments: YOUR_CLOUD });
-    expect(entries()).toEqual(["This Mac", "Mac mini", "Studio (offline) (disabled)", "AWS \u00b7 us-west-2"]);
+    expect(entries()).toEqual(["Auto", "This Mac", "Mac mini", "Studio (offline) (disabled)", "AWS \u00b7 us-west-2"]);
     fireEvent.click(screen.getByRole("button", { name: /Connect a cloud/ }));
     expect(onConnectCloud).toHaveBeenCalled();
   });
@@ -318,7 +318,7 @@ describe("the Resources step", () => {
     next();
     const p = size("ghcr.io/trycua/linux:24.04", "arm64");
     const gb = (b: number) => (b / GB < 10 ? (b / GB).toFixed(1) : Math.round(b / GB)) + " GB";
-    expect(facts()).toEqual(["Container", "ARM", `${gb(p.unpacked)}–${gb(p.unpacked + p.disk + p.download)} initially; grows with use (download ${gb(p.download)})`, "40 GB on Colima"]);
+    expect(facts()).toEqual(["Container", "ARM", `${gb(p.unpacked).replace(" GB", "")}–${gb(p.unpacked + p.disk + p.download)} initially; grows with use (download ${gb(p.download)})`, "40 GB on Colima"]);
     expect(screen.queryByRole("slider", { name: "Disk" })).toBeNull();
     expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
   });
@@ -337,7 +337,7 @@ describe("the Resources step", () => {
     expect(screen.getByText(/includes 455 MB one-time Linux runtime download/)).toBeInTheDocument();
     expect(screen.queryByText("Linux runtime")).toBeNull();
     expect(screen.getAllByText("Disk")).toHaveLength(1);
-    expect(screen.getByText(/GB–.*GB initially; grows with use/)).toBeInTheDocument();
+    expect(screen.getByText(/GB initially; grows with use/)).toBeInTheDocument();
   });
 
   it("blocks Continue in one line when the Space does not fit", () => {
@@ -493,7 +493,6 @@ describe("QEMU VMs", () => {
 describe("default placement", () => {
   it("starts on This Mac when not signed in but a local runtime is ready, even if that is known late", () => {
     const props: NewSpaceWizardProps = {
-      cloudAvailable: false,
       localAvailable: false,
       onCreate: vi.fn(),
       onAddByAddress: vi.fn(async () => {}),

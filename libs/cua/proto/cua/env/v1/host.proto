@@ -2,11 +2,14 @@ syntax = "proto3";
 
 package cua.env.v1;
 
+import "cua/env/v1/capacity.proto";
 import "cua/env/v1/diagnose.proto";
+import "cua/env/v1/host_egress.proto";
 import "cua/env/v1/system.proto";
+import "cua/env/v1/warm.proto";
 
 // Spaces a host provides: a machine set up with `cua host setup
-// --provide-spaces` creates Spaces (macOS VMs with Lume on a Mac, Linux
+// --share both` creates Spaces (macOS VMs with Lume on a Mac, Linux
 // containers with Docker, whatever else runs locally) for the owner's
 // enrolled devices and the accounts it is shared with, through the relay.
 //
@@ -18,17 +21,14 @@ import "cua/env/v1/system.proto";
 // relay as its own machine, and records every create and delete in the
 // host's hash-chained audit log (`~/.cua/host/spaces-audit.jsonl`).
 //
-// Providing Spaces never exposes the host's own desktop or files: with the
-// host setting `share_desktop` off, a relayed caller reaches only this
-// service and `SystemService` `GetCapabilities` / `Health`.
+// With `share_desktop` off, a relayed caller reaches only this service and
+// `GetCapabilities` / `Health`, never the host's desktop or files.
 //
-// A host set up with `cua host setup --direct <ip:port> --provide-spaces`
-// serves this service on its direct listener too, without the relay: the
-// caller is the holder of the host's env token (the owner), and by default
-// only loopback, Tailscale (100.64.0.0/10, fd7a:115c:a1e0::/48) and private
-// LAN addresses may call it. A Space created with `direct` set is not
-// attached to the relay: the host forwards a TCP port on its own address
-// (`HostSpace.direct_port`) to the Space's cua-spacesd.
+// A host set up with `cua host setup --direct <ip:port> --share both`
+// also serves it on its direct listener, to the holder of its env token,
+// by default only from loopback, Tailscale and private LAN addresses. A
+// Space created with `direct` is reached on a TCP port the host forwards
+// to it (`HostSpace.direct_port`).
 service HostSpacesService {
   // This host's settings, capacity, the Spaces it provides to the caller
   // (every one for the owner) and, for the owner, its recent audit.
@@ -52,13 +52,19 @@ service HostSpacesService {
   // relay machine. The owner powers any; another account only the ones it
   // created.
   rpc SetHostSpacePower(SetHostSpacePowerRequest) returns (SetHostSpacePowerResponse);
+  // Keeps Spaces of one shape ready for a prewarm (see `warm.proto`).
+  rpc SetHostWarm(SetHostWarmRequest) returns (SetHostWarmResponse);
   // Deletes a Space in the owner's own cloud that this machine created (an
-  // AWS, Google Cloud or Modal sandbox, by the relay machine it joined as):
+  // AWS, Google Cloud, Hetzner or Modal sandbox, by the relay machine it joined as):
   // its cloud resources, through this machine's ownership records, and its
   // relay machine. Only the owner. Lets another of the owner's devices
   // delete it permanently without the cloud's credentials. Works whether or
   // not this machine provides Spaces.
   rpc DeleteCloudSpace(DeleteCloudSpaceRequest) returns (DeleteCloudSpaceResponse);
+  // Replaces the egress policy of a Space this host provides; the host
+  // enforces it outside the guest, at once. The owner sets any; another
+  // account only on the ones it created.
+  rpc SetHostSpaceEgress(SetHostSpaceEgressRequest) returns (SetHostSpaceEgressResponse);
   // This machine's health as a place to run Spaces, checked by its cua
   // daemon (the process that runs them): Local Network access and the app
   // macOS holds responsible for it, free disk, virtualization, memory, and
@@ -146,24 +152,38 @@ message HostSpace {
   // response of a direct Space (the caller stores it like any direct
   // Space's token). Empty otherwise.
   string direct_token = 11;
+  // Where its egress policy is enforced: "host"; empty without one.
+  string egress_enforced = 20;
+  // The guest network the host applied, set only in the `CreateHostSpace`
+  // response: `none`, or empty for the default. A host older than
+  // `CreateHostSpaceRequest.network` leaves it empty.
+  string network = 21;
+  // What the Space takes on the host's disk, set only when
+  // `GetHostSpacesRequest.disk` asked for it and the host could measure
+  // it. A host that predates it leaves it unset.
+  HostSpaceDisk disk = 22;
 }
 
-// One line of the host's Spaces audit log.
-message HostSpacesAuditEvent {
-  // Unix milliseconds.
-  int64 ts_ms = 1;
-  // `create`, `delete`, `refused`, or `config`.
-  string action = 2;
-  // Who: an account (`name <email> (id)`), or `local` for this machine.
-  string who = 3;
-  // The relay machine or Space the event is about.
-  string space = 4;
-  // Detail for people.
-  string detail = 5;
+// What a Space takes on its host's disk (numbers only), as the host's
+// resource sampler measured it: at most a few minutes old.
+message HostSpaceDisk {
+  // Bytes only this Space holds: what deleting it frees. Unset when they
+  // could not be measured.
+  optional uint64 bytes = 1;
+  // Blocks its files occupy, clones counted in full: an upper bound.
+  uint64 allocated = 2;
+  // Part of it is shared with other copies.
+  bool shares_space = 3;
 }
 
 // Request for `HostSpacesService.GetHostSpaces`.
-message GetHostSpacesRequest {}
+message GetHostSpacesRequest {
+  // Also say what each listed Space takes on this host's disk
+  // (`HostSpace.disk`). The host measures each Space at most every few
+  // minutes and answers from that, so asking costs it little; another of
+  // your devices asks while a window shows the sizes.
+  bool disk = 1;
+}
 
 // Response for `HostSpacesService.GetHostSpaces`.
 message GetHostSpacesResponse {
@@ -189,28 +209,9 @@ message GetHostSpacesResponse {
   // create runs, to show the download and the boot. Empty from a host
   // that predates it.
   repeated HostSpaceCreating creating = 8;
-}
-
-// A create a host is running, and what it is doing now. The progress
-// fields are those of `cua.daemon.v1.CreateSpaceProgress`.
-message HostSpaceCreating {
-  // The create's key: `CreateHostSpaceRequest.create_key`, else the relay
-  // machine it attaches to (`attach.machine_id`).
-  string key = 1;
-  // "preparing", "pulling", "creating", "booting", "waiting_for_services",
-  // "connecting" or "ready", in that order.
-  string phase = 2;
-  // How far through the phase, 0.0 to 1.0, when its size is known (an
-  // image pull).
-  optional double fraction = 3;
-  // One short line, for example the image being pulled.
-  string detail = 4;
-  // Bytes downloaded so far, when the step counts them (an image pull).
-  optional uint64 bytes_done = 5;
-  // Bytes the download has in all.
-  optional uint64 bytes_total = 6;
-  // Smoothed download rate, bytes per second.
-  optional double bytes_per_second = 7;
+  // What a scheduler needs to place work here: capacity, what runs, the
+  // host's epoch and clock. Unset from hosts that predate it.
+  HostNodeStatus node = 9;
 }
 
 // Request for `HostSpacesService.CreateHostSpace`.
@@ -244,6 +245,22 @@ message CreateHostSpaceRequest {
   // `GetHostSpacesResponse.creating` lists its progress (a direct create
   // has no relay machine to name it). Empty: `attach.machine_id`.
   string create_key = 10;
+  // Guest network: `none`, or empty for the default.
+  string network = 12;
+  // Fork this checkpoint instead of creating from `image`.
+  string fork_source = 11;
+  // No desktop (`cua.daemon.v1.CreateSpaceRequest.headless`).
+  bool headless = 14;
+  // Egress policy, enforced by the host from the guest's first
+  // instruction. A host that does not enforce it leaves
+  // `HostSpace.egress_enforced` empty.
+  HostEgressPolicy egress = 19;
+  // Reached through this host's channel (no relay machine of its own).
+  bool routed = 13;
+  // Guest environment; the host's driver settings win on a clash.
+  map<string, string> env = 15;
+  // A GPU option of the host's runtime; empty: none.
+  string gpu = 16;
 }
 
 // Response for `HostSpacesService.CreateHostSpace`.
@@ -304,4 +321,360 @@ message SetHostSpacePowerResponse {
   string power = 2;
   // What happened, for people.
   string message = 3;
+}
+
+// Jobs on a host: each runs once in a fresh Space that the host creates,
+// runs the command in, and deletes. A host set up to provide Spaces serves
+// this service to the same callers as `HostSpacesService` (the owner, its
+// editors, and the env token holder of a direct host), through its
+// cua-spacesd, which forwards each call to the host's cua daemon.
+//
+// The host keeps a durable ledger of the jobs it accepted, keyed by job id,
+// so delivering a job again never runs it twice on this host, and a
+// scheduler that restarts reads back what happened. Each job carries an
+// attempt number that fences older deliveries: a host refuses an attempt
+// lower than one it has seen for the job (`stale`), and a newer attempt
+// cancels an older one still running here.
+service HostJobsService {
+  // Starts jobs (a batch): each is accepted (it runs now), or refused when
+  // the host has no room for it (the scheduler places it elsewhere).
+  // Idempotent per job id and attempt.
+  rpc RunHostJobs(RunHostJobsRequest) returns (RunHostJobsResponse);
+  // One job's record on this host.
+  rpc GetHostJob(GetHostJobRequest) returns (GetHostJobResponse);
+  // The jobs that changed after a ledger sequence number, oldest first:
+  // a change feed. With `wait_ms` the host holds the call until something
+  // changes or the wait ends (a long poll), so a scheduler hears about
+  // completions at once; the call is also the node's heartbeat.
+  rpc ListHostJobs(ListHostJobsRequest) returns (ListHostJobsResponse);
+  // Stops a job (its Space is deleted) and fences the attempt: a delivery
+  // of that attempt arriving later is refused. Idempotent; a job this
+  // host never saw is recorded as canceled for that attempt.
+  rpc CancelHostJob(CancelHostJobRequest) returns (CancelHostJobResponse);
+}
+
+// What a job runs.
+message HostJobSpec {
+  // Unique id, chosen by the scheduler (the idempotency key on the host).
+  string job_id = 1;
+  // Delivery attempt, from 1. A higher attempt fences lower ones.
+  uint32 attempt = 2;
+  // Image of the job's Space (a reference or an alias); empty: the
+  // canonical Linux image.
+  string image = 3;
+  // "auto" (empty: the host picks: its own Space when it is dedicated, a
+  // macOS VM for a macOS image, else a container), "container", "vm",
+  // "microvm", or "machine" (a dedicated host's own Space, on hosts that
+  // report `HostNodeStatus.dedicated`). "process" is refused.
+  string kind = 4;
+  // "auto" (empty) or a runtime this host offers.
+  string runtime = 5;
+  // CPU reserved for the job, in thousandths (0: 1000).
+  uint32 millicpus = 6;
+  // Memory reserved, in MiB (0: 1024).
+  uint64 memory_mb = 7;
+  // The command, run without a shell (`["sh", "-c", "..."]` for one).
+  repeated string argv = 8;
+  // Its environment.
+  map<string, string> env = 9;
+  // Seconds the command may run (0: 600). The Space is deleted either way.
+  uint32 timeout_secs = 10;
+  // A file in the Space to return as the job's result after the command
+  // ends (bounded by `max_output_bytes`). Empty: none.
+  string result_path = 11;
+  // Bytes of stdout, stderr and the result kept, each (the tail; 0:
+  // 65536).
+  uint32 max_output_bytes = 12;
+  // Files the job runs with: a gzip tar (at most 1 MiB) unpacked into the
+  // job's work directory (mounted into its Space; its working directory,
+  // `CUA_JOB_DIR`) before the command starts. Empty: none.
+  bytes bundle = 13;
+  // The run the job belongs to. A run keeps a data directory on each host
+  // (`CUA_JOB_DATA`, mounted into its members' Spaces) that every attempt
+  // of the run there shares (checkpoints), kept 7 days after its last
+  // attempt ended.
+  string run_id = 14;
+  // The accelerator asked for (`gpu`, `apple`, `nvidia`; empty: none):
+  // the job's Space gets that GPU.
+  string accelerator = 15;
+  // Host services the member reaches on its own loopback for its lifetime
+  // (for example `compat:e2b`). A host refuses a name it serves no
+  // provider for.
+  repeated string services = 16;
+}
+
+// Request for `HostJobsService.RunHostJobs`.
+message RunHostJobsRequest {
+  // The jobs, at most 512 per call.
+  repeated HostJobSpec jobs = 1;
+  // The scheduler's id, recorded with each job for people.
+  string scheduler = 2;
+}
+
+// What a host did with one delivered job.
+message HostJobAck {
+  // The job.
+  string job_id = 1;
+  // The attempt delivered.
+  uint32 attempt = 2;
+  // `accepted` (it runs now), `duplicate` (this attempt was delivered
+  // before: `job` is its record), `rejected` (no room or not allowed:
+  // place it elsewhere) or `stale` (a newer attempt was seen, or this one
+  // was canceled).
+  string outcome = 3;
+  // Why, for `rejected` and `stale`.
+  string reason = 4;
+  // The job's record on this host, for `accepted` and `duplicate`.
+  HostJob job = 5;
+}
+
+// Response for `HostJobsService.RunHostJobs`.
+message RunHostJobsResponse {
+  // One per delivered job, in order.
+  repeated HostJobAck acks = 1;
+  // The host after the batch.
+  HostNodeStatus node = 2;
+}
+
+// A job's record on a host.
+message HostJob {
+  // The job.
+  string job_id = 1;
+  // The newest attempt the host has seen for it.
+  uint32 attempt = 2;
+  // `running`, `succeeded` (exit 0), `failed` (the command exited non-zero
+  // or ran out of time), `error` (the host could not run it: the Space did
+  // not start, the daemon restarted mid-job; running it again may work)
+  // or `canceled`.
+  string state = 3;
+  // The command's exit code (`succeeded` and `failed`).
+  optional int32 exit_code = 4;
+  // The command ran out of time.
+  bool timed_out = 5;
+  // The tail of its stdout.
+  bytes stdout = 6;
+  // The tail of its stderr.
+  bytes stderr = 7;
+  // The result file (`HostJobSpec.result_path`).
+  bytes result = 8;
+  // What went wrong, for `error`, `canceled` and a missing result file.
+  string error = 9;
+  // Ledger sequence number of this change.
+  uint64 seq = 10;
+  // The Space it ran in (`local:<name>`).
+  string space = 11;
+  // When the host accepted it (Unix milliseconds, host clock).
+  int64 accepted_at_ms = 12;
+  // When it ended (0 while running).
+  int64 finished_at_ms = 13;
+  // Milliseconds to create its Space.
+  uint32 create_ms = 14;
+  // Milliseconds the command ran.
+  uint32 run_ms = 15;
+  // Milliseconds to delete its Space.
+  uint32 delete_ms = 16;
+  // stdout, stderr or the result were cut to their tail.
+  bool truncated = 17;
+}
+
+// Request for `HostJobsService.GetHostJob`.
+message GetHostJobRequest {
+  // The job.
+  string job_id = 1;
+  // Also return the job's live output (its command's merged stdout and
+  // stderr, `output.log`) from this byte offset: `output_chunk` and
+  // `output_size` in the answer, while it runs and after it ended.
+  optional uint64 output_from = 2;
+}
+
+// Response for `HostJobsService.GetHostJob`.
+message GetHostJobResponse {
+  // Its record (the call fails with `NOT_FOUND` when the host never saw
+  // it).
+  HostJob job = 1;
+  // The host now.
+  HostNodeStatus node = 2;
+  // With `output_from`: the job's output from that offset, at most 256
+  // KiB (empty when there is nothing new, or for a job that keeps no
+  // output log).
+  bytes output_chunk = 3;
+  // With `output_from`: the size of the job's output so far (read the
+  // next chunk from `output_from + len(output_chunk)`).
+  uint64 output_size = 4;
+}
+
+// Request for `HostJobsService.ListHostJobs`.
+message ListHostJobsRequest {
+  // Changes after this ledger sequence number (0: from the start).
+  uint64 after_seq = 1;
+  // At most this many (0: 1000).
+  uint32 limit = 2;
+  // Hold the call up to this long while nothing changed (0: answer now;
+  // at most 30000).
+  uint32 wait_ms = 3;
+  // Leave out stdout, stderr and the result.
+  bool without_output = 4;
+  // Gang members whose start barrier the scheduler releases: every member
+  // of their attempt reported ready (`ListHostJobsResponse.progress`). The
+  // host lets each go (`CUA_BARRIER/go`); sending one again is harmless.
+  repeated HostJobRef release = 5;
+}
+
+// One attempt of one job.
+message HostJobRef {
+  // The job.
+  string job_id = 1;
+  // Its attempt.
+  uint32 attempt = 2;
+}
+
+// What a running job reported about itself (its start barrier and its
+// progress: heartbeats from the cua jobs runtime, else its output).
+message HostJobProgress {
+  // The job.
+  string job_id = 1;
+  // Its attempt.
+  uint32 attempt = 2;
+  // It is ready to start (its environment is up) and waits at its start
+  // barrier.
+  bool ready = 3;
+  // Its start barrier was released.
+  bool released = 4;
+  // When it last reported progress, by the host's clock (Unix ms; 0:
+  // never). Compare with `HostNodeStatus.host_time_ms`.
+  int64 last_progress_ms = 5;
+  // The step it last reported (-1: none).
+  int64 step = 6;
+}
+
+// Response for `HostJobsService.ListHostJobs`.
+message ListHostJobsResponse {
+  // The latest record of each job that changed, by sequence number.
+  repeated HostJob jobs = 1;
+  // Pass as `after_seq` next time.
+  uint64 next_seq = 2;
+  // More changes are waiting (the limit cut the answer).
+  bool more = 3;
+  // The host now: the heartbeat.
+  HostNodeStatus node = 4;
+  // Each running job's start barrier and progress (only jobs that report
+  // them).
+  repeated HostJobProgress progress = 5;
+}
+
+// Request for `HostJobsService.CancelHostJob`.
+message CancelHostJobRequest {
+  // The job.
+  string job_id = 1;
+  // Cancel this attempt and every lower one (0: whatever runs).
+  uint32 attempt = 2;
+  // Why, for the record.
+  string reason = 3;
+}
+
+// Response for `HostJobsService.CancelHostJob`.
+message CancelHostJobResponse {
+  // The job's record after the cancel.
+  HostJob job = 1;
+}
+
+// One line of the host's Spaces audit log.
+message HostSpacesAuditEvent {
+  // Unix milliseconds.
+  int64 ts_ms = 1;
+  // `create`, `delete`, `refused`, or `config`.
+  string action = 2;
+  // Who: an account (`name <email> (id)`), or `local` for this machine.
+  string who = 3;
+  // The relay machine or Space the event is about.
+  string space = 4;
+  // Detail for people.
+  string detail = 5;
+}
+
+// A create a host is running, and what it is doing now. The progress
+// fields are those of `cua.daemon.v1.CreateSpaceProgress`.
+message HostSpaceCreating {
+  // The create's key: `CreateHostSpaceRequest.create_key`, else the relay
+  // machine it attaches to (`attach.machine_id`).
+  string key = 1;
+  // "preparing", "pulling", "creating", "booting", "waiting_for_services",
+  // "connecting" or "ready", in that order.
+  string phase = 2;
+  // How far through the phase, 0.0 to 1.0, when its size is known (an
+  // image pull).
+  optional double fraction = 3;
+  // One short line, for example the image being pulled.
+  string detail = 4;
+  // Bytes downloaded so far, when the step counts them (an image pull).
+  optional uint64 bytes_done = 5;
+  // Bytes the download has in all.
+  optional uint64 bytes_total = 6;
+  // Smoothed download rate, bytes per second.
+  optional double bytes_per_second = 7;
+}
+
+// A Space's thread and its agent members, for people on other devices. The
+// thread of a Space a host provides lives in the host's cua daemon (its
+// owner); a person the host is shared with reads it, posts to it and
+// @mentions its agents through this service, from their own device.
+//
+// The host's cua-spacesd serves it while the host provides Spaces (feature
+// `host_thread`), to relay-verified callers including view-only shares
+// (they read only), and to the local token holder (the owner). It forwards
+// each call to the host's cua daemon with the verified caller, which it
+// sets itself (a caller a client sent is never forwarded). The daemon runs
+// the tool as that caller: the thread records them as the author, and the
+// Space's roles and each agent's rights decide what they may do. Only the
+// thread and agent member tools are served, and only for the Spaces the
+// host provides.
+service HostThreadService {
+  // Runs one thread or agent member tool (`thread_read`, `thread_post`,
+  // `thread_inbox`, `thread_claim`, `thread_reply`, `agent_members`,
+  // `agent_send`, and `agent_message`, `agent_status`, `agent_events`,
+  // `agent_interrupt`, `agent_stop` by a member's name) on a Space this
+  // host provides, as the verified caller. A tool error (a refusal
+  // included) is a result with `is_error`, as the MCP server answers it.
+  rpc CallThreadTool(CallThreadToolRequest) returns (CallThreadToolResponse);
+}
+
+// Request for `HostThreadService.CallThreadTool`.
+message CallThreadToolRequest {
+  // The Space: `relay:<machine>` (or `<machine>`), as other devices know
+  // it, or its id on the host (`local:<name>`).
+  string space = 1;
+  // The tool's name (a former name works too).
+  string name = 2;
+  // The tool's arguments as a JSON object; its `space` is replaced by the
+  // host's id of `space`.
+  string arguments_json = 3;
+}
+
+// Response for `HostThreadService.CallThreadTool`.
+message CallThreadToolResponse {
+  // MCP content parts, as a JSON array.
+  string content_json = 1;
+  // MCP structured content as JSON (empty: none).
+  string structured_json = 2;
+  // The tool failed (a refusal, a bad argument): the content says why.
+  bool is_error = 3;
+  // MCP `_meta` as JSON (empty: none).
+  string meta_json = 4;
+}
+
+// What a person was looking at in a Space as they posted to its thread: the
+// Space's desktop, or one of its windows. `thread_post` takes it as `view`,
+// and every entry and task that has one returns it (`thread_read`,
+// `thread_inbox`), as JSON with these field names (`CallThreadTool`'s
+// `arguments_json` and `structured_json`). Typed clients read it as this
+// message; the daemon's `thread::ViewContext` is held to it by a test.
+message ThreadView {
+  // `desktop` or `window`.
+  string kind = 1;
+  // The window's app ("Firefox"); empty for the desktop.
+  string app = 2;
+  // The window's title ("Pull requests"), at most 256 characters.
+  string title = 3;
+  // The window's id in the Space, as `computer_window_list` gives it.
+  string window_id = 4;
 }

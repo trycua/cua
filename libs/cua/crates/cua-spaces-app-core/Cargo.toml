@@ -35,8 +35,17 @@ async-trait = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true, features = ["sync"] }
 
 [dev-dependencies]
+# Sign-in drift test (`tests/sign_in_failures.rs`): every real cua-auth
+# sign-in failure maps to a reason with words.
+cua-auth.workspace = true
+url.workspace = true
+base64.workspace = true
 # Wire-drift tests: the core's Keyvault mirror types decode the broker's
 # real serde output.
 cua-keyvault.workspace = true
+# Drift guard: the first run lists every agent the setup's registry knows.
+cua-agent-setup.workspace = true
+# Drift guard: every agent the @ picker offers to start is a real harness.
+cua-agents.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tempfile.workspace = true

@@ -21,7 +21,7 @@ error text.
 | `vm_limit` | The Mac already runs the two macOS VMs Apple allows. |
 | `vm_boot_timeout` | The VM did not finish booting in time. |
 | `services_unreachable` | The Space booted but its services never answered. |
-| `local_network` | macOS Local Network privacy blocked the connection to the new VM. |
+| `local_network` | macOS Local Network privacy blocked the connection to the new VM. `cua_space_create` says why in `error_subclass`: `local_network_denied` (Local Network access is off for the app) or `local_network_vpn` (access is on, but a VPN or firewall blocks the Mac's own VM network). |
 | `out_of_memory` | The machine ran out of memory for the guest. |
 | `port_in_use` | A port the Space needs is already taken. |
 | `file_access` | A file or folder could not be written (access denied, in use, path too long). |
@@ -33,3 +33,33 @@ error text.
 Otherwise it is the error's type (for example `unauthenticated`, `timeout`,
 `runtime`), and `other` only when nothing names the cause. A failed create
 never reports `none`.
+
+## Finer causes
+
+The Spaces app's `cua_space_create` also sets `error_subclass` where
+`error_kind` alone is too coarse. It is `none` when there is nothing finer to
+say.
+
+| `error_subclass` | Cause |
+|---|---|
+| `runtime_start` | A local runtime did not start this time (the built-in Linux runtime, its Docker engine, Apple's container services, a microVM). |
+| `daemon_unresponsive` | Cua's background service did not take the create in time. |
+| `pull_interrupted` | The image download stopped partway. Another try resumes it. |
+| `local_network_denied` | macOS Local Network privacy is off for the app or its service. |
+| `local_network_vpn` | A VPN routes the VM's private network away. |
+
+## Automatic retry
+
+The Spaces app runs a create once more by itself, and says **Retrying…**,
+when it fails for a reason that usually passes: `runtime_start`,
+`daemon_unresponsive`, `pull_interrupted`, `image_pull_network`,
+`vm_boot_timeout` or `services_unreachable`. It never retries a lasting
+cause, such as `insufficient_disk`, `runtime_permission`, `runtime_missing`,
+`runtime_not_running`, `unsupported`, `invalid_argument`, `local_network`,
+`out_of_memory` or `quota_exceeded`.
+
+`cua_space_create` is sent once per create, for its final outcome, with
+`retry_attempt` set to `1` when the app retried it. A retried create that
+worked sends `outcome` `ok` with the `error_subclass` of the failure it got
+past.
+

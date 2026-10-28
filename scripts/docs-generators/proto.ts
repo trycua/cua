@@ -159,27 +159,112 @@ export const PAGES: PageSpec[] = [
   },
   {
     slug: 'env-stream',
-    title: 'Streams, teleport, tunnels and host Spaces',
+    title: 'Streams, teleport and tunnels',
     description:
-      'cua.env.v1 StreamService, PresenceService, TeleportService, TunnelService, VolumeService and HostSpacesService.',
+      'cua.env.v1 StreamService, PresenceService, TeleportService, TunnelService and VolumeService.',
     intro:
-      'Media sessions (video and audio over the media wire, see `libs/cua/proto/MEDIA.md`) and presence; the receiving side of teleport (sending lives in the cua SDK), TCP port forwards, the reverse-SOCKS hotspot and the guest mount of Cua Volume; and the Spaces a machine set up with `cua host setup --provide-spaces` creates for its owner\'s enrolled devices.',
+      'Media sessions (video and audio over the media wire, see `libs/cua/proto/MEDIA.md`) and presence; the receiving side of teleport (sending lives in the cua SDK), TCP port forwards, the reverse-SOCKS hotspot and the guest mount of Cua Volume. Host Spaces are on [Host Spaces](/cua-sdk/reference/protocol/env-host-spaces).',
     files: [
       'cua/env/v1/stream.proto',
       'cua/env/v1/presence.proto',
       'cua/env/v1/teleport.proto',
       'cua/env/v1/tunnel.proto',
       'cua/env/v1/volume.proto',
-      'cua/env/v1/host.proto',
     ],
   },
   {
-    slug: 'daemon',
-    title: 'Cua daemon',
-    description: 'cua.daemon.v1: the local cua daemon API for sandboxes, local runtimes, Spaces, its identity and the media bridge.',
+    slug: 'env-host-spaces',
+    title: 'Host Spaces',
+    description:
+      'cua.env.v1 HostSpacesService: Spaces a host creates for its owner\'s devices through the relay.',
     intro:
-      'The local `cua daemon` API (a Unix socket on the host, not cua-spacesd): sandbox lifecycle across locations, the local runtimes and images it orchestrates, Spaces and the machines that provide them, its identity (`GetInfo`) and the loopback media bridge for webviews.',
-    files: ['cua/daemon/v1/sandboxes.proto', 'cua/daemon/v1/runtime.proto', 'cua/daemon/v1/spaces.proto', 'cua/daemon/v1/daemon.proto'],
+      'Spaces a machine set up with `cua host setup --share both` creates for its owner\'s enrolled devices: settings, capacity, create and delete. The host\'s cua-spacesd forwards each call to its cua daemon. What a host reports for placement is on [Host capacity](/cua-sdk/reference/protocol/env-host-capacity).',
+    files: ['cua/env/v1/host.proto'],
+  },
+  {
+    slug: 'env-host-capacity',
+    title: 'Host capacity',
+    description:
+      'cua.env.v1 HostNodeStatus and HostMeasured: what a host reports for placement (capacity, load, measured memory).',
+    intro:
+      'What a host reports to whoever places Spaces and jobs on it: `HostNodeStatus` (kinds, runtimes, CPU and memory, jobs) and, in `HostNodeStatus.measured`, what it measures rather than reserves: available memory, memory pressure, and how many more VMs fit when VMs share snapshot memory.',
+    files: ['cua/env/v1/capacity.proto'],
+  },
+  {
+    slug: 'env-host-warm',
+    title: 'Host prewarms',
+    description:
+      'cua.env.v1 SetHostWarm: the warm pool a host keeps for a prewarm, so the next creates of a shape start at once.',
+    intro:
+      'A prewarm\'s warm pool on a host (`HostSpacesService.SetHostWarm`): Spaces of one shape kept ready, claimed by the next creates of that shape, ended at the TTL or when the count is 0.',
+    files: ['cua/env/v1/warm.proto'],
+  },
+  {
+    slug: 'env-host-snapshots',
+    title: 'Host snapshots',
+    description:
+      'cua.env.v1 HostSnapshotsService: the checkpoints a host holds, and copying them between your machines.',
+    intro:
+      'Checkpoints a host holds and copying them to your other machines: a manifest of files by SHA-256, read grants, resumable LAN copies with verification, and a fallback copy in S3 or a shared folder. The host\'s cua-spacesd forwards each call to its cua daemon.',
+    files: ['cua/env/v1/snapshots.proto'],
+  },
+  {
+    slug: 'daemon-resize',
+    title: 'Daemon: resize',
+    description: 'cua.daemon.v1 ResizeSandbox: give a local VM another shape.',
+    intro:
+      'The messages of `SandboxService.ResizeSandbox`: a local VM stops and boots again from its own disk with new vCPUs, memory and a larger disk.',
+    files: ['cua/daemon/v1/resize.proto'],
+  },
+  {
+    slug: 'daemon-fork-batch',
+    title: 'Daemon: batched forks',
+    description:
+      'cua.daemon.v1 batched forks: many sandboxes from checkpoints at once, on this machine or across your machines.',
+    intro:
+      'Requests and events of `SandboxService.ForkSandboxBatch`: groups of forks of one checkpoint placed together on one machine, checkpoints spread over the least-loaded machines, each fork streamed as it is ready.',
+    files: ['cua/daemon/v1/fork_batch.proto'],
+  },
+  {
+    slug: 'daemon-shares',
+    title: 'Daemon: shares',
+    description:
+      'cua.daemon.v1 ShareService: links to a port, a Space port, a file or a folder that open on your other signed-in devices.',
+    intro:
+      'Shares are links the `cua daemon` owns and serves (`cua share`): created, listed, stopped and checked through `ShareService`.',
+    files: ['cua/daemon/v1/shares.proto'],
+  },
+  {
+    slug: 'daemon-builds',
+    title: 'Daemon: builds',
+    description: 'cua.daemon.v1 builds: the messages of SpaceService.BuildSpace, ListBuilds and DeleteBuild.',
+    intro: 'Building an image from a Dockerfile or steps into pinned checkpoints, its progress, result and listing.',
+    files: ['cua/daemon/v1/builds.proto'],
+  },
+  {
+    slug: 'daemon-egress',
+    title: 'Egress policies',
+    description: 'EgressPolicy: which destinations a Space may open connections to, enforced by the host outside the guest.',
+    intro: 'The egress policy `CreateSpaceRequest.egress` and `SpaceService.SetSpaceEgress` take and `Space.egress` returns, and its host form for `HostSpacesService.SetHostSpaceEgress`.',
+    files: ['cua/daemon/v1/egress.proto', 'cua/env/v1/host_egress.proto'],
+  },
+  {
+    slug: 'daemon',
+    title: 'Cua daemon: sandboxes and runtimes',
+    description:
+      'cua.daemon.v1 SandboxService and RuntimeService: sandbox lifecycle across locations, checkpoints and forks, local pools, and the local runtimes and images.',
+    intro:
+      'The local `cua daemon` API (a Unix socket on the host, not cua-spacesd): sandbox lifecycle across locations; checkpoints of local sandboxes that new sandboxes fork from (`ForkSandbox`); local pools of ready sandboxes (`ApplyPool`, `ListPools`, `DeletePool`, claimed by a create that names one in `local_pool`); and the local runtimes (gVisor, runc, QEMU, Lume, Firecracker) and images it orchestrates. Spaces and the daemon\'s identity are on [Daemon: Spaces and service](/cua-sdk/reference/protocol/daemon-spaces).',
+    files: ['cua/daemon/v1/sandboxes.proto', 'cua/daemon/v1/checkpoints.proto', 'cua/daemon/v1/pools.proto', 'cua/daemon/v1/runtime.proto'],
+  },
+  {
+    slug: 'daemon-spaces',
+    title: 'Daemon: Spaces and service',
+    description:
+      'cua.daemon.v1 SpaceService and DaemonService: Spaces and the computers that provide them, the daemon\'s identity and the media bridge.',
+    intro:
+      'Spaces through the local `cua daemon` (create, list, power, delete, and the computers that provide Spaces), batch runs on your computers (`PoolRequest`), the daemon identity (`GetInfo`) and the loopback media bridge for webviews.',
+    files: ['cua/daemon/v1/spaces.proto', 'cua/daemon/v1/daemon.proto'],
   },
   {
     slug: 'daemon-resources',
@@ -569,7 +654,7 @@ class Renderer {
       'Errors are `google.rpc.Status` with typed details: spacesd packs [`ErrorInfo`](' +
         `${ROUTE}/env-system#errorinfo` +
         ') and the daemon packs [`DaemonErrorInfo`](' +
-        `${ROUTE}/daemon#daemonerrorinfo` +
+        `${ROUTE}/daemon-spaces#daemonerrorinfo` +
         ').',
       ''
     );

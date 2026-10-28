@@ -1,16 +1,29 @@
 #!/usr/bin/env python3
-"""Build a platform wheel of the `cua` package around a built cua-sdk cdylib
-and the `cua` CLI binary.
+"""Build the platform wheels of the `cua` package (around a built cua-sdk
+cdylib) and of `cua-cli` (the `cua` CLI binary).
 
 The native library comes from `--library` (a CI artifact or a local
 `cargo build --release -p cua-sdk`) and the CLI from `--cli` (`cargo build
 --release -p cua-cli`); by default the host builds under
-libs/cua/target/release are used. The CLI is installed as the `cua` console
-command. The wheel is tagged for the library's platform, the same way
-libs/cua-driver/python/build_wheel.py does it.
+libs/cua/target/release are used.
+
+- `cua`: the library next to `_native.py`. Linux wheels also carry the
+  static cua-spacesd (`--spacesd`, the `cua-spacesd-linux-<arch>` that
+  .github/scripts/fetch_static_spacesd.sh fetches) in `cua/bin/`, where the
+  in-process SDK finds it to inject into images that lack one.
+- `cua-cli` (cli/): `cua_cli/bin/cua[.exe]`, which the `cua` wheel requires
+  at its own version (added at build time; a source install has no pin) and
+  whose `cua` console command runs it, pointing it at that cua-spacesd
+  (`$CUA_SPACESD_STATIC`). `--no-cli` skips it.
+
+The CLI and the library are separate wheels because each repeats most of
+the Rust code and PyPI caps a file at 100 MB. Both are tagged for the
+library's platform, the same way libs/cua-driver/python/build_wheel.py does
+it.
 
 Usage:
     python build_wheel.py [--library PATH] [--cli PATH|--no-cli]
+                          [--spacesd PATH|--no-spacesd]
                           [--platform darwin|linux|windows]
                           [--arch x86_64|arm64|universal] [--out-dir DIR]
 """
@@ -27,6 +40,9 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 PACKAGE = HERE / "src" / "cua"
+# The cua-cli project; its staged binary lands at cua_cli/bin/ in the wheel.
+CLI_PROJECT = HERE / "cli"
+CLI_BIN = CLI_PROJECT / "src" / "cua_cli" / "bin"
 LIB_NAMES = {
     "darwin": "libcua_sdk.dylib",
     "linux": "libcua_sdk.so",
@@ -64,7 +80,17 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--library", type=Path)
     parser.add_argument("--cli", type=Path, help="the built `cua` CLI binary")
-    parser.add_argument("--no-cli", action="store_true", help="build without the CLI binary")
+    parser.add_argument("--no-cli", action="store_true", help="skip the cua-cli wheel")
+    parser.add_argument(
+        "--spacesd",
+        type=Path,
+        help="the static cua-spacesd-linux-<arch> (required for Linux wheels)",
+    )
+    parser.add_argument(
+        "--no-spacesd",
+        action="store_true",
+        help="build a Linux wheel without it (test builds: images without cua-spacesd fail)",
+    )
     parser.add_argument("--platform", choices=sorted(LIB_NAMES))
     parser.add_argument("--arch", choices=["x86_64", "arm64", "universal"])
     parser.add_argument("--out-dir", type=Path, default=HERE / "dist")
@@ -84,6 +110,19 @@ def main() -> None:
 
     bin_dir = PACKAGE / "bin"
     shutil.rmtree(bin_dir, ignore_errors=True)
+    if system == "linux" and not args.no_spacesd:
+        name = f"cua-spacesd-linux-{'aarch64' if arch == 'arm64' else 'x86_64'}"
+        if args.spacesd is None:
+            raise SystemExit(f"a Linux wheel needs --spacesd PATH (the static {name})")
+        if not args.spacesd.is_file():
+            raise SystemExit(f"missing static cua-spacesd {args.spacesd}")
+        bin_dir.mkdir()
+        shutil.copy2(args.spacesd, bin_dir / name)
+        (bin_dir / name).chmod(0o755)
+    elif args.spacesd is not None:
+        raise SystemExit("--spacesd is for Linux wheels")
+
+    shutil.rmtree(CLI_BIN, ignore_errors=True)
     if not args.no_cli:
         exe = "cua.exe" if system == "windows" else "cua"
         cli = args.cli or (HERE.parent / "target" / "release" / exe)
@@ -95,23 +134,29 @@ def main() -> None:
             raise SystemExit(
                 f"missing CLI binary {cli}; run cargo build --release -p cua-cli or pass --no-cli"
             )
-        bin_dir.mkdir()
-        shutil.copy2(cli, bin_dir / exe)
-        (bin_dir / exe).chmod(0o755)
+        CLI_BIN.mkdir(parents=True)
+        shutil.copy2(cli, CLI_BIN / exe)
+        (CLI_BIN / exe).chmod(0o755)
 
     env = dict(os.environ, CUA_SDK_WHEEL_TAG=wheel_tag(system, arch))
+    # The `cua` wheel requires the `cua-cli` wheel built with it, at the same
+    # version (hatch_build.py adds the pin; the source pyproject has none).
+    env["CUA_SDK_WHEEL_REQUIRES_CLI"] = "0" if args.no_cli else "1"
     args.out_dir.mkdir(parents=True, exist_ok=True)
     try:
         import build  # noqa: F401
 
-        cmd = [sys.executable, "-m", "build", "--wheel", "--outdir", str(args.out_dir)]
+        cmd = [sys.executable, "-m", "build", "--wheel", "--outdir", str(args.out_dir.resolve())]
     except ImportError:
         uv = shutil.which("uv")
         if not uv:
             raise SystemExit("need `build` (pip install build) or `uv`")
-        cmd = [uv, "build", "--wheel", "--out-dir", str(args.out_dir)]
+        cmd = [uv, "build", "--wheel", "--out-dir", str(args.out_dir.resolve())]
     subprocess.run(cmd, cwd=HERE, env=env, check=True)
-    print(f"built {wheel_tag(system, arch)} wheel into {args.out_dir}")
+    print(f"built the {wheel_tag(system, arch)} cua wheel into {args.out_dir}")
+    if not args.no_cli:
+        subprocess.run(cmd, cwd=CLI_PROJECT, env=env, check=True)
+        print(f"built the {wheel_tag(system, arch)} cua-cli wheel into {args.out_dir}")
 
 
 if __name__ == "__main__":

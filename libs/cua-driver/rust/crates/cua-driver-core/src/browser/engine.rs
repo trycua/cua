@@ -247,10 +247,7 @@ fn endpoint_access_class(
     }
 }
 
-/// Everything revalidation proves before a mutation proceeds. The
-/// `record`/`tab` evidence rides along for future callers even though
-/// the v1 tools only need the attached connection.
-#[allow(dead_code)]
+/// Everything revalidation proves before a mutation proceeds.
 pub(crate) struct ValidatedTab {
     pub conn: Arc<CdpConnection>,
     pub record: TargetRecord,
@@ -621,8 +618,6 @@ pub(crate) enum FrameTreeError {
 pub(crate) struct AttachedChildFrame {
     pub session_id: String,
     pub target_id: String,
-    #[allow(dead_code)]
-    pub url: String,
 }
 
 pub(crate) enum AttachError {
@@ -653,19 +648,6 @@ impl BrowserEngine {
         Self::new_with_runtime_services(
             platform,
             Arc::new(crate::consent::ApprovalBroker::new(provider)),
-            Arc::new(crate::consent::ProtectedResourceOwnershipStore::default()),
-        )
-    }
-
-    /// Create an engine using the runtime-owned broker shared by every
-    /// protected resource adapter.
-    pub fn new_with_approval_broker(
-        platform: Arc<dyn BrowserPlatform>,
-        approval_broker: Arc<crate::consent::ApprovalBroker>,
-    ) -> Arc<Self> {
-        Self::new_with_runtime_services(
-            platform,
-            approval_broker,
             Arc::new(crate::consent::ProtectedResourceOwnershipStore::default()),
         )
     }
@@ -1875,7 +1857,6 @@ impl BrowserEngine {
             out.push(AttachedChildFrame {
                 session_id: session_id.to_owned(),
                 target_id: target_id.to_owned(),
-                url: info["url"].as_str().unwrap_or("").to_owned(),
             });
         }
         Ok(out)

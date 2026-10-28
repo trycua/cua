@@ -125,7 +125,7 @@ export function hostParts(ctx: BridgeContext): HostParts {
   if (system) {
     model.devices.presence = (reason) => system.confirmPresence(reason);
     model.devices.notify = (prompt) =>
-      system.notify({ id: `device-${prompt.deviceId}`, title: prompt.notifyTitle, body: prompt.notifyBody, route: "/settings/devices" });
+      system.notify({ id: `device-${prompt.deviceId}`, title: prompt.notifyTitle, body: prompt.notifyBody, route: "/machines" });
   }
 
   const onboarding = new OnboardingStore(path.join(path.dirname(model.settingsPath), "onboarding.json"));

@@ -17,8 +17,8 @@
 //!   | ==== binary: SEND dst(32) | packet ====> |   (WireGuard or disco
 //! ```                                              ciphertext only)
 //!
-//! The coordinator (accounts, devices, sharing and the relay) runs in Cua's
-//! relay service; this module is the contract
+//! The coordinator implementation (accounts, devices, sharing and the
+//! relay) is the source-available `cua-relay`; this module is the contract
 //! both sides speak.
 
 use std::net::{Ipv6Addr, SocketAddr};
@@ -33,6 +33,38 @@ use crate::key::{PublicKey, SecretKey};
 /// agree on the mesh when their versions match; anything else falls back to
 /// the relay's HTTPS path.
 pub const VERSION: u32 = 1;
+
+/// WebSocket close codes the coordinator gives when it ends a session
+/// itself (the private-use range), so a node can say why it was dropped and
+/// whether trying again can help. The close reason is a short English
+/// sentence for logs.
+///
+/// The relay restarts or its state changed: reconnect (spread out).
+pub const CLOSE_RELAY_CHANGED: u16 = 4000;
+/// Another connection with the same node key took over this one. A node
+/// that keeps hearing this shares its identity with another running copy.
+pub const CLOSE_REPLACED: u16 = 4001;
+/// The device behind this node is no longer enrolled.
+pub const CLOSE_DEVICE: u16 = 4002;
+/// The session reached its maximum age: reconnect with a fresh token.
+pub const CLOSE_SESSION_MAX: u16 = 4003;
+/// The account or machine was erased.
+pub const CLOSE_ERASED: u16 = 4004;
+/// This node connected too often; the reason is `retry after N s`
+/// ([`retry_after_reason`], [`parse_retry_after`]).
+pub const CLOSE_RATE_LIMITED: u16 = 4029;
+
+/// The close reason that tells a node when it may connect again.
+pub fn retry_after_reason(secs: u64) -> String {
+    format!("too many reconnects: retry after {secs} s")
+}
+
+/// The seconds in a [`retry_after_reason`] (or any `retry after N` text).
+pub fn parse_retry_after(reason: &str) -> Option<u64> {
+    let rest = reason.split("retry after ").nth(1)?;
+    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    digits.parse().ok()
+}
 
 /// The coordinator's WebSocket path.
 pub const CONNECT_PATH: &str = "/v1/mesh/connect";
@@ -85,6 +117,27 @@ pub enum Mode {
     /// Self-hosted static tokens: each client pairs with a machine by
     /// proving it holds that machine's env token; the machine approves.
     Static,
+}
+
+/// The [`Grant::role`] of a peer that is another machine of the same
+/// account (machine-to-machine peering: a gang's rank traffic between the
+/// owner's hosts). Such a peer reaches only [`port_service`] streams a
+/// running job registered, never a machine's spacesd.
+pub const ROLE_MACHINE: &str = "machine";
+
+/// The stream service name for local TCP port `port` on a machine
+/// (`port:<n>`; see [`parse_port_service`]).
+pub fn port_service(port: u16) -> String {
+    format!("port:{port}")
+}
+
+/// The port of a [`port_service`] name (`port:<n>`, `n` in 1..=65535).
+pub fn parse_port_service(service: &str) -> Option<u16> {
+    let n = service.strip_prefix("port:")?;
+    if n.is_empty() || n.len() > 5 || !n.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    n.parse().ok().filter(|p| *p != 0)
 }
 
 /// Who a client peer is, as the coordinator vouches to a machine (account
@@ -400,6 +453,27 @@ pub struct MeshInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn port_services_round_trip_and_reject_anything_else() {
+        assert_eq!(port_service(47012), "port:47012");
+        assert_eq!(parse_port_service("port:47012"), Some(47012));
+        assert_eq!(parse_port_service("port:65535"), Some(65535));
+        for bad in [
+            "port:0",
+            "port:",
+            "port:65536",
+            "port:-1",
+            "port:+80",
+            "port: 80",
+            "port:080000",
+            "spacesd",
+            "Port:80",
+            "port:80x",
+        ] {
+            assert_eq!(parse_port_service(bad), None, "{bad}");
+        }
+    }
 
     #[test]
     fn hello_proof_binds_the_node_key() {

@@ -16,12 +16,12 @@ impl From<cua_host::Error> for CuaError {
             E::Unauthenticated(_) => CuaError::Unauthenticated(m),
             E::PermissionDenied(_) => CuaError::PermissionDenied(m),
             E::NotFound(_) => CuaError::NotFound(m),
-            E::Relay(_) | E::Download(_) => CuaError::Http(m),
+            E::Relay(_) | E::Download(_) | E::Throttled { .. } => CuaError::Http(m),
             // The plain sentence, then where to upgrade, as the CLI says it;
             // the Python and TypeScript SDKs read both back as `PlanLimitError`.
             E::PlanLimit(_) => {
                 let url = cua_home::plan_limit::PlanLimit::parse(&m)
-                    .map(|l| l.upgrade_url(&cua_home::env::account_app_url()));
+                    .map(|l| l.upgrade_url_from(&cua_home::env::account_app_url(), "sdk_limit"));
                 CuaError::Http(match url {
                     Some(url) => format!("{m} Upgrade: {url}"),
                     None => m,
@@ -180,6 +180,61 @@ pub struct Relay {
     account_token: String,
 }
 
+impl Relay {
+    /// A copy of this handle for a task on the SDK runtime.
+    fn clone_parts(&self) -> Relay {
+        Relay {
+            client: self.client.clone(),
+            account_token: self.account_token.clone(),
+        }
+    }
+
+    /// This device's session on the relay, when it is enrolled: the relay
+    /// refuses per-machine calls (and the machine gateway) that carry only
+    /// the account token ("this device is not enrolled"), while the
+    /// machine list passes. `None` when this device has no key or session.
+    ///
+    /// Network I/O: call it only inside [`run`], on the SDK runtime. The
+    /// caller's executor (plain `asyncio`, a sync bridge) has no Tokio
+    /// reactor, which is a panic ("no reactor running").
+    async fn device_session(&self) -> Option<String> {
+        debug_assert!(
+            tokio::runtime::Handle::try_current().is_ok(),
+            "Relay::device_session must run on the SDK runtime (inside `run`)"
+        );
+        let session = Arc::new(cua_auth::Session::from_env());
+        let store = session.store().clone();
+        let tokens = Arc::new(SessionTokens(session));
+        let auth = cua_host::DeviceAuth::new(
+            self.client.base(),
+            tokens,
+            Arc::new(store),
+            cua_host::device_name(),
+        )
+        .ok()?;
+        auth.try_session().await
+    }
+
+    /// The relay client with this device's session attached.
+    async fn client_with_device(&self) -> cua_host::RelayClient {
+        self.client
+            .clone()
+            .with_device_session(self.device_session().await)
+    }
+}
+
+/// This device's session on the relay at `url`, when it is enrolled there
+/// (`None` otherwise: the relay then decides what it trusts).
+async fn own_device_session(url: &str) -> Option<String> {
+    let session = Arc::new(cua_auth::Session::from_env());
+    let store = session.store().clone();
+    let tokens = Arc::new(SessionTokens(session));
+    cua_host::DeviceAuth::new(url, tokens, Arc::new(store), cua_host::device_name())
+        .ok()?
+        .try_session()
+        .await
+}
+
 #[uniffi::export]
 impl Relay {
     /// A relay (`None` = the relay `cua` uses: `CUA_RELAY_URL`, else this
@@ -216,23 +271,41 @@ impl Relay {
 
     /// One machine.
     pub async fn machine(&self, machine_id: String) -> Result<RelayMachine> {
-        let client = self.client.clone();
-        let token = self.account_token.clone();
-        run(async move { Ok(client.machine(&token, &machine_id).await?.into()) }).await
+        let this = self.clone_parts();
+        run(async move {
+            let client = this.client_with_device().await;
+            Ok(client
+                .machine(&this.account_token, &machine_id)
+                .await?
+                .into())
+        })
+        .await
     }
 
     /// Cuts every client of a machine the account owns and refuses new ones.
     pub async fn stop_sharing(&self, machine_id: String) -> Result<RelayMachine> {
-        let client = self.client.clone();
-        let token = self.account_token.clone();
-        run(async move { Ok(client.stop_sharing(&token, &machine_id).await?.into()) }).await
+        let this = self.clone_parts();
+        run(async move {
+            let client = this.client_with_device().await;
+            Ok(client
+                .stop_sharing(&this.account_token, &machine_id)
+                .await?
+                .into())
+        })
+        .await
     }
 
     /// Accepts clients again.
     pub async fn start_sharing(&self, machine_id: String) -> Result<RelayMachine> {
-        let client = self.client.clone();
-        let token = self.account_token.clone();
-        run(async move { Ok(client.start_sharing(&token, &machine_id).await?.into()) }).await
+        let this = self.clone_parts();
+        run(async move {
+            let client = this.client_with_device().await;
+            Ok(client
+                .start_sharing(&this.account_token, &machine_id)
+                .await?
+                .into())
+        })
+        .await
     }
 
     /// Connects to a machine's spacesd through `<relay>/m/<id>`, with the
@@ -240,9 +313,14 @@ impl Relay {
     pub async fn connect(&self, machine_id: String) -> Result<Arc<SpacesdClient>> {
         let url = self.client.machine_url(&machine_id);
         let token = self.account_token.clone();
+        let this = self.clone_parts();
         run(async move {
-            let o = cua_spacesd_client::ConnectOptions::parse(&url)?
+            let device = this.device_session().await;
+            let mut o = cua_spacesd_client::ConnectOptions::parse(&url)?
                 .gateway(Arc::new(cua_spacesd_client::StaticBearer(token)));
+            if let Some(session) = device {
+                o = o.header(cua_host::relay::DEVICE_SESSION_HEADER, session);
+            }
             let client = cua_spacesd_client::SpacesdClient::connect(o).await?;
             Ok(Arc::new(SpacesdClient::new(client, vec![]).at("relay")))
         })
@@ -276,7 +354,8 @@ pub struct HostSetupOptions {
     #[uniffi(default = None)]
     pub share_desktop: Option<bool>,
     /// Create Spaces for your enrolled devices on this machine (relay
-    /// mode).
+    /// mode). `None`: on for a machine set up for the first time through
+    /// the relay; a machine set up before keeps its setting.
     #[uniffi(default = None)]
     pub provide_spaces: Option<bool>,
 }
@@ -421,6 +500,26 @@ pub struct HostStatus {
     /// The owner's email, when the relay gave one.
     #[uniffi(default = None)]
     pub owner_email: Option<String>,
+    /// macOS: a Cua Spaces app that can run the host service is
+    /// installed, so the host service can run as it.
+    #[uniffi(default = false)]
+    pub helper_available: bool,
+    /// macOS: the old hand-written LaunchAgent is still there.
+    #[uniffi(default = false)]
+    pub legacy_service: bool,
+}
+
+/// What [`Host::migrate_service`] did.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct HostServiceMigration {
+    /// `migrated`, `switched`, `cleaned-up`, `rolled-back`, `kept` or
+    /// `not-needed`.
+    pub outcome: String,
+    /// In words.
+    pub detail: String,
+    /// macOS will ask for Screen Recording and Accessibility for Cua Spaces
+    /// Helper.
+    pub permissions_needed: bool,
 }
 
 /// One access to this machine.
@@ -508,6 +607,8 @@ impl From<cua_host::HostStatus> for HostStatus {
             paused_signed_out: s.paused_signed_out,
             owner: s.owner,
             owner_email: s.owner_email,
+            helper_available: s.helper_available,
+            legacy_service: s.legacy_service,
         }
     }
 }
@@ -531,6 +632,13 @@ pub(crate) fn setup_token_state(mode: &str, token: Option<&str>) -> &'static str
     }
 }
 
+/// Where a direct host listens when the caller gives no address: every
+/// interface, on the channel's spacesd port (3211, or 3221 for Cua Spaces
+/// Local, so it runs beside a Stable host).
+fn direct_listen_default(channel: cua_home::channel::CuaChannel) -> String {
+    format!("0.0.0.0:{}", channel.ports().tcp)
+}
+
 /// Converts binding options to cua-host options.
 pub(crate) fn setup_options(o: HostSetupOptions) -> Result<cua_host::SetupOptions> {
     let mut opts = match o.mode.as_deref().unwrap_or("relay") {
@@ -540,7 +648,8 @@ pub(crate) fn setup_options(o: HostSetupOptions) -> Result<cua_host::SetupOption
                 .unwrap_or_else(cua_host::relay_url_from_env),
         ),
         "direct" => {
-            let listen = o.direct.as_deref().unwrap_or("0.0.0.0:3211");
+            let default = direct_listen_default(cua_home::channel::CuaChannel::current());
+            let listen = o.direct.as_deref().unwrap_or(&default);
             cua_host::SetupOptions::direct(listen.parse().map_err(|_| {
                 CuaError::InvalidArgument(format!("direct address {listen:?} is not ip:port"))
             })?)
@@ -562,7 +671,7 @@ pub(crate) fn setup_options(o: HostSetupOptions) -> Result<cua_host::SetupOption
         opts.share_desktop = d;
     }
     if let Some(p) = o.provide_spaces {
-        opts.provide_spaces = p;
+        opts.provide_spaces = Some(p);
     }
     Ok(opts)
 }
@@ -601,15 +710,31 @@ impl Host {
         let home = self.home.clone();
         let mode = options.mode.clone().unwrap_or_else(|| "relay".into());
         let opts = setup_options(options);
+        // What the setup asks for, as resolved before it writes anything (a
+        // machine set up before keeps whether it provides Spaces).
         let (desktop, provide) = opts
             .as_ref()
-            .map(|o| (o.share_desktop, o.provide_spaces))
+            .map(|o| {
+                (
+                    o.share_desktop,
+                    cua_host::Host::new(home.clone()).resolve_provide_spaces(o),
+                )
+            })
             .unwrap_or((true, false));
         let account_token = account_token.filter(|t| !t.trim().is_empty());
         let token_state = setup_token_state(&mode, account_token.as_deref());
         let (r, failed_stage, http_status) = match opts {
             Ok(opts) => {
                 let staged = run(async move {
+                    let mut opts = opts;
+                    // The Mac the user signed in on is enrolled by that
+                    // sign-in: registering with its session is the proof
+                    // the relay needs not to flag it as a new computer.
+                    if let (cua_host::HostMode::Relay { url }, Some(_)) =
+                        (&opts.mode, account_token.as_ref())
+                    {
+                        opts.device_session = own_device_session(url).await;
+                    }
                     let host = cua_host::Host::new(home);
                     let staged = match account_token {
                         Some(t) => host.setup_staged(opts, &cua_host::StaticToken(t)).await,
@@ -700,10 +825,40 @@ impl Host {
     pub async fn resume_signed_in(&self, account: String) -> Result<HostStatus> {
         let home = self.home.clone();
         run(async move {
-            Ok(cua_host::Host::new(home)
-                .resume_signed_in(&account)
-                .await?
-                .into())
+            // Another account is not refused here: the host registers again
+            // for it (same name and Provide Spaces setting), so a different
+            // sign-in needs no manual remove and set up.
+            let tokens = SessionTokens(Arc::new(cua_auth::Session::from_env()));
+            Ok(
+                Box::pin(cua_host::Host::new(home).resume_or_switch_account(&account, &tokens))
+                    .await?
+                    .into(),
+            )
+        })
+        .await
+    }
+
+    /// macOS: moves the host service from the old LaunchAgent to the Cua
+    /// Spaces app (its own login item, "Cua Spaces"), keeping this machine's
+    /// registration, id and Spaces; puts the old one back if the helper
+    /// does not take over (the outcome says so). `app_version`: a failed
+    /// move is not tried again by itself with the same version; `force`
+    /// tries anyway.
+    pub async fn migrate_service(
+        &self,
+        force: bool,
+        app_version: String,
+    ) -> Result<HostServiceMigration> {
+        let home = self.home.clone();
+        run(async move {
+            let m = cua_host::Host::new(home)
+                .migrate_service(force, &app_version)
+                .await?;
+            Ok(HostServiceMigration {
+                outcome: m.outcome,
+                detail: m.detail,
+                permissions_needed: m.permissions_needed,
+            })
         })
         .await
     }
@@ -988,7 +1143,13 @@ impl Devices {
     /// also deletes its key.
     pub async fn revoke(&self, id: String) -> Result<RelayDevice> {
         let auth = self.auth.clone();
-        run(async move { Ok(auth.revoke(&id).await?.into()) }).await
+        run(async move {
+            let d = auth.revoke(&id).await?;
+            // The agents that computer connected to Spaces here stop at once.
+            super::auth::revoke_connected_agents(vec![id]).await;
+            Ok(d.into())
+        })
+        .await
     }
 
     /// Makes a one-time code (link, QR, install commands) that adds another
@@ -1120,6 +1281,22 @@ impl Devices {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A direct host the caller gives no address listens on the channel's
+    /// spacesd port: Cua Spaces Local's is not Stable's 3211.
+    #[test]
+    fn a_direct_host_listens_on_the_channels_port_by_default() {
+        use cua_home::channel::CuaChannel;
+        assert_eq!(direct_listen_default(CuaChannel::Stable), "0.0.0.0:3211");
+        assert_eq!(direct_listen_default(CuaChannel::Local), "0.0.0.0:3221");
+        for channel in CuaChannel::ALL {
+            assert!(
+                direct_listen_default(channel)
+                    .parse::<std::net::SocketAddr>()
+                    .is_ok()
+            );
+        }
+    }
 
     /// The Machines page groups team machines and says whether a machine
     /// provides Spaces from what the relay recorded at registration.
@@ -1290,21 +1467,28 @@ mod tests {
             }
         );
         assert_eq!(o.runner, cua_host::RunnerKind::Process);
-        assert!(o.share_desktop && !o.provide_spaces, "the desktop profile");
+        assert!(o.share_desktop, "the desktop profile");
+        assert_eq!(o.provide_spaces, None, "the default: on for a new setup");
         // A spare machine, and each setting on its own.
         let o = setup_options(HostSetupOptions {
             profile: Some("spare".into()),
             ..Default::default()
         })
         .unwrap();
-        assert!(!o.share_desktop && o.provide_spaces);
+        assert!(!o.share_desktop && o.provide_spaces == Some(true));
         let o = setup_options(HostSetupOptions {
             profile: Some("spare".into()),
             share_desktop: Some(true),
             ..Default::default()
         })
         .unwrap();
-        assert!(o.share_desktop && o.provide_spaces);
+        assert!(o.share_desktop && o.provide_spaces == Some(true));
+        let o = setup_options(HostSetupOptions {
+            provide_spaces: Some(false),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(o.provide_spaces, Some(false), "an explicit off stays off");
         assert!(
             setup_options(HostSetupOptions {
                 mode: Some("carrier-pigeon".into()),

@@ -1,7 +1,7 @@
 {
   "name": "@cua/cua-spaces-desktop",
   "productName": "Cua Spaces",
-  "version": "0.12.1",
+  "version": "0.16.0",
   "private": true,
   "license": "FSL-1.1-MIT",
   "description": "Cua Spaces desktop shell (Electron)",
@@ -29,6 +29,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@sentry/electron": "8.3.0",
     "electron-updater": "6.8.9"
   },
   "devDependencies": {

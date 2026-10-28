@@ -21,6 +21,46 @@ after(async () => {
 const cmd = (program, args = [], extra = {}) =>
   cua.SpacesdCommand.create({ program, args, ...extra })
 
+// Acting as another guest user, and extended-attribute metadata (the fixture
+// guest knows alice and bob, and refuses `locked`).
+async function fileAccess(env) {
+  const bytes = (s) => new TextEncoder().encode(s).buffer
+  await env.upload(
+    "/tmp/ts/as.bin",
+    bytes("as alice"),
+    cua.UploadOptions.create({
+      user: "alice",
+      metadata: new Map([["origin", "ts"]]),
+      xattrNamespace: "user.e2b.",
+    }),
+  )
+  const st = await env.stat("/tmp/ts/as.bin", "alice", "user.e2b.", false)
+  assert.equal(st.owner, "alice")
+  assert.equal(st.metadata.get("origin"), "ts")
+  assert.equal((await env.stat("/tmp/ts/as.bin", undefined, undefined, false)).metadata.size, 0)
+  const rows = await env.listDir("/tmp/ts", 1, "alice", "user.e2b.")
+  assert.equal(rows.find((r) => r.name === "as.bin").metadata.get("origin"), "ts")
+  assert.equal(new TextDecoder().decode(await env.download("/tmp/ts/as.bin", "alice")), "as alice")
+  const moved = await env.movePath("/tmp/ts/as.bin", "/tmp/ts/as2.bin", false, true, "alice")
+  assert.equal(moved.path, "/tmp/ts/as2.bin")
+  await env.remove("/tmp/ts/as2.bin", false, "alice")
+  assert.equal((await env.makeDir("/tmp/ts/dir", "bob")).owner, "bob")
+  assert.match(
+    await env.callJson("FilesystemService/Stat", '{"path":"/tmp/ts/blob"}', "bob"),
+    /"entry"/,
+  )
+  await assert.rejects(
+    env.stat("/tmp/ts/blob", "no-such", undefined, false),
+    (e) => cua.CuaError.Env.instanceOf(e) && /no-such/.test(e.message),
+  )
+  await assert.rejects(env.stat("/tmp/ts/blob", "locked", undefined, false), (e) =>
+    cua.CuaError.PermissionDenied.instanceOf(e),
+  )
+  await assert.rejects(env.callJson("SystemService/Health", "{}", "alice"), (e) =>
+    cua.CuaError.InvalidArgument.instanceOf(e),
+  )
+}
+
 async function exercise(c) {
   const sbx = c.sandboxes()
   const sb = await sbx.connectUrl(fx.env_url, fx.env_token, "ts-direct")
@@ -30,6 +70,15 @@ async function exercise(c) {
 
   const caps = await env.capabilities()
   assert.ok(caps.version.length > 0)
+  // How the guest agent runs commands and file operations as another user:
+  // itself, with no sudo ("root" or "capabilities"), through sudo (older
+  // images) or not at all ("none").
+  const runAs = caps.features.find((f) => f.name === "process.run_as")
+  assert.ok(runAs.supported)
+  assert.equal(runAs.attributes.get("mode"), "capabilities")
+  const asAlice = await env.run(cmd("echo", ["as alice"], { user: "alice" }))
+  assert.ok(asAlice.exit.success)
+  assert.equal(new TextDecoder().decode(asAlice.stdout), "as alice\n")
   const out = await env.run(cmd("echo", ["hi"]))
   assert.ok(out.exit.success)
   assert.equal(new TextDecoder().decode(out.stdout), "hi\n")
@@ -42,16 +91,18 @@ async function exercise(c) {
   const blob = new Uint8Array(200_000).map((_, i) => i % 251)
   const up = await env.upload("/tmp/ts/blob", blob.buffer, undefined)
   assert.equal(up.size, BigInt(blob.length))
-  const down = new Uint8Array(await env.download("/tmp/ts/blob"))
+  const down = new Uint8Array(await env.download("/tmp/ts/blob", undefined))
   assert.deepEqual(down, blob)
+
+  await fileAccess(env)
 
   await env.setClipboard("from node")
   assert.equal(await env.getClipboard(), "from node")
-  assert.match(await env.callJson("SystemService/Health", "{}"), /^\{/)
+  assert.match(await env.callJson("SystemService/Health", "{}", undefined), /^\{/)
 
-  await assert.rejects(env.download("/nope"), (e) => cua.CuaError.NotFound.instanceOf(e))
+  await assert.rejects(env.download("/nope", undefined), (e) => cua.CuaError.NotFound.instanceOf(e))
   await assert.rejects(
-    env.callJson("ProcessService/StartProcess", "{}"),
+    env.callJson("ProcessService/StartProcess", "{}", undefined),
     (e) => cua.CuaError.InvalidArgument.instanceOf(e),
   )
 
@@ -83,6 +134,8 @@ async function exercise(c) {
   await sbx.connectUrl(fx.env_url, fx.env_token, "ts-direct")
 
   const listing = await sbx.listWithWarnings(undefined)
+  // A machine cua only connects to has no shape of its own to change.
+  await assert.rejects(sb.resize(2, 2048n, undefined), (e) => cua.CuaError.Unsupported.instanceOf(e))
   assert.ok(listing.sandboxes.some((s) => s.name === "ts-direct" && s.location === "direct"))
   assert.deepEqual(listing.warnings, [])
   // The default lists the sandboxes on this machine.

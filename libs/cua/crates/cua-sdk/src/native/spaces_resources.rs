@@ -96,8 +96,9 @@ pub struct GuestUsage {
     pub memory_limited: bool,
     /// Disk in use, bytes.
     pub disk_used: u64,
-    /// Disk size, bytes.
-    pub disk_total: u64,
+    /// Disk size, bytes; absent when the guest's file system has no size
+    /// of its own (gVisor's root overlay) or did not say. Never a sentinel.
+    pub disk_total: Option<u64>,
     /// `disk_total` is the guest's own disk.
     pub disk_limited: bool,
 }
@@ -132,8 +133,30 @@ pub struct SpaceResources {
     pub disk_allocated: u64,
     /// The guest's own numbers; absent while it is off or unreachable.
     pub usage: Option<GuestUsage>,
-    /// What it costs this Mac; absent for a container.
+    /// What it costs this Mac: its own data only, never the base it
+    /// shares; absent when there is nothing to measure.
     pub disk_on_host: Option<DiskOnHost>,
+    /// The base image it is a copy-on-write copy of, counted once for all
+    /// the Spaces that share it; absent when it has none or the runtime
+    /// cannot tell it apart.
+    #[serde(default)]
+    pub base: Option<SharedBase>,
+}
+
+/// A base image several Spaces share copy-on-write (a container image's
+/// layers, the image a VM disk was cloned from).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SharedBase {
+    /// Which base: Spaces with the same key share the same blocks.
+    pub key: String,
+    /// The image reference it came from (`ghcr.io/trycua/linux:24.04`).
+    pub image: String,
+    /// What it takes on this computer, once for all its Spaces; absent when
+    /// the runtime cannot tell it apart from the Spaces' own data.
+    pub bytes: Option<u64>,
+    /// Local Spaces that use it, this one included.
+    pub shared_with: u32,
 }
 
 /// One sample of everything.
@@ -462,6 +485,7 @@ mod resources_tests {
                     allocated: 31 << 30,
                     shares_space: true,
                 }),
+                base: None,
             }],
             computers: vec![],
             warning,

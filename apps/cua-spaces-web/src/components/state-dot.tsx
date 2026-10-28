@@ -19,9 +19,9 @@ const DOT: Record<SpaceState, string> = {
  * "Suspended", "Stopped", "Turning on…") when `space` is given, else this
  * page's word for the state.
  */
-export function StateLabel({ state, space, className }: { state: SpaceState; space?: Space; className?: string }) {
+export function StateLabel({ state, space, word: given, className }: { state: SpaceState; space?: Space; /** This word in place of the core's ("Not sharing" on a desktop). */ word?: string; className?: string }) {
   const { core } = useBridge();
-  const word = space ? (core.tryCall<string>("sidebar.statusText", { space }) ?? STATE_LABEL[state]) : STATE_LABEL[state];
+  const word = given ?? (space ? (core.tryCall<string>("sidebar.statusText", { space }) ?? STATE_LABEL[state]) : STATE_LABEL[state]);
   return (
     <span data-state-label={state} className={cn("inline-flex items-center gap-1.5 text-xs text-muted-foreground", className)}>
       <span className={cn("size-1.5 rounded-full", DOT[state])} aria-hidden />

@@ -6,12 +6,14 @@
 // browser finished one of them. The app is signed in whichever it was, and
 // a session stored while it waits ends the wait even when no wait returns.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { SIGN_IN_TIMED_OUT, SignInRuns, type SignInView } from "../src/model/sign-in";
-import type { AccountProfile, AccountRunning, SignInAttempt } from "../src/model/services";
+import { SignInRuns, type SignInEnd, type SignInView } from "../src/model/sign-in";
+import type { AccountProfile, AccountRunning, SignInAttempt, SignInOptions } from "../src/model/services";
 
 /** Each sign-in is an attempt of its own (a loopback port), finished or failed by the test. */
 class RetryAccount implements AccountRunning {
   stored: string | null = null;
+  /** The options each start was given. */
+  readonly starts: unknown[] = [];
   readonly attempts: { url: string; finish(who: string): void; fail(e: Error): void }[] = [];
   identity() {
     return this.stored;
@@ -19,7 +21,8 @@ class RetryAccount implements AccountRunning {
   profile(): AccountProfile | null {
     return null;
   }
-  async beginSignIn(): Promise<SignInAttempt> {
+  async beginSignIn(opts?: SignInOptions): Promise<SignInAttempt> {
+    this.starts.push(opts);
     const url = `http://127.0.0.1:${50000 + this.attempts.length}/callback`;
     let finish!: (who: string) => void;
     let fail!: (e: Error) => void;
@@ -44,7 +47,7 @@ class RetryAccount implements AccountRunning {
 }
 
 function view() {
-  const seen = { phase: "idle", url: null as string | null, identity: null as string | null, failed: [] as string[], signedIn: 0 };
+  const seen = { phase: "idle", url: null as string | null, identity: null as string | null, failed: [] as SignInEnd[], signedIn: 0 };
   const v: SignInView = {
     starting: () => void (seen.phase = "starting"),
     waiting: (a) => void ((seen.phase = "waiting"), (seen.url = a.url)),
@@ -59,6 +62,20 @@ const flush = () => vi.advanceTimersByTimeAsync(0);
 describe("a retried sign-in", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
+
+  it("starts with a code when the page asks for one (the browser never got back), then signs in", async () => {
+    const account = new RetryAccount();
+    const { seen, v } = view();
+    const runs = new SignInRuns(() => account, v);
+    void runs.begin();
+    await flush();
+    const byCode = runs.begin({ code: true });
+    await flush();
+    expect(account.starts).toEqual([undefined, { code: true }]);
+    account.attempts[1]!.finish("ada@example.com");
+    await byCode;
+    expect(seen).toMatchObject({ phase: "idle", identity: "ada@example.com", signedIn: 1 });
+  });
 
   it("finishes on the retry's attempt, and the first attempt's failure stays quiet", async () => {
     const account = new RetryAccount();
@@ -122,6 +139,18 @@ describe("a retried sign-in", () => {
     void runs.begin();
     await flush();
     await vi.advanceTimersByTimeAsync(runs.timeoutMs);
-    expect(seen).toMatchObject({ phase: "failed", failed: [SIGN_IN_TIMED_OUT], signedIn: 0 });
+    expect(seen).toMatchObject({ phase: "failed", failed: [{ timedOut: true }], signedIn: 0 });
+  });
+
+  it("fails with the error it caught (the core reads its reason), never silently", async () => {
+    const account = new RetryAccount();
+    const { seen, v } = view();
+    const runs = new SignInRuns(() => account, v);
+    const run = runs.begin();
+    await flush();
+    const offline = new Error("could not reach the sign-in service: error sending request");
+    account.attempts[0]!.fail(offline);
+    await run;
+    expect(seen).toMatchObject({ phase: "failed", failed: [{ error: offline }], signedIn: 0 });
   });
 });

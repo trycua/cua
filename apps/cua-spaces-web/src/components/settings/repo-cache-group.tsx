@@ -3,7 +3,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { isUnsupported, useBridge } from "@/bridge";
+import { isUnsupported, useBridge, useMachines } from "@/bridge";
 import type { RepoCacheChange, RepoCacheView } from "@/bridge/contracts/settings";
 import { SettingsGroup, SettingsRow } from "@/components/settings-group";
 import { Button } from "@/components/ui/button";
@@ -21,7 +21,11 @@ const REFRESH_MS = 15_000;
  */
 export function RepoCacheGroup() {
   const { data: adapter } = useBridge();
+  // Sharing above draws once the machines are known: this group waits for the same moment, so it never moves when Sharing arrives.
+  const { data: machines } = useMachines();
   const [view, setView] = useState<RepoCacheView | null>(null);
+  // Until the host has answered, the group holds the room it takes, so nothing below it moves.
+  const [answered, setAnswered] = useState(false);
   const [busy, setBusy] = useState(false);
   const shown = view && view.sizeSetting !== "auto" ? view.sizeSetting : "";
   const [draft, setDraft] = useState(shown);
@@ -36,6 +40,8 @@ export function RepoCacheGroup() {
     } catch (e) {
       // A host without a repo cache has no row; any other failure keeps what is shown.
       if (isUnsupported(e)) setView(null);
+    } finally {
+      setAnswered(true);
     }
   }, [adapter]);
 
@@ -45,7 +51,14 @@ export function RepoCacheGroup() {
     return () => clearInterval(t);
   }, [read]);
 
-  if (!adapter || !view) return null;
+  if (!adapter || machines === undefined) return null;
+  if (!view) {
+    return answered ? null : (
+      <SettingsGroup title="Cache" data-settings-group="repo-cache" aria-busy="true">
+        <div className="h-[233px]" />
+      </SettingsGroup>
+    );
+  }
 
   const run = async (op: "repoCache.set" | "repoCache.clear", args: RepoCacheChange, what: string) => {
     if (busy) return;

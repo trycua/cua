@@ -3,7 +3,7 @@
   "frames": [
     {
       "on": "local",
-      "step": "this Mac and your machines, no cloud without the experiment",
+      "step": "this Mac and your machines, no cloud while Your cloud is off",
       "wizard": {
         "canContinue": true,
         "cloud": null,
@@ -15,11 +15,15 @@
           "runtime",
           "connect-by-address"
         ],
-        "kindsOff": [],
+        "kindsOff": [
+          "microvm | MicroVM |  | off"
+        ],
         "placement": "local",
         "placementError": null,
         "placements": [
-          "local | This Mac | Container on this Mac (gVisor when installed) | on *",
+          "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
+          "---",
+          "local | This Mac | Linux, on this Mac | on *",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on",
           "host:lab | lab | Over Tailscale or your network | on",
@@ -29,21 +33,24 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.8 GB"
+          "Disk: 2.9–6.9 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
           "System: Ubuntu 24.04",
           "Image: ghcr.io/trycua/linux:24.04",
-          "Runs on: This Mac",
+          "Runs on: Linux, on this Mac",
           "Kind: Container",
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Name: Chosen automatically",
+          "Disk: 2.9–6.9 GB initially; grows with use",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     },
     {
@@ -60,11 +67,15 @@
           "runtime",
           "connect-by-address"
         ],
-        "kindsOff": [],
+        "kindsOff": [
+          "microvm | MicroVM |  | off"
+        ],
         "placement": "local",
         "placementError": null,
         "placements": [
-          "local | This Mac | Container on this Mac (gVisor when installed) | on *",
+          "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
+          "---",
+          "local | This Mac | Linux, on this Mac | on *",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on",
           "host:lab | lab | Over Tailscale or your network | on",
@@ -74,21 +85,24 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.8 GB"
+          "Disk: 2.9–6.9 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
           "System: Ubuntu 24.04",
           "Image: ghcr.io/trycua/linux:24.04",
-          "Runs on: This Mac",
+          "Runs on: Linux, on this Mac",
           "Kind: Container",
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Name: Chosen automatically",
+          "Disk: 2.9–6.9 GB initially; grows with use",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     },
     {
@@ -105,11 +119,15 @@
           "runtime",
           "connect-by-address"
         ],
-        "kindsOff": [],
+        "kindsOff": [
+          "microvm | MicroVM |  | off"
+        ],
         "placement": "local",
         "placementError": null,
         "placements": [
-          "local | This Mac | Container on this Mac (gVisor when installed) | on *",
+          "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
+          "---",
+          "local | This Mac | Linux, on this Mac | on *",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on",
           "host:lab | lab | Over Tailscale or your network | on",
@@ -119,21 +137,24 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.8 GB"
+          "Disk: 2.9–6.9 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
           "System: Ubuntu 24.04",
           "Image: ghcr.io/trycua/linux:24.04",
-          "Runs on: This Mac",
+          "Runs on: Linux, on this Mac",
           "Kind: Container",
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Name: Chosen automatically",
+          "Disk: 2.9–6.9 GB initially; grows with use",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     },
     {
@@ -150,11 +171,15 @@
           "runtime",
           "connect-by-address"
         ],
-        "kindsOff": [],
+        "kindsOff": [
+          "microvm | MicroVM |  | off"
+        ],
         "placement": "host",
         "placementError": null,
         "placements": [
-          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
+          "---",
+          "local | This Mac | Linux, on this Mac | on",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on *",
           "host:lab | lab | Over Tailscale or your network | on",
@@ -163,7 +188,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
@@ -173,10 +198,12 @@
           "Kind: Container",
           "Runtime: Container on Mac mini",
           "Resources: 2 cores, 4 GB memory",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     },
     {
@@ -194,11 +221,14 @@
           "connect-by-address"
         ],
         "kindsOff": [
-          "container | Container |  | off"
+          "container | Container |  | off",
+          "microvm | MicroVM |  | off"
         ],
         "placement": "host",
         "placementError": "Mac mini is at its limit: Apple's macOS license allows two macOS VMs per Mac.",
         "placements": [
+          "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
+          "---",
           "local | This Mac | Lume virtual machine (Apple silicon) | on",
           "---",
           "host:m-mini | Mac mini (at its limit) | Mac mini is at its limit: Apple's macOS license allows two macOS VMs per Mac. | off *",
@@ -218,10 +248,12 @@
           "Kind: Virtual machine",
           "Runtime: Virtual machine on Mac mini",
           "Resources: 4 cores, 8 GB memory",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     },
     {
@@ -238,11 +270,15 @@
           "runtime",
           "connect-by-address"
         ],
-        "kindsOff": [],
+        "kindsOff": [
+          "microvm | MicroVM |  | off"
+        ],
         "placement": "host",
         "placementError": null,
         "placements": [
-          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
+          "---",
+          "local | This Mac | Linux, on this Mac | on",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on *",
           "host:lab | lab | Over Tailscale or your network | on",
@@ -251,7 +287,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
@@ -261,10 +297,12 @@
           "Kind: Container",
           "Runtime: Container on Mac mini",
           "Resources: 2 cores, 4 GB memory",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     },
     {
@@ -281,11 +319,15 @@
           "runtime",
           "connect-by-address"
         ],
-        "kindsOff": [],
+        "kindsOff": [
+          "microvm | MicroVM |  | off"
+        ],
         "placement": "host",
         "placementError": null,
         "placements": [
-          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
+          "---",
+          "local | This Mac | Linux, on this Mac | on",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on",
           "host:lab | lab | Over Tailscale or your network | on *",
@@ -294,7 +336,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
@@ -304,15 +346,17 @@
           "Kind: Container",
           "Runtime: Container on lab",
           "Resources: 2 cores, 4 GB memory",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     },
     {
       "on": "host:lab",
-      "step": "with Your cloud, AWS after your machines",
+      "step": "Your cloud on, AWS after your machines",
       "wizard": {
         "canContinue": true,
         "cloud": "aws",
@@ -325,11 +369,15 @@
           "connect-cloud",
           "connect-by-address"
         ],
-        "kindsOff": [],
+        "kindsOff": [
+          "microvm | MicroVM |  | off"
+        ],
         "placement": "host",
         "placementError": null,
         "placements": [
-          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
+          "---",
+          "local | This Mac | Linux, on this Mac | on",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on",
           "host:lab | lab | Over Tailscale or your network | on *",
@@ -340,7 +388,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
@@ -350,10 +398,12 @@
           "Kind: Container",
           "Runtime: Container on lab",
           "Resources: 2 cores, 4 GB memory",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     },
     {
@@ -372,12 +422,15 @@
           "connect-by-address"
         ],
         "kindsOff": [
-          "vm | Virtual machine | AWS does not run this image. Ask your agent to deploy the Ubuntu 24.04 VM image on AWS and add it with cua spaces add. | off"
+          "vm | Virtual machine | AWS does not run this image. Ask your agent to deploy the Ubuntu 24.04 VM image on AWS and add it with cua spaces add. | off",
+          "microvm | MicroVM |  | off"
         ],
         "placement": "yours",
         "placementError": null,
         "placements": [
-          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
+          "---",
+          "local | This Mac | Linux, on this Mac | on",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on",
           "host:lab | lab | Over Tailscale or your network | on",
@@ -388,7 +441,7 @@
         "price": "About $0.04/hour",
         "resourceFacts": [
           "Kind: Container",
-          "Machine: t4g.medium",
+          "Computer: t4g.medium",
           "Deletes itself: After 2 hours"
         ],
         "step": 0,
@@ -400,11 +453,11 @@
           "Runtime: Container on t4g.medium",
           "Cost: About $0.04/hour",
           "Deletes itself: After 2 hours",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
         "systemsOff": [
-          "windows | Windows | AWS does not run this image. Ask your agent to deploy the Windows Server 2022 image on AWS and add it with cua spaces add. | off",
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off",
           "macos | macOS | macOS on AWS needs EC2 Mac (24 h minimum); not offered. Ask your agent to deploy the macOS Tahoe 26 image on AWS and add it with cua spaces add. | off"
         ]
       }
@@ -423,11 +476,15 @@
           "runtime",
           "connect-by-address"
         ],
-        "kindsOff": [],
+        "kindsOff": [
+          "microvm | MicroVM |  | off"
+        ],
         "placement": "local",
         "placementError": null,
         "placements": [
-          "local | This Mac | Container on this Mac (gVisor when installed) | on *",
+          "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
+          "---",
+          "local | This Mac | Linux, on this Mac | on *",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on",
           "host:lab | lab | Over Tailscale or your network | on",
@@ -437,21 +494,24 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.8 GB"
+          "Disk: 2.9–6.9 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
           "System: Ubuntu 24.04",
           "Image: ghcr.io/trycua/linux:24.04",
-          "Runs on: This Mac",
+          "Runs on: Linux, on this Mac",
           "Kind: Container",
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Name: Chosen automatically",
+          "Disk: 2.9–6.9 GB initially; grows with use",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     },
     {
@@ -468,11 +528,15 @@
           "runtime",
           "connect-by-address"
         ],
-        "kindsOff": [],
+        "kindsOff": [
+          "microvm | MicroVM |  | off"
+        ],
         "placement": "host",
         "placementError": null,
         "placements": [
-          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
+          "---",
+          "local | This Mac | Linux, on this Mac | on",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on *",
           "host:lab | lab | Over Tailscale or your network | on",
@@ -481,7 +545,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
@@ -491,10 +555,12 @@
           "Kind: Container",
           "Runtime: Container on Mac mini",
           "Resources: 2 cores, 4 GB memory",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     },
     {
@@ -507,11 +573,15 @@
           "cpus",
           "memory"
         ],
-        "kindsOff": [],
+        "kindsOff": [
+          "microvm | MicroVM |  | off"
+        ],
         "placement": "host",
         "placementError": null,
         "placements": [
-          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
+          "---",
+          "local | This Mac | Linux, on this Mac | on",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on *",
           "host:lab | lab | Over Tailscale or your network | on",
@@ -520,7 +590,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "step": 1,
         "summary": [
@@ -530,10 +600,12 @@
           "Kind: Container",
           "Runtime: Container on Mac mini",
           "Resources: 2 cores, 4 GB memory",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     },
     {
@@ -546,11 +618,15 @@
           "name",
           "open-when-ready"
         ],
-        "kindsOff": [],
+        "kindsOff": [
+          "microvm | MicroVM |  | off"
+        ],
         "placement": "host",
         "placementError": null,
         "placements": [
-          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
+          "---",
+          "local | This Mac | Linux, on this Mac | on",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on *",
           "host:lab | lab | Over Tailscale or your network | on",
@@ -559,7 +635,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "step": 2,
         "summary": [
@@ -569,10 +645,12 @@
           "Kind: Container",
           "Runtime: Container on Mac mini",
           "Resources: 2 cores, 4 GB memory",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     },
     {
@@ -582,11 +660,15 @@
         "canContinue": true,
         "cloud": null,
         "fields": [],
-        "kindsOff": [],
+        "kindsOff": [
+          "microvm | MicroVM |  | off"
+        ],
         "placement": "host",
         "placementError": null,
         "placements": [
-          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
+          "---",
+          "local | This Mac | Linux, on this Mac | on",
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on *",
           "host:lab | lab | Over Tailscale or your network | on",
@@ -595,7 +677,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "step": 3,
         "summary": [
@@ -605,10 +687,12 @@
           "Kind: Container",
           "Runtime: Container on Mac mini",
           "Resources: 2 cores, 4 GB memory",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     },
     {
@@ -618,31 +702,36 @@
         "canContinue": true,
         "cloud": null,
         "fields": [],
-        "kindsOff": [],
+        "kindsOff": [
+          "microvm | MicroVM |  | off"
+        ],
         "placement": "local",
         "placementError": null,
         "placements": [
-          "local | This Mac | Container on this Mac (gVisor when installed) | on *"
+          "local | This Mac | Linux, on this Mac | on *"
         ],
         "price": null,
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.8 GB"
+          "Disk: 2.9–6.9 GB initially; grows with use"
         ],
         "step": 3,
         "summary": [
           "System: Ubuntu 24.04",
           "Image: ghcr.io/trycua/linux:24.04",
-          "Runs on: This Mac",
+          "Runs on: Linux, on this Mac",
           "Kind: Container",
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Name: Chosen automatically",
+          "Disk: 2.9–6.9 GB initially; grows with use",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     },
     {
@@ -652,31 +741,36 @@
         "canContinue": true,
         "cloud": null,
         "fields": [],
-        "kindsOff": [],
+        "kindsOff": [
+          "microvm | MicroVM |  | off"
+        ],
         "placement": "local",
         "placementError": null,
         "placements": [
-          "local | This Mac | Container on this Mac (gVisor when installed) | on *"
+          "local | This Mac | Linux, on this Mac | on *"
         ],
         "price": null,
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.8 GB"
+          "Disk: 2.9–6.9 GB initially; grows with use"
         ],
         "step": 3,
         "summary": [
           "System: Ubuntu 24.04",
           "Image: ghcr.io/trycua/linux:24.04",
-          "Runs on: This Mac",
+          "Runs on: Linux, on this Mac",
           "Kind: Container",
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Name: Chosen automatically",
+          "Disk: 2.9–6.9 GB initially; grows with use",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     }
   ]

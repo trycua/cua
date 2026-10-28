@@ -2,6 +2,8 @@
 
 _Published on June 23, 2025 by Dillon DuPont_
 
+> Update, October 2026: Cua Cloud (Fleets) ended on 18 October 2026. This post describes it as it was. See [what changed](https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended).
+
 Cua's computer-use capabilities that we touched on in [Building your own Operator on macOS - Part 2](build-your-own-operator-on-macos-2.md) – your AI agents can click, scroll, type, and interact with any desktop application. But what if your agent needs to do more than just UI automation? What if it needs to process data, make API calls, analyze images, or run complex logic alongside those UI interactions, within the same virtual environment?
 
 That's where Cua's `@sandboxed` decorator comes in. While Cua handles the clicking and typing, sandboxed execution lets you run full Python code inside the same virtual environment. It's like giving your AI agents a programming brain to complement their clicking fingers.

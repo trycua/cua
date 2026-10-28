@@ -19,30 +19,41 @@
 //!
 //! | Module | What it owns |
 //! |---|---|
+//! | [`checklist`] | the getting-started checklist: its steps, what ticks them off, its usage events |
 //! | [`spaces`] | registry rows to Spaces, names, MRU order, the Space list state machine, sidebar and detail |
 //! | [`wizard`] | the image catalog, placement and runtime rules, the New Space wizard and its Run on menu (This Mac, your machines, your clouds) |
-//! | [`cloud_connect`] | the "Connect a cloud" sheet: providers with their found mark, the region, project or environment, Test and Connect |
+//! | [`cloud_page`] | the Clouds group on Computers, each cloud's page and the approval sheet |
+//! | [`cloud_sheet`] | "Connect a cloud" on Computers: the picker, one short sheet per cloud, the agent prompt |
+//! | [`cloud_connect`] | the older "Connect a cloud" sheet (CLI sign-ins): providers with their found mark, the region, project or environment, Test and Connect |
 //! | [`teleport`] | picker filters and primary action, the review gate, drag-to-notch, transfer overlay |
 //! | [`keyvault`] | grouping, consent chips, decisions, categories, the approval sheet, the broker client |
 //! | [`onboarding`] | the first-run steps |
+//! | [`palette`] | the command palette's ranking and the shared keyboard shortcuts |
 //! | [`driver_preview`] | the AI agents page's background computer-use card (its animated miniature) |
 //! | [`settings`] | hotkey format, defaults, the settings file, the Settings page |
 //! | [`experiments`] | Settings, Experiments: one switch per feature still being built, and what each hides while off |
 //! | [`login_item`] | launch at login: the Settings toggle, the first run's Done checkbox, when the app turns it on |
+//! | [`agent_keys`] | Settings, Agents: the provider keys agents get (rows, the add or replace sheet, names refused, the remove question) |
+//! | [`connectors`] | Settings, Connectors: coding apps with Connect, their pages, Providers, the provider sheet, a task's setup card |
+//! | [`summon`] | @mentioning agents in a Space: the composer's picker, what sending does, why an agent can't be woken, Ask first's first message |
+//! | [`profile_card`] | the card a person or an agent opens to in a Space: access, presence, who runs an agent and on what, its status, Details |
+//! | [`agent_list`] | every agent you work with as one list (agents in Spaces and this device's unfinished runs): the Agents page and Home draw it |
 //! | [`about`] | Settings, About: name, version, links, the update controls; the refresh after an update |
 //! | [`notch`] | notch geometry, notch mode and tiles |
 //! | [`window`] | the main window's chrome (account line, New Space, empty state) and the menu bar item's menu |
 //! | [`host`] | "This machine": the roster entry, its page, the host setup form and its validation |
+//! | [`machines`] | the Machines page's list: each computer once (a relay machine and its device merged), online, and which ones New Space can run on |
 //! | [`devices`] | this device's relay enrollment, the account's devices, approvals (with presence) and the access log |
 //! | [`persistent`] | the Agents page: persistent agents, pause and resume, one agent's memory, routines and computer access |
 //! | [`drive_page`] | the Drive page: browse the Cua Volume, access requests (with presence) and grants, sync per device, conflicts, Open in Finder |
 //! | [`drive_settings`] | Settings, Storage: this machine or an S3-compatible bucket, the Finder volume (a mount on Linux), the block cache |
 //! | [`drive_mount_preview`] | the first run's Cua Volume page (its animated miniature) |
+//! | [`resources`] | processor, memory and disk of this Mac, each extra Space and your other computers: the rows, the bars, the low-disk warning |
 //! | [`notifications`] | which daemon notifications to post as system notifications, and the list |
 //! | [`share`] | who a Space is shared with (viewer or editor) and the Share sheet |
 //! | `installer` | the "Command line" step: plan and install the bundled `cua` (feature `installer`) |
 //! | [`agents`] | coding agent runs (labels, order, filter) and the agents on this machine (Settings rows, setup summary) |
-//! | [`telemetry`] | which anonymous usage events a UI step means, and sending them (feature `telemetry`) |
+//! | [`telemetry`] | which usage events a UI step means, and sending them (feature `telemetry`) |
 //! | [`presence`] | the name and principal id the apps join a Space's presence as |
 //! | [`paths`] | home-relative paths |
 //! | [`errors`] | the words a failed action shows (a dead daemon in plain words) |
@@ -50,10 +61,20 @@
 //! | [`parity`] | the scripted flows every shell replays |
 
 pub mod about;
+pub mod account;
+pub mod agent_keys;
+pub mod agent_list;
+pub mod agent_prompts;
 pub mod agents;
-pub mod billing;
+pub mod bulk_confirm;
+pub mod checklist;
 pub mod cloud_connect;
+pub mod cloud_page;
+pub mod cloud_sheet;
+pub mod connection;
+pub mod connectors;
 pub mod devices;
+pub mod diagnostics;
 pub mod dispatch;
 pub mod drive_mount_preview;
 pub mod drive_page;
@@ -61,25 +82,43 @@ pub mod drive_settings;
 pub mod driver_preview;
 pub mod errors;
 pub mod experiments;
+pub mod first_run;
 pub mod host;
-#[cfg(feature = "installer")]
 pub mod installer;
 pub mod keyvault;
+pub mod local_network;
 pub mod login_item;
+pub mod machines;
+pub mod machines_account;
+pub mod machines_health;
+pub mod machines_view;
+pub mod message;
 pub mod model;
 pub mod notch;
 pub mod notifications;
+pub mod nudges;
 pub mod onboarding;
 pub mod onboarding_preview;
+pub mod palette;
 pub mod parity;
 pub mod paths;
 pub mod persistent;
 pub mod presence;
+pub mod profile_card;
+pub mod relay_usage;
+pub mod resources;
+pub mod runtimes;
 pub mod settings;
 pub mod share;
+pub mod sign_in;
+pub mod space_menu;
 pub mod spaces;
+pub mod summon;
+pub mod teams;
 pub mod telemetry;
 pub mod teleport;
+pub mod tips;
+pub mod upsell;
 mod util;
 pub mod window;
 pub mod wizard;

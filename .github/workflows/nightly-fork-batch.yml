@@ -1,0 +1,114 @@
+name: "Nightly: batched forks (perf guard)"
+
+# Perf guard for `Sandboxes.fork_many` (libs/cua/bench/fork-batch): on a
+# hosted Linux runner with KVM, bake a memory checkpoint of the reference
+# disk, fork it 4 times (2 at once; a 4-vCPU runner admits 4 one-vCPU forks) through a real `cua daemon`, and compare
+# fork p50/p95, time to the first ready fork and the batch's total with the
+# committed baseline (`check.py --profile linux-kvm-gh`: fails above 1.5x,
+# on any failed fork, or when a machine started more forks at once than
+# allowed). The functional scenario (`fork-batch`) runs in the e2e suite's
+# nightly qemu lane (e2e-cua-sdk.yml); multi-machine placement, snapshot
+# copies and host failures are covered by unit tests on every PR
+# (cua-cluster, cua-spaces, cua-snapshot-sync).
+
+on:
+  schedule:
+    - cron: "41 8 * * *"
+  workflow_dispatch:
+    inputs:
+      update_baseline:
+        description: "Print the result as the profile's new baseline instead of checking"
+        type: boolean
+        default: false
+  push:
+    branches: ["feat/fork-batch-placement"]
+    paths: [".github/workflows/nightly-fork-batch.yml"]
+  pull_request:
+    paths:
+      - "libs/cua/bench/fork-batch/**"
+      - ".github/workflows/nightly-fork-batch.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-fork-batch-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+  CARGO_TERM_COLOR: always
+  CARGO_BUILD_JOBS: "4"
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  guard-logic:
+    # The guard's own logic, on every change to it (no VM).
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: check.py tests
+        run: python3 -m unittest discover -s libs/cua/bench/fork-batch -p 'test_*.py' -v
+
+  bench:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/linux-rust-prep
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: ./.github/actions/rust-cache
+        with:
+          workspaces: |
+            libs/cua
+            libs/cua-spacesd
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6
+      - name: Build the SDK, CLI, bindings, reference disk and QEMU
+        run: tests/e2e/cua-sdk/ci-setup.sh --images --disks
+      - name: Start the cua daemon
+        run: |
+          arch=$(uname -m); case "$arch" in aarch64|arm64) arch=arm64 ;; *) arch=amd64 ;; esac
+          echo "DISK=$HOME/.cache/cua-images-e2e/linux/$arch/disk.img" >>"$GITHUB_ENV"
+          export CUA_HOME="$RUNNER_TEMP/cua-home"
+          echo "CUA_HOME=$CUA_HOME" >>"$GITHUB_ENV"
+          mkdir -p "$CUA_HOME"
+          libs/cua/target/debug/cua daemon start
+          libs/cua/target/debug/cua daemon status
+      - name: Fork 4 (2 at once) from a memory checkpoint
+        env:
+          PYTHONPATH: libs/cua/python/src
+        run: >
+          python3 libs/cua/bench/fork-batch/bench.py --bake "vm:$DISK" --count 4
+          --parallel 2 --kind vm --runtime qemu --on local --memory-mb 1536 --out "$RUNNER_TEMP/fork-batch/result.json"
+      - name: Compare with the baseline
+        run: |
+          if [ "${{ inputs.update_baseline }}" = true ] || [ "${{ github.event_name }}" = push ]; then
+            python3 libs/cua/bench/fork-batch/check.py --profile linux-kvm-gh --update "$RUNNER_TEMP/fork-batch/result.json"
+            cat libs/cua/bench/fork-batch/baseline.json | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            python3 libs/cua/bench/fork-batch/check.py --profile linux-kvm-gh "$RUNNER_TEMP/fork-batch/result.json" | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Stop the daemon
+        if: always()
+        run: libs/cua/target/debug/cua daemon stop || true
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: fork-batch
+          path: |
+            ${{ runner.temp }}/fork-batch
+            ${{ runner.temp }}/cua-home/daemon*.log
+# (baseline bootstrap run)

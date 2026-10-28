@@ -1,46 +1,54 @@
 ---
 title: Cua Spaces
-description: 'The Cua Spaces app and SDK: register any sandbox or machine once, then stream it, run agents in it and teleport apps into it.'
+description: 'Computers for you and your agents. Install the Cua Spaces app, connect an AI agent, and watch it work on a computer you own.'
 landing:
-  summary: 'The Mac app for working alongside your agents. Watch, take over, share files and teleport apps.'
+  summary: 'Computers for you and your agents. Install the app, connect an agent and watch it work.'
   cta: Explore Cua Spaces
 ---
 
-A Space is a desktop your agents can use and you can watch: a container or VM
-on your own Mac, or one of your team's machines (your own cloud is coming
-soon). Each runs cua-spacesd, which streams the screen, takes input through
-Cua Driver, and receives teleported apps and files. Cua Spaces is
-source-available under the FSL-1.1-MIT. For teams, join the
-[waitlist](https://cua.ai/teams).
+Cua Spaces gives your AI agents their own computers to work on, and lets you
+watch, step in and share them. You bring the computers: a Mac on your desk, a
+spare Linux box, a VM in your own cloud account. Cua does not rent them.
 
-The **Cua Spaces app** puts your Spaces in the menu bar and notch, so you can
-watch them, open them and teleport apps in with a drag.
-It launches at login (**Settings > General > Launch Cua Spaces at login**, on
-after setup unless you untick it), so the Spaces this machine provides, your
-persistent agents and Cua Volume come back after a restart.
+A **Space** is one desktop on one of those computers, set up for a task. Your
+agent runs commands in it and uses its apps and browser. You see the same
+screen and take over when you want. You can share a Space with anyone who has
+a cua.ai account, to watch it or to work in it. On the Teams plan you can also
+share it with your whole team.
 
-The **Cua SDK** gives your own apps the same Spaces: create them, stream them and
-run agents in them from Python, TypeScript, Swift or Rust.
+## Get started
 
-| Kind | Id | Comes from |
-|------|----|------------|
-| Local | `local:<name>` | `spaces.create(options)`: a new Space, on this machine by default |
-| Direct | `direct:<host:port>` | `spaces.add(url, token)`: an existing machine |
-| Relay | `relay:<machine-id>` | Your machines set up with `cua host setup`, listed automatically |
+1. [Quickstart](/spaces/quickstart): install the app, connect your agent and
+   run a first task. About five minutes.
+2. [Connect your agent](/spaces/guides/connect-your-agent): add Spaces to
+   Claude Code, Codex, Cursor and other agents.
+3. [Add a computer](/spaces/guides/add-a-computer): connect another Mac, Linux
+   or Windows computer you own.
 
-The app, the `cua` CLI, the SDKs and `cua daemon` share one registry (`~/.cua/spaces.json`).
+## What do you want to do?
 
-## What you can do with a Space
+| I want to | Go to |
+|---|---|
+| Install on Mac, Windows or Linux | [Install](/spaces/guides/install) |
+| Let my agent use Spaces | [Connect your agent](/spaces/guides/connect-your-agent) |
+| Use another computer I own, or reach my machines from my other machines | [Add a computer](/spaces/guides/add-a-computer) |
+| Let someone else watch or work in a Space | [Share a Space](/spaces/guides/share-a-space) |
+| Compare Free, Pro and Teams, or set up a team | [Plans and Teams](/spaces/guides/teams) |
+| Fix a Space that won't create | [Troubleshoot](/spaces/guides/troubleshoot) |
+| Move a signed-in app into a Space | [Teleport an app](/spaces/guides/teleport-an-app) |
+| Understand how it fits together | [How Spaces works](/spaces/concepts/how-spaces-works) |
 
-| Task | Guide |
-|------|-------|
-| Create or add a Space, from any image | [Add a Space](/spaces/guides/add-a-space) |
-| Reach this machine from your other devices | [Unattended access](/spaces/guides/unattended-access) |
-| Watch a desktop or one window, with audio | [Stream a desktop](/spaces/guides/stream-a-desktop) |
-| Send a file or folder into a Space | [Send files](/spaces/guides/send-files) |
-| Move a signed-in app session into a Space | [Teleport an app](/spaces/guides/teleport-an-app) |
-| Give an AI agent Spaces tools, or run agents inside a Space | [Use from an agent](/spaces/guides/use-from-an-agent) |
-| See an app built on the Spaces SDK | [Cua Bots](/spaces/examples/cua-bots), [infinite canvas](/spaces/examples/infinite-canvas), [examples in other languages](/spaces/examples/other-languages) |
+## For developers
 
-Start with the [Quickstart](/spaces/quickstart): install the app and CLI, then
-add your first Space.
+The `cua` CLI, the MCP server and the SDKs (Python, TypeScript, Swift and
+Rust) use the same Spaces as the app.
+
+- [What your agent can do](/spaces/guides/connect-your-agent#what-your-agent-can-do):
+  the Spaces tools your agent gets over MCP.
+- [Use Spaces from code](/spaces/guides/create-a-space-with-the-sdk): create, use
+  and delete a Space from code.
+- [Reference](/spaces/reference): every Spaces tool, its parameters and its
+  errors.
+- [Examples](/spaces/examples/cua-bots): apps built on the Spaces SDK.
+
+Cua Spaces is source-available under the FSL-1.1-MIT license.

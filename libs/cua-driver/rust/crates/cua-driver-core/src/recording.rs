@@ -488,7 +488,7 @@ struct RecordingInner {
     /// NOT stop B's recording. The proxy-exit `session_end` hook passes its
     /// own session id to `stop_owner()`, which no-ops when the live owner has
     /// moved on. `None` means the recording was started anonymously (CLI
-    /// one-shot / legacy `configure()` shim) and is owned by nobody — only an
+    /// one-shot) and is owned by nobody — only an
     /// unconditional `stop_owner(None)` can tear it down. Supersedes the
     /// #1775 generation token: a session id is a stable owner identity rather
     /// than a monotonic counter, and it doubles as the config-override key.
@@ -535,7 +535,7 @@ pub struct RecordingState {
     pub last_video_path: Option<String>,
     /// Session id that owns the current (or most recent) recording, stamped on
     /// `start()` from the daemon-injected `_session_id`. `None` for an
-    /// anonymously-started recording (CLI one-shot / legacy shim). Surfaced so
+    /// anonymously-started recording (CLI one-shot). Surfaced so
     /// callers can see who owns the live recording; the proxy-exit teardown
     /// drives ownership via `session_end` (it already knows its own id) rather
     /// than reading this back.
@@ -583,15 +583,13 @@ impl RecordingSession {
     /// for the lifetime of the session. NOTE: the MCP `start_recording` tool
     /// now defaults `record_video` to *false* (opt-in) — see
     /// `recording_tools.rs` — so video only records when explicitly requested.
-    /// The legacy CLI `recording start` path via `configure()` still forces
-    /// video on. If ffmpeg isn't on PATH the start still succeeds —
+    /// If ffmpeg isn't on PATH the start still succeeds —
     /// the per-turn capture (action.json + pre/post evidence) is independent
     /// of video — but the structured state carries the ffmpeg error so
     /// the caller can surface it.
     ///
     /// `owner` stamps the session that owns this recording (the daemon-injected
-    /// `_session_id`). `None` marks an anonymous start (CLI one-shot / legacy
-    /// `configure()` shim) owned by nobody. See `stop_owner()` for how this
+    /// `_session_id`). `None` marks an anonymous start (CLI one-shot) owned by nobody. See `stop_owner()` for how this
     /// gates teardown.
     pub fn start(
         &self,
@@ -626,8 +624,7 @@ impl RecordingSession {
         // teardown sites call `fire_session_end` (which marks ENDED_SESSIONS)
         // BEFORE `stop_owner`, so either the mark is already set and we bail
         // here, or we win the lock first and the reaper's later stop_owner(owner)
-        // reaps what we started. Anonymous starts (owner = None: CLI one-shot /
-        // legacy shim) are never gated.
+        // reaps what we started. Anonymous starts (owner = None: CLI one-shot) are never gated.
         if let Some(o) = owner {
             if crate::session::is_session_ended(o) {
                 anyhow::bail!(
@@ -648,7 +645,7 @@ impl RecordingSession {
         std::fs::create_dir_all(&dir)?;
 
         // Single monotonic anchor shared by video, cursor sampler, and
-        // per-turn `t_ms_from_session_start` math in `record()` — so all
+        // per-turn `t_ms_from_session_start` math in `finish_turn()` — so all
         // three timelines line up at the millisecond.
         let monotonic_start = Instant::now();
 
@@ -690,9 +687,10 @@ impl RecordingSession {
         // Write initial session.json — final video metadata is rewritten on
         // stop. We mark `present` based on whether ffmpeg actually started,
         // not just whether the caller asked for video.
+        let started_at_ms = now_ms();
         let session_payload = serde_json::json!({
             "schema_version": 1,
-            "started_at_monotonic_ms": now_ms(),
+            "started_at_monotonic_ms": started_at_ms,
             "video": video_session_payload(video_present, video_error.as_deref(), None),
             "cursor": { "present": inner.cursor.is_some(), "sample_count": 0 }
         });
@@ -709,7 +707,7 @@ impl RecordingSession {
         inner.output_dir = Some(dir);
         inner.state_budget = state_budget;
         inner.next_turn = 1;
-        inner.session_start_ms = now_ms();
+        inner.session_start_ms = started_at_ms;
         inner.session_monotonic_start = Some(monotonic_start);
         inner.last_error = video_error;
         inner.last_video = None;
@@ -724,9 +722,8 @@ impl RecordingSession {
     ///
     /// `requester` is the ownership guard for session-driven teardown
     /// (`session_end` / proxy-exit). Semantics:
-    ///   - `None` — unconditional stop. Manual `stop_recording`, the legacy
-    ///     `configure()` shim, the CLI one-shot path, and the idle-TTL backstop
-    ///     all pass `None` to preserve today's manual-stop behavior.
+    ///   - `None` — unconditional stop. Manual `stop_recording`, the CLI
+    ///     one-shot path, and the idle-TTL backstop all pass `None` to preserve today's manual-stop behavior.
     ///   - `Some(sid)` where `sid` owns the live recording — stop + clear owner.
     ///   - `Some(sid)` where `sid` does NOT own it (a disconnecting session
     ///     whose recording was already clobbered by a newer `start()`, or which
@@ -751,6 +748,7 @@ impl RecordingSession {
         }
         inner.owner = None;
         let dir = inner.output_dir.clone();
+        let started_at_ms = inner.session_start_ms;
         let (video_meta, stop_error) = match inner.video.take().map(|rec| rec.stop()) {
             Some(Ok(meta)) => match validate_video_metadata(meta) {
                 Ok(meta) => (Some(meta), None),
@@ -786,7 +784,7 @@ impl RecordingSession {
             };
             let session_payload = serde_json::json!({
                 "schema_version": 1,
-                "started_at_monotonic_ms": now_ms(),
+                "started_at_monotonic_ms": started_at_ms,
                 "video": video_block,
                 "cursor": { "present": cursor_samples > 0, "sample_count": cursor_samples }
             });
@@ -796,21 +794,6 @@ impl RecordingSession {
             anyhow::bail!("video finalization failed: {error}");
         }
         Ok(())
-    }
-
-    /// Legacy toggle API kept as a thin shim over `start()`/`stop()` so
-    /// existing callers (CLI subcommand, tests) keep compiling during the
-    /// rename window. Forces `record_video` on for this legacy CLI path — the
-    /// MCP `start_recording` tool now defaults video OFF (see
-    /// `recording_tools.rs`), but the CLI `recording start` keeps video on.
-    pub fn configure(&self, enabled: bool, output_dir: Option<&str>) -> anyhow::Result<()> {
-        if !enabled {
-            return self.stop_owner(None);
-        }
-        let dir = output_dir
-            .ok_or_else(|| anyhow::anyhow!("output_dir is required when enabling recording"))?;
-        // Legacy CLI path: anonymous owner (no MCP session id available here).
-        self.start(dir, true, None)
     }
 
     /// Return a snapshot of the current state (non-blocking).
@@ -1046,23 +1029,6 @@ impl RecordingSession {
         {
             inner.last_error = Some(error.to_string());
         }
-    }
-
-    /// Compatibility helper for callers that only report completed calls.
-    /// New dispatch paths should use `begin_turn` and `finish_turn` so the
-    /// before phase is captured before the action changes application state.
-    pub fn record(
-        &self,
-        tool_name: &str,
-        args: &Value,
-        result_text: &str,
-        start_ms: u64,
-        caller: RecordingCaller<'_>,
-    ) {
-        let Some(pending) = self.begin_turn(tool_name, args, start_ms, caller) else {
-            return;
-        };
-        self.finish_turn(pending, result_text);
     }
 }
 
@@ -1436,7 +1402,7 @@ fn write_turn_with_after(
         "arguments": args,
         "result_summary": result_text,
         "result_error": result_is_error,
-        "timestamp": iso_now(),
+        "timestamp": iso8601_utc_from_unix_ms(now),
         "t_ms_from_session_start": now.saturating_sub(session_start_ms),
         "t_start_ms_from_session_start": start_ms.saturating_sub(session_start_ms),
     });
@@ -1522,12 +1488,21 @@ pub fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
-fn iso_now() -> String {
-    let d = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-    // Format as fractional Unix seconds (simple, unambiguous, machine-readable).
-    format!("{:.3}", d.as_secs_f64())
+/// Format milliseconds since Unix epoch as an ISO-8601 UTC date-time with
+/// millisecond precision, e.g. `2026-01-01T00:00:00.000Z`.
+fn iso8601_utc_from_unix_ms(ms: u64) -> String {
+    let t = time::OffsetDateTime::from_unix_timestamp_nanos(i128::from(ms) * 1_000_000)
+        .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        t.year(),
+        u8::from(t.month()),
+        t.day(),
+        t.hour(),
+        t.minute(),
+        t.second(),
+        t.millisecond()
+    )
 }
 
 /// Build the `session.json` `video` field. Three shapes:
@@ -2330,13 +2305,24 @@ mod tests {
                 RecordingCaller::default(),
             )
             .expect("resolved refusal should reserve an evidence turn");
-        let refusal_record = crate::action_record::ActionExecutionRecord::builder(
-            crate::action_record::ActionEffect::Refused,
-            crate::action_record::ActionTransport::WindowsTargetedInjection,
-            crate::action_record::RequestedDelivery::Background,
+        // Derive the record from the real shared stale-zoom refusal so the
+        // recorder is proven to treat it as refused-before-dispatch (no
+        // click marker), not as an unverifiable delivered click.
+        let zoom_refusal = cache
+            .zoom(1, Some(2), None)
+            .expect_err("no zoom context was published")
+            .structured_content
+            .expect("zoom refusal is structured");
+        let refusal_record = crate::action_record::ActionExecutionRecord::from_legacy(
+            "click",
+            &serde_json::json!({"pid": 1, "window_id": 2, "x": 3, "y": 4, "from_zoom": true}),
+            &zoom_refusal,
         )
-        .build()
-        .expect("valid refusal record");
+        .expect("click refusal normalizes to an action record");
+        assert_eq!(
+            refusal_record.effect,
+            crate::action_record::ActionEffect::Refused
+        );
         session.finish_turn_with_outcome(
             pending,
             "refused before dispatch",
@@ -2815,6 +2801,35 @@ mod tests {
         assert!(
             !output_dir.join("turn-00002").exists(),
             "foreign calls must not leave turn folders"
+        );
+    }
+
+    #[test]
+    fn stop_preserves_recording_start_timestamp_in_session_manifest() {
+        let root = tempfile::tempdir().expect("temp dir");
+        let output_dir = root.path().join("recording");
+        let session = RecordingSession::new();
+        session
+            .start(output_dir.to_str().expect("utf-8 output dir"), false, None)
+            .expect("start recording");
+
+        let read_manifest = || -> Value {
+            serde_json::from_slice(
+                &std::fs::read(output_dir.join("session.json")).expect("read session manifest"),
+            )
+            .expect("parse session manifest")
+        };
+        let started_at_ms = read_manifest()["started_at_monotonic_ms"]
+            .as_u64()
+            .expect("start timestamp is an integer");
+
+        std::thread::sleep(Duration::from_millis(100));
+        session.stop_owner(None).expect("stop recording");
+
+        assert_eq!(
+            read_manifest()["started_at_monotonic_ms"],
+            started_at_ms,
+            "finalizing the manifest must not replace the recording start time"
         );
     }
 

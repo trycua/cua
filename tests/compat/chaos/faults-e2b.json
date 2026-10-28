@@ -1,0 +1,13 @@
+{"faults": {
+  "gateway_kill": {"apply": "kill -KILL \"$(cat \"$CHAOS_ROOT/gateway.pid\")\" || true; rm -f \"$CHAOS_ROOT/gateway.pid\"", "undo": ""},
+  "gateway_start": {"apply": "bash \"$CHAOS_ROOT/gateway.start\"", "undo": ""},
+  "daemon_kill": {"apply": "kill -KILL \"$(cat \"$CHAOS_ROOT/daemon.pid\")\" || true; rm -f \"$CHAOS_ROOT/daemon.pid\"", "undo": ""},
+  "daemon_start": {"apply": "bash \"$CHAOS_ROOT/daemon.start\"", "undo": ""},
+  "spacesd_kill": {"apply": "bash \"$CHAOS_ROOT/spacesd.kill\"", "undo": ""},
+  "partition": {"apply": "sudo -n iptables -I OUTPUT -p tcp --dport $(cat \"$CHAOS_ROOT/gateway.port\") -m comment --comment cua-chaos -j DROP", "undo": "sudo -n iptables -D OUTPUT -p tcp --dport $(cat \"$CHAOS_ROOT/gateway.port\") -m comment --comment cua-chaos -j DROP || true"},
+  "partition_heal": {"apply": "sudo -n iptables -D OUTPUT -p tcp --dport $(cat \"$CHAOS_ROOT/gateway.port\") -m comment --comment cua-chaos -j DROP; true", "undo": ""},
+  "disk_full": {"apply": "bash \"$CHAOS_ROOT/space.exec\" 'dd if=/dev/zero of=/var/tmp/fill bs=1M count=6000 2>/dev/null || true'", "undo": ""},
+  "disk_free": {"apply": "bash \"$CHAOS_ROOT/space.exec\" 'rm -f /var/tmp/fill'", "undo": ""},
+  "oom": {"apply": "bash \"$CHAOS_ROOT/space.exec\" 'python3 -c \"a=bytearray(3*2**30)\" || true'", "undo": ""},
+  "host_loss": {"apply": "true", "undo": ""}
+}}

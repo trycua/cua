@@ -1,0 +1,18 @@
+{
+  "id": "MB-10",
+  "title": "Reveal a hover-only toolbar and click one action",
+  "group": "P",
+  "category": "precision",
+  "ability": "hover_menu",
+  "dimension_tags": [
+    "hover",
+    "coverage_probe"
+  ],
+  "timeout_s": 360,
+  "max_turns": 45,
+  "app_args": [
+    "--mode",
+    "hover"
+  ],
+  "coverage_caveat": "Codex computer-use API has no hover or pointer-move tool; report separately."
+}

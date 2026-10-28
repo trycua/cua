@@ -32,7 +32,7 @@ use crate::util::internal;
 /// `cua sb stream-probe`.
 #[derive(Args, Debug, Clone)]
 pub struct StreamProbeArgs {
-    /// Sandbox name or ref (`local:NAME`, `cloud:NAME`).
+    /// Sandbox name or ref (`local:NAME`).
     pub name: String,
     /// Stream this window (an id from `cua do window ls`) instead of the
     /// primary display.
@@ -435,6 +435,7 @@ async fn presence_agents(env: &SpacesdClient) -> Result<Vec<String>, CuaError> {
             request.to_string(),
             1,
             10_000,
+            None,
         )
         .await?;
     let joined: Value = serde_json::from_str(

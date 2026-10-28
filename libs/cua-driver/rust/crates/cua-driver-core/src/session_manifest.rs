@@ -339,6 +339,13 @@ impl SessionManifest {
         let bundle_id = resource
             .get("bundle_id")
             .and_then(serde_json::Value::as_str);
+        // The process path the platform adapter read from the OS for this
+        // exact pid. Unlike `bundle_id` and `launch_path`, which come from
+        // `list_apps` (and on Windows are matched to a running process by file
+        // name only), this cannot be influenced by naming a program.
+        let attested_executable = resource
+            .pointer("/fingerprint/executable")
+            .and_then(serde_json::Value::as_str);
         let executable = resource
             .pointer("/fingerprint/executable")
             .or_else(|| resource.get("executable"))
@@ -346,16 +353,13 @@ impl SessionManifest {
             .and_then(serde_json::Value::as_str);
         self.applications.iter().any(|application| {
             (!require_all_windows || application.all_windows)
-                && (application
-                    .bundle_id
+                && (application.bundle_id.as_deref().is_some_and(|allowed| {
+                    bundle_grant_matches(allowed, bundle_id, attested_executable)
+                }) || application
+                    .executable
                     .as_deref()
-                    .zip(bundle_id)
-                    .is_some_and(|(allowed, actual)| allowed == actual)
-                    || application
-                        .executable
-                        .as_deref()
-                        .zip(executable)
-                        .is_some_and(|(allowed, actual)| allowed == actual))
+                    .zip(executable)
+                    .is_some_and(|(allowed, actual)| allowed == actual))
         })
     }
 
@@ -985,6 +989,8 @@ pub fn load_manifest(path: &Path) -> Result<SessionManifest, String> {
                 "press_key",
                 "hotkey",
                 "set_value",
+                "run_steps",
+                "run_script",
                 "mouse_button_down",
                 "mouse_button_up",
                 "mouse_drag",
@@ -1065,7 +1071,7 @@ fn validate_tools(section: &str, tools: Vec<String>) -> Result<HashSet<String>, 
 fn canonical_tool_name(tool: &str) -> &str {
     match tool {
         "type_text_chars" => "type_text",
-        other => other,
+        other => crate::tool::renamed_tool(other).unwrap_or(other),
     }
 }
 
@@ -1237,6 +1243,102 @@ fn validate_manifest_paths(section: &str, paths: Vec<String>) -> Result<HashSet<
         }
     }
     Ok(validated)
+}
+
+/// Whether a `bundle_id` grant names a Windows program by file path (for
+/// example `C:\Program Files\App\app.exe`) rather than by package or bundle
+/// identity (`Vendor.App_8wekyb3d8bbwe`, `com.example.Editor`).
+///
+/// Purely textual, so it behaves the same on every host OS and can be
+/// unit-tested anywhere. Drive-letter (`C:\`, `C:/`), UNC (`\\server\share`)
+/// and verbatim (`\\?\C:\`) forms count as paths.
+fn is_windows_path_identity(value: &str) -> bool {
+    let value = value.trim();
+    let mut chars = value.chars();
+    let drive_path = matches!(
+        (chars.next(), chars.next(), chars.next()),
+        (Some(letter), Some(':'), Some('\\' | '/')) if letter.is_ascii_alphabetic()
+    );
+    drive_path || value.starts_with("\\\\")
+}
+
+/// Normalize a Windows executable path for comparison: strip the `\\?\` and
+/// `\\?\UNC\` verbatim prefixes, treat `/` as `\`, collapse repeated
+/// separators and fold case (the file system is case-insensitive).
+///
+/// Returns `None`, so callers fail closed, for anything that is not an absolute
+/// drive or UNC path with at least one component below the root, or that
+/// contains a `.` or `..` component. The path read from a live process never
+/// has those, and resolving them lexically could point somewhere else once
+/// links are followed.
+fn normalize_windows_executable_path(path: &str) -> Option<String> {
+    let path = path.trim().replace('/', "\\");
+    let (unc, rest) = if let Some(rest) = path.strip_prefix("\\\\?\\UNC\\") {
+        (true, rest)
+    } else if let Some(rest) = path.strip_prefix("\\\\?\\") {
+        (false, rest)
+    } else if let Some(rest) = path.strip_prefix("\\\\") {
+        if rest.starts_with(['?', '.']) {
+            // `\\.\` device paths and malformed verbatim prefixes.
+            return None;
+        }
+        (true, rest)
+    } else {
+        (false, path.as_str())
+    };
+    let mut components = rest.split('\\').filter(|component| !component.is_empty());
+    let root = components.next()?;
+    let root = if unc {
+        let share = components.next()?;
+        format!("\\\\{}\\{}", root.to_lowercase(), share.to_lowercase())
+    } else {
+        let mut letters = root.chars();
+        match (letters.next(), letters.next(), letters.next()) {
+            (Some(letter), Some(':'), None) if letter.is_ascii_alphabetic() => root.to_lowercase(),
+            _ => return None,
+        }
+    };
+    let mut normalized = root;
+    let mut below_root = 0usize;
+    for component in components {
+        if component == "." || component == ".." {
+            return None;
+        }
+        normalized.push('\\');
+        normalized.push_str(&component.to_lowercase());
+        below_root += 1;
+    }
+    (below_root > 0).then_some(normalized)
+}
+
+/// Decide whether an application `bundle_id` grant covers a running process.
+///
+/// `claimed_bundle_id` is what `list_apps` reported for the pid.
+/// `attested_executable` is the full image path read from the OS for that
+/// exact pid.
+///
+/// - Package or bundle identities (macOS bundle ids, Windows package family
+///   names and AUMIDs) are compared with the claimed identity, as before.
+/// - A grant that is a Windows file path is compared with the attested
+///   executable path only. The claimed identity is ignored because Windows
+///   `list_apps` pairs a running process with an installed app by file name,
+///   so any program named like the granted one would otherwise inherit the
+///   grant. A missing or unusable path never matches.
+fn bundle_grant_matches(
+    granted_bundle_id: &str,
+    claimed_bundle_id: Option<&str>,
+    attested_executable: Option<&str>,
+) -> bool {
+    if is_windows_path_identity(granted_bundle_id) {
+        return match (
+            normalize_windows_executable_path(granted_bundle_id),
+            attested_executable.and_then(normalize_windows_executable_path),
+        ) {
+            (Some(granted), Some(actual)) => granted == actual,
+            _ => false,
+        };
+    }
+    claimed_bundle_id.is_some_and(|actual| actual == granted_bundle_id)
 }
 
 fn path_allowed(path: &str, exact: &HashSet<String>, roots: &[PathGrant]) -> bool {
@@ -2024,6 +2126,200 @@ allow:
         )
         .unwrap_err();
         assert!(overlap.contains("more than one decision set"));
+    }
+
+    const GRANTED_CHROME: &str = r"C:\Program Files\Google\Chrome\Application\chrome.exe";
+
+    #[test]
+    fn windows_path_identity_detection_is_textual() {
+        assert!(is_windows_path_identity(GRANTED_CHROME));
+        assert!(is_windows_path_identity("c:/tools/app.exe"));
+        assert!(is_windows_path_identity(r"\\?\C:\tools\app.exe"));
+        assert!(is_windows_path_identity(r"\\server\share\app.exe"));
+        // Package and bundle identities are not paths.
+        assert!(!is_windows_path_identity(
+            "Microsoft.WindowsNotepad_8wekyb3d8bbwe"
+        ));
+        assert!(!is_windows_path_identity(
+            "Microsoft.WindowsNotepad_8wekyb3d8bbwe!App"
+        ));
+        assert!(!is_windows_path_identity("com.apple.Safari"));
+        assert!(!is_windows_path_identity("chrome.exe"));
+    }
+
+    #[test]
+    fn windows_executable_paths_normalize_case_prefix_and_separators() {
+        let expected = Some(r"c:\program files\google\chrome\application\chrome.exe".to_owned());
+        for variant in [
+            GRANTED_CHROME,
+            r"c:\PROGRAM FILES\google\Chrome\Application\CHROME.EXE",
+            r"\\?\C:\Program Files\Google\Chrome\Application\chrome.exe",
+            "C:/Program Files/Google/Chrome/Application/chrome.exe",
+            r"C:\Program Files\\Google\Chrome\Application\chrome.exe",
+            r"  C:\Program Files\Google\Chrome\Application\chrome.exe  ",
+        ] {
+            assert_eq!(
+                normalize_windows_executable_path(variant),
+                expected,
+                "{variant}"
+            );
+        }
+        assert_eq!(
+            normalize_windows_executable_path(r"\\?\UNC\Server\Share\Tools\App.exe"),
+            Some(r"\\server\share\tools\app.exe".to_owned())
+        );
+        assert_eq!(
+            normalize_windows_executable_path(r"\\Server\Share\Tools\App.exe"),
+            Some(r"\\server\share\tools\app.exe".to_owned())
+        );
+    }
+
+    #[test]
+    fn unusable_windows_executable_paths_do_not_normalize() {
+        for bad in [
+            "",
+            "chrome.exe",
+            r"relative\chrome.exe",
+            r"C:chrome.exe",
+            r"C:\",
+            r"C:\Program Files\..\Users\victim\chrome.exe",
+            r"C:\Program Files\.\chrome.exe",
+            r"\\.\C:\chrome.exe",
+            r"\\server",
+            r"\\server\share",
+        ] {
+            assert_eq!(normalize_windows_executable_path(bad), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn path_style_bundle_grant_requires_the_real_executable_path() {
+        // Same file name, different directory: the claimed identity matches
+        // (Windows `list_apps` merges by file name) but the real path does not.
+        assert!(!bundle_grant_matches(
+            GRANTED_CHROME,
+            Some(GRANTED_CHROME),
+            Some(r"C:\Users\victim\chrome.exe"),
+        ));
+        // Same path, whatever its spelling.
+        assert!(bundle_grant_matches(
+            GRANTED_CHROME,
+            Some(GRANTED_CHROME),
+            Some(GRANTED_CHROME),
+        ));
+        assert!(bundle_grant_matches(
+            GRANTED_CHROME,
+            None,
+            Some(r"\\?\c:\program files\google\chrome\application\CHROME.EXE"),
+        ));
+        // The real path decides even if the claimed identity differs.
+        assert!(bundle_grant_matches(
+            GRANTED_CHROME,
+            Some(r"C:\Windows\notepad.exe"),
+            Some(GRANTED_CHROME),
+        ));
+        // Fail closed when the path cannot be resolved or is unusable.
+        assert!(!bundle_grant_matches(
+            GRANTED_CHROME,
+            Some(GRANTED_CHROME),
+            None
+        ));
+        assert!(!bundle_grant_matches(
+            GRANTED_CHROME,
+            Some(GRANTED_CHROME),
+            Some("chrome.exe"),
+        ));
+        assert!(!bundle_grant_matches(
+            r"C:\Program Files\..\Program Files\Google\Chrome\Application\chrome.exe",
+            Some(GRANTED_CHROME),
+            Some(GRANTED_CHROME),
+        ));
+    }
+
+    #[test]
+    fn package_and_bundle_identity_grants_still_match_the_claimed_identity() {
+        let family = "Microsoft.WindowsNotepad_8wekyb3d8bbwe";
+        assert!(bundle_grant_matches(family, Some(family), None));
+        assert!(!bundle_grant_matches(
+            family,
+            Some("Other.App_8wekyb3d8bbwe"),
+            None
+        ));
+        assert!(!bundle_grant_matches(
+            family,
+            None,
+            Some(r"C:\Windows\notepad.exe")
+        ));
+        assert!(bundle_grant_matches(
+            "com.apple.Safari",
+            Some("com.apple.Safari"),
+            None
+        ));
+        assert!(!bundle_grant_matches("com.apple.Safari", None, None));
+    }
+
+    #[cfg(feature = "yaml")]
+    #[test]
+    fn windows_path_bundle_grant_does_not_cover_a_same_named_program() {
+        let loaded = manifest(&format!(
+            r#"
+version: 2
+mode: bounded
+expires_after: 8h
+idle_timeout: 30m
+resources:
+  apps:
+    - bundle_id: '{GRANTED_CHROME}'
+      windows: all
+allow:
+  tools: [list_windows, click]
+"#
+        ))
+        .unwrap();
+        // What Windows `list_apps` reports for any running `chrome.exe`: the
+        // installed Chrome's bundle id, whatever the process's real location.
+        let resource = |kind: &str, fingerprint: serde_json::Value| {
+            serde_json::json!({
+                "kind": kind,
+                "pid": 42,
+                "window_id": 7,
+                "bundle_id": GRANTED_CHROME,
+                "fingerprint": fingerprint,
+            })
+        };
+        let at = |path: &str| serde_json::json!({"pid": 42, "start_time": 1, "executable": path});
+
+        for (adapter, kind) in [
+            ("private_observation", "window"),
+            ("private_observation", "application"),
+            ("desktop_input", "window_input"),
+            ("desktop_input", "application_input"),
+        ] {
+            let outcome = |fingerprint| {
+                loaded.authorize_protected_resource(adapter, &resource(kind, fingerprint))
+            };
+            // The genuine program, in any spelling the OS may report.
+            outcome(at(GRANTED_CHROME)).unwrap();
+            outcome(at(
+                r"\\?\C:\Program Files\Google\Chrome\Application\chrome.exe",
+            ))
+            .unwrap();
+            // A different program that only shares the file name.
+            assert!(
+                outcome(at(r"C:\Users\victim\chrome.exe")).is_err(),
+                "{adapter}/{kind}"
+            );
+            // No resolvable path: refused.
+            assert!(
+                outcome(serde_json::json!({"pid": 42, "start_time": 1, "executable": null}))
+                    .is_err(),
+                "{adapter}/{kind}"
+            );
+            assert!(
+                outcome(serde_json::Value::Null).is_err(),
+                "{adapter}/{kind}"
+            );
+        }
     }
 
     #[test]

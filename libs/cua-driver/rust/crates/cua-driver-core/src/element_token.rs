@@ -58,6 +58,43 @@ impl<T> ResolvedElement<T> {
     }
 }
 
+/// Message for a call that names its target only by an `element_token` the
+/// runtime no longer knows (or never minted), so no pid can be derived.
+pub const STALE_TOKEN_WITHOUT_PID: &str =
+    "element_token is stale or unknown; call get_window_state again to refresh";
+
+/// The refusal for [`STALE_TOKEN_WITHOUT_PID`]: `stale_element_token`, with
+/// the hint that a current token names its own pid.
+pub fn stale_token_without_pid() -> ToolResult {
+    ToolResult::error(format!(
+        "{STALE_TOKEN_WITHOUT_PID} (a current token names its own pid)."
+    ))
+    .with_structured(serde_json::json!({
+        "status": "refused",
+        "refusal": { "code": "stale_element_token", "message": STALE_TOKEN_WITHOUT_PID },
+    }))
+}
+
+/// Fill a missing `pid` from the call's `element_token`. A token names its
+/// snapshot, and so its window and process, so a token-only call needs no
+/// pid. An explicit `pid` wins and a call without a token is left as is (the
+/// tool reports its own missing-pid error). A token whose snapshot is gone
+/// is refused as `stale_element_token` rather than as a missing pid.
+pub fn fill_pid_from_token(
+    args: &mut serde_json::Value,
+    pid_for_token: impl FnOnce(&serde_json::Value) -> Option<i32>,
+) -> Result<(), ToolResult> {
+    let present = |key: &str| args.get(key).is_some_and(|value| !value.is_null());
+    if present("pid") || !present("element_token") {
+        return Ok(());
+    }
+    let pid = pid_for_token(args).ok_or_else(stale_token_without_pid)?;
+    if let Some(object) = args.as_object_mut() {
+        object.insert("pid".to_owned(), pid.into());
+    }
+    Ok(())
+}
+
 pub(crate) fn refusal(code: &str, message: String) -> ToolResult {
     ToolResult::error(message.clone()).with_structured(serde_json::json!({
         "status": "refused", "refusal": { "code": code, "message": message }
@@ -67,6 +104,26 @@ pub(crate) fn refusal(code: &str, message: String) -> ToolResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fill_pid_from_token_resolves_only_token_only_calls() {
+        let mut token_only = serde_json::json!({ "element_token": "s00000001:2" });
+        fill_pid_from_token(&mut token_only, |_| Some(42)).unwrap();
+        assert_eq!(token_only["pid"], 42);
+
+        let mut explicit = serde_json::json!({ "pid": 7, "element_token": "s00000001:2" });
+        fill_pid_from_token(&mut explicit, |_| panic!("an explicit pid wins")).unwrap();
+        assert_eq!(explicit["pid"], 7);
+
+        let mut no_token = serde_json::json!({ "x": 1, "y": 2 });
+        fill_pid_from_token(&mut no_token, |_| panic!("no token, no lookup")).unwrap();
+        assert!(no_token.get("pid").is_none());
+
+        let mut stale = serde_json::json!({ "pid": null, "element_token": "s00000009:0" });
+        let refused = fill_pid_from_token(&mut stale, |_| None).unwrap_err();
+        let structured = refused.structured_content.unwrap();
+        assert_eq!(structured["refusal"]["code"], "stale_element_token");
+    }
 
     #[test]
     fn token_round_trips_through_format_then_parse() {

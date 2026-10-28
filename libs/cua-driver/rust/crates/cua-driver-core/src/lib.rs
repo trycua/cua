@@ -10,6 +10,7 @@
 // here would churn every adapter's call sites for no runtime gain.
 #![allow(clippy::result_large_err)]
 
+pub mod guide;
 pub mod mcp_skills;
 pub mod mcp_wire;
 
@@ -53,6 +54,8 @@ pub mod action_target;
 pub mod agent_cursor;
 pub mod authorization;
 pub mod background_input;
+pub mod batch_nudge;
+pub mod batch_tools;
 pub mod browser;
 pub mod build_info;
 pub mod capture_mode;
@@ -87,12 +90,16 @@ pub mod perception_tools;
 pub mod pip_hook;
 pub mod pointer_shape;
 pub mod policy;
+pub mod post_action_wait;
 pub mod protocol;
 pub mod recording;
 pub mod recording_loader;
 pub mod recording_render;
 pub mod recording_tools;
 pub mod recording_zoom;
+pub mod recovery_hint;
+#[cfg(feature = "script")]
+pub mod script_tool;
 pub mod server;
 pub mod session;
 pub mod session_authorization;
@@ -103,9 +110,11 @@ pub mod snapshot_store;
 #[cfg(test)]
 pub(crate) mod snapshot_test_support;
 pub mod socket_io;
+pub mod step_pacing;
 pub mod text_sanitize;
 pub mod timestamp;
 pub mod tool;
+pub mod tool_activity;
 pub mod tool_args;
 pub mod tool_schema;
 pub mod video;
@@ -113,6 +122,7 @@ pub mod video_ffmpeg;
 pub mod walk_budget;
 pub mod window_inspection;
 pub mod window_observation;
+pub mod window_state_view;
 pub mod window_target;
 
 pub use cua_driver_contract::{CaptureScope, EscalationReason, TOOL_INVOCATION_FAILED_CODE};

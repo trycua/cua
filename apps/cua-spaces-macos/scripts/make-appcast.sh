@@ -13,10 +13,20 @@
 #       --dmg cua-spaces-0.2.0-darwin-universal.dmg --version 0.2.0 \
 #       --download-base https://github.com/trycua/cua/releases/download/cua-spaces-v0.2.0/ \
 #       [--previous cua-spaces-appcast.xml] [--notes notes.md] --out cua-spaces-appcast.xml
-#       [--sparkle-bin DIR]
+#       [--sparkle-bin DIR] [--electron]
+#
+# --electron (off by default; docs: apps/cua-spaces-desktop/docs/sparkle-cutover.md)
+# makes the item the Electron app's disk image instead of the Swift app's:
+# the Sparkle cutover, one stable release whose update replaces the Swift
+# app with the Electron app (same bundle id, team and EdDSA key). Without
+# it an Electron image is refused, and with it a Swift one is
+# (verify-appcast.sh --electron).
 #
 # A version with a suffix (X.Y.Z-suffix) goes to the `beta` channel, which
-# only apps set to "Update to: Beta" see; X.Y.Z goes to everyone. --notes
+# only apps set to Beta see; X.Y.Z goes to everyone. A nightly
+# (X.Y.Z-nightly.YYYYMMDD+sha, nightly-cua-spaces.yml, written into the
+# separate nightly appcast) goes to the `nightly` channel, so only apps set
+# to Nightly install it even if another app read that feed. --notes
 # (Markdown) becomes the item's release notes. The key (the base64 Ed25519
 # seed from Sparkle's key format) is read from the environment and handed
 # to Sparkle on standard input; it is never written to disk or printed.
@@ -32,6 +42,7 @@ previous=""
 notes=""
 out=""
 bin=""
+kind=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --dmg) dmg="$2"; shift ;;
@@ -41,13 +52,14 @@ while [ $# -gt 0 ]; do
     --notes) notes="$2"; shift ;;
     --out) out="$2"; shift ;;
     --sparkle-bin) bin="$2"; shift ;;
-    -h | --help) sed -n '5,27p' "$0"; exit 0 ;;
+    --electron) kind=(--electron) ;;
+    -h | --help) sed -n '5,35p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
   shift
 done
 [ -f "$dmg" ] || { echo "--dmg must be a disk image" >&2; exit 2; }
-[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "--version must look like 1.2.3 or 1.2.3-suffix" >&2; exit 2; }
+[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]] || { echo "--version must look like 1.2.3, 1.2.3-suffix or 1.2.3-suffix+build" >&2; exit 2; }
 case "$base" in http://* | https://*) ;; *) echo "--download-base must be a URL" >&2; exit 2 ;; esac
 case "$base" in */) ;; *) base="$base/" ;; esac
 [ -n "$out" ] || { echo "--out is required" >&2; exit 2; }
@@ -65,7 +77,9 @@ cp "$dmg" "$work/$name"
 [ -n "$previous" ] && [ -s "$previous" ] && cp "$previous" "$work/cua-spaces-appcast.xml"
 [ -n "$notes" ] && [ -s "$notes" ] && cp "$notes" "$work/${name%.dmg}.md"
 channel=()
-[[ "$version" == *-* ]] && channel=(--channel beta)
+if [[ "${version%%+*}" == *-nightly* ]]; then channel=(--channel nightly)
+elif [[ "${version%%+*}" == *-* ]]; then channel=(--channel beta)
+fi
 
 printf '%s' "$CUA_SPACES_SPARKLE_ED_PRIVATE_KEY" |
   "$bin/generate_appcast" --ed-key-file - ${channel[@]+"${channel[@]}"} --embed-release-notes \
@@ -93,7 +107,7 @@ tree.write(path, encoding="utf-8", xml_declaration=True)
 PY
 
 "$here/scripts/verify-appcast.sh" --appcast "$work/cua-spaces-appcast.xml" --dmg "$work/$name" \
-  --url "$base$name" --version "$version" --sparkle-bin "$bin"
+  --url "$base$name" --version "$version" --sparkle-bin "$bin" ${kind[@]+"${kind[@]}"}
 mkdir -p "$(dirname "$out")"
 cp "$work/cua-spaces-appcast.xml" "$out"
 echo "$out"

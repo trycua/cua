@@ -130,7 +130,7 @@ pub fn ensure_started() -> bool {
                 }
                 // No frame will ever be painted again: unblock every pointer
                 // action still waiting for its glide to arrive.
-                crate::overlay::release_arrivals();
+                crate::overlay::release_all_arrivals();
             })
             .expect("spawn cua-overlay-wl thread");
         tx
@@ -373,7 +373,7 @@ fn apply_keyed_command(
         _ => None,
     };
     if let Some((target_x, target_y)) = seed_target {
-        render.seed_start_if_sentinel(&key, target_x, target_y, frame);
+        render.seed_start_if_unplaced(&key, target_x, target_y, frame);
     }
 
     let disabling = matches!(&cmd, OverlayCommand::SetEnabled(false));
@@ -471,19 +471,53 @@ fn frame_plan(
     (selected, targets)
 }
 
+/// Whether a global logical `[x, y, w, h]` effect rect overlaps an output.
+fn effect_rect_intersects_output(layout: &OutputLayout, [x, y, w, h]: [f64; 4]) -> bool {
+    let left = f64::from(layout.origin_x);
+    let top = f64::from(layout.origin_y);
+    w > 0.0
+        && h > 0.0
+        && x < left + f64::from(layout.width)
+        && x + w > left
+        && y < top + f64::from(layout.height)
+        && y + h > top
+}
+
+/// Outputs touched by any effect rect, beyond the one each cursor sits on.
+fn effect_spill_outputs(
+    layouts: &[OutputLayout],
+    effect_rects: impl IntoIterator<Item = [f64; 4]>,
+) -> HashSet<u32> {
+    let rects: Vec<[f64; 4]> = effect_rects.into_iter().collect();
+    layouts
+        .iter()
+        .filter(|layout| {
+            rects
+                .iter()
+                .any(|rect| effect_rect_intersects_output(layout, *rect))
+        })
+        .map(|layout| layout.id)
+        .collect()
+}
+
 fn visible_cores_for_output<'a>(
     cores: &'a CursorMap<RenderStateCore>,
     layouts: &[OutputLayout],
     output_id: u32,
 ) -> Vec<(&'a CursorKey, &'a RenderStateCore)> {
+    let output = layouts.iter().find(|layout| layout.id == output_id);
     let mut visible_cores: Vec<_> = cores
         .iter()
         .filter(|(_, core)| {
-            core.visible
-                && core.pos.0 >= -100.0
-                && core.idle_alpha >= 0.004
-                && select_output(layouts, core.pos.0, core.pos.1)
+            core.is_revealed()
+                && (select_output(layouts, core.pos.0, core.pos.1)
                     .is_some_and(|selected| selected.id == output_id)
+                    // A cursor on another output whose trail or glow reaches
+                    // this one is painted here too, at this output's origin.
+                    || output.is_some_and(|layout| {
+                        core.effect_bounds()
+                            .is_some_and(|rect| effect_rect_intersects_output(layout, rect))
+                    }))
         })
         .collect();
     visible_cores.sort_by_key(|(left, _)| *left);
@@ -753,7 +787,7 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
         // a pointer action lands after the viewer saw the glide end (the X11
         // renderer's contract).
         for key in arrived {
-            crate::overlay::fire_arrival(&key);
+            crate::overlay::arrival_fire(&key);
         }
         frame_tick_needed = next_frame_tick_needed;
     }
@@ -827,6 +861,7 @@ fn earliest_idle_fade_wait(cores: &CursorMap<RenderStateCore>) -> Option<Duratio
 
 /// Advance every cursor and return the keys whose planned glide just ended.
 fn tick_all_cores(cores: &mut CursorMap<RenderStateCore>, dt: f64) -> Vec<CursorKey> {
+    cursor_overlay::render_map::update_peer_presence(cores.values_mut());
     cores
         .iter_mut()
         .filter_map(|(key, core)| core.tick_motion(dt).then(|| key.clone()))
@@ -837,13 +872,12 @@ fn tick_all_cores(cores: &mut CursorMap<RenderStateCore>, dt: f64) -> Vec<Cursor
 /// gated on a shown, placed cursor: a hidden cursor's motion is quiesced by
 /// [`quiesce_hidden`] and never repaints a layer surface.
 fn needs_frame_tick(core: &RenderStateCore) -> bool {
-    core.visible && core.pos.0 >= -100.0 && core.needs_frame_tick()
+    core.visible && core.placed && core.needs_frame_tick()
 }
 
 fn quiesce_hidden(core: &mut RenderStateCore) {
-    core.path = None;
-    core.spring = None;
-    core.spring_tgt = None;
+    core.cancel_motion();
+    core.click_age = None;
     core.click_t = None;
 }
 
@@ -875,14 +909,29 @@ fn redraw(
         .render
         .cursors
         .values()
-        .filter(|core| core.visible && core.pos.0 >= -100.0 && core.idle_alpha >= 0.004)
+        .filter(|core| core.is_revealed())
         .map(|core| core.pos);
-    let (selected, targets) = frame_plan(
+    let (mut selected, mut targets) = frame_plan(
         &layouts,
         &state.painted_outputs,
         &state.initialized_outputs,
         cursor_positions,
     );
+    // Each surface is a full-output buffer with full damage, so effects on the
+    // cursor's own output are drawn and erased with no extra bookkeeping. A
+    // trail or glow can spill onto a neighbouring output, though: paint those
+    // outputs too, and record them as painted so they are cleared next frame.
+    let effect_rects = state
+        .render
+        .cursors
+        .values()
+        .filter(|core| core.is_revealed())
+        .filter_map(|core| core.effect_bounds());
+    for id in effect_spill_outputs(&layouts, effect_rects) {
+        if selected.insert(id) && !targets.iter().any(|target| target.id == id) {
+            targets.push(FrameTarget { id });
+        }
+    }
 
     for target in targets {
         redraw_output(state, shm, qh, target, &layouts)?;
@@ -1351,6 +1400,7 @@ mod tests {
     fn positioned_core() -> RenderStateCore {
         let mut core = RenderStateCore::new(CursorConfig::default());
         core.pos = (100.0, 100.0);
+        core.placed = true;
         core.motion.idle_hide_ms = 1_000.0;
         core
     }
@@ -1398,6 +1448,7 @@ mod tests {
                 x: 400.0,
                 y: 300.0,
                 end_heading_radians: std::f64::consts::FRAC_PI_4,
+                target: None,
             },
         );
         let mut still = positioned_core();
@@ -1410,7 +1461,7 @@ mod tests {
         }
         assert_eq!(arrivals, vec!["mover".to_owned()]);
         assert!(
-            render.cursors["mover"].path.is_none(),
+            render.cursors["mover"].trajectory.is_none(),
             "the planned glide has ended"
         );
     }
@@ -1469,11 +1520,49 @@ mod tests {
         ];
         let mut core = positioned_core();
         core.pos = (400.0, 300.0);
+        core.placed = true;
         let cores = CursorMap::from([("session".to_owned(), core)]);
 
         assert_eq!(select_output(&layouts, 400.0, 300.0).unwrap().id, 4);
         assert_eq!(visible_cores_for_output(&cores, &layouts, 4).len(), 1);
         assert!(visible_cores_for_output(&cores, &layouts, 8).is_empty());
+    }
+
+    #[test]
+    fn a_cursor_on_a_monitor_left_of_the_origin_is_drawn_there() {
+        // A left-hand monitor puts real cursor positions far below zero; they
+        // must not be mistaken for the never-placed sentinel.
+        let layouts = vec![
+            OutputLayout {
+                id: 3,
+                origin_x: -3840,
+                origin_y: 0,
+                width: 3840,
+                height: 2160,
+            },
+            OutputLayout {
+                id: 4,
+                origin_x: 0,
+                origin_y: 0,
+                width: 3840,
+                height: 2160,
+            },
+        ];
+        let mut core = positioned_core();
+        core.pos = (-2220.0, 980.0);
+        core.placed = true;
+        let cores = CursorMap::from([("session".to_owned(), core)]);
+        assert_eq!(visible_cores_for_output(&cores, &layouts, 3).len(), 1);
+        assert!(visible_cores_for_output(&cores, &layouts, 4).is_empty());
+        // And it paints there: a 160 px crop of the left monitor around it.
+        let mut crop = tiny_skia::Pixmap::new(160, 160).unwrap();
+        cursor_overlay::paint_cursor(&mut crop, &cores["session"], -2300.0, 900.0, None, 1.0);
+        assert!(crop.pixels().iter().any(|pixel| pixel.alpha() > 0));
+        let unplaced = CursorMap::from([(
+            "session".to_owned(),
+            RenderStateCore::new(CursorConfig::default()),
+        )]);
+        assert!(visible_cores_for_output(&unplaced, &layouts, 3).is_empty());
     }
 
     #[test]
@@ -1553,6 +1642,32 @@ mod tests {
     }
 
     #[test]
+    fn effects_spilling_across_an_output_edge_select_the_neighbour() {
+        let layouts = three_monitor_layout();
+        let first = layouts[0];
+        let right_edge = f64::from(first.origin_x) + f64::from(first.width);
+        let top = f64::from(first.origin_y);
+
+        // A trail straddling the edge between output 1 and its neighbour.
+        let straddle = [right_edge - 100.0, top + 10.0, 200.0, 50.0];
+        assert_eq!(
+            effect_spill_outputs(&layouts, Some(straddle)),
+            HashSet::from([1, 2]),
+            "the neighbour output must be painted too"
+        );
+
+        // An effect wholly inside output 1 touches no other output, and
+        // degenerate rects touch nothing.
+        let inside = [f64::from(first.origin_x) + 10.0, top + 10.0, 50.0, 50.0];
+        assert_eq!(
+            effect_spill_outputs(&layouts, Some(inside)),
+            HashSet::from([first.id])
+        );
+        assert!(effect_spill_outputs(&layouts, Some([0.0, 0.0, 0.0, 0.0])).is_empty());
+        assert!(effect_spill_outputs(&layouts, std::iter::empty()).is_empty());
+    }
+
+    #[test]
     fn hide_or_session_removal_clears_every_previously_painted_output() {
         let layouts = three_monitor_layout();
         let painted = HashSet::from([1, 2, 3]);
@@ -1614,6 +1729,11 @@ mod tests {
     fn stable_visible_overlay_keeps_frame_cadence_for_resting_motion() {
         let mut core = positioned_core();
         core.idle_secs = 0.25;
+        core.pos = (-1.0e9, -1.0e9);
+        assert!(needs_frame_tick(&core));
+        core.placed = false;
+        assert!(!needs_frame_tick(&core));
+        core.placed = true;
         assert!(core.has_resting_motion());
         let mut cores = CursorMap::from([("cursor-a".to_owned(), core)]);
         assert_eq!(next_wait(&cores, false, false), WlWait::Frame);
@@ -1650,11 +1770,12 @@ mod tests {
                 x: 50.0,
                 y: 50.0,
                 end_heading_radians: 0.0,
+                target: None,
             },
         ));
         let core = &render.cursors["session-a"];
         assert_eq!(core.pos, (2.0, 2.0));
-        assert!(core.path.is_some());
+        assert!(core.trajectory.is_some());
     }
 
     #[test]
@@ -1680,8 +1801,7 @@ mod tests {
         core.visible = false;
         quiesce_hidden(&mut core);
         assert!(core.click_t.is_none());
-        assert!(core.path.is_none());
-        assert!(core.spring.is_none());
+        assert!(core.trajectory.is_none());
         let cores = CursorMap::from([("cursor-a".to_owned(), core)]);
         assert_eq!(
             next_wait(&cores, false, false),
@@ -1804,7 +1924,7 @@ mod tests {
         ));
         let core = state.render.cursors.get("session-a").unwrap();
         assert_eq!(core.session_label.as_deref(), Some("Synthetic session"));
-        assert!(core.pos.0 < -50.0);
+        assert!(!core.placed);
         assert!(state.outputs.is_empty());
         assert!(matches!(
             rx.try_recv(),
@@ -1934,7 +2054,11 @@ mod tests {
             &layouts,
             &HashSet::new(),
             &initialized(&layouts),
-            render.cursors.values().map(|core| core.pos),
+            render
+                .cursors
+                .values()
+                .filter(|core| core.placed)
+                .map(|core| core.pos),
         );
         assert_eq!(painted, HashSet::from([1, 2]));
         assert_eq!(targets, vec![FrameTarget { id: 1 }, FrameTarget { id: 2 }]);
@@ -1954,7 +2078,11 @@ mod tests {
             &layouts,
             &painted,
             &initialized(&layouts),
-            render.cursors.values().map(|core| core.pos),
+            render
+                .cursors
+                .values()
+                .filter(|core| core.placed)
+                .map(|core| core.pos),
         );
         assert_eq!(selected, HashSet::from([2]));
         assert_eq!(targets, vec![FrameTarget { id: 1 }, FrameTarget { id: 2 }]);

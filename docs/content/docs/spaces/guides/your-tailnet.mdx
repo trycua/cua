@@ -1,0 +1,94 @@
+---
+title: Use your tailnet
+description: 'Host Spaces on your team''s own Tailscale or Headscale network instead of the cua.ai relay, with your tailnet''s identities, ACLs and SSO deciding who connects.'
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+If your team already runs [Tailscale](https://tailscale.com) or a
+self-hosted [Headscale](https://github.com/juanfont/headscale) network, a
+machine can host Spaces on that tailnet instead of the cua.ai relay. Your
+tailnet then does the networking and decides who is who:
+
+- **Identity.** A teammate is identified by their tailnet login (through
+  your identity provider and its SSO and MFA). They need no Cua env token.
+- **Access.** Your tailnet's ACLs decide which devices can reach the
+  machine at all; the machine's share list decides what each user may do.
+- **Rollout.** Your MDM or RMM installs the tailnet client as it already
+  does; Cua uses it, and never installs or reconfigures it.
+
+Nothing goes through cua.ai: no relay, no sign-in, no enrolled devices.
+
+## Set the machine up
+
+On the machine, with the tailnet client running and logged in (`tailscale
+up`, or `tailscale up --login-server https://headscale.example.com` for
+Headscale):
+
+```bash test="cli-shape" id="cua-host-setup-tailnet"
+cua host setup --tailnet --share spaces --allow bob@example.com
+```
+
+`--tailnet` serves on the machine's tailnet address (`tailscale ip -4`) on
+port 3211 and identifies callers by their tailnet login:
+
+- the machine's own tailnet user owns it (full access, as with an env token);
+- each `--allow` user can use it too;
+- anyone else on the tailnet who can reach it still needs the env token.
+
+Setup prints the command a teammate runs:
+
+```bash test="cli-shape" id="cua-spaces-add-tailnet-host"
+cua spaces add 100.101.102.103:3211 --host --name "Mac mini (spare)"
+```
+
+No token: the tailnet login is the credential. Then they create Spaces on
+it like on any host: `cua spaces create linux --on "spare mac mini"`.
+
+Run `cua host setup --tailnet` again with a different `--allow` list to
+change who may use it.
+
+## How identity works
+
+For each call from a tailnet address, the machine asks the local tailnet
+client which user owns the calling device (`tailscale whois`, the same
+lookup `tailscale serve` uses). It never trusts a name the caller sends. A
+device tagged by ACL (`tag:ci`) belongs to no user, so it needs the env
+token. Login names match the share list case-insensitively; with Headscale
+they are the Headscale user names (`bob`), with Tailscale usually emails.
+
+## Restrict it with your ACLs
+
+Let only a group reach Spaces hosts, on the one port they use:
+
+```json skip="pseudo"
+{
+  "groups": { "group:spaces": ["alice@example.com", "bob@example.com"] },
+  "tagOwners": { "tag:spaces-host": ["alice@example.com"] },
+  "acls": [
+    { "action": "accept", "src": ["group:spaces"], "dst": ["tag:spaces-host:3211"] }
+  ]
+}
+```
+
+The same policy works in Headscale's ACL file.
+
+## Tailnet or the Cua mesh
+
+| | Your tailnet (`--tailnet`) | The cua.ai relay and mesh (default) |
+|---|---|---|
+| Who runs the network | You (Tailscale or Headscale) | Cua, inside the app |
+| Identity | Your tailnet's logins and SSO | Your cua.ai account and enrolled devices |
+| Access rules | Your tailnet ACLs plus the machine's share list | Owner, share lists and sharing switch |
+| Encryption | Your tailnet's WireGuard | Cua's [WireGuard®-based mesh](/spaces/guides/relay-security#end-to-end-encrypted-connections) |
+| Browser viewer from anywhere | Only on the tailnet | Yes, through the relay |
+
+Both keep your traffic end to end encrypted. A machine set up on the cua.ai
+relay also finds direct paths over your tailnet on its own when both ends
+are on it: tailnet addresses are among the mesh's candidate paths.
+
+<Callout type="warn">
+  The machine's listener speaks plain HTTP inside the tailnet (the tailnet
+  encrypts it). Keep `--tailnet` on the tailnet address it picks; do not
+  expose port 3211 on a public interface.
+</Callout>

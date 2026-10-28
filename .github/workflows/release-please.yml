@@ -20,6 +20,15 @@ on:
           - cua-spacesd
           - cua-sdk
           - cua-spaces
+          - agent
+          - core
+          - bench
+          - bench-ui
+          - som
+          - sandbox-apps
+          - npm-core
+          - npm-playground
+          - cuabot
       bump:
         description: "Version bump for the selected component"
         required: true
@@ -39,9 +48,15 @@ concurrency:
   group: release-please-main
   cancel-in-progress: false
 
+env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
+
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    if: github.repository == 'trycua/cua'  # public repo only: needs its release secrets / AWS OIDC trust
     steps:
       - name: Generate release GitHub App token
         id: app-token
@@ -63,7 +78,7 @@ jobs:
           inputs.component == 'automatic' &&
           inputs.bump != 'automatic'
         run: |
-          echo "::error::Select cua-perception, cua-driver-rs, lume, sandbox, cua-spacesd, cua-sdk or cua-spaces when forcing a bump type."
+          echo "::error::Select a component (not automatic) when forcing a bump type."
           exit 1
 
       - name: Reject manifest tags outside main history
@@ -178,59 +193,54 @@ jobs:
 
             # Release Please can update an existing branch that predates the
             # current workflow. Refresh it, then replay only this trusted bot
-            # branch onto main so validation uses the current release tooling.
+            # branch onto main when main changed this component or the release
+            # tooling, or when the branch conflicts, so validation uses the
+            # current release tooling. Otherwise keep the branch untouched.
             git fetch origin "+refs/heads/main:refs/remotes/origin/main"
             git fetch origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
             REMOTE_HEAD=$(git rev-parse "origin/$BRANCH")
+            # Every force-push restarts the release PR's checks, so replay
+            # the branch only when it must move. Decide from main's copy of
+            # the script, before the checkout swaps in the branch's tree.
+            DECISION=$(python3 .github/scripts/release_branch_needs_rebase.py \
+              --branch "$BRANCH" --head "origin/$BRANCH")
+            echo "Release PR #$number: $DECISION"
+            # Main's copy of the replay tooling, taken before the checkout swaps
+            # in the branch's (possibly older) tree, which may not have it.
+            TOOLS="$RUNNER_TEMP/release-tools"
+            mkdir -p "$TOOLS"
+            for tool in replay_release_branch.sh merge_release_please_manifests.py; do
+              git show "origin/main:.github/scripts/$tool" > "$TOOLS/$tool"
+            done
+            chmod +x "$TOOLS/replay_release_branch.sh"
             git checkout -B "$BRANCH" "origin/$BRANCH"
             git config user.name "trycua-release[bot]"
             git config user.email "trycua-release[bot]@users.noreply.github.com"
-            if ! git rebase origin/main; then
-              mapfile -t CONFLICTS < <(git diff --name-only --diff-filter=U)
-              if [[ "${#CONFLICTS[@]}" -ne 1 || \
-                    "${CONFLICTS[0]}" != ".release-please-manifest.json" ]]; then
-                git rebase --abort
-                echo "::error::Release branch has conflicts beyond the shared manifest"
-                exit 1
-              fi
-
-              # Each component release PR rewrites the shared manifest from
-              # its original base. Keep main's versions for other components
-              # and carry forward only the version(s) owned by this PR.
-              git show origin/main:.release-please-manifest.json \
-                > "$RUNNER_TEMP/main-release-manifest.json"
-              git show "origin/$BRANCH:.release-please-manifest.json" \
-                > "$RUNNER_TEMP/branch-release-manifest.json"
+            if [[ "$DECISION" == keep* ]]; then
+              echo "Leaving the release branch and its checks alone"
+            else
+              # Replay onto main: reconcile the shared manifest and drop the
+              # generated "synchronize" commit (regenerated below).
               COMPONENT_ARGS=()
-              if [[ "$DRIVER" == "true" ]]; then
+              if [[ "${DRIVER}" == "true" ]]; then
                 COMPONENT_ARGS+=(--component cua-driver-rs)
               fi
-              if [[ "$PERCEPTION" == "true" ]]; then
+              if [[ "${PERCEPTION}" == "true" ]]; then
                 COMPONENT_ARGS+=(--component cua-perception)
               fi
-              if [[ "$LUME" == "true" ]]; then
+              if [[ "${LUME}" == "true" ]]; then
                 COMPONENT_ARGS+=(--component lume)
               fi
-              if [[ "$SANDBOX" == "true" ]]; then
+              if [[ "${SANDBOX}" == "true" ]]; then
                 COMPONENT_ARGS+=(--component sandbox)
               fi
-              if [[ "$SPACESD" == "true" ]]; then
+              if [[ "${SPACESD}" == "true" ]]; then
                 COMPONENT_ARGS+=(--component cua-spacesd)
               fi
-              if [[ "$SDK" == "true" ]]; then
+              if [[ "${SDK}" == "true" ]]; then
                 COMPONENT_ARGS+=(--component cua-sdk)
               fi
-              python3 .github/scripts/merge_release_please_manifests.py \
-                --main "$RUNNER_TEMP/main-release-manifest.json" \
-                --release "$RUNNER_TEMP/branch-release-manifest.json" \
-                "${COMPONENT_ARGS[@]}" \
-                > .release-please-manifest.json
-              git add .release-please-manifest.json
-              if ! GIT_EDITOR=true git rebase --continue; then
-                git rebase --abort
-                echo "::error::Release branch still conflicts after manifest reconciliation"
-                exit 1
-              fi
+              "$TOOLS/replay_release_branch.sh" "origin/$BRANCH" "${COMPONENT_ARGS[@]}"
             fi
             if [[ "$PERCEPTION" == "true" ]]; then
               PERCEPTION_VERSION=$(tr -d '[:space:]' < \
@@ -259,7 +269,8 @@ jobs:
             elif [[ "$LUME" == "true" ]]; then
               python3 .github/scripts/sync_lume_release_docs.py
               python3 .github/scripts/validate_release_versions.py --product lume
-              git add docs/content/docs/lume/reference
+              git add docs/content/docs/lume/reference \
+                scripts/docs-generators/cli-specs/lume.json
               COMMIT_MESSAGE="chore(lume): synchronize release documentation"
             elif [[ "$SPACESD" == "true" ]]; then
               # Release Please bumps the workspace version in Cargo.toml; the
@@ -273,9 +284,18 @@ jobs:
               COMMIT_MESSAGE="chore(cua-spacesd): synchronize release lockfiles"
             elif [[ "$SDK" == "true" ]]; then
               # Release Please bumps VERSION, pyproject, __init__, package.json
-              # and package-lock.json together; only validation runs here.
+              # and package-lock.json together; the stamped docs and the other
+              # lockfiles that lock the checkout's SDK follow here.
+              PREVIOUS=$(git show origin/main:libs/cua/VERSION)
+              python3 .github/scripts/sync_sdk_release_docs.py --from "$PREVIOUS"
+              SDK_LOCKS=$(python3 .github/scripts/sync_sdk_release_locks.py)
               python3 .github/scripts/validate_release_versions.py --product sdk
-              COMMIT_MESSAGE="chore(cua-sdk): synchronize release metadata"
+              git add docs/content/docs/cua-cli docs/content/docs/cua-sdk scripts/docs-generators/cli-specs/cua.json
+              if [[ -n "$SDK_LOCKS" ]]; then
+                mapfile -t SDK_LOCK_PATHS <<< "$SDK_LOCKS"
+                git add -- "${SDK_LOCK_PATHS[@]}"
+              fi
+              COMMIT_MESSAGE="chore(cua-sdk): synchronize release documentation and lockfiles"
             else
               python3 .github/scripts/validate_release_versions.py --product sandbox
               # The Sandbox reference records the package version, so regenerate

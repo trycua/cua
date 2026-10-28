@@ -14,8 +14,7 @@
     "test": "pnpm -r test",
     "typecheck": "pnpm build:core && pnpm -r typecheck",
     "format": "prettier --write .",
-    "format:check": "prettier --check .",
-    "build:fleet": "pnpm --filter @trycua/fleet build"
+    "format:check": "prettier --check ."
   },
   "packageManager": "pnpm@10.12.3",
   "devDependencies": {
@@ -31,8 +30,9 @@
     "overrides": {
       "defu": "6.1.5",
       "happy-dom": "20.8.9",
+      "nanoid": "3.3.18",
       "picomatch": "4.0.4",
-      "postcss": "8.5.10",
+      "postcss": "8.5.18",
       "rollup": "4.59.0",
       "uuid": "11.1.1",
       "vite": "7.3.5",

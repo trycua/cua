@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-//! Which anonymous usage events a UI transition means, for both shells.
+//! Which usage events a UI transition means, for both shells.
 //!
 //! The apps drive the core's reducers; these functions look at one step of
 //! a reducer (the state before and the action) and answer with
@@ -19,7 +19,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::drive_settings::{StorageAction, StorageInput, StorageRequest, StorageState};
-use crate::model::{SpaceKind, SpaceOs};
+use crate::model::SpaceKind;
 use crate::onboarding::{
     OnboardingAction, OnboardingMode, OnboardingState, OnboardingStep, StorageChoice,
 };
@@ -47,14 +47,31 @@ pub enum TelemetrySignal {
         /// It worked.
         ok: bool,
     },
+    /// The app started (`cua_onboarding_step`, step `app_launched`).
+    Launched {
+        /// The first run was not finished yet at this launch, so the
+        /// app opens it (none: the shell does not know).
+        onboarding_eligible: Option<bool>,
+    },
+    /// A sign-in failed, timed out or was cancelled (`cua_onboarding_step`,
+    /// step `signed_in`, outcome `error`).
+    SignInFailed {
+        /// `timeout`, `cancelled`, `permission_denied`, `transport`,
+        /// `unauthenticated` or `other` (never the message).
+        error_kind: String,
+    },
     /// A first-run page was shown or left (`cua_onboarding_page`).
     OnboardingPage {
         /// `welcome`, `signin`, `agents`, `presentation`, `volume`,
-        /// `this_machine` or `done`.
+        /// `this_machine` or `done`; or, with a `step_*` action, one of
+        /// `schema::FIRST_RUN_STEPS` (`connect_agent`, `terminal`, ...).
         page: String,
-        /// `shown`, `completed`, `skipped` or `back`.
+        /// `shown`, `completed`, `skipped` or `back`; or `step_viewed`,
+        /// `step_completed`, `step_failed` or `step_skipped`, which send
+        /// `cua_onboarding_step_*` and `cua_onboarding_skipped`.
         action: String,
-        /// The page's answer as a fixed word, or `none`.
+        /// The page's answer as a fixed word, or `none`; for
+        /// `step_failed`, the reason (`timeout`, `install_failed`, ...).
         choice: String,
     },
     /// The New Space panel (`cua_space_wizard`).
@@ -82,6 +99,16 @@ pub enum TelemetrySignal {
         /// GPU acceleration was turned on.
         #[serde(default)]
         gpu: bool,
+        /// The error enum's case name, when the shell sent one.
+        #[serde(default)]
+        error_variant: String,
+        /// 1 when the app ran the create a second time by itself, else 0.
+        #[serde(default)]
+        retry_attempt: u32,
+        /// The finer cause (`error_subclass`): the failure's, or on a
+        /// retried create that worked, the failure it recovered from.
+        #[serde(default = "none_word")]
+        error_subclass: String,
     },
     /// A Space create started (`cua_space_create_started`).
     SpaceCreateStarted {
@@ -113,8 +140,19 @@ pub enum TelemetrySignal {
         action: String,
         /// `viewer`, `editor` or `none`.
         role: String,
-        /// `ok` or `error`.
+        /// `ok`, `error`, or `cancelled` when the confirmation prompt was
+        /// dismissed.
         outcome: String,
+        /// Why it did not happen (`presence_denied`, `presence_cancelled`,
+        /// `presence_unavailable`, `not_signed_in`, `device_not_enrolled`,
+        /// `driver_unsupported`, `relay_refused`, `relay_unreachable`,
+        /// `invalid_who` or `other`); `none` when it worked.
+        #[serde(default = "none_word")]
+        error_kind: String,
+        /// Where it stopped (`request`, `presence`, `account`, `device`,
+        /// `driver`, `relay` or `other`); `none` when it worked.
+        #[serde(default = "none_word")]
+        failed_stage: String,
     },
     /// An updater step (`cua_app_update`).
     AppUpdate {
@@ -147,6 +185,25 @@ pub enum TelemetrySignal {
         /// Their ids (`cua_volume`, ...); empty: none.
         experiments: Vec<String>,
     },
+    /// A plan limit was shown (`cua_plan_limit_shown`).
+    PlanLimitShown {
+        /// Where: `app_create`, `app_connect`, `app_meter`, `app_team`, ...
+        surface: String,
+        /// `sessions`, `hours`, `machines`, `seats` or `other`.
+        kind: String,
+        /// `free`, `pro`, `teams` or `unknown`.
+        plan: String,
+    },
+    /// The upgrade or plan link of a limit or an upgrade prompt was opened
+    /// (`cua_upgrade_link_opened`).
+    UpgradeLinkOpened {
+        /// Where: `app_meter`, `app_share`, `app_plan_card`, ...
+        surface: String,
+        /// The cap when it came from a limit, `none` otherwise.
+        kind: String,
+        /// `free`, `pro`, `teams` or `unknown`.
+        plan: String,
+    },
 }
 
 fn feature(f: &str) -> TelemetrySignal {
@@ -171,9 +228,13 @@ fn outcome(ok: bool) -> String {
 
 // ---- The app ---------------------------------------------------------------
 
-/// The app started (`app_launched`, every launch).
-pub fn launched() -> Vec<TelemetrySignal> {
-    vec![step("app_launched", true)]
+/// The app started (`app_launched`, every launch), with whether the first
+/// run is still to finish (so the funnel can tell a launch that should
+/// show Welcome from one that should not).
+pub fn launched(onboarding_eligible: Option<bool>) -> Vec<TelemetrySignal> {
+    vec![TelemetrySignal::Launched {
+        onboarding_eligible,
+    }]
 }
 
 /// A Spaces app feature (a fixed name; see the docs). Shells use this for
@@ -182,12 +243,160 @@ pub fn feature_used(name: &str) -> Vec<TelemetrySignal> {
     vec![feature(name)]
 }
 
+/// The in-app Pro and Teams prompts, as `cua_spaces_feature_used`
+/// `upsell_<surface>_<action>`: `meter`, `share` and `machine` are shown,
+/// clicked or dismissed; the always-visible `plan_card` (Settings) and
+/// `account_menu` (the plan under the account name) are only clicked.
+/// Anything else: nothing.
+pub fn upsell(surface: &str, action: &str) -> Vec<TelemetrySignal> {
+    upsell_with(surface, action, None, None)
+}
+
+/// [`upsell`] knowing the plan (and, for the meter's `limit` notice, the
+/// cap: its `kind`). A `click` also means the upgrade link was opened
+/// (`cua_upgrade_link_opened`, surface `app_<surface>`); the meter shown
+/// past a limit also means a plan limit was shown (`cua_plan_limit_shown`).
+pub fn upsell_with(
+    surface: &str,
+    action: &str,
+    kind: Option<&str>,
+    plan: Option<&str>,
+) -> Vec<TelemetrySignal> {
+    let ok = match surface {
+        "meter" | "share" | "machine" | "onboarding" => {
+            matches!(action, "shown" | "click" | "dismiss")
+        }
+        "plan_card" | "account_menu" => action == "click",
+        // The limit cards (`upsell::card`): `card_<reason>`.
+        c if c
+            .strip_prefix("card_")
+            .is_some_and(|r| crate::upsell::CARD_REASONS.contains(&r)) =>
+        {
+            matches!(action, "shown" | "click" | "dismiss")
+        }
+        _ => false,
+    };
+    if !ok {
+        return vec![];
+    }
+    let mut out = vec![feature(&format!("upsell_{surface}_{action}"))];
+    let at = format!("app_{surface}");
+    let kind = kind.map(limit_word).unwrap_or("none");
+    let plan = crate::relay_usage::plan_word(plan.unwrap_or_default());
+    match action {
+        "click" => out.push(TelemetrySignal::UpgradeLinkOpened {
+            surface: at,
+            kind: kind.into(),
+            plan: plan.into(),
+        }),
+        "shown" if surface == "meter" && kind != "none" => {
+            out.push(TelemetrySignal::PlanLimitShown {
+                surface: at,
+                kind: kind.into(),
+                plan: plan.into(),
+            })
+        }
+        _ => {}
+    }
+    out
+}
+
+/// A cap as the usage data names it.
+fn limit_word(kind: &str) -> &'static str {
+    match kind.trim() {
+        "sessions" => "sessions",
+        "hours" => "hours",
+        "machines" => "machines",
+        "seats" => "seats",
+        "" | "none" => "none",
+        _ => "other",
+    }
+}
+
+/// The getting-started checklist's steps, in the order it lists them.
+pub const CHECKLIST_STEPS: &[&str] = &[
+    "add_machine",
+    "create_space",
+    "teleport",
+    "share",
+    "run_agent",
+];
+
+/// What happens to the checklist itself.
+const CHECKLIST_EVENTS: &[&str] = &["shown", "completed", "dismissed", "reopened"];
+
+/// One getting-started checklist event as `cua_onboarding_step`
+/// `checklist_<event>`: `shown` (first time on screen), one of
+/// [`CHECKLIST_STEPS`] (that step done, once per install), `completed`
+/// (every step done), `dismissed` or `reopened`. Anything else: nothing.
+pub fn checklist(event: &str) -> Vec<TelemetrySignal> {
+    if CHECKLIST_STEPS.contains(&event) || CHECKLIST_EVENTS.contains(&event) {
+        vec![step(&format!("checklist_{event}"), true)]
+    } else {
+        vec![]
+    }
+}
+
+/// Where a plan limit shows or an upgrade link opens, as the usage data and
+/// the account app's `?from=` name it (`cua-telemetry`'s `PLAN_SURFACES`).
+pub const PLAN_SURFACES: &[&str] = &[
+    "app_create",
+    "app_connect",
+    "app_meter",
+    "app_machine",
+    "app_share",
+    "app_team",
+    "app_plan_card",
+    "app_account_menu",
+    "app_onboarding",
+];
+
+/// A plan limit at `surface` (`action` `shown`), or its upgrade link opened
+/// (`opened`): `kind` is the cap (`sessions`, `hours`, `machines`, `seats`;
+/// none when the link was not from a limit), `plan` the account's plan.
+/// Nothing for another action or surface.
+pub fn plan_limit(action: &str, surface: &str, kind: &str, plan: &str) -> Vec<TelemetrySignal> {
+    if !PLAN_SURFACES.contains(&surface) {
+        return vec![];
+    }
+    let (surface, plan) = (
+        surface.to_string(),
+        crate::relay_usage::plan_word(plan).to_string(),
+    );
+    let kind = limit_word(kind);
+    match action {
+        "shown" if kind != "none" => vec![TelemetrySignal::PlanLimitShown {
+            surface,
+            kind: kind.into(),
+            plan,
+        }],
+        "opened" => vec![TelemetrySignal::UpgradeLinkOpened {
+            surface,
+            kind: kind.into(),
+            plan,
+        }],
+        _ => vec![],
+    }
+}
+
+/// The upgrade link `url` saying it was opened from `surface` (`?from=`),
+/// the rest of its query kept. A surface outside [`PLAN_SURFACES`] leaves
+/// it alone.
+pub fn upgrade_link(url: &str, surface: &str) -> String {
+    if PLAN_SURFACES.contains(&surface) {
+        cua_home::plan_limit::with_from(url, surface)
+    } else {
+        url.to_string()
+    }
+}
+
 // ---- First run ---------------------------------------------------------------
 
 /// A page's telemetry name.
 pub fn page_name(s: OnboardingStep) -> &'static str {
     match s {
         OnboardingStep::Welcome => "welcome",
+        OnboardingStep::Cli => "command_line",
         OnboardingStep::Signin => "signin",
         OnboardingStep::Agents => "agents",
         OnboardingStep::Presentation => "presentation",
@@ -211,6 +420,70 @@ fn mount_method(m: Option<&crate::drive_settings::DriveMountInput>) -> String {
         .unwrap_or_else(|| "unknown".into())
 }
 
+/// "Set up later": the first run left for now on its current page
+/// (`skipped`, choice `later`) and `onboarding_skipped`. Nothing while
+/// usage data is off; from Welcome, the run's start counts first.
+pub fn onboarding_skipped(s: &OnboardingState) -> Vec<TelemetrySignal> {
+    if !s.shares_usage() || s.step == OnboardingStep::Done {
+        return vec![];
+    }
+    let mut out = if s.run_counted {
+        vec![]
+    } else {
+        run_started(s)
+    };
+    out.push(page(page_name(s.step), "skipped", "later"));
+    out.push(step("onboarding_skipped", true));
+    out
+}
+
+/// A sign-in failure's kind from its message (`None`: cancelled). Only the
+/// fixed word leaves; the message (which can name an account) never does.
+pub fn sign_in_error_kind(message: Option<&str>) -> &'static str {
+    let Some(m) = message else { return "cancelled" };
+    let m = m.to_ascii_lowercase();
+    let has = |words: &[&str]| words.iter().any(|w| m.contains(w));
+    if has(&["timed out", "timeout", "expired"]) {
+        "timeout"
+    } else if has(&["cancel"]) {
+        "cancelled"
+    } else if has(&["denied", "rejected", "forbidden", "403"]) {
+        "permission_denied"
+    } else if has(&["unauthorized", "unauthenticated", "401", "invalid_grant"]) {
+        "unauthenticated"
+    } else if has(&[
+        "network",
+        "connect",
+        "offline",
+        "dns",
+        "unreachable",
+        "transport",
+        "tls",
+    ]) {
+        "transport"
+    } else {
+        "other"
+    }
+}
+
+/// A sign-in failed (`message`) or was cancelled (`None`).
+pub fn sign_in_failed(message: Option<&str>) -> Vec<TelemetrySignal> {
+    vec![TelemetrySignal::SignInFailed {
+        error_kind: sign_in_error_kind(message).into(),
+    }]
+}
+
+/// A sign-in failed for `reason` or was cancelled (`None`): its fixed
+/// word only ([`crate::sign_in::error_kind`]).
+pub fn sign_in_failure(reason: Option<crate::sign_in::SignInFailure>) -> Vec<TelemetrySignal> {
+    vec![TelemetrySignal::SignInFailed {
+        error_kind: reason
+            .map(crate::sign_in::error_kind)
+            .unwrap_or("cancelled")
+            .into(),
+    }]
+}
+
 /// "Start using Cua Spaces" on Done (nothing while usage data is off).
 pub fn onboarding_finished(s: &OnboardingState) -> Vec<TelemetrySignal> {
     if !s.shares_usage() {
@@ -226,6 +499,10 @@ pub fn onboarding_finished(s: &OnboardingState) -> Vec<TelemetrySignal> {
 fn leave(s: &OnboardingState, a: &OnboardingAction) -> (&'static str, &'static str) {
     match s.step {
         OnboardingStep::Welcome | OnboardingStep::Done => ("completed", "none"),
+        OnboardingStep::Cli => match a {
+            OnboardingAction::CliPlanned { .. } => ("completed", "installed"),
+            _ => ("skipped", "not_installed"),
+        },
         OnboardingStep::Signin => {
             if s.identity.as_deref().is_some_and(|i| !i.is_empty()) {
                 ("completed", "signed_in")
@@ -263,31 +540,41 @@ fn leave(s: &OnboardingState, a: &OnboardingAction) -> (&'static str, &'static s
     }
 }
 
+/// The run's start: `onboarding_shown` and Welcome shown (and `signed_in`
+/// for an account the app already had).
+fn run_started(after: &OnboardingState) -> Vec<TelemetrySignal> {
+    let mut out = vec![
+        step("onboarding_shown", true),
+        page("welcome", "shown", "none"),
+    ];
+    if after.identity.as_deref().is_some_and(|i| !i.is_empty()) {
+        out.push(step("signed_in", true));
+    }
+    out
+}
+
 /// The events one first-run step means: the page left (completed, skipped
 /// or back, with its answer), the page shown, the Cua Volume choice when
 /// the Volume page is left, and `signed_in`.
 ///
-/// Nothing is derived on Welcome (its notice and usage-data switch come
-/// first): leaving it starts the run (`onboarding_shown`, Welcome shown and
-/// completed). Nothing at all while the switch is off.
+/// The run's start (`onboarding_shown`, Welcome shown) counts once per
+/// run: when Welcome shows (`welcome-shown`) on a machine that already
+/// showed the usage notice, else when Welcome is left (its notice and
+/// usage-data switch come first: nothing is sent before). Nothing at all
+/// while the switch is off.
 pub fn onboarding(before: &OnboardingState, action: &OnboardingAction) -> Vec<TelemetrySignal> {
     let after = crate::onboarding::reduce(before, action);
     if !after.shares_usage() {
         return vec![];
     }
-    if before.step == OnboardingStep::Welcome && after.step == OnboardingStep::Welcome {
-        return vec![];
-    }
     let mut out = vec![];
-    if before.step == OnboardingStep::Welcome {
-        out.push(step("onboarding_shown", true));
-        out.push(page("welcome", "shown", "none"));
-        // Signed in before the run started (an account the app already had).
-        if after.identity.as_deref().is_some_and(|i| !i.is_empty()) {
-            out.push(step("signed_in", true));
-        }
+    if !before.run_counted && after.run_counted {
+        out.extend(run_started(&after));
     }
+    // Before the run's start counts, an account the app already had counts
+    // with it (above).
     if let OnboardingAction::SignedIn { identity } = action
+        && before.run_counted
         && !identity.is_empty()
         && before.identity.as_deref() != Some(identity.as_str())
     {
@@ -333,26 +620,20 @@ fn after_answers(before: &OnboardingState, after: &OnboardingState) -> Onboardin
 
 // ---- Space creates -------------------------------------------------------------
 
-fn os_word(os: SpaceOs) -> &'static str {
-    match os {
-        SpaceOs::Macos => "macos",
-        SpaceOs::Windows => "windows",
-        SpaceOs::Linux => "linux",
-    }
-}
-
 fn kind_word(k: Option<SpaceKind>) -> &'static str {
     match k {
         Some(SpaceKind::Container) => "container",
         Some(SpaceKind::Vm) => "vm",
+        Some(SpaceKind::Microvm) => "microvm",
         None => "unknown",
     }
 }
 
-fn create_event(p: &PendingCreate, outcome: &str, stalled: bool, now_ms: i64) -> TelemetrySignal {
+#[rustfmt::skip]
+fn create_event(p: &PendingCreate, outcome: &str, stalled: bool, error_variant: &str, subclass: &str, now_ms: i64) -> TelemetrySignal {
     TelemetrySignal::SpaceCreate {
         location: p.provider.as_str().into(),
-        guest_os: os_word(p.os).into(),
+        guest_os: p.os.as_str().into(),
         kind: kind_word(p.kind).into(),
         outcome: outcome.into(),
         failed_phase: if outcome == "ok" {
@@ -363,6 +644,9 @@ fn create_event(p: &PendingCreate, outcome: &str, stalled: bool, now_ms: i64) ->
         stalled: outcome == "error" && stalled,
         elapsed_ms: (now_ms - p.started_at).max(0) as u64,
         gpu: p.gpu,
+        error_variant: error_variant.into(),
+        retry_attempt: p.attempt.min(1),
+        error_subclass: subclass.into(),
     }
 }
 
@@ -389,46 +673,78 @@ pub fn creates(before: &CreatesState, action: &CreateAction, now_ms: i64) -> Vec
             let started = after.pending.iter().find(|p| &p.id == id).map(|p| {
                 TelemetrySignal::SpaceCreateStarted {
                     location: p.provider.as_str().into(),
-                    guest_os: os_word(p.os).into(),
+                    guest_os: p.os.as_str().into(),
                     kind: kind_word(p.kind).into(),
                     gpu: p.gpu,
                 }
             });
-            [feature(if provider.as_str() == "cloud" {
-                "space_create_cloud"
-            } else {
-                "space_create_local"
-            })]
-            .into_iter()
-            .chain(started)
-            .chain([step("first_space_created", true)])
-            .collect()
+            [feature("space_create_local")]
+                .into_iter()
+                .chain(started)
+                .chain([step("first_space_created", true)])
+                .collect()
         }
         CreateAction::Finish { id, .. } => match find(id) {
             Some(p) if p.space_id.is_none() => vec![
-                create_event(p, "ok", false, now_ms),
+                // A retried create that worked: the cause it got past.
+                create_event(
+                    p,
+                    "ok",
+                    false,
+                    "",
+                    p.retried_subclass.as_deref().unwrap_or("none"),
+                    now_ms,
+                ),
                 step("first_space_ready", true),
             ],
             _ => vec![],
         },
-        CreateAction::Fail { id, .. } => match find(id) {
+        CreateAction::Fail {
+            id,
+            error,
+            error_variant,
+            ..
+        } => match find(id) {
             Some(p) if p.space_id.is_none() && p.cancelling => {
-                vec![create_event(p, "cancelled", false, now_ms)]
+                vec![create_event(p, "cancelled", false, "", "none", now_ms)]
             }
             Some(p) if p.space_id.is_none() && (p.error.is_none() || stalled(p)) => {
-                vec![create_event(p, "error", stalled(p), now_ms)]
+                let decision = crate::spaces::creating::fail_decision(p, error, error_variant);
+                // The app runs it once more by itself: the create has no
+                // outcome yet. It counts once, when that attempt ends.
+                if decision.retry == cua_create_failure::retry::Retry::Once {
+                    return vec![];
+                }
+                // The shell's enum case is often `Runtime` or none: the
+                // cause the app reads from the text (an image that is not
+                // in the registry, Local Network, a VM that did not boot in
+                // time, disk) says more. Only the word is sent.
+                let variant = crate::spaces::creating::failure_variant(
+                    error,
+                    Some(&p.phase),
+                    p.gpu,
+                    error_variant,
+                );
+                vec![create_event(
+                    p,
+                    "error",
+                    stalled(p),
+                    variant,
+                    decision.subclass.as_str(),
+                    now_ms,
+                )]
             }
             _ => vec![],
         },
         CreateAction::CancelDone { id } => match find(id) {
             Some(p) if p.space_id.is_none() && p.cancelling => {
-                vec![create_event(p, "cancelled", false, now_ms)]
+                vec![create_event(p, "cancelled", false, "", "none", now_ms)]
             }
             _ => vec![],
         },
         CreateAction::Dismiss { id } => match find(id) {
             Some(p) if p.space_id.is_none() && stalled(p) => {
-                vec![create_event(p, "error", true, now_ms)]
+                vec![create_event(p, "error", true, "", "none", now_ms)]
             }
             _ => vec![],
         },
@@ -515,11 +831,102 @@ pub fn share(
         Some(ShareRequest::Unshare { .. }) => ("unshare", "none"),
         None => return vec![],
     };
+    let (outcome, error_kind, failed_stage) = match action {
+        ShareSheetAction::Failed { error } => {
+            let (kind, stage) = share_failure(error);
+            let word = if kind == "presence_cancelled" {
+                "cancelled"
+            } else {
+                "error"
+            };
+            (word.to_string(), kind, stage)
+        }
+        _ => (outcome(ok), "none", "none"),
+    };
     vec![TelemetrySignal::Share {
         action: act.into(),
         role: role.into(),
-        outcome: outcome(ok),
+        outcome,
+        error_kind: error_kind.into(),
+        failed_stage: failed_stage.into(),
     }]
+}
+
+fn none_word() -> String {
+    "none".into()
+}
+
+/// Why a share, unshare or role change failed, and where it stopped, from
+/// the error's words (what the daemon and the relay say): one of the fixed
+/// kinds of `cua_share`, never the words themselves (CUA-1855).
+pub fn share_failure(error: &str) -> (&'static str, &'static str) {
+    let e = error.to_ascii_lowercase();
+    let has = |words: &[&str]| words.iter().any(|w| e.contains(w));
+    // The user's own confirmation, asked before anything reaches the relay
+    // (`share_space`: "not shared: <why>").
+    if has(&["nothing here can ask you to confirm"]) {
+        return ("presence_unavailable", "presence");
+    }
+    if has(&["not shared:", "presence was not confirmed"]) {
+        return if has(&["cancelled", "canceled", "dismissed"]) {
+            ("presence_cancelled", "presence")
+        } else if has(&[
+            "unavailable",
+            "prompt failed",
+            "no confirmation prompt",
+            "cannot run pkcheck",
+        ]) {
+            ("presence_unavailable", "presence")
+        } else {
+            ("presence_denied", "presence")
+        };
+    }
+    if has(&[
+        "is not an email",
+        "not an email or account id",
+        "share with an account",
+    ]) {
+        return ("invalid_who", "request");
+    }
+    if has(&["device"]) && has(&["enroll", "approv", "revoked", "re-verification"]) {
+        return ("device_not_enrolled", "device");
+    }
+    if has(&[
+        "sign in",
+        "signed in",
+        "not signed",
+        "unauthenticated",
+        "auth login",
+        "session expired",
+        "token expired",
+    ]) {
+        return ("not_signed_in", "account");
+    }
+    if has(&["relay_attach", "has no cua-spacesd", "cannot be shared"]) {
+        return ("driver_unsupported", "driver");
+    }
+    if has(&[
+        "relay: error sending",
+        "connection refused",
+        "connection reset",
+        "timed out",
+        "dns error",
+        "unreachable",
+        "could not connect",
+        "failed to connect",
+    ]) {
+        return ("relay_unreachable", "relay");
+    }
+    if has(&[
+        "relay",
+        "only its owner can share",
+        "forbidden",
+        "permission denied",
+        "limit",
+    ]) {
+        return ("relay_refused", "relay");
+    }
+    ("other", "other")
 }
 
 // ---- Enrollment ----------------------------------------------------------------
@@ -609,11 +1016,23 @@ pub fn record(t: &cua_telemetry::Telemetry, signals: &[TelemetrySignal]) -> usiz
             TelemetrySignal::Step { step, ok } => {
                 Some(t.capture_step(step, if *ok { Outcome::Ok } else { Outcome::Error }))
             }
+            TelemetrySignal::Launched {
+                onboarding_eligible,
+            } => Some(t.capture(events::app_launched(*onboarding_eligible))),
+            TelemetrySignal::SignInFailed { error_kind } => {
+                Some(t.capture(events::sign_in_failed(error_kind)))
+            }
             TelemetrySignal::OnboardingPage {
                 page,
                 action,
                 choice,
-            } => events::onboarding_page(page, action, choice).map(|e| t.capture(e)),
+            } => if action.starts_with("step_") {
+                // The first run's funnel (`first_run_step`): its own events.
+                events::first_run_step(page, action, choice)
+            } else {
+                events::onboarding_page(page, action, choice)
+            }
+            .map(|e| t.capture(e)),
             TelemetrySignal::SpaceWizard { action } => {
                 events::space_wizard(action).map(|e| t.capture(e))
             }
@@ -626,6 +1045,9 @@ pub fn record(t: &cua_telemetry::Telemetry, signals: &[TelemetrySignal]) -> usiz
                 stalled,
                 elapsed_ms,
                 gpu,
+                error_variant,
+                retry_attempt,
+                error_subclass,
             } => Some(t.capture(events::space_create(
                 &events::SpaceCreate {
                     on: location,
@@ -634,6 +1056,9 @@ pub fn record(t: &cua_telemetry::Telemetry, signals: &[TelemetrySignal]) -> usiz
                     last_phase: failed_phase,
                     stalled: *stalled,
                     gpu: *gpu,
+                    error_variant,
+                    retry_attempt: *retry_attempt,
+                    error_subclass,
                 },
                 Outcome::from_word(outcome),
                 Duration::from_millis(*elapsed_ms),
@@ -663,7 +1088,16 @@ pub fn record(t: &cua_telemetry::Telemetry, signals: &[TelemetrySignal]) -> usiz
                 action,
                 role,
                 outcome,
-            } => events::share(action, role, Outcome::from_word(outcome)).map(|e| t.capture(e)),
+                error_kind,
+                failed_stage,
+            } => events::share(
+                action,
+                role,
+                Outcome::from_word(outcome),
+                error_kind,
+                failed_stage,
+            )
+            .map(|e| t.capture(e)),
             TelemetrySignal::AppUpdate {
                 action,
                 channel,
@@ -681,6 +1115,16 @@ pub fn record(t: &cua_telemetry::Telemetry, signals: &[TelemetrySignal]) -> usiz
                 t.set_experiments_on(&ids);
                 None
             }
+            TelemetrySignal::PlanLimitShown {
+                surface,
+                kind,
+                plan,
+            } => Some(t.capture(events::plan_limit_shown(surface, kind, plan))),
+            TelemetrySignal::UpgradeLinkOpened {
+                surface,
+                kind,
+                plan,
+            } => Some(t.capture(events::upgrade_link_opened(surface, kind, plan))),
         };
         if r == Some(Captured::Queued) {
             queued += 1;
@@ -693,19 +1137,39 @@ pub fn record(t: &cua_telemetry::Telemetry, signals: &[TelemetrySignal]) -> usiz
 }
 
 /// A launch before the first-run notice was ever shown waits for it.
+/// (0: none waits; 1: unknown; 2: not eligible; 3: eligible.)
 #[cfg(feature = "telemetry")]
-static LAUNCH_PENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static LAUNCH_PENDING: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+#[cfg(feature = "telemetry")]
+fn pending_word(onboarding_eligible: Option<bool>) -> u8 {
+    match onboarding_eligible {
+        None => 1,
+        Some(false) => 2,
+        Some(true) => 3,
+    }
+}
 
 /// The app started: records `app_launched` now, or, on a machine that has
 /// not shown the first-run notice yet (nothing may be sent before it),
 /// when [`acknowledge_notice`] runs. Returns whether it was recorded now.
 #[cfg(feature = "telemetry")]
 pub fn start(t: &cua_telemetry::Telemetry) -> bool {
+    start_with(t, None)
+}
+
+/// [`start`], saying whether the first run is still to finish
+/// (`onboarding_eligible` on `app_launched`).
+#[cfg(feature = "telemetry")]
+pub fn start_with(t: &cua_telemetry::Telemetry, onboarding_eligible: Option<bool>) -> bool {
     if t.notice_shown() {
-        record(t, &launched());
+        record(t, &launched(onboarding_eligible));
         true
     } else {
-        LAUNCH_PENDING.store(true, std::sync::atomic::Ordering::SeqCst);
+        LAUNCH_PENDING.store(
+            pending_word(onboarding_eligible),
+            std::sync::atomic::Ordering::SeqCst,
+        );
         false
     }
 }
@@ -715,9 +1179,13 @@ pub fn start(t: &cua_telemetry::Telemetry) -> bool {
 #[cfg(feature = "telemetry")]
 pub fn acknowledge_notice(t: &cua_telemetry::Telemetry) {
     t.acknowledge_notice();
-    if LAUNCH_PENDING.swap(false, std::sync::atomic::Ordering::SeqCst) {
-        record(t, &launched());
-    }
+    let eligible = match LAUNCH_PENDING.swap(0, std::sync::atomic::Ordering::SeqCst) {
+        0 => return,
+        2 => Some(false),
+        3 => Some(true),
+        _ => None,
+    };
+    record(t, &launched(eligible));
 }
 
 /// The first run left Welcome with its usage-data switch at `on`: writes
@@ -739,8 +1207,295 @@ pub fn welcome_left(t: &cua_telemetry::Telemetry, on: bool) -> std::io::Result<(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plan_limits_and_upgrade_links_say_where_which_cap_and_plan() {
+        // A refused create, on Pro.
+        assert_eq!(
+            plan_limit("shown", "app_create", "sessions", "team"),
+            [TelemetrySignal::PlanLimitShown {
+                surface: "app_create".into(),
+                kind: "sessions".into(),
+                plan: "teams".into(),
+            }]
+        );
+        // Its Upgrade.
+        assert_eq!(
+            plan_limit("opened", "app_connect", "hours", ""),
+            [TelemetrySignal::UpgradeLinkOpened {
+                surface: "app_connect".into(),
+                kind: "hours".into(),
+                plan: "unknown".into(),
+            }]
+        );
+        // A limit always names a cap; unknown surfaces and actions are dropped.
+        assert!(plan_limit("shown", "app_create", "none", "free").is_empty());
+        assert!(plan_limit("shown", "/Users/alice", "hours", "free").is_empty());
+        assert!(plan_limit("clicked", "app_meter", "hours", "free").is_empty());
+        assert_eq!(
+            plan_limit("shown", "app_team", "alice@example.com", "Enterprise"),
+            [TelemetrySignal::PlanLimitShown {
+                surface: "app_team".into(),
+                kind: "other".into(),
+                plan: "unknown".into(),
+            }]
+        );
+
+        // An upsell click opens the upgrade link too; the meter shown past a
+        // limit is a plan limit shown; a heads-up is not.
+        assert_eq!(
+            upsell_with("share", "click", None, Some("free")),
+            [
+                feature("upsell_share_click"),
+                TelemetrySignal::UpgradeLinkOpened {
+                    surface: "app_share".into(),
+                    kind: "none".into(),
+                    plan: "free".into(),
+                }
+            ]
+        );
+        assert_eq!(
+            upsell_with("meter", "shown", Some("hours"), Some("pro")),
+            [
+                feature("upsell_meter_shown"),
+                TelemetrySignal::PlanLimitShown {
+                    surface: "app_meter".into(),
+                    kind: "hours".into(),
+                    plan: "pro".into(),
+                }
+            ]
+        );
+        assert_eq!(
+            upsell_with("meter", "shown", Some("none"), Some("free")),
+            [feature("upsell_meter_shown")]
+        );
+        assert_eq!(
+            upsell("meter", "dismiss"),
+            [feature("upsell_meter_dismiss")]
+        );
+        assert!(upsell("plan_card", "shown").is_empty());
+
+        // The page sends them as the shells read them.
+        assert_eq!(
+            serde_json::to_value(plan_limit("opened", "app_meter", "hours", "free")).unwrap(),
+            serde_json::json!([{"type": "upgrade-link-opened", "surface": "app_meter", "kind": "hours", "plan": "free"}])
+        );
+    }
+
+    #[test]
+    fn an_upgrade_link_says_where_it_was_opened() {
+        assert_eq!(
+            upgrade_link("https://app.cua.ai/buy/pro?from=plan_limit", "app_create"),
+            "https://app.cua.ai/buy/pro?from=app_create"
+        );
+        assert_eq!(
+            upgrade_link("https://app.cua.ai/billing?team=t1", "app_team"),
+            "https://app.cua.ai/billing?team=t1&from=app_team"
+        );
+        assert_eq!(
+            upgrade_link("https://app.cua.ai/billing", "somewhere"),
+            "https://app.cua.ai/billing"
+        );
+    }
+
+    /// The core's surfaces are words the telemetry schema accepts.
+    #[cfg(feature = "telemetry")]
+    #[test]
+    fn plan_surfaces_are_the_schemas() {
+        for s in PLAN_SURFACES {
+            assert!(
+                cua_telemetry::schema::PLAN_SURFACES.contains(s),
+                "{s} is not in cua-telemetry's PLAN_SURFACES"
+            );
+        }
+        for s in [
+            "meter",
+            "share",
+            "machine",
+            "onboarding",
+            "plan_card",
+            "account_menu",
+        ] {
+            assert!(PLAN_SURFACES.contains(&format!("app_{s}").as_str()), "{s}");
+        }
+    }
+
+    /// Plan limits recorded with usage data on are sent; with it off,
+    /// nothing is.
+    #[cfg(feature = "telemetry")]
+    #[test]
+    fn plan_limit_signals_are_recorded_and_respect_the_switch() {
+        use std::sync::Arc;
+        let client = |home: &std::path::Path, off: bool| {
+            let sink = Arc::new(cua_telemetry::sink::MemorySink::new());
+            let t = cua_telemetry::Telemetry::builder()
+                .env(move |k| match k {
+                    "CUA_TELEMETRY_FORBID_NETWORK" => Some("1".into()),
+                    "DO_NOT_TRACK" if off => Some("1".into()),
+                    _ => None,
+                })
+                .home(home)
+                .sink(sink.clone())
+                .product("spaces_app", "0.2.0")
+                .notice_mode(cua_telemetry::NoticeMode::External)
+                .foreground()
+                .build();
+            t.acknowledge_notice();
+            (t, sink)
+        };
+        let signals = [
+            plan_limit("shown", "app_create", "sessions", "free"),
+            plan_limit("opened", "app_create", "sessions", "free"),
+        ]
+        .concat();
+        let on = tempfile::tempdir().unwrap();
+        let (t, sink) = client(on.path(), false);
+        assert_eq!(record(&t, &signals), 2);
+        t.flush(std::time::Duration::from_secs(2));
+        let names: Vec<String> = sink
+            .events()
+            .iter()
+            .map(|e| e["event"].as_str().unwrap().to_string())
+            .collect();
+        assert!(
+            names.contains(&"cua_plan_limit_shown".to_string()),
+            "{names:?}"
+        );
+        assert!(
+            names.contains(&"cua_upgrade_link_opened".to_string()),
+            "{names:?}"
+        );
+
+        let off = tempfile::tempdir().unwrap();
+        let (t, sink) = client(off.path(), true);
+        assert_eq!(record(&t, &signals), 0);
+        t.flush(std::time::Duration::from_secs(2));
+        assert!(sink.events().is_empty());
+    }
+
+    /// CUA-1855: a failed share says why and where, in fixed words; a
+    /// dismissed prompt is `cancelled`, not `error`.
+    #[test]
+    fn a_failed_share_says_why_in_fixed_words() {
+        let cases = [
+            (
+                "env: not shared: user presence was not confirmed: biometric authorization was denied",
+                "presence_denied",
+            ),
+            ("not shared: you declined", "presence_denied"),
+            (
+                "not shared: user presence was not confirmed: biometric authorization was cancelled",
+                "presence_cancelled",
+            ),
+            (
+                "not shared: user presence was not confirmed: user confirmation is unavailable: install Cua Spaces from the .deb",
+                "presence_unavailable",
+            ),
+            (
+                "share consent: nothing here can ask you to confirm; share from the Cua app",
+                "presence_unavailable",
+            ),
+            (
+                "invalid argument: \"grace\" is not an email address",
+                "invalid_who",
+            ),
+            (
+                "sign in to cua.ai (`cua auth login` or the app) to list your machines",
+                "not_signed_in",
+            ),
+            (
+                "this device is not enrolled for your cua.ai account (run `cua devices enroll`)",
+                "device_not_enrolled",
+            ),
+            (
+                "local:studio does not support `relay_attach`",
+                "driver_unsupported",
+            ),
+            (
+                "relay: error sending request for url (https://relay.cua.ai/v1/machines)",
+                "relay_unreachable",
+            ),
+            (
+                "relay:abc is shared with you; only its owner can share it",
+                "relay_refused",
+            ),
+            ("something else broke", "other"),
+        ];
+        for (error, kind) in cases {
+            assert_eq!(share_failure(error).0, kind, "{error}");
+        }
+        let input = ShareInput {
+            space_id: "local:studio".into(),
+            space_name: "studio".into(),
+            shares: vec![],
+            signed_in: true,
+            shareable: true,
+        };
+        let before = ShareSheetState {
+            request: Some(ShareRequest::Share {
+                space: "local:studio".into(),
+                who: "grace@example.com".into(),
+                role: "viewer".into(),
+            }),
+            busy: true,
+            ..Default::default()
+        };
+        let failed = |error: &str| {
+            share(
+                &input,
+                &before,
+                &ShareSheetAction::Failed {
+                    error: error.into(),
+                },
+            )
+        };
+        assert_eq!(
+            failed(
+                "not shared: user presence was not confirmed: biometric authorization was cancelled"
+            ),
+            [TelemetrySignal::Share {
+                action: "share".into(),
+                role: "viewer".into(),
+                outcome: "cancelled".into(),
+                error_kind: "presence_cancelled".into(),
+                failed_stage: "presence".into(),
+            }]
+        );
+        assert_eq!(
+            failed("not shared: user presence was not confirmed: polkit did not confirm it is you"),
+            [TelemetrySignal::Share {
+                action: "share".into(),
+                role: "viewer".into(),
+                outcome: "error".into(),
+                error_kind: "presence_denied".into(),
+                failed_stage: "presence".into(),
+            }]
+        );
+        assert_eq!(
+            share(&input, &before, &ShareSheetAction::Done),
+            [TelemetrySignal::Share {
+                action: "share".into(),
+                role: "viewer".into(),
+                outcome: "ok".into(),
+                error_kind: "none".into(),
+                failed_stage: "none".into(),
+            }]
+        );
+        // Never who, never the words.
+        let text = serde_json::to_string(&failed("grace@example.com: no")).unwrap();
+        assert!(!text.contains("grace"), "{text}");
+        // A host that sends the signal without the new fields still parses.
+        let old: TelemetrySignal = serde_json::from_str(
+            r#"{"type":"share","action":"share","role":"viewer","outcome":"ok"}"#,
+        )
+        .unwrap();
+        assert!(
+            matches!(old, TelemetrySignal::Share { ref error_kind, .. } if error_kind == "none")
+        );
+    }
+
     use crate::drive_settings::DriveMountInput;
-    use crate::model::SpaceProvider;
+    use crate::model::{SpaceOs, SpaceProvider};
     use crate::onboarding::{initial, reduce};
 
     fn pages(v: &[TelemetrySignal]) -> Vec<String> {
@@ -754,6 +1509,129 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    fn steps_of(v: &[TelemetrySignal]) -> Vec<String> {
+        v.iter()
+            .filter_map(|s| match s {
+                TelemetrySignal::Step { step, .. } => Some(step.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn loaded(enabled: bool, notice_shown: bool) -> OnboardingState {
+        reduce(
+            &initial(None, None),
+            &OnboardingAction::TelemetryLoaded {
+                telemetry: crate::settings::TelemetryInput {
+                    enabled,
+                    locked_by: None,
+                    notice_shown,
+                },
+            },
+        )
+    }
+
+    #[test]
+    fn welcome_counts_when_shown_once_the_notice_was_shown() {
+        let s = loaded(true, true);
+        let shown = onboarding(&s, &OnboardingAction::WelcomeShown);
+        assert_eq!(steps_of(&shown), ["onboarding_shown"]);
+        assert_eq!(pages(&shown), ["welcome shown none"]);
+        let s = reduce(&s, &OnboardingAction::WelcomeShown);
+        // Shown again (a re-render, Back): not counted twice.
+        assert!(onboarding(&s, &OnboardingAction::WelcomeShown).is_empty());
+        let left = onboarding(&s, &OnboardingAction::Start);
+        assert!(steps_of(&left).is_empty());
+        assert_eq!(
+            pages(&left),
+            ["welcome completed none", "signin shown none"]
+        );
+    }
+
+    #[test]
+    fn a_fresh_machine_counts_welcome_only_when_it_is_left() {
+        // The notice is Welcome's own: nothing before the user can turn
+        // usage data off.
+        let s = loaded(true, false);
+        assert!(onboarding(&s, &OnboardingAction::WelcomeShown).is_empty());
+        let s = reduce(&s, &OnboardingAction::WelcomeShown);
+        assert!(!s.run_counted);
+        let left = onboarding(&s, &OnboardingAction::Start);
+        assert_eq!(steps_of(&left), ["onboarding_shown"]);
+        // Usage data off: nothing when shown, nothing when left.
+        let off = loaded(false, true);
+        assert!(onboarding(&off, &OnboardingAction::WelcomeShown).is_empty());
+        assert!(onboarding(&off, &OnboardingAction::Start).is_empty());
+        // Not read yet: never counted at display.
+        let unread = initial(None, None);
+        assert!(onboarding(&unread, &OnboardingAction::WelcomeShown).is_empty());
+    }
+
+    #[test]
+    fn back_to_welcome_does_not_count_the_run_twice() {
+        let s = reduce(&loaded(true, false), &OnboardingAction::Start);
+        let back = onboarding(&s, &OnboardingAction::Back);
+        assert_eq!(pages(&back), ["signin back none", "welcome shown none"]);
+        let s = reduce(&s, &OnboardingAction::Back);
+        assert!(onboarding(&s, &OnboardingAction::WelcomeShown).is_empty());
+        let again = onboarding(&s, &OnboardingAction::Start);
+        assert!(steps_of(&again).is_empty());
+        assert_eq!(
+            pages(&again),
+            ["welcome completed none", "signin shown none"]
+        );
+    }
+
+    #[test]
+    fn set_up_later_counts_where_it_was_left() {
+        let s = reduce(&loaded(true, false), &OnboardingAction::Start);
+        let v = onboarding_skipped(&s);
+        assert_eq!(pages(&v), ["signin skipped later"]);
+        assert_eq!(steps_of(&v), ["onboarding_skipped"]);
+        // From Welcome, the run's start comes first.
+        let w = onboarding_skipped(&loaded(true, false));
+        assert_eq!(steps_of(&w), ["onboarding_shown", "onboarding_skipped"]);
+        assert!(onboarding_skipped(&loaded(false, true)).is_empty());
+    }
+
+    #[test]
+    fn a_sign_in_failure_is_only_its_kind() {
+        assert_eq!(sign_in_error_kind(None), "cancelled");
+        assert_eq!(
+            sign_in_error_kind(Some("The sign-in timed out. Try again.")),
+            "timeout"
+        );
+        assert_eq!(
+            sign_in_error_kind(Some("access_denied by user")),
+            "permission_denied"
+        );
+        assert_eq!(
+            sign_in_error_kind(Some("could not connect to auth.cua.ai")),
+            "transport"
+        );
+        assert_eq!(
+            sign_in_error_kind(Some("maya@example.com is not allowed")),
+            "other"
+        );
+        let json = serde_json::to_string(&sign_in_failed(Some("maya@example.com x"))).unwrap();
+        assert!(!json.contains("maya"), "{json}");
+    }
+
+    #[test]
+    fn launched_says_whether_the_first_run_is_due() {
+        assert_eq!(
+            launched(Some(true)),
+            vec![TelemetrySignal::Launched {
+                onboarding_eligible: Some(true)
+            }]
+        );
+        let json = serde_json::to_value(launched(None)).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!([{ "type": "launched", "onboardingEligible": null }])
+        );
     }
 
     #[test]
@@ -800,6 +1678,53 @@ mod tests {
     }
 
     #[test]
+    fn installing_the_command_and_skipping_it_are_told_apart() {
+        let planned = reduce(
+            &initial(None, None),
+            &OnboardingAction::CliPlanned {
+                plan: crate::installer::CliInstallPlan {
+                    found: None,
+                    source: Some("/Applications/Cua Spaces.app/Contents/MacOS/cua".into()),
+                    target: "/Users/alice/.local/bin/cua".into(),
+                    ..Default::default()
+                },
+            },
+        );
+        let s = reduce(&planned, &OnboardingAction::Start);
+        assert_eq!(
+            pages(&onboarding(&planned, &OnboardingAction::Start))[1..],
+            ["welcome completed none", "command_line shown none"]
+        );
+        let installing = reduce(&s, &OnboardingAction::CliDone { install: true });
+        assert!(onboarding(&s, &OnboardingAction::CliDone { install: true }).is_empty());
+        let installed = OnboardingAction::CliPlanned {
+            plan: crate::installer::CliInstallPlan {
+                found: None,
+                source: Some("/Applications/Cua Spaces.app/Contents/MacOS/cua".into()),
+                target: "/Users/alice/.local/bin/cua".into(),
+                up_to_date: true,
+                ..Default::default()
+            },
+        };
+        let done = onboarding(&installing, &installed);
+        assert_eq!(
+            pages(&done),
+            ["command_line completed installed", "signin shown none"]
+        );
+        assert!(!serde_json::to_string(&done).unwrap().contains("alice"));
+        let failed = OnboardingAction::CliInstallFailed {
+            error: "/Users/alice/.zshrc: Permission denied".into(),
+        };
+        assert!(onboarding(&installing, &failed).is_empty());
+        let skip = onboarding(&s, &OnboardingAction::CliDone { install: false });
+        assert_eq!(
+            pages(&skip),
+            ["command_line skipped not_installed", "signin shown none"]
+        );
+        assert!(!serde_json::to_string(&skip).unwrap().contains("alice"));
+    }
+
+    #[test]
     fn no_signal_carries_caller_text() {
         let s = reduce(&initial(None, None), &OnboardingAction::Start);
         let s = reduce(
@@ -835,6 +1760,8 @@ mod tests {
                 kind: Some(SpaceKind::Container),
                 host_arch: None,
                 gpu: false,
+                host: None,
+                host_name: None,
             },
         );
         let p = &mut st.pending[0];
@@ -844,11 +1771,119 @@ mod tests {
     }
 
     #[test]
+    fn create_telemetry_preserves_os_words() {
+        for (os, expected) in [
+            (SpaceOs::Macos, "macos"),
+            (SpaceOs::Windows, "windows"),
+            (SpaceOs::Linux, "linux"),
+            (SpaceOs::Unknown, "unknown"),
+        ] {
+            let mut p = pending("pending:os", "booting", None);
+            p.os = os;
+            let finished = create_event(&p, "ok", false, "", "none", 2_000);
+            let finished = serde_json::to_value(finished).unwrap();
+            let started = creates(
+                &CreatesState::default(),
+                &CreateAction::Start {
+                    id: p.id.clone(),
+                    name: "test".into(),
+                    os,
+                    provider: SpaceProvider::Local,
+                    now: 1_000,
+                    image: None,
+                    kind: Some(SpaceKind::Vm),
+                    host_arch: None,
+                    gpu: false,
+                    host: None,
+                    host_name: None,
+                },
+                1_000,
+            );
+            let event = started.iter().find_map(|s| match s {
+                TelemetrySignal::SpaceCreateStarted { guest_os, .. } => Some(guest_os.as_str()),
+                _ => None,
+            });
+            assert_eq!(
+                (finished["guestOs"].as_str(), event),
+                (Some(expected), (os != SpaceOs::Unknown).then_some(expected))
+            );
+        }
+    }
+
+    #[test]
+    fn a_retried_create_counts_once_with_its_final_outcome() {
+        use crate::spaces::creating::reduce;
+        let fail = |error: &str| CreateAction::Fail {
+            id: "pending:a".into(),
+            error: error.into(),
+            error_variant: "Runtime".into(),
+            now: Some(5_000),
+        };
+        let runtime = "the built-in Linux runtime did not start: exiting, status 1";
+        let st = CreatesState {
+            pending: vec![pending("pending:a", "preparing", None)],
+            ..Default::default()
+        };
+        // The failure the app retries by itself sends nothing.
+        assert!(creates(&st, &fail(runtime), 5_000).is_empty());
+        let retrying = reduce(&st, &fail(runtime));
+        // It worked: one ok, with the retry and the cause it got past.
+        let ready = creates(
+            &retrying,
+            &CreateAction::Finish {
+                id: "pending:a".into(),
+                space_id: "local:x".into(),
+            },
+            9_000,
+        );
+        match &ready[0] {
+            TelemetrySignal::SpaceCreate {
+                outcome,
+                retry_attempt,
+                error_subclass,
+                ..
+            } => assert_eq!(
+                (outcome.as_str(), *retry_attempt, error_subclass.as_str()),
+                ("ok", 1, "runtime_start")
+            ),
+            other => panic!("{other:?}"),
+        }
+        // It failed again: one error, with the retry.
+        let failed = creates(&retrying, &fail(runtime), 9_000);
+        assert_eq!(failed.len(), 1);
+        match &failed[0] {
+            TelemetrySignal::SpaceCreate {
+                outcome,
+                retry_attempt,
+                error_subclass,
+                error_variant,
+                ..
+            } => assert_eq!(
+                (
+                    outcome.as_str(),
+                    *retry_attempt,
+                    error_subclass.as_str(),
+                    error_variant.as_str()
+                ),
+                ("error", 1, "runtime_start", "Runtime")
+            ),
+            other => panic!("{other:?}"),
+        }
+        // A lasting failure is sent at once, never retried.
+        let disk = creates(&st, &fail("No space left on device"), 5_000);
+        assert!(matches!(
+            &disk[0],
+            TelemetrySignal::SpaceCreate { retry_attempt: 0, error_subclass, .. } if error_subclass == "none"
+        ));
+    }
+
+    #[test]
     fn a_create_counts_once_when_ready_or_failed_for_good() {
         let st = CreatesState {
             pending: vec![pending("pending:a", "booting", None)],
             deleting: vec![],
             powering: vec![],
+            streaks: vec![],
         };
         let ready = creates(
             &st,
@@ -869,6 +1904,9 @@ mod tests {
                 stalled: false,
                 elapsed_ms: 47_000,
                 gpu: false,
+                error_variant: String::new(),
+                retry_attempt: 0,
+                error_subclass: "none".into(),
             }
         );
         assert_eq!(ready[1], step("first_space_ready", true));
@@ -877,20 +1915,63 @@ mod tests {
             &CreateAction::Fail {
                 id: "pending:a".into(),
                 error: "boom at /Users/alice".into(),
+                error_variant: "InsufficientDisk".into(),
+                now: None,
             },
             5_000,
         );
         assert!(matches!(
             &failed[0],
-            TelemetrySignal::SpaceCreate { failed_phase, stalled: false, outcome, .. }
-                if failed_phase == "booting" && outcome == "error"
+            TelemetrySignal::SpaceCreate { failed_phase, stalled: false, outcome, error_variant, .. }
+                if failed_phase == "booting" && outcome == "error" && error_variant == "InsufficientDisk"
         ));
+        // A cause the app reads from the text replaces the shell's generic case.
+        for (error, shell, want) in [
+            (
+                "runtime: Local Network access is not available: Cua Spaces cannot reach the VM at 192.168.64.5:3211 (No route to host (os error 65))",
+                "Runtime",
+                "local_network_denied",
+            ),
+            (
+                "lume: The number of virtual machines exceeds the limit",
+                "",
+                "vm_limit",
+            ),
+            ("something else at /Users/alice", "Runtime", "Runtime"),
+            (
+                "container engine: pull ghcr.io/trycua/linux:24.04: manifest unknown",
+                "",
+                "image_pull_not_found",
+            ),
+            // A specific case from the shell stays.
+            (
+                "cua-spacesd timed out",
+                "SpacesdNotAvailable",
+                "SpacesdNotAvailable",
+            ),
+        ] {
+            let failed = creates(
+                &st,
+                &CreateAction::Fail {
+                    id: "pending:a".into(),
+                    error: error.into(),
+                    error_variant: shell.into(),
+                    now: None,
+                },
+                5_000,
+            );
+            assert!(matches!(
+                &failed[0],
+                TelemetrySignal::SpaceCreate { error_variant, .. } if error_variant == want
+            ));
+        }
         // A stalled row is counted when dismissed, not when it stalls.
         let stall = crate::spaces::creating::stall_error("pulling", 900.0);
         let st = CreatesState {
             pending: vec![pending("pending:b", "pulling", Some(&stall))],
             deleting: vec![],
             powering: vec![],
+            streaks: vec![],
         };
         assert!(creates(&st, &CreateAction::Tick { now: 9_000 }, 9_000).is_empty());
         let gone = creates(
@@ -902,13 +1983,35 @@ mod tests {
         );
         assert!(matches!(
             &gone[0],
-            TelemetrySignal::SpaceCreate { stalled: true, failed_phase, .. } if failed_phase == "pulling"
+            TelemetrySignal::SpaceCreate { stalled: true, failed_phase, error_variant, .. }
+                if failed_phase == "pulling" && error_variant.is_empty()
+        ));
+        let mut cancelling = pending("pending:d", "pulling", None);
+        cancelling.cancelling = true;
+        let st = CreatesState {
+            pending: vec![cancelling],
+            deleting: vec![],
+            powering: vec![],
+            streaks: vec![],
+        };
+        let cancelled = creates(
+            &st,
+            &CreateAction::CancelDone {
+                id: "pending:d".into(),
+            },
+            9_000,
+        );
+        assert!(matches!(
+            &cancelled[0],
+            TelemetrySignal::SpaceCreate { outcome, error_variant, .. }
+                if outcome == "cancelled" && error_variant.is_empty()
         ));
         // A failed (not stalled) row dismissed was already counted.
         let st = CreatesState {
             pending: vec![pending("pending:c", "pulling", Some("no network"))],
             deleting: vec![],
             powering: vec![],
+            streaks: vec![],
         };
         assert!(
             creates(
@@ -968,11 +2071,11 @@ mod tests {
     #[test]
     fn an_experiment_toggle_is_one_event_and_the_set_that_is_on() {
         use crate::experiments::Experiments;
-        let off = Experiments::default();
-        let on = Experiments {
-            sharing: true,
+        let off = Experiments {
+            sharing: false,
             ..Default::default()
         };
+        let on = Experiments::default();
         let signals = experiments_changed(&off, &on);
         assert_eq!(
             signals,
@@ -982,7 +2085,7 @@ mod tests {
                     experiment: "sharing".into(),
                 },
                 TelemetrySignal::ExperimentsOn {
-                    experiments: vec!["sharing".into()],
+                    experiments: vec!["your_cloud".into(), "sharing".into()],
                 },
             ]
         );
@@ -990,7 +2093,7 @@ mod tests {
             serde_json::to_value(&signals).unwrap(),
             serde_json::json!([
                 {"type": "experiment", "action": "experiment_on", "experiment": "sharing"},
-                {"type": "experiments-on", "experiments": ["sharing"]},
+                {"type": "experiments-on", "experiments": ["your_cloud", "sharing"]},
             ])
         );
         assert_eq!(
@@ -1001,7 +2104,7 @@ mod tests {
                     experiment: "sharing".into(),
                 },
                 TelemetrySignal::ExperimentsOn {
-                    experiments: vec![]
+                    experiments: vec!["your_cloud".into()]
                 },
             ]
         );
@@ -1009,7 +2112,12 @@ mod tests {
         assert_eq!(
             experiments_on(&Experiments::all_on()),
             vec![TelemetrySignal::ExperimentsOn {
-                experiments: vec!["cua_volume".into(), "your_cloud".into(), "sharing".into()]
+                experiments: vec![
+                    "cua_volume".into(),
+                    "your_cloud".into(),
+                    "sharing".into(),
+                    "web_ui".into()
+                ]
             }]
         );
         // Loading the switches on Welcome derives nothing.
@@ -1042,12 +2150,16 @@ mod tests {
             .foreground()
             .build();
         t.acknowledge_notice();
+        let off = Experiments {
+            sharing: false,
+            ..Default::default()
+        };
         let on = Experiments {
             cua_volume: true,
             sharing: true,
             ..Default::default()
         };
-        let signals = experiments_changed(&Experiments::default(), &on);
+        let signals = experiments_changed(&off, &on);
         assert_eq!(
             record(&t, &signals),
             2,
@@ -1076,7 +2188,70 @@ mod tests {
             .iter()
             .find(|e| e["event"] == "cua_app_active")
             .expect("the day is active");
-        assert_eq!(active["properties"]["experiments_on"], "cua_volume+sharing");
+        // `your_cloud` is on by default, so the active day carries it too.
+        assert_eq!(
+            active["properties"]["experiments_on"],
+            "cua_volume+your_cloud+sharing"
+        );
+    }
+
+    /// A `step_*` onboarding-page signal sends the first-run funnel events
+    /// with the machine's OS and app version, and an old page still sends
+    /// `cua_onboarding_page`.
+    #[cfg(feature = "telemetry")]
+    #[test]
+    fn first_run_step_signals_record_the_funnel_events() {
+        use std::sync::Arc;
+        let home = tempfile::tempdir().unwrap();
+        let sink = Arc::new(cua_telemetry::sink::MemorySink::new());
+        let t = cua_telemetry::Telemetry::builder()
+            .env(|k| (k == "CUA_TELEMETRY_FORBID_NETWORK").then(|| "1".into()))
+            .home(home.path())
+            .sink(sink.clone())
+            .product("spaces_app", "0.12.0")
+            .foreground()
+            .build();
+        t.acknowledge_notice();
+        let sig = |page: &str, action: &str, choice: &str| TelemetrySignal::OnboardingPage {
+            page: page.into(),
+            action: action.into(),
+            choice: choice.into(),
+        };
+        let signals = [
+            sig("sign_in", "step_viewed", "none"),
+            sig("sign_in", "step_failed", "timeout"),
+            sig("sign_in", "step_completed", "none"),
+            sig("terminal", "step_skipped", "none"),
+            sig("welcome", "shown", "none"),
+            sig("/Users/alice", "step_viewed", "none"),
+        ];
+        assert_eq!(record(&t, &signals), 5, "the unknown step is dropped");
+        t.flush(std::time::Duration::from_secs(2));
+        let names: Vec<String> = sink
+            .events()
+            .iter()
+            .map(|e| e["event"].as_str().unwrap().to_string())
+            .filter(|n| n.starts_with("cua_onboarding"))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "cua_onboarding_step_viewed",
+                "cua_onboarding_step_failed",
+                "cua_onboarding_step_completed",
+                "cua_onboarding_skipped",
+                "cua_onboarding_page"
+            ]
+        );
+        let events = sink.events();
+        let failed = events
+            .iter()
+            .find(|e| e["event"] == "cua_onboarding_step_failed")
+            .unwrap();
+        assert_eq!(failed["properties"]["reason"], "timeout");
+        assert_eq!(failed["properties"]["step_index"], 4);
+        assert_eq!(failed["properties"]["product_version"], "0.12.0");
+        assert!(failed["properties"]["os_family"].is_string());
     }
 
     /// Every signal the parity flow derives is a valid event: each one is
@@ -1231,5 +2406,33 @@ mod tests {
             !on.path().join("config.toml").exists(),
             "on is the default: nothing written"
         );
+    }
+
+    #[test]
+    fn checklist_events_are_fixed_steps_in_the_schema() {
+        let all: Vec<&str> = CHECKLIST_STEPS
+            .iter()
+            .chain(CHECKLIST_EVENTS)
+            .copied()
+            .collect();
+        for e in &all {
+            assert_eq!(steps_of(&checklist(e)), [format!("checklist_{e}")]);
+            #[cfg(feature = "telemetry")]
+            assert!(
+                cua_telemetry::schema::ONBOARDING_STEPS
+                    .contains(&format!("checklist_{e}").as_str()),
+                "checklist_{e} is not in cua-telemetry's step vocabulary"
+            );
+        }
+        for bad in [
+            "",
+            "Share",
+            "checklist_share",
+            "me@example.com",
+            "/Users/x",
+            "share ",
+        ] {
+            assert!(checklist(bad).is_empty(), "{bad:?} accepted");
+        }
     }
 }

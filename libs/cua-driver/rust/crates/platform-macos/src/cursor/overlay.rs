@@ -23,7 +23,7 @@
 //! ## Cross-platform note (2026-05 dedup audit)
 //!
 //! Animation state + render pipeline live in `cursor_overlay::render_state`
-//! (`RenderStateCore`, `tick_swift_constants`, `apply_command_base`,
+//! (`RenderStateCore`, `tick_motion`, `apply_command_base`,
 //! `render_frame`).  macOS uses the hardcoded Swift reference constants
 //! (peakSpeed=900, springK=400, overshoot=0.8) and the sentinel-snap
 //! variants of MoveTo / ClickPulse — see the wrapper around
@@ -137,13 +137,43 @@ pub(crate) fn overlay_may_show_pixels() -> bool {
         .is_some_and(|last| last.elapsed() < OVERLAY_CLEAR_GRACE)
 }
 
+/// Whether the macOS overlay, which covers the main screen from (0, 0), draws
+/// a cursor at `pos`. This is the existing visibility gate: a cursor more
+/// than 50 points left of or above the main screen's origin is not drawn,
+/// session badge included. One predicate decides both painting and pixel
+/// presence, so they cannot disagree.
+fn on_main_screen(pos: (f64, f64)) -> bool {
+    pos.0 > -50.0 && pos.1 > -50.0
+}
+
 fn cursor_may_paint(state: &RenderState) -> bool {
     state.focus_rect.is_some()
         || (state.core.cfg.enabled
             && state.core.visible
+            && state.core.placed
             && state.core.idle_alpha > 0.0
-            && state.core.pos.0 > -50.0
-            && state.core.pos.1 > -50.0)
+            && on_main_screen(state.core.pos))
+}
+
+/// Paint every cursor the main-screen overlay draws into `pm`.
+fn paint_main_screen(pm: &mut tiny_skia::Pixmap, map: &RenderMap, backing_scale: f32) {
+    for rs in map.cursors.values() {
+        if !on_main_screen(rs.core.pos) {
+            continue;
+        }
+        let focus = rs.focus_rect.map(|rect| FocusRect {
+            rect,
+            t: rs.focus_rect_t,
+        });
+        cursor_overlay::paint_cursor(
+            pm,
+            &rs.core,
+            0.0,
+            0.0, // macOS uses screen-local coords (no origin offset)
+            focus,
+            backing_scale,
+        );
+    }
 }
 
 /// Screen-global geometry kept beside the shared keyed render map
@@ -224,6 +254,12 @@ pub fn init(cfg: CursorConfig) {
                         reduced_motion: selection.reduced_motion,
                     },
                 ),
+                CursorEvent::KeyCombo { session, keys } => {
+                    (session, OverlayCommand::ShowKeyCombo(keys))
+                }
+                CursorEvent::SelectMotion { session, motion } => {
+                    (session, OverlayCommand::ApplyMotion(motion))
+                }
             };
             send_command(session, cmd);
         },
@@ -335,11 +371,11 @@ pub fn current_theme_state(
 /// the sentinel and only `ClickPulse` snapped a static arrow, which is easy to
 /// miss. See the AX-no-glide report.
 ///
-/// No-op when the cursor is already on-screen (pos.0 > -50.0) or absent. The
+/// No-op when the cursor is already placed or absent. The
 /// seed is clamped to the main screen frame so it never starts off-display.
 /// Returns true if a seed was applied (i.e. the cursor was at the sentinel and
 /// is now primed to glide).
-fn seed_start_if_sentinel(key: &CursorKey, target_x: f64, target_y: f64) -> bool {
+fn seed_start_if_unplaced(key: &CursorKey, target_x: f64, target_y: f64) -> bool {
     let mut guard = RENDER.lock().unwrap();
     let Some(map) = guard.as_mut() else {
         return false;
@@ -348,7 +384,7 @@ fn seed_start_if_sentinel(key: &CursorKey, target_x: f64, target_y: f64) -> bool
     // keeps the start point off negative coordinates.
     let MacScreen { win_w, win_h, .. } = map.platform;
     let frame = (win_w > 0.0 && win_h > 0.0).then(|| ScreenFrame::new(0.0, 0.0, win_w, win_h));
-    map.seed_start_if_sentinel(key, target_x, target_y, frame)
+    map.seed_start_if_unplaced(key, target_x, target_y, frame)
 }
 
 /// Animate the overlay cursor to `(x, y)` and suspend until the Dubins path
@@ -357,18 +393,26 @@ fn seed_start_if_sentinel(key: &CursorKey, target_x: f64, target_y: f64) -> bool
 /// Mirrors Swift's `AgentCursor.shared.animateAndWait(to:)`.
 /// Returns immediately (no animation) only when the overlay is disabled for
 /// this cursor. A brand-new cursor still at the off-screen sentinel is first
-/// seeded on-screen via [`seed_start_if_sentinel`] so its FIRST action glides
+/// seeded on-screen via [`seed_start_if_unplaced`] so its FIRST action glides
 /// in (it previously snapped silently via `ClickPulse`, invisible on a pure-AX
 /// run).
 pub async fn animate_cursor_to(key: CursorKey, x: f64, y: f64) {
+    animate_cursor_to_target(key, x, y, None).await;
+}
+
+/// [`animate_cursor_to`] with the targeted element's screen rect
+/// `[x, y, width, height]` (same space as `x`/`y`), so motion styles can use
+/// Fitts timing and highlight the target. `None` when the action has no
+/// element (pixel coordinates).
+pub async fn animate_cursor_to_target(key: CursorKey, x: f64, y: f64, target: Option<[f64; 4]>) {
     // Empty key is the explicit no-cursor sentinel → nothing to animate.
     if key.is_empty() {
         return;
     }
     // Seed a sentinel cursor on-screen so the MoveTo below glides instead of
-    // being short-circuited. After this the cursor's pos.0 > -50.0, so the
+    // being short-circuited. After this the cursor is placed, so the
     // should-animate check passes on the first action just like later ones.
-    seed_start_if_sentinel(&key, x, y);
+    seed_start_if_unplaced(&key, x, y);
 
     // Check whether animation should run for THIS cursor. A disabled cursor
     // never animates; an absent cursor (seed found nothing to prime) is skipped.
@@ -376,7 +420,7 @@ pub async fn animate_cursor_to(key: CursorKey, x: f64, y: f64) {
         let guard = RENDER.lock().unwrap();
         matches!(
             guard.as_ref().and_then(|m| m.cursors.get(&key)),
-            Some(rs) if rs.core.cfg.enabled && rs.core.pos.0 > -50.0
+            Some(rs) if rs.core.cfg.enabled && rs.core.placed
         )
     };
     if !should_animate {
@@ -397,6 +441,7 @@ pub async fn animate_cursor_to(key: CursorKey, x: f64, y: f64) {
             // Arrive pointing upper-left (45°), matching the macOS system-cursor
             // convention and Swift reference (`endAngleDegrees: 45`).
             end_heading_radians: std::f64::consts::FRAC_PI_4,
+            target,
         },
     );
 
@@ -405,12 +450,32 @@ pub async fn animate_cursor_to(key: CursorKey, x: f64, y: f64) {
     // thread never entered `run_on_main_thread`): the command stays queued
     // for a loop that starts later, and the action proceeds now. Bounded
     // either way.
-    wait_for_arrival(
-        rx,
-        RENDER_LOOP_RUNNING.load(Ordering::Acquire),
-        ARRIVAL_TIMEOUT,
-    )
-    .await;
+    await_arrival(rx, RENDER_LOOP_RUNNING.load(Ordering::Acquire)).await;
+}
+
+/// Waits for the cursor's arrival signal for as long as the current step's
+/// pacing allows. A step of a batch waits only briefly for the glide (it plays
+/// on), so a chain of actions is not held up by one cursor move per step.
+pub(crate) async fn await_arrival(
+    rx: tokio::sync::oneshot::Receiver<()>,
+    render_loop_running: bool,
+) -> bool {
+    let limit = cua_driver_core::step_pacing::glide_wait_limit(ARRIVAL_TIMEOUT);
+    if limit < ARRIVAL_TIMEOUT {
+        wait_for_arrival_briefly(rx, render_loop_running, limit).await
+    } else {
+        wait_for_arrival(rx, render_loop_running, ARRIVAL_TIMEOUT).await
+    }
+}
+
+/// [`wait_for_arrival`] for a deliberately short wait: the cursor is still
+/// gliding when the limit passes, which is expected and not logged.
+async fn wait_for_arrival_briefly(
+    rx: tokio::sync::oneshot::Receiver<()>,
+    render_loop_running: bool,
+    limit: Duration,
+) -> bool {
+    render_loop_running && tokio::time::timeout(limit, rx).await.is_ok()
 }
 
 /// Waits for `rx` only while a render loop runs, and never longer than
@@ -523,12 +588,11 @@ impl RenderEntry for RenderState {
         &mut self.core
     }
 
-    /// Advance the animation by `dt`.  Uses the Swift reference constants
-    /// (peakSpeed=900, springK=400, overshoot=0.8) — see
-    /// [`RenderStateCore::tick_swift_constants`].  Returns true if an
-    /// arrival signal should be fired (the path just ended).
+    /// Advance the animation by `dt` with the shared trajectory player (see
+    /// [`RenderStateCore::tick_motion`]). Returns true if an arrival signal
+    /// should be fired (the cursor just reached its target).
     fn tick(&mut self, dt: f64) -> bool {
-        let fire_arrival = self.core.tick_swift_constants(dt);
+        let fire_arrival = self.core.tick_motion(dt);
 
         // Advance focus-rect fade (fades out over ~600ms).  macOS-only —
         // the shared core has no focus_rect concept.
@@ -578,10 +642,7 @@ impl RenderEntry for RenderState {
     fn needs_frame_tick(&self) -> bool {
         self.core.needs_frame_tick()
             || self.focus_rect.is_some()
-            || (self.core.motion.idle_hide_ms > 0.0
-                && self.core.visible
-                && self.core.pos.0 >= -100.0
-                && self.core.idle_alpha >= 0.004)
+            || (self.core.motion.idle_hide_ms > 0.0 && self.core.is_revealed())
     }
 }
 
@@ -933,20 +994,7 @@ fn render_loop(
                         .unwrap_or_else(|| tiny_skia::Pixmap::new(1, 1).unwrap());
                     let backing_scale_f32 = scale as f32;
                     note_overlay_frame(map.cursors.values().any(cursor_may_paint));
-                    for (_k, rs) in &map.cursors {
-                        let focus = rs.focus_rect.map(|rect| FocusRect {
-                            rect,
-                            t: rs.focus_rect_t,
-                        });
-                        cursor_overlay::paint_cursor(
-                            &mut pm,
-                            &rs.core,
-                            0.0,
-                            0.0, // macOS uses screen-local coords (no origin offset)
-                            focus,
-                            backing_scale_f32,
-                        );
-                    }
+                    paint_main_screen(&mut pm, map, backing_scale_f32);
                     pm
                 } else {
                     break;
@@ -1049,8 +1097,8 @@ fn hardware_cursor_position() -> Option<(f64, f64)> {
 fn cursor_is_externally_visible(state: &RenderState) -> bool {
     state.core.cfg.enabled
         && state.core.visible
-        && state.core.pos.0 > -50.0
-        && state.core.pos.1 > -50.0
+        && state.core.placed
+        && on_main_screen(state.core.pos)
         && state.core.idle_alpha >= 0.004
 }
 
@@ -1419,6 +1467,29 @@ mod tests {
         assert!(rt.block_on(wait_for_arrival(rx, true, Duration::from_secs(60))));
     }
 
+    #[test]
+    fn a_batched_step_waits_for_the_glide_only_up_to_the_batch_cap() {
+        use cua_driver_core::step_pacing::{glide_wait_limit, scope, StepPacing, BATCH_GLIDE_WAIT};
+        let rt = runtime();
+        // The sender stays alive and never fires: the glide is still playing.
+        let (_tx, rx) = tokio::sync::oneshot::channel::<()>();
+        let started = Instant::now();
+        let arrived = rt.block_on(scope(StepPacing::Batched, async {
+            let limit = glide_wait_limit(ARRIVAL_TIMEOUT);
+            assert_eq!(limit, BATCH_GLIDE_WAIT);
+            wait_for_arrival_briefly(rx, true, limit).await
+        }));
+        assert!(!arrived);
+        assert!(started.elapsed() >= BATCH_GLIDE_WAIT);
+        assert!(started.elapsed() < ARRIVAL_TIMEOUT / 4);
+        // A direct call keeps the full arrival limit.
+        assert_eq!(glide_wait_limit(ARRIVAL_TIMEOUT), ARRIVAL_TIMEOUT);
+        // An arrival inside the cap is still seen.
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        tx.send(()).unwrap();
+        assert!(rt.block_on(wait_for_arrival_briefly(rx, true, BATCH_GLIDE_WAIT)));
+    }
+
     fn window(window_id: u32, pid: i32, z_index: usize) -> crate::windows::WindowInfo {
         crate::windows::WindowInfo {
             window_id,
@@ -1453,7 +1524,7 @@ mod tests {
 
     fn placed<'a>(map: &'a mut RenderMap, key: &str) -> &'a mut RenderState {
         let frame = Some(ScreenFrame::new(0.0, 0.0, 100.0, 100.0));
-        assert!(map.seed_start_if_sentinel(key, 60.0, 60.0, frame));
+        assert!(map.seed_start_if_unplaced(key, 60.0, 60.0, frame));
         map.cursors.get_mut(key).unwrap()
     }
 
@@ -1489,8 +1560,33 @@ mod tests {
 
         placed(&mut map, "sessA");
         assert!(cursor_is_externally_visible(&map.cursors["sessA"]));
+        map.cursors.get_mut("sessA").unwrap().core.placed = false;
+        assert!(!cursor_may_paint(&map.cursors["sessA"]));
+        assert!(!cursor_is_externally_visible(&map.cursors["sessA"]));
+        map.cursors.get_mut("sessA").unwrap().core.placed = true;
 
         map.cursors.get_mut("sessA").unwrap().core.cfg.enabled = false;
+        assert!(!cursor_is_externally_visible(&map.cursors["sessA"]));
+    }
+
+    #[test]
+    fn a_cursor_left_of_the_main_screen_paints_nothing_there() {
+        let mut map = empty_map();
+        let state = placed(&mut map, "sessA");
+        state.core.session_label = Some("A".to_owned());
+        let painted = |map: &RenderMap| {
+            let mut pm = tiny_skia::Pixmap::new(100, 100).unwrap();
+            paint_main_screen(&mut pm, map, 1.0);
+            pm.pixels().iter().any(|pixel| pixel.alpha() > 0)
+        };
+        assert!(painted(&map));
+        assert!(cursor_may_paint(&map.cursors["sessA"]));
+
+        // Placed on a display left of the main screen: the label would clamp
+        // its badge into the main-screen pixmap if this cursor were painted.
+        map.cursors.get_mut("sessA").unwrap().core.pos = (-200.0, 30.0);
+        assert!(!painted(&map));
+        assert!(!cursor_may_paint(&map.cursors["sessA"]));
         assert!(!cursor_is_externally_visible(&map.cursors["sessA"]));
     }
 

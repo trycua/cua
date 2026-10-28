@@ -5,6 +5,7 @@ import AppKit
 import CuaSDK
 import CuaSpacesFFI
 @testable import CuaSpacesMacKit
+import CuaSpacesNotchUI
 import Foundation
 import SwiftUI
 import Testing
@@ -42,7 +43,7 @@ final class ManualScheduler: NotchScheduler {
 @MainActor
 @Suite("Notch")
 struct NotchTests {
-    let motion = appNotchMotion()
+    let motion = appNotchMotion().data
 
     /// A click on the non-activating panel works without focusing it first,
     /// and the panel never activates the app.
@@ -59,7 +60,7 @@ struct NotchTests {
     /// The debug start's highlight names one control.
     @Test func highlightParses() {
         #expect(NotchHighlight.parse("tile", firstTile: "local:aurora") == NotchHighlight(.tile("local:aurora")))
-        #expect(NotchHighlight.parse("tile=cloud:x:pressed", firstTile: nil) == NotchHighlight(.tile("cloud:x"), pressed: true))
+        #expect(NotchHighlight.parse("tile=direct:x:pressed", firstTile: nil) == NotchHighlight(.tile("direct:x"), pressed: true))
         #expect(NotchHighlight.parse("settings:pressed", firstTile: nil) == NotchHighlight(.button(.settings), pressed: true))
         #expect(NotchHighlight.parse("list", firstTile: nil) == NotchHighlight(.button(.list)))
         #expect(NotchHighlight.parse("search", firstTile: nil) == NotchHighlight(.search))
@@ -81,11 +82,64 @@ struct NotchTests {
         #expect(motion.openResponse > 0.12)
     }
 
+    /// The closed hover area ends at the drawn tab, so the menu bar item
+    /// right of it (a status item, the overflow chevron) keeps its hover
+    /// and clicks; before the tab is measured it is the core's widest tab.
+    @Test func closedHoverEndsAtTheDrawnTab() {
+        let g = NotchGeometry.fallback
+        let tabStart = g.stage.width / 2 + g.notch.width / 2
+        let y = g.tab.height / 2
+        let drawn: CGFloat = 44
+        let hover = g.closedHover(tabWidth: drawn)
+        #expect(hover.contains(CGPoint(x: tabStart + drawn - 1, y: y)))
+        #expect(!hover.contains(CGPoint(x: tabStart + drawn + 1, y: y)))
+        #expect(!hover.contains(CGPoint(x: tabStart + g.tab.width - 1, y: y)))
+        #expect(g.closedHover(tabWidth: nil).contains(CGPoint(x: tabStart + g.tab.width - 1, y: y)))
+        // The notch and its margin stay hoverable.
+        #expect(hover.contains(CGPoint(x: g.stage.width / 2, y: y)))
+        #expect(hover.contains(CGPoint(x: (g.stage.width - g.closedHit.width) / 2 + 1, y: y)))
+    }
 
     func spaces() async -> [AppSpace] {
         let m = ViewModelTests().makeModel(FixtureSpacesBackend())
         await m.refresh()
         return m.notch.spaces
+    }
+
+    /// The open panel's search sits inside the panel: its hover fill clears
+    /// the rounded top-left corner by a margin and, on the glass panel (no
+    /// notch), is as far from the top edge as from the side (#4644). Beside
+    /// a notch it clears the concave ear (the top edge is the screen's).
+    @Test func searchFillClearsThePanelCorner() {
+        let radii = NotchModel.radii
+        let margin: CGFloat = 4
+        func glass(menuBar: Double) -> NotchGeometry {
+            NotchGeometry(appNotchLayout(screen: AppScreenFacts(
+                frame: AppLogicalRect(x: 0, y: 0, width: 1440, height: 900),
+                visibleFrame: AppLogicalRect(x: 0, y: 0, width: 1440, height: 900 - menuBar),
+                safeAreaTop: 0, auxLeftWidth: nil, auxRightWidth: nil), prompt: false).data)
+        }
+        let notched = NotchGeometry.fallback
+        #expect(notched.notchStyle)
+        #expect(notched.searchFill(side: notched.side(radii: radii), width: 120).minX >= CGFloat(radii.open.top) + margin)
+
+        for g in [glass(menuBar: 24), glass(menuBar: 0), glass(menuBar: 30)] {
+            #expect(!g.notchStyle)
+            let fill = g.searchFill(side: g.side(radii: radii), width: 120)
+            let outline = NotchSurfaceShape(notchStyle: g.notchStyle, top: radii.open.top, bottom: radii.open.bottom,
+                                             corner: g.glassCorner(open: true))
+                .path(in: CGRect(origin: .zero, size: g.open))
+            // The fill's top-left corner grown by the margin: every point of
+            // it inside the panel's outline.
+            let c = NotchGeometry.searchCorner
+            let center = CGPoint(x: fill.minX + c, y: fill.minY + c)
+            for deg in stride(from: 180.0, through: 270.0, by: 5.0) {
+                let a = deg * .pi / 180
+                let p = CGPoint(x: center.x + (c + margin) * cos(a), y: center.y + (c + margin) * sin(a))
+                #expect(outline.contains(p), "menu bar \(g.notch.height): \(p) outside the panel")
+            }
+            #expect(fill.minY == fill.minX, "as far from the top as from the side (\(fill))")
+        }
     }
 
     // MARK: - Hover timing (the core's dwell and close delay)
@@ -134,6 +188,35 @@ struct NotchTests {
         #expect(notch.view.phase == .closed)
     }
 
+    /// Hovering the notch lists the Spaces, never a machine that only
+    /// provides them (CUA-1619): This machine and your other Mac on the
+    /// relay stay off the tiles, the Space that Mac provides is listed, and
+    /// the tab counts what the tiles list.
+    @Test func hoverListsOnlySpacesNeverTheMachinesThatProvideThem() async {
+        var machine = FixtureSpacesBackend.sample[0]
+        machine.id = "relay:studio"
+        machine.name = "Studio"
+        machine.provider = "relay"
+        var provided = FixtureSpacesBackend.sample[0]
+        provided.id = "relay:studio/dev"
+        provided.name = "Dev"
+        provided.provider = "relay"
+        provided.host = "studio"
+        let m = ViewModelTests().makeModel(FixtureSpacesBackend(rows: [machine, provided]))
+        await m.refresh()
+        #expect(m.notch.spaces.contains { $0.id == "relay:studio" }, "the roster still has the machine")
+
+        let clock = ManualScheduler()
+        let notch = NotchModel(scheduler: clock)
+        notch.spaces = m.notch.spaces
+        notch.send(.hoverEnter)
+        clock.advance(motion.hoverDwellMs)
+        #expect(notch.view.phase == .tiles)
+        #expect(notch.view.tiles.map(\.id) == ["relay:studio/dev"])
+        #expect(notch.view.tab.count == "1")
+        #expect(notch.view.tiles.count == Int(appOpenableCount(spaces: notch.spaces)))
+    }
+
     // MARK: - The presentation state machine
 
     @Test func openingSpringsTheShapeThenFadesTheContentIn() {
@@ -171,15 +254,15 @@ struct NotchTests {
     @Test func theCueRespondsAtOnceWithASpringAndFadesUnderReduceMotion() {
         let clock = ManualScheduler()
         let notch = NotchModel(scheduler: clock)
-        var s = NotchStage(settledOn: notch.view.phase, cue: notch.view.hoverCue)
+        var s = NotchStage(settledOn: notch.view.phase.data, cue: notch.view.hoverCue)
         notch.send(.hoverEnter)
         #expect(notch.view.hoverCue, "the cue shows before any time passes")
-        #expect(s.update(phase: notch.view.phase, cue: notch.view.hoverCue, motion: motion,
+        #expect(s.update(phase: notch.view.phase.data, cue: notch.view.hoverCue, motion: motion,
                          reduceMotion: false) == [.shape(.cue, .cue)])
         clock.advance(motion.hoverDwellMs / 2)
         notch.send(.hoverExit)
         #expect(!notch.view.hoverCue && notch.view.phase == .closed, "left early: back, never opened")
-        #expect(s.update(phase: notch.view.phase, cue: notch.view.hoverCue, motion: motion,
+        #expect(s.update(phase: notch.view.phase.data, cue: notch.view.hoverCue, motion: motion,
                          reduceMotion: false) == [.shape(.closed, .cue)])
         // The spring: quick, a little bounce, wider and taller.
         #expect(motion.hoverResponse <= 0.3)
@@ -222,10 +305,10 @@ struct NotchTests {
     @Test func theClosedShapeCoversTheHardwareNotchWithItsEarsOutside() {
         let g = NotchGeometry.fallback
         let r = appNotchRadii()
-        let closed = g.size(.closed, radii: (r[0], r[1]))
+        let closed = g.size(.closed, radii: NotchModel.radii)
         #expect(closed.height == g.notch.height)
         #expect(abs(Double(closed.width) - (Double(g.notch.width) + 2 * r[0].top)) < 0.001)
-        #expect(g.size(.tiles, radii: (r[0], r[1])) == g.open)
+        #expect(g.size(.tiles, radii: NotchModel.radii) == g.open)
         #expect(g.stage.width >= g.open.width && g.stage.height >= g.open.height)
     }
 
@@ -267,7 +350,7 @@ struct NotchTests {
         let clock = ManualScheduler()
         c.scheduler = clock
         c.clock = { UInt64(clock.now) }
-        c.place(screen: NotchGeometry.fallbackScreen, primary: NotchGeometry.fallbackScreen)
+        c.place(screen: NotchGeometry.fallbackScreen.ffi, primary: NotchGeometry.fallbackScreen.ffi)
         return (c, clock)
     }
 
@@ -301,7 +384,7 @@ struct NotchTests {
         #expect(notch.view.phase == .tiles)
         #expect(notch.view.dropMode)
         // The panel now shows its line above the tiles.
-        c.place(screen: NotchGeometry.fallbackScreen, primary: NotchGeometry.fallbackScreen)
+        c.place(screen: NotchGeometry.fallbackScreen.ffi, primary: NotchGeometry.fallbackScreen.ffi)
         let l = c.layout!
         // Over the first tile (left edge of the content, tile row), far
         // below the line: still open, the tile targeted.
@@ -384,6 +467,38 @@ struct NotchTests {
         #expect(notch.view.phase == .closed)
     }
 
+    // MARK: - The count
+
+    /// The tab counts only the Spaces on or starting: with every Space
+    /// stopped there is no tab at all (no "0"), the stopped Spaces are
+    /// still tiles that take drops, and one starting brings the tab back.
+    @Test func theTabCountsOnlySpacesOnAndGoesAtZero() async throws {
+        let notch = NotchModel(scheduler: ManualScheduler())
+        let roster = await spaces()
+        let stopped = roster.map { s -> AppSpace in
+            var s = s
+            if s.id != "this-mac" { s.status = .suspended }
+            return s
+        }
+        notch.spaces = stopped
+        #expect(appOnCount(spaces: stopped) == 0)
+        #expect(notch.view.phase == .closed && !notch.view.showTab)
+        #expect(appOnStatusLine(count: 0) == "No Spaces running")
+        notch.send(.click)
+        let tiles = notch.view.tiles
+        #expect(!tiles.isEmpty && tiles.allSatisfy { $0.dim })
+        #expect(tiles.contains { $0.dropTarget }, "a reachable stopped Space still takes drops")
+        notch.send(.click)
+
+        var starting = stopped
+        let i = try #require(starting.firstIndex { $0.id != "this-mac" })
+        starting[i].status = .provisioning
+        notch.spaces = starting
+        #expect(notch.view.showTab)
+        #expect(notch.view.tab.count == "1" && notch.view.tab.word == "Space")
+        #expect(notch.view.countLabel == "1 Space")
+    }
+
     // MARK: - The notch setting
 
     @Test func hidingTheNotchStopsHoverAndDragsAndShowingRestoresIt() async {
@@ -391,7 +506,7 @@ struct NotchTests {
         notch.spaces = await spaces()
         let c = NotchController(model: notch)
         c.makesPanel = false
-        c.apply(appNotchLayout(screen: NotchGeometry.fallbackScreen, prompt: false))
+        c.apply(appNotchLayout(screen: NotchGeometry.fallbackScreen.ffi, prompt: false))
         var started = 0
         c.permitted = { true }
         c.startDrags = { started += 1 }
@@ -429,6 +544,39 @@ struct NotchTests {
         await m.choose(row: "notch", option: "show")
         for _ in 0..<20 where !c.isShown { try? await Task.sleep(for: .milliseconds(20)) }
         #expect(c.isShown && !m.notch.view.hidden)
+        c.setShown(false)
+    }
+
+    /// CUA-1618: the setting off at launch, the SDK in, then the setting
+    /// turned on while the app runs: window drags are followed (onto the
+    /// notch and the New UI's tiles) without a relaunch, stop when it turns
+    /// off and start again when it turns back on.
+    @Test func turningTheNotchOnLiveStartsWindowDragsAndOffStopsThem() async {
+        let m = ViewModelTests().makeModel(FixtureSpacesBackend())
+        let c = NotchController(model: m.notch)
+        c.makesPanel = false
+        m.settings.menuBar = true
+        AppDelegate.followNotchSetting(m, c)
+        #expect(!c.isShown)
+        // The SDK comes in after the launch (`followWindowDrags`).
+        var started = 0
+        c.permitted = { true }
+        c.startDrags = { started += 1 }
+        c.recheckPermission()
+        #expect(started == 0 && !c.dragsRunning, "no drag monitor while hidden")
+        await m.choose(row: "notch", option: "show")
+        for _ in 0..<20 where !c.isShown { try? await Task.sleep(for: .milliseconds(20)) }
+        #expect(c.isShown)
+        #expect(started == 1 && c.dragsRunning, "turned on live: window drags are followed")
+        await m.choose(row: "notch", option: "hide")
+        for _ in 0..<20 where c.isShown { try? await Task.sleep(for: .milliseconds(20)) }
+        #expect(!c.isShown && !c.dragsRunning, "turned off: the monitor stops")
+        await m.choose(row: "notch", option: "show")
+        for _ in 0..<20 where !c.isShown { try? await Task.sleep(for: .milliseconds(20)) }
+        #expect(started == 2 && c.dragsRunning, "on again: it starts again")
+        // Showing an already shown notch keeps the one monitor.
+        c.show()
+        #expect(started == 2)
         c.setShown(false)
     }
 }

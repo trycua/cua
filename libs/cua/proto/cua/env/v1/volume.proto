@@ -42,6 +42,33 @@ message AttachVolumeRequest {
   // How long the ticket accepts the client's WebSocket. Unset means 60
   // seconds.
   google.protobuf.Duration ticket_ttl = 2;
+  // Folders of the volume to bind at other paths once it is mounted (Linux:
+  // bind mounts; macOS: symbolic links). Undone with the mount.
+  repeated VolumeBind binds = 3;
+}
+
+// A named volume mounted into a Space: the folder `volumes/<name>/` of
+// the user's Cua Volume, bound at `path` in the guest.
+message VolumeMount {
+  // The volume's name: 1-63 of `a-z`, `0-9`, `.`, `_`, `-`.
+  string name = 1;
+  // Absolute path in the guest.
+  string path = 2;
+  // Mounted read-only.
+  bool read_only = 3;
+  // A folder inside the volume to mount instead of the whole volume.
+  string subpath = 4;
+}
+
+// A folder of the mounted volume made available at another path.
+message VolumeBind {
+  // Folder inside the volume, relative to its root (`volumes/shared/`).
+  string source = 1;
+  // Absolute path in the guest. Created when missing.
+  string target = 2;
+  // Mounted read-only (Linux). A link on macOS cannot enforce it; the
+  // client's view of the folder does.
+  bool read_only = 3;
 }
 
 // Response for `VolumeService.AttachVolume`.
@@ -106,4 +133,6 @@ message GetVolumeStatusResponse {
   uint64 bytes_out = 7;
   // Bytes received from the client.
   uint64 bytes_in = 8;
+  // Targets of the binds that are in place.
+  repeated string binds = 9;
 }

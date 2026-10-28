@@ -71,16 +71,19 @@
 //! machine token and is never enrolled as a client.
 //!
 //! Every enrollment change, device session and machine access is recorded
-//! in the account's audit log (bounded, persisted with the devices).
+//! in the account's audit log (bounded per account, appended to its own
+//! file next to the devices file; see [`AuditLog`]).
 
 use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
-use std::sync::Mutex;
+use std::io::{BufRead as _, Write as _};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 
-use crate::assertion::{now_secs, write_private};
+use crate::assertion::{now_secs, remove_stale_temps, write_private, write_private_with};
+use crate::storage::{store, Storage};
 
 /// Header carrying the device session token.
 pub const DEVICE_SESSION_HEADER: &str = "x-cua-device-session";
@@ -263,7 +266,8 @@ pub struct AuditEvent {
     /// `device_renamed`, `device_revoked`, `device_session`, `machine_access`,
     /// `shared_access`, `unenrolled_access`, `share_added`,
     /// `share_removed`, `machine_registered`, `machine_removed`,
-    /// `sharing_stopped`, `sharing_started`.
+    /// `sharing_stopped`, `sharing_started`, `share_left` (someone left a
+    /// machine shared with them; owner log), `machine_left` (their own log).
     pub kind: String,
     /// Acting device, when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -385,8 +389,8 @@ fn chain_mac(key: &[u8; 32], hash: &str) -> String {
     hex::encode(ring::hmac::sign(&key, hash.as_bytes()).as_ref())
 }
 
-/// Appends `event` to `log`, hash-chained from its current tail.
-fn chain_append(log: &mut Vec<AuditEntry>, event: AuditEvent, audit_key: &[u8; 32]) {
+/// The entry that appends `event` to `log`, hash-chained from its tail.
+fn chain_next(log: &[AuditEntry], event: AuditEvent, audit_key: &[u8; 32]) -> AuditEntry {
     let prev = log
         .last()
         .map(|e| e.hash.clone())
@@ -394,13 +398,83 @@ fn chain_append(log: &mut Vec<AuditEntry>, event: AuditEvent, audit_key: &[u8; 3
     let seq = log.last().map(|e| e.seq).unwrap_or(0) + 1;
     let hash = chain_hash(&prev, seq, &event);
     let mac = chain_mac(audit_key, &hash);
-    log.push(AuditEntry {
+    AuditEntry {
         seq,
         event,
         prev,
         hash,
         mac,
-    });
+    }
+}
+
+/// Appends `event` to `log`, hash-chained from its current tail.
+fn chain_append(log: &mut Vec<AuditEntry>, event: AuditEvent, audit_key: &[u8; 32]) {
+    let entry = chain_next(log, event, audit_key);
+    log.push(entry);
+}
+
+/// `text` with `account` and each of `emails` (any case) replaced.
+pub(crate) fn scrub(text: &str, account: &str, emails: &[String], with: &str) -> String {
+    let mut out = text.replace(account, with);
+    for e in emails.iter().filter(|e| !e.is_empty()) {
+        // ASCII lowering keeps byte offsets.
+        while let Some(at) = out.to_ascii_lowercase().find(&e.to_ascii_lowercase()) {
+            out.replace_range(at..at + e.len(), with);
+        }
+    }
+    out
+}
+
+/// Replaces `account` and `emails` in the entries of `log` that name them
+/// with "deleted account", then re-chains the log from the first changed
+/// entry (same `seq`, new `prev`, `hash` and `mac` under `audit_key`), so it
+/// still verifies. Returns how many entries changed; a log that names
+/// neither is left byte for byte as it was.
+fn rewrite_audit(
+    log: &mut [AuditEntry],
+    account: &str,
+    emails: &[String],
+    audit_key: &[u8; 32],
+) -> usize {
+    const GONE: &str = "deleted account";
+    let fix = |f: &mut Option<String>| -> bool {
+        match f {
+            Some(v) => {
+                let n = scrub(v, account, emails, GONE);
+                let changed = n != *v;
+                *v = n;
+                changed
+            }
+            None => false,
+        }
+    };
+    let mut first = None;
+    let mut changed = 0;
+    for (i, e) in log.iter_mut().enumerate() {
+        let ev = &mut e.event;
+        let hit = [
+            fix(&mut ev.device),
+            fix(&mut ev.machine),
+            fix(&mut ev.subject),
+            fix(&mut ev.detail),
+        ]
+        .contains(&true);
+        if hit {
+            changed += 1;
+            first.get_or_insert(i);
+        }
+    }
+    let Some(first) = first else {
+        return 0;
+    };
+    for i in first..log.len() {
+        if i > 0 {
+            log[i].prev = log[i - 1].hash.clone();
+        }
+        log[i].hash = chain_hash(&log[i].prev, log[i].seq, &log[i].event);
+        log[i].mac = chain_mac(audit_key, &log[i].hash);
+    }
+    changed
 }
 
 /// Why chain verification failed: the entry's sequence number and why.
@@ -456,9 +530,12 @@ pub fn verify_audit_chain(log: &[AuditEntry], audit_key: &[u8; 32]) -> Result<()
 /// sentinel anywhere in an account's log is enough to rebuild that whole
 /// log rather than require it to already be entry-by-entry consistent.
 /// Returns whether anything was migrated (the caller persists the result).
-fn migrate_legacy_audit(state: &mut State, audit_key: &[u8; 32]) -> bool {
+fn migrate_legacy_audit(
+    audit: &mut BTreeMap<String, Vec<AuditEntry>>,
+    audit_key: &[u8; 32],
+) -> bool {
     let mut migrated = false;
-    for log in state.audit.values_mut() {
+    for log in audit.values_mut() {
         if log.iter().any(|entry| entry.seq == 0) {
             let events: Vec<AuditEvent> =
                 std::mem::take(log).into_iter().map(|e| e.event).collect();
@@ -471,9 +548,23 @@ fn migrate_legacy_audit(state: &mut State, audit_key: &[u8; 32]) -> bool {
     migrated
 }
 
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+/// The devices file: devices only. Audit entries live in [`AuditLog`]'s
+/// own file, so an audit event never rewrites this one.
+#[derive(Debug, Default, Clone, Serialize)]
 struct State {
     /// Start of the migration grace period (first start with devices).
+    grace_started_at: u64,
+    devices: BTreeMap<String, DeviceRecord>,
+    /// Audit events of the change being applied, appended to the audit log
+    /// once the change is persisted ([`DeviceStore::mutate`]).
+    #[serde(skip)]
+    pending_audit: Vec<(String, AuditEvent)>,
+}
+
+/// The devices file as read: earlier relays also kept every account's
+/// audit log in it, which [`DeviceStore::open`] moves to the audit log file.
+#[derive(Debug, Default, Deserialize)]
+struct StoredState {
     #[serde(default)]
     grace_started_at: u64,
     #[serde(default)]
@@ -482,11 +573,386 @@ struct State {
     audit: BTreeMap<String, Vec<AuditEntry>>,
 }
 
-#[derive(Debug, Clone)]
+/// The live device sessions are kept in the devices file's path plus this
+/// suffix, so a relay restart does not cut every client off until its
+/// session expires: an append-only journal, one line per session opened
+/// (`{"open": <token hash>, ...}`) or ended (`{"end": <token hash>}`).
+pub const SESSIONS_FILE_SUFFIX: &str = ".sessions.jsonl";
+
+/// Where earlier relays kept the sessions, as one JSON map rewritten on
+/// every change; read once and replaced by the journal.
+const LEGACY_SESSIONS_FILE_SUFFIX: &str = ".sessions.json";
+
+/// Lines the session journal may hold beyond twice the live sessions
+/// before it is rewritten with only the live ones.
+const SESSIONS_COMPACT_SLACK: usize = 4_096;
+
+/// The audit log file is the devices file's path plus this suffix.
+pub const AUDIT_FILE_SUFFIX: &str = ".audit.jsonl";
+
+/// Lines the audit log file may hold beyond the retained entries (trimmed
+/// ones) before it is rewritten with only the retained ones.
+const AUDIT_COMPACT_SLACK: usize = 50_000;
+
+/// One line of the audit log file.
+#[derive(Serialize)]
+struct AuditLineOut<'a> {
+    account: &'a str,
+    #[serde(flatten)]
+    entry: &'a AuditEntry,
+}
+
+/// One line of the audit log file, read back.
+#[derive(Deserialize)]
+struct AuditLineIn {
+    account: String,
+    #[serde(flatten)]
+    entry: AuditEntry,
+}
+
+/// Every account's audit log: the last [`AUDIT_LIMIT`] entries per account
+/// in memory and, for a persisted store, an append-only file of one JSON
+/// line per entry (`{"account": ..., <entry>}`). Recording an event appends
+/// one line; the file is rewritten (atomically, streamed) only when trimmed
+/// entries make up more than [`AUDIT_COMPACT_SLACK`] of its lines, or at
+/// startup after a torn final line.
+#[derive(Debug, Default)]
+struct AuditLog {
+    path: Option<PathBuf>,
+    /// Append handle, opened on first use.
+    file: Option<std::fs::File>,
+    logs: BTreeMap<String, Vec<AuditEntry>>,
+    /// Entries in `logs`.
+    retained: usize,
+    /// Lines in the file.
+    lines: usize,
+    compact_slack: usize,
+    /// The outcome of the last compaction since it was last taken
+    /// ([`DeviceStore::audit`] reports it).
+    compacted: Option<std::io::Result<()>>,
+}
+
+impl AuditLog {
+    fn path_for(devices_path: &Path) -> PathBuf {
+        PathBuf::from(format!("{}{AUDIT_FILE_SUFFIX}", devices_path.display()))
+    }
+
+    /// Drops every entry recorded before `cutoff` (Unix seconds), oldest
+    /// first, and rewrites the file without them. Like count trimming this
+    /// only removes a prefix, so the retained chain still verifies (its
+    /// first entry's own `hash`/`mac` are checked, nothing before it). An
+    /// account whose whole log expires starts again at `seq` 1 on its next
+    /// event. Returns how many entries were dropped.
+    fn trim_before(&mut self, cutoff: u64) -> usize {
+        let mut dropped = 0;
+        for log in self.logs.values_mut() {
+            let n = log.iter().take_while(|e| e.event.ts < cutoff).count();
+            log.drain(..n);
+            dropped += n;
+        }
+        if dropped > 0 {
+            self.logs.retain(|_, log| !log.is_empty());
+            self.retained -= dropped;
+            self.compacted = Some(self.compact());
+        }
+        dropped
+    }
+
+    fn in_memory() -> Self {
+        Self {
+            compact_slack: AUDIT_COMPACT_SLACK,
+            ..Self::default()
+        }
+    }
+
+    /// Loads the log file at `path` (empty when missing). A line that does
+    /// not parse (a write torn by a crash) is dropped and the file is
+    /// rewritten without it.
+    fn load(path: PathBuf) -> std::io::Result<Self> {
+        let mut log = Self {
+            path: Some(path),
+            ..Self::in_memory()
+        };
+        let path = log.path.clone().expect("path");
+        let file = match std::fs::File::open(&path) {
+            Ok(f) => f,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(log),
+            Err(e) => return Err(e),
+        };
+        let mut reader = std::io::BufReader::new(file);
+        let mut line = Vec::new();
+        let mut dropped = 0usize;
+        loop {
+            line.clear();
+            if reader.read_until(b'\n', &mut line)? == 0 {
+                break;
+            }
+            let complete = line.last() == Some(&b'\n');
+            let body = line.strip_suffix(b"\n").unwrap_or(&line);
+            if body.is_empty() {
+                continue;
+            }
+            log.lines += 1;
+            match serde_json::from_slice::<AuditLineIn>(body) {
+                Ok(parsed) if complete => log.insert(parsed.account, parsed.entry),
+                _ => dropped += 1,
+            }
+        }
+        if dropped > 0 {
+            tracing::warn!(path = %path.display(), dropped, "dropped unreadable audit log lines");
+            log.compact()?;
+        }
+        Ok(log)
+    }
+
+    /// Adds an already chained entry, trimming the account to
+    /// [`AUDIT_LIMIT`].
+    fn insert(&mut self, account: String, entry: AuditEntry) {
+        let log = self.logs.entry(account).or_default();
+        log.push(entry);
+        self.retained += 1;
+        if log.len() > AUDIT_LIMIT {
+            let excess = log.len() - AUDIT_LIMIT;
+            log.drain(..excess);
+            self.retained -= excess;
+        }
+    }
+
+    /// Chains `event` onto `account`'s log and appends it to the file. On
+    /// a write error nothing is recorded (the file is cut back to where it
+    /// was, so no torn line stays in it).
+    fn append(
+        &mut self,
+        account: &str,
+        event: AuditEvent,
+        audit_key: &[u8; 32],
+    ) -> std::io::Result<()> {
+        let entry = chain_next(
+            self.logs.get(account).map(Vec::as_slice).unwrap_or(&[]),
+            event,
+            audit_key,
+        );
+        if self.path.is_some() {
+            let mut line = serde_json::to_vec(&AuditLineOut {
+                account,
+                entry: &entry,
+            })?;
+            line.push(b'\n');
+            self.write_line(&line)?;
+            self.lines += 1;
+        }
+        self.insert(account.to_owned(), entry);
+        if self.lines > self.retained.saturating_add(self.compact_slack) {
+            self.compacted = Some(self.compact());
+        }
+        Ok(())
+    }
+
+    fn write_line(&mut self, line: &[u8]) -> std::io::Result<()> {
+        let path = self.path.as_ref().expect("persisted audit log");
+        if self.file.is_none() {
+            let mut options = std::fs::OpenOptions::new();
+            options.append(true).create(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt as _;
+                options.mode(0o600);
+            }
+            self.file = Some(options.open(path)?);
+        }
+        let file = self.file.as_mut().expect("open");
+        let before = file.metadata()?.len();
+        let written = file.write_all(line).and_then(|()| file.sync_data());
+        if written.is_err() {
+            let _ = file.set_len(before);
+        }
+        written
+    }
+
+    /// Rewrites the file with only the retained entries.
+    fn compact(&mut self) -> std::io::Result<()> {
+        let Some(path) = self.path.clone() else {
+            return Ok(());
+        };
+        self.file = None;
+        let logs = &self.logs;
+        write_private_with(&path, |out| {
+            for (account, entries) in logs {
+                for entry in entries {
+                    serde_json::to_writer(&mut *out, &AuditLineOut { account, entry })?;
+                    out.write_all(b"\n")?;
+                }
+            }
+            Ok(())
+        })?;
+        self.lines = self.retained;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct Session {
     account: String,
     device: String,
     expires: u64,
+}
+
+/// One line of the session journal.
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
+enum SessionLine {
+    Open {
+        open: String,
+        #[serde(flatten)]
+        session: Session,
+    },
+    End {
+        end: String,
+    },
+}
+
+/// The live sessions' journal: opening or ending a session appends one
+/// line (fsynced); the file is rewritten (streamed, atomic) with only the
+/// live sessions once it holds [`SESSIONS_COMPACT_SLACK`] lines more than
+/// twice their number. Losing it only costs clients a new session, and a
+/// session of a device that is no longer enrolled is refused regardless.
+#[derive(Debug)]
+struct SessionLog {
+    path: Option<PathBuf>,
+    file: Option<std::fs::File>,
+    lines: usize,
+    compact_slack: usize,
+}
+
+impl Default for SessionLog {
+    fn default() -> Self {
+        Self {
+            path: None,
+            file: None,
+            lines: 0,
+            compact_slack: SESSIONS_COMPACT_SLACK,
+        }
+    }
+}
+
+impl SessionLog {
+    /// Loads the journal at `path` (and, once, the map an earlier relay
+    /// kept at `legacy`), without the sessions expired by `now`. A line
+    /// that does not parse (a torn write) is skipped and the journal is
+    /// rewritten.
+    fn load(
+        path: PathBuf,
+        legacy: &Path,
+        now: u64,
+    ) -> std::io::Result<(Self, HashMap<String, Session>)> {
+        let mut log = Self {
+            path: Some(path.clone()),
+            ..Self::default()
+        };
+        let mut sessions: HashMap<String, Session> = match std::fs::read(legacy) {
+            // An unreadable file only costs clients a new session.
+            Ok(raw) => serde_json::from_slice(&raw).unwrap_or_default(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => HashMap::new(),
+            Err(e) => return Err(e),
+        };
+        let had_legacy = legacy.exists();
+        let mut torn = false;
+        match std::fs::File::open(&path) {
+            Ok(file) => {
+                let mut reader = std::io::BufReader::new(file);
+                let mut line = Vec::new();
+                loop {
+                    line.clear();
+                    if reader.read_until(b'\n', &mut line)? == 0 {
+                        break;
+                    }
+                    let complete = line.last() == Some(&b'\n');
+                    let body = line.strip_suffix(b"\n").unwrap_or(&line);
+                    if body.is_empty() {
+                        continue;
+                    }
+                    log.lines += 1;
+                    match serde_json::from_slice::<SessionLine>(body) {
+                        Ok(SessionLine::Open { open, session }) if complete => {
+                            sessions.insert(open, session);
+                        }
+                        Ok(SessionLine::End { end }) if complete => {
+                            sessions.remove(&end);
+                        }
+                        _ => torn = true,
+                    }
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e),
+        }
+        sessions.retain(|_, s| s.expires > now);
+        if torn || had_legacy {
+            log.compact(&sessions)?;
+            if had_legacy {
+                std::fs::remove_file(legacy)?;
+            }
+        }
+        Ok((log, sessions))
+    }
+
+    fn append(&mut self, lines: &[SessionLine]) -> std::io::Result<()> {
+        let Some(path) = &self.path else {
+            return Ok(());
+        };
+        let mut buf = Vec::new();
+        for l in lines {
+            serde_json::to_writer(&mut buf, l)?;
+            buf.push(b'\n');
+        }
+        if self.file.is_none() {
+            let mut options = std::fs::OpenOptions::new();
+            options.append(true).create(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt as _;
+                options.mode(0o600);
+            }
+            self.file = Some(options.open(path)?);
+        }
+        let file = self.file.as_mut().expect("open");
+        let before = file.metadata()?.len();
+        let written = file.write_all(&buf).and_then(|()| file.sync_data());
+        if written.is_err() {
+            // No torn line stays behind.
+            let _ = file.set_len(before);
+        }
+        written?;
+        self.lines += lines.len();
+        Ok(())
+    }
+
+    /// Rewrites the journal with only `live`.
+    fn compact(&mut self, live: &HashMap<String, Session>) -> std::io::Result<()> {
+        let Some(path) = self.path.clone() else {
+            return Ok(());
+        };
+        self.file = None;
+        write_private_with(&path, |out| {
+            for (hash, session) in live {
+                serde_json::to_writer(
+                    &mut *out,
+                    &SessionLine::Open {
+                        open: hash.clone(),
+                        session: session.clone(),
+                    },
+                )?;
+                out.write_all(b"\n")?;
+            }
+            Ok(())
+        })?;
+        self.lines = live.len();
+        Ok(())
+    }
+
+    fn needs_compaction(&self, live: usize) -> bool {
+        self.path.is_some() && self.lines > live.saturating_mul(2) + self.compact_slack
+    }
 }
 
 /// [`DeviceError::Proof`] message: the proof's timestamp is outside the
@@ -610,13 +1076,28 @@ impl Default for DevicePolicy {
     }
 }
 
+/// What [`DeviceStore::erase_account`] removed.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct DeviceErase {
+    /// Device records deleted.
+    pub devices: usize,
+    /// Live sessions ended.
+    pub sessions: usize,
+    /// Audit entries dropped with the account's chain.
+    pub audit_entries: usize,
+    /// Entries of other accounts' chains rewritten to stop naming it.
+    pub audit_rewritten: usize,
+}
+
 /// The device store.
 #[derive(Debug)]
 pub struct DeviceStore {
     path: Option<PathBuf>,
     policy: DevicePolicy,
     state: Mutex<State>,
-    sessions: Mutex<HashMap<String, Session>>,
+    /// Live sessions by the SHA-256 of their token (never the token), and
+    /// their journal (`<devices>`[`SESSIONS_FILE_SUFFIX`]).
+    sessions: Mutex<(HashMap<String, Session>, SessionLog)>,
     /// Signed timestamps already used (replay guard), with their expiry.
     proofs: Mutex<HashMap<String, u64>>,
     /// Last recorded access per (account, actor, machine).
@@ -625,6 +1106,10 @@ pub struct DeviceStore {
     /// in-memory store, loaded or created (0600, next to the devices file)
     /// for a persisted one.
     audit_key: [u8; 32],
+    /// Locked after `state` when both are needed.
+    audit: Mutex<AuditLog>,
+    /// Where write failures are counted and reported.
+    storage: Arc<Storage>,
 }
 
 fn random_audit_key() -> [u8; 32] {
@@ -720,6 +1205,7 @@ impl DeviceStore {
                 ..State::default()
             },
             random_audit_key(),
+            AuditLog::in_memory(),
         )
     }
 
@@ -728,6 +1214,7 @@ impl DeviceStore {
         policy: DevicePolicy,
         state: State,
         audit_key: [u8; 32],
+        audit: AuditLog,
     ) -> Self {
         Self {
             path,
@@ -737,26 +1224,79 @@ impl DeviceStore {
             proofs: Mutex::default(),
             throttle: Mutex::default(),
             audit_key,
+            audit: Mutex::new(audit),
+            storage: Arc::default(),
         }
     }
 
     /// Loads (or starts, recording the start of the grace period) the store
-    /// persisted at `path`.
+    /// persisted at `path`, with its audit log next to it
+    /// (`<path>`[`AUDIT_FILE_SUFFIX`]). Temp files an interrupted write left
+    /// behind are removed first. An audit log still kept inside the devices
+    /// file (earlier relays) is moved to the audit log file.
     pub fn open(path: PathBuf, policy: DevicePolicy) -> std::io::Result<Self> {
-        let mut state = match std::fs::read(&path) {
-            Ok(raw) => serde_json::from_slice::<State>(&raw)
+        Self::open_with(path, policy, Arc::default())
+    }
+
+    /// [`DeviceStore::open`], reporting writes to `storage`.
+    pub fn open_with(
+        path: PathBuf,
+        policy: DevicePolicy,
+        storage: Arc<Storage>,
+    ) -> std::io::Result<Self> {
+        // Also covers the audit log's temps (`.<name>.audit.jsonl.*.tmp`).
+        remove_stale_temps(&path)?;
+        let stored = match std::fs::read(&path) {
+            Ok(raw) => serde_json::from_slice::<StoredState>(&raw)
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => State::default(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => StoredState::default(),
             Err(e) => return Err(e),
+        };
+        let StoredState {
+            grace_started_at,
+            devices,
+            audit: mut legacy_audit,
+        } = stored;
+        let state = State {
+            grace_started_at,
+            devices,
+            pending_audit: Vec::new(),
         };
         let fresh = state.grace_started_at == 0;
         let audit_key = load_or_create_audit_key(&path)?;
-        // S9 landed after accounts already had audit history: migrate a
-        // pre-chain log (see `migrate_legacy_audit`) instead of failing to
-        // deserialize it and refusing to start.
-        let migrated = migrate_legacy_audit(&mut state, &audit_key);
-        let store = Self::with_state(Some(path), policy, state, audit_key);
-        if fresh || migrated {
+        let audit_path = AuditLog::path_for(&path);
+        let moved = !legacy_audit.is_empty();
+        let audit = if moved {
+            // S9 landed after accounts already had audit history: migrate a
+            // pre-chain log (see `migrate_legacy_audit`) instead of failing
+            // to deserialize it and refusing to start.
+            migrate_legacy_audit(&mut legacy_audit, &audit_key);
+            // The devices file is the source until it is rewritten below
+            // without the log, so a crash in between repeats this move
+            // rather than losing or doubling entries.
+            let mut audit = AuditLog {
+                path: Some(audit_path),
+                ..AuditLog::in_memory()
+            };
+            for (account, entries) in legacy_audit {
+                for entry in entries {
+                    audit.insert(account.clone(), entry);
+                }
+            }
+            audit.compact()?;
+            audit
+        } else {
+            AuditLog::load(audit_path)?
+        };
+        let sessions = SessionLog::load(
+            PathBuf::from(format!("{}{SESSIONS_FILE_SUFFIX}", path.display())),
+            &PathBuf::from(format!("{}{LEGACY_SESSIONS_FILE_SUFFIX}", path.display())),
+            now_secs(),
+        )?;
+        let mut store = Self::with_state(Some(path), policy, state, audit_key, audit);
+        *store.sessions.get_mut().expect("sessions") = (sessions.1, sessions.0);
+        store.storage = storage;
+        if fresh || moved {
             let mut state = store.state.lock().expect("devices");
             if fresh {
                 state.grace_started_at = now_secs();
@@ -787,20 +1327,38 @@ impl DeviceStore {
         now < self.enforce_after()
     }
 
+    /// Writes the devices file: compact JSON, streamed to a temp file
+    /// that replaces it (never held in memory whole). A failure is the
+    /// caller's error: the change it was for is not made.
     fn persist(&self, state: &State) -> Result<(), DeviceError> {
         let Some(path) = &self.path else {
             return Ok(());
         };
-        let raw =
-            serde_json::to_vec_pretty(state).map_err(|e| DeviceError::Storage(e.to_string()))?;
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| DeviceError::Storage(e.to_string()))?;
-        }
-        write_private(path, &raw).map_err(|e| DeviceError::Storage(e.to_string()))
+        let written = (|| {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            write_private_with(path, |out| {
+                serde_json::to_writer(&mut *out, state).map_err(std::io::Error::other)
+            })
+        })();
+        self.storage.record(store::DEVICES, &written);
+        written.map_err(|e| DeviceError::Storage(e.to_string()))
+    }
+
+    /// Whether the devices file, the audit log and the session journal are
+    /// writable: no write of theirs failed lately without a successful one
+    /// since (true for an in-memory store). Audit events are written all
+    /// the time, so this tracks the state volume within moments of it
+    /// filling up or going read-only.
+    pub fn writes_ok(&self) -> bool {
+        [store::DEVICES, store::AUDIT, store::SESSIONS]
+            .iter()
+            .all(|s| self.storage.store_ok(s))
     }
 
     /// Applies `change` to a copy of the state and persists it before
-    /// making it current.
+    /// making it current, then records the audit events `change` queued.
     fn mutate<T>(
         &self,
         change: impl FnOnce(&mut State) -> Result<T, DeviceError>,
@@ -809,28 +1367,56 @@ impl DeviceStore {
         let mut next = state.clone();
         let out = change(&mut next)?;
         self.persist(&next)?;
+        let events = std::mem::take(&mut next.pending_audit);
         *state = next;
+        // Still under the state lock, so the log follows the order of the
+        // changes.
+        for (account, event) in events {
+            self.audit(&account, event);
+        }
         Ok(out)
     }
 
-    fn push_audit(state: &mut State, account: &str, event: AuditEvent, audit_key: &[u8; 32]) {
-        let log = state.audit.entry(account.to_owned()).or_default();
-        chain_append(log, event, audit_key);
-        if log.len() > AUDIT_LIMIT {
-            let excess = log.len() - AUDIT_LIMIT;
-            log.drain(..excess);
+    /// Queues `event` for `account`'s audit log, recorded once the change
+    /// in progress is persisted.
+    fn push_audit(state: &mut State, account: &str, event: AuditEvent) {
+        state.pending_audit.push((account.to_owned(), event));
+    }
+
+    /// Records `event` in `account`'s audit log (best effort: a failed
+    /// write drops the event, counted as `audit_events_dropped` and logged
+    /// as `state persist failed`, store `audit`).
+    pub fn audit(&self, account: &str, event: AuditEvent) {
+        let mut audit = self.audit.lock().expect("audit");
+        let appended = audit.append(account, event, &self.audit_key);
+        if self.path.is_none() {
+            return;
+        }
+        self.storage.record(store::AUDIT, &appended);
+        if appended.is_err() {
+            self.storage.audit_dropped();
+        }
+        if let Some(compacted) = audit.compacted.take() {
+            self.storage.record(store::AUDIT, &compacted);
         }
     }
 
-    /// Records `event` in `account`'s audit log (best effort).
-    pub fn audit(&self, account: &str, event: AuditEvent) {
-        let audit_key = self.audit_key;
-        if let Err(e) = self.mutate(|s| {
-            Self::push_audit(s, account, event, &audit_key);
-            Ok(())
-        }) {
-            tracing::warn!(error = %e, "audit event not persisted");
+    /// Drops audit entries older than `days` (0: keep them until the count
+    /// limit trims them) from memory and from the audit file. Returns how
+    /// many were dropped. Called at start and then hourly.
+    pub fn trim_audit(&self, days: u64) -> usize {
+        if days == 0 {
+            return 0;
         }
+        let cutoff = now_secs().saturating_sub(days.saturating_mul(86_400));
+        let mut audit = self.audit.lock().expect("audit");
+        let dropped = audit.trim_before(cutoff);
+        if let Some(compacted) = audit.compacted.take() {
+            if self.path.is_some() {
+                self.storage.record(store::AUDIT, &compacted);
+            }
+        }
+        dropped
     }
 
     /// Records `event` unless the same `key` was recorded within
@@ -856,18 +1442,16 @@ impl DeviceStore {
     /// `account`'s audit log, hash-chained entries, newest last (at most
     /// `limit`; S9).
     pub fn audit_log(&self, account: &str, limit: usize) -> Vec<AuditEntry> {
-        let state = self.state.lock().expect("devices");
-        let log = state.audit.get(account).cloned().unwrap_or_default();
-        let skip = log.len().saturating_sub(limit);
-        log.into_iter().skip(skip).collect()
+        let audit = self.audit.lock().expect("audit");
+        let log = audit.logs.get(account).map(Vec::as_slice).unwrap_or(&[]);
+        log[log.len().saturating_sub(limit)..].to_vec()
     }
 
     /// Verifies `account`'s full retained audit chain (S9). `Ok(())` for an
     /// empty log.
     pub fn verify_audit_chain(&self, account: &str) -> Result<(), ChainBroken> {
-        let state = self.state.lock().expect("devices");
-        let empty = Vec::new();
-        let log = state.audit.get(account).unwrap_or(&empty);
+        let audit = self.audit.lock().expect("audit");
+        let log = audit.logs.get(account).map(Vec::as_slice).unwrap_or(&[]);
         verify_audit_chain(log, &self.audit_key)
     }
 
@@ -934,7 +1518,6 @@ impl DeviceStore {
         by: &str,
         machine: Option<&str>,
         now: u64,
-        audit_key: &[u8; 32],
     ) -> Vec<String> {
         let Some(machine) = machine else {
             return Vec::new();
@@ -960,8 +1543,7 @@ impl DeviceStore {
                 AuditEvent::new("device_rekeyed")
                     .device(Some(by))
                     .subject(id.clone())
-                    .detail(format!("replaced {name} on the same machine")),
-                audit_key,
+                    .detail(format!("replaced {name} on the same computer")),
             );
         }
         replaced.into_iter().map(|(id, _)| id).collect()
@@ -971,10 +1553,37 @@ impl DeviceStore {
         if devices.is_empty() {
             return;
         }
-        self.sessions
-            .lock()
-            .expect("sessions")
-            .retain(|_, s| !devices.contains(&s.device));
+        let mut guard = self.sessions.lock().expect("sessions");
+        let (sessions, log) = &mut *guard;
+        let ended: Vec<SessionLine> = sessions
+            .iter()
+            .filter(|(_, s)| devices.contains(&s.device))
+            .map(|(h, _)| SessionLine::End { end: h.clone() })
+            .collect();
+        sessions.retain(|_, s| !devices.contains(&s.device));
+        if !ended.is_empty() {
+            self.journal_sessions(sessions, log, &ended);
+        }
+    }
+
+    /// Appends to the session journal, compacting it when it grew (best
+    /// effort: a lost write only means clients open new sessions after the
+    /// next restart, and an ended device's sessions are refused anyway).
+    fn journal_sessions(
+        &self,
+        sessions: &HashMap<String, Session>,
+        log: &mut SessionLog,
+        lines: &[SessionLine],
+    ) {
+        if log.path.is_none() {
+            return;
+        }
+        let written = log.append(lines);
+        self.storage.record(store::SESSIONS, &written);
+        if log.needs_compaction(sessions.len()) {
+            let compacted = log.compact(sessions);
+            self.storage.record(store::SESSIONS, &compacted);
+        }
     }
 
     /// Registers (or re-registers) a device, its key proven by `r.sig` over
@@ -1003,7 +1612,6 @@ impl DeviceStore {
         let grace = self.in_grace(now);
         let policy = self.policy;
         let machine = r.machine_id.and_then(|m| machine_key(account, m));
-        let audit_key = self.audit_key;
         let out = self.mutate(|state| {
             if let Some(existing) = state.devices.get(&id) {
                 if existing.account != account {
@@ -1014,7 +1622,7 @@ impl DeviceStore {
                 if existing.state(now) == DeviceState::Revoked {
                     return Err(DeviceError::Forbidden(match &existing.superseded_by {
                         Some(by) => format!(
-                            "this device key was replaced by {by} on the same machine; create a new device key to enroll again"
+                            "this device key was replaced by {by} on the same computer; create a new device key to enroll again"
                         ),
                         None => {
                             "this device was revoked; create a new device key to enroll again".into()
@@ -1073,7 +1681,6 @@ impl DeviceStore {
                     AuditEvent::new("device_registered")
                         .device(Some(&id))
                         .detail(device.name.clone()),
-                    &audit_key,
                 );
             }
             let fresh_sign_in = r.auth_time.filter(|t| {
@@ -1159,7 +1766,6 @@ impl DeviceStore {
                             (BY_FRESH_SIGN_IN, false, false) => "enrolled by fresh sign-in",
                             _ => "enrolled during the grace period",
                         }),
-                    &audit_key,
                 );
                 state.devices.insert(id.clone(), device.clone());
                 let superseded = Self::supersede(
@@ -1168,7 +1774,6 @@ impl DeviceStore {
                     &id,
                     device.machine.as_deref(),
                     now,
-                    &audit_key,
                 );
                 return Ok(Registered {
                     device,
@@ -1206,7 +1811,6 @@ impl DeviceStore {
             (Some(c), None) if c.starts_with(DEVICE_ID_PREFIX) => (None, Some(c)),
             (c, t) => (c, t),
         };
-        let audit_key = self.audit_key;
         let (approved, superseded) = self.mutate(|state| {
             let approving = state
                 .devices
@@ -1263,7 +1867,6 @@ impl DeviceStore {
                 AuditEvent::new("device_enrolled")
                     .device(Some(&approved.id))
                     .subject(approving_id),
-                &audit_key,
             );
             let superseded = Self::supersede(
                 state,
@@ -1271,7 +1874,6 @@ impl DeviceStore {
                 &approved.id,
                 approved.machine.as_deref(),
                 now,
-                &audit_key,
             );
             Ok((approved, superseded))
         })?;
@@ -1323,9 +1925,37 @@ impl DeviceStore {
         };
         let ttl = self.policy.ttl_secs;
         let step = RENEW_STEP_SECS.min(ttl / 2);
-        let audit_key = self.audit_key;
-        let until = self
-            .mutate(|state| {
+        // The common case moves nothing that must survive a restart: the
+        // device was renewed within the last step, so only its last-seen
+        // time changes, in memory (written with the next real change).
+        // Rewriting and fsyncing the whole devices file on every session
+        // held the devices lock for the write, and a reconnecting fleet
+        // opens several sessions a second (CUA-2323).
+        let kept = {
+            let mut state = self.state.lock().expect("devices");
+            match state.devices.get_mut(device) {
+                Some(d) if d.state(now) == DeviceState::Enrolled => {
+                    let current = d.enrolled_until.unwrap_or(now);
+                    (now + ttl <= current.saturating_add(step)).then(|| {
+                        d.last_seen = Some(now);
+                        current
+                    })
+                }
+                // Revoked or expired since the read above: `mutate` below
+                // leaves it as it is.
+                _ => None,
+            }
+        };
+        let until = if let Some(current) = kept {
+            // One audit line per device per interval, like other access.
+            self.audit_throttled(
+                &format!("session:{device}"),
+                account,
+                AuditEvent::new("device_session").device(Some(device)),
+            );
+            current
+        } else {
+            self.mutate(|state| {
                 let mut until = until;
                 if let Some(d) = state.devices.get_mut(device) {
                     d.last_seen = Some(now);
@@ -1344,22 +1974,30 @@ impl DeviceStore {
                     state,
                     account,
                     AuditEvent::new("device_session").device(Some(device)),
-                    &audit_key,
                 );
                 Ok(until)
             })
-            .unwrap_or(until);
+            .unwrap_or(until)
+        };
         let expires = (now + self.policy.session_ttl_secs).min(until);
         let token = new_session_token();
-        let mut sessions = self.sessions.lock().expect("sessions");
+        let mut guard = self.sessions.lock().expect("sessions");
+        let (sessions, log) = &mut *guard;
         sessions.retain(|_, s| s.expires > now);
-        sessions.insert(
-            sha256_hex(&token),
-            Session {
-                account: account.to_owned(),
-                device: device.to_owned(),
-                expires,
-            },
+        let session = Session {
+            account: account.to_owned(),
+            device: device.to_owned(),
+            expires,
+        };
+        let hash = sha256_hex(&token);
+        sessions.insert(hash.clone(), session.clone());
+        self.journal_sessions(
+            sessions,
+            log,
+            &[SessionLine::Open {
+                open: hash,
+                session,
+            }],
         );
         Ok((token, expires))
     }
@@ -1372,6 +2010,7 @@ impl DeviceStore {
             .sessions
             .lock()
             .expect("sessions")
+            .0
             .get(&sha256_hex(token))
             .cloned()?;
         if session.account != account || session.expires <= now {
@@ -1394,7 +2033,6 @@ impl DeviceStore {
         if name.is_empty() {
             return Err(DeviceError::Invalid("empty name".into()));
         }
-        let audit_key = self.audit_key;
         self.mutate(|state| {
             let device = state
                 .devices
@@ -1410,10 +2048,82 @@ impl DeviceStore {
                     .device(Some(actor))
                     .subject(id)
                     .detail(name),
-                &audit_key,
             );
             Ok(renamed)
         })
+    }
+
+    /// Erases everything this store holds for `account` (account deletion):
+    /// its device records are deleted (not revoked), its sessions ended and
+    /// the session journal rewritten without them, its whole audit chain
+    /// dropped (other accounts' chains are separate and still verify) and
+    /// its access-throttle entries forgotten. Idempotent; every file is
+    /// rewritten each call so a retry after a failed write finishes the job.
+    pub fn erase_account(
+        &self,
+        account: &str,
+        emails: &[String],
+    ) -> Result<DeviceErase, DeviceError> {
+        let mut out = DeviceErase::default();
+        // Devices first, persisted before they leave memory.
+        let mut ids: Vec<String> = Vec::new();
+        {
+            let mut gone = Vec::new();
+            self.mutate(|state| {
+                gone = state
+                    .devices
+                    .values()
+                    .filter(|d| d.account == account)
+                    .map(|d| d.id.clone())
+                    .collect();
+                for id in &gone {
+                    state.devices.remove(id);
+                }
+                Ok(())
+            })?;
+            ids.extend(gone);
+        }
+        out.devices = ids.len();
+        // Sessions of those devices (and any other of the account's).
+        {
+            let mut guard = self.sessions.lock().expect("sessions");
+            let (sessions, log) = &mut *guard;
+            let before = sessions.len();
+            sessions.retain(|_, s| s.account != account && !ids.contains(&s.device));
+            out.sessions = before - sessions.len();
+            if log.path.is_some() {
+                // Rewrite the journal: its old `open` lines carry the account.
+                let compacted = log.compact(sessions);
+                self.storage.record(store::SESSIONS, &compacted);
+                compacted.map_err(|e| DeviceError::Storage(e.to_string()))?;
+            }
+        }
+        // Proof fingerprints are hashes of signatures, not tied to an
+        // account, and expire in minutes; the access throttle keys are.
+        self.throttle
+            .lock()
+            .expect("throttle")
+            .retain(|k, _| !k.contains(account));
+        // The account's own audit chain.
+        {
+            let mut audit = self.audit.lock().expect("audit");
+            if let Some(log) = audit.logs.remove(account) {
+                audit.retained -= log.len();
+                out.audit_entries = log.len();
+            }
+            // Other accounts' entries that name this one are rewritten and
+            // their chains re-chained from the first changed entry.
+            let key = self.audit_key;
+            for log in audit.logs.values_mut() {
+                out.audit_rewritten += rewrite_audit(log, account, emails, &key);
+            }
+            if audit.path.is_some() {
+                let compacted = audit.compact();
+                self.storage.record(store::AUDIT, &compacted);
+                compacted.map_err(|e| DeviceError::Storage(e.to_string()))?;
+            }
+        }
+        Ok(out)
     }
 
     /// Revokes `id` and ends its sessions.
@@ -1424,7 +2134,6 @@ impl DeviceStore {
         id: &str,
     ) -> Result<DeviceRecord, DeviceError> {
         let now = now_secs();
-        let audit_key = self.audit_key;
         let revoked = self.mutate(|state| {
             let device = state
                 .devices
@@ -1443,14 +2152,10 @@ impl DeviceStore {
                 AuditEvent::new("device_revoked")
                     .device(Some(actor))
                     .subject(id),
-                &audit_key,
             );
             Ok(revoked)
         })?;
-        self.sessions
-            .lock()
-            .expect("sessions")
-            .retain(|_, s| s.device != id);
+        self.end_sessions(&[id.to_owned()]);
         Ok(revoked)
     }
 }
@@ -1459,6 +2164,7 @@ impl DeviceStore {
 pub(crate) mod tests {
     use super::*;
     use ring::signature::KeyPair as _;
+    use serde_json::json;
 
     /// A device key for tests.
     pub(crate) struct TestKey {
@@ -1914,10 +2620,493 @@ pub(crate) mod tests {
         // The migration is persisted, so a second restart (the pod
         // restarting again) does not re-migrate or duplicate entries, and
         // the chain still verifies under the same (now persisted) key.
+        // The log moved out of the devices file into its own.
+        let devices: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert!(devices.get("audit").is_none());
+        assert_eq!(devices["grace_started_at"], 1_790_000_000u64);
+        let lines = std::fs::read_to_string(AuditLog::path_for(&path)).unwrap();
+        assert_eq!(lines.lines().count(), 2);
         drop(store);
         let reopened = DeviceStore::open(path, enforcing()).unwrap();
         assert!(reopened.verify_audit_chain("acct").is_ok());
         assert_eq!(reopened.audit_log("acct", 10).len(), 2);
+    }
+
+    #[test]
+    fn a_chained_log_in_the_devices_file_moves_out_once_and_keeps_verifying() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("devices.json");
+        let audit_key = load_or_create_audit_key(&path).unwrap();
+        let mut log = Vec::new();
+        for kind in ["device_registered", "device_enrolled", "device_session"] {
+            chain_append(&mut log, AuditEvent::new(kind), &audit_key);
+        }
+        let mut other = Vec::new();
+        chain_append(&mut other, AuditEvent::new("machine_access"), &audit_key);
+        // The shape the previous relay persisted: the log inside the file.
+        let previous = serde_json::json!({
+            "grace_started_at": 1_790_000_000u64,
+            "devices": {},
+            "audit": { "acct": log, "other": other },
+        });
+        std::fs::write(&path, serde_json::to_vec_pretty(&previous).unwrap()).unwrap();
+
+        let store = DeviceStore::open(path.clone(), enforcing()).unwrap();
+        assert_eq!(store.audit_log("acct", 10), log);
+        assert!(store.verify_audit_chain("acct").is_ok());
+        assert!(store.verify_audit_chain("other").is_ok());
+        // New entries chain on from the moved ones.
+        store.audit("acct", AuditEvent::new("machine_access"));
+        drop(store);
+
+        let reopened = DeviceStore::open(path.clone(), enforcing()).unwrap();
+        let after = reopened.audit_log("acct", 10);
+        assert_eq!(after.len(), 4);
+        assert_eq!(after[3].seq, 4);
+        assert_eq!(after[3].prev, log[2].hash);
+        assert!(reopened.verify_audit_chain("acct").is_ok());
+        assert_eq!(reopened.audit_log("other", 10).len(), 1);
+    }
+
+    #[test]
+    fn an_audit_event_appends_a_line_and_leaves_the_devices_file_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("devices.json");
+        let store = DeviceStore::open(path.clone(), enforcing()).unwrap();
+        let key = TestKey::new();
+        register(&store, "acct", &key, true, Some(now_secs())).unwrap();
+        let devices = std::fs::read(&path).unwrap();
+        let log_path = AuditLog::path_for(&path);
+        let before = std::fs::read_to_string(&log_path).unwrap();
+        let enrollment = before.lines().count();
+        assert!(enrollment > 0, "the enrollment is audited");
+
+        for _ in 0..200 {
+            store.audit("acct", AuditEvent::new("machine_access"));
+        }
+        assert_eq!(std::fs::read(&path).unwrap(), devices);
+        let after = std::fs::read_to_string(&log_path).unwrap();
+        assert!(
+            after.starts_with(&before),
+            "earlier lines are never rewritten"
+        );
+        assert_eq!(after.lines().count(), enrollment + 200);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            assert_eq!(
+                std::fs::metadata(&log_path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        drop(store);
+        let reopened = DeviceStore::open(path, enforcing()).unwrap();
+        assert_eq!(
+            reopened.audit_log("acct", usize::MAX).len(),
+            enrollment + 200
+        );
+        assert!(reopened.verify_audit_chain("acct").is_ok());
+    }
+
+    #[test]
+    fn a_torn_last_line_is_dropped_and_the_log_stays_appendable() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("devices.json");
+        let store = DeviceStore::open(path.clone(), enforcing()).unwrap();
+        store.audit("acct", AuditEvent::new("device_registered"));
+        store.audit("acct", AuditEvent::new("device_enrolled"));
+        drop(store);
+        // A crash mid-append: half a line, no newline.
+        let log_path = AuditLog::path_for(&path);
+        let mut raw = std::fs::read(&log_path).unwrap();
+        raw.extend_from_slice(br#"{"account":"acct","seq":3,"ts":1"#);
+        std::fs::write(&log_path, raw).unwrap();
+
+        let store = DeviceStore::open(path.clone(), enforcing()).unwrap();
+        assert_eq!(store.audit_log("acct", 10).len(), 2);
+        store.audit("acct", AuditEvent::new("device_session"));
+        drop(store);
+        let reopened = DeviceStore::open(path, enforcing()).unwrap();
+        let log = reopened.audit_log("acct", 10);
+        assert_eq!(log.len(), 3);
+        assert_eq!(log[2].seq, 3);
+        assert!(reopened.verify_audit_chain("acct").is_ok());
+    }
+
+    #[test]
+    fn trimmed_entries_are_compacted_out_of_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("devices.json");
+        let store = DeviceStore::open(path.clone(), enforcing()).unwrap();
+        store.audit.lock().unwrap().compact_slack = 100;
+        for _ in 0..(AUDIT_LIMIT + 150) {
+            store.audit("acct", AuditEvent::new("machine_access"));
+        }
+        store.audit("other", AuditEvent::new("machine_access"));
+        let lines = std::fs::read_to_string(AuditLog::path_for(&path))
+            .unwrap()
+            .lines()
+            .count();
+        assert!(lines <= AUDIT_LIMIT + 1 + 100, "{lines} lines");
+        drop(store);
+        let reopened = DeviceStore::open(path, enforcing()).unwrap();
+        let log = reopened.audit_log("acct", usize::MAX);
+        assert_eq!(log.len(), AUDIT_LIMIT);
+        assert_eq!(log.last().unwrap().seq, (AUDIT_LIMIT + 150) as u64);
+        assert!(reopened.verify_audit_chain("acct").is_ok());
+        assert_eq!(reopened.audit_log("other", 10).len(), 1);
+    }
+
+    #[test]
+    fn old_entries_expire_by_age_and_the_chain_still_verifies() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("devices.json");
+        let store = DeviceStore::open(path.clone(), enforcing()).unwrap();
+        let day = 86_400;
+        let now = now_secs();
+        for age_days in [500u64, 450, 410, 100, 1] {
+            let mut event = AuditEvent::new("machine_access");
+            event.ts = now - age_days * day;
+            store.audit("acct", event);
+        }
+        let mut old = AuditEvent::new("machine_access");
+        old.ts = now - 600 * day;
+        store.audit("gone", old);
+        assert_eq!(store.trim_audit(0), 0, "0 keeps everything");
+        assert_eq!(store.trim_audit(400), 4, "3 of acct and all of gone");
+        let log = store.audit_log("acct", 10);
+        assert_eq!(log.len(), 2);
+        assert_eq!(log[0].seq, 4, "seq is kept across the trim");
+        assert!(store.verify_audit_chain("acct").is_ok());
+        assert!(store.audit_log("gone", 10).is_empty());
+        // The file no longer holds the expired lines, and survives a reopen.
+        let lines = std::fs::read_to_string(AuditLog::path_for(&path)).unwrap();
+        assert_eq!(lines.lines().count(), 2, "{lines}");
+        drop(store);
+        let reopened = DeviceStore::open(path, enforcing()).unwrap();
+        assert_eq!(reopened.audit_log("acct", 10).len(), 2);
+        assert!(reopened.verify_audit_chain("acct").is_ok());
+        // New events keep chaining from the retained tail.
+        reopened.audit("acct", AuditEvent::new("machine_access"));
+        assert!(reopened.verify_audit_chain("acct").is_ok());
+        assert_eq!(reopened.audit_log("acct", 10).last().unwrap().seq, 6);
+        assert_eq!(reopened.trim_audit(400), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_write_is_reported_until_one_succeeds() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tempfile::tempdir().unwrap();
+        let state = dir.path().join("state");
+        std::fs::create_dir(&state).unwrap();
+        let store = DeviceStore::open(state.join("devices.json"), enforcing()).unwrap();
+        store.audit("acct", AuditEvent::new("device_registered"));
+        assert!(store.writes_ok());
+        // The volume goes read-only (or full): the next write fails.
+        store.audit.lock().unwrap().file = None;
+        std::fs::remove_file(AuditLog::path_for(&state.join("devices.json"))).unwrap();
+        std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o500)).unwrap();
+        store.audit("acct", AuditEvent::new("machine_access"));
+        let blocked = !store.writes_ok();
+        std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
+        // Root ignores directory permissions; nothing to check then.
+        if blocked {
+            assert_eq!(
+                store.audit_log("acct", 10).len(),
+                1,
+                "a failed event is not recorded"
+            );
+            store.audit("acct", AuditEvent::new("machine_access"));
+            assert!(store.writes_ok());
+        }
+    }
+
+    #[test]
+    fn sessions_survive_a_restart_but_not_a_revocation() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("devices.json");
+        let store = DeviceStore::open(path.clone(), enforcing()).unwrap();
+        let laptop = TestKey::new();
+        let phone = TestKey::new();
+        register(&store, "acct", &laptop, true, Some(now_secs())).unwrap();
+        register(&store, "acct", &phone, true, Some(now_secs())).unwrap();
+        let laptop_session = session(&store, "acct", &laptop).unwrap();
+        let phone_session = session(&store, "acct", &phone).unwrap();
+        let saved =
+            std::fs::read_to_string(format!("{}{SESSIONS_FILE_SUFFIX}", path.display())).unwrap();
+        assert!(
+            !saved.contains(&laptop_session),
+            "only token hashes are stored"
+        );
+        drop(store);
+
+        let reopened = DeviceStore::open(path.clone(), enforcing()).unwrap();
+        assert_eq!(
+            reopened.session_device("acct", &laptop_session),
+            Some(laptop.id())
+        );
+        assert_eq!(reopened.session_device("other", &laptop_session), None);
+        reopened.revoke("acct", &laptop.id(), &phone.id()).unwrap();
+        assert_eq!(reopened.session_device("acct", &phone_session), None);
+        drop(reopened);
+        let again = DeviceStore::open(path, enforcing()).unwrap();
+        assert_eq!(again.session_device("acct", &phone_session), None);
+        assert_eq!(
+            again.session_device("acct", &laptop_session),
+            Some(laptop.id())
+        );
+    }
+
+    #[test]
+    fn the_devices_file_is_compact_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("devices.json");
+        let store = DeviceStore::open(path.clone(), enforcing()).unwrap();
+        register(&store, "acct", &TestKey::new(), true, Some(now_secs())).unwrap();
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(!raw.contains('\n'), "one line, no indentation: {raw}");
+        assert!(raw.contains("\"devices\":{"));
+    }
+
+    #[test]
+    fn the_session_journal_appends_compacts_and_replaces_the_old_map() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("devices.json");
+        let journal = PathBuf::from(format!("{}{SESSIONS_FILE_SUFFIX}", path.display()));
+        let legacy = PathBuf::from(format!("{}{LEGACY_SESSIONS_FILE_SUFFIX}", path.display()));
+        // An earlier relay's map of one live and one expired session.
+        let now = now_secs();
+        std::fs::write(
+            &legacy,
+            serde_json::to_vec(&json!({
+                "live": {"account": "acct", "device": "dev_a", "expires": now + 600},
+                "gone": {"account": "acct", "device": "dev_a", "expires": now - 1},
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let store = DeviceStore::open(path.clone(), enforcing()).unwrap();
+        assert!(!legacy.exists(), "the old map is replaced by the journal");
+        assert_eq!(
+            std::fs::read_to_string(&journal).unwrap().lines().count(),
+            1
+        );
+        let key = TestKey::new();
+        register(&store, "acct", &key, true, Some(now_secs())).unwrap();
+        // Each session opened is one appended line.
+        for _ in 0..3 {
+            session(&store, "acct", &key).unwrap();
+        }
+        assert_eq!(
+            std::fs::read_to_string(&journal).unwrap().lines().count(),
+            4
+        );
+        // A torn last line (a crash mid-append) is dropped at the next open.
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&journal)
+            .unwrap();
+        f.write_all(b"{\"open\":\"x").unwrap();
+        drop(f);
+        drop(store);
+        let store = DeviceStore::open(path.clone(), enforcing()).unwrap();
+        let raw = std::fs::read_to_string(&journal).unwrap();
+        assert!(raw.ends_with('\n') && !raw.contains("\"x"), "{raw}");
+        assert_eq!(store.sessions.lock().unwrap().0.len(), 4);
+        // Sessions that end make the journal compact to the live ones.
+        store.sessions.lock().unwrap().1.compact_slack = 8;
+        let phone = TestKey::new();
+        register(&store, "acct", &phone, true, Some(now_secs())).unwrap();
+        for _ in 0..40 {
+            session(&store, "acct", &phone).unwrap();
+        }
+        store.revoke("acct", &key.id(), &phone.id()).unwrap();
+        let live = store.sessions.lock().unwrap().0.len();
+        assert_eq!(live, 4);
+        let lines = std::fs::read_to_string(&journal).unwrap().lines().count();
+        assert_eq!(lines, live, "compacted to the live sessions");
+        drop(store);
+        let again = DeviceStore::open(path, enforcing()).unwrap();
+        assert_eq!(again.sessions.lock().unwrap().0.len(), live);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_dropped_audit_event_and_a_refused_change_are_counted() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tempfile::tempdir().unwrap();
+        let state = dir.path().join("state");
+        std::fs::create_dir(&state).unwrap();
+        let storage = Arc::new(Storage::new(Some(state.clone()), Default::default()));
+        let path = state.join("devices.json");
+        let store = DeviceStore::open_with(path.clone(), enforcing(), storage.clone()).unwrap();
+        store.audit("acct", AuditEvent::new("device_registered"));
+        store.audit.lock().unwrap().file = None;
+        std::fs::remove_file(AuditLog::path_for(&path)).unwrap();
+        std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o500)).unwrap();
+        store.audit("acct", AuditEvent::new("machine_access"));
+        let registered = register(&store, "acct", &TestKey::new(), true, Some(now_secs()));
+        std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
+        // Root ignores directory permissions; nothing to check then.
+        if storage.failures(store::AUDIT) > 0 {
+            assert_eq!(storage.audit_dropped_total(), 1);
+            assert!(
+                matches!(registered, Err(DeviceError::Storage(_))),
+                "{registered:?}"
+            );
+            assert!(storage.failures(store::DEVICES) >= 1);
+            assert!(!store.writes_ok());
+            assert!(
+                store.list("acct").is_empty(),
+                "a refused change is not made"
+            );
+            let (ready, body) = storage.report();
+            assert!(!ready);
+            assert_eq!(body["audit_events_dropped"], 1);
+        }
+    }
+
+    #[test]
+    fn opening_removes_temp_files_an_interrupted_write_left() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("devices.json");
+        let stale = dir.path().join(".devices.json.6852b0d9e7d6.tmp");
+        std::fs::write(&stale, vec![b'{'; 4096]).unwrap();
+        let store = DeviceStore::open(path, enforcing()).unwrap();
+        assert!(!stale.exists());
+        drop(store);
+    }
+
+    #[test]
+    fn erasing_an_account_drops_its_chain_and_leaves_other_chains_verifying() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("devices.json");
+        let store = DeviceStore::open(path.clone(), enforcing()).unwrap();
+        let (ada_key, bob_key) = (TestKey::new(), TestKey::new());
+        let fresh = Some(now_secs() - 5);
+        register(&store, "ada-sub", &ada_key, true, fresh).unwrap();
+        register(&store, "bob-sub", &bob_key, true, fresh).unwrap();
+        let ada_session = session(&store, "ada-sub", &ada_key).unwrap();
+        let bob_session = session(&store, "bob-sub", &bob_key).unwrap();
+        // Interleaved events: the two chains grow side by side in one file.
+        for _ in 0..3 {
+            store.audit(
+                "ada-sub",
+                AuditEvent::new("machine_access").subject("ada@example.test"),
+            );
+            store.audit("bob-sub", AuditEvent::new("machine_access"));
+        }
+        store.audit_throttled(
+            "access:ada-sub:d:m",
+            "ada-sub",
+            AuditEvent::new("machine_access"),
+        );
+        let bob_before = store.audit_log("bob-sub", 1000);
+        assert!(store.verify_audit_chain("bob-sub").is_ok());
+
+        let erased = store.erase_account("ada-sub", &[]).unwrap();
+        assert_eq!(erased.devices, 1);
+        assert_eq!(erased.sessions, 1);
+        assert!(erased.audit_entries >= 7, "{erased:?}");
+        assert!(store.list("ada-sub").is_empty());
+        assert!(store.get(&ada_key.id()).is_none());
+        assert!(store.session_device("ada-sub", &ada_session).is_none());
+        assert!(store.audit_log("ada-sub", 1000).is_empty());
+        // Bob's devices, session and chain are untouched, and still verify.
+        assert_eq!(store.list("bob-sub").len(), 1);
+        assert!(store.session_device("bob-sub", &bob_session).is_some());
+        assert_eq!(store.audit_log("bob-sub", 1000), bob_before);
+        assert!(store.verify_audit_chain("bob-sub").is_ok());
+        // Nothing of Ada is left on disk: not in the devices file, the audit
+        // log, or the session journal.
+        for entry in std::fs::read_dir(dir.path()).unwrap() {
+            let p = entry.unwrap().path();
+            if p.is_file() {
+                let raw = String::from_utf8_lossy(&std::fs::read(&p).unwrap()).into_owned();
+                assert!(
+                    !raw.contains("ada-sub"),
+                    "{} still names the account",
+                    p.display()
+                );
+            }
+        }
+        // Again: nothing to do, same answer; and it survives a restart.
+        assert_eq!(
+            store.erase_account("ada-sub", &[]).unwrap(),
+            DeviceErase::default()
+        );
+        assert_eq!(
+            store.erase_account("nobody", &[]).unwrap(),
+            DeviceErase::default()
+        );
+        drop(store);
+        let again = DeviceStore::open(path, enforcing()).unwrap();
+        assert!(again.list("ada-sub").is_empty());
+        assert!(again.audit_log("ada-sub", 1000).is_empty());
+        assert_eq!(again.audit_log("bob-sub", 1000), bob_before);
+        assert!(again.verify_audit_chain("bob-sub").is_ok());
+        // A new account with the same id starts a fresh chain.
+        again.audit("ada-sub", AuditEvent::new("device_registered"));
+        assert!(again.verify_audit_chain("ada-sub").is_ok());
+    }
+
+    #[test]
+    fn erasing_an_account_rewrites_the_entries_naming_it_in_other_chains() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("devices.json");
+        let store = DeviceStore::open(path.clone(), enforcing()).unwrap();
+        let emails = vec!["ada@example.test".to_owned()];
+        store.audit("bob-sub", AuditEvent::new("device_registered"));
+        store.audit(
+            "bob-sub",
+            AuditEvent::new("shared_access")
+                .machine("m1")
+                .subject("Ada@Example.test"),
+        );
+        store.audit("bob-sub", AuditEvent::new("share_added").subject("ada-sub"));
+        store.audit("bob-sub", AuditEvent::new("machine_access"));
+        store.audit("cy-sub", AuditEvent::new("machine_access"));
+        let cy_before = store.audit_log("cy-sub", 100);
+        let bob_before = store.audit_log("bob-sub", 100);
+
+        let erased = store.erase_account("ada-sub", &emails).unwrap();
+        assert_eq!(erased.audit_rewritten, 2);
+        let bob = store.audit_log("bob-sub", 100);
+        assert!(store.verify_audit_chain("bob-sub").is_ok());
+        assert_eq!(bob.len(), 4);
+        assert_eq!(
+            bob[0], bob_before[0],
+            "entries before the first change are kept"
+        );
+        assert_eq!(bob[1].subject.as_deref(), Some("deleted account"));
+        assert_eq!(bob[1].machine.as_deref(), Some("m1"));
+        assert_eq!(bob[2].subject.as_deref(), Some("deleted account"));
+        assert_ne!(
+            bob[3].hash, bob_before[3].hash,
+            "later entries are re-chained"
+        );
+        assert_eq!(bob[3].event, bob_before[3].event);
+        // An unrelated chain is untouched, byte for byte.
+        assert_eq!(store.audit_log("cy-sub", 100), cy_before);
+        assert!(store.verify_audit_chain("cy-sub").is_ok());
+        for e in std::fs::read_dir(dir.path()).unwrap() {
+            let raw = std::fs::read(e.unwrap().path()).unwrap();
+            let raw = String::from_utf8_lossy(&raw).to_ascii_lowercase();
+            assert!(
+                !raw.contains("ada-sub") && !raw.contains("ada@example"),
+                "left on disk"
+            );
+        }
+        // Idempotent, and persisted: a restart loads a chain that verifies.
+        let again = store.erase_account("ada-sub", &emails).unwrap();
+        assert_eq!(again, DeviceErase::default());
+        assert_eq!(store.audit_log("bob-sub", 100), bob);
+        drop(store);
+        let reopened = DeviceStore::open(path, enforcing()).unwrap();
+        assert_eq!(reopened.audit_log("bob-sub", 100), bob);
+        assert!(reopened.verify_audit_chain("bob-sub").is_ok());
     }
 
     #[test]
@@ -1953,8 +3142,8 @@ pub(crate) mod tests {
         // Editing the middle entry's content breaks the chain from there:
         // its own hash/mac no longer match, and the entry after it no
         // longer chains from a hash that is still valid.
-        let mut tampered = store.state.lock().unwrap();
-        tampered.audit.get_mut("acct").unwrap()[1].event.kind = "device_revoked".into();
+        let mut tampered = store.audit.lock().unwrap();
+        tampered.logs.get_mut("acct").unwrap()[1].event.kind = "device_revoked".into();
         drop(tampered);
         let err = store.verify_audit_chain("acct").unwrap_err();
         assert_eq!(err.seq, 2);
@@ -1978,20 +3167,24 @@ pub(crate) mod tests {
         store.audit("acct", AuditEvent::new("device_enrolled"));
         drop(store);
 
-        // Someone with only the state file (a backup, a disk snapshot) edits
-        // an event and recomputes the plain hash chain (no secret needed for
-        // that much), but cannot reproduce a valid mac without the audit
-        // key, which lives in a separate file.
-        let raw = std::fs::read_to_string(&path).unwrap();
-        let mut value: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        let entries = value["audit"]["acct"].as_array_mut().unwrap();
+        // Someone with only the state files (a backup, a disk snapshot)
+        // edits an event and recomputes the plain hash chain (no secret
+        // needed for that much), but cannot reproduce a valid mac without
+        // the audit key, which lives in a separate file.
+        let log_path = AuditLog::path_for(&path);
+        let raw = std::fs::read_to_string(&log_path).unwrap();
+        let mut entries: Vec<serde_json::Value> = raw
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
         entries[0]["kind"] = "device_revoked".into();
-        let prev = entries[0]["hash"].as_str().unwrap().to_owned();
         let seq = entries[0]["seq"].as_u64().unwrap();
         let event: AuditEvent = serde_json::from_value(entries[0].clone()).unwrap();
-        entries[0]["hash"] = chain_hash(AUDIT_GENESIS, seq, &event).into();
-        entries[1]["prev"] = prev.clone().into();
-        std::fs::write(&path, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+        let hash = chain_hash(AUDIT_GENESIS, seq, &event);
+        entries[0]["hash"] = hash.clone().into();
+        entries[1]["prev"] = hash.into();
+        let edited: String = entries.iter().map(|e| format!("{e}\n")).collect();
+        std::fs::write(&log_path, edited).unwrap();
 
         let reopened = DeviceStore::open(path, DevicePolicy::default()).unwrap();
         // The mac on the edited entry no longer matches (it was never
@@ -2259,6 +3452,35 @@ pub(crate) mod tests {
         let revoked_until = until();
         assert!(session(&store, "acct", &key).is_err());
         assert_eq!(until(), revoked_until);
+    }
+
+    /// CUA-2323: a session that renews nothing does not rewrite the
+    /// devices file (a reconnecting fleet opened several a second, each a
+    /// full rewrite and fsync under the devices lock), and its audit line
+    /// is throttled per device.
+    #[cfg(unix)]
+    #[test]
+    fn a_session_that_renews_nothing_leaves_the_devices_file_alone() {
+        use std::os::unix::fs::MetadataExt as _;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("devices.json");
+        let store = DeviceStore::open(path.clone(), enforcing()).unwrap();
+        let key = TestKey::new();
+        register(&store, "acct", &key, true, Some(now_secs())).unwrap();
+        let before = std::fs::metadata(&path).unwrap().ino();
+        let raw = std::fs::read(&path).unwrap();
+        for _ in 0..5 {
+            session(&store, "acct", &key).unwrap();
+        }
+        assert_eq!(std::fs::metadata(&path).unwrap().ino(), before);
+        assert_eq!(std::fs::read(&path).unwrap(), raw);
+        assert!(store.get(&key.id()).unwrap().last_seen.is_some());
+        let sessions = store
+            .audit_log("acct", 100)
+            .iter()
+            .filter(|e| e.kind == "device_session")
+            .count();
+        assert_eq!(sessions, 1);
     }
 
     #[test]

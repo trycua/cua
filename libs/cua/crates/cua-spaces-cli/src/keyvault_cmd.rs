@@ -27,12 +27,32 @@ fn connect_error(e: ConnectError) -> CuaError {
             "the Cua Keyvault is not running at {} (start the daemon: `cua daemon start`)",
             p.display()
         )),
-        ConnectError::Impostor { path, who } => CuaError::Unauthenticated(format!(
-            "the process serving {} is not the Cua daemon ({who}); refusing to talk to it",
-            path.display()
-        )),
+        ConnectError::Impostor { path, who } => {
+            CuaError::Unauthenticated(impostor_message(&path, &who, cfg!(target_os = "linux")))
+        }
         ConnectError::Other(m) => CuaError::Transport(format!("keyvault: {m}")),
     }
+}
+
+/// The refusal when the socket's server is not recognised as the Cua daemon.
+/// On Linux the Keyvault recognises Cua only by where it is installed (a
+/// root-owned install root such as `/opt/Cua Spaces`), because a same-user
+/// binary cannot be told from a copy; a daemon started from a build or from
+/// the home directory is therefore refused, which the plain message hides.
+fn impostor_message(path: &std::path::Path, who: &str, linux: bool) -> String {
+    let base = format!(
+        "the process serving {} is not the Cua daemon ({who}); refusing to talk to it",
+        path.display()
+    );
+    if !linux {
+        return base;
+    }
+    format!(
+        "{base}. On Linux the Keyvault trusts only a daemon run from the installed Cua package \
+         (under {}, in a tree only root can change). Run the daemon from the package; a debug \
+         build of cua can set CUA_KEYVAULT_ALLOW_UNVERIFIED_DAEMON=1 for this command",
+        cua_keyvault::caller::LINUX_INSTALL_ROOTS.join(", ")
+    )
 }
 
 fn kv_error(e: KvError) -> CuaError {
@@ -204,6 +224,7 @@ fn kind_name(k: ProtectorKind) -> &'static str {
     match k {
         ProtectorKind::MacosKeychain => "macOS keychain",
         ProtectorKind::WindowsCredential => "Windows Credential Manager",
+        ProtectorKind::LinuxSecretService => "desktop keyring",
         ProtectorKind::Passphrase => "passphrase",
         ProtectorKind::Recovery => "recovery key",
     }
@@ -404,6 +425,7 @@ pub async fn run(cmd: KeyvaultCmd, json: bool, out: &mut dyn Write) -> Result<i3
                 paths: None,
                 domains: None,
                 passwords: false,
+                password_domains: None,
             };
             let r = c.import(spec).await.map_err(kv_error)?;
             if json {
@@ -429,6 +451,7 @@ pub async fn run(cmd: KeyvaultCmd, json: bool, out: &mut dyn Write) -> Result<i3
                         serde_json::json!({"id": p.id, "caller": p.caller_display,
                             "agent": p.request.agent, "actions": p.request.actions,
                             "targets": p.request.targets,
+                            "selected_paths": p.request.paths,
                             "items": p.items.iter().map(|i| i.redacted().label()).collect::<Vec<_>>()})
                     })
                     .collect();
@@ -467,11 +490,21 @@ pub async fn run(cmd: KeyvaultCmd, json: bool, out: &mut dyn Write) -> Result<i3
                             p.request.targets.join(", ")
                         ),
                     );
+                    if let Some(note) = selection_note(p) {
+                        line(out, format!("    {note}"));
+                    }
                 }
             }
         }
         KeyvaultCmd::Approve { id } => {
             if !json {
+                // The system prompt (polkit on Linux) cannot show what the
+                // request is for, so say it here before asking.
+                if let Ok(pending) = c.list_pending().await
+                    && let Some(p) = pending.iter().find(|p| p.id == id)
+                {
+                    eprintln!("{}", describe_pending(p));
+                }
                 eprintln!("The Cua daemon asks for Touch ID or your login password to approve.");
             }
             let g = c.approve(&id, Default::default()).await.map_err(kv_error)?;
@@ -496,6 +529,62 @@ pub async fn run(cmd: KeyvaultCmd, json: bool, out: &mut dyn Write) -> Result<i3
     Ok(0)
 }
 
+/// The parts of an app a request is limited to, when its requester named
+/// them (`teleport_app` with a selection), or what it would import.
+fn selection_note(p: &cua_keyvault::broker::PendingView) -> Option<String> {
+    let paths = p.request.paths.as_ref()?;
+    let app = p.request.selectors.iter().find_map(|s| match s {
+        cua_keyvault::broker::Selector::App { app } => Some(app.as_str()),
+        _ => None,
+    });
+    Some(format!(
+        "only these parts{}: {}",
+        app.map(|a| format!(" of {a}")).unwrap_or_default(),
+        paths.join(", ")
+    ))
+}
+
+/// What approving `p` would allow, in plain words, for the approver to read
+/// before the system prompt (which, on Linux, shows fixed text only).
+fn describe_pending(p: &cua_keyvault::broker::PendingView) -> String {
+    let who = match &p.request.agent {
+        Some(a) => format!("agent {a} ({})", p.caller_display),
+        None => p.caller_display.clone(),
+    };
+    let mut text = format!(
+        "Request {}: {who} asks to move app data into {}.",
+        p.id,
+        p.request.targets.join(", ")
+    );
+    match selection_note(p) {
+        Some(note) => text.push_str(&format!("\n  Limited to {note}.")),
+        None => {
+            let whole: Vec<String> = p
+                .request
+                .selectors
+                .iter()
+                .filter_map(|s| match s {
+                    cua_keyvault::broker::Selector::App { app } => Some(app.clone()),
+                    _ => None,
+                })
+                .collect();
+            if !whole.is_empty() {
+                text.push_str(&format!(
+                    "\n  Covers the stored session of {}.",
+                    whole.join(", ")
+                ));
+            }
+        }
+    }
+    if !p.request.reason.is_empty() {
+        text.push_str(&format!(
+            "\n  The app says (unverified): {}",
+            p.request.reason
+        ));
+    }
+    text
+}
+
 /// "Saved 4 items: 3 new, 1 updated" (counts only; never a name or a value).
 fn import_summary(r: &cua_keyvault::broker::ImportReport, noun: &str) -> String {
     let plural = if r.saved == 1 { "" } else { "s" };
@@ -516,9 +605,53 @@ fn import_summary(r: &cua_keyvault::broker::ImportReport, noun: &str) -> String 
 mod tests {
     use super::*;
 
+    fn pending(paths: Option<Vec<String>>) -> cua_keyvault::broker::PendingView {
+        cua_keyvault::broker::PendingView {
+            id: "req-1".into(),
+            caller: cua_keyvault::CallerIdentity::for_tests("com.example.bot", false),
+            caller_fp: "fp".into(),
+            caller_display: "Example bot".into(),
+            request: cua_keyvault::broker::AccessRequest {
+                selectors: vec![cua_keyvault::broker::Selector::App {
+                    app: "firefox".into(),
+                }],
+                targets: vec!["dev-1".into()],
+                reason: "teleport_app: move firefox's Preferences into dev-1".into(),
+                paths,
+                ..Default::default()
+            },
+            items: vec![],
+            needs_import: vec![],
+            created_ms: 0,
+        }
+    }
+
+    /// What the approver reads before a system prompt that cannot show it.
+    #[test]
+    fn approve_describes_the_selection_the_request_is_limited_to() {
+        let narrow = describe_pending(&pending(Some(vec!["firefox/prefs.js".into()])));
+        assert!(narrow.contains("Limited to only these parts of firefox: firefox/prefs.js"));
+        assert!(narrow.contains("Example bot"), "{narrow}");
+        let whole = describe_pending(&pending(None));
+        assert!(whole.contains("stored session of firefox"), "{whole}");
+        assert_eq!(selection_note(&pending(None)), None);
+    }
+
     #[test]
     fn only_the_line_ending_is_stripped() {
         let s = strip_newline(Zeroizing::new("  two spaces  \r\n".into()));
         assert_eq!(s.as_str(), "  two spaces  ");
+    }
+
+    #[test]
+    fn linux_refusal_says_where_the_daemon_must_run_from() {
+        let p = std::path::Path::new("/h/.cua/keyvault.sock");
+        let who = "/home/u/bin/cua (signature not checked on this OS, UNTRUSTED)";
+        let linux = impostor_message(p, who, true);
+        assert!(linux.contains("refusing to talk to it"));
+        assert!(linux.contains("/opt/Cua Spaces"));
+        assert!(linux.contains("CUA_KEYVAULT_ALLOW_UNVERIFIED_DAEMON"));
+        let mac = impostor_message(p, who, false);
+        assert!(!mac.contains("/opt/"));
     }
 }

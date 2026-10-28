@@ -10,30 +10,29 @@
         "drive": null,
         "driveStorage": null,
         "launchAtLogin": "[x] Launch at login ~Keeps your Spaces and agents available after a restart.",
-        "lede": "Cua Spaces is in your menu bar.",
+        "lede": "3 things are left. You can finish them now, or later from the menu bar.",
         "notice": null,
         "noticeLink": null,
         "presentations": [],
         "primary": "Start using Cua Spaces",
         "prompts": [
-          "qa my app on windows, macos and linux",
-          "use the cua sdk to build an agent app that runs codex in a space",
-          "open my app in a space and pip it",
-          "use the cua sdk to stream a space's window into my app",
-          "teleport my browser into a space and finish the checkout test",
-          "use the cua docs to set up a cua bench taskset",
-          "spin up a linux space and run the test suite there"
+          "Open a Linux Space and run my test suite in it",
+          "Use my Space's browser to finish the checkout test and show me",
+          "Share this Space with a teammate as a viewer"
         ],
         "showMark": false,
         "step": "done",
         "summary": [
-          "cua command: not installed",
-          "Account: not signed in",
-          "AI agents: none",
           "Shows in: Notch and menu bar",
-          "This machine: Access other machines"
+          "This machine: Opens your other machines"
         ],
-        "title": "You're all set",
+        "title": "Almost done",
+        "todos": [
+          "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
+          "[ ] Account ~Reach your machines from any machine. -> Sign in",
+          "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
+          "[ ] Cua Volume ~Shared folder: files your agents can share across your machines. -> Turn on (optional)"
+        ],
         "usage": null
       },
       "launchAtLogin": true,
@@ -48,30 +47,29 @@
         "drive": null,
         "driveStorage": null,
         "launchAtLogin": "[ ] Launch at login ~Keeps your Spaces and agents available after a restart.",
-        "lede": "Cua Spaces is in your menu bar.",
+        "lede": "3 things are left. You can finish them now, or later from the menu bar.",
         "notice": null,
         "noticeLink": null,
         "presentations": [],
         "primary": "Start using Cua Spaces",
         "prompts": [
-          "qa my app on windows, macos and linux",
-          "use the cua sdk to build an agent app that runs codex in a space",
-          "open my app in a space and pip it",
-          "use the cua sdk to stream a space's window into my app",
-          "teleport my browser into a space and finish the checkout test",
-          "use the cua docs to set up a cua bench taskset",
-          "spin up a linux space and run the test suite there"
+          "Open a Linux Space and run my test suite in it",
+          "Use my Space's browser to finish the checkout test and show me",
+          "Share this Space with a teammate as a viewer"
         ],
         "showMark": false,
         "step": "done",
         "summary": [
-          "cua command: not installed",
-          "Account: not signed in",
-          "AI agents: none",
           "Shows in: Notch and menu bar",
-          "This machine: Access other machines"
+          "This machine: Opens your other machines"
         ],
-        "title": "You're all set",
+        "title": "Almost done",
+        "todos": [
+          "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
+          "[ ] Account ~Reach your machines from any machine. -> Sign in",
+          "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
+          "[ ] Cua Volume ~Shared folder: files your agents can share across your machines. -> Turn on (optional)"
+        ],
         "usage": null
       },
       "launchAtLogin": false,
@@ -86,33 +84,106 @@
         "drive": null,
         "driveStorage": null,
         "launchAtLogin": "[x] Launch at login ~Keeps your Spaces and agents available after a restart.",
-        "lede": "Cua Spaces is in your menu bar.",
+        "lede": "3 things are left. You can finish them now, or later from the menu bar.",
         "notice": null,
         "noticeLink": null,
         "presentations": [],
         "primary": "Start using Cua Spaces",
         "prompts": [
-          "qa my app on windows, macos and linux",
-          "use the cua sdk to build an agent app that runs codex in a space",
-          "open my app in a space and pip it",
-          "use the cua sdk to stream a space's window into my app",
-          "teleport my browser into a space and finish the checkout test",
-          "use the cua docs to set up a cua bench taskset",
-          "spin up a linux space and run the test suite there"
+          "Open a Linux Space and run my test suite in it",
+          "Use my Space's browser to finish the checkout test and show me",
+          "Share this Space with a teammate as a viewer"
         ],
         "showMark": false,
         "step": "done",
         "summary": [
-          "cua command: not installed",
-          "Account: not signed in",
-          "AI agents: none",
           "Shows in: Notch and menu bar",
-          "This machine: Access other machines"
+          "This machine: Opens your other machines"
         ],
-        "title": "You're all set",
+        "title": "Almost done",
+        "todos": [
+          "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
+          "[ ] Account ~Reach your machines from any machine. -> Sign in",
+          "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
+          "[ ] Cua Volume ~Shared folder: files your agents can share across your machines. -> Turn on (optional)"
+        ],
         "usage": null
       },
       "launchAtLogin": true,
+      "onboarding": "launch-at-login-toggled"
+    },
+    {
+      "frame": {
+        "canBack": true,
+        "canSkip": false,
+        "choices": [],
+        "dots": "Welcome,Sign in,AI agents,Menu bar,This machine,*Done",
+        "drive": null,
+        "driveStorage": null,
+        "launchAtLogin": "[x] Launch at login ~Keeps your Spaces and agents available after a restart.",
+        "lede": "3 things are left. You can finish them now, or later from the menu bar.",
+        "notice": null,
+        "noticeLink": null,
+        "presentations": [],
+        "primary": "Start using Cua Spaces",
+        "prompts": [
+          "Open a Linux Space and run my test suite in it",
+          "Use my Space's browser to finish the checkout test and show me",
+          "Share this Space with a teammate as a viewer"
+        ],
+        "showMark": false,
+        "step": "done",
+        "summary": [
+          "Shows in: Notch and menu bar",
+          "This machine: Your other machines can reach it"
+        ],
+        "title": "Almost done",
+        "todos": [
+          "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
+          "[ ] Account ~Reach your machines from any machine. -> Sign in",
+          "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
+          "[ ] Cua Volume ~Shared folder: files your agents can share across your machines. -> Turn on (optional)"
+        ],
+        "usage": null
+      },
+      "launchAtLogin": true,
+      "onboarding": "mode-chosen"
+    },
+    {
+      "frame": {
+        "canBack": true,
+        "canSkip": false,
+        "choices": [],
+        "dots": "Welcome,Sign in,AI agents,Menu bar,This machine,*Done",
+        "drive": null,
+        "driveStorage": null,
+        "launchAtLogin": "[ ] Launch at login ~Keeps your Spaces and agents available after a restart.",
+        "lede": "3 things are left. You can finish them now, or later from the menu bar.",
+        "notice": null,
+        "noticeLink": null,
+        "presentations": [],
+        "primary": "Start using Cua Spaces",
+        "prompts": [
+          "Open a Linux Space and run my test suite in it",
+          "Use my Space's browser to finish the checkout test and show me",
+          "Share this Space with a teammate as a viewer"
+        ],
+        "showMark": false,
+        "step": "done",
+        "summary": [
+          "Shows in: Notch and menu bar",
+          "This machine: Your other machines can reach it"
+        ],
+        "title": "Almost done",
+        "todos": [
+          "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
+          "[ ] Account ~Reach your machines from any machine. -> Sign in",
+          "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
+          "[ ] Cua Volume ~Shared folder: files your agents can share across your machines. -> Turn on (optional)"
+        ],
+        "usage": null
+      },
+      "launchAtLogin": false,
       "onboarding": "launch-at-login-toggled"
     },
     {
@@ -120,7 +191,9 @@
         "- launch-at-login toggle: Launch Cua Spaces at login {*On|Off}",
         "- launch-at-login-note note: Keeps your Spaces and agents available after a restart.",
         "- notch choice: Spaces tab in the notch {*Show|Hide}",
-        "- welcome text: Welcome [Show again]"
+        "- welcome text: Welcome [Show again]",
+        "- tips toggle: Show tips {*On|Off}",
+        "- reset-tips text: Reset tips [Reset]"
       ],
       "step": "enabled"
     },
@@ -129,7 +202,9 @@
         "- launch-at-login toggle: Launch Cua Spaces at login {On|*Off}",
         "- launch-at-login-note note: Keeps your Spaces and agents available after a restart.",
         "- notch choice: Spaces tab in the notch {*Show|Hide}",
-        "- welcome text: Welcome [Show again]"
+        "- welcome text: Welcome [Show again]",
+        "- tips toggle: Show tips {*On|Off}",
+        "- reset-tips text: Reset tips [Reset]"
       ],
       "step": "not registered"
     },
@@ -138,7 +213,9 @@
         "- launch-at-login toggle: Launch Cua Spaces at login {*On|Off}",
         "- launch-at-login-approve text: Approve in System Settings › Login Items [Open Login Items]",
         "- notch choice: Spaces tab in the notch {*Show|Hide}",
-        "- welcome text: Welcome [Show again]"
+        "- welcome text: Welcome [Show again]",
+        "- tips toggle: Show tips {*On|Off}",
+        "- reset-tips text: Reset tips [Reset]"
       ],
       "step": "requires approval"
     },
@@ -147,7 +224,9 @@
         "- launch-at-login toggle: Launch Cua Spaces at login {On|*Off} (disabled)",
         "- launch-at-login-note note: Login items are not available for this copy of Cua Spaces.",
         "- notch choice: Spaces tab in the notch {*Show|Hide}",
-        "- welcome text: Welcome [Show again]"
+        "- welcome text: Welcome [Show again]",
+        "- tips toggle: Show tips {*On|Off}",
+        "- reset-tips text: Reset tips [Reset]"
       ],
       "step": "not found"
     },
@@ -156,7 +235,9 @@
         "- launch-at-login toggle: Launch Cua Spaces at login {On|*Off} (disabled)",
         "- launch-at-login-note note: Keeps your Spaces and agents available after a restart.",
         "- notch choice: Spaces tab in the notch {*Show|Hide}",
-        "- welcome text: Welcome [Show again]"
+        "- welcome text: Welcome [Show again]",
+        "- tips toggle: Show tips {*On|Off}",
+        "- reset-tips text: Reset tips [Reset]"
       ],
       "step": "turning on"
     },
@@ -165,7 +246,9 @@
         "- launch-at-login toggle: Launch Cua Spaces at login {On|*Off}",
         "- launch-at-login-error error: Operation not permitted",
         "- notch choice: Spaces tab in the notch {*Show|Hide}",
-        "- welcome text: Welcome [Show again]"
+        "- welcome text: Welcome [Show again]",
+        "- tips toggle: Show tips {*On|Off}",
+        "- reset-tips text: Reset tips [Reset]"
       ],
       "step": "failed"
     },
@@ -174,7 +257,9 @@
         "- launch-at-login toggle: Launch Cua Spaces at login {On|*Off}",
         "- launch-at-login-note note: This machine provides Spaces, which stop after a restart until you open Cua Spaces.",
         "- notch choice: Spaces tab in the notch {*Show|Hide}",
-        "- welcome text: Welcome [Show again]"
+        "- welcome text: Welcome [Show again]",
+        "- tips toggle: Show tips {*On|Off}",
+        "- reset-tips text: Reset tips [Reset]"
       ],
       "step": "off, provides Spaces"
     },
@@ -183,7 +268,9 @@
         "- launch-at-login toggle: Launch Cua Spaces at login {On|*Off}",
         "- launch-at-login-note note: This machine runs persistent agents, which stop after a restart until you open Cua Spaces.",
         "- notch choice: Spaces tab in the notch {*Show|Hide}",
-        "- welcome text: Welcome [Show again]"
+        "- welcome text: Welcome [Show again]",
+        "- tips toggle: Show tips {*On|Off}",
+        "- reset-tips text: Reset tips [Reset]"
       ],
       "step": "off, runs agents"
     },
@@ -192,7 +279,9 @@
         "- launch-at-login toggle: Launch Cua Spaces at login {On|*Off}",
         "- launch-at-login-note note: This machine provides Spaces and runs persistent agents, which stop after a restart until you open Cua Spaces.",
         "- notch choice: Spaces tab in the notch {*Show|Hide}",
-        "- welcome text: Welcome [Show again]"
+        "- welcome text: Welcome [Show again]",
+        "- tips toggle: Show tips {*On|Off}",
+        "- reset-tips text: Reset tips [Reset]"
       ],
       "step": "off, both"
     },
@@ -201,7 +290,9 @@
         "- launch-at-login toggle: Launch Cua Spaces at login {*On|Off}",
         "- launch-at-login-note note: Keeps your Spaces and agents available after a restart.",
         "- notch choice: Spaces tab in the notch {*Show|Hide}",
-        "- welcome text: Welcome [Show again]"
+        "- welcome text: Welcome [Show again]",
+        "- tips toggle: Show tips {*On|Off}",
+        "- reset-tips text: Reset tips [Reset]"
       ],
       "step": "on, both"
     },

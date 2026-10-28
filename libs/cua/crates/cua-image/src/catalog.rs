@@ -18,7 +18,7 @@ use crate::error::{ImageError, Result};
 use crate::resolve::NormalizedRef;
 
 /// The catalog file, as built into this crate.
-pub const CATALOG_JSON: &str = include_str!("../../../../images/sandbox-images.json");
+pub const CATALOG_JSON: &str = include_str!(concat!(env!("OUT_DIR"), "/sandbox-images.json"));
 
 /// One catalog entry (the fields the resolver needs).
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -49,6 +49,9 @@ pub struct CatalogEntry {
     /// (`scripts/images/record-image-sizes.py`).
     #[serde(default)]
     pub sizes: Option<CatalogSizes>,
+    /// `Some(false)`: the guest cannot use GPU acceleration (absent: no claim).
+    #[serde(default)]
+    pub gpu: Option<bool>,
 }
 
 /// The guest distribution a catalog entry names (`distro`).
@@ -272,6 +275,7 @@ mod tests {
             digest: None,
             local: None,
             sizes: None,
+            gpu: None,
             distro: Some(Distro {
                 id: id.into(),
                 name: n.into(),

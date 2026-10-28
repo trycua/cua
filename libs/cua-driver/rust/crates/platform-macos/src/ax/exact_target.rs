@@ -17,7 +17,7 @@ use super::bindings::{
     copy_string_attr, focused_element_of_pid, AXUIElementCreateApplication, AXUIElementRef,
 };
 use super::snapshot::RetainedElement;
-use crate::windows::{all_windows, resolve_window_owner, WindowOwner};
+use crate::windows::{all_windows_without_spaces, resolve_window_owner, WindowOwner};
 
 /// Bounded `AXParent` ascent used when an element does not expose `AXWindow`.
 const MAX_ANCESTRY_DEPTH: usize = 40;
@@ -75,6 +75,63 @@ pub unsafe fn element_window_id(element: AXUIElementRef) -> Option<u32> {
         CFRelease(current as CFTypeRef);
     }
     resolved
+}
+
+/// Decide an addressed element's ancestry from what was read about it.
+fn element_ancestry(window: Option<u32>, in_app_menu_bar: bool, requested: u32) -> ElementAncestry {
+    match window {
+        Some(id) if id == requested => ElementAncestry::ProvenDescendant,
+        Some(_) => ElementAncestry::OutsideTargetWindow,
+        None if in_app_menu_bar => ElementAncestry::ProvenDescendant,
+        None => ElementAncestry::Unproven,
+    }
+}
+
+/// Whether `element` sits under the application's own `AXMenuBar`: a bounded
+/// `AXParent` ascent that must end at the same menu bar element the
+/// application reports.
+///
+/// # Safety
+///
+/// `app` and `element` must be valid `AXUIElementRef`s.
+unsafe fn element_in_app_menu_bar(app: AXUIElementRef, element: AXUIElementRef) -> bool {
+    let Some(menu_bar) = copy_element_attr(app, "AXMenuBar") else {
+        return false;
+    };
+    let mut current = element;
+    let mut owned = false;
+    let mut found = false;
+    for _ in 0..MAX_ANCESTRY_DEPTH {
+        if core_foundation::base::CFEqual(current as CFTypeRef, menu_bar as CFTypeRef) != 0 {
+            found = true;
+            break;
+        }
+        if matches!(
+            copy_string_attr(current, "AXRole").as_deref(),
+            Some("AXWindow") | Some("AXSheet") | Some("AXApplication") | None
+        ) {
+            break;
+        }
+        let parent = copy_element_attr(current, "AXParent");
+        if owned {
+            CFRelease(current as CFTypeRef);
+        }
+        match parent {
+            Some(parent) => {
+                current = parent;
+                owned = true;
+            }
+            None => {
+                owned = false;
+                break;
+            }
+        }
+    }
+    if owned {
+        CFRelease(current as CFTypeRef);
+    }
+    CFRelease(menu_bar as CFTypeRef);
+    found
 }
 
 /// Map a window-role AX element to the CGWindowID of the top-level window it
@@ -176,27 +233,47 @@ unsafe fn ax_window_records(app: AXUIElementRef, pid: i32, window_id: u32) -> Ve
         .collect()
 }
 
-/// Count independently AX-mapped, non-minimized sibling top-level windows.
+/// One same-session WindowServer row as the keyboard-ambiguity count sees it.
+struct WindowServerRow {
+    pid: i32,
+    window_id: u32,
+    /// On screen and of real size. An ordered-out window (LibreOffice's
+    /// `VCL ImplGetDefaultWindow`, a closed Chrome omnibox popup) cannot be
+    /// the key window, so process-scoped keys can never reach it.
+    visible: bool,
+}
+
+/// Count independently AX-mapped, visible, non-minimized sibling top-level
+/// windows that could receive process-scoped key events instead of the target.
 ///
 /// WindowServer may expose several layer-0 compositor surfaces for one native
 /// Electron, Tauri, or WebKit window. A raw same-pid CGWindow row is therefore
 /// not enough to prove another process-scoped keyboard destination. Requiring a
 /// fresh `AXWindows` mapping preserves the fail-closed two-window guard while
 /// ignoring render surfaces that cannot independently become the AX key window.
+///
+/// AppKit sends a process's key events to its key window. When AX proves the
+/// target is that window (`target_is_key`), no sibling can receive them, so a
+/// sibling such as an open omnibox popup does not make the target ambiguous.
 fn count_competing_keyboard_destinations(
     pid: i32,
     target_window_id: u32,
-    window_server_rows: impl IntoIterator<Item = (i32, u32)>,
+    window_server_rows: impl IntoIterator<Item = WindowServerRow>,
     ax_records: &[AxWindowRecord],
+    target_is_key: bool,
 ) -> usize {
+    if target_is_key {
+        return 0;
+    }
     window_server_rows
         .into_iter()
-        .filter(|(owner_pid, window_id)| {
-            *owner_pid == pid
-                && *window_id != target_window_id
-                && ax_records
-                    .iter()
-                    .any(|record| record.window_id == *window_id && record.minimized != Some(true))
+        .filter(|row| {
+            row.pid == pid
+                && row.window_id != target_window_id
+                && row.visible
+                && ax_records.iter().any(|record| {
+                    record.window_id == row.window_id && record.minimized != Some(true)
+                })
         })
         .count()
 }
@@ -205,8 +282,9 @@ fn count_competing_keyboard_destinations(
 ///
 /// `element_ptr` is an optional retained `AXUIElementRef` (as `usize`) for an
 /// explicitly addressed element; the caller must keep it retained for the
-/// duration of this call. Blocking: performs one CGWindowList enumeration and
-/// bounded AX reads. Call from a blocking context immediately before deciding.
+/// duration of this call. Blocking: performs up to two Space-free CGWindowList
+/// enumerations and bounded AX reads. Call from a blocking context immediately
+/// before deciding.
 pub fn gather_background_facts(
     pid: i32,
     window_id: u32,
@@ -223,13 +301,14 @@ pub fn gather_background_facts(
     // SAFETY: the application element is created and released here; window
     // elements are released inside ax_window_records; the caller guarantees
     // element_ptr stays retained.
-    let (records, app_hidden, element) = unsafe {
+    let (records, app_hidden, element, focused_window_id) = unsafe {
         let app = AXUIElementCreateApplication(pid);
         if app.is_null() {
             (
                 Vec::new(),
                 None,
                 element_ptr.map(|_| ElementAncestry::Unproven),
+                None,
             )
         } else {
             // Electron/Chromium apps may need per-process-lifetime enablement
@@ -237,13 +316,21 @@ pub fn gather_background_facts(
             super::enablement::ensure_chromium_ax_enabled(pid, app);
             let records = ax_window_records(app, pid, window_id);
             let app_hidden = copy_bool_attr(app, "AXHidden");
-            let element = element_ptr.map(|ptr| match element_window_id(ptr as AXUIElementRef) {
-                Some(id) if id == window_id => ElementAncestry::ProvenDescendant,
-                Some(_) => ElementAncestry::OutsideTargetWindow,
-                None => ElementAncestry::Unproven,
+            let element = element_ptr.map(|ptr| {
+                let element = ptr as AXUIElementRef;
+                let window = element_window_id(element);
+                // A menu-bar item has no window ancestor: the menu bar hangs
+                // off the application. It still belongs to this app.
+                let in_menu_bar = window.is_none() && element_in_app_menu_bar(app, element);
+                element_ancestry(window, in_menu_bar, window_id)
+            });
+            let focused_window_id = copy_element_attr(app, "AXFocusedWindow").and_then(|window| {
+                let window_id = ax_get_window_id(window);
+                CFRelease(window as CFTypeRef);
+                window_id
             });
             CFRelease(app as CFTypeRef);
-            (records, app_hidden, element)
+            (records, app_hidden, element, focused_window_id)
         }
     };
 
@@ -251,10 +338,17 @@ pub fn gather_background_facts(
     let competing_keyboard_destinations = count_competing_keyboard_destinations(
         pid,
         window_id,
-        all_windows()
+        all_windows_without_spaces()
             .iter()
-            .map(|window| (window.pid, window.window_id)),
+            .map(|window| WindowServerRow {
+                pid: window.pid,
+                window_id: window.window_id,
+                visible: window.is_on_screen
+                    && window.bounds.width >= 2.0
+                    && window.bounds.height >= 2.0,
+            }),
         &records,
+        target.is_some() && focused_window_id == Some(window_id),
     );
 
     BackgroundTargetFacts {
@@ -264,12 +358,16 @@ pub fn gather_background_facts(
         app_hidden,
         competing_keyboard_destinations,
         element: element.unwrap_or(ElementAncestry::NotAddressed),
+        screen_locked: crate::session::screen_locked(),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{count_competing_keyboard_destinations, resolve_owning_window, AxWindowRecord};
+    use super::{
+        count_competing_keyboard_destinations, resolve_owning_window, AxWindowRecord,
+        WindowServerRow,
+    };
 
     /// A fake AX node: (role, AXParent index, CGWindowID).
     type FakeNode = (&'static str, Option<usize>, Option<u32>);
@@ -282,6 +380,16 @@ mod tests {
             |&index| tree[index].1,
             |&index| tree[index].2,
         )
+    }
+
+    #[test]
+    fn menu_bar_item_is_proven_only_through_the_app_menu_bar() {
+        use super::element_ancestry;
+        use cua_driver_core::background_input::ElementAncestry::*;
+        assert_eq!(element_ancestry(None, true, 7), ProvenDescendant);
+        assert_eq!(element_ancestry(None, false, 7), Unproven);
+        assert_eq!(element_ancestry(Some(7), false, 7), ProvenDescendant);
+        assert_eq!(element_ancestry(Some(8), true, 7), OutsideTargetWindow);
     }
 
     #[test]
@@ -337,46 +445,83 @@ mod tests {
         }
     }
 
+    fn rows<const N: usize>(rows: [(i32, u32); N]) -> Vec<WindowServerRow> {
+        rows.into_iter()
+            .map(|(pid, window_id)| WindowServerRow {
+                pid,
+                window_id,
+                visible: true,
+            })
+            .collect()
+    }
+
     #[test]
     fn compositor_surfaces_do_not_create_keyboard_ambiguity() {
-        let rows = [(42, 10), (42, 11), (42, 12), (42, 13), (42, 14), (42, 15)];
+        let rows = rows([(42, 10), (42, 11), (42, 12), (42, 13), (42, 14), (42, 15)]);
         let records = [ax_window(10, Some(false))];
 
         assert_eq!(
-            count_competing_keyboard_destinations(42, 10, rows, &records),
+            count_competing_keyboard_destinations(42, 10, rows, &records, false),
             0
         );
     }
 
     #[test]
     fn independently_mapped_sibling_remains_ambiguous() {
-        let rows = [(42, 10), (42, 11)];
+        let rows = rows([(42, 10), (42, 11)]);
         let records = [ax_window(10, Some(false)), ax_window(11, Some(false))];
 
         assert_eq!(
-            count_competing_keyboard_destinations(42, 10, rows, &records),
+            count_competing_keyboard_destinations(42, 10, rows, &records, false),
             1
         );
     }
 
     #[test]
     fn minimized_mapped_sibling_is_not_a_keyboard_destination() {
-        let rows = [(42, 10), (42, 11)];
+        let rows = rows([(42, 10), (42, 11)]);
         let records = [ax_window(10, Some(false)), ax_window(11, Some(true))];
 
         assert_eq!(
-            count_competing_keyboard_destinations(42, 10, rows, &records),
+            count_competing_keyboard_destinations(42, 10, rows, &records, false),
             0
         );
     }
 
     #[test]
     fn unmapped_window_server_sibling_is_not_a_keyboard_destination() {
-        let rows = [(42, 10), (42, 99), (7, 11)];
+        let rows = rows([(42, 10), (42, 99), (7, 11)]);
         let records = [ax_window(10, Some(false)), ax_window(11, Some(false))];
 
         assert_eq!(
-            count_competing_keyboard_destinations(42, 10, rows, &records),
+            count_competing_keyboard_destinations(42, 10, rows, &records, false),
+            0
+        );
+    }
+
+    #[test]
+    fn off_screen_mapped_sibling_is_not_a_keyboard_destination() {
+        // LibreOffice lists `VCL ImplGetDefaultWindow` in AXWindows, but it is
+        // ordered out and can never be the key window (bench CDB-S02).
+        let mut rows = rows([(42, 10), (42, 11)]);
+        rows[1].visible = false;
+        let records = [ax_window(10, Some(false)), ax_window(11, Some(false))];
+
+        assert_eq!(
+            count_competing_keyboard_destinations(42, 10, rows, &records, false),
+            0
+        );
+    }
+
+    #[test]
+    fn a_proven_key_target_has_no_competing_destination() {
+        // Chrome with its omnibox popup open: the popup is visible and
+        // AX-mapped, but the browser window stays key (bench CDB-G04).
+        let rows = rows([(42, 10), (42, 11)]);
+        let records = [ax_window(10, Some(false)), ax_window(11, Some(false))];
+
+        assert_eq!(
+            count_competing_keyboard_destinations(42, 10, rows, &records, true),
             0
         );
     }

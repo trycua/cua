@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 //! Settings, About: the app's name and version, its links (acknowledgements,
-//! privacy policy, terms, an issue report), the copyright line, and, where
+//! privacy policy, terms, system status, an issue report), the copyright line, and, where
 //! the app updates itself (the macOS app, through Sparkle), the update
 //! controls: automatic checks, automatic installs, the channel (Stable or
 //! Beta), Check Now and the last check.
@@ -22,6 +22,9 @@ use crate::settings::SettingsOption;
 pub const PRIVACY_URL: &str = "https://cua.ai/privacy-policy";
 /// The terms of service.
 pub const TERMS_URL: &str = "https://cua.ai/terms-of-service";
+/// The public status page: whether sign-in, the relay, the Spaces API,
+/// downloads and billing are up.
+pub const STATUS_URL: &str = "https://status.cua.ai";
 /// A new issue from the repository's bug report form.
 pub const ISSUE_URL: &str = "https://github.com/trycua/cua/issues/new";
 /// The copyright line.
@@ -103,6 +106,8 @@ pub enum AboutLinkId {
     Privacy,
     /// The terms of service.
     Terms,
+    /// The public status page.
+    Status,
     /// A new issue.
     Issue,
 }
@@ -123,11 +128,11 @@ pub struct AboutLink {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AboutUpdates {
-    /// "Automatically check for updates".
+    /// "Check for and download updates automatically".
     pub auto_check_label: String,
     /// Checked.
     pub auto_check: bool,
-    /// "Install updates automatically".
+    /// "Install a downloaded update when Cua Spaces quits".
     pub auto_install_label: String,
     /// Checked.
     pub auto_install: bool,
@@ -155,7 +160,7 @@ pub struct AboutView {
     pub title: String,
     /// "Version 0.2.0 (0.2.0.123)".
     pub version_line: String,
-    /// Acknowledgements, Privacy Policy, Terms of Service, Report an Issue.
+    /// Acknowledgements, Privacy Policy, Terms of Service, System Status, Report an Issue.
     pub links: Vec<AboutLink>,
     /// "© 2026 Cua AI, Inc. All rights reserved."
     pub copyright: String,
@@ -218,9 +223,9 @@ pub fn view(input: &AboutInput) -> AboutView {
         url,
     };
     let updates = input.updater.then(|| AboutUpdates {
-        auto_check_label: "Automatically check for updates".into(),
+        auto_check_label: "Check for and download updates automatically".into(),
         auto_check: input.auto_check,
-        auto_install_label: "Install updates automatically".into(),
+        auto_install_label: "Install a downloaded update when Cua Spaces quits".into(),
         auto_install: input.auto_install,
         auto_install_enabled: input.auto_check,
         channel_label: "Update to:".into(),
@@ -264,6 +269,11 @@ pub fn view(input: &AboutInput) -> AboutView {
                 AboutLinkId::Terms,
                 "Terms of Service",
                 Some(TERMS_URL.into()),
+            ),
+            link(
+                AboutLinkId::Status,
+                "System Status",
+                Some(STATUS_URL.into()),
             ),
             link(
                 AboutLinkId::Issue,
@@ -428,6 +438,7 @@ mod tests {
                 "Acknowledgements",
                 "Privacy Policy",
                 "Terms of Service",
+                "System Status",
                 "Report an Issue\u{2026}"
             ]
         );
@@ -440,6 +451,7 @@ mod tests {
             v.links[2].url.as_deref(),
             Some("https://cua.ai/terms-of-service")
         );
+        assert_eq!(v.links[3].url.as_deref(), Some("https://status.cua.ai"));
     }
 
     #[test]

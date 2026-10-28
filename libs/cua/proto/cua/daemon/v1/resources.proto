@@ -1,0 +1,203 @@
+syntax = "proto3";
+
+package cua.daemon.v1;
+
+// What this computer, its extra Spaces and your other computers use:
+// processor, memory and disk, measured once by the daemon's sampler and
+// served by `SpaceService.GetResources` and `WatchResources`. Numbers only:
+// counts, bytes and percentages, never a name, a path or a process.
+
+// Request for `SpaceService.GetResources`.
+message GetResourcesRequest {
+  // A window shows the numbers: sample every 10 seconds for the next 30.
+  bool visible = 1;
+}
+
+// Response for `SpaceService.GetResources`.
+message GetResourcesResponse {
+  // Everything, now.
+  ResourcesSnapshot snapshot = 1;
+}
+
+// Request for `SpaceService.WatchResources`.
+message WatchResourcesRequest {
+  // A window shows the numbers (sample every 10 seconds) rather than only
+  // the menu bar warning (every 5 minutes).
+  bool visible = 1;
+}
+
+// One event of `SpaceService.WatchResources`.
+message WatchResourcesResponse {
+  // What happened.
+  oneof event {
+    // Everything, once at the start.
+    ResourcesSnapshot snapshot = 1;
+    // Only what changed.
+    ResourcesUpdate update = 2;
+    // The free-disk warning level changed.
+    DiskWarning low_disk = 3;
+  }
+}
+
+// One sample of everything.
+message ResourcesSnapshot {
+  // Grows by one per sample.
+  uint64 sequence = 1;
+  // When it was sampled, in Unix milliseconds.
+  uint64 sampled_at_ms = 2;
+  // This computer.
+  ComputerResources this_mac = 3;
+  // The extra Spaces on this computer (the local ones).
+  repeated SpaceResources spaces = 4;
+  // Your other computers that published a summary (through the relay).
+  repeated ComputerResources computers = 5;
+  // `this_mac.warning`, for the menu bar.
+  DiskWarning warning = 6;
+}
+
+// What changed since the receiver's last update, past the thresholds.
+message ResourcesUpdate {
+  // The sample it brings the receiver to.
+  uint64 sequence = 1;
+  // When it was sampled, in Unix milliseconds.
+  uint64 sampled_at_ms = 2;
+  // This computer, when it changed.
+  optional ComputerResources this_mac = 3;
+  // Extra Spaces that changed or appeared: replace by `id`.
+  repeated SpaceResources spaces = 4;
+  // Other computers that changed or appeared: replace by `id`.
+  repeated ComputerResources computers = 5;
+  // Ids (Spaces or computers) that are gone.
+  repeated string removed = 6;
+}
+
+// The low-disk signal.
+message DiskWarning {
+  // `ok`, `low` (under 50 GB or 15% of the volume, whichever line is
+  // higher, capped at 100 GB) or `critical` (under the floor where creates
+  // fail, 5 GiB unless `CUA_DISK_MIN_FREE` says otherwise).
+  string level = 1;
+  // Free bytes on the volume that holds Spaces.
+  uint64 free = 2;
+  // Size of that volume in bytes.
+  uint64 total = 3;
+  // The line that was crossed in bytes (0 when `ok`).
+  uint64 threshold = 4;
+}
+
+// A computer: this one, or one of your other computers.
+message ComputerResources {
+  // `this-mac`, or the relay machine id.
+  string id = 1;
+  // Display name (empty for this computer).
+  string name = 2;
+  // Reachable now (always true for this computer).
+  bool online = 3;
+  // When the computer measured this, in Unix milliseconds (another
+  // computer's can be minutes old).
+  uint64 sampled_at_ms = 4;
+  // Processor cores.
+  uint32 cpu_count = 5;
+  // Busy now, 0 to 100.
+  double cpu_percent = 6;
+  // 1-minute load average.
+  double load_average_1m = 7;
+  // Memory size in bytes.
+  uint64 memory_total = 8;
+  // Memory in use in bytes, without reclaimable cache.
+  uint64 memory_used = 9;
+  // Size of the volume that holds Spaces in bytes.
+  uint64 disk_total = 10;
+  // Free bytes on that volume.
+  uint64 disk_free = 11;
+  // Extra Spaces on it.
+  uint32 spaces_count = 12;
+  // Of those, running.
+  uint32 spaces_running = 13;
+  // Cores given to the running ones.
+  uint32 spaces_cpu_allocated = 14;
+  // Memory given to the running ones in bytes.
+  uint64 spaces_memory_allocated = 15;
+  // Memory the running guests report in use in bytes.
+  uint64 spaces_memory_used = 16;
+  // Bytes all its extra Spaces take on it.
+  uint64 spaces_disk_bytes = 17;
+  // False when some Space's disk could only be estimated.
+  bool spaces_disk_exact = 18;
+  // The low-disk signal.
+  DiskWarning warning = 19;
+}
+
+// What `cua.env.v1.SystemService.Metrics` reports from inside a Space.
+message GuestUsage {
+  // Cores the guest sees.
+  uint32 cpu_count = 1;
+  // Busy now, 0 to 100.
+  double cpu_percent = 2;
+  // 1-minute load average.
+  double load_average_1m = 3;
+  // Memory in use in bytes.
+  uint64 memory_used = 4;
+  // Memory size in bytes.
+  uint64 memory_total = 5;
+  // `memory_total` is the guest's own limit.
+  bool memory_limited = 6;
+  // Disk in use in bytes.
+  uint64 disk_used = 7;
+  // Disk size in bytes; 0 when the guest's file system has no size of its
+  // own (gVisor's root overlay says "unlimited") or did not say. Readers
+  // treat any size at or above 2^60 bytes the same way: a sentinel, never a
+  // size.
+  uint64 disk_total = 8;
+  // `disk_total` is the guest's own disk.
+  bool disk_limited = 9;
+}
+
+// What a Space costs this computer's disk, as opposed to what the guest
+// sees.
+message DiskOnHost {
+  // Bytes only this Space holds: what deleting it frees. Unset when they
+  // could not be measured.
+  optional uint64 bytes = 1;
+  // Blocks its files occupy, clones counted in full: an upper bound.
+  uint64 allocated = 2;
+  // Part of it is shared with other copies.
+  bool shares_space = 3;
+}
+
+// One extra Space on this computer.
+message SpaceResources {
+  // The Space id, for example `local:aurora`.
+  string id = 1;
+  // `running`, `stopped`, `suspended`, or empty when unknown.
+  string power_state = 2;
+  // Cores given to it (0: unknown).
+  uint32 cpu_allocated = 3;
+  // Memory given to it in bytes (0: unknown).
+  uint64 memory_allocated = 4;
+  // Its disk's size limit in bytes (0: unknown).
+  uint64 disk_allocated = 5;
+  // The guest's own numbers; unset while it is off or unreachable.
+  GuestUsage usage = 6;
+  // What it costs this computer: its own data only, never the base it
+  // shares; unset when there is nothing to measure.
+  DiskOnHost disk_on_host = 7;
+  // The base image it is a copy-on-write copy of; unset when it has none or
+  // the runtime cannot tell it apart.
+  SharedBase base = 8;
+}
+
+// A base image several Spaces share copy-on-write: a container image's
+// layers, the image a virtual machine's disk was cloned from.
+message SharedBase {
+  // Which base: Spaces with the same key share the same blocks.
+  string key = 1;
+  // The image reference it came from, for example
+  // `ghcr.io/trycua/linux:24.04`.
+  string image = 2;
+  // What it takes on this computer, once for all its Spaces. Unset when the
+  // runtime cannot tell it apart from the Spaces' own data.
+  optional uint64 bytes = 3;
+  // Local Spaces that use it, this one included.
+  uint32 shared_with = 4;
+}

@@ -2,20 +2,9 @@
   "title": "MCP tools",
   "pages": [
     "index",
-    "apps-and-windows",
-    "window-state",
-    "screen",
-    "click",
-    "double-and-right-click",
-    "pointer",
-    "keyboard",
-    "keys-and-shortcuts",
-    "values-and-clipboard",
-    "page",
-    "browser-input",
-    "sessions",
-    "agent-cursor",
-    "recording",
-    "maintenance"
+    "apps-windows-and-screen",
+    "click-and-type",
+    "pointer-cursor-and-browser",
+    "batch-recording-and-settings"
   ]
 }

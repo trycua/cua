@@ -1135,6 +1135,50 @@ fn next_random(state: &mut u64) -> u64 {
 }
 
 #[tokio::test]
+async fn a_new_machine_gets_a_new_quic_certificate_and_the_old_pin_stops_working() {
+    let server = server().await;
+    let quic = server
+        .provider
+        .start_quic("127.0.0.1:0".parse().unwrap())
+        .unwrap();
+    let old_pin = quic.certificate_sha256.clone();
+    assert!(quic_connect(quic.port, &old_pin).await.is_ok());
+
+    // What Init{new_machine} (and a first token after a snapshot) signals.
+    server.ctx.first_token_installed();
+    let mut stream = StreamServiceClient::new(server.channel.clone());
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let new_pin = loop {
+        let opened = stream
+            .open_media(OpenMediaRequest {
+                target: Some(MediaTarget {
+                    target: Some(media_target::Target::DisplayId("primary".into())),
+                }),
+                codecs: vec![MediaCodec::Bgra as i32],
+                prefer_quic: true,
+                ..OpenMediaRequest::default()
+            })
+            .await
+            .unwrap()
+            .into_inner();
+        let pin = opened.quic.expect("QUIC still offered").certificate_sha256;
+        if pin != old_pin {
+            break pin;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "certificate never renewed"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    assert!(
+        quic_connect(quic.port, &old_pin).await.is_err(),
+        "the snapshot's certificate is no longer served"
+    );
+    assert!(quic_connect(quic.port, &new_pin).await.is_ok());
+}
+
+#[tokio::test]
 async fn quic_media_pins_the_certificate_requires_a_ticket_and_recovers_from_datagram_loss_with_a_keyframe(
 ) {
     use cua_media_protocol::v2::{close_code, ClientMessage};

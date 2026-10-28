@@ -1,0 +1,2188 @@
+{
+ "exports": {
+  "ALL_TRAFFIC": {
+   "kind": "value",
+   "type": "\"0.0.0.0/0\""
+  },
+  "ApiClient": {
+   "ctor": "(config: ConnectionConfig, opts?: { requireApiKey?: boolean; }): ApiClient",
+   "extends": [],
+   "kind": "class",
+   "members": {
+    "api": "Client<paths, `${string}/${string}`>"
+   },
+   "static": {
+    "prototype": "?"
+   }
+  },
+  "AuthenticationError": {
+   "ctor": "(message: string): AuthenticationError",
+   "extends": [
+    "Error"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": "unknown",
+    "message": "string",
+    "name": "string",
+    "stack": "string"
+   },
+   "static": {
+    "prototype": "?"
+   }
+  },
+  "BuildError": {
+   "ctor": "(message: string, stackTrace?: string): BuildError",
+   "extends": [
+    "Error"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": "unknown",
+    "message": "string",
+    "name": "string",
+    "stack": "string"
+   },
+   "static": {
+    "prototype": "?"
+   }
+  },
+  "BuildInfo": {
+   "kind": "type",
+   "type": "{ alias: string; name: string; tags: string[]; templateId: string; buildId: string; }"
+  },
+  "BuildOptions": {
+   "kind": "type",
+   "type": "ConnectionOpts & BasicBuildOptions"
+  },
+  "BuildStatusReason": {
+   "kind": "type",
+   "type": "{ message: string; step?: string; logEntries: LogEntry[]; }"
+  },
+  "CommandConnectOpts": {
+   "kind": "type",
+   "type": "Pick<CommandStartOpts, \"onStderr\" | \"onStdout\" | \"timeoutMs\"> & CommandRequestOpts"
+  },
+  "CommandExitError": {
+   "ctor": "(result: CommandResult): CommandExitError",
+   "extends": [
+    "SandboxError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": "unknown",
+    "error": "string",
+    "exitCode": "number",
+    "message": "string",
+    "name": "string",
+    "stack": "string",
+    "statusCode": "number",
+    "stderr": "string",
+    "stdout": "string"
+   },
+   "static": {
+    "prototype": "?"
+   }
+  },
+  "CommandHandle": {
+   "ctor": "(pid: number, handleDisconnect: () => void, handleKill: () => Promise<boolean>, events: AsyncIterable<ConnectResponse | StartResponse>, onStdout?: ((stdout: string) => void | Promise<void>) | undefined, onStderr?: ((stderr: string) => void | Promise<void>) | undefined, onPty?: ((pty: Uint8Array) => void | Promise<void>) | undefined, handleSendStdin?: ((data: string | Uint8Array, opts?: CommandRequestOpts) => Promise<void>) | undefined, handleCloseStdin?: ((opts?: CommandRequestOpts) => Promise<void>) | undefined, checkHealth?: SandboxHealthCheck | undefined): CommandHandle",
+   "extends": [],
+   "kind": "class",
+   "members": {
+    "closeStdin": "(opts?: CommandRequestOpts): Promise<void>",
+    "disconnect": "(): Promise<void>",
+    "error": "string",
+    "exitCode": "number",
+    "kill": "(): Promise<boolean>",
+    "pid": "number",
+    "sendStdin": "(data: string | Uint8Array, opts?: CommandRequestOpts): Promise<void>",
+    "stderr": "string",
+    "stdout": "string",
+    "wait": "(): Promise<CommandResult>"
+   },
+   "static": {
+    "prototype": "?"
+   }
+  },
+  "CommandInputHandle": {
+   "ctor": "(rpc: Client<typeof Process>, pid: number, inputKind: InputKind, opts: CommandStreamInputOpts, checkHealth: SandboxHealthCheck, keepaliveIntervalMs?: number): CommandInputHandle",
+   "extends": [],
+   "kind": "class",
+   "members": {
+    "close": "(): Promise<void>",
+    "send": "(data: string | Uint8Array): Promise<void>"
+   },
+   "static": {
+    "prototype": "?"
+   }
+  },
+  "CommandRequestOpts": {
+   "kind": "interface",
+   "members": {
+    "requestTimeoutMs": "number",
+    "signal": "AbortSignal"
+   }
+  },
+  "CommandResult": {
+   "kind": "interface",
+   "members": {
+    "error": "string",
+    "exitCode": "number",
+    "stderr": "string",
+    "stdout": "string"
+   }
+  },
+  "CommandStartOpts": {
+   "kind": "interface",
+   "members": {
+    "background": "boolean",
+    "cwd": "string",
+    "envs": "Record<string, string>",
+    "onStderr": "(data: string): void | Promise<void>",
+    "onStdout": "(data: string): void | Promise<void>",
+    "requestTimeoutMs": "number",
+    "signal": "AbortSignal",
+    "stdin": "boolean",
+    "timeoutMs": "number",
+    "user": "string"
+   }
+  },
+  "CommandStreamInputOpts": {
+   "kind": "interface",
+   "members": {
+    "signal": "AbortSignal",
+    "timeoutMs": "number"
+   }
+  },
+  "Commands": {
+   "ctor": "(transport: Transport, envdApi: EnvdApiClient, connectionConfig: ConnectionConfig, streamingTransport: Transport): Commands",
+   "extends": [],
+   "kind": "class",
+   "members": {
+    "closeStdin": "(pid: number, opts?: CommandRequestOpts): Promise<void>",
+    "connect": "(pid: number, opts?: CommandConnectOpts): Promise<CommandHandle>",
+    "kill": "(pid: number, opts?: CommandRequestOpts): Promise<boolean>",
+    "list": "(opts?: CommandRequestOpts): Promise<ProcessInfo[]>",
+    "run": "(cmd: string, opts?: CommandStartOpts & { background?: false; }): Promise<CommandResult> | (cmd: string, opts: CommandStartOpts & { background: true; }): Promise<CommandHandle> | (cmd: string, opts?: CommandStartOpts & { background?: boolean; }): Promise<CommandHandle | CommandResult>",
+    "sendStdin": "(pid: number, data: string | Uint8Array, opts?: CommandRequestOpts): Promise<void>",
+    "streamInput": "(pid: number, opts?: CommandStreamInputOpts): CommandInputHandle",
+    "supportsStdinClose": "boolean"
+   },
+   "static": {
+    "prototype": "?"
+   }
+  },
+  "ConnectionConfig": {
+   "ctor": "(opts?: ConnectionOpts): ConnectionConfig",
+   "extends": [],
+   "kind": "class",
+   "members": {
+    "apiKey": "string",
+    "apiUrl": "string",
+    "debug": "boolean",
+    "domain": "string",
+    "getHost": "(sandboxId: string, port: number, sandboxDomain: string): string",
+    "getSandboxDirectUrl": "(sandboxId: string, opts: { sandboxDomain: string; envdPort: number; }): string",
+    "getSandboxUrl": "(sandboxId: string, opts: { sandboxDomain: string; envdPort: number; }): string",
+    "getSignal": "(requestTimeoutMs?: number, signal?: AbortSignal): AbortSignal | undefined",
+    "headers": "Record<string, string>",
+    "httpVersion": "HttpVersion",
+    "logger": "Logger",
+    "proxy": "string",
+    "requestTimeoutMs": "number",
+    "retries": "number",
+    "sandboxUrl": "string",
+    "validateApiKey": "boolean"
+   },
+   "static": {
+    "envdPort": "number",
+    "mergeOpts": "<T extends ConnectionOpts>(boundOpts: ConnectionOpts | undefined, opts?: T): T | undefined",
+    "prototype": "?",
+    "setIntegration": "(integration: string | undefined): void"
+   }
+  },
+  "ConnectionConfigOpts": {
+   "kind": "type",
+   "type": "ConnectionOpts"
+  },
+  "ConnectionOpts": {
+   "kind": "interface",
+   "members": {
+    "apiHeaders": "Record<string, string>",
+    "apiKey": "string",
+    "apiUrl": "string",
+    "debug": "boolean",
+    "domain": "string",
+    "headers": "Record<string, string>",
+    "httpVersion": "HttpVersion",
+    "logger": "Logger",
+    "proxy": "string",
+    "requestTimeoutMs": "number",
+    "retries": "number",
+    "sandboxUrl": "string",
+    "signal": "AbortSignal",
+    "validateApiKey": "boolean"
+   }
+  },
+  "CopyItem": {
+   "kind": "type",
+   "type": "{ src: PathLike | PathLike[]; dest: PathLike; forceUpload?: true; user?: string; mode?: number; resolveSymlinks?: boolean; gzip?: boolean; }"
+  },
+  "CreateSnapshotOpts": {
+   "kind": "interface",
+   "members": {
+    "apiHeaders": "Record<string, string>",
+    "apiKey": "string",
+    "debug": "boolean",
+    "domain": "string",
+    "headers": "Record<string, string>",
+    "mode": "SnapshotMode",
+    "name": "string",
+    "requestTimeoutMs": "number",
+    "retries": "number",
+    "signal": "AbortSignal",
+    "validateApiKey": "boolean"
+   }
+  },
+  "DockerfileSyntaxError": {
+   "ctor": "(message: string, line?: number | undefined): DockerfileSyntaxError",
+   "extends": [
+    "Error"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": "unknown",
+    "line": "number",
+    "message": "string",
+    "name": "string",
+    "stack": "string"
+   },
+   "static": {
+    "prototype": "?"
+   }
+  },
+  "E2B": {
+   "ctor": "(opts?: E2BClientOpts): E2B",
+   "extends": [],
+   "kind": "class",
+   "members": {
+    "Sandbox": "typeof Sandbox",
+    "Secret": "typeof Secret",
+    "Template": "(options?: TemplateOptions): TemplateFromImage",
+    "Volume": "typeof Volume"
+   },
+   "static": {
+    "prototype": "?"
+   }
+  },
+  "E2BClientOpts": {
+   "kind": "type",
+   "type": "{ headers?: Record<string, string>; requestTimeoutMs?: number; apiKey?: string; validateApiKey?: boolean; apiHeaders?: Record<string, string>; debug?: boolean; domain?: string; retries?: number; apiUrl?: string; sandboxUrl?: string; logger?: Logger; proxy?: string; httpVersion?: HttpVersion; }"
+  },
+  "EntryInfo": {
+   "kind": "interface",
+   "members": {
+    "group": "string",
+    "metadata": "Record<string, string>",
+    "mode": "number",
+    "modifiedTime": "Date",
+    "name": "string",
+    "owner": "string",
+    "path": "string",
+    "permissions": "string",
+    "size": "number",
+    "symlinkTarget": "string",
+    "type": "FileType"
+   }
+  },
+  "FileNotFoundError": {
+   "ctor": "(message: string): FileNotFoundError",
+   "extends": [
+    "NotFoundError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": "unknown",
+    "message": "string",
+    "name": "string",
+    "stack": "string",
+    "statusCode": "number"
+   },
+   "static": {
+    "prototype": "?"
+   }
+  },
+  "FileType": {
+   "kind": "enum",
+   "members": {
+    "DIR": "member",
+    "FILE": "member",
+    "SYMLINK": "member"
+   }
+  },
+  "FileUploadError": {
+   "ctor": "(message: string, stackTrace?: string): FileUploadError",
+   "extends": [
+    "BuildError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": "unknown",
+    "message": "string",
+    "name": "string",
+    "stack": "string"
+   },
+   "static": {
+    "prototype": "?"
+   }
+  },
+  "Filesystem": {
+   "ctor": "(transport: Transport, envdApi: EnvdApiClient, connectionConfig: ConnectionConfig): Filesystem",
+   "extends": [],
+   "kind": "class",
+   "members": {
+    "exists": "(path: string, opts?: FilesystemRequestOpts): Promise<boolean>",
+    "getInfo": "(path: string, opts?: FilesystemRequestOpts): Promise<EntryInfo>",
+    "list": "(path: string, opts?: FilesystemListOpts): Promise<EntryInfo[]>",
+    "makeDir": "(path: string, opts?: FilesystemRequestOpts): Promise<boolean>",
+    "read": "(path: string, opts?: FilesystemReadOpts & { format?: \"text\"; }): Promise<string> | (path: string, opts?: FilesystemReadOpts & { format: \"bytes\"; }): Promise<Uint8Array> | (path: string, opts?: FilesystemReadOpts & { format: \"blob\"; }): Promise<Blob> | (path: string, opts?: FilesystemReadOpts & { format: \"stream\"; }): Promise<ReadableStream<Uint8Array>>",
+    "remove": "(path: string, opts?: FilesystemRequestOpts): Promise<void>",
+    "rename": "(oldPath: string, newPath: string, opts?: FilesystemRequestOpts): Promise<EntryInfo>",
+    "watchDir": "(path: string, onEvent: (event: FilesystemEvent) => void | Promise<void>, opts?: WatchOpts & { onExit?: (err?: Error) => void | Promise<void>; }): Promise<WatchHandle>",
+    "write": "(path: string, data: string | ArrayBuffer | Blob | ReadableStream, opts?: FilesystemWriteOpts): Promise<WriteInfo> | (files: WriteEntry[], opts?: FilesystemWriteOpts): Promise<WriteInfo[]>",
+    "writeFiles": "(files: WriteEntry[], opts?: FilesystemWriteOpts): Promise<WriteInfo[]>"
+   },
+   "static": {
+    "prototype": "?"
+   }
+  },
+  "FilesystemEvent": {
+   "kind": "interface",
+   "members": {
+    "entry": "EntryInfo",
+    "name": "string",
+    "type": "FilesystemEventType"
+   }
+  },
+  "FilesystemEventType": {
+   "kind": "enum",
+   "members": {
+    "CHMOD": "member",
+    "CREATE": "member",
+    "REMOVE": "member",
+    "RENAME": "member",
+    "WRITE": "member"
+   }
+  },
+  "FilesystemReadOpts": {
+   "kind": "interface",
+   "members": {
+    "gzip": "boolean",
+    "requestTimeoutMs": "number",
+    "signal": "AbortSignal",
+    "streamIdleTimeoutMs": "number",
+    "user": "string"
+   }
+  },
+  "FilesystemWriteOpts": {
+   "kind": "interface",
+   "members": {
+    "gzip": "boolean",
+    "metadata": "Record<string, string>",
+    "requestTimeoutMs": "number",
+    "signal": "AbortSignal",
+    "useOctetStream": "boolean",
+    "user": "string"
+   }
+  },
+  "GetBuildStatusOptions": {
+   "kind": "type",
+   "type": "ConnectionOpts & { logsOffset?: number; }"
+  },
+  "Git": {
+   "ctor": "(commands: Commands): Git",
+   "extends": [],
+   "kind": "class",
+   "members": {
+    "add": "(path: string, opts?: GitAddOpts): Promise<CommandResult>",
+    "branches": "(path: string, opts?: GitRequestOpts): Promise<GitBranches>",
+    "checkoutBranch": "(path: string, branch: string, opts?: GitRequestOpts): Promise<CommandResult>",
+    "clone": "(url: string, opts?: GitCloneOpts): Promise<CommandResult>",
+    "commit": "(path: string, message: string, opts?: GitCommitOpts): Promise<CommandResult>",
+    "configureUser": "(name: string, email: string, opts?: GitConfigOpts): Promise<CommandResult>",
+    "createBranch": "(path: string, branch: string, opts?: GitRequestOpts): Promise<CommandResult>",
+    "dangerouslyAuthenticate": "(opts: GitDangerouslyAuthenticateOpts): Promise<CommandResult>",
+    "deleteBranch": "(path: string, branch: string, opts?: GitDeleteBranchOpts): Promise<CommandResult>",
+    "getConfig": "(key: string, opts?: GitConfigOpts): Promise<string | undefined>",
+    "init": "(path: string, opts?: GitInitOpts): Promise<CommandResult>",
+    "pull": "(path: string, opts?: GitPullOpts): Promise<CommandResult>",
+    "push": "(path: string, opts?: GitPushOpts): Promise<CommandResult>",
+    "remoteAdd": "(path: string, name: string, url: string, opts?: GitRemoteAddOpts): Promise<CommandResult>",
+    "remoteGet": "(path: string, name: string, opts?: GitRequestOpts): Promise<string | undefined>",
+    "reset": "(path: string, opts?: GitResetOpts): Promise<CommandResult>",
+    "restore": "(path: string, opts: GitRestoreOpts): Promise<CommandResult>",
+    "setConfig": "(key: string, value: string, opts?: GitConfigOpts): Promise<CommandResult>",
+    "status": "(path: string, opts?: GitRequestOpts): Promise<GitStatus>"
+   },
+   "static": {
+    "prototype": "?"
+   }
+  },
+  "GitAddOpts": {
+   "kind": "interface",
+   "members": {
+    "all": "boolean",
+    "cwd": "string",
+    "envs": "Record<string, string>",
+    "files": "string[]",
+    "requestTimeoutMs": "number",
+    "timeoutMs": "number",
+    "user": "string"
+   }
+  },
+  "GitAuthError": {
+   "ctor": "(message: string): GitAuthError",
+   "extends": [
+    "AuthenticationError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": "unknown",
+    "message": "string",
+    "name": "string",
+    "stack": "string"
+   },
+   "static": {
+    "prototype": "?"
+   }
+  },
+  "GitBranches": {
+   "kind": "interface",
+   "members": {
+    "branches": "string[]",
+    "currentBranch": "string"
+   }
+  },
+  "GitCloneOpts": {
+   "kind": "interface",
+   "members": {
+    "branch": "string",
+    "cwd": "string",
+    "dangerouslyStoreCredentials": "boolean",
+    "depth": "number",
+    "envs": "Record<string, string>",
+    "password": "string",
+    "path": "string",
+    "requestTimeoutMs": "number",
+    "timeoutMs": "number",
+    "user": "string",
+    "username": "string"
+   }
+  },
+  "GitCommitOpts": {
+   "kind": "interface",
+   "members": {
+    "allowEmpty": "boolean",
+    "authorEmail": "string",
+    "authorName": "string",
+    "cwd": "string",
+    "envs": "Record<string, string>",
+    "requestTimeoutMs": "number",
+    "timeoutMs": "number",
+    "user": "string"
+   }
+  },
+  "GitConfigOpts": {
+   "kind": "interface",
+   "members": {
+    "cwd": "string",
+    "envs": "Record<string, string>",
+    "path": "string",
+    "requestTimeoutMs": "number",
+    "scope": "GitConfigScope",
+    "timeoutMs": "number",
+    "user": "string"
+   }
+  },
+  "GitConfigScope": {
+   "kind": "type",
+   "type": "\"global\" | \"local\" | \"system\""
+  },
+  "GitDangerouslyAuthenticateOpts": {
+   "kind": "interface",
+   "members": {
+    "cwd": "string",
+    "envs": "Record<string, string>",
+    "host": "string",
+    "password": "string",
+    "protocol": "string",
+    "requestTimeoutMs": "number",
+    "timeoutMs": "number",
+    "user": "string",
+    "username": "string"
+   }
+  },
+  "GitDeleteBranchOpts": {
+   "kind": "interface",
+   "members": {
+    "cwd": "string",
+    "envs": "Record<string, string>",
+    "force": "boolean",
+    "requestTimeoutMs": "number",
+    "timeoutMs": "number",
+    "user": "string"
+   }
+  },
+  "GitFileStatus": {
+   "kind": "interface",
+   "members": {
+    "indexStatus": "string",
+    "name": "string",
+    "renamedFrom": "string",
+    "staged": "boolean",
+    "status": "GitStatusLabel",
+    "workingTreeStatus": "string"
+   }
+  },
+  "GitInitOpts": {
+   "kind": "interface",
+   "members": {
+    "bare": "boolean",
+    "cwd": "string",
+    "envs": "Record<string, string>",
+    "initialBranch": "string",
+    "requestTimeoutMs": "number",
+    "timeoutMs": "number",
+    "user": "string"
+   }
+  },
+  "GitPullOpts": {
+   "kind": "interface",
+   "members": {
+    "branch": "string",
+    "cwd": "string",
+    "envs": "Record<string, string>",
+    "password": "string",
+    "remote": "string",
+    "requestTimeoutMs": "number",
+    "timeoutMs": "number",
+    "user": "string",
+    "username": "string"
+   }
+  },
+  "GitPushOpts": {
+   "kind": "interface",
+   "members": {
+    "branch": "string",
+    "cwd": "string",
+    "envs": "Record<string, string>",
+    "password": "string",
+    "remote": "string",
+    "requestTimeoutMs": "number",
+    "setUpstream": "boolean",
+    "timeoutMs": "number",
+    "user": "string",
+    "username": "string"
+   }
+  },
+  "GitRemoteAddOpts": {
+   "kind": "interface",
+   "members": {
+    "cwd": "string",
+    "envs": "Record<string, string>",
+    "fetch": "boolean",
+    "overwrite": "boolean",
+    "requestTimeoutMs": "number",
+    "timeoutMs": "number",
+    "user": "string"
+   }
+  },
+  "GitRequestOpts": {
+   "kind": "interface",
+   "members": {
+    "cwd": "string",
+    "envs": "Record<string, string>",
+    "requestTimeoutMs": "number",
+    "timeoutMs": "number",
+    "user": "string"
+   }
+  },
+  "GitResetMode": {
+   "kind": "type",
+   "type": "\"soft\" | \"mixed\" | \"hard\" | \"merge\" | \"keep\""
+  },
+  "GitResetOpts": {
+   "kind": "interface",
+   "members": {
+    "cwd": "string",
+    "envs": "Record<string, string>",
+    "mode": "GitResetMode",
+    "paths": "string[]",
+    "requestTimeoutMs": "number",
+    "target": "string",
+    "timeoutMs": "number",
+    "user": "string"
+   }
+  },
+  "GitRestoreOpts": {
+   "kind": "interface",
+   "members": {
+    "cwd": "string",
+    "envs": "Record<string, string>",
+    "paths": "string[]",
+    "requestTimeoutMs": "number",
+    "source": "string",
+    "staged": "boolean",
+    "timeoutMs": "number",
+    "user": "string",
+    "worktree": "boolean"
+   }
+  },
+  "GitStatus": {
+   "kind": "interface",
+   "members": {
+    "ahead": "number",
+    "behind": "number",
+    "conflictCount": "number",
+    "currentBranch": "string",
+    "detached": "boolean",
+    "fileStatus": "GitFileStatus[]",
+    "hasChanges": "boolean",
+    "hasConflicts": "boolean",
+    "hasStaged": "boolean",
+    "hasUntracked": "boolean",
+    "isClean": "boolean",
+    "stagedCount": "number",
+    "totalCount": "number",
+    "unstagedCount": "number",
+    "untrackedCount": "number",
+    "upstream": "string"
+   }
+  },
+  "GitStatusLabel": {
+   "kind": "type",
+   "type": "\"conflict\" | \"renamed\" | \"copied\" | \"deleted\" | \"added\" | \"modified\" | \"typechange\" | \"untracked\" | \"unknown\""
+  },
+  "GitUpstreamError": {
+   "ctor": "(message: string): GitUpstreamError",
+   "extends": [
+    "SandboxError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": "unknown",
+    "message": "string",
+    "name": "string",
+    "stack": "string",
+    "statusCode": "number"
+   },
+   "static": {
+    "prototype": "?"
+   }
+  },
+  "HttpVersion": {
+   "kind": "type",
+   "type": "\"1.1\" | \"2\""
+  },
+  "InvalidArgumentError": {
+   "ctor": "(message: string, stackTrace?: string): InvalidArgumentError",
+   "extends": [
+    "SandboxError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": "unknown",
+    "message": "string",
+    "name": "string",
+    "stack": "string",
+    "statusCode": "number"
+   },
+   "static": {
+    "prototype": "?"
+   }
+  },
+  "LogEntry": {
+   "ctor": "(timestamp: Date, level: LogEntryLevel, message: string): LogEntry",
+   "extends": [],
+   "kind": "class",
+   "members": {
+    "level": "LogEntryLevel",
+    "message": "string",
+    "timestamp": "Date",
+    "toString": "(): string"
+   },
+   "static": {
+    "prototype": "?"
+   }
+  },
+  "LogEntryEnd": {
+   "ctor": "(timestamp: Date, message: string): LogEntryEnd",
+   "extends": [
+    "LogEntry"
+   ],
+   "kind": "class",
+   "members": {
+    "level": "LogEntryLevel",
+    "message": "string",
+    "timestamp": "Date",
+    "toString": "(): string"
+   },
+   "static": {
+    "prototype": "?"
+   }
+  },
+  "LogEntryLevel": {
+   "kind": "type",
+   "type": "\"debug\" | \"info\" | \"warn\" | \"error\""
+  },
+  "LogEntryStart": {
+   "ctor": "(timestamp: Date, message: string): LogEntryStart",
+   "extends": [
+    "LogEntry"
+   ],
+   "kind": "class",
+   "members": {
+    "level": "LogEntryLevel",
+    "message": "string",
+    "timestamp": "Date",
+    "toString": "(): string"
+   },
+   "static": {
+    "prototype": "?"
+   }
+  },
+  "Logger": {
+   "kind": "interface",
+   "members": {
+    "debug": "(...args: any[]): void",
+    "error": "(...args: any[]): void",
+    "info": "(...args: any[]): void",
+    "warn": "(...args: any[]): void"
+   }
+  },
+  "McpServer": {
+   "kind": "interface",
+   "members": {
+    "airtable": "Airtable",
+    "aks": "AzureKubernetesServiceAKS",
+    "alfresco": "Alfresco",
+    "amazonBedrockAgentcore": "AWSBedrockAgentCore",
+    "amazonKendraIndex": "AmazonKendraIndex",
+    "amazonNeptune": "AmazonNeptune",
+    "amazonQbusinessAnonymous": "AmazonQBusiness",
+    "apiGateway": "APIGateway",
+    "apify": "Apify",
+    "arm": "Arm",
+    "arxiv": "ArXiv",
+    "astGrep": "AstGrep",
+    "astraDb": "AstraDB",
+    "astroDocs": "AstroDocs",
+    "atlan": "Atlan",
+    "atlasDocs": "AtlasDocs",
+    "atlassian": "Atlassian",
+    "audienseInsights": "AudienseInsights",
+    "awsApi": "AWSAPI",
+    "awsAppsync": "AWSAppSync",
+    "awsBedrockCustomModelImport": "AWSBedrockCustomModelImport",
+    "awsBedrockDataAutomation": "AWSBedrockDataAutomation",
+    "awsCdk": "AWSCDK",
+    "awsCore": "AWSCore",
+    "awsDataprocessing": "AWSDataProcessing",
+    "awsDiagram": "AWSDiagram",
+    "awsDocumentation": "AWSDocumentation",
+    "awsHealthomics": "AWSHealthOmics",
+    "awsIotSitewise": "AWSIoTSiteWise",
+    "awsKbRetrievalServer": "AWSKBRetrievalArchived",
+    "awsLocation": "AmazonLocationService",
+    "awsMsk": "AmazonMSK",
+    "awsPricing": "AWSPricing",
+    "awsTerraform": "AWSTerraform",
+    "awslabsBillingCostManagement": "AWSBillingAndCostManagement",
+    "awslabsCcapi": "AWSCloudControlAPI",
+    "awslabsCfn": "AWSCloudFormation",
+    "awslabsCloudtrail": "AWSCloudTrail",
+    "awslabsCloudwatch": "AmazonCloudWatch",
+    "awslabsCloudwatchAppsignals": "AmazonCloudWatchApplicationSignals",
+    "awslabsCostExplorer": "AWSCostExplorer",
+    "awslabsDynamodb": "AmazonDynamoDB",
+    "awslabsElasticache": "AmazonElastiCache",
+    "awslabsIam": "AWSIAM",
+    "awslabsMemcached": "AmazonElastiCacheForMemcached",
+    "awslabsNovaCanvas": "AWSLabsNovaCanvas",
+    "awslabsRedshift": "AmazonRedshift",
+    "awslabsS3Tables": "AWSS3Tables",
+    "awslabsTimestreamForInfluxdb": "AmazonTimestreamForInfluxDB",
+    "awslabsValkey": "AmazonElastiCacheMemoryDBForValkey",
+    "azure": "Azure",
+    "beagleSecurity": "BeagleSecurity",
+    "bitrefill": "Bitrefill",
+    "box": "Box",
+    "brave": "BraveSearch",
+    "browserbase": "Browserbase",
+    "buildkite": "Buildkite",
+    "camunda": "CamundaBPMProcessEngine",
+    "charmhealth": "CharmHealth",
+    "chroma": "Chroma",
+    "circleci": "CircleCI",
+    "clickhouse": "OfficialClickHouse",
+    "close": "Close",
+    "cloudRun": "CloudRun",
+    "cloudflareDocs": "CloudflareDocs",
+    "cockroachdb": "CockroachDB",
+    "codeInterpreter": "PythonInterpreter",
+    "context7": "Context7",
+    "couchbase": "Couchbase",
+    "cylera": "Cylera",
+    "cyreslabAiShodan": "Shodan",
+    "dappier": "Dappier",
+    "dappierRemote": "DappierRemote",
+    "dart": "DartAI",
+    "databaseServer": "MCPDatabaseServer",
+    "databutton": "Databutton",
+    "deepwiki": "DeepWiki",
+    "descope": "Descope",
+    "desktopCommander": "DesktopCommander",
+    "devhubCms": "DevHubCMS",
+    "discord": "Discord",
+    "dockerhub": "DockerHub",
+    "dodoPayments": "DodoPayments",
+    "dotnetTypesExplorer": "NETTypesExplorer",
+    "dreamfactory": "DreamFactory",
+    "duckduckgo": "PrivateWebSearch",
+    "dynatrace": "Dynatrace",
+    "e2b": "E2B$1",
+    "edubase": "EduBase",
+    "effect": "Effect",
+    "elasticsearch": "Elasticsearch",
+    "elevenlabs": "ElevenLabs",
+    "everart": "EverArtArchived",
+    "exa": "Exa",
+    "explorium": "ExploriumB2BData",
+    "fetch": "FetchReference",
+    "fibery": "Fibery",
+    "filesystem": "FilesystemReference",
+    "findADomain": "FindADomain",
+    "firecrawl": "Firecrawl",
+    "firewalla": "Firewalla",
+    "geminiApiDocs": "GeminiAPIDocs",
+    "git": "GitReference",
+    "github": "GitHubArchived",
+    "githubChat": "GitHubChat",
+    "githubOfficial": "GitHubOfficial",
+    "gitlab": "GitLabArchived",
+    "gitmcp": "GitMCP",
+    "glif": "GlifApp",
+    "gmail": "Gmail",
+    "googleFlights": "GoogleFlights",
+    "googleMaps": "GoogleMapsArchived",
+    "googleMapsComprehensive": "GoogleMapsComprehensive",
+    "grafana": "Grafana",
+    "gyazo": "Gyazo",
+    "hackernews": "HackerNews",
+    "hackle": "Hackle",
+    "handwritingOcr": "HandwritingOCR",
+    "hdx": "HumanitarianDataExchange",
+    "heroku": "Heroku",
+    "hostinger": "HostingerAPI",
+    "hoverfly": "Hoverfly",
+    "hubspot": "HubSpot",
+    "huggingFace": "HuggingFace",
+    "hummingbot": "HummingbotTradingAgent",
+    "husqvarnaAutomower": "HusqvarnaAutomower",
+    "hyperbrowser": "Hyperbrowser",
+    "hyperspell": "Hyperspell",
+    "iaptic": "Iaptic",
+    "inspektorGadget": "InspektorGadget",
+    "javadocs": "Javadocs",
+    "jetbrains": "JetBrains",
+    "kafkaSchemaReg": "KafkaSchemaRegistry",
+    "kagisearch": "KagiSearch",
+    "keboola": "Keboola",
+    "kong": "KongKonnect",
+    "kubectl": "Kubectl",
+    "kubernetes": "Kubernetes",
+    "lara": "LaraTranslate",
+    "line": "LINE",
+    "linkedin": "LinkedIn",
+    "llmtxt": "LLMText",
+    "maestro": "Maestro",
+    "manifold": "Manifold",
+    "mapbox": "Mapbox",
+    "mapboxDevkit": "MapboxDeveloper",
+    "markdownify": "Markdownify",
+    "markitdown": "Markitdown",
+    "mavenTools": "MavenTools",
+    "memory": "MemoryReference",
+    "mercadoLibre": "MercadoLibre",
+    "mercadoPago": "MercadoPago",
+    "metabase": "Metabase",
+    "minecraftWiki": "MinecraftWiki",
+    "mongodb": "MongoDB",
+    "multiversxMx": "MultiversX",
+    "n8n": "N8N",
+    "nasdaqDataLink": "NasdaqDataLink",
+    "needle": "Needle",
+    "neo4j": "Neo4J",
+    "neo4jCloudAuraApi": "Neo4JCloudAuraApi",
+    "neo4jCypher": "Neo4JCypher",
+    "neo4jDataModeling": "Neo4JDataModeling",
+    "neo4jMemory": "Neo4JMemory",
+    "neon": "Neon",
+    "nextDevtools": "NextJsDevTools",
+    "nodeCodeSandbox": "NodeJsSandbox",
+    "notion": "Notion",
+    "novita": "Novita",
+    "npmSentinel": "NPMSentinel",
+    "obsidian": "Obsidian",
+    "okta": "Okta",
+    "oktaMcpFctr": "Okta1",
+    "omi": "Omi",
+    "onlyofficeDocspace": "ONLYOFFICEDocSpace",
+    "openapi": "OpenAPIToolkit",
+    "openapiSchema": "OpenAPISchema",
+    "openbnbAirbnb": "AirbnbSearch",
+    "openmesh": "OpenMesh",
+    "openweather": "Openweather",
+    "openzeppelinCairo": "OpenZeppelinCairoContracts",
+    "openzeppelinSolidity": "OpenZeppelinSolidityContracts",
+    "openzeppelinStellar": "OpenZeppelinStellarContracts",
+    "openzeppelinStylus": "OpenZeppelinStylusContracts",
+    "opik": "Opik",
+    "opine": "Opine",
+    "oracle": "OracleDatabase",
+    "ospMarketingTools": "OSPMarketingTools",
+    "oxylabs": "Oxylabs",
+    "paperSearch": "PaperSearch",
+    "perplexityAsk": "Perplexity",
+    "pia": "ProgramIntegrityAlliance",
+    "pinecone": "PineconeAssistant",
+    "playwright": "ExecuteAutomationPlaywright",
+    "pluggedinMcpProxy": "PluggedInProxy",
+    "polarSignals": "PolarSignals",
+    "pomodash": "PomoDash",
+    "postman": "Postman",
+    "prefEditor": "PrefEditor",
+    "prometheus": "Prometheus",
+    "proxmox": "ProxmoxVE",
+    "puppeteer": "PuppeteerArchived",
+    "pythonRefactoring": "PythonRefactoringAssistant",
+    "quantconnect": "QuantConnect",
+    "ramparts": "RampartsSecurityScanner",
+    "razorpay": "Razorpay",
+    "reddit": "Reddit",
+    "redis": "Redis",
+    "redisCloud": "RedisCloud",
+    "ref": "RefUpToDateDocs",
+    "remote": "RemoteMCP",
+    "render": "Render",
+    "resend": "Resend",
+    "risken": "RISKEN",
+    "ros2": "WiseVisionROS2",
+    "rube": "Rube",
+    "rustMcpFilesystem": "RustFilesystem",
+    "schemacrawlerAi": "SchemaCrawlerAI",
+    "schoginiMcpImageBorder": "SchoginiImageBorder",
+    "scrapegraph": "ScrapeGraph",
+    "scrapezy": "Scrapezy",
+    "securenoteLink": "SecurenoteLink",
+    "semgrep": "Semgrep",
+    "sentry": "SentryArchived",
+    "sequa": "SequaAI",
+    "sequentialthinking": "SequentialThinkingReference",
+    "shortIo": "ShortIo",
+    "simplechecklist": "SimpleCheckList",
+    "singlestore": "Singlestore",
+    "slack": "SlackArchived",
+    "smartbear": "SmartBear",
+    "sonarqube": "SonarQube",
+    "sqlite": "SQLiteArchived",
+    "stackgen": "StackGen",
+    "stackhawk": "StackHawk",
+    "stripe": "Stripe",
+    "supadata": "Supadata",
+    "suzieq": "Suzieq",
+    "taskOrchestrator": "TaskOrchestrator",
+    "tavily": "Tavily",
+    "teamwork": "Teamwork",
+    "telnyx": "Telnyx",
+    "temporal": "Temporal",
+    "terraform": "HashicorpTerraform",
+    "testkube": "Testkube",
+    "textToGraphql": "TextToGraphQL",
+    "thingsboard": "ThingsBoard",
+    "tigris": "TigrisData",
+    "time": "TimeReference",
+    "unrealEngine": "UnrealEngine",
+    "vectraAiRux": "VectraAIRUXMCPServer",
+    "veyrax": "VeyraX",
+    "victorialogs": "VictoriaLogs",
+    "victoriametrics": "VictoriaMetrics",
+    "victoriatraces": "VictoriaTraces",
+    "vizro": "Vizro",
+    "vulnNist": "VulnNIST",
+    "wayfound": "Wayfound",
+    "webflow": "Webflow",
+    "wikipedia": "Wikipedia",
+    "wolframAlpha": "WolframAlpha",
+    "youtubeTranscript": "YouTubeTranscripts",
+    "zen": "Zen",
+    "zerodhaKite": "ZerodhaKiteConnect",
+    "zscaler": "Zscaler"
+   }
+  },
+  "McpServerName": {
+   "kind": "type",
+   "type": "keyof McpServer"
+  },
+  "NotEnoughSpaceError": {
+   "ctor": "(message: string): NotEnoughSpaceError",
+   "extends": [
+    "SandboxError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": "unknown",
+    "message": "string",
+    "name": "string",
+    "stack": "string",
+    "statusCode": "number"
+   },
+   "static": {
+    "prototype": "?"
+   }
+  },
+  "NotFoundError": {
+   "ctor": "(message: string): NotFoundError",
+   "extends": [
+    "SandboxError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": "unknown",
+    "message": "string",
+    "name": "string",
+    "stack": "string",
+    "statusCode": "number"
+   },
+   "static": {
+    "prototype": "?"
+   }
+  },
+  "ProcessInfo": {
+   "kind": "interface",
+   "members": {
+    "args": "string[]",
+    "cmd": "string",
+    "cwd": "string",
+    "envs": "Record<string, string>",
+    "pid": "number",
+    "tag": "string"
+   }
+  },
+  "Pty": {
+   "ctor": "(transport: Transport, envdApi: EnvdApiClient, connectionConfig: ConnectionConfig, streamingTransport: Transport): Pty",
+   "extends": [],
+   "kind": "class",
+   "members": {
+    "connect": "(pid: number, opts?: PtyConnectOpts): Promise<CommandHandle>",
+    "create": "(opts: PtyCreateOpts): Promise<CommandHandle>",
+    "kill": "(pid: number, opts?: Pick<ConnectionOpts, \"requestTimeoutMs\" | \"signal\">): Promise<boolean>",
+    "resize": "(pid: number, size: { cols: number; rows: number; }, opts?: Pick<ConnectionOpts, \"requestTimeoutMs\" | \"signal\">): Promise<void>",
+    "sendInput": "(pid: number, data: Uint8Array, opts?: Pick<ConnectionOpts, \"requestTimeoutMs\" | \"signal\">): Promise<void>",
+    "streamInput": "(pid: number, opts?: CommandStreamInputOpts): CommandInputHandle"
+   },
+   "static": {
+    "prototype": "?"
+   }
+  },
+  "PtyOutput": {
+   "kind": "type",
+   "type": "Uint8Array<ArrayBufferLike> & Brand<\"pty\">"
+  },
+  "RateLimitError": {
+   "ctor": "(message: string): RateLimitError",
+   "extends": [
+    "SandboxError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": "unknown",
+    "message": "string",
+    "name": "string",
+    "stack": "string",
+    "statusCode": "number"
+   },
+   "static": {
+    "prototype": "?"
+   }
+  },
+  "ReadyCmd": {
+   "ctor": "(cmd: string): ReadyCmd",
+   "extends": [],
+   "kind": "class",
+   "members": {
+    "getCmd": "(): string"
+   },
+   "static": {
+    "prototype": "?"
+   }
+  },
+  "Sandbox": {
+   "ctor": "(opts: SandboxConnectOpts & { sandboxId: string; sandboxDomain?: string; envdVersion: string; envdAccessToken?: string; trafficAccessToken?: string; }): Sandbox",
+   "extends": [
+    "SandboxApi"
+   ],
+   "kind": "class",
+   "members": {
+    "betaPause": "(opts?: SandboxPauseOpts): Promise<boolean>",
+    "commands": "Commands",
+    "connect": "(opts?: SandboxConnectOpts): Promise<Sandbox>",
+    "createSnapshot": "(opts?: CreateSnapshotOpts): Promise<SnapshotInfo>",
+    "downloadUrl": "(path: string, opts?: SandboxUrlOpts): Promise<string>",
+    "files": "Filesystem",
+    "fork": "(opts?: SandboxForkOpts): Promise<(Error | Sandbox)[]>",
+    "getHost": "(port: number): string",
+    "getInfo": "(opts?: Pick<SandboxOpts, \"requestTimeoutMs\" | \"signal\">): Promise<SandboxInfo>",
+    "getMcpToken": "(): Promise<string | undefined>",
+    "getMcpUrl": "(): string",
+    "getMetrics": "(opts?: SandboxMetricsOpts): Promise<SandboxMetrics[]>",
+    "git": "Git",
+    "isRunning": "(opts?: Pick<ConnectionOpts, \"requestTimeoutMs\" | \"signal\">): Promise<boolean>",
+    "kill": "(opts?: Pick<SandboxOpts, \"requestTimeoutMs\" | \"signal\">): Promise<boolean>",
+    "listSnapshots": "(opts?: Omit<SnapshotListOpts, \"sandboxId\">): SnapshotPaginator",
+    "pause": "(opts?: SandboxPauseOpts): Promise<boolean>",
+    "pty": "Pty",
+    "sandboxDomain": "string",
+    "sandboxId": "string",
+    "setTimeout": "(timeoutMs: number, opts?: Pick<SandboxOpts, \"requestTimeoutMs\" | \"signal\">): Promise<void>",
+    "trafficAccessToken": "string",
+    "updateNetwork": "(network: SandboxNetworkUpdate, opts?: Pick<SandboxOpts, \"requestTimeoutMs\" | \"signal\">): Promise<void>",
+    "uploadUrl": "(path?: string, opts?: SandboxUrlOpts): Promise<string>"
+   },
+   "static": {
+    "betaPause": "(sandboxId: string, opts?: SandboxPauseOpts): Promise<boolean>",
+    "connect": "<S extends typeof Sandbox>(this: S, sandboxId: string, opts?: SandboxConnectOpts): Promise<InstanceType<S>>",
+    "create": "<S extends typeof Sandbox>(this: S, opts?: SandboxOpts): Promise<InstanceType<S>> | <S extends typeof Sandbox>(this: S, template: string, opts?: SandboxOpts): Promise<InstanceType<S>>",
+    "createSnapshot": "(sandboxId: string, opts?: CreateSnapshotOpts): Promise<SnapshotInfo>",
+    "deleteSnapshot": "(snapshotId: string, opts?: SandboxApiOpts): Promise<boolean>",
+    "fork": "<S extends typeof Sandbox>(this: S, sandboxId: string, opts?: SandboxForkOpts): Promise<Array<InstanceType<S> | Error>>",
+    "getFullInfo": "(sandboxId: string, opts?: SandboxApiOpts): Promise<SandboxInfo>",
+    "getInfo": "(sandboxId: string, opts?: SandboxApiOpts): Promise<SandboxInfo>",
+    "getMetrics": "(sandboxId: string, opts?: SandboxMetricsOpts): Promise<SandboxMetrics[]>",
+    "kill": "(sandboxId: string, opts?: SandboxApiOpts): Promise<boolean>",
+    "list": "(opts?: SandboxListOpts): SandboxPaginator",
+    "listSnapshots": "(opts?: SnapshotListOpts): SnapshotPaginator",
+    "pause": "(sandboxId: string, opts?: SandboxPauseOpts): Promise<boolean>",
+    "prototype": "?",
+    "setTimeout": "(sandboxId: string, timeoutMs: number, opts?: SandboxApiOpts): Promise<void>",
+    "updateNetwork": "(sandboxId: string, network: SandboxNetworkUpdate, opts?: SandboxApiOpts): Promise<void>"
+   }
+  },
+  "SandboxApiOpts": {
+   "kind": "interface",
+   "members": {
+    "apiHeaders": "Record<string, string>",
+    "apiKey": "string",
+    "debug": "boolean",
+    "domain": "string",
+    "headers": "Record<string, string>",
+    "requestTimeoutMs": "number",
+    "retries": "number",
+    "signal": "AbortSignal",
+    "validateApiKey": "boolean"
+   }
+  },
+  "SandboxConnectOpts": {
+   "kind": "type",
+   "type": "ConnectionOpts & { timeoutMs?: number; onResume?: SandboxOnResume; }"
+  },
+  "SandboxEgressProxyInfo": {
+   "kind": "type",
+   "type": "{ address: string; username?: string; tls?: SandboxEgressProxyTLSInfo; }"
+  },
+  "SandboxEgressProxyOpts": {
+   "kind": "type",
+   "type": "{ address: string; username?: string; password?: string; tls?: boolean | SandboxEgressProxyTLSOpts; }"
+  },
+  "SandboxEgressProxyTLSInfo": {
+   "kind": "type",
+   "type": "{ serverName?: string; }"
+  },
+  "SandboxEgressProxyTLSOpts": {
+   "kind": "type",
+   "type": "{ serverName?: string; caCert?: string; }"
+  },
+  "SandboxError": {
+   "ctor": "(message?: string): SandboxError",
+   "extends": [
+    "Error"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": "unknown",
+    "message": "string",
+    "name": "string",
+    "stack": "string",
+    "statusCode": "number"
+   },
+   "static": {
+    "prototype": "?"
+   }
+  },
+  "SandboxForkOpts": {
+   "kind": "interface",
+   "members": {
+    "apiHeaders": "Record<string, string>",
+    "apiKey": "string",
+    "apiUrl": "string",
+    "count": "number",
+    "debug": "boolean",
+    "domain": "string",
+    "headers": "Record<string, string>",
+    "httpVersion": "HttpVersion",
+    "logger": "Logger",
+    "proxy": "string",
+    "requestTimeoutMs": "number",
+    "retries": "number",
+    "sandboxUrl": "string",
+    "signal": "AbortSignal",
+    "timeoutMs": "number",
+    "validateApiKey": "boolean"
+   }
+  },
+  "SandboxIamOpts": {
+   "kind": "interface",
+   "members": {
+    "tokens": "Record<string, SandboxIamToken>"
+   }
+  },
+  "SandboxIamToken": {
+   "kind": "interface",
+   "members": {
+    "audience": "string",
+    "tokenType": "SandboxIamTokenType"
+   }
+  },
+  "SandboxIamTokenType": {
+   "kind": "type",
+   "type": "\"JWT-SVID\" | (string & {})"
+  },
+  "SandboxInfo": {
+   "kind": "interface",
+   "members": {
+    "allowInternetAccess": "boolean",
+    "cpuCount": "number",
+    "endAt": "Date",
+    "envdVersion": "string",
+    "lifecycle": "SandboxInfoLifecycle",
+    "memoryMB": "number",
+    "metadata": "Record<string, string>",
+    "name": "string",
+    "network": "SandboxNetworkInfo",
+    "sandboxDomain": "string",
+    "sandboxId": "string",
+    "startedAt": "Date",
+    "state": "SandboxState",
+    "templateId": "string",
+    "volumeMounts": "{ name: string; path: string; }[]"
+   }
+  },
+  "SandboxInfoLifecycle": {
+   "kind": "type",
+   "type": "{ onTimeout: \"pause\" | \"kill\"; autoResume: boolean; }"
+  },
+  "SandboxLifecycle": {
+   "kind": "type",
+   "type": "{ onTimeout: SandboxOnTimeout; autoResume?: boolean; }"
+  },
+  "SandboxListOpts": {
+   "kind": "interface",
+   "members": {
+    "apiHeaders": "Record<string, string>",
+    "apiKey": "string",
+    "debug": "boolean",
+    "domain": "string",
+    "headers": "Record<string, string>",
+    "limit": "number",
+    "nextToken": "string",
+    "order": "SandboxListOrder",
+    "query": "{ metadata?: Record<string, string>; state?: Array<SandboxState>; startedAfter?: Date; template?: string; }",
+    "requestTimeoutMs": "number",
+    "retries": "number",
+    "validateApiKey": "boolean"
+   }
+  },
+  "SandboxListOrder": {
+   "kind": "type",
+   "type": "\"asc\" | \"desc\""
+  },
+  "SandboxMetrics": {
+   "kind": "interface",
+   "members": {
+    "cpuCount": "number",
+    "cpuUsedPct": "number",
+    "diskTotal": "number",
+    "diskUsed": "number",
+    "memCache": "number",
+    "memTotal": "number",
+    "memUsed": "number",
+    "timestamp": "Date"
+   }
+  },
+  "SandboxMetricsOpts": {
+   "kind": "interface",
+   "members": {
+    "apiHeaders": "Record<string, string>",
+    "apiKey": "string",
+    "debug": "boolean",
+    "domain": "string",
+    "end": "Date",
+    "headers": "Record<string, string>",
+    "requestTimeoutMs": "number",
+    "retries": "number",
+    "signal": "AbortSignal",
+    "start": "Date",
+    "validateApiKey": "boolean"
+   }
+  },
+  "SandboxNetworkInfo": {
+   "kind": "type",
+   "type": "{ allowOut?: string[]; denyOut?: string[]; rules?: Record<string, SandboxNetworkRuleInfo[]>; egressProxy?: SandboxEgressProxyInfo; allowPublicTraffic?: boolean; maskRequestHost?: string; httpsPorts?: number[]; }"
+  },
+  "SandboxNetworkOpts": {
+   "kind": "type",
+   "type": "{ allowOut?: SandboxNetworkSelector; denyOut?: SandboxNetworkSelector; rules?: SandboxNetworkRules; egressProxy?: SandboxEgressProxyOpts; allowPublicTraffic?: boolean; maskRequestHost?: string; httpsPorts?: number[]; }"
+  },
+  "SandboxNetworkRule": {
+   "kind": "type",
+   "type": "{ transform?: SandboxNetworkTransform | SandboxNetworkTransformResolver; }"
+  },
+  "SandboxNetworkRuleInfo": {
+   "kind": "type",
+   "type": "{ transform?: SandboxNetworkTransform; }"
+  },
+  "SandboxNetworkRules": {
+   "kind": "type",
+   "type": "Record<string, SandboxNetworkRule[]> | Map<string, SandboxNetworkRule[]>"
+  },
+  "SandboxNetworkSelector": {
+   "kind": "type",
+   "type": "string[] | ((ctx: SandboxNetworkSelectorContext) => string[])"
+  },
+  "SandboxNetworkSelectorContext": {
+   "kind": "type",
+   "type": "{ allTraffic: string; rules: Map<string, SandboxNetworkRule[]>; }"
+  },
+  "SandboxNetworkTransform": {
+   "kind": "type",
+   "type": "{ headers?: Record<string, string>; }"
+  },
+  "SandboxNetworkTransformContext": {
+   "kind": "type",
+   "type": "{ iam: { tokens: Record<string, string>; }; }"
+  },
+  "SandboxNetworkTransformResolver": {
+   "kind": "type",
+   "type": "(ctx: SandboxNetworkTransformContext) => SandboxNetworkTransform"
+  },
+  "SandboxNetworkUpdate": {
+   "kind": "type",
+   "type": "{ allowOut?: SandboxNetworkSelector; denyOut?: SandboxNetworkSelector; rules?: SandboxNetworkRules; egressProxy?: SandboxEgressProxyOpts; allowInternetAccess?: boolean; }"
+  },
+  "SandboxNotFoundError": {
+   "ctor": "(message: string): SandboxNotFoundError",
+   "extends": [
+    "NotFoundError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": "unknown",
+    "message": "string",
+    "name": "string",
+    "stack": "string",
+    "statusCode": "number"
+   },
+   "static": {
+    "prototype": "?"
+   }
+  },
+  "SandboxNotRunningError": {
+   "ctor": "(message: string, options?: ErrorOptions): SandboxNotRunningError",
+   "extends": [
+    "TimeoutError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": "unknown",
+    "message": "string",
+    "name": "string",
+    "stack": "string",
+    "statusCode": "number"
+   },
+   "static": {
+    "prototype": "?"
+   }
+  },
+  "SandboxOnResume": {
+   "kind": "type",
+   "type": "\"restore\" | \"reboot\""
+  },
+  "SandboxOnTimeout": {
+   "kind": "type",
+   "type": "\"pause\" | \"kill\" | { action: \"pause\"; mode?: SnapshotMode; keepMemory?: boolean; } | { action: \"kill\"; }"
+  },
+  "SandboxOpts": {
+   "kind": "interface",
+   "members": {
+    "allowInternetAccess": "boolean",
+    "apiHeaders": "Record<string, string>",
+    "apiKey": "string",
+    "apiUrl": "string",
+    "debug": "boolean",
+    "domain": "string",
+    "envs": "Record<string, string>",
+    "headers": "Record<string, string>",
+    "httpVersion": "HttpVersion",
+    "iam": "SandboxIamOpts",
+    "lifecycle": "SandboxLifecycle",
+    "logger": "Logger",
+    "mcp": "McpServer$1",
+    "metadata": "Record<string, string>",
+    "network": "SandboxNetworkOpts",
+    "proxy": "string",
+    "requestTimeoutMs": "number",
+    "retries": "number",
+    "sandboxUrl": "string",
+    "secure": "boolean",
+    "signal": "AbortSignal",
+    "template": "string",
+    "timeoutMs": "number",
+    "validateApiKey": "boolean",
+    "volumeMounts": "Record<string, string | Volume>"
+   }
+  },
+  "SandboxPaginator": {
+   "ctor": "(opts?: SandboxListOpts): SandboxPaginator",
+   "extends": [
+    "Paginator<SandboxInfo, SandboxApiOpts>"
+   ],
+   "kind": "class",
+   "members": {
+    "hasNext": "boolean",
+    "nextItems": "(opts?: SandboxApiOpts): Promise<SandboxInfo[]>",
+    "nextToken": "string"
+   },
+   "static": {
+    "prototype": "?"
+   }
+  },
+  "SandboxPauseOpts": {
+   "kind": "interface",
+   "members": {
+    "apiHeaders": "Record<string, string>",
+    "apiKey": "string",
+    "debug": "boolean",
+    "domain": "string",
+    "headers": "Record<string, string>",
+    "keepMemory": "boolean",
+    "mode": "SnapshotMode",
+    "requestTimeoutMs": "number",
+    "retries": "number",
+    "signal": "AbortSignal",
+    "validateApiKey": "boolean"
+   }
+  },
+  "SandboxState": {
+   "kind": "type",
+   "type": "\"running\" | \"paused\""
+  },
+  "SandboxUnreachableError": {
+   "ctor": "(message: string, options?: ErrorOptions): SandboxUnreachableError",
+   "extends": [
+    "TimeoutError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": "unknown",
+    "message": "string",
+    "name": "string",
+    "stack": "string",
+    "statusCode": "number"
+   },
+   "static": {
+    "prototype": "?"
+   }
+  },
+  "Secret": {
+   "ctor": "(): Secret",
+   "extends": [
+    "ClientFactory"
+   ],
+   "kind": "class",
+   "members": {},
+   "static": {
+    "create": "(name: string, value: string, opts?: SecretCreateOpts): Promise<SecretInfo>",
+    "destroy": "(secret: string, opts?: SecretDestroyOpts): Promise<boolean>",
+    "exists": "(secret: string, opts?: SecretExistsOpts): Promise<boolean>",
+    "fill": "(secret: string): string",
+    "getInfo": "(secret: string, opts?: SecretGetInfoOpts): Promise<SecretInfo>",
+    "iamToken": "(token: SandboxIamToken): SandboxIamToken",
+    "list": "(opts?: SecretListOpts): SecretPaginator",
+    "prototype": "?",
+    "update": "(secret: string, value: string, opts?: SecretUpdateOpts): Promise<SecretInfo>"
+   }
+  },
+  "SecretCreateOpts": {
+   "kind": "interface",
+   "members": {
+    "apiHeaders": "Record<string, string>",
+    "apiKey": "string",
+    "apiUrl": "string",
+    "debug": "boolean",
+    "domain": "string",
+    "headers": "Record<string, string>",
+    "httpVersion": "HttpVersion",
+    "logger": "Logger",
+    "metadata": "Record<string, string>",
+    "proxy": "string",
+    "requestTimeoutMs": "number",
+    "retries": "number",
+    "sandboxUrl": "string",
+    "signal": "AbortSignal",
+    "validateApiKey": "boolean"
+   }
+  },
+  "SecretDestroyOpts": {
+   "kind": "type",
+   "type": "ConnectionOpts"
+  },
+  "SecretError": {
+   "ctor": "(message: string): SecretError",
+   "extends": [
+    "Error"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": "unknown",
+    "message": "string",
+    "name": "string",
+    "stack": "string"
+   },
+   "static": {
+    "prototype": "?"
+   }
+  },
+  "SecretExistsOpts": {
+   "kind": "type",
+   "type": "ConnectionOpts"
+  },
+  "SecretGetInfoOpts": {
+   "kind": "type",
+   "type": "ConnectionOpts"
+  },
+  "SecretInfo": {
+   "kind": "interface",
+   "members": {
+    "createdAt": "Date",
+    "metadata": "Record<string, string>",
+    "name": "string",
+    "secretId": "string",
+    "updatedAt": "Date",
+    "version": "number"
+   }
+  },
+  "SecretListOpts": {
+   "kind": "interface",
+   "members": {
+    "apiHeaders": "Record<string, string>",
+    "apiKey": "string",
+    "apiUrl": "string",
+    "debug": "boolean",
+    "domain": "string",
+    "headers": "Record<string, string>",
+    "httpVersion": "HttpVersion",
+    "limit": "number",
+    "logger": "Logger",
+    "nextToken": "string",
+    "proxy": "string",
+    "requestTimeoutMs": "number",
+    "retries": "number",
+    "sandboxUrl": "string",
+    "validateApiKey": "boolean"
+   }
+  },
+  "SecretNotFoundError": {
+   "ctor": "(message: string): SecretNotFoundError",
+   "extends": [
+    "SecretError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": "unknown",
+    "message": "string",
+    "name": "string",
+    "stack": "string"
+   },
+   "static": {
+    "prototype": "?"
+   }
+  },
+  "SecretPaginator": {
+   "ctor": "(opts?: SecretListOpts): SecretPaginator",
+   "extends": [
+    "Paginator<SecretInfo, ConnectionOpts>"
+   ],
+   "kind": "class",
+   "members": {
+    "hasNext": "boolean",
+    "nextItems": "(opts?: ConnectionOpts): Promise<SecretInfo[]>",
+    "nextToken": "string"
+   },
+   "static": {
+    "prototype": "?"
+   }
+  },
+  "SecretUpdateOpts": {
+   "kind": "interface",
+   "members": {
+    "apiHeaders": "Record<string, string>",
+    "apiKey": "string",
+    "apiUrl": "string",
+    "debug": "boolean",
+    "domain": "string",
+    "headers": "Record<string, string>",
+    "httpVersion": "HttpVersion",
+    "logger": "Logger",
+    "metadata": "Record<string, string>",
+    "proxy": "string",
+    "requestTimeoutMs": "number",
+    "retries": "number",
+    "sandboxUrl": "string",
+    "signal": "AbortSignal",
+    "validateApiKey": "boolean"
+   }
+  },
+  "ServiceBusyError": {
+   "ctor": "(message: string): ServiceBusyError",
+   "extends": [
+    "Error"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": "unknown",
+    "message": "string",
+    "name": "string",
+    "stack": "string",
+    "statusCode": "503"
+   },
+   "static": {
+    "prototype": "?"
+   }
+  },
+  "SnapshotInfo": {
+   "kind": "interface",
+   "members": {
+    "names": "string[]",
+    "snapshotId": "string"
+   }
+  },
+  "SnapshotListOpts": {
+   "kind": "interface",
+   "members": {
+    "apiHeaders": "Record<string, string>",
+    "apiKey": "string",
+    "debug": "boolean",
+    "domain": "string",
+    "headers": "Record<string, string>",
+    "limit": "number",
+    "name": "string",
+    "nextToken": "string",
+    "requestTimeoutMs": "number",
+    "retries": "number",
+    "sandboxId": "string",
+    "validateApiKey": "boolean"
+   }
+  },
+  "SnapshotMode": {
+   "kind": "type",
+   "type": "\"full\" | \"filesystem\""
+  },
+  "SnapshotPaginator": {
+   "ctor": "(opts?: SnapshotListOpts): SnapshotPaginator",
+   "extends": [
+    "Paginator<SnapshotInfo, SandboxApiOpts>"
+   ],
+   "kind": "class",
+   "members": {
+    "hasNext": "boolean",
+    "nextItems": "(opts?: SandboxApiOpts): Promise<SnapshotInfo[]>",
+    "nextToken": "string"
+   },
+   "static": {
+    "prototype": "?"
+   }
+  },
+  "Stderr": {
+   "kind": "type",
+   "type": "string & Brand<\"stderr\">"
+  },
+  "Stdout": {
+   "kind": "type",
+   "type": "string & Brand<\"stdout\">"
+  },
+  "Template": {
+   "kind": "value",
+   "type": "CallableTemplate<typeof TemplateBase>"
+  },
+  "TemplateBase": {
+   "ctor": "(options?: TemplateOptions): TemplateBase",
+   "extends": [
+    "ClientFactory"
+   ],
+   "kind": "class",
+   "members": {
+    "addMcpServer": "(servers: McpServerName | McpServerName[]): TemplateBuilder",
+    "aptInstall": "(packages: string | string[], options?: { noInstallRecommends?: boolean; fixMissing?: boolean; }): TemplateBuilder",
+    "betaDevContainerPrebuild": "(devcontainerDirectory: string): TemplateBuilder",
+    "betaSetDevContainerStart": "(devcontainerDirectory: string): TemplateFinal",
+    "bunInstall": "(packages?: string | string[], options?: { g?: boolean; dev?: boolean; }): TemplateBuilder",
+    "copy": "(src: PathLike | PathLike[], dest: PathLike, options?: { forceUpload?: true; user?: string; mode?: number; resolveSymlinks?: boolean; gzip?: boolean; }): TemplateBuilder",
+    "copyItems": "(items: CopyItem[]): TemplateBuilder",
+    "fromAWSRegistry": "(image: string, credentials: { accessKeyId: string; secretAccessKey: string; region: string; }): TemplateBuilder",
+    "fromAlpineImage": "(variant?: string): TemplateBuilder",
+    "fromArchImage": "(variant?: string): TemplateBuilder",
+    "fromBaseImage": "(): TemplateBuilder",
+    "fromBunImage": "(variant?: string): TemplateBuilder",
+    "fromDebianImage": "(variant?: string): TemplateBuilder",
+    "fromDockerfile": "(dockerfileContentOrPath: string): TemplateBuilder",
+    "fromFedoraImage": "(variant?: string): TemplateBuilder",
+    "fromGCPRegistry": "(image: string, credentials: { serviceAccountJSON: string | object; }): TemplateBuilder",
+    "fromImage": "(baseImage: string, credentials?: { username: string; password: string; }): TemplateBuilder",
+    "fromNodeImage": "(variant?: string): TemplateBuilder",
+    "fromPythonImage": "(version?: string): TemplateBuilder",
+    "fromTemplate": "(template: string): TemplateBuilder",
+    "fromUbuntuImage": "(variant?: string): TemplateBuilder",
+    "gitClone": "(url: string, path?: PathLike, options?: { branch?: string; depth?: number; user?: string; }): TemplateBuilder",
+    "makeDir": "(path: PathLike | PathLike[], options?: { mode?: number; user?: string; }): TemplateBuilder",
+    "makeSymlink": "(src: PathLike, dest: PathLike, options?: { user?: string; force?: boolean; }): TemplateBuilder",
+    "npmInstall": "(packages?: string | string[], options?: { g?: boolean; dev?: boolean; }): TemplateBuilder",
+    "pipInstall": "(packages?: string | string[], options?: { g?: boolean; }): TemplateBuilder",
+    "remove": "(path: PathLike | PathLike[], options?: { force?: boolean; recursive?: boolean; user?: string; }): TemplateBuilder",
+    "rename": "(src: PathLike, dest: PathLike, options?: { force?: boolean; user?: string; }): TemplateBuilder",
+    "runCmd": "(command: string, options?: { user?: string; }): TemplateBuilder | (commands: string[], options?: { user?: string; }): TemplateBuilder",
+    "setEnvs": "(envs: Record<string, string>): TemplateBuilder",
+    "setReadyCmd": "(readyCommand: string | ReadyCmd): TemplateFinal",
+    "setStartCmd": "(startCommand: string, readyCommand: string | ReadyCmd): TemplateFinal",
+    "setUser": "(user: string): TemplateBuilder",
+    "setWorkdir": "(workdir: PathLike): TemplateBuilder",
+    "skipCache": "(): TemplateBase"
+   },
+   "static": {
+    "aliasExists": "(alias: string, options?: ConnectionOpts): Promise<boolean>",
+    "assignTags": "(targetName: string, tags: string | string[], options?: ConnectionOpts): Promise<TemplateTagInfo>",
+    "build": "(template: TemplateClass, name: string, options?: Omit<BuildOptions, \"alias\">): Promise<BuildInfo> | (template: TemplateClass, options: BuildOptions): Promise<BuildInfo>",
+    "buildInBackground": "(template: TemplateClass, name: string, options?: Omit<BuildOptions, \"alias\">): Promise<BuildInfo> | (template: TemplateClass, options: BuildOptions): Promise<BuildInfo>",
+    "exists": "(name: string, options?: ConnectionOpts): Promise<boolean>",
+    "getBuildStatus": "(data: Pick<BuildInfo, \"templateId\" | \"buildId\">, options?: GetBuildStatusOptions): Promise<TemplateBuildStatusResponse>",
+    "getTags": "(templateId: string, options?: ConnectionOpts): Promise<TemplateTag[]>",
+    "prototype": "?",
+    "removeTags": "(name: string, tags: string | string[], options?: ConnectionOpts): Promise<void>",
+    "toDockerfile": "(template: TemplateClass): string",
+    "toJSON": "(template: TemplateClass, computeHashes?: boolean): Promise<string>"
+   }
+  },
+  "TemplateBuildStatus": {
+   "kind": "type",
+   "type": "\"error\" | \"building\" | \"waiting\" | \"ready\""
+  },
+  "TemplateBuildStatusResponse": {
+   "kind": "type",
+   "type": "{ buildID: string; templateID: string; status: TemplateBuildStatus; logEntries: LogEntry[]; logs: string[]; reason?: BuildStatusReason; }"
+  },
+  "TemplateBuilder": {
+   "kind": "interface",
+   "members": {
+    "addMcpServer": "(servers: McpServerName | McpServerName[]): TemplateBuilder",
+    "aptInstall": "(packages: string | string[], options?: { noInstallRecommends?: boolean; fixMissing?: boolean; }): TemplateBuilder",
+    "betaDevContainerPrebuild": "(devcontainerDirectory: string): TemplateBuilder",
+    "betaSetDevContainerStart": "(devcontainerDirectory: string): TemplateFinal",
+    "bunInstall": "(packages?: string | string[], options?: { g?: boolean; dev?: boolean; }): TemplateBuilder",
+    "copy": "(src: PathLike | PathLike[], dest: PathLike, options?: { forceUpload?: true; user?: string; mode?: number; resolveSymlinks?: boolean; gzip?: boolean; }): TemplateBuilder",
+    "copyItems": "(items: CopyItem[]): TemplateBuilder",
+    "gitClone": "(url: string, path?: PathLike, options?: { branch?: string; depth?: number; user?: string; }): TemplateBuilder",
+    "makeDir": "(path: PathLike | PathLike[], options?: { mode?: number; user?: string; }): TemplateBuilder",
+    "makeSymlink": "(src: PathLike, dest: PathLike, options?: { user?: string; force?: boolean; }): TemplateBuilder",
+    "npmInstall": "(packages?: string | string[], options?: { g?: boolean; dev?: boolean; }): TemplateBuilder",
+    "pipInstall": "(packages?: string | string[], options?: { g?: boolean; }): TemplateBuilder",
+    "remove": "(path: PathLike | PathLike[], options?: { force?: boolean; recursive?: boolean; user?: string; }): TemplateBuilder",
+    "rename": "(src: PathLike, dest: PathLike, options?: { force?: boolean; user?: string; }): TemplateBuilder",
+    "runCmd": "(command: string, options?: { user?: string; }): TemplateBuilder | (commands: string[], options?: { user?: string; }): TemplateBuilder | (commandOrCommands: string | string[], options?: { user?: string; }): TemplateBuilder",
+    "setEnvs": "(envs: Record<string, string>): TemplateBuilder",
+    "setReadyCmd": "(readyCommand: string | ReadyCmd): TemplateFinal",
+    "setStartCmd": "(startCommand: string, readyCommand: string | ReadyCmd): TemplateFinal",
+    "setUser": "(user: string): TemplateBuilder",
+    "setWorkdir": "(workdir: PathLike): TemplateBuilder",
+    "skipCache": "(): TemplateBuilder"
+   }
+  },
+  "TemplateClass": {
+   "kind": "type",
+   "type": "TemplateBuilder | TemplateFinal"
+  },
+  "TemplateError": {
+   "ctor": "(message: string, stackTrace?: string): TemplateError",
+   "extends": [
+    "SandboxError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": "unknown",
+    "message": "string",
+    "name": "string",
+    "stack": "string",
+    "statusCode": "number"
+   },
+   "static": {
+    "prototype": "?"
+   }
+  },
+  "TemplateTag": {
+   "kind": "type",
+   "type": "{ tag: string; buildId: string; createdAt: Date; }"
+  },
+  "TemplateTagInfo": {
+   "kind": "type",
+   "type": "{ buildId: string; tags: string[]; }"
+  },
+  "TimeoutError": {
+   "ctor": "(message: string): TimeoutError",
+   "extends": [
+    "SandboxError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": "unknown",
+    "message": "string",
+    "name": "string",
+    "stack": "string",
+    "statusCode": "number"
+   },
+   "static": {
+    "prototype": "?"
+   }
+  },
+  "Username": {
+   "kind": "type",
+   "type": "string"
+  },
+  "Volume": {
+   "ctor": "(volumeId: string, name: string, token: string, domain?: string, debug?: boolean, proxy?: string, opts?: Pick<ConnectionOpts, \"httpVersion\">): Volume",
+   "extends": [
+    "ClientFactory"
+   ],
+   "kind": "class",
+   "members": {
+    "debug": "boolean",
+    "domain": "string",
+    "exists": "(path: string, opts?: VolumeApiOpts): Promise<boolean>",
+    "getInfo": "(path: string, opts?: VolumeApiOpts): Promise<VolumeEntryStat>",
+    "httpVersion": "HttpVersion",
+    "list": "(path: string, opts?: VolumeApiOpts & { depth?: number; }): Promise<VolumeEntryStat[]>",
+    "makeDir": "(path: string, opts?: VolumeWriteOpts & VolumeApiOpts): Promise<VolumeEntryStat>",
+    "name": "string",
+    "proxy": "string",
+    "readFile": "(path: string, opts?: VolumeReadOpts & { format?: \"text\"; }): Promise<string> | (path: string, opts?: VolumeReadOpts & { format: \"bytes\"; }): Promise<Uint8Array> | (path: string, opts?: VolumeReadOpts & { format: \"blob\"; }): Promise<Blob> | (path: string, opts?: VolumeReadOpts & { format: \"stream\"; }): Promise<ReadableStream<Uint8Array>>",
+    "remove": "(path: string, opts?: VolumeApiOpts): Promise<void>",
+    "token": "string",
+    "updateMetadata": "(path: string, metadata: VolumeMetadataOpts, opts?: VolumeApiOpts): Promise<VolumeEntryStat>",
+    "volumeId": "string",
+    "writeFile": "(path: string, data: string | ArrayBuffer | Blob | ReadableStream<Uint8Array>, opts?: VolumeWriteOpts & VolumeApiOpts): Promise<VolumeEntryStat>"
+   },
+   "static": {
+    "connect": "<V extends typeof Volume>(this: V, volumeId: string, opts?: ConnectionOpts): Promise<InstanceType<V>>",
+    "create": "<V extends typeof Volume>(this: V, name: string, opts?: ConnectionOpts): Promise<InstanceType<V>>",
+    "destroy": "(volumeId: string, opts?: ConnectionOpts): Promise<boolean>",
+    "getInfo": "(volumeId: string, opts?: ConnectionOpts): Promise<VolumeAndToken>",
+    "list": "(opts?: ConnectionOpts): Promise<VolumeInfo[]>",
+    "prototype": "?"
+   }
+  },
+  "VolumeAndToken": {
+   "kind": "type",
+   "type": "VolumeInfo & { token: string; domain?: string; }"
+  },
+  "VolumeApiOpts": {
+   "kind": "interface",
+   "members": {
+    "apiUrl": "string",
+    "debug": "boolean",
+    "domain": "string",
+    "headers": "Record<string, string>",
+    "httpVersion": "HttpVersion",
+    "logger": "Logger",
+    "proxy": "string",
+    "requestTimeoutMs": "number",
+    "signal": "AbortSignal",
+    "token": "string"
+   }
+  },
+  "VolumeConnectionConfig": {
+   "ctor": "(volume: Volume, opts?: VolumeApiOpts): VolumeConnectionConfig",
+   "extends": [],
+   "kind": "class",
+   "members": {
+    "apiUrl": "string",
+    "debug": "boolean",
+    "domain": "string",
+    "getSignal": "(requestTimeoutMs?: number, signal?: AbortSignal): AbortSignal | undefined",
+    "headers": "Record<string, string>",
+    "httpVersion": "HttpVersion",
+    "logger": "Logger",
+    "proxy": "string",
+    "requestTimeoutMs": "number",
+    "signal": "AbortSignal",
+    "token": "string"
+   },
+   "static": {
+    "prototype": "?"
+   }
+  },
+  "VolumeEntryStat": {
+   "kind": "type",
+   "type": "Omit<{ atime: string; ctime: string; gid: number; mode: number; mtime: string; name: string; path: string; size: number; target?: string; type: \"unknown\" | \"file\" | \"directory\" | \"symlink\"; uid: number; }, \"atime\" | \"mtime\" | \"ctime\" | \"type\"> & { atime: Date; mtime: Date; ctime: Date; type: VolumeFileType; }"
+  },
+  "VolumeError": {
+   "ctor": "(message: string): VolumeError",
+   "extends": [
+    "Error"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": "unknown",
+    "message": "string",
+    "name": "string",
+    "stack": "string"
+   },
+   "static": {
+    "prototype": "?"
+   }
+  },
+  "VolumeFileType": {
+   "kind": "enum",
+   "members": {
+    "DIRECTORY": "member",
+    "FILE": "member",
+    "SYMLINK": "member",
+    "UNKNOWN": "member"
+   }
+  },
+  "VolumeInfo": {
+   "kind": "type",
+   "type": "{ volumeId: string; name: string; }"
+  },
+  "VolumeMetadataOptions": {
+   "kind": "type",
+   "type": "{ uid?: number; gid?: number; mode?: number; }"
+  },
+  "VolumeMetadataOpts": {
+   "kind": "type",
+   "type": "{ uid?: number; gid?: number; mode?: number; }"
+  },
+  "VolumeNotFoundError": {
+   "ctor": "(message: string): VolumeNotFoundError",
+   "extends": [
+    "VolumeError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": "unknown",
+    "message": "string",
+    "name": "string",
+    "stack": "string"
+   },
+   "static": {
+    "prototype": "?"
+   }
+  },
+  "VolumePathNotFoundError": {
+   "ctor": "(message: string): VolumePathNotFoundError",
+   "extends": [
+    "VolumeError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": "unknown",
+    "message": "string",
+    "name": "string",
+    "stack": "string"
+   },
+   "static": {
+    "prototype": "?"
+   }
+  },
+  "VolumeReadOpts": {
+   "kind": "type",
+   "type": "VolumeApiOpts & { streamIdleTimeoutMs?: number; }"
+  },
+  "VolumeWriteOptions": {
+   "kind": "type",
+   "type": "VolumeMetadataOpts & { force?: boolean; }"
+  },
+  "VolumeWriteOpts": {
+   "kind": "type",
+   "type": "VolumeMetadataOpts & { force?: boolean; }"
+  },
+  "WatchHandle": {
+   "ctor": "(handleStop: () => void, events: AsyncIterable<WatchDirResponse>, onEvent?: ((event: FilesystemEvent) => void | Promise<void>) | undefined, onExit?: ((err?: Error) => void | Promise<void>) | undefined, checkHealth?: SandboxHealthCheck | undefined): WatchHandle",
+   "extends": [],
+   "kind": "class",
+   "members": {
+    "stop": "(): Promise<void>"
+   },
+   "static": {
+    "prototype": "?"
+   }
+  },
+  "WriteInfo": {
+   "kind": "interface",
+   "members": {
+    "metadata": "Record<string, string>",
+    "name": "string",
+    "path": "string",
+    "type": "FileType"
+   }
+  },
+  "components": {
+   "kind": "interface",
+   "members": {
+    "headers": "{ XNextToken: string; XTotalRunning: number; }",
+    "parameters": "{ buildID: string; paginationLimit: number; paginationNextToken: string; sandboxID: string; secretID: string; teamID: string; templateID: string; volumeID: string; }",
+    "pathItems": "never",
+    "requestBodies": "never",
+    "responses": "{ 400: { headers: { [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"Error\"]; }; }; 401: { headers: { [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"Error\"]; }; }; 403: { headers: { [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"Error\"]; }; }; 404: { headers: { [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"Error\"]; }; }; 409: { headers: { [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"Error\"]; }; }; 429: { headers: { \"Retry-After\"?: number; [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"Error\"]; }; }; 500: { headers: { [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"Error\"]; }; }; 502: { headers: { [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"Error\"]; }; }; 503: { headers: { [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"Error\"]; }; }; 504: { headers: { [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"Error\"]; }; }; }",
+    "schemas": "{ AssignedTemplateTags: { buildID: string; tags: string[]; }; AssignTemplateTagsRequest: { tags: string[]; target: string; }; AWSRegistry: { awsAccessKeyId: string; awsRegion: string; awsSecretAccessKey: string; type: \"aws\"; }; BuildLogEntry: { level: components[\"schemas\"][\"LogLevel\"]; message: string; step?: string; timestamp: string; }; BuildStatusReason: { logEntries?: components[\"schemas\"][\"BuildLogEntry\"][]; message: string; step?: string; }; ConnectSandbox: { memory?: boolean; timeout: number; }; ConnectSandboxV2: { memory?: boolean; timeout?: number; }; CPUCount: number; DeleteTemplateTagsRequest: { name: string; tags: string[]; }; DiskSizeMB: number; EnvdVersion: string; EnvVars: { [key: string]: string; }; Error: { code: number; error_code?: string; message: string; }; FromImageRegistry: components[\"schemas\"][\"AWSRegistry\"] | components[\"schemas\"][\"GCPRegistry\"] | components[\"schemas\"][\"GeneralRegistry\"]; GCPRegistry: { serviceAccountJson: string; type: \"gcp\"; }; GeneralRegistry: { password: string; type: \"registry\"; username: string; }; ListedSandbox: { alias?: string; clientID: string; cpuCount: components[\"schemas\"][\"CPUCount\"]; diskSizeMB: components[\"schemas\"][\"DiskSizeMB\"]; endAt: string; envdVersion: components[\"schemas\"][\"EnvdVersion\"]; memoryMB: components[\"schemas\"][\"MemoryMB\"]; metadata?: components[\"schemas\"][\"SandboxMetadata\"]; sandboxID: string; startedAt: string; state: components[\"schemas\"][\"SandboxState\"]; templateID: string; volumeMounts?: components[\"schemas\"][\"SandboxVolumeMount\"][]; }; LogLevel: \"debug\" | \"info\" | \"warn\" | \"error\"; LogsDirection: \"forward\" | \"backward\"; LogsSource: \"temporary\" | \"persistent\"; MaxTeamMetric: { timestamp: string; timestampUnix: number; value: number; }; Mcp: { [key: string]: unknown; } | null; MemoryMB: number; MinFreeDiskMb: number; NewSandbox: { allow_internet_access?: boolean; autoPause?: boolean; autoPauseMemory?: boolean; autoResume?: components[\"schemas\"][\"SandboxAutoResumeConfig\"]; envVars?: components[\"schemas\"][\"EnvVars\"]; iam?: components[\"schemas\"][\"SandboxIam\"]; mcp?: components[\"schemas\"][\"Mcp\"]; metadata?: components[\"schemas\"][\"SandboxMetadata\"]; network?: components[\"schemas\"][\"SandboxNetworkConfig\"]; secure?: boolean; templateID: string; timeout?: number; volumeMounts?: components[\"schemas\"][\"SandboxVolumeMount\"][]; }; NewSandboxV2: { allow_internet_access?: boolean; autoPause?: boolean; autoPauseMemory?: boolean; autoResume?: components[\"schemas\"][\"SandboxAutoResumeConfig\"]; envVars?: components[\"schemas\"][\"EnvVars\"]; iam?: components[\"schemas\"][\"SandboxIam\"]; mcp?: components[\"schemas\"][\"Mcp\"]; metadata?: components[\"schemas\"][\"SandboxMetadata\"]; network?: components[\"schemas\"][\"SandboxNetworkConfig\"]; templateID: string; timeout?: number; volumeMounts?: components[\"schemas\"][\"SandboxVolumeMount\"][]; }; NewSecret: { metadata?: components[\"schemas\"][\"SecretMetadata\"]; name: string; value: string; }; NewVolume: { name: string; }; OrderDirection: \"asc\" | \"desc\"; ResumedSandbox: { autoPause?: boolean; memory?: boolean; timeout?: number; }; Sandbox: { alias?: string; clientID: string; domain?: string | null; envdAccessToken?: string; envdVersion: components[\"schemas\"][\"EnvdVersion\"]; sandboxID: string; templateID: string; trafficAccessToken?: string | null; }; SandboxAutoResumeConfig: { enabled: components[\"schemas\"][\"SandboxAutoResumeEnabled\"]; }; SandboxAutoResumeEnabled: boolean; SandboxDetail: { alias?: string; allowInternetAccess?: boolean | null; clientID: string; cpuCount: components[\"schemas\"][\"CPUCount\"]; diskSizeMB: components[\"schemas\"][\"DiskSizeMB\"]; domain?: string | null; endAt: string; envdAccessToken?: string; envdVersion: components[\"schemas\"][\"EnvdVersion\"]; lifecycle?: components[\"schemas\"][\"SandboxLifecycle\"]; memoryMB: components[\"schemas\"][\"MemoryMB\"]; metadata?: components[\"schemas\"][\"SandboxMetadata\"]; network?: components[\"schemas\"][\"SandboxNetworkConfig\"]; sandboxID: string; startedAt: string; state: components[\"schemas\"][\"SandboxState\"]; templateID: string; volumeMounts?: components[\"schemas\"][\"SandboxVolumeMount\"][]; }; SandboxEgressProxyConfig: { address: string; password?: string; tls?: components[\"schemas\"][\"SandboxEgressProxyTLSConfig\"]; username?: string; } | null; SandboxEgressProxyTLSConfig: { caCert?: string; enabled: boolean; serverName?: string; } | null; SandboxesWithMetrics: { sandboxes: { [key: string]: components[\"schemas\"][\"SandboxMetric\"]; }; }; SandboxForkRequest: { count?: number; timeout?: number; }; SandboxForkResult: { error?: components[\"schemas\"][\"Error\"]; sandbox?: components[\"schemas\"][\"Sandbox\"]; }; SandboxIam: { tokens?: components[\"schemas\"][\"SandboxIamTokens\"]; }; SandboxIamToken: { audience: string; tokenType: string; }; SandboxIamTokens: { [key: string]: components[\"schemas\"][\"SandboxIamToken\"]; }; SandboxLifecycle: { autoResume: boolean; onTimeout: components[\"schemas\"][\"SandboxOnTimeout\"]; }; SandboxLog: { line: string; timestamp: string; }; SandboxLogEntry: { fields: { [key: string]: string; }; level: components[\"schemas\"][\"LogLevel\"]; message: string; timestamp: string; }; SandboxLogs: { logEntries: components[\"schemas\"][\"SandboxLogEntry\"][]; logs: components[\"schemas\"][\"SandboxLog\"][]; }; SandboxLogsV2Response: { logs: components[\"schemas\"][\"SandboxLogEntry\"][]; }; SandboxMetadata: { [key: string]: string; }; SandboxMetric: { cpuCount: number; cpuUsedPct: number; diskTotal: number; diskUsed: number; memCache: number; memTotal: number; memUsed: number; timestamp: string; timestampUnix: number; }; SandboxNetworkConfig: { allowOut?: string[]; allowPublicTraffic?: boolean; denyOut?: string[]; egressProxy?: components[\"schemas\"][\"SandboxEgressProxyConfig\"]; httpsPorts?: number[]; maskRequestHost?: string; rules?: { [key: string]: components[\"schemas\"][\"SandboxNetworkRule\"][]; }; }; SandboxNetworkRule: { transform?: components[\"schemas\"][\"SandboxNetworkTransform\"]; }; SandboxNetworkTransform: { headers?: { [key: string]: string; }; }; SandboxNetworkUpdateConfig: { allow_internet_access?: boolean; allowOut?: string[]; denyOut?: string[]; egressProxy?: components[\"schemas\"][\"SandboxEgressProxyConfig\"]; rules?: { [key: string]: components[\"schemas\"][\"SandboxNetworkRule\"][]; }; }; SandboxOnTimeout: \"kill\" | \"pause\"; SandboxPauseRequest: { memory?: boolean; }; SandboxRefreshRequest: { duration?: number; }; SandboxSnapshotRequest: { memory?: boolean; name?: string; }; SandboxState: \"running\" | \"paused\"; SandboxTimeoutRequest: { timeout: number; }; SandboxVolumeMount: { name: string; path: string; }; Secret: { createdAt: string; currentVersion: number; metadata: components[\"schemas\"][\"SecretMetadata\"]; name: string; secretID: string; updatedAt: string; }; SecretMetadata: { [key: string]: string; }; SecretUpdate: { metadata?: components[\"schemas\"][\"SecretMetadata\"]; value: string; }; SnapshotInfo: { names: string[]; snapshotID: string; }; Team: { apiKey: string; isDefault: boolean; name: string; teamID: string; }; TeamMetric: { concurrentSandboxes: number; sandboxStartRate: number; timestamp: string; timestampUnix: number; }; TeamUser: { email: string | null; id: string; }; Template: { aliases: string[]; buildCount: number; buildID: string; buildStatus: components[\"schemas\"][\"TemplateBuildStatus\"]; cpuCount: components[\"schemas\"][\"CPUCount\"]; createdAt: string; createdBy: components[\"schemas\"][\"TeamUser\"] | null; diskSizeMB: components[\"schemas\"][\"DiskSizeMB\"]; envdVersion: components[\"schemas\"][\"EnvdVersion\"]; lastSpawnedAt: string | null; memoryMB: components[\"schemas\"][\"MemoryMB\"]; names: string[]; public: boolean; spawnCount: number; templateID: string; updatedAt: string; }; TemplateAliasResponse: { public: boolean; templateID: string; }; TemplateBuild: { buildID: string; cpuCount: components[\"schemas\"][\"CPUCount\"]; createdAt: string; diskSizeMB?: components[\"schemas\"][\"DiskSizeMB\"]; envdVersion?: components[\"schemas\"][\"EnvdVersion\"]; finishedAt?: string; memoryMB: components[\"schemas\"][\"MemoryMB\"]; status: components[\"schemas\"][\"TemplateBuildStatus\"]; updatedAt: string; }; TemplateBuildFileUpload: { headers?: { [key: string]: string; }; present: boolean; url?: string; }; TemplateBuildInfo: { buildID: string; logEntries: components[\"schemas\"][\"BuildLogEntry\"][]; logs: string[]; reason?: components[\"schemas\"][\"BuildStatusReason\"]; status: components[\"schemas\"][\"TemplateBuildStatus\"]; templateID: string; }; TemplateBuildLogsResponse: { logs: components[\"schemas\"][\"BuildLogEntry\"][]; }; TemplateBuildRequestV3: { alias?: string; cpuCount?: components[\"schemas\"][\"CPUCount\"]; memoryMB?: components[\"schemas\"][\"MemoryMB\"]; minFreeDiskMb?: components[\"schemas\"][\"MinFreeDiskMb\"]; name?: string; tags?: string[]; teamID?: string; }; TemplateBuildStartV2: { force?: boolean; fromImage?: string; fromImageRegistry?: components[\"schemas\"][\"FromImageRegistry\"]; fromTemplate?: string; readyCmd?: string; startCmd?: string; steps?: components[\"schemas\"][\"TemplateStep\"][]; }; TemplateBuildStatus: \"building\" | \"waiting\" | \"ready\" | \"error\"; TemplateRequestResponseV3: { aliases: string[]; buildID: string; names: string[]; public: boolean; tags: string[]; templateID: string; }; TemplateStep: { args?: string[]; filesHash?: string; force?: boolean; type: string; }; TemplateTag: { buildID: string; createdAt: string; tag: string; }; TemplateUpdateRequest: { public?: boolean; }; TemplateUpdateResponse: { names: string[]; }; TemplateWithBuilds: { aliases: string[]; builds: components[\"schemas\"][\"TemplateBuild\"][]; createdAt: string; lastSpawnedAt: string | null; names: string[]; public: boolean; spawnCount: number; templateID: string; updatedAt: string; }; Volume: { name: string; volumeID: string; }; VolumeAndToken: { domain?: string; name: string; token: string; volumeID: string; }; }"
+   }
+  },
+  "default": {
+   "ctor": "(opts: SandboxConnectOpts & { sandboxId: string; sandboxDomain?: string; envdVersion: string; envdAccessToken?: string; trafficAccessToken?: string; }): Sandbox",
+   "extends": [
+    "SandboxApi"
+   ],
+   "kind": "class",
+   "members": {
+    "betaPause": "(opts?: SandboxPauseOpts): Promise<boolean>",
+    "commands": "Commands",
+    "connect": "(opts?: SandboxConnectOpts): Promise<Sandbox>",
+    "createSnapshot": "(opts?: CreateSnapshotOpts): Promise<SnapshotInfo>",
+    "downloadUrl": "(path: string, opts?: SandboxUrlOpts): Promise<string>",
+    "files": "Filesystem",
+    "fork": "(opts?: SandboxForkOpts): Promise<(Error | Sandbox)[]>",
+    "getHost": "(port: number): string",
+    "getInfo": "(opts?: Pick<SandboxOpts, \"requestTimeoutMs\" | \"signal\">): Promise<SandboxInfo>",
+    "getMcpToken": "(): Promise<string | undefined>",
+    "getMcpUrl": "(): string",
+    "getMetrics": "(opts?: SandboxMetricsOpts): Promise<SandboxMetrics[]>",
+    "git": "Git",
+    "isRunning": "(opts?: Pick<ConnectionOpts, \"requestTimeoutMs\" | \"signal\">): Promise<boolean>",
+    "kill": "(opts?: Pick<SandboxOpts, \"requestTimeoutMs\" | \"signal\">): Promise<boolean>",
+    "listSnapshots": "(opts?: Omit<SnapshotListOpts, \"sandboxId\">): SnapshotPaginator",
+    "pause": "(opts?: SandboxPauseOpts): Promise<boolean>",
+    "pty": "Pty",
+    "sandboxDomain": "string",
+    "sandboxId": "string",
+    "setTimeout": "(timeoutMs: number, opts?: Pick<SandboxOpts, \"requestTimeoutMs\" | \"signal\">): Promise<void>",
+    "trafficAccessToken": "string",
+    "updateNetwork": "(network: SandboxNetworkUpdate, opts?: Pick<SandboxOpts, \"requestTimeoutMs\" | \"signal\">): Promise<void>",
+    "uploadUrl": "(path?: string, opts?: SandboxUrlOpts): Promise<string>"
+   },
+   "static": {
+    "betaPause": "(sandboxId: string, opts?: SandboxPauseOpts): Promise<boolean>",
+    "connect": "<S extends typeof Sandbox>(this: S, sandboxId: string, opts?: SandboxConnectOpts): Promise<InstanceType<S>>",
+    "create": "<S extends typeof Sandbox>(this: S, opts?: SandboxOpts): Promise<InstanceType<S>> | <S extends typeof Sandbox>(this: S, template: string, opts?: SandboxOpts): Promise<InstanceType<S>>",
+    "createSnapshot": "(sandboxId: string, opts?: CreateSnapshotOpts): Promise<SnapshotInfo>",
+    "deleteSnapshot": "(snapshotId: string, opts?: SandboxApiOpts): Promise<boolean>",
+    "fork": "<S extends typeof Sandbox>(this: S, sandboxId: string, opts?: SandboxForkOpts): Promise<Array<InstanceType<S> | Error>>",
+    "getFullInfo": "(sandboxId: string, opts?: SandboxApiOpts): Promise<SandboxInfo>",
+    "getInfo": "(sandboxId: string, opts?: SandboxApiOpts): Promise<SandboxInfo>",
+    "getMetrics": "(sandboxId: string, opts?: SandboxMetricsOpts): Promise<SandboxMetrics[]>",
+    "kill": "(sandboxId: string, opts?: SandboxApiOpts): Promise<boolean>",
+    "list": "(opts?: SandboxListOpts): SandboxPaginator",
+    "listSnapshots": "(opts?: SnapshotListOpts): SnapshotPaginator",
+    "pause": "(sandboxId: string, opts?: SandboxPauseOpts): Promise<boolean>",
+    "prototype": "?",
+    "setTimeout": "(sandboxId: string, timeoutMs: number, opts?: SandboxApiOpts): Promise<void>",
+    "updateNetwork": "(sandboxId: string, network: SandboxNetworkUpdate, opts?: SandboxApiOpts): Promise<void>"
+   }
+  },
+  "defaultBuildLogger": {
+   "kind": "function",
+   "signature": "(options?: { minLevel?: LogEntryLevel; }): (logEntry: LogEntry) => void"
+  },
+  "getSignature": {
+   "kind": "function",
+   "signature": "({ path, operation, user, expirationInSeconds, envdAccessToken }: SignatureOpts): Promise<{ signature: string; expiration: number | null; }>"
+  },
+  "paths": {
+   "kind": "interface",
+   "members": {
+    "/sandboxes": "{ parameters: { query?: never; header?: never; path?: never; cookie?: never; }; get: { parameters: { query?: { metadata?: string; }; header?: never; path?: never; cookie?: never; }; requestBody?: never; responses: { 200: { headers: { [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"ListedSandbox\"][]; }; }; 400: components[\"responses\"][\"400\"]; 401: components[\"responses\"][\"401\"]; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; }; }; put?: never; post: { parameters: { query?: never; header?: never; path?: never; cookie?: never; }; requestBody: { content: { \"application/json\": components[\"schemas\"][\"NewSandbox\"]; }; }; responses: { 201: { headers: { [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"Sandbox\"]; }; }; 400: components[\"responses\"][\"400\"]; 401: components[\"responses\"][\"401\"]; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; 503: components[\"responses\"][\"503\"]; 504: components[\"responses\"][\"504\"]; }; }; delete?: never; options?: never; head?: never; patch?: never; trace?: never; }",
+    "/sandboxes/metrics": "{ parameters: { query?: never; header?: never; path?: never; cookie?: never; }; get: { parameters: { query: { sandbox_ids: string[]; }; header?: never; path?: never; cookie?: never; }; requestBody?: never; responses: { 200: { headers: { [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"SandboxesWithMetrics\"]; }; }; 400: components[\"responses\"][\"400\"]; 401: components[\"responses\"][\"401\"]; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; }; }; put?: never; post?: never; delete?: never; options?: never; head?: never; patch?: never; trace?: never; }",
+    "/sandboxes/{sandboxID}": "{ parameters: { query?: never; header?: never; path?: never; cookie?: never; }; get: { parameters: { query?: never; header?: never; path: { sandboxID: components[\"parameters\"][\"sandboxID\"]; }; cookie?: never; }; requestBody?: never; responses: { 200: { headers: { [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"SandboxDetail\"]; }; }; 401: components[\"responses\"][\"401\"]; 404: components[\"responses\"][\"404\"]; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; }; }; put?: never; post?: never; delete: { parameters: { query?: never; header?: never; path: { sandboxID: components[\"parameters\"][\"sandboxID\"]; }; cookie?: never; }; requestBody?: never; responses: { 204: { headers: { [name: string]: unknown; }; content?: never; }; 401: components[\"responses\"][\"401\"]; 404: components[\"responses\"][\"404\"]; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; }; }; options?: never; head?: never; patch?: never; trace?: never; }",
+    "/sandboxes/{sandboxID}/connect": "{ parameters: { query?: never; header?: never; path?: never; cookie?: never; }; get?: never; put?: never; post: { parameters: { query?: never; header?: never; path: { sandboxID: components[\"parameters\"][\"sandboxID\"]; }; cookie?: never; }; requestBody: { content: { \"application/json\": components[\"schemas\"][\"ConnectSandbox\"]; }; }; responses: { 200: { headers: { [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"Sandbox\"]; }; }; 201: { headers: { [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"Sandbox\"]; }; }; 400: components[\"responses\"][\"400\"]; 401: components[\"responses\"][\"401\"]; 404: components[\"responses\"][\"404\"]; 409: components[\"responses\"][\"409\"]; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; 503: components[\"responses\"][\"503\"]; 504: components[\"responses\"][\"504\"]; }; }; delete?: never; options?: never; head?: never; patch?: never; trace?: never; }",
+    "/sandboxes/{sandboxID}/fork": "{ parameters: { query?: never; header?: never; path?: never; cookie?: never; }; get?: never; put?: never; post: { parameters: { query?: never; header?: never; path: { sandboxID: components[\"parameters\"][\"sandboxID\"]; }; cookie?: never; }; requestBody?: { content: { \"application/json\": components[\"schemas\"][\"SandboxForkRequest\"]; }; }; responses: { 201: { headers: { [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"SandboxForkResult\"][]; }; }; 401: components[\"responses\"][\"401\"]; 404: components[\"responses\"][\"404\"]; 409: components[\"responses\"][\"409\"]; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; 503: components[\"responses\"][\"503\"]; }; }; delete?: never; options?: never; head?: never; patch?: never; trace?: never; }",
+    "/sandboxes/{sandboxID}/logs": "{ parameters: { query?: never; header?: never; path?: never; cookie?: never; }; get: { parameters: { query?: { limit?: number; start?: number; }; header?: never; path: { sandboxID: components[\"parameters\"][\"sandboxID\"]; }; cookie?: never; }; requestBody?: never; responses: { 200: { headers: { [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"SandboxLogs\"]; }; }; 401: components[\"responses\"][\"401\"]; 404: components[\"responses\"][\"404\"]; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; }; }; put?: never; post?: never; delete?: never; options?: never; head?: never; patch?: never; trace?: never; }",
+    "/sandboxes/{sandboxID}/metrics": "{ parameters: { query?: never; header?: never; path?: never; cookie?: never; }; get: { parameters: { query?: { end?: number; start?: number; }; header?: never; path: { sandboxID: components[\"parameters\"][\"sandboxID\"]; }; cookie?: never; }; requestBody?: never; responses: { 200: { headers: { [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"SandboxMetric\"][]; }; }; 400: components[\"responses\"][\"400\"]; 401: components[\"responses\"][\"401\"]; 404: components[\"responses\"][\"404\"]; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; }; }; put?: never; post?: never; delete?: never; options?: never; head?: never; patch?: never; trace?: never; }",
+    "/sandboxes/{sandboxID}/network": "{ parameters: { query?: never; header?: never; path?: never; cookie?: never; }; get?: never; put: { parameters: { query?: never; header?: never; path: { sandboxID: components[\"parameters\"][\"sandboxID\"]; }; cookie?: never; }; requestBody: { content: { \"application/json\": components[\"schemas\"][\"SandboxNetworkUpdateConfig\"]; }; }; responses: { 204: { headers: { [name: string]: unknown; }; content?: never; }; 401: components[\"responses\"][\"401\"]; 404: components[\"responses\"][\"404\"]; 409: components[\"responses\"][\"409\"]; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; }; }; post?: never; delete?: never; options?: never; head?: never; patch?: never; trace?: never; }",
+    "/sandboxes/{sandboxID}/pause": "{ parameters: { query?: never; header?: never; path?: never; cookie?: never; }; get?: never; put?: never; post: { parameters: { query?: never; header?: never; path: { sandboxID: components[\"parameters\"][\"sandboxID\"]; }; cookie?: never; }; requestBody?: { content: { \"application/json\": components[\"schemas\"][\"SandboxPauseRequest\"]; }; }; responses: { 204: { headers: { [name: string]: unknown; }; content?: never; }; 401: components[\"responses\"][\"401\"]; 404: components[\"responses\"][\"404\"]; 409: components[\"responses\"][\"409\"]; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; 503: components[\"responses\"][\"503\"]; }; }; delete?: never; options?: never; head?: never; patch?: never; trace?: never; }",
+    "/sandboxes/{sandboxID}/refreshes": "{ parameters: { query?: never; header?: never; path?: never; cookie?: never; }; get?: never; put?: never; post: { parameters: { query?: never; header?: never; path: { sandboxID: components[\"parameters\"][\"sandboxID\"]; }; cookie?: never; }; requestBody?: { content: { \"application/json\": components[\"schemas\"][\"SandboxRefreshRequest\"]; }; }; responses: { 204: { headers: { [name: string]: unknown; }; content?: never; }; 401: components[\"responses\"][\"401\"]; 404: components[\"responses\"][\"404\"]; 429: components[\"responses\"][\"429\"]; }; }; delete?: never; options?: never; head?: never; patch?: never; trace?: never; }",
+    "/sandboxes/{sandboxID}/resume": "{ parameters: { query?: never; header?: never; path?: never; cookie?: never; }; get?: never; put?: never; post: { parameters: { query?: never; header?: never; path: { sandboxID: components[\"parameters\"][\"sandboxID\"]; }; cookie?: never; }; requestBody?: { content: { \"application/json\": components[\"schemas\"][\"ResumedSandbox\"]; }; }; responses: { 201: { headers: { [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"Sandbox\"]; }; }; 400: components[\"responses\"][\"400\"]; 401: components[\"responses\"][\"401\"]; 404: components[\"responses\"][\"404\"]; 409: components[\"responses\"][\"409\"]; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; 503: components[\"responses\"][\"503\"]; 504: components[\"responses\"][\"504\"]; }; }; delete?: never; options?: never; head?: never; patch?: never; trace?: never; }",
+    "/sandboxes/{sandboxID}/snapshots": "{ parameters: { query?: never; header?: never; path?: never; cookie?: never; }; get?: never; put?: never; post: { parameters: { query?: never; header?: never; path: { sandboxID: components[\"parameters\"][\"sandboxID\"]; }; cookie?: never; }; requestBody: { content: { \"application/json\": components[\"schemas\"][\"SandboxSnapshotRequest\"]; }; }; responses: { 201: { headers: { [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"SnapshotInfo\"]; }; }; 400: components[\"responses\"][\"400\"]; 401: components[\"responses\"][\"401\"]; 404: components[\"responses\"][\"404\"]; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; }; }; delete?: never; options?: never; head?: never; patch?: never; trace?: never; }",
+    "/sandboxes/{sandboxID}/timeout": "{ parameters: { query?: never; header?: never; path?: never; cookie?: never; }; get?: never; put?: never; post: { parameters: { query?: never; header?: never; path: { sandboxID: components[\"parameters\"][\"sandboxID\"]; }; cookie?: never; }; requestBody?: { content: { \"application/json\": components[\"schemas\"][\"SandboxTimeoutRequest\"]; }; }; responses: { 204: { headers: { [name: string]: unknown; }; content?: never; }; 401: components[\"responses\"][\"401\"]; 404: components[\"responses\"][\"404\"]; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; }; }; delete?: never; options?: never; head?: never; patch?: never; trace?: never; }",
+    "/secrets": "{ parameters: { query?: never; header?: never; path?: never; cookie?: never; }; get: { parameters: { query?: { limit?: components[\"parameters\"][\"paginationLimit\"]; nextToken?: components[\"parameters\"][\"paginationNextToken\"]; }; header?: never; path?: never; cookie?: never; }; requestBody?: never; responses: { 200: { headers: { \"X-Next-Token\": components[\"headers\"][\"XNextToken\"]; [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"Secret\"][]; }; }; 400: components[\"responses\"][\"400\"]; 401: components[\"responses\"][\"401\"]; 403: components[\"responses\"][\"403\"]; 404: components[\"responses\"][\"404\"]; 409: components[\"responses\"][\"409\"]; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; 502: components[\"responses\"][\"502\"]; 504: components[\"responses\"][\"504\"]; }; }; put?: never; post: { parameters: { query?: never; header?: never; path?: never; cookie?: never; }; requestBody: { content: { \"application/json\": components[\"schemas\"][\"NewSecret\"]; }; }; responses: { 201: { headers: { [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"Secret\"]; }; }; 400: components[\"responses\"][\"400\"]; 401: components[\"responses\"][\"401\"]; 403: components[\"responses\"][\"403\"]; 404: components[\"responses\"][\"404\"]; 409: { headers: { [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"Error\"]; }; }; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; 502: components[\"responses\"][\"502\"]; 504: components[\"responses\"][\"504\"]; }; }; delete?: never; options?: never; head?: never; patch?: never; trace?: never; }",
+    "/secrets/{secretID}": "{ parameters: { query?: never; header?: never; path?: never; cookie?: never; }; get: { parameters: { query?: never; header?: never; path: { secretID: components[\"parameters\"][\"secretID\"]; }; cookie?: never; }; requestBody?: never; responses: { 200: { headers: { [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"Secret\"]; }; }; 400: components[\"responses\"][\"400\"]; 401: components[\"responses\"][\"401\"]; 403: components[\"responses\"][\"403\"]; 404: components[\"responses\"][\"404\"]; 409: components[\"responses\"][\"409\"]; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; 502: components[\"responses\"][\"502\"]; 504: components[\"responses\"][\"504\"]; }; }; put?: never; post: { parameters: { query?: never; header?: never; path: { secretID: components[\"parameters\"][\"secretID\"]; }; cookie?: never; }; requestBody: { content: { \"application/json\": components[\"schemas\"][\"SecretUpdate\"]; }; }; responses: { 200: { headers: { [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"Secret\"]; }; }; 400: components[\"responses\"][\"400\"]; 401: components[\"responses\"][\"401\"]; 403: components[\"responses\"][\"403\"]; 404: components[\"responses\"][\"404\"]; 409: components[\"responses\"][\"409\"]; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; 502: components[\"responses\"][\"502\"]; 504: components[\"responses\"][\"504\"]; }; }; delete: { parameters: { query?: never; header?: never; path: { secretID: components[\"parameters\"][\"secretID\"]; }; cookie?: never; }; requestBody?: never; responses: { 204: { headers: { [name: string]: unknown; }; content?: never; }; 400: components[\"responses\"][\"400\"]; 401: components[\"responses\"][\"401\"]; 403: components[\"responses\"][\"403\"]; 404: components[\"responses\"][\"404\"]; 409: components[\"responses\"][\"409\"]; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; 502: components[\"responses\"][\"502\"]; 504: components[\"responses\"][\"504\"]; }; }; options?: never; head?: never; patch?: never; trace?: never; }",
+    "/snapshots": "{ parameters: { query?: never; header?: never; path?: never; cookie?: never; }; get: { parameters: { query?: { limit?: components[\"parameters\"][\"paginationLimit\"]; name?: string; nextToken?: components[\"parameters\"][\"paginationNextToken\"]; sandboxID?: string; }; header?: never; path?: never; cookie?: never; }; requestBody?: never; responses: { 200: { headers: { \"X-Next-Token\": components[\"headers\"][\"XNextToken\"]; [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"SnapshotInfo\"][]; }; }; 401: components[\"responses\"][\"401\"]; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; }; }; put?: never; post?: never; delete?: never; options?: never; head?: never; patch?: never; trace?: never; }",
+    "/teams": "{ parameters: { query?: never; header?: never; path?: never; cookie?: never; }; get: { parameters: { query?: never; header?: never; path?: never; cookie?: never; }; requestBody?: never; responses: { 200: { headers: { [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"Team\"][]; }; }; 401: components[\"responses\"][\"401\"]; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; }; }; put?: never; post?: never; delete?: never; options?: never; head?: never; patch?: never; trace?: never; }",
+    "/teams/{teamID}/metrics": "{ parameters: { query?: never; header?: never; path?: never; cookie?: never; }; get: { parameters: { query?: { end?: number; start?: number; }; header?: never; path: { teamID: components[\"parameters\"][\"teamID\"]; }; cookie?: never; }; requestBody?: never; responses: { 200: { headers: { [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"TeamMetric\"][]; }; }; 400: components[\"responses\"][\"400\"]; 401: components[\"responses\"][\"401\"]; 403: components[\"responses\"][\"403\"]; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; }; }; put?: never; post?: never; delete?: never; options?: never; head?: never; patch?: never; trace?: never; }",
+    "/teams/{teamID}/metrics/max": "{ parameters: { query?: never; header?: never; path?: never; cookie?: never; }; get: { parameters: { query: { end?: number; metric: \"concurrent_sandboxes\" | \"sandbox_start_rate\"; start?: number; }; header?: never; path: { teamID: components[\"parameters\"][\"teamID\"]; }; cookie?: never; }; requestBody?: never; responses: { 200: { headers: { [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"MaxTeamMetric\"]; }; }; 400: components[\"responses\"][\"400\"]; 401: components[\"responses\"][\"401\"]; 403: components[\"responses\"][\"403\"]; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; }; }; put?: never; post?: never; delete?: never; options?: never; head?: never; patch?: never; trace?: never; }",
+    "/templates": "{ parameters: { query?: never; header?: never; path?: never; cookie?: never; }; get: { parameters: { query?: { teamID?: string; }; header?: never; path?: never; cookie?: never; }; requestBody?: never; responses: { 200: { headers: { [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"Template\"][]; }; }; 401: components[\"responses\"][\"401\"]; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; }; }; put?: never; post?: never; delete?: never; options?: never; head?: never; patch?: never; trace?: never; }",
+    "/templates/aliases/{alias}": "{ parameters: { query?: never; header?: never; path?: never; cookie?: never; }; get: { parameters: { query?: never; header?: never; path: { alias: string; }; cookie?: never; }; requestBody?: never; responses: { 200: { headers: { [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"TemplateAliasResponse\"]; }; }; 400: components[\"responses\"][\"400\"]; 403: components[\"responses\"][\"403\"]; 404: components[\"responses\"][\"404\"]; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; }; }; put?: never; post?: never; delete?: never; options?: never; head?: never; patch?: never; trace?: never; }",
+    "/templates/tags": "{ parameters: { query?: never; header?: never; path?: never; cookie?: never; }; get?: never; put?: never; post: { parameters: { query?: never; header?: never; path?: never; cookie?: never; }; requestBody: { content: { \"application/json\": components[\"schemas\"][\"AssignTemplateTagsRequest\"]; }; }; responses: { 201: { headers: { [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"AssignedTemplateTags\"]; }; }; 400: components[\"responses\"][\"400\"]; 401: components[\"responses\"][\"401\"]; 404: components[\"responses\"][\"404\"]; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; }; }; delete: { parameters: { query?: never; header?: never; path?: never; cookie?: never; }; requestBody: { content: { \"application/json\": components[\"schemas\"][\"DeleteTemplateTagsRequest\"]; }; }; responses: { 204: { headers: { [name: string]: unknown; }; content?: never; }; 400: components[\"responses\"][\"400\"]; 401: components[\"responses\"][\"401\"]; 404: components[\"responses\"][\"404\"]; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; }; }; options?: never; head?: never; patch?: never; trace?: never; }",
+    "/templates/{templateID}": "{ parameters: { query?: never; header?: never; path?: never; cookie?: never; }; get: { parameters: { query?: { limit?: components[\"parameters\"][\"paginationLimit\"]; nextToken?: components[\"parameters\"][\"paginationNextToken\"]; }; header?: never; path: { templateID: components[\"parameters\"][\"templateID\"]; }; cookie?: never; }; requestBody?: never; responses: { 200: { headers: { \"X-Next-Token\": components[\"headers\"][\"XNextToken\"]; [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"TemplateWithBuilds\"]; }; }; 401: components[\"responses\"][\"401\"]; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; }; }; put?: never; post?: never; delete: { parameters: { query?: never; header?: never; path: { templateID: components[\"parameters\"][\"templateID\"]; }; cookie?: never; }; requestBody?: never; responses: { 204: { headers: { [name: string]: unknown; }; content?: never; }; 401: components[\"responses\"][\"401\"]; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; }; }; options?: never; head?: never; patch: { parameters: { query?: never; header?: never; path: { templateID: components[\"parameters\"][\"templateID\"]; }; cookie?: never; }; requestBody: { content: { \"application/json\": components[\"schemas\"][\"TemplateUpdateRequest\"]; }; }; responses: { 200: { headers: { [name: string]: unknown; }; content?: never; }; 400: components[\"responses\"][\"400\"]; 401: components[\"responses\"][\"401\"]; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; }; }; trace?: never; }",
+    "/templates/{templateID}/builds/{buildID}/logs": "{ parameters: { query?: never; header?: never; path?: never; cookie?: never; }; get: { parameters: { query?: { cursor?: number; direction?: components[\"schemas\"][\"LogsDirection\"]; level?: components[\"schemas\"][\"LogLevel\"]; limit?: number; source?: components[\"schemas\"][\"LogsSource\"]; }; header?: never; path: { buildID: components[\"parameters\"][\"buildID\"]; templateID: components[\"parameters\"][\"templateID\"]; }; cookie?: never; }; requestBody?: never; responses: { 200: { headers: { [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"TemplateBuildLogsResponse\"]; }; }; 401: components[\"responses\"][\"401\"]; 404: components[\"responses\"][\"404\"]; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; }; }; put?: never; post?: never; delete?: never; options?: never; head?: never; patch?: never; trace?: never; }",
+    "/templates/{templateID}/builds/{buildID}/status": "{ parameters: { query?: never; header?: never; path?: never; cookie?: never; }; get: { parameters: { query?: { level?: components[\"schemas\"][\"LogLevel\"]; limit?: number; logsOffset?: number; }; header?: never; path: { buildID: components[\"parameters\"][\"buildID\"]; templateID: components[\"parameters\"][\"templateID\"]; }; cookie?: never; }; requestBody?: never; responses: { 200: { headers: { [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"TemplateBuildInfo\"]; }; }; 401: components[\"responses\"][\"401\"]; 404: components[\"responses\"][\"404\"]; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; }; }; put?: never; post?: never; delete?: never; options?: never; head?: never; patch?: never; trace?: never; }",
+    "/templates/{templateID}/files/{hash}": "{ parameters: { query?: never; header?: never; path?: never; cookie?: never; }; get: { parameters: { query?: never; header?: never; path: { hash: string; templateID: components[\"parameters\"][\"templateID\"]; }; cookie?: never; }; requestBody?: never; responses: { 201: { headers: { [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"TemplateBuildFileUpload\"]; }; }; 400: components[\"responses\"][\"400\"]; 401: components[\"responses\"][\"401\"]; 404: components[\"responses\"][\"404\"]; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; }; }; put?: never; post?: never; delete?: never; options?: never; head?: never; patch?: never; trace?: never; }",
+    "/templates/{templateID}/tags": "{ parameters: { query?: never; header?: never; path?: never; cookie?: never; }; get: { parameters: { query?: never; header?: never; path: { templateID: components[\"parameters\"][\"templateID\"]; }; cookie?: never; }; requestBody?: never; responses: { 200: { headers: { [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"TemplateTag\"][]; }; }; 401: components[\"responses\"][\"401\"]; 403: components[\"responses\"][\"403\"]; 404: components[\"responses\"][\"404\"]; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; }; }; put?: never; post?: never; delete?: never; options?: never; head?: never; patch?: never; trace?: never; }",
+    "/v2/sandboxes": "{ parameters: { query?: never; header?: never; path?: never; cookie?: never; }; get: { parameters: { query?: { limit?: components[\"parameters\"][\"paginationLimit\"]; metadata?: string; nextToken?: components[\"parameters\"][\"paginationNextToken\"]; order?: components[\"schemas\"][\"OrderDirection\"]; startedAfter?: string; state?: components[\"schemas\"][\"SandboxState\"][]; template?: string; }; header?: never; path?: never; cookie?: never; }; requestBody?: never; responses: { 200: { headers: { \"X-Next-Token\": components[\"headers\"][\"XNextToken\"]; \"X-Total-Running\": components[\"headers\"][\"XTotalRunning\"]; [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"ListedSandbox\"][]; }; }; 400: components[\"responses\"][\"400\"]; 401: components[\"responses\"][\"401\"]; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; }; }; put?: never; post: { parameters: { query?: never; header?: never; path?: never; cookie?: never; }; requestBody: { content: { \"application/json\": components[\"schemas\"][\"NewSandboxV2\"]; }; }; responses: { 201: { headers: { [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"Sandbox\"]; }; }; 400: components[\"responses\"][\"400\"]; 401: components[\"responses\"][\"401\"]; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; 503: components[\"responses\"][\"503\"]; 504: components[\"responses\"][\"504\"]; }; }; delete?: never; options?: never; head?: never; patch?: never; trace?: never; }",
+    "/v2/sandboxes/{sandboxID}/connect": "{ parameters: { query?: never; header?: never; path?: never; cookie?: never; }; get?: never; put?: never; post: { parameters: { query?: never; header?: never; path: { sandboxID: components[\"parameters\"][\"sandboxID\"]; }; cookie?: never; }; requestBody?: { content: { \"application/json\": components[\"schemas\"][\"ConnectSandboxV2\"]; }; }; responses: { 200: { headers: { [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"Sandbox\"]; }; }; 201: { headers: { [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"Sandbox\"]; }; }; 400: components[\"responses\"][\"400\"]; 401: components[\"responses\"][\"401\"]; 404: components[\"responses\"][\"404\"]; 409: components[\"responses\"][\"409\"]; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; 503: components[\"responses\"][\"503\"]; 504: components[\"responses\"][\"504\"]; }; }; delete?: never; options?: never; head?: never; patch?: never; trace?: never; }",
+    "/v2/sandboxes/{sandboxID}/logs": "{ parameters: { query?: never; header?: never; path?: never; cookie?: never; }; get: { parameters: { query?: { cursor?: number; direction?: components[\"schemas\"][\"LogsDirection\"]; level?: components[\"schemas\"][\"LogLevel\"]; limit?: number; search?: string; }; header?: never; path: { sandboxID: components[\"parameters\"][\"sandboxID\"]; }; cookie?: never; }; requestBody?: never; responses: { 200: { headers: { [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"SandboxLogsV2Response\"]; }; }; 401: components[\"responses\"][\"401\"]; 404: components[\"responses\"][\"404\"]; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; }; }; put?: never; post?: never; delete?: never; options?: never; head?: never; patch?: never; trace?: never; }",
+    "/v2/templates": "{ parameters: { query?: never; header?: never; path?: never; cookie?: never; }; get: { parameters: { query?: { limit?: components[\"parameters\"][\"paginationLimit\"]; nextToken?: components[\"parameters\"][\"paginationNextToken\"]; teamID?: string; }; header?: never; path?: never; cookie?: never; }; requestBody?: never; responses: { 200: { headers: { \"X-Next-Token\": components[\"headers\"][\"XNextToken\"]; [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"Template\"][]; }; }; 400: components[\"responses\"][\"400\"]; 401: components[\"responses\"][\"401\"]; 403: components[\"responses\"][\"403\"]; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; }; }; put?: never; post?: never; delete?: never; options?: never; head?: never; patch?: never; trace?: never; }",
+    "/v2/templates/{templateID}": "{ parameters: { query?: never; header?: never; path?: never; cookie?: never; }; get?: never; put?: never; post?: never; delete?: never; options?: never; head?: never; patch: { parameters: { query?: never; header?: never; path: { templateID: components[\"parameters\"][\"templateID\"]; }; cookie?: never; }; requestBody: { content: { \"application/json\": components[\"schemas\"][\"TemplateUpdateRequest\"]; }; }; responses: { 200: { headers: { [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"TemplateUpdateResponse\"]; }; }; 400: components[\"responses\"][\"400\"]; 401: components[\"responses\"][\"401\"]; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; }; }; trace?: never; }",
+    "/v2/templates/{templateID}/builds/{buildID}": "{ parameters: { query?: never; header?: never; path?: never; cookie?: never; }; get?: never; put?: never; post: { parameters: { query?: never; header?: never; path: { buildID: components[\"parameters\"][\"buildID\"]; templateID: components[\"parameters\"][\"templateID\"]; }; cookie?: never; }; requestBody: { content: { \"application/json\": components[\"schemas\"][\"TemplateBuildStartV2\"]; }; }; responses: { 202: { headers: { [name: string]: unknown; }; content?: never; }; 400: components[\"responses\"][\"400\"]; 401: components[\"responses\"][\"401\"]; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; }; }; delete?: never; options?: never; head?: never; patch?: never; trace?: never; }",
+    "/v3/templates": "{ parameters: { query?: never; header?: never; path?: never; cookie?: never; }; get?: never; put?: never; post: { parameters: { query?: never; header?: never; path?: never; cookie?: never; }; requestBody: { content: { \"application/json\": components[\"schemas\"][\"TemplateBuildRequestV3\"]; }; }; responses: { 202: { headers: { [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"TemplateRequestResponseV3\"]; }; }; 400: components[\"responses\"][\"400\"]; 401: components[\"responses\"][\"401\"]; 403: components[\"responses\"][\"403\"]; 409: components[\"responses\"][\"409\"]; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; }; }; delete?: never; options?: never; head?: never; patch?: never; trace?: never; }",
+    "/volumes": "{ parameters: { query?: never; header?: never; path?: never; cookie?: never; }; get: { parameters: { query?: never; header?: never; path?: never; cookie?: never; }; requestBody?: never; responses: { 200: { headers: { [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"Volume\"][]; }; }; 401: components[\"responses\"][\"401\"]; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; }; }; put?: never; post: { parameters: { query?: never; header?: never; path?: never; cookie?: never; }; requestBody: { content: { \"application/json\": components[\"schemas\"][\"NewVolume\"]; }; }; responses: { 201: { headers: { [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"VolumeAndToken\"]; }; }; 400: components[\"responses\"][\"400\"]; 401: components[\"responses\"][\"401\"]; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; }; }; delete?: never; options?: never; head?: never; patch?: never; trace?: never; }",
+    "/volumes/{volumeID}": "{ parameters: { query?: never; header?: never; path?: never; cookie?: never; }; get: { parameters: { query?: never; header?: never; path: { volumeID: components[\"parameters\"][\"volumeID\"]; }; cookie?: never; }; requestBody?: never; responses: { 200: { headers: { [name: string]: unknown; }; content: { \"application/json\": components[\"schemas\"][\"VolumeAndToken\"]; }; }; 401: components[\"responses\"][\"401\"]; 404: components[\"responses\"][\"404\"]; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; }; }; put?: never; post?: never; delete: { parameters: { query?: never; header?: never; path: { volumeID: components[\"parameters\"][\"volumeID\"]; }; cookie?: never; }; requestBody?: never; responses: { 204: { headers: { [name: string]: unknown; }; content?: never; }; 401: components[\"responses\"][\"401\"]; 404: components[\"responses\"][\"404\"]; 429: components[\"responses\"][\"429\"]; 500: components[\"responses\"][\"500\"]; }; }; options?: never; head?: never; patch?: never; trace?: never; }"
+   }
+  },
+  "waitForFile": {
+   "kind": "function",
+   "signature": "(filename: string): ReadyCmd"
+  },
+  "waitForPort": {
+   "kind": "function",
+   "signature": "(port: number): ReadyCmd"
+  },
+  "waitForProcess": {
+   "kind": "function",
+   "signature": "(processName: string): ReadyCmd"
+  },
+  "waitForTimeout": {
+   "kind": "function",
+   "signature": "(timeout: number): ReadyCmd"
+  },
+  "waitForURL": {
+   "kind": "function",
+   "signature": "(url: string, statusCode?: number): ReadyCmd"
+  }
+ },
+ "version": "2.58.0"
+}

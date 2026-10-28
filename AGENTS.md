@@ -2,7 +2,7 @@
 
 ## Contributor authorship
 
-Follow [Preserve Contributor Authorship](CONTRIBUTING.md#preserve-contributor-authorship).
+Follow [Preserve Contributor Authorship](.github/CONTRIBUTING.md#preserve-contributor-authorship).
 
 - A `Salvaged from #<pr>` source pull request must differ from the landing pull request.
 - When adapting a contribution directly in its existing pull request, keep the
@@ -17,10 +17,10 @@ Do not reimplement submitted work solely to remove its authorship history.
 ## Issue and pull request workflow
 
 Follow the contribution and selection contract in
-[`CONTRIBUTING.md`](CONTRIBUTING.md#choose-where-work-starts),
-[`MAINTAINERS.md`](MAINTAINERS.md#select-and-start-work), the
-GitHub issue forms, [`rfcs/README.md`](rfcs/README.md), and
-[`SECURITY.md`](SECURITY.md). Keep those files canonical instead of duplicating
+[`CONTRIBUTING.md`](.github/CONTRIBUTING.md#choose-where-work-starts),
+[`MAINTAINERS.md`](docs/contributing/MAINTAINERS.md#select-and-start-work), the
+GitHub issue forms, [`rfcs/README.md`](docs/rfcs/README.md), and
+[`SECURITY.md`](.github/SECURITY.md). Keep those files canonical instead of duplicating
 their field lists, polling ladder, or RFC lifecycle here.
 
 Coding agents act as workers within that contract, not as a planning authority.
@@ -37,19 +37,19 @@ understand, reproduce, or continue the work.
 - avoid noisy periodic status comments; keep progress in the linked pull request
   description; and
 - route suspected vulnerabilities through the private process in
-  [`SECURITY.md`](SECURITY.md), never a public issue, RFC, pull request, log, or
+  [`SECURITY.md`](.github/SECURITY.md), never a public issue, RFC, pull request, log, or
   screenshot.
 
 ### Polling for work
 
 When asked what to work on, follow
-[`MAINTAINERS.md`](MAINTAINERS.md#pull-model) and the
+[`MAINTAINERS.md`](docs/contributing/MAINTAINERS.md#pull-model) and the
 [polling skill](.agents/skills/poll-github-work/SKILL.md).
 
 ## Repository layout
 
-[`Development.md`](Development.md) maps components to paths and toolchains;
-[`TESTING.md`](TESTING.md) maps them to test commands and CI workflows. Rules
+[`Development.md`](docs/contributing/Development.md) maps components to paths and toolchains;
+[`TESTING.md`](docs/contributing/TESTING.md) maps them to test commands and CI workflows. Rules
 that are easy to miss:
 
 - `libs/cua` (cua SDK, `cua` CLI, `cua daemon`) is the only client library.
@@ -63,7 +63,7 @@ that are easy to miss:
 - Sandboxes are daemon-agnostic: lifecycle and readiness must not assume
   cua-spacesd or any other in-guest service.
 - `libs/fleet` is a read-only mirror. Never edit it.
-- Tests that start VMs, containers, Fleet claims, or host input are opt-in
+- Tests that start VMs, containers, or host input are opt-in
   (off by default) and clean up what they create.
 
 ## Cross-platform Cua Driver behavior
@@ -130,8 +130,8 @@ These rules come from the #4094 test audit.
 
 ## Pull request titles and component releases
 
-Follow the [release-title rules](CONTRIBUTING.md#agent-assisted-contributions)
-and [Sandbox release rules](CONTRIBUTING.md#sandbox-releases).
+Follow the [release-title rules](.github/CONTRIBUTING.md#agent-assisted-contributions)
+and [Sandbox release rules](.github/CONTRIBUTING.md#sandbox-releases).
 Do not use `no-release` to hide a user-visible change.
 
 Before declaring a pull request ready or merging it, inspect its final changed

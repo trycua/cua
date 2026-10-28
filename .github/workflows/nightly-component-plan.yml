@@ -60,10 +60,15 @@ jobs:
       - name: Verify source is an exact main commit
         env:
           SOURCE_SHA: ${{ inputs.source_sha }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
-          git fetch --no-tags origin main
+          # Checkout does not persist credentials; private repos need an
+          # authenticated fetch, scoped to this one command.
+          AUTH_HEADER="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$AUTH_HEADER"
+          git -c "http.https://github.com/.extraheader=$AUTH_HEADER" fetch --no-tags origin main
           git merge-base --is-ancestor "$SOURCE_SHA" origin/main
 
       - name: Fetch published release inventory
@@ -73,6 +78,24 @@ jobs:
           gh api --paginate --slurp \
             "repos/${{ github.repository }}/releases?per_page=100" \
             | jq 'add' > "$RUNNER_TEMP/releases.json"
+
+      # The first nightly diffs from the component's stable tag, which lives
+      # in trycua/cua, not here (see ensure_upstream_tag.sh).
+      - name: Fetch the stable base tag read-only
+        env:
+          COMPONENT: ${{ inputs.component }}
+        run: |
+          set -euo pipefail
+          BASE_TAG=$(python3 - <<'PY'
+          import os, sys
+          sys.path.insert(0, ".github/scripts")
+          import release_channels as rc
+          c = rc.component_descriptor(os.environ["COMPONENT"])
+          base = rc.repository_path(rc.ROOT, c["versionAuthorityFile"]).read_text(encoding="utf-8").strip()
+          print(rc.format_tag(c, "stable", base))
+          PY
+          )
+          .github/scripts/ensure_upstream_tag.sh "$BASE_TAG"
 
       - name: Plan immutable nightly
         id: plan
@@ -104,12 +127,24 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  report-attribution-hold:
+  report-attribution-warning:
     needs: plan
-    if: needs.plan.outputs.reason == 'held-attribution'
+    if: needs.plan.outputs.attribution_issues != '' && needs.plan.outputs.attribution_issues != '[]'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
     steps:
-      - name: Create or refresh the attribution hold
+      # A warning only: attribution never holds a nightly or a stable release.
+      # Unresolved identities go to the one rolling maintainer issue.
+      - name: Check out trusted reporter
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github
+          persist-credentials: false
+
+      - name: Refresh the rolling unresolved-attribution issue
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           COMPONENT: ${{ inputs.component }}
@@ -117,24 +152,13 @@ jobs:
           ATTRIBUTION_ISSUES: ${{ needs.plan.outputs.attribution_issues }}
         run: |
           set -euo pipefail
-          TITLE="Nightly ${COMPONENT} held by unresolved contributor attribution"
-          BODY="$RUNNER_TEMP/nightly-attribution-hold.md"
           {
-            echo "The nightly planner stopped before the cross-platform build because contributor attribution is unresolved."
+            echo "Nightly ${COMPONENT} continued; unresolved contributors are credited by display name."
             echo
-            echo "Source commit: \`$SOURCE_SHA\`"
-            echo
-            echo "Unresolved identities:"
             jq -r '.[] | "- `\(.email)` in commit `\(.sha)` (\(.name))"' <<<"$ATTRIBUTION_ISSUES"
-            echo
-            echo "Resolve each identity by linking the email to GitHub, amending the source commit with a recognized email before merge, or adding a verified \`identityOverrides\` mapping. Do not add wildcard or human-email ignores."
-          } > "$BODY"
-          MATCHES=$(gh issue list --repo "${{ github.repository }}" --state open \
-            --search "\"$TITLE\" in:title" --limit 100 --json number,title)
-          NUMBER=$(jq -r --arg title "$TITLE" \
-            'map(select(.title == $title)) | first | .number // empty' <<<"$MATCHES")
-          if [[ -n "$NUMBER" ]]; then
-            gh issue edit "$NUMBER" --repo "${{ github.repository }}" --body-file "$BODY"
-          else
-            gh issue create --repo "${{ github.repository }}" --title "$TITLE" --body-file "$BODY"
-          fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          printf '%s' "$ATTRIBUTION_ISSUES" > "$RUNNER_TEMP/identities.json"
+          python3 .github/scripts/release_attribution.py report-unresolved \
+            --repository "${{ github.repository }}" \
+            --identities "$RUNNER_TEMP/identities.json" \
+            --source "nightly ${COMPONENT}"

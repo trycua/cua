@@ -4,8 +4,11 @@
 //! Google Compute Engine (`--on gcp`): one small VM per sandbox, over the
 //! Compute Engine REST API (v1) with the gcloud CLI's sign-in (an access
 //! token from `gcloud auth print-access-token`, for the connection's
-//! account when it names one). Credentials stay in gcloud; Cua stores the
-//! project, region, zone and account names only.
+//! account when it names one), or, for an OIDC connection, a federated
+//! token: Cua's issuer signs a token for the project's workload identity
+//! provider and Google's STS exchanges it ([`crate::federation::gcp`]).
+//! Either way no key is stored; Cua keeps the project, region, zone and
+//! account names only.
 //!
 //! What a sandbox creates, all labelled with the sandbox's tags:
 //!
@@ -34,7 +37,11 @@ use cua_sandbox_core::byoc::{CloudCredentials, CloudKind};
 use serde_json::{Value, json};
 
 use crate::api::{CloudApi, Result, Target, Tested, cloud_err};
-use crate::model::{self, Connection, ProvisionSpec, Resource, Tier};
+use crate::federation::{IssuerClient, Purpose};
+use crate::model::{
+    self, Auth, Billing, Capabilities, Connection, HostType, ProvisionSpec, Resource, Supplies,
+    Tier,
+};
 
 /// The Compute Engine API root.
 pub const COMPUTE: &str = "https://compute.googleapis.com/compute/v1";
@@ -52,7 +59,7 @@ const OFFERS: &[(&str, &str, f64)] = &[
     ("linux-slim", "e2-small", 0.01675 + 0.0041 + 0.005),
 ];
 
-/// The permissions a create, stop, start and delete use.
+/// The permissions a create, stop, start, delete and boot log read use.
 pub const PERMISSIONS: &[&str] = &[
     "compute.instances.create",
     "compute.instances.delete",
@@ -62,6 +69,7 @@ pub const PERMISSIONS: &[&str] = &[
     "compute.instances.stop",
     "compute.instances.setMetadata",
     "compute.instances.setLabels",
+    "compute.instances.getSerialPortOutput",
     "compute.disks.create",
     "compute.networks.create",
     "compute.networks.get",
@@ -123,6 +131,16 @@ pub struct Gcp {
     tokens: Arc<dyn TokenSource>,
     cache: tokio::sync::Mutex<BTreeMap<String, (String, Instant)>>,
     config_dir: Option<PathBuf>,
+    /// Held while the shared network is found or created.
+    network_lock: tokio::sync::Mutex<()>,
+    /// Cua's issuer for OIDC connections (`None`: from the environment on
+    /// first use).
+    issuer: std::sync::Mutex<Option<Arc<dyn IssuerClient>>>,
+    /// Google's STS and the IAM Credentials API root.
+    sts_url: String,
+    iam_url: String,
+    /// One token exchange per connection, provider, purpose and agent.
+    exchanges: std::sync::Mutex<BTreeMap<String, Arc<crate::federation::gcp::Exchange>>>,
 }
 
 impl Default for Gcp {
@@ -160,10 +178,116 @@ impl Gcp {
             tokens,
             cache: Default::default(),
             config_dir,
+            network_lock: tokio::sync::Mutex::new(()),
+            issuer: std::sync::Mutex::new(None),
+            sts_url: crate::federation::gcp::STS_URL.into(),
+            iam_url: crate::federation::gcp::IAM_CREDENTIALS_URL.into(),
+            exchanges: Default::default(),
         }
     }
 
-    async fn token(&self, conn: &Connection) -> Result<String> {
+    /// OIDC connections get their tokens from `issuer` and exchange them
+    /// at `sts_url` (and `iam_url` for a service account) instead of
+    /// Google's (tests, self-hosted issuers).
+    pub fn with_federation(
+        mut self,
+        issuer: Arc<dyn IssuerClient>,
+        sts_url: &str,
+        iam_url: &str,
+    ) -> Self {
+        *self.issuer.lock().expect("gcp issuer") = Some(issuer);
+        self.sts_url = sts_url.into();
+        self.iam_url = iam_url.into();
+        self
+    }
+
+    fn issuer(&self) -> Result<Arc<dyn IssuerClient>> {
+        let mut slot = self.issuer.lock().expect("gcp issuer");
+        if let Some(i) = slot.as_ref() {
+            return Ok(i.clone());
+        }
+        let i: Arc<dyn IssuerClient> =
+            Arc::new(crate::federation::HttpIssuer::from_env().ok_or_else(|| {
+                Error::Cloud(
+                    "gcp: this Google Cloud link signs in through Cua, and this device has no \
+                     Cua sign-in yet (run `cua auth login`)"
+                        .into(),
+                )
+            })?);
+        *slot = Some(i.clone());
+        Ok(i)
+    }
+
+    /// The token exchange of an OIDC connection for `purpose` (`None`: a
+    /// CLI sign-in connection).
+    fn exchange(
+        &self,
+        conn: &Connection,
+        purpose: Purpose,
+    ) -> Result<Option<Arc<crate::federation::gcp::Exchange>>> {
+        let (conn_id, provider, sa) = match &conn.auth {
+            Auth::Cli => return Ok(None),
+            Auth::Oidc {
+                conn_id,
+                gcp_provider,
+                service_account,
+                ..
+            } => (conn_id, gcp_provider, service_account),
+            Auth::Sealed { .. } => {
+                return Err(Error::InvalidArgument(
+                    "gcp: a sealed token is not a way to link Google Cloud (use OIDC or gcloud)"
+                        .into(),
+                ));
+            }
+        };
+        if provider.is_empty() {
+            return Err(Error::InvalidArgument(
+                "gcp: this OIDC link names no workload identity provider; run \
+                 `cua cloud connect gcp --oidc --project-number <number> --check` again"
+                    .into(),
+            ));
+        }
+        let agent = crate::federation::caller_agent();
+        let key = format!(
+            "{conn_id}|{provider}|{sa}|{}|{}",
+            purpose.as_str(),
+            agent.as_deref().unwrap_or_default()
+        );
+        let mut map = self.exchanges.lock().expect("gcp exchanges");
+        if let Some(x) = map.get(&key) {
+            return Ok(Some(x.clone()));
+        }
+        let x = Arc::new(crate::federation::gcp::Exchange::new(
+            self.issuer()?,
+            &self.sts_url,
+            &self.iam_url,
+            conn_id,
+            provider,
+            sa,
+            purpose,
+            agent,
+        ));
+        map.insert(key, x.clone());
+        Ok(Some(x))
+    }
+
+    /// Forgets the token of `conn` (Google said it expired).
+    async fn forget(&self, conn: &Connection, purpose: Purpose) {
+        match self.exchange(conn, purpose) {
+            Ok(Some(x)) => x.forget().await,
+            _ => {
+                self.cache.lock().await.remove(&conn.profile);
+            }
+        }
+    }
+
+    async fn token(&self, conn: &Connection, purpose: Purpose) -> Result<String> {
+        if let Some(x) = self.exchange(conn, purpose)? {
+            return x
+                .access_token()
+                .await
+                .map_err(|e| cloud_err("gcp", "credentials", e));
+        }
         let key = conn.profile.clone();
         let mut cache = self.cache.lock().await;
         // gcloud hands out its own cached token, which may be close to
@@ -189,14 +313,17 @@ impl Gcp {
     async fn call(
         &self,
         conn: &Connection,
+        purpose: Purpose,
         method: reqwest::Method,
         url: &str,
         body: Option<&Value>,
         what: &str,
     ) -> Result<Option<Value>> {
         let mut retried = false;
+        let mut throttled = 0;
+        let idempotent = matches!(method, reqwest::Method::GET | reqwest::Method::DELETE);
         let resp = loop {
-            let token = self.token(conn).await?;
+            let token = self.token(conn, purpose).await?;
             let mut req = self.http.request(method.clone(), url).bearer_auth(token);
             match body {
                 Some(b) => req = req.json(b),
@@ -211,10 +338,19 @@ impl Gcp {
                 .await
                 .map_err(|e| cloud_err("gcp", what, e.without_url()))?;
             if resp.status() == reqwest::StatusCode::UNAUTHORIZED && !retried {
-                // An expired token: drop it and ask gcloud again, once.
+                // An expired token: drop it and ask again, once.
                 retried = true;
-                self.cache.lock().await.remove(&conn.profile);
+                self.forget(conn, purpose).await;
                 continue;
+            }
+            // Rate limited or briefly unavailable: wait and ask again, a
+            // few times.
+            if crate::api::retryable_status(resp.status().as_u16(), idempotent) {
+                throttled += 1;
+                if let Some(wait) = crate::api::retry_backoff(throttled) {
+                    tokio::time::sleep(wait).await;
+                    continue;
+                }
             }
             break resp;
         };
@@ -233,8 +369,15 @@ impl Gcp {
         Ok(Some(v))
     }
 
-    async fn get(&self, conn: &Connection, url: &str, what: &str) -> Result<Option<Value>> {
-        self.call(conn, reqwest::Method::GET, url, None, what).await
+    async fn get(
+        &self,
+        conn: &Connection,
+        purpose: Purpose,
+        url: &str,
+        what: &str,
+    ) -> Result<Option<Value>> {
+        self.call(conn, purpose, reqwest::Method::GET, url, None, what)
+            .await
     }
 
     fn project_url(&self, conn: &Connection) -> String {
@@ -255,7 +398,13 @@ impl Gcp {
 
     /// Waits for a long-running operation (zonal or global) to finish, and
     /// fails with its error.
-    async fn wait(&self, conn: &Connection, op: &Value, what: &str) -> Result<()> {
+    async fn wait(
+        &self,
+        conn: &Connection,
+        purpose: Purpose,
+        op: &Value,
+        what: &str,
+    ) -> Result<()> {
         let deadline = Instant::now() + Duration::from_secs(10 * 60);
         let mut op = op.clone();
         loop {
@@ -282,7 +431,7 @@ impl Gcp {
             // The real API's links are absolute; a fake's may be too.
             let url = format!("{}/wait", self.rebase(link));
             op = self
-                .call(conn, reqwest::Method::POST, &url, None, what)
+                .call(conn, purpose, reqwest::Method::POST, &url, None, what)
                 .await?
                 .ok_or_else(|| cloud_err("gcp", what, "the operation is gone"))?;
         }
@@ -312,7 +461,10 @@ impl Gcp {
         let name = Self::network_name(owner);
         let url = self.network_url(conn, &name);
         let tags = network_tags(owner);
-        match self.get(conn, &url, "get the Cua network").await? {
+        // One caller at a time: concurrent first launches make it once.
+        let _one = self.network_lock.lock().await;
+        let p = Purpose::Create;
+        match self.get(conn, p, &url, "get the Cua network").await? {
             Some(n) => {
                 let seen = description_tags(n["description"].as_str().unwrap_or(""));
                 if !model::is_ours(&seen, owner) {
@@ -335,17 +487,40 @@ impl Gcp {
                     // need no MTU of their own.
                     "mtu": 1500,
                 });
-                let op = self
+                let made = self
                     .call(
                         conn,
+                        p,
                         reqwest::Method::POST,
                         &format!("{}/global/networks", self.project_url(conn)),
                         Some(&body),
                         "create the Cua network",
                     )
-                    .await?
-                    .unwrap_or(Value::Null);
-                self.wait(conn, &op, "create the Cua network").await?;
+                    .await;
+                match made {
+                    Ok(op) => {
+                        self.wait(
+                            conn,
+                            p,
+                            &op.unwrap_or(Value::Null),
+                            "create the Cua network",
+                        )
+                        .await?
+                    }
+                    // Made by another process between the look and the
+                    // create: the same network, when it is Cua's.
+                    Err(e) if e.to_string().contains("already exists") => {
+                        let n = self.get(conn, p, &url, "get the Cua network").await?;
+                        let seen = n
+                            .as_ref()
+                            .map(|n| description_tags(n["description"].as_str().unwrap_or("")))
+                            .unwrap_or_default();
+                        if !model::is_ours(&seen, owner) {
+                            return Err(e);
+                        }
+                    }
+                    Err(e) => return Err(e),
+                }
             }
         }
         Ok(Resource {
@@ -396,6 +571,7 @@ impl Gcp {
         let v = self
             .call(
                 conn,
+                Purpose::Manage,
                 reqwest::Method::POST,
                 &url,
                 None,
@@ -403,8 +579,13 @@ impl Gcp {
             )
             .await?
             .unwrap_or(Value::Null);
-        self.wait(conn, &v, &format!("{op} instance {}", r.id))
-            .await
+        self.wait(
+            conn,
+            Purpose::Manage,
+            &v,
+            &format!("{op} instance {}", r.id),
+        )
+        .await
     }
 }
 
@@ -603,18 +784,30 @@ impl CloudApi for Gcp {
 
     async fn test(&self, conn: &Connection) -> Tested {
         let mut t = Tested::default();
-        let who = if conn.profile.is_empty() {
-            "the active gcloud account".to_string()
-        } else {
-            format!("gcloud account {}", conn.profile)
+        let ck = Purpose::Check;
+        let who = match &conn.auth {
+            Auth::Oidc {
+                gcp_provider,
+                service_account,
+                ..
+            } if service_account.is_empty() => {
+                format!("Cua's token, through {gcp_provider}")
+            }
+            Auth::Oidc {
+                service_account, ..
+            } => {
+                format!("Cua's token, as {service_account}")
+            }
+            _ if conn.profile.is_empty() => "the active gcloud account".to_string(),
+            _ => format!("gcloud account {}", conn.profile),
         };
-        if let Err(e) = self.token(conn).await {
+        if let Err(e) = self.token(conn, ck).await {
             t.check("credentials", false, e.to_string());
             return t;
         }
         t.check("credentials", true, who);
         match self
-            .get(conn, &self.project_url(conn), "read the project")
+            .get(conn, ck, &self.project_url(conn), "read the project")
             .await
         {
             Ok(Some(_)) => {
@@ -652,6 +845,7 @@ impl CloudApi for Gcp {
         match self
             .call(
                 conn,
+                ck,
                 reqwest::Method::POST,
                 &url,
                 Some(&body),
@@ -690,7 +884,10 @@ impl CloudApi for Gcp {
             "{}/projects/ubuntu-os-cloud/global/images/family/ubuntu-2404-lts-amd64",
             self.compute
         );
-        match self.get(conn, &family, "find the Ubuntu 24.04 image").await {
+        match self
+            .get(conn, ck, &family, "find the Ubuntu 24.04 image")
+            .await
+        {
             Ok(Some(i)) => t.check(
                 "image",
                 true,
@@ -706,7 +903,7 @@ impl CloudApi for Gcp {
         let mut types = Vec::new();
         for (_, mt, _) in OFFERS {
             let url = format!("{}/machineTypes/{mt}", self.zone_url(conn));
-            match self.get(conn, &url, "look up the machine type").await {
+            match self.get(conn, ck, &url, "look up the machine type").await {
                 Ok(Some(_)) => types.push(*mt),
                 Ok(None) => {
                     t.check(
@@ -728,7 +925,10 @@ impl CloudApi for Gcp {
             format!("{} in {}", types.join(", "), conn.zone),
         );
         let region = format!("{}/regions/{}", self.project_url(conn), conn.region);
-        match self.get(conn, &region, "read the region's quotas").await {
+        match self
+            .get(conn, ck, &region, "read the region's quotas")
+            .await
+        {
             Ok(Some(r)) => {
                 let quota = |m: &str| {
                     r["quotas"].as_array().and_then(|q| {
@@ -813,6 +1013,7 @@ impl CloudApi for Gcp {
         let op = self
             .call(
                 conn,
+                Purpose::Create,
                 reqwest::Method::POST,
                 &format!("{}/instances", self.zone_url(conn)),
                 Some(&body),
@@ -820,7 +1021,10 @@ impl CloudApi for Gcp {
             )
             .await?
             .unwrap_or(Value::Null);
-        if let Err(e) = self.wait(conn, &op, "create the instance").await {
+        if let Err(e) = self
+            .wait(conn, Purpose::Create, &op, "create the instance")
+            .await
+        {
             // A half-made instance is deleted (it carries our labels).
             let probe = Resource {
                 id: spec.name.clone(),
@@ -833,6 +1037,7 @@ impl CloudApi for Gcp {
                 let _ = self
                     .call(
                         conn,
+                        Purpose::Manage,
                         reqwest::Method::DELETE,
                         &self.instance_url(conn, &spec.name),
                         None,
@@ -874,7 +1079,12 @@ impl CloudApi for Gcp {
         }
         match r.resource_type.as_str() {
             "network" => Ok(self
-                .get(conn, &self.network_url(conn, &r.id), "read the network")
+                .get(
+                    conn,
+                    Purpose::Manage,
+                    &self.network_url(conn, &r.id),
+                    "read the network",
+                )
                 .await?
                 .map(|n| {
                     (
@@ -883,10 +1093,28 @@ impl CloudApi for Gcp {
                     )
                 })),
             _ => Ok(self
-                .get(conn, &self.instance_url(conn, &r.id), "read the instance")
+                .get(
+                    conn,
+                    Purpose::Manage,
+                    &self.instance_url(conn, &r.id),
+                    "read the instance",
+                )
                 .await?
                 .map(|i| (state_of(i["status"].as_str().unwrap_or("")), labels_of(&i)))),
         }
+    }
+
+    async fn boot_log(&self, conn: &Connection, r: &Resource) -> Result<Option<String>> {
+        if r.id.is_empty() || r.resource_type == "network" {
+            return Ok(None);
+        }
+        // Port 1 is the console; Compute returns up to 1 MiB of it.
+        let url = format!("{}/serialPort?port=1", self.instance_url(conn, &r.id));
+        Ok(self
+            .get(conn, Purpose::Manage, &url, "read the serial port output")
+            .await?
+            .and_then(|v| v["contents"].as_str().map(str::to_string))
+            .filter(|c| !c.trim().is_empty()))
     }
 
     async fn stop(&self, conn: &Connection, r: &Resource, owner: &str) -> Result<()> {
@@ -907,10 +1135,17 @@ impl CloudApi for Gcp {
         };
         let what = format!("delete {} {}", r.resource_type, r.id);
         match self
-            .call(conn, reqwest::Method::DELETE, &url, None, &what)
+            .call(
+                conn,
+                Purpose::Manage,
+                reqwest::Method::DELETE,
+                &url,
+                None,
+                &what,
+            )
             .await?
         {
-            Some(op) => self.wait(conn, &op, &what).await,
+            Some(op) => self.wait(conn, Purpose::Manage, &op, &what).await,
             None => Ok(()),
         }
     }
@@ -934,7 +1169,7 @@ impl CloudApi for Gcp {
                 url.query_pairs_mut().append_pair("pageToken", p);
             }
             let v = self
-                .get(conn, url.as_str(), "list instances")
+                .get(conn, Purpose::Manage, url.as_str(), "list instances")
                 .await?
                 .unwrap_or(Value::Null);
             for i in v["items"].as_array().into_iter().flatten() {
@@ -971,7 +1206,12 @@ impl CloudApi for Gcp {
         }
         let name = Self::network_name(owner);
         if let Some(n) = self
-            .get(conn, &self.network_url(conn, &name), "read the network")
+            .get(
+                conn,
+                Purpose::Manage,
+                &self.network_url(conn, &name),
+                "read the network",
+            )
             .await?
         {
             let tags = description_tags(n["description"].as_str().unwrap_or(""));
@@ -989,6 +1229,63 @@ impl CloudApi for Gcp {
             }
         }
         Ok(out)
+    }
+
+    fn capabilities(&self, conn: &Connection) -> Capabilities {
+        Capabilities {
+            supplies: Supplies::Hosts,
+            billing: Billing {
+                granularity_secs: 1,
+                minimum_secs: 60,
+                stopped_bills: false,
+            },
+            // Hosts go to the connection's zone.
+            regions: vec![if conn.zone.is_empty() {
+                conn.region.clone()
+            } else {
+                conn.zone.clone()
+            }],
+            max_machines: 20,
+            vcpu_quotas: Default::default(),
+            self_deletes: false,
+        }
+    }
+
+    async fn host_types(&self, conn: &Connection) -> Result<Vec<HostType>> {
+        let regions = self.capabilities(conn).regions;
+        // On-demand us-central1 prices (cloud.google.com/compute/vm-instance-pricing,
+        // 2026-10-21) plus a 60 GiB balanced disk ($0.10/GiB-month).
+        let disk = 60.0 * 0.10 / 730.0;
+        let table: &[(&str, &str, u32, u64, f64)] = &[
+            ("e2-standard-2", "amd64", 2, 8, 0.067),
+            ("e2-standard-4", "amd64", 4, 16, 0.134),
+            ("e2-standard-8", "amd64", 8, 32, 0.268),
+            ("t2a-standard-2", "arm64", 2, 8, 0.077),
+            ("t2a-standard-4", "arm64", 4, 16, 0.154),
+            ("t2a-standard-8", "arm64", 8, 32, 0.308),
+        ];
+        let mut v: Vec<HostType> = table
+            .iter()
+            .map(|(name, arch, cpus, gb, usd)| HostType {
+                name: (*name).into(),
+                arch: (*arch).into(),
+                vcpus: *cpus,
+                memory_mb: gb * 1024,
+                disk_gb: 60,
+                kvm: false,
+                gpu: String::new(),
+                usd_per_hour: ((usd + disk) * 10_000.0).round() / 10_000.0,
+                regions: regions.clone(),
+                boot_secs: 90,
+                quota_pool: "cpus".into(),
+            })
+            .collect();
+        v.sort_by(|a, b| {
+            a.usd_per_hour
+                .total_cmp(&b.usd_per_hour)
+                .then(a.name.cmp(&b.name))
+        });
+        Ok(v)
     }
 }
 

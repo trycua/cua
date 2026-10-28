@@ -1,9 +1,10 @@
 // Shared helpers for the cua SDK e2e suite (TypeScript / Node). Mirrors
 // ../python/e2e.py: cua-e2e-<run>-* names, env-gated lanes, bounded polls,
 // results appended to $CUA_E2E_RESULTS/ts.jsonl.
+import assert from "node:assert/strict"
 import { execFileSync, spawn, spawnSync } from "node:child_process"
 import { randomBytes } from "node:crypto"
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs"
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { createConnection } from "node:net"
 import { arch, homedir } from "node:os"
 import { dirname, join, resolve } from "node:path"
@@ -19,12 +20,6 @@ export const cua = await import(sdkEntry)
 export const RUN = process.env.CUA_E2E_RUN || randomBytes(3).toString("hex")
 process.env.CUA_E2E_RUN = RUN
 export const HOST_ARCH = arch() === "arm64" ? "arm64" : "amd64"
-
-export const LEGACY_FLEET_IMAGE =
-  process.env.CUA_E2E_FLEET_IMAGE ??
-  "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04@sha256:82702ebdd32d1f8fc05f2ea409a7c67d0ba9f8f8e4e9f1a89ce40989d5f4475d"
-export const LEGACY_FLEET_ROOTFS =
-  process.env.CUA_E2E_FLEET_ROOTFS ?? "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:docker-main-809e3f81"
 
 export const desktopImage = () =>
   process.env.CUA_E2E_DESKTOP_IMAGE ?? `cua-e2e-local/linux:docker-local-${HOST_ARCH}`
@@ -50,6 +45,25 @@ export function binary(env, exe) {
 const flag = (v) => process.env[v] === "1"
 const hasDocker = () => spawnSync("docker", ["version", "--format", "{{.Server.Version}}"]).status === 0
 
+// Cua Cloud has ended: every cloud create fails with this message
+// (`CLOUD_ENDED` in cua-sandbox-core).
+export const isCloudEnded = (err) =>
+  cua.CuaError.Unsupported.instanceOf(err) && /Cua Cloud has ended/.test(err.message)
+
+/**
+ * A cloud create (`on: "cloud"`, plus `extra`'s options) fails with the one
+ * `Unsupported` message; nothing is created.
+ */
+export async function assertCloudEnded(c, extra = {}) {
+  await assert.rejects(
+    c.sandboxes().create(
+      cua.SandboxCreateOptions.create({ on: "cloud", image: "registry.test/cua-e2e:fake", ...extra }),
+    ),
+    isCloudEnded,
+  )
+  assert.deepEqual((await c.sandboxes().listWithWarnings("cloud")).sandboxes, [])
+}
+
 /** `undefined` when `lane` can run here, else the skip reason. */
 export function laneEnabled(lane) {
   switch (lane) {
@@ -62,30 +76,12 @@ export function laneEnabled(lane) {
       return flag("CUA_E2E_QEMU") ? undefined : "set CUA_E2E_QEMU=1 for the QEMU lane"
     case "lume":
       return flag("CUA_E2E_LUME") ? undefined : "set CUA_E2E_LUME=1 for the Lume lane"
-    case "fleet":
-      if (!flag("CUA_E2E_FLEET")) return "set CUA_E2E_FLEET=1 for live Fleet"
-      return process.env.FLEETS_TOKEN || process.env.CUA_CLIENT_ID ? undefined : "no Fleet credentials"
-    case "fleet-env":
-      return (
-        laneEnabled("fleet") ??
-        (process.env.CUA_E2E_FLEET_ENV_IMAGE
-          ? undefined
-          : "CUA_E2E_FLEET_ENV_IMAGE is unset: no linux (spacesd) image in a registry Fleet can pull")
-      )
     case "cua-sandbox":
       return flag("CUA_E2E_CUA_SANDBOX") ? undefined : "set CUA_E2E_CUA_SANDBOX=1"
     default:
       throw new Error(`unknown lane ${lane}`)
   }
 }
-
-// Fleet pools have no env/secret field yet: a gVisor pod of the spacesd
-// image gets its token through an entrypoint override (the image reads
-// /etc/cua/env-token). KubeVirt containerDisk guests have no such hook.
-export const KUBEVIRT_ENV_SKIP =
-  "KubeVirt spacesd lane needs a per-claim secret field (cloud PR): no way to deliver the env token to a containerDisk guest yet"
-export const envTokenCommand = (token) => ["/bin/sh", "-c",
-  `mkdir -p /etc/cua && printf %s ${token} >/etc/cua/env-token && exec /opt/cua/desktop/entrypoint.sh`]
 
 export class Skip extends Error {}
 export const skip = (reason) => {
@@ -278,6 +274,69 @@ export async function withDaemon(fn) {
   }
 }
 
+// ---------------------------------------------------------------- cua share
+
+export const SHARE_MACHINE = "0123456789abcdef0123456789abcdef"
+
+/**
+ * A real `cua daemon` that is a signed-in relay host, with the relay and the
+ * host's cua-spacesd stood in by fixtures/share_relay.py (the daemon's own
+ * side is not mocked). The relay's owner token is `owner`, another account's
+ * `other`; no token is anonymous.
+ */
+export async function withShareDaemon(fn) {
+  const cli = binary("CUA_CLI", "cua")
+  if (!cli) skip("the cua CLI is not built")
+  const home = mkdtempSync(`/tmp/cua-share-${RUN}-`)
+  mkdirSync(join(home, "host"))
+  writeFileSync(
+    join(home, "credentials.json"),
+    JSON.stringify({ access_token: "owner", refresh_token: null, expires_at: "2099-01-01T00:00:00Z", token_type: "Bearer" }),
+  )
+  const relay = spawn(
+    "python3",
+    [join(SUITE, "fixtures", "share_relay.py"), "--gateway", join(home, "share", "gateway.sock"), "--machine-id", SHARE_MACHINE],
+    { stdio: ["ignore", "pipe", "inherit"] },
+  )
+  let daemon
+  try {
+    const first = await new Promise((res, rej) => {
+      let acc = ""
+      relay.stdout.on("data", (d) => {
+        acc += d
+        if (acc.includes("\n")) res(acc.split("\n")[0])
+      })
+      relay.once("exit", () => rej(new Error("share_relay.py exited early")))
+    })
+    const relayUrl = JSON.parse(first).url
+    writeFileSync(
+      join(home, "host", "config.json"),
+      JSON.stringify({ mode: "relay", relay_url: relayUrl, name: "share-e2e", machine_id: SHARE_MACHINE, runner: "process", driver_bin: "/bin/true", share_desktop: false }),
+    )
+    writeFileSync(join(home, "host", "host.json"), JSON.stringify({ owner: "acct-owner", owner_email: "owner@example.com" }))
+    const sock = join(home, "cua.sock")
+    daemon = spawn(cli, ["daemon", "start", "--foreground", "--socket", sock], {
+      env: { ...process.env, CUA_HOME: home, CUA_CREDENTIAL_STORE: "file", CUA_RELAY_URL: relayUrl, CUA_TELEMETRY: "0" },
+      stdio: ["ignore", "ignore", "inherit"],
+    })
+    await poll("share gateway", async () => existsSync(join(home, "share", "gateway.sock")) && existsSync(sock), { attempts: 150, delayMs: 100 })
+    const get = async (url, bearer) => {
+      const r = await fetch(url, { headers: bearer ? { authorization: `Bearer ${bearer}` } : {}, redirect: "manual" })
+      return [r.status, await r.text()]
+    }
+    return await fn({ socket: sock, relayUrl, client: () => cua.connect(sock), get })
+  } finally {
+    if (daemon) {
+      try {
+        await cua.connect(join(home, "cua.sock")).shutdownDaemon()
+      } catch {}
+      await Promise.race([new Promise((r) => daemon.once("exit", r)), sleep(15_000).then(() => daemon.kill())])
+    }
+    relay.kill()
+    rmSync(home, { recursive: true, force: true })
+  }
+}
+
 // ---------------------------------------------------------------- env smoke
 
 export async function envSmoke(env, { desktop, mock = false }) {
@@ -291,6 +350,12 @@ export async function envSmoke(env, { desktop, mock = false }) {
   await p.writeStdin(u8("xyz").buffer)
   await p.closeStdin()
   if (str((await p.wait()).stdout) !== "xyz") throw new Error("stdin roundtrip")
+  // kill_on_disconnect: letting go of the starting stream ends the process.
+  const kodTag = `kod-ts-${RUN}`
+  const kod = await env.spawn(cmd("cat", [], { stdin: true, tag: kodTag, killOnDisconnect: true }))
+  await kod.detach()
+  const ended = await (await env.attach(undefined, kodTag, cua.ReplayMode.None.new())).wait()
+  if (ended.exit.success) throw new Error("kill_on_disconnect left the process running")
   const blob = new Uint8Array(1 << 20).map((_, i) => i % 251)
   const path = `/tmp/cua-e2e-${RUN}/blob-ts.bin`
   const up = await env.upload(path, blob.buffer, undefined)
@@ -395,43 +460,6 @@ export async function mcpInitialize(addr, token) {
   return msg.result
 }
 
-export function parseCmdSse(body) {
-  const line = str(body).split("\n").find((l) => l.startsWith("data: "))
-  if (!line) throw new Error(`no data frame: ${str(body).slice(0, 200)}`)
-  return JSON.parse(line.slice(6))
-}
-
-export async function legacyCmd(sb, service, command, params = {}) {
-  const r = await sb.service(service).request("POST", "/cmd", u8(JSON.stringify({ command, params })).buffer, 120_000)
-  if (r.status < 200 || r.status >= 300) throw new Error(`/cmd ${r.status}`)
-  const p = parseCmdSse(r.body)
-  if (p.success === false) throw new Error(JSON.stringify(p).slice(0, 300))
-  return p
-}
-
-/**
- * `fleet.apply(name, SandboxSpec, PoolOptions)` from the flat pool fields the
- * guides list (name, image, runtime, replicas, cpu, memoryMb, services, efi,
- * command, ttlSecondsAfterCreated). Services default
- * to `{ env: 3211 }` and replicas to 1, as the deprecated `applyPool` did.
- */
-export function applyPool(fleet, o) {
-  let services = o.services instanceof Map ? o.services : new Map(Object.entries(o.services ?? {}))
-  if (services.size === 0) services = new Map([["env", 3211]])
-  const spec = cua.sandboxSpec(o.image, {
-    services,
-    efi: !!o.efi,
-    ...(o.cpu ? { cpu: o.cpu } : {}),
-    ...(o.memoryMb ? { memoryMb: o.memoryMb } : {}),
-    ...(o.command?.length ? { command: o.command } : {}),
-  })
-  return fleet.apply(o.name, spec, cua.poolOptions({
-    replicas: o.replicas ?? 1,
-    ...(o.runtime ? { runtime: o.runtime } : {}),
-    ...(o.ttlSecondsAfterCreated ? { poolTtlSeconds: o.ttlSecondsAfterCreated } : {}),
-  }))
-}
-
-export const embeddedLocal = (dir) => cua.embedded({ stateDir: dir, fleetFromEnv: false })
+export const embeddedLocal = (dir) => cua.embedded({ stateDir: dir })
 export const tmpState = () => mkdtempSync(join(process.env.TMPDIR ?? "/tmp", `cua-e2e-${RUN}-state-`))
 export { execFileSync }

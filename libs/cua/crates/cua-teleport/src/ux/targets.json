@@ -30,6 +30,14 @@
       "launch": { "bin": "google-chrome" },
       "opens_files": true
     },
+    "edge": {
+      "name": "Microsoft Edge",
+      "match": ["edge", "msedge", "microsoft-edge", "microsoft-edge-stable", "com.microsoft.edgemac", "Microsoft Edge"],
+      "provider": "chrome",
+      "image": true,
+      "launch": { "bin": "google-chrome" },
+      "opens_files": true
+    },
     "claude-code": {
       "name": "Claude Code",
       "match": ["claude-code", "claude", "Claude Code"],

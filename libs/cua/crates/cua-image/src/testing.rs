@@ -1,7 +1,7 @@
 //! Test helpers: [`FakeRegistry`], an in-memory [`ManifestSource`] with
 //! builders for the canonical layouts (multi-arch rootfs and containerDisk
 //! indexes, Lume and other darwin artifacts). Used by this crate's resolver
-//! tests and by the daemon, cua-fleet and SDK tests, so none of them needs a
+//! tests and by the daemon and SDK tests, so none of them needs a
 //! network.
 
 use std::collections::BTreeMap;

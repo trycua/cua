@@ -1,0 +1,432 @@
+// SPDX-License-Identifier: FSL-1.1-MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
+@testable import CuaSpacesMacKit
+import CuaSDK
+import CuaSpacesFFI
+import CuaSpacesStreaming
+import Foundation
+import Testing
+
+/// The Space list and creates survive a daemon connection that stops
+/// answering (after a relaunch next to a running daemon, the
+/// list went stale, a create sat at Creating for 4 min and never reached the
+/// daemon). The fakes hang the way an SDK call does: forever, and deaf to
+/// task cancellation. No real daemon, keychain or SDK is touched.
+@MainActor
+@Suite struct StalePollTests {
+    /// A daemon connection: answers until `wedge()`, then every list and
+    /// create hangs for good.
+    final class Connection: SpacesBackend, @unchecked Sendable {
+        let inner: FixtureSpacesBackend
+        private let lock = NSLock()
+        private var isWedged = false
+        private(set) var listCalls = 0
+        private(set) var createCalls = 0
+        /// Holds every hung call (never resumed).
+        private var hung: [CheckedContinuation<Void, Never>] = []
+
+        init(rows: [AppSpaceRow]) { inner = FixtureSpacesBackend(rows: rows) }
+
+        func wedge() { lock.withLock { isWedged = true } }
+        var wedged: Bool { lock.withLock { isWedged } }
+        /// Every list read answers with this error (the daemon's own).
+        private var refusal: Error?
+        func refuse(_ error: Error?) { lock.withLock { refusal = error } }
+
+        /// Never returns, cancelled or not (a UniFFI future).
+        private func hang() async {
+            await withCheckedContinuation { c in lock.withLock { hung.append(c) } }
+        }
+
+        /// The next list read reads the rows, then answers only on
+        /// `answerHeldRead()` (a read that is slow to come back).
+        private var holdNext = false
+        private var heldRead: CheckedContinuation<Void, Never>?
+        private var answerHeld = false
+        func holdNextRead() { lock.withLock { holdNext = true } }
+        func answerHeldRead() {
+            let c = lock.withLock { () -> CheckedContinuation<Void, Never>? in
+                answerHeld = true
+                defer { heldRead = nil }
+                return heldRead
+            }
+            c?.resume()
+        }
+
+        func rows() async throws -> [AppSpaceRow] {
+            let hold = lock.withLock { () -> Bool in
+                listCalls += 1
+                defer { holdNext = false }
+                return holdNext
+            }
+            if wedged { await hang() }
+            if let refusal = lock.withLock({ refusal }) { throw refusal }
+            let rows = try await inner.rows()
+            if hold {
+                await withCheckedContinuation { c in
+                    let now = lock.withLock { () -> Bool in
+                        if answerHeld { return true }
+                        heldRead = c
+                        return false
+                    }
+                    if now { c.resume() }
+                }
+            }
+            return rows
+        }
+
+        func create(_ args: AppCreateSpaceArgs, createId: String,
+                    progress: @escaping @Sendable (SpaceCreateProgress) -> Void) async throws -> String {
+            lock.withLock { createCalls += 1 }
+            if wedged { await hang() }
+            // The daemon says "preparing" as it takes the create.
+            progress(SpaceCreateProgress(phase: "preparing", fraction: nil, detail: ""))
+            return try await inner.create(args, createId: createId, progress: progress)
+        }
+
+        func cancelCreate(createId: String) async throws {
+            if wedged { await hang() }
+            try await inner.cancelCreate(createId: createId)
+        }
+        func add(url: String, token: String?, name: String?) async throws { try await inner.add(url: url, token: token, name: name) }
+        func remove(id: String, removeOnly: Bool) async throws { try await inner.remove(id: id, removeOnly: removeOnly) }
+        func setPower(id: String, on: Bool) async throws { try await inner.setPower(id: id, on: on) }
+        func streamProvider(id: String) async throws -> SpaceStreamSourceProviding { try await inner.streamProvider(id: id) }
+        func localBackends() async -> [String]? { ["docker"] }
+        func localStorage() async -> LocalStorage? { nil }
+        func teleportContext(id: String) async throws -> (CuaSpacesFFI.Teleport, CuaSDK.Space)? { nil }
+        func teleportHandle() -> CuaSpacesFFI.Teleport? { nil }
+        func sendFiles(id: String, paths: [String]) async throws -> [AppSentFileInfo] { [] }
+        func agentRuns(id: String) async throws -> [AppSpaceAgentRun] { [] }
+    }
+
+    static func row(_ id: String) -> AppSpaceRow {
+        AppSpaceRow(id: id, name: String(id.split(separator: ":").last ?? ""), displayName: nil, provider: "local",
+                    spacesdVersion: "0.5.3", features: ["desktop_stream"], addedAt: nil, os: .linux,
+                    osName: nil, osPrettyName: nil, image: "ghcr.io/trycua/linux:24.04", imageDigest: nil,
+                    kind: .container, arch: nil, reachable: true, error: nil, host: nil, hostName: nil,
+                    power: nil, powerState: "running", cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil)
+    }
+
+    func eventually(_ seconds: Double = 120, _ condition: @MainActor () -> Bool) async -> Bool {
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            if condition() { return true }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return condition()
+    }
+
+    /// The app as `AppEnvironment` wires it: the stand-in backend over the
+    /// gate, and a reconnect that hands it the next connection.
+    func makeModel(gate: LiveGate<LiveServices>, startup: StartupModel? = nil,
+                   next: @escaping @MainActor () -> Connection?) -> AppModel {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cua-stale-\(UUID().uuidString)")
+        let pending = PendingSpacesBackend(gate: gate)
+        let model = AppModel(backend: pending, keyvault: KeyvaultModel(client: nil),
+                             onboarding: OnboardingModel(statePath: dir.appendingPathComponent("onboarding.json").path),
+                             settingsPath: dir.appendingPathComponent("settings.json").path,
+                             telemetry: FixtureTelemetry(), startup: startup ?? StartupModel())
+        // Short, with room for a loaded test run.
+        model.listTimeout = 1
+        model.hostTimeout = 1
+        model.listStaleAfter = 3
+        // Creates keep the app's acceptance timeout: on a loaded run a
+        // create the daemon takes may report later than any short one.
+        model.reconnect = {
+            guard let connection = next() else { return false }
+            pending.replace(connection, live: nil)
+            return true
+        }
+        return model
+    }
+
+    func args(_ name: String) -> AppCreateSpaceArgs {
+        AppCreateSpaceArgs(image: "ghcr.io/trycua/linux:24.04", on: "local", kind: .container, runtime: .auto,
+                           name: name, cpus: nil, memoryMb: nil, diskGb: nil, spacesd: true, gpu: nil)
+    }
+
+    // MARK: - The bound
+
+    @Test func aTimeoutReturnsWhenTheCallNeverDoes() async throws {
+        let started = Date()
+        let result = await withTimeout(seconds: 0.2) { () async throws -> Int in
+            // Deaf to cancellation, as a UniFFI future is.
+            await withCheckedContinuation { (_: CheckedContinuation<Void, Never>) in }
+            return 1
+        }
+        guard case .failure(TimeoutError.timedOut) = result else {
+            Issue.record("expected a timeout, got \(result)")
+            return
+        }
+        // Well before "never" (the run may be loaded).
+        #expect(Date().timeIntervalSince(started) < 60)
+        #expect(try await withTimeout(seconds: 5) { 7 }.get() == 7)
+    }
+
+    // MARK: - A stale list reconnects
+
+    @Test func aListPollThatHangsReconnectsAndShowsWhatTheCLIMade() async throws {
+        let first = Connection(rows: [Self.row("local:e2e-1005-linux")])
+        let gate = LiveGate<LiveServices>()
+        gate.resolve(LiveServices(backend: first))
+        // The second connection sees the Space `cua` made meanwhile.
+        let second = Connection(rows: [Self.row("local:e2e-1005-linux"), Self.row("local:e2e-1005-cli")])
+        var made = 0
+        let model = makeModel(gate: gate) { made += 1; return second }
+        let poll = model.startListPoll(every: .milliseconds(50))
+        defer { poll.cancel() }
+        #expect(await eventually { model.spaces.contains { $0.id == "local:e2e-1005-linux" } })
+
+        first.wedge()
+        #expect(await eventually { model.spaces.contains { $0.id == "local:e2e-1005-cli" } })
+        // At least once (a loaded run may also find the first read late).
+        #expect(model.reconnects >= 1)
+        #expect(made == model.reconnects)
+        // A hung read is asked once, not once a poll.
+        #expect(first.listCalls <= 3)
+        // No banner for a read that only timed out.
+        #expect(model.banner == nil)
+    }
+
+    /// Signed out on Windows and Linux, every read failed with the relay's
+    /// refusal and the app reconnected every 50 s: a daemon that answers
+    /// is not a stale connection. The poll's steps run by hand on a stepped
+    /// clock, so a loaded run cannot make a read late (it failed on a
+    /// 3-core CI runner when the real 3 s staleness passed between polls).
+    @Test func aListTheDaemonRefusesIsNotAStaleConnection() async throws {
+        let first = Connection(rows: [Self.row("local:a")])
+        first.refuse(CuaError.Unauthenticated(message: "Relay authentication failed. Sign in again to refresh your computers."))
+        let gate = LiveGate<LiveServices>()
+        gate.resolve(LiveServices(backend: first))
+        let model = makeModel(gate: gate) { first }
+        // Nothing times out on real time; only the stepped clock moves.
+        model.listTimeout = 600
+        model.hostTimeout = 600
+        model.listStaleAfter = 45
+        var now = Date()
+        model.listClock = { now }
+        model.watchListFromNow()
+        /// One poll, `seconds` after the last.
+        func poll(after seconds: TimeInterval) async {
+            now += seconds
+            await model.refresh()
+            await model.checkListHealth()
+        }
+        await poll(after: 0)
+        #expect(model.rosterError != nil)
+        // Ten minutes of refusals, a poll every 30 s: never stale.
+        for _ in 0..<20 { await poll(after: 30) }
+        #expect(model.reconnects == 0)
+        #expect(first.listCalls == 21)
+
+        // A connection that broke is made again, once it stayed so past
+        // the staleness (and not before).
+        first.refuse(CuaError.DaemonNotRunning(message: "The cua daemon is not running."))
+        await poll(after: 30)
+        #expect(model.reconnects == 0)
+        await poll(after: 30)
+        #expect(model.reconnects == 1)
+        #expect(AppModel.daemonAnswered(CuaError.Transport(message: "reset")) == false)
+    }
+
+    @Test func aReconnectThatFailsIsTriedAgainLater() async {
+        let first = Connection(rows: [Self.row("local:a")])
+        first.wedge()
+        let gate = LiveGate<LiveServices>()
+        gate.resolve(LiveServices(backend: first))
+        let second = Connection(rows: [Self.row("local:a"), Self.row("local:b")])
+        var tries = 0
+        let model = makeModel(gate: gate) {
+            tries += 1
+            return tries < 2 ? nil : second
+        }
+        let poll = model.startListPoll(every: .milliseconds(50))
+        defer { poll.cancel() }
+        #expect(await eventually { model.spaces.contains { $0.id == "local:b" } })
+        #expect(tries >= 2)
+    }
+
+    // MARK: - The startup gate
+
+    @Test func theListIsReadOnceTheGateResolvesAndNeverReconnectsBefore() async {
+        let gate = LiveGate<LiveServices>()
+        let startup = StartupModel(phase: .starting)
+        let live = Connection(rows: [Self.row("local:e2e-1005-cli")])
+        let model = makeModel(gate: gate, startup: startup) { live }
+        let poll = model.startListPoll(every: .milliseconds(50))
+        defer { poll.cancel() }
+        // Waiting for the daemon (the keychain, "Starting Cua…"): reads wait on
+        // the gate, and that is not a stale list.
+        try? await Task.sleep(for: .seconds(4))
+        #expect(model.reconnects == 0)
+        #expect(model.spaces.isEmpty)
+
+        startup.start = { [weak model] in
+            gate.resolve(LiveServices(backend: live))
+            model?.attachLive(nil)
+        }
+        startup.begin()
+        #expect(await eventually { startup.isReady })
+        // The read that waited on the gate goes on to the live backend.
+        #expect(await eventually { model.spaces.contains { $0.id == "local:e2e-1005-cli" } })
+    }
+
+    // MARK: - Creates
+
+    /// What the model said it retried (`runCreate`'s `retrying`).
+    final class Retries: @unchecked Sendable { var errors: [String] = [] }
+
+    @Test func aCreateTheDaemonNeverTakesIsRetriedOnceOverTheNewConnection() async throws {
+        let first = Connection(rows: [])
+        let gate = LiveGate<LiveServices>()
+        gate.resolve(LiveServices(backend: first))
+        let second = Connection(rows: [])
+        let model = makeModel(gate: gate) { second }
+        model.listStaleAfter = 600
+        first.wedge()
+        // Short for the attempt that hangs; the app's own for the retry,
+        // which the daemon takes.
+        let acceptTimeout = model.createAcceptTimeout
+        model.createAcceptTimeout = 2
+
+        let started = Date()
+        let retries = Retries()
+        // The daemon never takes it: the create fails fast, the connection
+        // is made again, and the model runs the create once more by itself
+        // (the row says "Retrying…"), over the new connection.
+        let id = try await model.runCreate(args("e2e-1005-linux"), os: .linux, pendingId: "pending:one",
+                                           retrying: { error, _ in
+                                               retries.errors.append(error)
+                                               model.createAcceptTimeout = acceptTimeout
+                                           })
+        // Well before the 4 min stall this replaced (the retry may wait
+        // the app's whole acceptance timeout on a loaded run).
+        #expect(Date().timeIntervalSince(started) < 240)
+        #expect(retries.errors.count == 1)
+        #expect(retries.errors.first?.contains("didn't start this create") == true)
+        #expect(model.reconnects == 1)
+        #expect(id == "local:e2e-1005-linux")
+        #expect(second.createCalls == 1)
+        // The first attempt's cancel went to its own (hung) connection,
+        // never to the new one, where it would cancel the retry.
+        #expect(second.inner.cancelRequests.isEmpty)
+        // Listed, by the create's own read or (a loaded run) the poll's.
+        let poll = model.startListPoll(every: .milliseconds(50))
+        defer { poll.cancel() }
+        #expect(await eventually { model.spaces.contains { $0.id == id } })
+    }
+
+    /// A list read still in flight when a create finished was read before
+    /// it: the create's own read is a new one (the Space is listed when
+    /// the create returns), and the older answer, coming in later, does
+    /// not take the Space off the list.
+    @Test func theListAfterACreateIsReadAfterIt() async throws {
+        let connection = Connection(rows: [Self.row("local:a")])
+        let gate = LiveGate<LiveServices>()
+        gate.resolve(LiveServices(backend: connection))
+        let model = makeModel(gate: gate) { nil }
+        model.listStaleAfter = 600
+        // The early refresh still waits when its read answers (a minute
+        // only bounds a run where the create's refresh joined that read).
+        model.listTimeout = 60
+        connection.holdNextRead()
+        let early = Task { await model.refresh() }
+        #expect(await eventually { connection.listCalls == 1 })
+
+        let id = try await model.runCreate(args("made"), os: .linux, pendingId: "pending:made")
+        #expect(model.spaces.contains { $0.id == id })
+        connection.answerHeldRead()
+        await early.value
+        #expect(model.spaces.contains { $0.id == id })
+        #expect(model.spaces.contains { $0.id == "local:a" })
+    }
+
+    @Test func aCreateTheDaemonNeverTakesTwiceFailsWithItsFix() async throws {
+        let connection = Connection(rows: [])
+        let gate = LiveGate<LiveServices>()
+        gate.resolve(LiveServices(backend: connection))
+        // The new connection is wedged too.
+        let model = makeModel(gate: gate) { connection }
+        model.listStaleAfter = 600
+        // Both attempts hang: a short wait is enough to see each one fail.
+        model.createAcceptTimeout = 2
+        connection.wedge()
+        do {
+            _ = try await model.runCreate(args("e2e-1005-linux"), os: .linux, pendingId: "pending:one")
+            Issue.record("the create should have failed")
+        } catch is AppModel.CreateNotAccepted {}
+        let row = try #require(model.creates.pending.first { $0.id == "pending:one" })
+        #expect(row.attempt == 1)
+        #expect(row.error?.contains("didn't start this create") == true)
+        // The same failure twice: its fix, not a plain Try again.
+        #expect(row.fix?.value == "cua doctor")
+    }
+
+    @Test func aTakenCreateMayRunLongerThanTheWatchdog() async throws {
+        let connection = Connection(rows: [])
+        connection.inner.holdCreates = true
+        let gate = LiveGate<LiveServices>()
+        gate.resolve(LiveServices(backend: connection))
+        let model = makeModel(gate: gate) { nil }
+        let started = Date()
+        let create = Task { try await model.runCreate(args("slow"), os: .linux, pendingId: "pending:slow") }
+        // Taken (the daemon said "preparing"), then held past the watchdog.
+        #expect(await eventually { connection.createCalls == 1 })
+        let past = model.createAcceptTimeout + 1 - Date().timeIntervalSince(started)
+        if past > 0 { try await Task.sleep(for: .seconds(past)) }
+        connection.inner.releaseCreate()
+        let id = try await create.value
+        #expect(id == "local:slow")
+        #expect(model.reconnects == 0)
+    }
+
+    // MARK: - The daemon this app found running
+
+    @Test func anAdoptedDaemonThatDiesIsStartedAgainAndTheAppReconnects() async throws {
+        let supervisor = try #require(DaemonSupervisor(bundledCua: "/bin/sh"))
+        final class Daemon: @unchecked Sendable {
+            let lock = NSLock()
+            var up = true
+            var starts = 0
+            /// A probe of a dead connection may hang instead of failing.
+            var probeHangs = false
+            var restarted = 0
+        }
+        let daemon = Daemon()
+        let task = supervisor.supervise(
+            interval: .milliseconds(50),
+            isUp: {
+                if daemon.lock.withLock({ daemon.probeHangs }) {
+                    let r = await withTimeout(seconds: 0.2) { () async throws -> Bool in
+                        await withCheckedContinuation { (_: CheckedContinuation<Void, Never>) in }
+                        return true
+                    }
+                    return (try? r.get()) ?? false
+                }
+                return daemon.lock.withLock { daemon.up }
+            },
+            report: { _ in },
+            restarted: { daemon.lock.withLock { daemon.restarted += 1 } },
+            start: {
+                daemon.lock.withLock {
+                    daemon.starts += 1
+                    daemon.up = true
+                    daemon.probeHangs = false
+                }
+                return nil
+            })
+        defer { task.cancel() }
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(daemon.lock.withLock { daemon.starts } == 0)
+
+        // Killed: its old connection's probe never answers.
+        daemon.lock.withLock {
+            daemon.up = false
+            daemon.probeHangs = true
+        }
+        #expect(await eventually { daemon.lock.withLock { daemon.starts } == 1 })
+        #expect(await eventually { daemon.lock.withLock { daemon.restarted } == 1 })
+    }
+}

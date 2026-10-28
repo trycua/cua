@@ -18,6 +18,7 @@ enum CommandRegistry {
             Shutdown.self,
             Restart.self,
             SSH.self,
+            Cp.self,
             Sip.self,
             IPSW.self,
             Serve.self,

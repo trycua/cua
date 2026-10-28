@@ -25,7 +25,7 @@ Use the CLI by default when a shell is available, or the existing MCP connection
 
 Bare MCP owns a runtime on Windows/Linux and uses the signed service identity on macOS. `cua-driver mcp --socket <endpoint>` explicitly selects a service. One-shot CLI calls are service-backed. Starting a process that serves MCP is not the same as connecting a client: use the harness's MCP integration, not independent shell writes to a dead stdin.
 
-For missing software, use the installation instructions in [README.md](README.md) with user approval. `check-update` is read-only; `update --apply` installs software. After an approved update, check both the executable and daemon. Do not interpret a nonzero updater exit as proof that nothing changed.
+For missing software, use the installation instructions in [README.md](README.md) with user approval. `check-update` is read-only; `update --apply` installs software. After an approved update, check both the executable and daemon. Do not interpret a nonzero updater exit as proof that nothing changed. On macOS, [MACOS.md](MACOS.md#install-and-approve-permissions) covers approving Cua Driver's own Accessibility and Screen Recording prompts, including when an owner may authorize you to do it.
 
 `skills update` replaces the installed pack. Back up personal edits before refreshing. `skills install --from main` is for source validation, not proof of compatibility with a release binary. Other platform guides are installed only with `--all-platforms`.
 
@@ -56,6 +56,8 @@ If foreground control is not authorized, stop with the driver's refusal instead 
 Use Cua's tools rather than shell activation/input shims. `bring_to_front` is reserved for requested persistent foreground state or a focus-proxy surface that must remain active across calls. A native menu operation can also activate temporarily; prefer an in-window control when background posture matters.
 
 ## Keep authorization separate from sessions
+
+This section is about Cua Driver's authorization profile. It is separate from the macOS privacy approvals (TCC) that the app itself needs; see [MACOS.md](MACOS.md#install-and-approve-permissions).
 
 The trusted host selects one permission profile at startup. `standard` keeps
 the normal profile behavior and residual approval requirements, `bounded`
@@ -98,7 +100,7 @@ Pixel `click` already animates the cursor. Do not precede it with `move_cursor` 
 
 The default theme provides session-colored pointer/glow, action marks, and activity animations. Named sessions have stable palette colors. Native hosts own delivery/target badges separately from theme artwork; cursor state is scoped to the private lifecycle.
 
-`set_agent_cursor_enabled` controls idle visibility. `set_agent_cursor_motion` supports `start_handle`, `end_handle`, `arc_size`, `arc_flow`, and `spring` where advertised. Choose preinstalled artwork with `set_agent_cursor_theme`; `cursor_id` on input tools is not a theme selector. Never supply inline theme code or arbitrary source paths through agent tools. The trusted local `cursor-theme` workflow owns validation, compilation, preview, installation, and removal.
+`set_agent_cursor_enabled` controls idle visibility. `set_agent_cursor_motion` takes `style` (`signature_arc` default, `spring_settle`, `magnetic`, `comet_swoop`, `adaptive`, `classic`), `timing` (`native`, `fitts`, `fixed`), `effects` (`trail`, `glow`, `magnet`, `ripple`, `squish` as `on`, `off`, or `default`; `default` restores the style default, and an omitted effect keeps its current setting), and the arc knobs `start_handle`, `end_handle`, `arc_size`, `arc_flow` (bezier styles) plus `spring` and `turn_radius` (`classic`) where advertised. Choose preinstalled artwork with `set_agent_cursor_theme`; `cursor_id` on input tools is not a theme selector. Never supply inline theme code or arbitrary source paths through agent tools. The trusted local `cursor-theme` workflow owns validation, compilation, preview, installation, and removal.
 
 Overlay operations need a suitable UI event loop. macOS direct SDK/MCP runtimes without a certified host main-thread adapter can return `facility_unavailable`; do not report that as a successful move. See [EMBEDDING.md](EMBEDDING.md).
 

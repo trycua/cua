@@ -318,7 +318,9 @@ cua_sysdeps() {
     cua_aptopt="-o Dir::State::Lists=$cua_apt_dir/lists -o Dir::Cache=$cua_apt_dir -o Dir::Cache::archives=$cua_apt_dir/archives -o Dir::Cache::pkgcache= -o Dir::Cache::srcpkgcache= -o Debug::NoLocking=1 -o APT::Sandbox::User=$(id -un)"
     cua_lists="$cua_apt_dir/lists"
   else
-    cua_aptopt=""; cua_lists=/var/lib/apt/lists
+    # CUA_APT_LISTS: tests point it at an empty folder (the host's own
+    # lists would decide whether this run updates).
+    cua_aptopt=""; cua_lists="${CUA_APT_LISTS:-/var/lib/apt/lists}"
   fi
   if ! ls "$cua_lists"/*_Packages* >/dev/null 2>&1; then
     cua_progress "$cua_id" deps "apt-get update"
@@ -949,6 +951,7 @@ done < "$FAKE/needs.txt"
                 .env("HOME", self.home.path())
                 .env("FAKE", &self.dir)
                 .env("FAKE_UID", uid.to_string())
+                .env("CUA_APT_LISTS", self.dir.join("apt-lists"))
                 .env(
                     "PATH",
                     format!("{}:/usr/bin:/bin", self.dir.join("bin").display()),

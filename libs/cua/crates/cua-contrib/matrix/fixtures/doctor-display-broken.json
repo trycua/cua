@@ -750,7 +750,7 @@
   }
  ],
  "_recorded": {
-  "source": "republish/doctor/amd64-fleet-gvisor/report.json",
+  "source": "republish/doctor/amd64-gvisor/report.json",
   "note": "recorded from a real run; trimmed to id, group, status, severity and message; redacted: the home path and the public egress IP"
  }
 }

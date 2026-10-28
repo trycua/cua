@@ -581,6 +581,8 @@ async fn run_input_job(
     let started = Instant::now();
     let events = batch.events.len() as u64;
     let nack = |code: ActionErrorCode, message: String| {
+        tracing::warn!(target: "cua_spacesd_client::host_input", ?code,
+            "viewer input dispatch rejected");
         ServerMessage::InteractiveInputAcknowledgement(InteractiveInputAcknowledgement {
             session_id: session_id.clone(),
             through_sequence: through,
@@ -832,6 +834,10 @@ impl Viewer {
     async fn dispatch_input(&mut self, batch: InteractiveInputBatch) -> Option<ServerMessage> {
         let session_id = self.session_id();
         let nack = |through: u64, code: ActionErrorCode, message: String| {
+            // Admission errors contain permission/lease state, never the
+            // contents of a user's keyboard or pointer batch.
+            tracing::warn!(target: "cua_spacesd_client::host_input", ?code,
+                reason = %message, "viewer input admission rejected");
             ServerMessage::InteractiveInputAcknowledgement(InteractiveInputAcknowledgement {
                 session_id: session_id.clone(),
                 through_sequence: through,

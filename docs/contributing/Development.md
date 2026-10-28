@@ -1,0 +1,206 @@
+# Development
+
+This file is the contributor map for the Cua monorepo. Each component owns its
+detailed setup, build, and test instructions. Start here, then follow the guide
+next to the code you plan to change.
+
+## Choose a Component
+
+| Area                         | Main paths                                                                           | Toolchain                           | Start here                                                                                                                   |
+| ---------------------------- | ------------------------------------------------------------------------------------ | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| cua SDK and `cua` CLI        | `libs/cua` (Rust crates, `proto/`, `python/`, `typescript/`, `swift/`, `kotlin/`)    | Rust, protoc, buf; Node, uv, Swift  | [`libs/cua/README.md`](../../libs/cua/README.md)                                                                                   |
+| cua-spacesd               | `libs/cua-spacesd`                                                                | Rust, protoc; Docker for Linux lanes | [`libs/cua-spacesd/README.md`](../../libs/cua-spacesd/README.md)                                                            |
+| Cua Spaces app               | `apps/cua-spaces`                                                                    | Node.js, pnpm, Rust, Tauri 2        | [`apps/cua-spaces/README.md`](../../apps/cua-spaces/README.md)                                                                     |
+| cua-driver                   | `libs/cua-driver/rust`, `libs/cua-driver/python`                                     | Rust, platform SDKs, Nix on Linux   | [`libs/cua-driver/README.md`](../../libs/cua-driver/README.md), [`libs/cua-driver/rust/README.md`](../../libs/cua-driver/rust/README.md) |
+| Python SDKs and services     | `libs/python` (incl. `cua-sandbox`), `libs/cua-bench`                                | Python 3.12, uv                     | Package `pyproject.toml` and README                                                                                          |
+| TypeScript SDKs              | `libs/typescript`                                                                    | Node.js, pnpm                       | [`libs/typescript/README.md`](../../libs/typescript/README.md) and its `package.json` scripts                                      |
+| CuaBot (deprecated)          | `libs/cuabot`                                                                        | Node.js, pnpm                       | [`libs/cuabot/README.md`](../../libs/cuabot/README.md)                                                                             |
+| Lume                         | `libs/lume`                                                                          | Swift, Xcode command-line tools     | [`libs/lume/Development.md`](../../libs/lume/Development.md)                                                                       |
+| Sandbox and container images | `libs/images`, `libs/kasm`, `libs/lumier`, `libs/qemu-docker`, `libs/xfce`, `libs/xfce-cua` | Docker plus the component toolchain | [`libs/images/README.md`](../../libs/images/README.md) or the README in the component                                        |
+| Cross-language E2E           | `tests/e2e/cua-sdk`, `tests/e2e/local-runtimes`                                      | Rust, uv, Node.js, Go, Docker       | [`TESTING.md`](TESTING.md#cua-sdk-and-cli)                                                                                   |
+| Public documentation         | `docs/content/docs`                                                                  | Node.js, pnpm, Fumadocs             | [`docs/README.md`](../README.md)                                                                                           |
+| Examples                     | `examples`                                                                           | Depends on the example              | README next to the example                                                                                                   |
+
+The repository changes quickly. Directory listings in this root guide are an
+orientation aid, not a package registry. Release targets come from
+[`.github/releases/components.json`](../../.github/releases/components.json) and
+[`.github/workflows/release-bump-version.yml`](../../.github/workflows/release-bump-version.yml),
+and test ownership comes from CI plus the component guides.
+
+Two boundaries to keep in mind:
+
+- `libs/cua-spacesd` is server-only (it runs inside the sandbox). Client
+  code, including wire formats and media clients, lives in `libs/cua`, and the
+  driver depends on it, never the reverse. CI enforces this.
+- `libs/fleet` is a read-only mirror of the retired Fleet SDK. Nothing builds it
+  any more; never edit it here.
+
+## Common Setup
+
+Clone the repository and enter it:
+
+```bash
+git clone https://github.com/trycua/cua.git
+cd cua
+```
+
+Install only the toolchains required by your component:
+
+| Work                        | Required tools                                                              |
+| --------------------------- | --------------------------------------------------------------------------- |
+| Python packages             | Python 3.12 and [uv](https://docs.astral.sh/uv/)                            |
+| TypeScript, CuaBot, or docs | The Node.js version required by the component and its declared pnpm version |
+| cua SDK or cua-spacesd   | Rust (pinned in `rust-toolchain.toml`), `protoc`, and `buf` for contract checks |
+| cua-driver                  | Rust plus the target OS SDK; Nix for the reproducible Linux lanes           |
+| Lume                        | macOS, Swift, and Xcode command-line tools                                  |
+| Images                      | Docker or the image-specific builder documented by the component            |
+
+The root uv workspace contains only the members declared in
+[`pyproject.toml`](../../pyproject.toml). Other directories under `libs/python` are
+independent packages; use their own `pyproject.toml` and CI workflow.
+
+The root Node package installs repository-wide Prettier only. Run `pnpm
+install` inside `libs/typescript`, `libs/cuabot`, `apps/cua-spaces`, or `docs`
+for those components' dependencies. `libs/cua/typescript` uses npm.
+
+API keys are not required for ordinary builds and deterministic tests. Add
+credentials only for a test or example that explicitly calls an external
+provider, and never commit them.
+
+## Fast Rust Builds
+
+The Rust workspaces compile several hundred crates. Share one compile cache
+between every checkout and worktree, so a crate compiled once is reused
+everywhere:
+
+```bash
+brew install sccache          # or: cargo install sccache --locked
+export RUSTC_WRAPPER=sccache  # route rustc through the cache
+export SCCACHE_CACHE_SIZE=30G # least recently used objects are evicted beyond this
+```
+
+Put the exports in your shell profile. Every `cargo` command then reads and
+fills the cache in `~/Library/Caches/Mozilla.sccache` (macOS) or
+`~/.cache/sccache` (Linux); `sccache --show-stats` reports the hit rate. A new
+worktree with an empty `target/` compiles its dependencies from the cache in a
+fraction of the cold time. Dependencies are shared between all checkouts;
+the workspace's own crates are cached per checkout path, and only when
+incremental compilation is off. Scripted and agent builds should set
+`CARGO_INCREMENTAL=0` (smaller `target/`, every crate cached); keep the
+default when you iterate on one crate, where incremental rebuilds are faster.
+
+Other defaults that keep builds small:
+
+* The dev and test profile of `libs/cua` keeps line tables only for workspace
+  crates and no debug info for dependencies; set
+  `CARGO_PROFILE_DEV_DEBUG=full` for a debugger session.
+* The cloud SDKs (AWS, Google Cloud, Hetzner, Modal) compile only with the
+  `byoc` feature. `cargo build -p cua-cli` and `cargo test -p cua-cli` do not
+  need them; the release builds turn the feature on.
+* Build one package at a time (`-p <crate>`) and cap parallelism on a laptop
+  (`CARGO_BUILD_JOBS=4`); the largest crates take about 1 GB of RAM each.
+* The linkers are already fast: Xcode's linker on macOS and `rust-lld`, the
+  default on x86-64 Linux, so the repository sets none.
+* Building `cua-cli` and then `cua-sdk` in one `target/` compiles about 100
+  dependencies a second time with other features (`cua-sdk` turns on `byoc`).
+  This happens once per `target/` and both variants are cached, so there is
+  no workspace-hack crate: it would make every build compile the cloud SDKs.
+
+`node libs/cua/scripts/generate-uniffi-bindings.mjs` builds `cua-sdk` without
+the cloud SDKs, and caches the generated bindings by a fingerprint of the
+interface sources: when the `cua-sdk` crate has not changed, a rerun from any
+worktree writes them without compiling. `--library=PATH` reads a
+`libcua_sdk` you already built instead.
+
+## Root Formatting Hooks
+
+Install the root Python development tools and optional Git hooks with:
+
+```bash
+uv sync --group dev
+uv run pre-commit install
+```
+
+Run all configured hooks against the repository with:
+
+```bash
+uv run pre-commit run --all-files
+```
+
+The hooks currently run Prettier, the TypeScript workspace typecheck, Black,
+isort, and Ruff. Install the TypeScript workspace dependencies before running
+the typecheck hook. Mypy is configured in `pyproject.toml` but is not a
+pre-commit gate.
+
+For a read-only repository-wide formatting check:
+
+```bash
+pnpm install --frozen-lockfile
+pnpm prettier:check
+```
+
+Component-specific Rust, TypeScript, Swift, and documentation checks remain in
+their component guides. See [`TESTING.md`](TESTING.md) for the test map.
+
+## cua-driver Development
+
+cua-driver has three distinct validation layers:
+
+1. Rust unit and protocol tests that do not require a target GUI application.
+2. Source-built harness E2E tests that drive Electron, Tauri, and native toolkit
+   fixtures in a real user desktop session.
+3. Supporting installed-application checks whose runner declares whether they
+   are canonical (the macOS Calculator/TextEdit rows) or optional (LibreOffice).
+
+The Rust harnesses are the source of truth for desktop behavior. Python tests
+do not duplicate that matrix. Start with:
+
+- [`libs/cua-driver/rust/README.md`](../../libs/cua-driver/rust/README.md) for the Cargo workspace.
+- [`libs/cua-driver/rust/crates/cua-driver-e2e/tests/README.md`](../../libs/cua-driver/rust/crates/cua-driver-e2e/tests/README.md) for desktop E2E test ownership.
+- [`scripts/ci/README.md`](../../scripts/ci/README.md) for canonical OS runners.
+- [Platform support](https://cua.ai/docs/cua-driver/concepts/platform-support) for current capability boundaries.
+- [How Cua Driver is validated](https://cua.ai/docs/cua-driver/concepts/how-cua-driver-is-validated) for the public evidence model.
+- [Platform roadmap](https://cua.ai/docs/cua-driver/concepts/platform-roadmap) for remaining work and platform boundaries.
+
+Windows and macOS desktop tests need a real user session. Windows requires an
+active console or RDP session. macOS requires a logged-in session with
+Accessibility and Screen Recording permissions. The hosted Linux Sway and
+nested-compositor runners create controlled sessions; GNOME, KDE, and real
+Xorg validation use an existing graphical login.
+
+## Documentation
+
+Public docs use Fumadocs and follow Diataxis:
+
+- tutorials teach a first success;
+- how-to guides solve a specific task;
+- concepts explain constraints and design;
+- reference pages state commands, contracts, support, and limits.
+
+Run documentation commands from `docs`; see [`docs/README.md`](../README.md).
+Contributor-only implementation notes should remain next to their component
+instead of entering the public docs navigation.
+
+## Releases
+
+Release Please manages Cua Driver, Cua Perception, Lume, Cua Spaces, the cua
+SDK, cua-spacesd, cua-sandbox and the Python and npm packages; the table in
+[`.github/releases/README.md`](../../.github/releases/README.md) lists each one's
+path, tag and publishing workflow. Their pull request titles decide the
+release; see [`CONTRIBUTING.md`](../../.github/CONTRIBUTING.md#agent-assisted-contributions).
+
+The Docker images are still released through the
+[Legacy packages: Bump Version](https://github.com/trycua/cua/actions/workflows/release-bump-version.yml)
+workflow. Its `service` input is the current target list. Each image's
+`.bumpversion.cfg` owns its version and tag format, and tag-triggered CD
+workflows publish.
+
+The root `Makefile` prints the Release Please versions (`make show-versions`).
+It does not publish releases.
+
+## Generated and Local Files
+
+Do not commit build products, staged harness binaries, local VM artifacts,
+credentials, permission databases, or editor-specific state. Promote an
+artifact into source control only when it becomes a stable fixture, sample, or
+maintained document.

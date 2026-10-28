@@ -2,7 +2,11 @@
 //!
 //! [`cua_home`] is `$CUA_HOME`, else `$HOME/.cua` (`%USERPROFILE%\.cua` on
 //! Windows): the directory that holds the Spaces registry, sandbox state,
-//! env tokens and credentials.
+//! env tokens and credentials. A non-production `CUA_ENV` (see [`env`])
+//! moves the default below it (`~/.cua/envs/staging`). The Local channel
+//! (see [`channel`]) has a home of its own, `~/.cua-local` (its default
+//! environment is staging), with production below it
+//! (`~/.cua-local/envs/prod`).
 //!
 //! [`guard_write`] refuses a write under the user's *real* `~/.cua` (the
 //! passwd home, or on Windows the account's profile directory; never
@@ -24,40 +28,74 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
+pub mod channel;
+pub mod env;
+pub mod experimental;
+pub mod filetable;
+pub mod plan_limit;
+pub mod version;
+
 /// Environment variable that marks a test process.
 pub const CUA_TEST_ENV: &str = "CUA_TEST";
 
-/// The `cua` of the app bundle this process runs in
-/// (`<Name>.app/Contents/MacOS/cua`, symlinks resolved), when there is one:
-/// the `cua` an app ships and expects its daemon to run. `None` outside an
-/// app bundle (a CLI on `PATH`, a Python host).
+/// The `cua` of the app this process runs in (symlinks resolved), when
+/// there is one: the `cua` an app ships and expects its daemon to run.
+/// `None` outside an app (a CLI on `PATH`, a Python host). The places an
+/// app ships it:
+///
+/// - the SwiftUI Mac app: `<Name>.app/Contents/MacOS/cua`;
+/// - the Electron app on macOS: `<Name>.app/Contents/Resources/native/cua`;
+/// - the Electron app on Windows and Linux: `resources/native/cua[.exe]`
+///   beside the app's executable.
 pub fn bundled_cua() -> Option<PathBuf> {
     bundled_cua_of(&std::env::current_exe().ok()?)
 }
 
-/// [`bundled_cua`] for the executable `exe`.
+/// The bundled CLI's file name on this platform.
+const CUA_FILE: &str = if cfg!(windows) { "cua.exe" } else { "cua" };
+
+/// [`bundled_cua`] for the executable `exe`: the app's executable, or a
+/// helper or the `cua` inside it.
 pub fn bundled_cua_of(exe: &Path) -> Option<PathBuf> {
     let exe = exe.canonicalize().unwrap_or_else(|_| exe.to_path_buf());
-    let bundle = exe
+    let file = |p: PathBuf| p.canonicalize().ok().filter(|p| p.is_file());
+    // macOS: the bundle's own `cua`. A helper app inside it (Electron's
+    // `Contents/Frameworks/<Name> Helper.app`) belongs to the outer bundle.
+    for bundle in exe
         .ancestors()
-        .find(|d| d.extension().is_some_and(|e| e == "app"))?;
-    let cua = bundle
-        .join("Contents/MacOS")
-        .join(if cfg!(windows) { "cua.exe" } else { "cua" });
-    cua.canonicalize().ok().filter(|p| p.is_file())
+        .filter(|d| d.extension().is_some_and(|e| e == "app"))
+    {
+        let contents = bundle.join("Contents");
+        if let Some(cua) = file(contents.join("MacOS").join(CUA_FILE))
+            .or_else(|| file(contents.join("Resources/native").join(CUA_FILE)))
+        {
+            return Some(cua);
+        }
+    }
+    // Windows and Linux (Electron): `<dir>/resources/native/cua`, for the
+    // app's executable in `<dir>` or that `cua` itself.
+    let named = |d: Option<&Path>, n: &str| {
+        d.and_then(Path::file_name)
+            .is_some_and(|f| f.to_string_lossy().eq_ignore_ascii_case(n))
+    };
+    let dir = exe.parent()?;
+    if named(Some(dir), "native") && named(dir.parent(), "resources") {
+        return file(dir.join(CUA_FILE));
+    }
+    file(dir.join("resources/native").join(CUA_FILE))
 }
 
-/// The cua home: `$CUA_HOME`, else `~/.cua`.
+/// The cua home: `$CUA_HOME`, else the channel's home for the environment
+/// ([`channel::CuaChannel::env_home_dir`]): `~/.cua` (Stable, production),
+/// `~/.cua/envs/staging` (Stable, staging), `~/.cua-local` (Local, staging)
+/// or `~/.cua-local/envs/prod` (Local, with the `CUA_ENV=prod` opt-in, which
+/// is an opt-in to the production deployment, not to Stable's home).
 pub fn cua_home() -> PathBuf {
     if let Some(h) = std::env::var_os("CUA_HOME").filter(|v| !v.is_empty()) {
         return PathBuf::from(h);
     }
-    let home = std::env::var_os("HOME")
-        .filter(|v| !v.is_empty())
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
-    home.join(".cua")
+    let (channel, env) = channel::CuaChannel::current_with_env();
+    channel.env_home_dir(env)
 }
 
 /// The user's real `~/.cua`, from the account database rather than `$HOME`

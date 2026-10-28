@@ -66,6 +66,12 @@ available_envs: List[int] = list(range(MAX_ENVS - 1, -1, -1))  # [1, 0] for MAX_
 active_envs: List[int] = []
 env_map: Dict[int, EnvState] = {}
 
+# Event loop the envs were created on, recorded by /reset. The timeout checker thread
+# has no running loop, so it schedules env.close() here.
+_server_loop: Optional[asyncio.AbstractEventLoop] = None
+# Pending close() calls, kept referenced until they finish.
+_pending_closes: set = set()
+
 # FastAPI app
 app = FastAPI(title="CUA-Bench Worker Server", version="0.1.0")
 
@@ -171,33 +177,55 @@ def _get_available_env(timeout: int) -> int:
         return env_id
 
 
-def _release_env(env_id_or_all: int | str) -> None:
-    """Release an environment back to the pool."""
+def _release_env(env_id_or_all: int | str, expired_at: Optional[float] = None) -> None:
+    """Release an environment back to the pool.
+
+    With ``expired_at``, a single env is released only if it is still past its timeout
+    at that time, so an env used again after the timeout checker's sweep is kept.
+    """
     with env_lock:
         if env_id_or_all == "all":
             # Release all active envs
             for eid in list(active_envs):
                 if eid in env_map:
                     state = env_map.pop(eid)
-                    # Close the environment
-                    try:
-                        asyncio.create_task(_close_env_async(state.env))
-                    except Exception:
-                        pass
+                    _close_env_soon(state.env)
                 active_envs.remove(eid)
                 available_envs.append(eid)
         else:
             env_id = int(env_id_or_all)
             if env_id in active_envs:
+                if expired_at is not None:
+                    state = env_map.get(env_id)
+                    if state is None or expired_at - state.last_accessed <= state.timeout:
+                        return
                 if env_id in env_map:
                     state = env_map.pop(env_id)
-                    # Close the environment
-                    try:
-                        asyncio.create_task(_close_env_async(state.env))
-                    except Exception:
-                        pass
+                    _close_env_soon(state.env)
                 active_envs.remove(env_id)
                 available_envs.append(env_id)
+
+
+def _close_env_soon(env: Any) -> None:
+    """Schedule env.close() on the event loop, from the loop or from another thread."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        # Called from the timeout checker thread: hand the close to the server loop.
+        loop = _server_loop
+        if loop is None or loop.is_closed():
+            return
+        coro = _close_env_async(env)
+        try:
+            future = asyncio.run_coroutine_threadsafe(coro, loop)
+        except RuntimeError:
+            # The loop closed after the check above: the server is shutting down.
+            coro.close()
+            return
+    else:
+        future = asyncio.create_task(_close_env_async(env))
+    _pending_closes.add(future)
+    future.add_done_callback(_pending_closes.discard)
 
 
 async def _close_env_async(env: Any) -> None:
@@ -288,13 +316,17 @@ def _timeout_checker():
         time.sleep(30)  # Check every 30 seconds
         current_time = time.time()
 
+        # Collect timed-out envs under the lock and release them after dropping it:
+        # _release_env takes env_lock itself, and env_lock is not reentrant.
         with env_lock:
-            for env_id in list(active_envs):
-                if env_id in env_map:
-                    state = env_map[env_id]
-                    if current_time - state.last_accessed > state.timeout:
-                        # Release timed out environment
-                        _release_env(env_id)
+            expired = [
+                env_id
+                for env_id in active_envs
+                if env_id in env_map
+                and current_time - env_map[env_id].last_accessed > env_map[env_id].timeout
+            ]
+        for env_id in expired:
+            _release_env(env_id, expired_at=current_time)
 
 
 # Start timeout checker thread
@@ -313,6 +345,9 @@ async def reset(request: ResetRequest):
     3. Creates/resets the environment to the specified task
     4. Returns the initial screenshot and task instruction
     """
+    global _server_loop
+    _server_loop = asyncio.get_running_loop()
+
     # Release all active envs first (as per incus pattern)
     _release_env("all")
 

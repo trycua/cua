@@ -19,7 +19,7 @@ import { stableJson } from './lib/mdx';
 const CLI_COMMANDS = [
   'mcp', 'mcp-config', 'list-tools', 'describe', 'call', 'manifest', 'dump-docs', 'serve', 'stop', 'status', 'sessions',
   'revoke', 'autostart', 'permissions', 'doctor', 'diagnose', 'recording', 'history', 'config', 'telemetry',
-  'cursor-theme', 'skills', 'extension', 'perception', 'check-update', 'update', 'channel',
+  'cursor-theme', 'cursor', 'skills', 'extension', 'perception', 'check-update', 'update', 'channel',
 ];
 
 function docs(description = 'Inspect the native tree.'): DumpDocsOutput {
@@ -94,7 +94,7 @@ test('each host refreshes only its own registry snapshot; pages merge all three'
   const files = referenceFiles(docs('Fresh Linux tree.'), linux, out, specs);
   const snapshots = [...files.keys()].filter((f) => f.startsWith(specs)).map((f) => basename(f)).sort();
   assert.deepEqual(snapshots, ['cua-driver-mcp-linux.json', 'cua-driver.json']);
-  const page = files.get(join(out, 'mcp-tools', 'window-state.mdx'))!;
+  const page = files.get(join(out, 'mcp-tools', 'apps-windows-and-screen.mdx'))!;
   assert.ok(page.includes("<Tabs items={['macOS', 'Linux', 'Windows']}"));
   assert.ok(page.includes('Fresh Linux tree.') && page.includes('macOS tree.') && page.includes('Windows tree.'));
   // The shared parameter is listed once, outside the tabs.

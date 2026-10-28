@@ -45,6 +45,12 @@ name: "CD: Image linux"
 # so the registry shares slim's layers):
 #   slim   series 24.04-slim   ghcr.io/trycua/linux:24.04-slim[-disk]   CI and bench use it
 #   full   series 24.04        ghcr.io/trycua/linux:24.04[-disk]        the default
+#   docker series 24.04-docker ghcr.io/trycua/linux:24.04-docker-disk   slim + the Docker
+#          engine, a VM tier; its own gate (docker/<arch>/qemu: dockerd up at
+#          boot, br_netfilter, iptables, a compose hello-world). It builds and
+#          gates on every run but publishes only when the repository variable
+#          CUA_LINUX_PUBLISH_DOCKER_TIER is `true` (opt-in, until its public
+#          tags are approved).
 #
 # Weekly schedule (security updates): the same build and gates for both tiers.
 # A tier publishes a new dated pin and moves its floating tags only when every
@@ -77,7 +83,12 @@ on:
       - "libs/cua-spacesd/**"
       - "libs/cua/crates/cua-cli/src/image_build.rs"
       - "libs/cua/crates/cua-cli/src/image_release.rs"
+      - "libs/cua/crates/cua-cli/src/sandbox/bake.rs"
+      - "libs/cua/crates/cua-image/src/canonical.rs"
       - "libs/cua/crates/cua-image/src/publish.rs"
+      # VM admission and QEMU launch decide whether the bake VM starts.
+      - "libs/cua/crates/cua-vmm/src/density.rs"
+      - "libs/cua/crates/cua-vmm/src/qemu/**"
       - ".github/workflows/cd-image-linux.yml"
       - ".github/workflows/image-doctor.yml"
   workflow_dispatch:
@@ -126,6 +137,9 @@ permissions:
   contents: read
 
 env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
   # Cua programs and packages run here never send usage telemetry.
   CUA_TELEMETRY: "0"
   DO_NOT_TRACK: "1"
@@ -135,7 +149,7 @@ env:
 
 jobs:
   meta:
-    if: inputs.promote_run == '' && inputs.doctor_children == ''
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') && (inputs.promote_run == '' && inputs.doctor_children == '') }}
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.meta.outputs.tag }}
@@ -227,7 +241,7 @@ jobs:
           retention-days: 7
 
   cli:
-    if: inputs.promote_run == '' && inputs.doctor_children == ''
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') && (inputs.promote_run == '' && inputs.doctor_children == '') }}
     strategy:
       fail-fast: false
       matrix:
@@ -242,13 +256,13 @@ jobs:
       - name: Install protoc
         run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends protobuf-compiler libprotobuf-dev
       - uses: dtolnay/rust-toolchain@1.97.1
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua
           key: cli-${{ matrix.arch }}
       - name: Build the cua CLI
         working-directory: libs/cua
-        run: cargo build --release --locked -p cua-cli
+        run: cargo build --release --locked -p cua-cli --features byoc
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: cua-cli-linux-${{ matrix.arch }}
@@ -269,7 +283,7 @@ jobs:
       fail-fast: false
       matrix:
         arch: [amd64, arm64]
-        tier: [slim, full]
+        tier: [slim, full, docker]
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     # arm64 runs its VM doctor under TCG (hosted arm64 runners have no KVM).
     timeout-minutes: 360
@@ -323,6 +337,63 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
+
+  # The docker tier's bake integration test, against real Spaces: the gated
+  # amd64 disk runs as a local `vm` Space (QEMU on the runner's KVM);
+  # `cua sb bake` brings up tests/compose-world (agent, MCP and grader
+  # containers) and saves a live checkpoint; a fork of it must come back
+  # with the same containers running (not restarted), docker exec, the
+  # agent reaching the grader, iptables/br_netfilter, and the MCP server
+  # answering the official MCP client through a port forward.
+  docker-bake:
+    needs: [meta, cli, release]
+    if: ${{ !cancelled() && needs.release.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CUA_HOME: ${{ github.workspace }}/.cua-home
+      EVIDENCE: ${{ github.workspace }}/.bake-evidence
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: cua-cli-linux-amd64
+          path: ${{ runner.temp }}/bin
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: artifacts-linux-docker-amd64
+          path: ${{ runner.temp }}/docker-tier
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+      - name: Host tools (QEMU, firmware, KVM)
+        run: |
+          set -euo pipefail
+          chmod +x "$RUNNER_TEMP/bin/cua"
+          echo "$RUNNER_TEMP/bin" >>"$GITHUB_PATH"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends qemu-utils qemu-system-x86 ovmf genisoimage netcat-openbsd
+          sudo chmod 666 /dev/kvm
+      - name: Free runner disk (golden snapshots and the checkpoint need room)
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+      - name: Bake, fork and check (tests/bake-world.sh)
+        run: |
+          libs/images/linux/tests/bake-world.sh --cua cua --memory 4GB --cpu 2 \
+            --image "$RUNNER_TEMP/docker-tier/disk/disk.img" --evidence "$EVIDENCE"
+      - name: Collect VM serial logs
+        if: always()
+        run: |
+          mkdir -p "$EVIDENCE/serial"
+          find "$CUA_HOME/vmm/qemu" -name 'serial*.log' -size +0 2>/dev/null | head -8 | while read -r f; do
+            cp "$f" "$EVIDENCE/serial/$(echo "$f" | tr / _)" || true
+          done
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: evidence-docker-bake
+          path: ${{ env.EVIDENCE }}
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 14
 
   plain:
     needs: cli
@@ -412,10 +483,16 @@ jobs:
       - id: changes
         env:
           EVENT: ${{ github.event_name }}
+          PUBLISH_DOCKER_TIER: ${{ vars.CUA_LINUX_PUBLISH_DOCKER_TIER }}
         run: |
           set -euo pipefail
           tiers=()
-          for tier in slim full; do
+          for tier in slim full docker; do
+            if [ "$tier" = docker ] && [ "$PUBLISH_DOCKER_TIER" != true ]; then
+              echo "::notice::the docker tier is built and gated, not published (CUA_LINUX_PUBLISH_DOCKER_TIER is not true)"
+              echo "- $SERIES-docker: not published (opt-in: CUA_LINUX_PUBLISH_DOCKER_TIER)" >>"$GITHUB_STEP_SUMMARY"
+              continue
+            fi
             series="$SERIES"; [ "$tier" = full ] || series="$SERIES-$tier"
             # The tier's digest: its per-arch content digests, in arch order
             # (scripts/images/release-publish.sh annotates the same value).
@@ -549,7 +626,8 @@ jobs:
       # One tier at a time: both push to the image-doctor-ledger branch.
       max-parallel: 1
       matrix:
-        tier: [slim, full]
+        # The docker tier only once it publishes (CUA_LINUX_PUBLISH_DOCKER_TIER).
+        tier: ${{ fromJSON(vars.CUA_LINUX_PUBLISH_DOCKER_TIER == 'true' && '["slim","full","docker"]' || '["slim","full"]') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -586,7 +664,7 @@ jobs:
           if gh run download "$RUN" -R "$GITHUB_REPOSITORY" -n cua-cli-linux-amd64 -D "$RUNNER_TEMP/cli" 2>/dev/null; then
             install -m 0755 "$RUNNER_TEMP/cli/cua" "$RUNNER_TEMP/cua"
           else
-            (cd libs/cua && cargo build --release --locked -p cua-cli) && install -m 0755 libs/cua/target/release/cua "$RUNNER_TEMP/cua"
+            (cd libs/cua && cargo build --release --locked -p cua-cli --features byoc) && install -m 0755 libs/cua/target/release/cua "$RUNNER_TEMP/cua"
           fi
       - uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3
         with:
@@ -702,6 +780,8 @@ jobs:
       - run: scripts/images/test-schedule-scripts.sh
       - name: boot-qemu.sh SSH probe retries (fake ssh)
         run: libs/images/common/tests/test-ssh-retry.sh
+      - name: Browser sandbox choice per runtime (stubbed probes)
+        run: libs/images/common/tests/test-browser-sandbox.sh
       - name: Manifest generator, ledger and docs-gate tests
         run: |
           python3 -m unittest discover -s libs/images/common/tools/tests

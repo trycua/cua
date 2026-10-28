@@ -42,6 +42,7 @@ pub mod metadata;
 pub mod model;
 pub mod persistent;
 pub mod teleport;
+pub mod thread;
 pub mod transport;
 
 pub use control::{Connection, Space};

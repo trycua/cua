@@ -116,101 +116,10 @@ final class FakeDriveTools: AgentsToolRunning, @unchecked Sendable {
 struct DriveTests {
     init() { _ = NSApplication.shared }
 
-    func atDrive(_ tools: AgentsToolRunning?) -> OnboardingModel {
-        let o = OnboardingModel(statePath: nil)
-        o.driveTools = tools
-        // The Volume page shows with the Cua Volume experiment on.
-        o.send(.experimentsLoaded(experiments: AppExperiments(cuaVolume: true, yourCloud: false, sharing: false)))
-        o.send(.start)
-        o.send(.signinDone)
-        o.send(.agentsDone(configured: []))
-        o.send(.presentationDone)
-        return o
-    }
-
-    @Test func theFirstRunCheckboxIsOffAndMountsOnContinue() async throws {
+    /// Settings notices a bucket the agent connects (`cua volume config set`
+    /// and `set-keys`) and shows it connected.
+    @Test func settingsNoticesTheBucketAnAgentConnects() async throws {
         let tools = FakeDriveTools()
-        let o = atDrive(tools)
-        await o.checkDrive()
-        var card = try #require(o.view.drive)
-        #expect(card.label == "Add Cua Volume to Finder")
-        #expect(!card.checked && card.enabled, "off by default")
-        // Unticked: Continue mounts nothing.
-        await o.continueDrive()
-        #expect(o.view.step == .mode)
-        #expect(!tools.names().contains("volume_mount"))
-
-        let p = atDrive(tools)
-        await p.checkDrive()
-        p.send(.driveToggled(on: true))
-        await p.continueDrive()
-        #expect(tools.names().contains("volume_mount"))
-        // macOS asks for the extension first: the page stays and says so.
-        #expect(p.view.step == .drive)
-        card = try #require(p.view.drive)
-        #expect(card.settingsLabel == "Open System Settings")
-        var opened: [URL] = []
-        p.openURL = { opened.append($0) }
-        p.openURL(URL(string: card.settingsUrl!)!)
-        #expect(opened.count == 1)
-        // Approved: the daemon finishes on its own; Continue moves on.
-        tools.mount = "mounted"
-        await p.checkDrive()
-        await p.continueDrive()
-        #expect(p.view.step == .mode)
-        p.send(.modeChosen(mode: .client))
-        #expect(p.view.summary.first { $0.label == "Cua Volume" }?.value == "In Finder")
-    }
-
-    @Test func theFirstRunSavesYourBucketThenMounts() async throws {
-        let tools = FakeDriveTools()
-        let o = atDrive(tools)
-        await o.checkDrive()
-        var card = try #require(o.view.drive)
-        #expect(card.storageOptions.map(\.label) == ["This Mac", "Your S3 bucket", "Set up later"])
-        #expect(card.storageOptions.first(where: \.active)?.id == "local", "this Mac by default")
-        o.send(.storageChosen(choice: .s3))
-        o.send(.driveStorage(action: .showManual(on: true)))
-        for (id, value) in [("s3-endpoint", "http://127.0.0.1:9000"), ("s3-bucket", "cua-volume"),
-                            ("s3-access-key", "maya-drive"), ("s3-secret", "fixture-secret")] {
-            o.send(.driveStorage(action: try #require(appStorageEdit(id: id, value: value))))
-        }
-        await o.driveStorage(.test)
-        let test = try #require(tools.calls.last { $0.0 == "volume_storage_set" })
-        #expect(test.1["dry_run"] as? Bool == true)
-        card = try #require(o.view.drive)
-        #expect(card.storageRows.first { $0.id == "s3-test" }?.value == "Connected, versioning on")
-        o.send(.driveToggled(on: true))
-        await o.continueDrive()
-        let save = try #require(tools.calls.last { $0.0 == "volume_storage_set" })
-        #expect(save.1["dry_run"] as? Bool == false && save.1["secret_access_key"] as? String == "fixture-secret")
-        #expect(tools.names().last == "volume_mount", "saved, then mounted")
-        #expect(o.view.step == .drive, "the fake asks for approval")
-        #expect(o.state.storage.form.secretAccessKey.isEmpty)
-    }
-
-    @Test func theAgentPromptNoticesTheBucketAndConnects() async throws {
-        let tools = FakeDriveTools()
-        let o = atDrive(tools)
-        await o.checkDrive()
-        #expect(o.view.drive?.storedIn?.hasPrefix("Stored in ") == true)
-        o.send(.storageChosen(choice: .s3))
-        #expect(o.watchingStorage, "the prompt shows")
-        #expect(o.view.drive?.canContinue == false)
-        await o.loadDriveStorage()
-        #expect(!tools.names().contains("volume_storage_set"), "nothing yet")
-        // The agent ran `cua volume config set` and `set-keys`.
-        tools.backend = "s3"
-        tools.hasKeys = true
-        await o.loadDriveStorage()
-        let adopt = try #require(tools.calls.last { $0.0 == "volume_storage_set" })
-        #expect(adopt.1["dry_run"] as? Bool == false && adopt.1["access_key_id"] as? String == nil)
-        let card = try #require(o.view.drive)
-        #expect(card.storageRows.contains { $0.value == "Connected, versioning on" })
-        #expect(card.canContinue)
-        // Settings notices the same way.
-        tools.backend = "fs"
-        tools.hasKeys = false
         let st = StorageModel(tools: tools)
         await st.load()
         await st.choose("backend", "s3")
@@ -219,30 +128,6 @@ struct DriveTests {
         tools.hasKeys = true
         await st.load()
         #expect(st.section.rows.contains { $0.value == "Connected, versioning on" })
-    }
-
-    @Test func setUpLaterSkipsStorage() async throws {
-        let tools = FakeDriveTools()
-        let o = atDrive(tools)
-        await o.checkDrive()
-        o.send(.storageChosen(choice: .later))
-        #expect(o.view.drive?.storageNote != nil)
-        await o.continueDrive()
-        #expect(o.view.step == .mode)
-        #expect(!tools.names().contains("volume_storage_set"))
-    }
-
-    @Test func withoutTheDrivesToolsThePageIsHonest() async throws {
-        let tools = FakeDriveTools()
-        tools.missing = true
-        let o = atDrive(tools)
-        await o.checkDrive()
-        let card = try #require(o.view.drive)
-        #expect(!card.enabled && !card.checked)
-        #expect(card.note == "Not available on this Mac yet")
-        await o.continueDrive()
-        #expect(o.view.step == .mode)
-        #expect(!tools.names().contains("volume_mount"))
     }
 
     @Test func storageSendsKeysOnlyToTheToolAndShowsTheVolume() async throws {
@@ -254,7 +139,7 @@ struct DriveTests {
         #expect(s.section.rows.first?.options.map(\.label) == ["This Mac", "S3-compatible"])
         #expect(s.section.rows.allSatisfy { !$0.options.contains { $0.id == "cloud" } })
         await s.choose("backend", "s3")
-        #expect(s.section.rows.first { $0.id == "s3-prompt" }?.value?.contains("cua volume config set-keys") == true)
+        #expect(s.section.rows.first { $0.id == "s3-prompt" }?.value?.contains("cua.ai/docs/agents/volume-s3") == true)
         await s.press("s3-manual")
         #expect(!s.section.rows.contains { $0.id == "s3-prompt" })
         s.edit("s3-endpoint", "http://127.0.0.1:9000")
@@ -338,51 +223,4 @@ struct DriveTests {
         #expect(v.mountPath == "/Volumes/Cua Volume")
     }
 
-    @Test func snapshots() async throws {
-        let snap = SnapshotTests()
-        let tools = FakeDriveTools()
-        // The first run's card at beats of its loop, and the Reduce Motion
-        // still, ticked.
-        let o = atDrive(tools)
-        await o.checkDrive()
-        let card = try #require(o.view.drive)
-        let size = CGSize(width: 380, height: 180)
-        for (ms, name) in [(UInt32(400), "mounting"), (1200, "flying"), (3000, "arrived")] {
-            try snap.assertSnapshot(DriveCardView(card: card, toggle: { _ in }, fixedMs: ms).padding(12),
-                                    "onboarding-drive-\(name)", size: size)
-        }
-        o.send(.driveToggled(on: true))
-        try snap.assertSnapshot(DriveCardView(card: o.view.drive!, toggle: { _ in }, still: true).padding(12),
-                                "onboarding-drive-still-on", size: size)
-        // Your S3 bucket: the agent prompt first.
-        o.send(.storageChosen(choice: .s3))
-        try snap.assertSnapshot(DriveCardView(card: o.view.drive!, toggle: { _ in }, still: true).padding(12),
-                                "onboarding-drive-prompt", size: CGSize(width: 380, height: 420))
-        o.send(.driveStorage(action: .showManual(on: true)))
-        // Your S3 bucket, entered manually and tested.
-        o.send(.driveStorage(action: .showManual(on: true)))
-        for (id, value) in [("s3-endpoint", "http://127.0.0.1:9000"), ("s3-bucket", "cua-volume"),
-                            ("s3-access-key", "maya-drive"), ("s3-secret", "fixture-secret")] {
-            o.send(.driveStorage(action: try #require(appStorageEdit(id: id, value: value))))
-        }
-        await o.driveStorage(.test)
-        try snap.assertSnapshot(DriveCardView(card: o.view.drive!, toggle: { _ in }, still: true).padding(12),
-                                "onboarding-drive-bucket", size: CGSize(width: 380, height: 420))
-        // Settings with the Storage section (S3, the volume mounted).
-        tools.mount = "mounted"
-        tools.enabled = true
-        tools.backend = "s3"
-        tools.hasKeys = true
-        let m = try await snap.model()
-        m.storage = StorageModel(tools: tools)
-        await m.loadSettings()
-        // Storage shows only with the Cua Volume experiment on.
-        m.settings.experiments = AppExperiments(cuaVolume: true, yourCloud: false, sharing: false)
-        try snap.assertSnapshot(SettingsView(model: m), "settings-storage", size: CGSize(width: 520, height: 900))
-        // The Drive page, mounted and syncing with a conflict.
-        let p = PersistentModel(tools: tools)
-        p.now = { Date(timeIntervalSince1970: 1_790_000_000) }
-        await p.sendDrive(nil)
-        try snap.assertSnapshot(DrivePageView(model: p), "drive-page-sync", size: CGSize(width: 720, height: 620))
-    }
 }

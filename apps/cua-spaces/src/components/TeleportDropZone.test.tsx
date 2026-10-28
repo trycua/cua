@@ -89,7 +89,7 @@ function renderZone(props: Partial<Parameters<typeof TeleportDropZone>[0]> = {})
   const fileSend = props.fileSend ?? fakeFileSend();
   const result = render(
     <TeleportDropZone
-      spaceId="cloud:aurora"
+      spaceId="direct:aurora"
       spaceName="Aurora"
       fileSend={fileSend}
       onTeleportApp={onTeleportApp}
@@ -136,7 +136,7 @@ describe("the Teleport drop zone", () => {
     const { fileSend } = renderZone();
     await user.click(screen.getByRole("button", { name: "Send file…" }));
     await waitFor(() => expect(fileSend.sendFiles).toHaveBeenCalled());
-    expect(fileSend.sendFiles).toHaveBeenCalledWith("cloud:aurora", ["/Users/me/notes.pdf"]);
+    expect(fileSend.sendFiles).toHaveBeenCalledWith("direct:aurora", ["/Users/me/notes.pdf"]);
     const status = await screen.findByRole("status");
     expect(status).toHaveTextContent("/root/Downloads/notes.pdf");
     expect(status).toHaveTextContent("2.1 MB");
@@ -177,7 +177,7 @@ describe("the Teleport drop zone", () => {
 
     fireDrop({ type: "drop", position: { x: 120, y: 260 }, paths: ["/tmp/here.txt"] });
     await waitFor(() =>
-      expect(fileSend.sendFiles).toHaveBeenCalledWith("cloud:aurora", ["/tmp/here.txt"]),
+      expect(fileSend.sendFiles).toHaveBeenCalledWith("direct:aurora", ["/tmp/here.txt"]),
     );
   });
 

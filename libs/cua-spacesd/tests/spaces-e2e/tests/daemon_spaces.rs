@@ -92,12 +92,20 @@ async fn space_service_delegates_to_cua_spaces_and_the_passthrough_carries_crede
     assert!(json.contains(&added.id) && !json.contains(TOKEN));
 
     let listed = svc
-        .list_spaces(pb::ListSpacesRequest {})
+        .list_spaces(pb::ListSpacesRequest::default())
         .await
         .unwrap()
         .into_inner()
         .spaces;
     assert_eq!(listed, vec![added.clone()]);
+    // `known_now`: the same rows, complete (no account to reach).
+    let known = svc
+        .list_spaces(pb::ListSpacesRequest { known_now: true })
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(known.spaces, vec![added.clone()]);
+    assert!(!known.incomplete && !known.stale && known.reaching == 0 && known.notice.is_empty());
     let resolved = svc
         .resolve_space(pb::ResolveSpaceRequest {
             space: "svc".into(),
@@ -207,7 +215,7 @@ async fn space_service_delegates_to_cua_spaces_and_the_passthrough_carries_crede
         .message;
     assert!(msg.contains(&added.id));
     assert!(
-        svc.list_spaces(pb::ListSpacesRequest {})
+        svc.list_spaces(pb::ListSpacesRequest::default())
             .await
             .unwrap()
             .into_inner()
@@ -376,88 +384,24 @@ async fn mcp_over_streamable_http_decodes_through_the_typed_client() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn media_bridge_resolves_a_fleet_space_with_its_gateway_headers() {
-    use cua_daemon::fixtures;
-    use futures_util::StreamExt;
-    const IMAGE: &str = "ghcr.io/trycua/linux:24.04-disk";
-    const CLAIM: &str = "cua-e2e-bridge";
+async fn creating_a_cloud_space_fails_with_the_cloud_ended_message() {
     let dir = tempfile::tempdir().unwrap();
-    let fake = cua_fleet::testing::FakeFleet::new();
-    // The pool name the Spaces runtime will pick, to aim the fake gateway.
-    let pool = cua_spaces::Spaces::builder()
-        .home(dir.path().join("probe"))
-        .fleet(fake.client())
-        .fleet_namespace("cua-e2e-sp")
-        .build()
-        .fleet_pool_name(cua_spaces::contract::inputs::FleetRuntime::Kubevirt, IMAGE);
-    let gw = fixtures::start_env(None, Some(fixtures::fake_gateway(&pool, CLAIM))).await;
-    // SAFETY: tests in this binary never read CUA_SPACES_NAMESPACE concurrently.
-    unsafe { std::env::set_var("CUA_SPACES_NAMESPACE", "cua-e2e-sp") };
-    let runtime = Runtime::new(RuntimeConfig {
-        state_dir: Some(dir.path().join("sandboxes")),
-        spaces_home: Some(dir.path().join("cua")),
-        teleport_home: Some(dir.path().join("host-home")),
-        fleet_client: Some(fake.client_with_base(&gw.url)),
-        env_probe_timeout: Some(Duration::from_secs(5)),
-        // The Cua Spaces build of the daemon: teleport, the Cua
-        // Drive, persistent agents and the Keyvault.
-        extensions: vec![std::sync::Arc::new(
-            cua_spaces_ext::daemon::CuaSpacesDaemon::default(),
-        )],
-        ..Default::default()
-    })
-    .unwrap();
-    let h = server::start(
-        runtime,
-        ServerConfig {
-            socket_path: None,
-            loopback: Some("127.0.0.1:0".parse().unwrap()),
-            token: DAEMON_TOKEN.into(),
-            discovery_path: None,
-            bridge_ticket_ttl: Duration::from_secs(30),
-        },
-    )
-    .await
-    .unwrap();
-    let c = client(&h);
-    let claimed = c
+    let h = daemon(dir.path()).await;
+    let status = client(&h)
         .spaces()
         .create_space(pb::CreateSpaceRequest {
-            image: IMAGE.into(),
+            image: "ghcr.io/trycua/linux:24.04-disk".into(),
             location: "cloud".into(),
-            name: CLAIM.into(),
+            name: "cua-e2e-ended".into(),
             ..Default::default()
         })
         .await
-        .unwrap()
-        .into_inner()
-        .space
-        .unwrap();
-    assert_eq!(claimed.id, format!("cloud:{CLAIM}"));
-
-    let bridge = c.open_media_bridge(&claimed.id, None).await.unwrap();
-    assert!(bridge.ws_url.contains("/v1/bridge/media?ticket="));
-    let (mut ws, _) = tokio_tungstenite::connect_async(bridge.ws_url.as_str())
-        .await
-        .unwrap();
-    let first = tokio::time::timeout(Duration::from_secs(10), ws.next())
-        .await
-        .unwrap()
-        .unwrap()
-        .unwrap();
-    assert!(first.to_text().unwrap().contains("hello"), "{first:?}");
-    let log = gw.media.lock().unwrap().clone();
-    assert_eq!(log.attaches, 1);
-    assert_eq!(
-        log.last_authorization.as_deref(),
-        Some(format!("Bearer {}", fixtures::FAKE_FLEET_TOKEN).as_str())
+        .expect_err("a cloud create fails");
+    assert_eq!(status.code(), tonic::Code::Unimplemented);
+    assert!(
+        status.message().contains("Cua Cloud has ended"),
+        "{status:?}"
     );
-    assert_eq!(log.last_claim.as_deref(), Some(CLAIM));
-    drop(ws);
-    c.spaces()
-        .delete_space(pb::DeleteSpaceRequest { space: claimed.id })
-        .await
-        .unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -488,7 +432,7 @@ async fn space_service_lists_the_accounts_relay_machines() {
     let c = client(&h);
     let listed = c
         .spaces()
-        .list_spaces(pb::ListSpacesRequest {})
+        .list_spaces(pb::ListSpacesRequest::default())
         .await
         .unwrap()
         .into_inner()
@@ -511,14 +455,55 @@ async fn space_service_lists_the_accounts_relay_machines() {
         .space
         .unwrap();
     assert_eq!(resolved.id, row.id);
-    // Signed out: the listing still works, without relay rows.
+    // `known_now`: the relay answered within the wait, so the list is complete.
+    let known = c
+        .spaces()
+        .list_spaces(pb::ListSpacesRequest { known_now: true })
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(known.spaces.iter().any(|s| s.id == row.id), "{known:?}");
+    assert!(
+        !known.incomplete && !known.stale && known.notice.is_empty(),
+        "{known:?}"
+    );
+    // A configured account that loses authentication must not look like
+    // successful empty discovery.
     rt.spaces().set_relay(Some(cua_spaces::RelayAccount::new(
         relay.url.clone(),
         Arc::new(cua_spaces::relay::NoAccount),
     )));
+    let error = c
+        .spaces()
+        .list_spaces(pb::ListSpacesRequest::default())
+        .await
+        .unwrap_err();
+    assert_eq!(error.code(), tonic::Code::Unauthenticated);
+    assert_eq!(
+        error.message(),
+        "Relay authentication failed. Sign in again to refresh your computers."
+    );
+    // `known_now` never fails this machine's list over it: the last known
+    // computers stay, stale, and the response says why.
+    let known = c
+        .spaces()
+        .list_spaces(pb::ListSpacesRequest { known_now: true })
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(known.spaces.iter().any(|s| s.id == row.id), "{known:?}");
+    assert!(!known.incomplete && known.stale, "{known:?}");
+    assert!(
+        known
+            .notice
+            .contains("Relay authentication failed. Sign in again to refresh your computers."),
+        "{known:?}"
+    );
+    // Explicitly disabling relay discovery still permits a local-only list.
+    rt.spaces().set_relay(None);
     let listed = c
         .spaces()
-        .list_spaces(pb::ListSpacesRequest {})
+        .list_spaces(pb::ListSpacesRequest::default())
         .await
         .unwrap()
         .into_inner()

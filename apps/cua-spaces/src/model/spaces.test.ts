@@ -4,7 +4,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  cloudNamespaceOf,
   displayName,
   hasFeature,
   nameOf,
@@ -15,9 +14,9 @@ import {
 
 function row(overrides: Partial<SpaceRow> = {}): SpaceRow {
   return {
-    id: "space://cloud/cua-spaces-abc/brave-otter",
+    id: "space://direct/10.0.0.5:3211",
     name: "brave-otter",
-    provider: "cloud",
+    provider: "direct",
     spacesdVersion: "0.4.0",
     features: ["desktop_stream", "window_stream"],
     addedAt: "2026-08-30T12:00:00Z",
@@ -28,14 +27,13 @@ function row(overrides: Partial<SpaceRow> = {}): SpaceRow {
 }
 
 describe("rowToSpace", () => {
-  it("maps a reachable cloud row onto a running tile grouped by namespace", () => {
+  it("maps a reachable row onto a running tile", () => {
     const space = rowToSpace(row(), 1_000);
-    expect(space.id).toBe("space://cloud/cua-spaces-abc/brave-otter");
-    expect(space.name).toBe("Brave Otter");
+    expect(space.id).toBe("space://direct/10.0.0.5:3211");
+    expect(space.name).toBe("brave-otter");
     expect(space.status).toBe("running");
-    expect(space.provider).toBe("cloud");
-    expect(space.fleetId).toBe("cua-spaces-abc");
-    expect(space.detail).toBe("cua-spaces-abc");
+    expect(space.provider).toBe("direct");
+    expect(space.detail).toBe("10.0.0.5:3211");
     expect(space.lastUsedAt).toBe(Date.parse("2026-08-30T12:00:00Z"));
     expect(space.sdk?.features).toContain("desktop_stream");
   });
@@ -46,16 +44,15 @@ describe("rowToSpace", () => {
     expect(space.detail).toContain("timed out");
   });
 
-  it("maps direct and local rows, defaulting the OS to linux", () => {
+  it("maps direct and local rows, preserving an unknown OS", () => {
     const direct = rowToSpace(
       row({ id: "space://direct/10.0.0.5:3211", name: "10.0.0.5:3211", provider: "direct", os: undefined, addedAt: undefined }),
       42,
     );
-    expect(direct.os).toBe("linux");
+    expect(direct.os).toBe("unknown");
     expect(direct.detail).toBe("10.0.0.5:3211");
     expect(direct.name).toBe("10.0.0.5:3211");
     expect(direct.lastUsedAt).toBe(42);
-    expect(direct.fleetId).toBe("direct");
     const mac = rowToSpace(row({ id: "space://local/space-1", provider: "local", os: "macos" }), 0);
     expect(mac.scene).toBe("mac-desktop");
     expect(mac.detail).toBe("This Mac");
@@ -63,24 +60,16 @@ describe("rowToSpace", () => {
 });
 
 describe("ids and features", () => {
-  it("reads locations and namespaces from space ids", () => {
+  it("reads locations from space ids", () => {
     expect(providerOfId("space://direct/h:1")).toBe("direct");
     expect(providerOfId("space://local/x")).toBe("local");
     expect(providerOfId("pending:1")).toBeUndefined();
-    expect(cloudNamespaceOf("space://cloud/ns/box")).toBe("ns");
-    expect(cloudNamespaceOf("space://local/x")).toBeUndefined();
   });
 
   it("reads the unified refs the SDK prints", () => {
-    expect(providerOfId("cloud:box")).toBe("cloud");
     expect(providerOfId("local:box")).toBe("local");
     expect(providerOfId("direct:10.0.0.5:3211")).toBe("direct");
     expect(providerOfId("relay:0123abcd4567")).toBe("relay");
-    expect(cloudNamespaceOf("cloud:box")).toBeUndefined();
-    const cloud = rowToSpace(row({ id: "cloud:box", provider: "cloud" }), 0);
-    expect(cloud.provider).toBe("cloud");
-    expect(cloud.fleetId).toBe("cloud");
-    expect(cloud.detail).toBe("Cua Cloud");
     const direct = rowToSpace(
       row({ id: "direct:10.0.0.5:3211", name: "10.0.0.5:3211", provider: "direct" }),
       0,
@@ -93,9 +82,9 @@ describe("ids and features", () => {
     expect(hasFeature({ sdk: undefined }, "desktop_stream")).toBe(false);
   });
 
-  it("title-cases Space names", () => {
-    expect(displayName("brave-otter")).toBe("Brave Otter");
-    expect(displayName("space-3f2a")).toBe("Space 3f2a");
+  it("shows Space names as the user typed them, trimmed", () => {
+    expect(displayName("brave-otter")).toBe("brave-otter");
+    expect(displayName(" space-3f2a ")).toBe("space-3f2a");
   });
 });
 

@@ -6,18 +6,26 @@ name: "CI: openkoalabot-example (TypeScript and Swift)"
 # this workflow builds and tests the sources. The Rust/Tauri sample has its own
 # workflow (ci-openkoalabot-example-tauri.yml). Tests are hermetic (fixtures, temp
 # homes); nothing touches host apps.
+#
+# The macOS Swift build is 28 minutes, so a pull request runs it only when
+# something it compiles or reads changes: the sample, the files its tests read,
+# the Swift packages, the SDK crate the binding is generated from and the
+# composite actions it runs (the map and the reasons are in
+# .github/scripts/ci_swift_samples_scope.py). There is no event-level `paths:`
+# filter: the cheap ubuntu `scope` job always runs and decides, so the `ci:full`
+# label, every push to main and the nightly schedule reach it. Rust-internal
+# changes that leave the binding alone are covered by the full run on every
+# push to main and by the nightly schedule. Release-please branches skip both
+# jobs as they always have. The TypeScript job keeps the trigger paths this
+# workflow had before; the scope job evaluates them too.
 
 on:
   pull_request:
-    paths:
-      - "samples/openkoalabot-example-ts/**"
-      - "samples/openkoalabot-example-swift/**"
-      - "libs/cua/**"
-      - "libs/spaces-sdk-swift/**"
-      - "libs/spaces-app-swift/**"
-      - "docs/content/docs/spaces/guides/**"
-      - "docs/content/docs/spaces/examples/**"
-      - ".github/workflows/ci-openkoalabot-example-samples.yml"
+  push:
+    branches: [main]
+  # Drift check: the full build on main, whatever changed.
+  schedule:
+    - cron: "53 5 * * *"
   workflow_dispatch:
 
 permissions:
@@ -25,34 +33,52 @@ permissions:
 
 concurrency:
   group: ci-openkoalabot-example-samples-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
   # Cua programs and packages run here never send usage telemetry.
   CUA_TELEMETRY: "0"
   DO_NOT_TRACK: "1"
   CARGO_TERM_COLOR: always
   CARGO_BUILD_JOBS: "4"
+  # CI checks behavior, not speed: a cheaper release profile compiles about a
+  # quarter faster and the dev profile drops debug info (the line-table
+  # test binaries filled the runner's disk). Release builds in cd-*.yml keep
+  # the shipped profile.
+  CARGO_PROFILE_RELEASE_OPT_LEVEL: "1"
+  CARGO_PROFILE_RELEASE_DEBUG: "0"
+  CARGO_PROFILE_RELEASE_LTO: "off"
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+  CARGO_PROFILE_DEV_DEBUG: "0"
 
 jobs:
   typescript:
+    needs: changes
+    if: ${{ needs.changes.outputs.typescript == 'true' && !startsWith(github.head_ref, 'release-please--branches--') }}
     name: openkoalabot-example-ts (npm test)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
+      # The native + wasm SDK builds (plus the restored rust-cache) overflow the
+      # runner's ~14 GB free disk ("No space left on device"); drop unused
+      # preinstalled toolchains first.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost /opt/hostedtoolcache/CodeQL || true
+          df -h /
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
       - name: Install protoc
-        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
-        with:
-          version: "29.x"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+        uses: ./.github/actions/setup-protoc
       - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@1.97.1
         with:
           targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua
           key: openkoalabot-example-ts
@@ -77,29 +103,61 @@ jobs:
           command -v wasm-bindgen >/dev/null || cargo install --locked wasm-bindgen-cli --version 0.2.126
           npm run build:browser
       - name: Test the sample
-        working-directory: samples/openkoalabot-example-ts
+        working-directory: examples/openkoalabot-example-ts
         run: |
           npm ci
           npm test
           npm run typecheck
           npm run build:web
 
+  changes:
+    name: scope (macOS Swift sample)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      run: ${{ steps.scope.outputs.run }}
+      typescript: ${{ steps.scope.outputs.typescript }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - id: scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          # Fails when the dependency map no longer matches the Swift manifests.
+          python3 .github/scripts/ci_swift_samples_scope.py check-manifests openkoalabot
+          files=""
+          if [[ "$EVENT" == pull_request ]]; then
+            # Both names of a renamed file: moving a dependency out of a mapped
+            # directory is still a change to the dependency.
+            files=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" --jq '.[] | .filename, (.previous_filename // empty)')
+          fi
+          python3 .github/scripts/ci_swift_samples_scope.py scope openkoalabot <<< "$files" | tee -a "$GITHUB_STEP_SUMMARY"
+
   swift:
+    needs: changes
+    if: ${{ needs.changes.outputs.run == 'true' && !startsWith(github.head_ref, 'release-please--branches--') }}
     name: openkoalabot-example-swift (swift test)
-    runs-on: macos-26
+    runs-on: macos-26-xlarge
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
       - name: Install protoc
-        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
-        with:
-          version: "29.x"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+        uses: ./.github/actions/setup-protoc
       - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@1.97.1
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua
           key: openkoalabot-example-swift
@@ -108,4 +166,4 @@ jobs:
           (cd libs/cua && cargo build --locked --release -p cua-sdk)
           node libs/cua/scripts/stage-uniffi-library.mjs --only=swift
       - name: Test the sample
-        run: samples/openkoalabot-example-swift/scripts/test.sh
+        run: examples/openkoalabot-example-swift/scripts/test.sh

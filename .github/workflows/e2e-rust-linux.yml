@@ -1,6 +1,11 @@
 name: "E2E: Rust Linux interactive"
 
 on:
+  pull_request:
+    paths:
+      - .cursor/skills/verify-cua-driver/**
+      - libs/cua-driver/**
+      - .github/workflows/e2e-rust-linux.yml
   # Stable Cua Driver tag runs call this matrix as a release gate. Keep the
   # inputs in sync with workflow_dispatch; only `inputs.*` is read below.
   workflow_call:
@@ -36,6 +41,7 @@ on:
           - native
           - capture
           - installer
+          - verify
       cell_filter:
         description: "Optional shared-cell substring for targeted diagnostics"
         required: false
@@ -46,6 +52,12 @@ permissions:
   actions: read
 
 env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
+  # Failed cases are rerun once inside the gate; a pass on the rerun is
+  # reported as flaky, two failures fail. See scripts/ci/lib/e2e-retry-once.sh.
+  CUA_E2E_RETRY_ONCE: "1"
   # Cua programs and packages run here never send usage telemetry.
   CUA_TELEMETRY: "0"
   DO_NOT_TRACK: "1"
@@ -78,19 +90,21 @@ jobs:
           fi
           echo "sha=${sha,,}" >> "$GITHUB_OUTPUT"
 
-  shared:
-    if: inputs.lane == 'all' || inputs.lane == 'shared'
-    name: "Linux / shared Electron + Tauri"
+  verify-skill:
+    if: inputs.lane == '' || inputs.lane == 'verify'
+    name: "Linux / verification skill proof"
     needs: source
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 25
     env:
       CUA_E2E_SOURCE_SHA: ${{ needs.source.outputs.sha }}
-      CUA_E2E_CELL_FILTER: ${{ inputs.cell_filter }}
+      CUA_E2E_RETRY_ONCE: "0"
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ needs.source.outputs.sha }}
+      - name: Test evidence checker and workflow offline
+        run: timeout 60 python3 -m unittest discover -s .github/scripts/tests -p test_e2e_rust_linux_workflow.py
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
@@ -110,6 +124,53 @@ jobs:
             libgtk-3-dev clang pkg-config libdbus-1-dev libpipewire-0.3-dev \
             libspa-0.2-dev libei-dev libx11-dev libxi-dev libxtst-dev libxext-dev \
             libwebkit2gtk-4.1-dev libssl-dev libxdo-dev \
+            libayatana-appindicator3-dev librsvg2-dev ffmpeg jq x11-utils
+      - name: Verify real Electron background clicks
+        run: .cursor/skills/verify-cua-driver/scripts/verify-linux.sh x11
+      - name: Upload verification evidence after cleanup
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        with:
+          name: verify-cua-driver-evidence
+          path: artifacts/cua-driver/verify/run-*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  shared:
+    if: inputs.lane == 'all' || inputs.lane == 'shared'
+    name: "Linux / shared Electron + Tauri"
+    needs: source
+    runs-on: ubuntu-latest
+    # About 30 minutes warm. The headroom covers a run with neither the
+    # sccache nor the apt package cache warm while the Ubuntu mirror is slow.
+    timeout-minutes: 90
+    env:
+      CUA_E2E_SOURCE_SHA: ${{ needs.source.outputs.sha }}
+      CUA_E2E_CELL_FILTER: ${{ inputs.cell_filter }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+      - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
+      - uses: ./.github/actions/rust-cache
+        with:
+          workspaces: "libs/cua-driver/rust -> target"
+          key: e2e-shared
+          save-if: ${{ github.ref_type == 'branch' && needs.source.outputs.sha == github.sha }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: ${{ github.ref_type == 'branch' && needs.source.outputs.sha == github.sha && 'npm' || '' }}
+          cache-dependency-path: libs/cua-driver/tests/fixtures/apps/cross-platform/electron/package-lock.json
+      - name: Install GUI and Rust build dependencies
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            xvfb dbus-x11 at-spi2-core openbox picom python3-gi gir1.2-gtk-3.0
+            libgtk-3-dev clang pkg-config libdbus-1-dev libpipewire-0.3-dev
+            libspa-0.2-dev libei-dev libx11-dev libxi-dev libxtst-dev libxext-dev
+            libwebkit2gtk-4.1-dev libssl-dev libxdo-dev
             libayatana-appindicator3-dev librsvg2-dev ffmpeg gnome-keyring
       - name: Run shared Rust behavior matrix
         env:
@@ -133,7 +194,7 @@ jobs:
     name: "Linux / GTK3 + GTK4 native harnesses"
     needs: source
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     env:
       CUA_E2E_SOURCE_SHA: ${{ needs.source.outputs.sha }}
     steps:
@@ -141,7 +202,7 @@ jobs:
         with:
           ref: ${{ needs.source.outputs.sha }}
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: "libs/cua-driver/rust -> target"
           key: e2e-native
@@ -152,14 +213,14 @@ jobs:
           cache: ${{ github.ref_type == 'branch' && needs.source.outputs.sha == github.sha && 'npm' || '' }}
           cache-dependency-path: libs/cua-driver/tests/fixtures/apps/cross-platform/electron/package-lock.json
       - name: Install GUI and Rust build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            xvfb dbus-x11 at-spi2-core openbox picom python3-gi gir1.2-gtk-3.0 \
-            gir1.2-gtk-4.0 \
-            libgtk-3-dev clang pkg-config libdbus-1-dev libpipewire-0.3-dev \
-            libspa-0.2-dev libei-dev libx11-dev libxi-dev libxtst-dev libxext-dev \
-            libwebkit2gtk-4.1-dev libssl-dev libxdo-dev \
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            xvfb dbus-x11 at-spi2-core openbox picom python3-gi gir1.2-gtk-3.0
+            gir1.2-gtk-4.0
+            libgtk-3-dev clang pkg-config libdbus-1-dev libpipewire-0.3-dev
+            libspa-0.2-dev libei-dev libx11-dev libxi-dev libxtst-dev libxext-dev
+            libwebkit2gtk-4.1-dev libssl-dev libxdo-dev
             libayatana-appindicator3-dev librsvg2-dev ffmpeg
       - name: Run GTK3 and GTK4 native Rust harnesses
         env:
@@ -183,7 +244,7 @@ jobs:
     name: "Linux / capture and desktop scope"
     needs: source
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     env:
       CUA_E2E_SOURCE_SHA: ${{ needs.source.outputs.sha }}
     steps:
@@ -191,7 +252,7 @@ jobs:
         with:
           ref: ${{ needs.source.outputs.sha }}
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: "libs/cua-driver/rust -> target"
           key: e2e-capture
@@ -202,14 +263,14 @@ jobs:
           cache: ${{ github.ref_type == 'branch' && needs.source.outputs.sha == github.sha && 'npm' || '' }}
           cache-dependency-path: libs/cua-driver/tests/fixtures/apps/cross-platform/electron/package-lock.json
       - name: Install GUI and Rust build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            xvfb dbus-x11 at-spi2-core openbox picom python3-gi gir1.2-gtk-3.0 \
-            libgtk-3-dev clang pkg-config libdbus-1-dev libpipewire-0.3-dev \
-            libspa-0.2-dev libei-dev libx11-dev libxi-dev libxtst-dev libxext-dev \
-            libwebkit2gtk-4.1-dev libssl-dev libxdo-dev \
-            libayatana-appindicator3-dev librsvg2-dev ffmpeg \
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            xvfb dbus-x11 at-spi2-core openbox picom python3-gi gir1.2-gtk-3.0
+            libgtk-3-dev clang pkg-config libdbus-1-dev libpipewire-0.3-dev
+            libspa-0.2-dev libei-dev libx11-dev libxi-dev libxtst-dev libxext-dev
+            libwebkit2gtk-4.1-dev libssl-dev libxdo-dev
+            libayatana-appindicator3-dev librsvg2-dev ffmpeg
             python3-tk x11-utils
       - name: Run capture and desktop-scope contracts
         env:
@@ -241,17 +302,17 @@ jobs:
         with:
           ref: ${{ needs.source.outputs.sha }}
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: "libs/cua-driver/rust -> target"
           key: e2e-installer
           save-if: ${{ github.ref_type == 'branch' && needs.source.outputs.sha == github.sha }}
       - name: Install Rust build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            clang pkg-config libdbus-1-dev libpipewire-0.3-dev \
-            libspa-0.2-dev libei-dev libwayland-dev libxkbcommon-dev \
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            clang pkg-config libdbus-1-dev libpipewire-0.3-dev
+            libspa-0.2-dev libei-dev libwayland-dev libxkbcommon-dev
             libx11-dev libxi-dev libxtst-dev libxext-dev
       - name: Install into an isolated local namespace
         shell: bash
@@ -293,7 +354,7 @@ jobs:
           retention-days: 14
 
   summary:
-    if: always()
+    if: always() && inputs.lane != '' && inputs.lane != 'verify'
     needs: [source, shared, native, capture, installer]
     name: "Linux / matrix summary"
     runs-on: ubuntu-latest
@@ -373,6 +434,7 @@ jobs:
           {
             echo
             echo "Each evidence link opens its owning lane artifact; the row text is the exact \`recordings/<cell-label>-pid<pid>-<sequence>/recording.mp4\` path, with an adjacent \`trajectory.json\`."
+            scripts/ci/summarize-flaky-cases.sh artifacts
           } >> "$summary_path"
           cat "$summary_path" >> "$GITHUB_STEP_SUMMARY"
       - name: Upload matrix summary

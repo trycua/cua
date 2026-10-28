@@ -58,7 +58,7 @@ import type { DemoHandlers } from "./context";
 type Json = Record<string, unknown>;
 
 /** What the pasted join line tells an agent to do next (the daemon's `line`, in `join.rs`). */
-export const JOIN_LINE_STEPS = "Then set your name with thread_join, keep watching the thread with thread_inbox in a loop, reply with thread_post as yourself, and never @mention yourself.";
+export const JOIN_LINE_STEPS = "After you join: set your name with thread_join, keep watching the thread with thread_inbox in a loop, reply with thread_post as yourself, and never @mention yourself.";
 
 /** The demo's own account in the thread (`DEMO_IDENTITY`). */
 export const DEMO_THREAD_ME = { kind: "person", id: "acct_ada", name: "Ada" } as const;

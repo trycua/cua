@@ -329,7 +329,7 @@ impl Persistent {
             "code": code,
             "url": url,
             "line": format!(
-                "Join my Cua Space \"{}\": {url} Then set your name with thread_join, keep watching the thread with thread_inbox in a loop, reply with thread_post as yourself, and never @mention yourself.",
+                "Join my Cua Space \"{}\": {url} After you join: set your name with thread_join, keep watching the thread with thread_inbox in a loop, reply with thread_post as yourself, and never @mention yourself.",
                 self.space_name(&id)
             ),
             "expires_at_ms": out.expires_ms,

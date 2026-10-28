@@ -78,9 +78,13 @@ export function ThreadView({
   const keep = useRef<number | null>(null);
   const first = items.length ? items[0]!.key : "";
   const last = items.length ? items[items.length - 1]!.key : "";
+  // Your own message just went in: the thread follows it to the end, wherever you were reading.
+  const lastItem = items.length ? items[items.length - 1]! : null;
+  const mineLast = Boolean(lastItem && "entry" in lastItem && roster.people.some((p) => p.me && p.id === lastItem.entry.author.id));
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el || !items.length) return;
+    if (mineLast && opened.current) atEnd.current = true;
     if (keep.current !== null) {
       el.scrollTop += el.scrollHeight - keep.current;
       keep.current = null;
@@ -100,7 +104,7 @@ export function ThreadView({
     if (atEnd.current) el.scrollTop = el.scrollHeight;
     // Follows the first and last items, not every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [first, last, items.length]);
+  }, [first, last, items.length, mineLast]);
   // The mini-player moved to (or grew at) the bottom: keep the newest entry in view above it.
   useLayoutEffect(() => {
     const el = ref.current;

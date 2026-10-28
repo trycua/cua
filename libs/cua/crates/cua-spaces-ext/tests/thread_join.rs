@@ -189,7 +189,7 @@ async fn a_code_is_one_line_works_once_and_is_stored_hashed() {
     assert_eq!(
         c["line"],
         format!(
-            "Join my Cua Space \"ubuntu-build\": https://cua.ai/join/{code} Then set your name with thread_join, keep watching the thread with thread_inbox in a loop, reply with thread_post as yourself, and never @mention yourself."
+            "Join my Cua Space \"ubuntu-build\": https://cua.ai/join/{code} After you join: set your name with thread_join, keep watching the thread with thread_inbox in a loop, reply with thread_post as yourself, and never @mention yourself."
         )
     );
     let ttl = c["expires_at_ms"].as_u64().unwrap() - cua_volume::now_ms();

@@ -4,7 +4,7 @@
 import { ChevronRightIcon, PanelRightCloseIcon, PanelRightOpenIcon, PictureInPicture2Icon, PlusIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
-import type { AgentRights, SpaceFact, StreamRow } from "@/bridge";
+import type { AgentRight, AgentRights, SpaceFact, StreamRow } from "@/bridge";
 import { OsIcon } from "@/components/os-icon";
 import { Select } from "@/components/ui/select";
 import { toast } from "@/components/ui/toast";
@@ -314,8 +314,19 @@ function ProfileRow({ person, agent, children }: { person?: RosterPerson; agent?
 }
 
 /** Who can task, stop and approve: the selects alone, for the agent card's Details. */
-export function RightsEditor({ agent, onSetRights, people }: { agent: RosterAgent; onSetRights: (name: string, rights: Partial<AgentRights>) => Promise<void>; people?: readonly RosterPerson[] }) {
-  return <AgentRightsRows agent={agent} onSetRights={onSetRights} people={people} bare />;
+export function RightsEditor({
+  agent,
+  onSetRights,
+  people,
+  labels,
+}: {
+  agent: RosterAgent;
+  onSetRights: (name: string, rights: Partial<AgentRights>) => Promise<void>;
+  people?: readonly RosterPerson[];
+  /** The rows' words, when the page has its own ("Can give it tasks"). */
+  labels?: Partial<Record<AgentRight, string>>;
+}) {
+  return <AgentRightsRows agent={agent} onSetRights={onSetRights} people={people} labels={labels} bare />;
 }
 
 const CHOICES: readonly { value: HolderChoice; label: string }[] = [
@@ -331,6 +342,7 @@ function AgentRightsRows({
   onSetRights,
   onRemove,
   people = [],
+  labels,
   bare,
 }: {
   agent: RosterAgent;
@@ -338,6 +350,7 @@ function AgentRightsRows({
   onRemove?: () => Promise<void>;
   /** Specific people a right can go to (each its own choice). */
   people?: readonly RosterPerson[];
+  labels?: Partial<Record<AgentRight, string>>;
   bare?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
@@ -354,7 +367,8 @@ function AgentRightsRows({
   };
   return (
     <div data-agent-rights={agent.name} className={bare ? "" : "mb-1 ml-9 divide-y divide-border/60 border-y border-border/60"}>
-      {RIGHT_ROWS.map(({ right, label }) => {
+      {RIGHT_ROWS.map(({ right, label: short }) => {
+        const label = labels?.[right] ?? short;
         const value = agent.rights[right];
         const choice = holderChoice(value);
         // One person alone, as their name; several, as a count.

@@ -204,7 +204,7 @@ describe("a Space's thread", () => {
     // The entry carries the structured view the daemon stores.
     const page = await demo.call("thread.read", { spaceId: DEMO_THREAD_SPACE, limit: 200 });
     const posted = page.entries.find((e) => e.text === "is this the right PR?");
-    expect(posted?.view).toEqual({ kind: "window", app: "Firefox", title: "Pull requests · trycua/cua — Mozilla Firefox", windowId: "w-firefox" });
+    expect(posted?.view).toEqual({ kind: "window", app: "Firefox", title: "Pull requests - trycua/cua — Mozilla Firefox", windowId: "w-firefox" });
 
     // Back to the desktop: the next post carries no view and no line.
     await act(async () => {

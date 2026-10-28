@@ -121,7 +121,7 @@ describe("Add an agent", () => {
     await found("[data-join-expired]", 5000);
     expect(q("[data-prompt-copy]")?.hasAttribute("disabled")).toBe(true);
     await click(q("[data-join-renew]")!);
-    await waitFor(() => expect(line()?.value).toMatch(/^Join my Cua Space "ubuntu-build": https:\/\/cua\.ai\/join\/[2-9A-Z]{4}-[2-9A-Z]{4}$/));
+    await waitFor(() => expect(line()?.value).toMatch(/^Join my Cua Space "ubuntu-build": https:\/\/cua\.ai\/join\/[2-9A-Z]{4}-[2-9A-Z]{4} After you join: /));
     expect(line()?.value).not.toBe(LINE);
     expect(q("[data-join-expired]")).toBeNull();
   });

@@ -356,7 +356,7 @@ export function AgentCard({ identity: i, agent, roster, onRemove, onDone }: { id
               </div>
             ) : null}
             {canEdit && agent && scope?.onSetRights && (editing || !v.defaultPermissions) ? (
-              <RightsEditor agent={agent} onSetRights={scope.onSetRights} people={roster.people.filter((p) => !p.id.startsWith("share:"))} />
+              <RightsEditor agent={agent} onSetRights={scope.onSetRights} labels={RIGHT_WORDS} people={roster.people.filter((p) => !p.id.startsWith("share:"))} />
             ) : null}
             {/* Its tasks and posts with you, in the Agents tab. */}
             <Button

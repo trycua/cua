@@ -6,7 +6,7 @@
  * `src-tauri/src/geometry.rs` (serde uses kebab-case for enums).
  */
 
-export type WindowMode = "ambient" | "ambient-teleport" | "switcher" | "create-fleet";
+export type WindowMode = "ambient" | "ambient-teleport" | "switcher" | "create-space";
 
 /** How the portal should draw itself. */
 export type DisplayStyle = "notched" | "no-notch";

@@ -1,0 +1,5289 @@
+{
+ "groups": [
+  {
+   "count": 256,
+   "duration_secs": 1800,
+   "holders": [],
+   "id": "request-0",
+   "latency": "batch",
+   "per": {
+    "disk_gb": 1,
+    "memory_mb": 512,
+    "millicpus": 1000
+   },
+   "pin_host": "",
+   "req": {
+    "arch": "",
+    "base_gb": 2,
+    "gpu": "",
+    "host_os": "",
+    "image": "ghcr.io/trycua/linux:24.04-slim",
+    "kind": "container",
+    "needs_kvm": false,
+    "private_image": false
+   },
+   "soft": false,
+   "soft_usd": 0.0,
+   "sync_secs": 0,
+   "whole": false
+  }
+ ],
+ "hosts": [],
+ "offers": [
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 3072,
+    "millicpus": 8000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-west-2",
+   "rtt_ms": 19,
+   "type_name": "t3.medium",
+   "usd_per_hour": 0.0532,
+   "vcpus": 2
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 3072,
+    "millicpus": 8000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-east-1",
+   "rtt_ms": 59,
+   "type_name": "t3.medium",
+   "usd_per_hour": 0.0532,
+   "vcpus": 2
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 3072,
+    "millicpus": 8000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-east-2",
+   "rtt_ms": 52,
+   "type_name": "t3.medium",
+   "usd_per_hour": 0.0532,
+   "vcpus": 2
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 3072,
+    "millicpus": 8000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "eu-west-1",
+   "rtt_ms": 122,
+   "type_name": "t3.medium",
+   "usd_per_hour": 0.0532,
+   "vcpus": 2
+  },
+  {
+   "arch": "arm64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 3072,
+    "millicpus": 8000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-west-2",
+   "rtt_ms": 19,
+   "type_name": "c7g.large",
+   "usd_per_hour": 0.0841,
+   "vcpus": 2
+  },
+  {
+   "arch": "arm64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 3072,
+    "millicpus": 8000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-east-1",
+   "rtt_ms": 59,
+   "type_name": "c7g.large",
+   "usd_per_hour": 0.0841,
+   "vcpus": 2
+  },
+  {
+   "arch": "arm64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 3072,
+    "millicpus": 8000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-east-2",
+   "rtt_ms": 52,
+   "type_name": "c7g.large",
+   "usd_per_hour": 0.0841,
+   "vcpus": 2
+  },
+  {
+   "arch": "arm64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 3072,
+    "millicpus": 8000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "eu-west-1",
+   "rtt_ms": 122,
+   "type_name": "c7g.large",
+   "usd_per_hour": 0.0841,
+   "vcpus": 2
+  },
+  {
+   "arch": "arm64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 7168,
+    "millicpus": 8000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-west-2",
+   "rtt_ms": 19,
+   "type_name": "m7g.large",
+   "usd_per_hour": 0.0932,
+   "vcpus": 2
+  },
+  {
+   "arch": "arm64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 7168,
+    "millicpus": 8000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-east-1",
+   "rtt_ms": 59,
+   "type_name": "m7g.large",
+   "usd_per_hour": 0.0932,
+   "vcpus": 2
+  },
+  {
+   "arch": "arm64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 7168,
+    "millicpus": 8000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-east-2",
+   "rtt_ms": 52,
+   "type_name": "m7g.large",
+   "usd_per_hour": 0.0932,
+   "vcpus": 2
+  },
+  {
+   "arch": "arm64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 7168,
+    "millicpus": 8000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "eu-west-1",
+   "rtt_ms": 122,
+   "type_name": "m7g.large",
+   "usd_per_hour": 0.0932,
+   "vcpus": 2
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 7168,
+    "millicpus": 8000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-west-2",
+   "rtt_ms": 19,
+   "type_name": "t3.large",
+   "usd_per_hour": 0.0948,
+   "vcpus": 2
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 7168,
+    "millicpus": 8000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-east-1",
+   "rtt_ms": 59,
+   "type_name": "t3.large",
+   "usd_per_hour": 0.0948,
+   "vcpus": 2
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 7168,
+    "millicpus": 8000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-east-2",
+   "rtt_ms": 52,
+   "type_name": "t3.large",
+   "usd_per_hour": 0.0948,
+   "vcpus": 2
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 7168,
+    "millicpus": 8000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "eu-west-1",
+   "rtt_ms": 122,
+   "type_name": "t3.large",
+   "usd_per_hour": 0.0948,
+   "vcpus": 2
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 3072,
+    "millicpus": 8000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-west-2",
+   "rtt_ms": 19,
+   "type_name": "c7i.large",
+   "usd_per_hour": 0.1008,
+   "vcpus": 2
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 3072,
+    "millicpus": 8000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-east-1",
+   "rtt_ms": 59,
+   "type_name": "c7i.large",
+   "usd_per_hour": 0.1008,
+   "vcpus": 2
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 3072,
+    "millicpus": 8000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-east-2",
+   "rtt_ms": 52,
+   "type_name": "c7i.large",
+   "usd_per_hour": 0.1008,
+   "vcpus": 2
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 3072,
+    "millicpus": 8000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "eu-west-1",
+   "rtt_ms": 122,
+   "type_name": "c7i.large",
+   "usd_per_hour": 0.1008,
+   "vcpus": 2
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 7168,
+    "millicpus": 8000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-west-2",
+   "rtt_ms": 19,
+   "type_name": "m7i.large",
+   "usd_per_hour": 0.1124,
+   "vcpus": 2
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 7168,
+    "millicpus": 8000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-east-1",
+   "rtt_ms": 59,
+   "type_name": "m7i.large",
+   "usd_per_hour": 0.1124,
+   "vcpus": 2
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 7168,
+    "millicpus": 8000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-east-2",
+   "rtt_ms": 52,
+   "type_name": "m7i.large",
+   "usd_per_hour": 0.1124,
+   "vcpus": 2
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 7168,
+    "millicpus": 8000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "eu-west-1",
+   "rtt_ms": 122,
+   "type_name": "m7i.large",
+   "usd_per_hour": 0.1124,
+   "vcpus": 2
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 15360,
+    "millicpus": 8000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-west-2",
+   "rtt_ms": 19,
+   "type_name": "r7i.large",
+   "usd_per_hour": 0.1439,
+   "vcpus": 2
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 15360,
+    "millicpus": 8000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-east-1",
+   "rtt_ms": 59,
+   "type_name": "r7i.large",
+   "usd_per_hour": 0.1439,
+   "vcpus": 2
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 15360,
+    "millicpus": 8000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-east-2",
+   "rtt_ms": 52,
+   "type_name": "r7i.large",
+   "usd_per_hour": 0.1439,
+   "vcpus": 2
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 15360,
+    "millicpus": 8000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "eu-west-1",
+   "rtt_ms": 122,
+   "type_name": "r7i.large",
+   "usd_per_hour": 0.1439,
+   "vcpus": 2
+  },
+  {
+   "arch": "arm64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 7168,
+    "millicpus": 16000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-west-2",
+   "rtt_ms": 19,
+   "type_name": "c7g.xlarge",
+   "usd_per_hour": 0.1566,
+   "vcpus": 4
+  },
+  {
+   "arch": "arm64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 7168,
+    "millicpus": 16000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-east-1",
+   "rtt_ms": 59,
+   "type_name": "c7g.xlarge",
+   "usd_per_hour": 0.1566,
+   "vcpus": 4
+  },
+  {
+   "arch": "arm64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 7168,
+    "millicpus": 16000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-east-2",
+   "rtt_ms": 52,
+   "type_name": "c7g.xlarge",
+   "usd_per_hour": 0.1566,
+   "vcpus": 4
+  },
+  {
+   "arch": "arm64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 7168,
+    "millicpus": 16000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "eu-west-1",
+   "rtt_ms": 122,
+   "type_name": "c7g.xlarge",
+   "usd_per_hour": 0.1566,
+   "vcpus": 4
+  },
+  {
+   "arch": "arm64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 15360,
+    "millicpus": 16000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-west-2",
+   "rtt_ms": 19,
+   "type_name": "m7g.xlarge",
+   "usd_per_hour": 0.1748,
+   "vcpus": 4
+  },
+  {
+   "arch": "arm64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 15360,
+    "millicpus": 16000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-east-1",
+   "rtt_ms": 59,
+   "type_name": "m7g.xlarge",
+   "usd_per_hour": 0.1748,
+   "vcpus": 4
+  },
+  {
+   "arch": "arm64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 15360,
+    "millicpus": 16000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-east-2",
+   "rtt_ms": 52,
+   "type_name": "m7g.xlarge",
+   "usd_per_hour": 0.1748,
+   "vcpus": 4
+  },
+  {
+   "arch": "arm64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 15360,
+    "millicpus": 16000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "eu-west-1",
+   "rtt_ms": 122,
+   "type_name": "m7g.xlarge",
+   "usd_per_hour": 0.1748,
+   "vcpus": 4
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 7168,
+    "millicpus": 16000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-west-2",
+   "rtt_ms": 19,
+   "type_name": "c7i.xlarge",
+   "usd_per_hour": 0.1901,
+   "vcpus": 4
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 7168,
+    "millicpus": 16000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-east-1",
+   "rtt_ms": 59,
+   "type_name": "c7i.xlarge",
+   "usd_per_hour": 0.1901,
+   "vcpus": 4
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 7168,
+    "millicpus": 16000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-east-2",
+   "rtt_ms": 52,
+   "type_name": "c7i.xlarge",
+   "usd_per_hour": 0.1901,
+   "vcpus": 4
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 7168,
+    "millicpus": 16000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "eu-west-1",
+   "rtt_ms": 122,
+   "type_name": "c7i.xlarge",
+   "usd_per_hour": 0.1901,
+   "vcpus": 4
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 15360,
+    "millicpus": 16000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-west-2",
+   "rtt_ms": 19,
+   "type_name": "m7i.xlarge",
+   "usd_per_hour": 0.2132,
+   "vcpus": 4
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 15360,
+    "millicpus": 16000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-east-1",
+   "rtt_ms": 59,
+   "type_name": "m7i.xlarge",
+   "usd_per_hour": 0.2132,
+   "vcpus": 4
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 15360,
+    "millicpus": 16000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-east-2",
+   "rtt_ms": 52,
+   "type_name": "m7i.xlarge",
+   "usd_per_hour": 0.2132,
+   "vcpus": 4
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 15360,
+    "millicpus": 16000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "eu-west-1",
+   "rtt_ms": 122,
+   "type_name": "m7i.xlarge",
+   "usd_per_hour": 0.2132,
+   "vcpus": 4
+  },
+  {
+   "arch": "arm64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 15360,
+    "millicpus": 32000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-west-2",
+   "rtt_ms": 19,
+   "type_name": "c7g.2xlarge",
+   "usd_per_hour": 0.3016,
+   "vcpus": 8
+  },
+  {
+   "arch": "arm64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 15360,
+    "millicpus": 32000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-east-1",
+   "rtt_ms": 59,
+   "type_name": "c7g.2xlarge",
+   "usd_per_hour": 0.3016,
+   "vcpus": 8
+  },
+  {
+   "arch": "arm64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 15360,
+    "millicpus": 32000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-east-2",
+   "rtt_ms": 52,
+   "type_name": "c7g.2xlarge",
+   "usd_per_hour": 0.3016,
+   "vcpus": 8
+  },
+  {
+   "arch": "arm64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 15360,
+    "millicpus": 32000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "eu-west-1",
+   "rtt_ms": 122,
+   "type_name": "c7g.2xlarge",
+   "usd_per_hour": 0.3016,
+   "vcpus": 8
+  },
+  {
+   "arch": "arm64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 31744,
+    "millicpus": 32000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-west-2",
+   "rtt_ms": 19,
+   "type_name": "m7g.2xlarge",
+   "usd_per_hour": 0.338,
+   "vcpus": 8
+  },
+  {
+   "arch": "arm64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 31744,
+    "millicpus": 32000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-east-1",
+   "rtt_ms": 59,
+   "type_name": "m7g.2xlarge",
+   "usd_per_hour": 0.338,
+   "vcpus": 8
+  },
+  {
+   "arch": "arm64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 31744,
+    "millicpus": 32000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-east-2",
+   "rtt_ms": 52,
+   "type_name": "m7g.2xlarge",
+   "usd_per_hour": 0.338,
+   "vcpus": 8
+  },
+  {
+   "arch": "arm64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 31744,
+    "millicpus": 32000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "eu-west-1",
+   "rtt_ms": 122,
+   "type_name": "m7g.2xlarge",
+   "usd_per_hour": 0.338,
+   "vcpus": 8
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 15360,
+    "millicpus": 32000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-west-2",
+   "rtt_ms": 19,
+   "type_name": "c7i.2xlarge",
+   "usd_per_hour": 0.3686,
+   "vcpus": 8
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 15360,
+    "millicpus": 32000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-east-1",
+   "rtt_ms": 59,
+   "type_name": "c7i.2xlarge",
+   "usd_per_hour": 0.3686,
+   "vcpus": 8
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 15360,
+    "millicpus": 32000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-east-2",
+   "rtt_ms": 52,
+   "type_name": "c7i.2xlarge",
+   "usd_per_hour": 0.3686,
+   "vcpus": 8
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 15360,
+    "millicpus": 32000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "eu-west-1",
+   "rtt_ms": 122,
+   "type_name": "c7i.2xlarge",
+   "usd_per_hour": 0.3686,
+   "vcpus": 8
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 31744,
+    "millicpus": 32000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-west-2",
+   "rtt_ms": 19,
+   "type_name": "m7i.2xlarge",
+   "usd_per_hour": 0.4148,
+   "vcpus": 8
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 31744,
+    "millicpus": 32000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-east-1",
+   "rtt_ms": 59,
+   "type_name": "m7i.2xlarge",
+   "usd_per_hour": 0.4148,
+   "vcpus": 8
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 31744,
+    "millicpus": 32000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-east-2",
+   "rtt_ms": 52,
+   "type_name": "m7i.2xlarge",
+   "usd_per_hour": 0.4148,
+   "vcpus": 8
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 31744,
+    "millicpus": 32000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "eu-west-1",
+   "rtt_ms": 122,
+   "type_name": "m7i.2xlarge",
+   "usd_per_hour": 0.4148,
+   "vcpus": 8
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 15360,
+    "millicpus": 16000
+   },
+   "gpu": "nvidia:T4",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/g",
+   "region": "us-west-2",
+   "rtt_ms": 19,
+   "type_name": "g4dn.xlarge",
+   "usd_per_hour": 0.5376,
+   "vcpus": 4
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 15360,
+    "millicpus": 16000
+   },
+   "gpu": "nvidia:T4",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/g",
+   "region": "us-east-1",
+   "rtt_ms": 59,
+   "type_name": "g4dn.xlarge",
+   "usd_per_hour": 0.5376,
+   "vcpus": 4
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 15360,
+    "millicpus": 16000
+   },
+   "gpu": "nvidia:T4",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/g",
+   "region": "us-east-2",
+   "rtt_ms": 52,
+   "type_name": "g4dn.xlarge",
+   "usd_per_hour": 0.5376,
+   "vcpus": 4
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 15360,
+    "millicpus": 16000
+   },
+   "gpu": "nvidia:T4",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/g",
+   "region": "eu-west-1",
+   "rtt_ms": 122,
+   "type_name": "g4dn.xlarge",
+   "usd_per_hour": 0.5376,
+   "vcpus": 4
+  },
+  {
+   "arch": "arm64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 31744,
+    "millicpus": 64000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-west-2",
+   "rtt_ms": 19,
+   "type_name": "c7g.4xlarge",
+   "usd_per_hour": 0.5916,
+   "vcpus": 16
+  },
+  {
+   "arch": "arm64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 31744,
+    "millicpus": 64000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-east-1",
+   "rtt_ms": 59,
+   "type_name": "c7g.4xlarge",
+   "usd_per_hour": 0.5916,
+   "vcpus": 16
+  },
+  {
+   "arch": "arm64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 31744,
+    "millicpus": 64000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-east-2",
+   "rtt_ms": 52,
+   "type_name": "c7g.4xlarge",
+   "usd_per_hour": 0.5916,
+   "vcpus": 16
+  },
+  {
+   "arch": "arm64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 31744,
+    "millicpus": 64000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "eu-west-1",
+   "rtt_ms": 122,
+   "type_name": "c7g.4xlarge",
+   "usd_per_hour": 0.5916,
+   "vcpus": 16
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 31744,
+    "millicpus": 64000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-west-2",
+   "rtt_ms": 19,
+   "type_name": "c7i.4xlarge",
+   "usd_per_hour": 0.7256,
+   "vcpus": 16
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 31744,
+    "millicpus": 64000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-east-1",
+   "rtt_ms": 59,
+   "type_name": "c7i.4xlarge",
+   "usd_per_hour": 0.7256,
+   "vcpus": 16
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 31744,
+    "millicpus": 64000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-east-2",
+   "rtt_ms": 52,
+   "type_name": "c7i.4xlarge",
+   "usd_per_hour": 0.7256,
+   "vcpus": 16
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 31744,
+    "millicpus": 64000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "eu-west-1",
+   "rtt_ms": 122,
+   "type_name": "c7i.4xlarge",
+   "usd_per_hour": 0.7256,
+   "vcpus": 16
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 15360,
+    "millicpus": 16000
+   },
+   "gpu": "nvidia:L4",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/g",
+   "region": "us-west-2",
+   "rtt_ms": 19,
+   "type_name": "g6.xlarge",
+   "usd_per_hour": 0.8164,
+   "vcpus": 4
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 15360,
+    "millicpus": 16000
+   },
+   "gpu": "nvidia:L4",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/g",
+   "region": "us-east-1",
+   "rtt_ms": 59,
+   "type_name": "g6.xlarge",
+   "usd_per_hour": 0.8164,
+   "vcpus": 4
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 15360,
+    "millicpus": 16000
+   },
+   "gpu": "nvidia:L4",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/g",
+   "region": "us-east-2",
+   "rtt_ms": 52,
+   "type_name": "g6.xlarge",
+   "usd_per_hour": 0.8164,
+   "vcpus": 4
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 15360,
+    "millicpus": 16000
+   },
+   "gpu": "nvidia:L4",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/g",
+   "region": "eu-west-1",
+   "rtt_ms": 122,
+   "type_name": "g6.xlarge",
+   "usd_per_hour": 0.8164,
+   "vcpus": 4
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 31744,
+    "millicpus": 32000
+   },
+   "gpu": "nvidia:L4",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/g",
+   "region": "us-west-2",
+   "rtt_ms": 19,
+   "type_name": "g6.2xlarge",
+   "usd_per_hour": 0.9892,
+   "vcpus": 8
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 31744,
+    "millicpus": 32000
+   },
+   "gpu": "nvidia:L4",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/g",
+   "region": "us-east-1",
+   "rtt_ms": 59,
+   "type_name": "g6.2xlarge",
+   "usd_per_hour": 0.9892,
+   "vcpus": 8
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 31744,
+    "millicpus": 32000
+   },
+   "gpu": "nvidia:L4",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/g",
+   "region": "us-east-2",
+   "rtt_ms": 52,
+   "type_name": "g6.2xlarge",
+   "usd_per_hour": 0.9892,
+   "vcpus": 8
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 31744,
+    "millicpus": 32000
+   },
+   "gpu": "nvidia:L4",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/g",
+   "region": "eu-west-1",
+   "rtt_ms": 122,
+   "type_name": "g6.2xlarge",
+   "usd_per_hour": 0.9892,
+   "vcpus": 8
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 15360,
+    "millicpus": 16000
+   },
+   "gpu": "nvidia:A10G",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/g",
+   "region": "us-west-2",
+   "rtt_ms": 19,
+   "type_name": "g5.xlarge",
+   "usd_per_hour": 1.0176,
+   "vcpus": 4
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 15360,
+    "millicpus": 16000
+   },
+   "gpu": "nvidia:A10G",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/g",
+   "region": "us-east-1",
+   "rtt_ms": 59,
+   "type_name": "g5.xlarge",
+   "usd_per_hour": 1.0176,
+   "vcpus": 4
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 15360,
+    "millicpus": 16000
+   },
+   "gpu": "nvidia:A10G",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/g",
+   "region": "us-east-2",
+   "rtt_ms": 52,
+   "type_name": "g5.xlarge",
+   "usd_per_hour": 1.0176,
+   "vcpus": 4
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 15360,
+    "millicpus": 16000
+   },
+   "gpu": "nvidia:A10G",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/g",
+   "region": "eu-west-1",
+   "rtt_ms": 122,
+   "type_name": "g5.xlarge",
+   "usd_per_hour": 1.0176,
+   "vcpus": 4
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 31744,
+    "millicpus": 32000
+   },
+   "gpu": "nvidia:A10G",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/g",
+   "region": "us-west-2",
+   "rtt_ms": 19,
+   "type_name": "g5.2xlarge",
+   "usd_per_hour": 1.2236,
+   "vcpus": 8
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 31744,
+    "millicpus": 32000
+   },
+   "gpu": "nvidia:A10G",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/g",
+   "region": "us-east-1",
+   "rtt_ms": 59,
+   "type_name": "g5.2xlarge",
+   "usd_per_hour": 1.2236,
+   "vcpus": 8
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 31744,
+    "millicpus": 32000
+   },
+   "gpu": "nvidia:A10G",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/g",
+   "region": "us-east-2",
+   "rtt_ms": 52,
+   "type_name": "g5.2xlarge",
+   "usd_per_hour": 1.2236,
+   "vcpus": 8
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 31744,
+    "millicpus": 32000
+   },
+   "gpu": "nvidia:A10G",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/g",
+   "region": "eu-west-1",
+   "rtt_ms": 122,
+   "type_name": "g5.2xlarge",
+   "usd_per_hour": 1.2236,
+   "vcpus": 8
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 64512,
+    "millicpus": 64000
+   },
+   "gpu": "nvidia:L4",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/g",
+   "region": "us-west-2",
+   "rtt_ms": 19,
+   "type_name": "g6.4xlarge",
+   "usd_per_hour": 1.3348,
+   "vcpus": 16
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 64512,
+    "millicpus": 64000
+   },
+   "gpu": "nvidia:L4",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/g",
+   "region": "us-east-1",
+   "rtt_ms": 59,
+   "type_name": "g6.4xlarge",
+   "usd_per_hour": 1.3348,
+   "vcpus": 16
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 64512,
+    "millicpus": 64000
+   },
+   "gpu": "nvidia:L4",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/g",
+   "region": "us-east-2",
+   "rtt_ms": 52,
+   "type_name": "g6.4xlarge",
+   "usd_per_hour": 1.3348,
+   "vcpus": 16
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 64512,
+    "millicpus": 64000
+   },
+   "gpu": "nvidia:L4",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/g",
+   "region": "eu-west-1",
+   "rtt_ms": 122,
+   "type_name": "g6.4xlarge",
+   "usd_per_hour": 1.3348,
+   "vcpus": 16
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 31744,
+    "millicpus": 16000
+   },
+   "gpu": "nvidia:L40S",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/g",
+   "region": "us-west-2",
+   "rtt_ms": 19,
+   "type_name": "g6e.xlarge",
+   "usd_per_hour": 1.8726,
+   "vcpus": 4
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 31744,
+    "millicpus": 16000
+   },
+   "gpu": "nvidia:L40S",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/g",
+   "region": "us-east-1",
+   "rtt_ms": 59,
+   "type_name": "g6e.xlarge",
+   "usd_per_hour": 1.8726,
+   "vcpus": 4
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 31744,
+    "millicpus": 16000
+   },
+   "gpu": "nvidia:L40S",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/g",
+   "region": "us-east-2",
+   "rtt_ms": 52,
+   "type_name": "g6e.xlarge",
+   "usd_per_hour": 1.8726,
+   "vcpus": 4
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 31744,
+    "millicpus": 16000
+   },
+   "gpu": "nvidia:L40S",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/g",
+   "region": "eu-west-1",
+   "rtt_ms": 122,
+   "type_name": "g6e.xlarge",
+   "usd_per_hour": 1.8726,
+   "vcpus": 4
+  },
+  {
+   "arch": "arm64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 300,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 130048,
+    "millicpus": 256000
+   },
+   "gpu": "",
+   "kinds": [
+    "container",
+    "vm",
+    "microvm"
+   ],
+   "kvm": true,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-west-2",
+   "rtt_ms": 19,
+   "type_name": "c6g.metal",
+   "usd_per_hour": 2.1876,
+   "vcpus": 64
+  },
+  {
+   "arch": "arm64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 300,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 130048,
+    "millicpus": 256000
+   },
+   "gpu": "",
+   "kinds": [
+    "container",
+    "vm",
+    "microvm"
+   ],
+   "kvm": true,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-east-1",
+   "rtt_ms": 59,
+   "type_name": "c6g.metal",
+   "usd_per_hour": 2.1876,
+   "vcpus": 64
+  },
+  {
+   "arch": "arm64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 300,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 130048,
+    "millicpus": 256000
+   },
+   "gpu": "",
+   "kinds": [
+    "container",
+    "vm",
+    "microvm"
+   ],
+   "kvm": true,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "us-east-2",
+   "rtt_ms": 52,
+   "type_name": "c6g.metal",
+   "usd_per_hour": 2.1876,
+   "vcpus": 64
+  },
+  {
+   "arch": "arm64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 300,
+   "capacity": {
+    "disk_gb": 45,
+    "memory_mb": 130048,
+    "millicpus": 256000
+   },
+   "gpu": "",
+   "kinds": [
+    "container",
+    "vm",
+    "microvm"
+   ],
+   "kvm": true,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/standard",
+   "region": "eu-west-1",
+   "rtt_ms": 122,
+   "type_name": "c6g.metal",
+   "usd_per_hour": 2.1876,
+   "vcpus": 64
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 64512,
+    "millicpus": 32000
+   },
+   "gpu": "nvidia:L40S",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/g",
+   "region": "us-west-2",
+   "rtt_ms": 19,
+   "type_name": "g6e.2xlarge",
+   "usd_per_hour": 2.2537,
+   "vcpus": 8
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 64512,
+    "millicpus": 32000
+   },
+   "gpu": "nvidia:L40S",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/g",
+   "region": "us-east-1",
+   "rtt_ms": 59,
+   "type_name": "g6e.2xlarge",
+   "usd_per_hour": 2.2537,
+   "vcpus": 8
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 64512,
+    "millicpus": 32000
+   },
+   "gpu": "nvidia:L40S",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/g",
+   "region": "us-east-2",
+   "rtt_ms": 52,
+   "type_name": "g6e.2xlarge",
+   "usd_per_hour": 2.2537,
+   "vcpus": 8
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 64512,
+    "millicpus": 32000
+   },
+   "gpu": "nvidia:L40S",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/g",
+   "region": "eu-west-1",
+   "rtt_ms": 122,
+   "type_name": "g6e.2xlarge",
+   "usd_per_hour": 2.2537,
+   "vcpus": 8
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 195584,
+    "millicpus": 192000
+   },
+   "gpu": "nvidia:L4",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/g",
+   "region": "us-west-2",
+   "rtt_ms": 19,
+   "type_name": "g6.12xlarge",
+   "usd_per_hour": 4.6132,
+   "vcpus": 48
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 195584,
+    "millicpus": 192000
+   },
+   "gpu": "nvidia:L4",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/g",
+   "region": "us-east-1",
+   "rtt_ms": 59,
+   "type_name": "g6.12xlarge",
+   "usd_per_hour": 4.6132,
+   "vcpus": 48
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 195584,
+    "millicpus": 192000
+   },
+   "gpu": "nvidia:L4",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/g",
+   "region": "us-east-2",
+   "rtt_ms": 52,
+   "type_name": "g6.12xlarge",
+   "usd_per_hour": 4.6132,
+   "vcpus": 48
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 195584,
+    "millicpus": 192000
+   },
+   "gpu": "nvidia:L4",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/g",
+   "region": "eu-west-1",
+   "rtt_ms": 122,
+   "type_name": "g6.12xlarge",
+   "usd_per_hour": 4.6132,
+   "vcpus": 48
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 195584,
+    "millicpus": 192000
+   },
+   "gpu": "nvidia:A10G",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/g",
+   "region": "us-west-2",
+   "rtt_ms": 19,
+   "type_name": "g5.12xlarge",
+   "usd_per_hour": 5.6836,
+   "vcpus": 48
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 195584,
+    "millicpus": 192000
+   },
+   "gpu": "nvidia:A10G",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/g",
+   "region": "us-east-1",
+   "rtt_ms": 59,
+   "type_name": "g5.12xlarge",
+   "usd_per_hour": 5.6836,
+   "vcpus": 48
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 195584,
+    "millicpus": 192000
+   },
+   "gpu": "nvidia:A10G",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/g",
+   "region": "us-east-2",
+   "rtt_ms": 52,
+   "type_name": "g5.12xlarge",
+   "usd_per_hour": 5.6836,
+   "vcpus": 48
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 195584,
+    "millicpus": 192000
+   },
+   "gpu": "nvidia:A10G",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/g",
+   "region": "eu-west-1",
+   "rtt_ms": 122,
+   "type_name": "g5.12xlarge",
+   "usd_per_hour": 5.6836,
+   "vcpus": 48
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 392192,
+    "millicpus": 192000
+   },
+   "gpu": "nvidia:L40S",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/g",
+   "region": "us-west-2",
+   "rtt_ms": 19,
+   "type_name": "g6e.12xlarge",
+   "usd_per_hour": 10.5042,
+   "vcpus": 48
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 392192,
+    "millicpus": 192000
+   },
+   "gpu": "nvidia:L40S",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/g",
+   "region": "us-east-1",
+   "rtt_ms": 59,
+   "type_name": "g6e.12xlarge",
+   "usd_per_hour": 10.5042,
+   "vcpus": 48
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 392192,
+    "millicpus": 192000
+   },
+   "gpu": "nvidia:L40S",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/g",
+   "region": "us-east-2",
+   "rtt_ms": 52,
+   "type_name": "g6e.12xlarge",
+   "usd_per_hour": 10.5042,
+   "vcpus": 48
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 392192,
+    "millicpus": 192000
+   },
+   "gpu": "nvidia:L40S",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/g",
+   "region": "eu-west-1",
+   "rtt_ms": 122,
+   "type_name": "g6e.12xlarge",
+   "usd_per_hour": 10.5042,
+   "vcpus": 48
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 1178624,
+    "millicpus": 384000
+   },
+   "gpu": "nvidia:A100",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/p",
+   "region": "us-west-2",
+   "rtt_ms": 19,
+   "type_name": "p4d.24xlarge",
+   "usd_per_hour": 21.9692,
+   "vcpus": 96
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 1178624,
+    "millicpus": 384000
+   },
+   "gpu": "nvidia:A100",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/p",
+   "region": "us-east-1",
+   "rtt_ms": 59,
+   "type_name": "p4d.24xlarge",
+   "usd_per_hour": 21.9692,
+   "vcpus": 96
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 1178624,
+    "millicpus": 384000
+   },
+   "gpu": "nvidia:A100",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/p",
+   "region": "us-east-2",
+   "rtt_ms": 52,
+   "type_name": "p4d.24xlarge",
+   "usd_per_hour": 21.9692,
+   "vcpus": 96
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 1178624,
+    "millicpus": 384000
+   },
+   "gpu": "nvidia:A100",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/p",
+   "region": "eu-west-1",
+   "rtt_ms": 122,
+   "type_name": "p4d.24xlarge",
+   "usd_per_hour": 21.9692,
+   "vcpus": 96
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 2096128,
+    "millicpus": 768000
+   },
+   "gpu": "nvidia:H100",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/p",
+   "region": "us-west-2",
+   "rtt_ms": 19,
+   "type_name": "p5.48xlarge",
+   "usd_per_hour": 55.0516,
+   "vcpus": 192
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 2096128,
+    "millicpus": 768000
+   },
+   "gpu": "nvidia:H100",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/p",
+   "region": "us-east-1",
+   "rtt_ms": 59,
+   "type_name": "p5.48xlarge",
+   "usd_per_hour": 55.0516,
+   "vcpus": 192
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 2096128,
+    "millicpus": 768000
+   },
+   "gpu": "nvidia:H100",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/p",
+   "region": "us-east-2",
+   "rtt_ms": 52,
+   "type_name": "p5.48xlarge",
+   "usd_per_hour": 55.0516,
+   "vcpus": 192
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 60,
+   "billing_step_secs": 1,
+   "boot_secs": 90,
+   "capacity": {
+    "disk_gb": 85,
+    "memory_mb": 2096128,
+    "millicpus": 768000
+   },
+   "gpu": "nvidia:H100",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 20,
+   "one_space_each": false,
+   "provider": "aws",
+   "quota": "aws/p",
+   "region": "eu-west-1",
+   "rtt_ms": 122,
+   "type_name": "p5.48xlarge",
+   "usd_per_hour": 55.0516,
+   "vcpus": 192
+  },
+  {
+   "arch": "arm64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 25,
+    "memory_mb": 3072,
+    "millicpus": 8000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "fsn1",
+   "rtt_ms": 137,
+   "type_name": "cax11",
+   "usd_per_hour": 0.0122,
+   "vcpus": 2
+  },
+  {
+   "arch": "arm64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 25,
+    "memory_mb": 3072,
+    "millicpus": 8000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "nbg1",
+   "rtt_ms": 138,
+   "type_name": "cax11",
+   "usd_per_hour": 0.0122,
+   "vcpus": 2
+  },
+  {
+   "arch": "arm64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 135,
+   "capacity": {
+    "disk_gb": 25,
+    "memory_mb": 3072,
+    "millicpus": 8000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "hel1",
+   "rtt_ms": 130,
+   "type_name": "cax11",
+   "usd_per_hour": 0.0122,
+   "vcpus": 2
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 5,
+    "memory_mb": 0,
+    "millicpus": 4000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "fsn1",
+   "rtt_ms": 137,
+   "type_name": "cpx02",
+   "usd_per_hour": 0.013,
+   "vcpus": 1
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 5,
+    "memory_mb": 0,
+    "millicpus": 4000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "nbg1",
+   "rtt_ms": 138,
+   "type_name": "cpx02",
+   "usd_per_hour": 0.013,
+   "vcpus": 1
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 5,
+    "memory_mb": 0,
+    "millicpus": 4000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "hel1",
+   "rtt_ms": 130,
+   "type_name": "cpx02",
+   "usd_per_hour": 0.013,
+   "vcpus": 1
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 5,
+    "memory_mb": 0,
+    "millicpus": 4000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "sin",
+   "rtt_ms": 201,
+   "type_name": "cpx02",
+   "usd_per_hour": 0.013,
+   "vcpus": 1
+  },
+  {
+   "arch": "arm64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 65,
+    "memory_mb": 7168,
+    "millicpus": 16000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "fsn1",
+   "rtt_ms": 137,
+   "type_name": "cax21",
+   "usd_per_hour": 0.021,
+   "vcpus": 4
+  },
+  {
+   "arch": "arm64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 65,
+    "memory_mb": 7168,
+    "millicpus": 16000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "nbg1",
+   "rtt_ms": 138,
+   "type_name": "cax21",
+   "usd_per_hour": 0.021,
+   "vcpus": 4
+  },
+  {
+   "arch": "arm64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 65,
+    "memory_mb": 7168,
+    "millicpus": 16000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "hel1",
+   "rtt_ms": 130,
+   "type_name": "cax21",
+   "usd_per_hour": 0.021,
+   "vcpus": 4
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 25,
+    "memory_mb": 1024,
+    "millicpus": 4000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "fsn1",
+   "rtt_ms": 137,
+   "type_name": "cpx12",
+   "usd_per_hour": 0.0226,
+   "vcpus": 1
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 25,
+    "memory_mb": 1024,
+    "millicpus": 4000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "nbg1",
+   "rtt_ms": 138,
+   "type_name": "cpx12",
+   "usd_per_hour": 0.0226,
+   "vcpus": 1
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 25,
+    "memory_mb": 1024,
+    "millicpus": 4000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "hel1",
+   "rtt_ms": 130,
+   "type_name": "cpx12",
+   "usd_per_hour": 0.0226,
+   "vcpus": 1
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 25,
+    "memory_mb": 1024,
+    "millicpus": 4000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "sin",
+   "rtt_ms": 201,
+   "type_name": "cpx12",
+   "usd_per_hour": 0.0226,
+   "vcpus": 1
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 25,
+    "memory_mb": 1024,
+    "millicpus": 8000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "ash",
+   "rtt_ms": 59,
+   "type_name": "cpx11",
+   "usd_per_hour": 0.033800000000000004,
+   "vcpus": 2
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 25,
+    "memory_mb": 1024,
+    "millicpus": 8000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "hil",
+   "rtt_ms": 19,
+   "type_name": "cpx11",
+   "usd_per_hour": 0.033800000000000004,
+   "vcpus": 2
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 65,
+    "memory_mb": 3072,
+    "millicpus": 8000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "fsn1",
+   "rtt_ms": 137,
+   "type_name": "cpx22",
+   "usd_per_hour": 0.0378,
+   "vcpus": 2
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 65,
+    "memory_mb": 3072,
+    "millicpus": 8000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "nbg1",
+   "rtt_ms": 138,
+   "type_name": "cpx22",
+   "usd_per_hour": 0.0378,
+   "vcpus": 2
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 65,
+    "memory_mb": 3072,
+    "millicpus": 8000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "hel1",
+   "rtt_ms": 130,
+   "type_name": "cpx22",
+   "usd_per_hour": 0.0378,
+   "vcpus": 2
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 65,
+    "memory_mb": 3072,
+    "millicpus": 8000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "sin",
+   "rtt_ms": 201,
+   "type_name": "cpx22",
+   "usd_per_hour": 0.0378,
+   "vcpus": 2
+  },
+  {
+   "arch": "arm64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 145,
+    "memory_mb": 15360,
+    "millicpus": 32000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "fsn1",
+   "rtt_ms": 137,
+   "type_name": "cax31",
+   "usd_per_hour": 0.041,
+   "vcpus": 8
+  },
+  {
+   "arch": "arm64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 145,
+    "memory_mb": 15360,
+    "millicpus": 32000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "nbg1",
+   "rtt_ms": 138,
+   "type_name": "cax31",
+   "usd_per_hour": 0.041,
+   "vcpus": 8
+  },
+  {
+   "arch": "arm64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 145,
+    "memory_mb": 15360,
+    "millicpus": 32000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "hel1",
+   "rtt_ms": 130,
+   "type_name": "cax31",
+   "usd_per_hour": 0.041,
+   "vcpus": 8
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 65,
+    "memory_mb": 3072,
+    "millicpus": 12000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "ash",
+   "rtt_ms": 59,
+   "type_name": "cpx21",
+   "usd_per_hour": 0.0611,
+   "vcpus": 3
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 65,
+    "memory_mb": 3072,
+    "millicpus": 12000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "hil",
+   "rtt_ms": 19,
+   "type_name": "cpx21",
+   "usd_per_hour": 0.0611,
+   "vcpus": 3
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 145,
+    "memory_mb": 7168,
+    "millicpus": 16000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "fsn1",
+   "rtt_ms": 137,
+   "type_name": "cpx32",
+   "usd_per_hour": 0.0683,
+   "vcpus": 4
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 145,
+    "memory_mb": 7168,
+    "millicpus": 16000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "nbg1",
+   "rtt_ms": 138,
+   "type_name": "cpx32",
+   "usd_per_hour": 0.0683,
+   "vcpus": 4
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 145,
+    "memory_mb": 7168,
+    "millicpus": 16000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "hel1",
+   "rtt_ms": 130,
+   "type_name": "cpx32",
+   "usd_per_hour": 0.0683,
+   "vcpus": 4
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 145,
+    "memory_mb": 7168,
+    "millicpus": 16000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "sin",
+   "rtt_ms": 201,
+   "type_name": "cpx32",
+   "usd_per_hour": 0.0683,
+   "vcpus": 4
+  },
+  {
+   "arch": "arm64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 305,
+    "memory_mb": 31744,
+    "millicpus": 64000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "fsn1",
+   "rtt_ms": 137,
+   "type_name": "cax41",
+   "usd_per_hour": 0.0787,
+   "vcpus": 16
+  },
+  {
+   "arch": "arm64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 305,
+    "memory_mb": 31744,
+    "millicpus": 64000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "nbg1",
+   "rtt_ms": 138,
+   "type_name": "cax41",
+   "usd_per_hour": 0.0787,
+   "vcpus": 16
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 65,
+    "memory_mb": 7168,
+    "millicpus": 8000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/dedicated",
+   "region": "fsn1",
+   "rtt_ms": 137,
+   "type_name": "ccx13",
+   "usd_per_hour": 0.0819,
+   "vcpus": 2
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 65,
+    "memory_mb": 7168,
+    "millicpus": 8000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/dedicated",
+   "region": "nbg1",
+   "rtt_ms": 138,
+   "type_name": "ccx13",
+   "usd_per_hour": 0.0819,
+   "vcpus": 2
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 65,
+    "memory_mb": 7168,
+    "millicpus": 8000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/dedicated",
+   "region": "hel1",
+   "rtt_ms": 130,
+   "type_name": "ccx13",
+   "usd_per_hour": 0.0819,
+   "vcpus": 2
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 65,
+    "memory_mb": 7168,
+    "millicpus": 8000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/dedicated",
+   "region": "ash",
+   "rtt_ms": 59,
+   "type_name": "ccx13",
+   "usd_per_hour": 0.0819,
+   "vcpus": 2
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 65,
+    "memory_mb": 7168,
+    "millicpus": 8000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/dedicated",
+   "region": "hil",
+   "rtt_ms": 19,
+   "type_name": "ccx13",
+   "usd_per_hour": 0.0819,
+   "vcpus": 2
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 65,
+    "memory_mb": 7168,
+    "millicpus": 8000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/dedicated",
+   "region": "sin",
+   "rtt_ms": 201,
+   "type_name": "ccx13",
+   "usd_per_hour": 0.0819,
+   "vcpus": 2
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 145,
+    "memory_mb": 7168,
+    "millicpus": 16000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "ash",
+   "rtt_ms": 59,
+   "type_name": "cpx31",
+   "usd_per_hour": 0.1188,
+   "vcpus": 4
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 145,
+    "memory_mb": 7168,
+    "millicpus": 16000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "hil",
+   "rtt_ms": 19,
+   "type_name": "cpx31",
+   "usd_per_hour": 0.1188,
+   "vcpus": 4
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 305,
+    "memory_mb": 15360,
+    "millicpus": 32000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "fsn1",
+   "rtt_ms": 137,
+   "type_name": "cpx42",
+   "usd_per_hour": 0.1324,
+   "vcpus": 8
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 305,
+    "memory_mb": 15360,
+    "millicpus": 32000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "nbg1",
+   "rtt_ms": 138,
+   "type_name": "cpx42",
+   "usd_per_hour": 0.1324,
+   "vcpus": 8
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 305,
+    "memory_mb": 15360,
+    "millicpus": 32000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "hel1",
+   "rtt_ms": 130,
+   "type_name": "cpx42",
+   "usd_per_hour": 0.1324,
+   "vcpus": 8
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 305,
+    "memory_mb": 15360,
+    "millicpus": 32000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "sin",
+   "rtt_ms": 201,
+   "type_name": "cpx42",
+   "usd_per_hour": 0.1324,
+   "vcpus": 8
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 145,
+    "memory_mb": 15360,
+    "millicpus": 16000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/dedicated",
+   "region": "fsn1",
+   "rtt_ms": 137,
+   "type_name": "ccx23",
+   "usd_per_hour": 0.1636,
+   "vcpus": 4
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 145,
+    "memory_mb": 15360,
+    "millicpus": 16000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/dedicated",
+   "region": "nbg1",
+   "rtt_ms": 138,
+   "type_name": "ccx23",
+   "usd_per_hour": 0.1636,
+   "vcpus": 4
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 145,
+    "memory_mb": 15360,
+    "millicpus": 16000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/dedicated",
+   "region": "hel1",
+   "rtt_ms": 130,
+   "type_name": "ccx23",
+   "usd_per_hour": 0.1636,
+   "vcpus": 4
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 145,
+    "memory_mb": 15360,
+    "millicpus": 16000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/dedicated",
+   "region": "ash",
+   "rtt_ms": 59,
+   "type_name": "ccx23",
+   "usd_per_hour": 0.1636,
+   "vcpus": 4
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 145,
+    "memory_mb": 15360,
+    "millicpus": 16000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/dedicated",
+   "region": "hil",
+   "rtt_ms": 19,
+   "type_name": "ccx23",
+   "usd_per_hour": 0.1636,
+   "vcpus": 4
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 145,
+    "memory_mb": 15360,
+    "millicpus": 16000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/dedicated",
+   "region": "sin",
+   "rtt_ms": 201,
+   "type_name": "ccx23",
+   "usd_per_hour": 0.1636,
+   "vcpus": 4
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 465,
+    "memory_mb": 23552,
+    "millicpus": 48000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "fsn1",
+   "rtt_ms": 137,
+   "type_name": "cpx52",
+   "usd_per_hour": 0.1917,
+   "vcpus": 12
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 465,
+    "memory_mb": 23552,
+    "millicpus": 48000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "nbg1",
+   "rtt_ms": 138,
+   "type_name": "cpx52",
+   "usd_per_hour": 0.1917,
+   "vcpus": 12
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 465,
+    "memory_mb": 23552,
+    "millicpus": 48000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "hel1",
+   "rtt_ms": 130,
+   "type_name": "cpx52",
+   "usd_per_hour": 0.1917,
+   "vcpus": 12
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 465,
+    "memory_mb": 23552,
+    "millicpus": 48000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "sin",
+   "rtt_ms": 201,
+   "type_name": "cpx52",
+   "usd_per_hour": 0.1917,
+   "vcpus": 12
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 225,
+    "memory_mb": 15360,
+    "millicpus": 32000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "ash",
+   "rtt_ms": 59,
+   "type_name": "cpx41",
+   "usd_per_hour": 0.2277,
+   "vcpus": 8
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 225,
+    "memory_mb": 15360,
+    "millicpus": 32000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "hil",
+   "rtt_ms": 19,
+   "type_name": "cpx41",
+   "usd_per_hour": 0.2277,
+   "vcpus": 8
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 625,
+    "memory_mb": 31744,
+    "millicpus": 64000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "fsn1",
+   "rtt_ms": 137,
+   "type_name": "cpx62",
+   "usd_per_hour": 0.2462,
+   "vcpus": 16
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 625,
+    "memory_mb": 31744,
+    "millicpus": 64000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "nbg1",
+   "rtt_ms": 138,
+   "type_name": "cpx62",
+   "usd_per_hour": 0.2462,
+   "vcpus": 16
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 625,
+    "memory_mb": 31744,
+    "millicpus": 64000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "hel1",
+   "rtt_ms": 130,
+   "type_name": "cpx62",
+   "usd_per_hour": 0.2462,
+   "vcpus": 16
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 625,
+    "memory_mb": 31744,
+    "millicpus": 64000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "sin",
+   "rtt_ms": 201,
+   "type_name": "cpx62",
+   "usd_per_hour": 0.2462,
+   "vcpus": 16
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 225,
+    "memory_mb": 31744,
+    "millicpus": 32000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/dedicated",
+   "region": "fsn1",
+   "rtt_ms": 137,
+   "type_name": "ccx33",
+   "usd_per_hour": 0.2622,
+   "vcpus": 8
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 225,
+    "memory_mb": 31744,
+    "millicpus": 32000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/dedicated",
+   "region": "nbg1",
+   "rtt_ms": 138,
+   "type_name": "ccx33",
+   "usd_per_hour": 0.2622,
+   "vcpus": 8
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 225,
+    "memory_mb": 31744,
+    "millicpus": 32000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/dedicated",
+   "region": "hel1",
+   "rtt_ms": 130,
+   "type_name": "ccx33",
+   "usd_per_hour": 0.2622,
+   "vcpus": 8
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 225,
+    "memory_mb": 31744,
+    "millicpus": 32000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/dedicated",
+   "region": "ash",
+   "rtt_ms": 59,
+   "type_name": "ccx33",
+   "usd_per_hour": 0.2622,
+   "vcpus": 8
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 225,
+    "memory_mb": 31744,
+    "millicpus": 32000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/dedicated",
+   "region": "hil",
+   "rtt_ms": 19,
+   "type_name": "ccx33",
+   "usd_per_hour": 0.2622,
+   "vcpus": 8
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 225,
+    "memory_mb": 31744,
+    "millicpus": 32000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/dedicated",
+   "region": "sin",
+   "rtt_ms": 201,
+   "type_name": "ccx33",
+   "usd_per_hour": 0.2622,
+   "vcpus": 8
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 345,
+    "memory_mb": 31744,
+    "millicpus": 64000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "ash",
+   "rtt_ms": 59,
+   "type_name": "cpx51",
+   "usd_per_hour": 0.4489,
+   "vcpus": 16
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 345,
+    "memory_mb": 31744,
+    "millicpus": 64000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/shared",
+   "region": "hil",
+   "rtt_ms": 19,
+   "type_name": "cpx51",
+   "usd_per_hour": 0.4489,
+   "vcpus": 16
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 345,
+    "memory_mb": 64512,
+    "millicpus": 64000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/dedicated",
+   "region": "fsn1",
+   "rtt_ms": 137,
+   "type_name": "ccx43",
+   "usd_per_hour": 0.5226,
+   "vcpus": 16
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 345,
+    "memory_mb": 64512,
+    "millicpus": 64000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/dedicated",
+   "region": "nbg1",
+   "rtt_ms": 138,
+   "type_name": "ccx43",
+   "usd_per_hour": 0.5226,
+   "vcpus": 16
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 345,
+    "memory_mb": 64512,
+    "millicpus": 64000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/dedicated",
+   "region": "hel1",
+   "rtt_ms": 130,
+   "type_name": "ccx43",
+   "usd_per_hour": 0.5226,
+   "vcpus": 16
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 345,
+    "memory_mb": 64512,
+    "millicpus": 64000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/dedicated",
+   "region": "ash",
+   "rtt_ms": 59,
+   "type_name": "ccx43",
+   "usd_per_hour": 0.5226,
+   "vcpus": 16
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 345,
+    "memory_mb": 64512,
+    "millicpus": 64000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/dedicated",
+   "region": "hil",
+   "rtt_ms": 19,
+   "type_name": "ccx43",
+   "usd_per_hour": 0.5226,
+   "vcpus": 16
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 345,
+    "memory_mb": 64512,
+    "millicpus": 64000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/dedicated",
+   "region": "sin",
+   "rtt_ms": 201,
+   "type_name": "ccx43",
+   "usd_per_hour": 0.5226,
+   "vcpus": 16
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 585,
+    "memory_mb": 130048,
+    "millicpus": 128000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/dedicated",
+   "region": "fsn1",
+   "rtt_ms": 137,
+   "type_name": "ccx53",
+   "usd_per_hour": 1.0097999999999998,
+   "vcpus": 32
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 585,
+    "memory_mb": 130048,
+    "millicpus": 128000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/dedicated",
+   "region": "nbg1",
+   "rtt_ms": 138,
+   "type_name": "ccx53",
+   "usd_per_hour": 1.0097999999999998,
+   "vcpus": 32
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 585,
+    "memory_mb": 130048,
+    "millicpus": 128000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/dedicated",
+   "region": "hel1",
+   "rtt_ms": 130,
+   "type_name": "ccx53",
+   "usd_per_hour": 1.0097999999999998,
+   "vcpus": 32
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 585,
+    "memory_mb": 130048,
+    "millicpus": 128000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/dedicated",
+   "region": "ash",
+   "rtt_ms": 59,
+   "type_name": "ccx53",
+   "usd_per_hour": 1.0097999999999998,
+   "vcpus": 32
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 585,
+    "memory_mb": 130048,
+    "millicpus": 128000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/dedicated",
+   "region": "hil",
+   "rtt_ms": 19,
+   "type_name": "ccx53",
+   "usd_per_hour": 1.0097999999999998,
+   "vcpus": 32
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 585,
+    "memory_mb": 130048,
+    "millicpus": 128000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/dedicated",
+   "region": "sin",
+   "rtt_ms": 201,
+   "type_name": "ccx53",
+   "usd_per_hour": 1.0097999999999998,
+   "vcpus": 32
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 945,
+    "memory_mb": 195584,
+    "millicpus": 192000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/dedicated",
+   "region": "fsn1",
+   "rtt_ms": 137,
+   "type_name": "ccx63",
+   "usd_per_hour": 1.6147999999999998,
+   "vcpus": 48
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 945,
+    "memory_mb": 195584,
+    "millicpus": 192000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/dedicated",
+   "region": "nbg1",
+   "rtt_ms": 138,
+   "type_name": "ccx63",
+   "usd_per_hour": 1.6147999999999998,
+   "vcpus": 48
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 945,
+    "memory_mb": 195584,
+    "millicpus": 192000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/dedicated",
+   "region": "hel1",
+   "rtt_ms": 130,
+   "type_name": "ccx63",
+   "usd_per_hour": 1.6147999999999998,
+   "vcpus": 48
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 945,
+    "memory_mb": 195584,
+    "millicpus": 192000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/dedicated",
+   "region": "ash",
+   "rtt_ms": 59,
+   "type_name": "ccx63",
+   "usd_per_hour": 1.6147999999999998,
+   "vcpus": 48
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 945,
+    "memory_mb": 195584,
+    "millicpus": 192000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/dedicated",
+   "region": "hil",
+   "rtt_ms": 19,
+   "type_name": "ccx63",
+   "usd_per_hour": 1.6147999999999998,
+   "vcpus": 48
+  },
+  {
+   "arch": "amd64",
+   "billing_min_secs": 3600,
+   "billing_step_secs": 3600,
+   "boot_secs": 150,
+   "capacity": {
+    "disk_gb": 945,
+    "memory_mb": 195584,
+    "millicpus": 192000
+   },
+   "gpu": "",
+   "kinds": [
+    "container"
+   ],
+   "kvm": false,
+   "max_new": 9,
+   "one_space_each": false,
+   "provider": "hetzner",
+   "quota": "hetzner/dedicated",
+   "region": "sin",
+   "rtt_ms": 201,
+   "type_name": "ccx63",
+   "usd_per_hour": 1.6147999999999998,
+   "vcpus": 48
+  }
+ ],
+ "constraints": {
+  "budget_left_usd": 59.8714,
+  "interactive_slo_secs": 120,
+  "max_new_hosts": 10,
+  "max_usd_per_hour": 4.0,
+  "pins": {
+   "devices_only": false,
+   "new_hosts": null,
+   "no_scale": false,
+   "provider": "aws",
+   "region": null,
+   "type_name": null
+  },
+  "quota_left": {
+   "hetzner/shared": 10
+  },
+  "relay_limit": 32,
+  "relay_used": 4,
+  "running_usd_per_hour": 0.0122,
+  "space_takes_relay": false,
+  "time_budget_ms": 200
+ }
+}

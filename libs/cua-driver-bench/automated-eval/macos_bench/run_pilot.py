@@ -39,6 +39,7 @@ sys.path.insert(0, str(HERE / "swift"))
 
 import arms  # noqa: E402
 import codex_events  # noqa: E402
+import desktop_runtime as desktop
 
 SCHEMA = "cdb-pilot-trial/1"
 SKIP_APP_KINDS = {"terminal", "editor"}
@@ -121,6 +122,39 @@ def build_schedule(
 
 
 def hid_idle_seconds() -> float:
+    if desktop.detect_platform() == "linux":
+        import ctypes
+        import ctypes.util
+
+        class Info(ctypes.Structure):
+            _fields_ = [
+                ("window", ctypes.c_ulong),
+                ("state", ctypes.c_int),
+                ("kind", ctypes.c_int),
+                ("til_or_since", ctypes.c_ulong),
+                ("idle", ctypes.c_ulong),
+                ("mask", ctypes.c_ulong),
+            ]
+
+        x11 = ctypes.CDLL(ctypes.util.find_library("X11"))
+        x11.XOpenDisplay.restype = ctypes.c_void_p
+        display = x11.XOpenDisplay(None)
+        if not display:
+            raise RuntimeError("X11 unavailable; set DISPLAY")
+        x11.XDefaultRootWindow.argtypes = [ctypes.c_void_p]
+        x11.XDefaultRootWindow.restype = ctypes.c_ulong
+        xss = ctypes.CDLL(ctypes.util.find_library("Xss"))
+        xss.XScreenSaverQueryInfo.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.POINTER(Info)]
+        info = Info()
+        try:
+            if not xss.XScreenSaverQueryInfo(
+                display, x11.XDefaultRootWindow(display), ctypes.byref(info)
+            ):
+                raise RuntimeError("XScreenSaver idle query failed")
+            return info.idle / 1000
+        finally:
+            x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
+            x11.XCloseDisplay(display)
     try:
         out = subprocess.run(
             ["ioreg", "-c", "IOHIDSystem"], capture_output=True, text=True, timeout=10
@@ -188,15 +222,13 @@ def hid_drops(path: Path) -> int:
 
 
 def clean_app_env(home: Path) -> dict[str, str]:
-    env = {
-        "PATH": f"/opt/homebrew/bin:{arms.CLOSED_PATH}",
-        "HOME": str(home),
-        "USER": os.environ.get("USER", ""),
-        "LANG": "en_US.UTF-8",
-        "TMPDIR": str(home / "tmp"),
-    }
     (home / "tmp").mkdir(parents=True, exist_ok=True)
-    return env
+    extra = (
+        {"PATH": f"/opt/homebrew/bin:{arms.CLOSED_PATH}"}
+        if desktop.detect_platform() == "macos"
+        else None
+    )
+    return desktop.desktop_env(home, extra)
 
 
 def sweep_processes(needle: str) -> int:
@@ -214,13 +246,7 @@ def sweep_processes(needle: str) -> int:
     return killed
 
 
-def kill_group(pid: int) -> None:
-    for sig in (signal.SIGTERM, signal.SIGKILL):
-        try:
-            os.killpg(pid, sig)
-        except OSError:
-            return
-        time.sleep(1.0)
+kill_group = desktop.stop_group
 
 
 class Sentinel:
@@ -236,20 +262,31 @@ class Sentinel:
 
     @property
     def enabled(self) -> bool:
-        return self.app is not None and (self.app / "Contents/MacOS").is_dir()
+        return self.app is not None and (
+            desktop.detect_platform() == "linux" or (self.app / "Contents/MacOS").is_dir()
+        )
 
     def start(self) -> None:
         if not self.enabled:
             return
-        exe = next((self.app / "Contents/MacOS").iterdir())
-        self.log.parent.mkdir(parents=True, exist_ok=True)
-        self.proc = subprocess.Popen(
-            [str(exe), "--log", str(self.log), *self.args],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
+        self.proc = desktop.start_app(
+            [
+                *desktop.bench_app_argv("BenchSentinel", self.app.parent),
+                "--log",
+                str(self.log),
+                *self.args,
+            ],
+            self.log.parent / "sentinel-home",
+            self.log.with_suffix(".stderr"),
         )
+        if desktop.detect_platform() == "linux":
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline and self.proc.poll() is None:
+                if self.log.exists() and '"ev": "ready"' in self.log.read_text():
+                    return
+                time.sleep(0.1)
+            self.stop()
+            raise RuntimeError(f"BenchSentinel not ready; see {self.log.with_suffix('.stderr')}")
         time.sleep(2.0)
 
     def signal(self, sig: int) -> None:
@@ -267,6 +304,7 @@ class Sentinel:
     def stop(self) -> None:
         if self.proc is not None:
             kill_group(self.proc.pid)
+            self.proc.wait(timeout=5)
             self.proc = None
 
     def summary(self) -> dict[str, Any]:
@@ -275,7 +313,10 @@ class Sentinel:
         try:
             import summarize_sentinel  # type: ignore
 
-            return summarize_sentinel.summarize(str(self.log))
+            summary = summarize_sentinel.summarize(str(self.log))
+            if desktop.detect_platform() == "linux":
+                summary["hid_events"] = None
+            return summary
         except Exception as error:  # noqa: BLE001 - never fail a trial on a summary
             return {"available": False, "error": f"{type(error).__name__}: {error}"}
 
@@ -499,9 +540,8 @@ def prepare_probe(
 def launch_lab(
     task: Task, seed: int, paths: dict[str, Path], lab_app: Path, app_env: dict[str, str]
 ) -> subprocess.Popen[bytes]:
-    exe = next((lab_app / "Contents/MacOS").iterdir())
     args = [
-        str(exe),
+        *desktop.bench_app_argv("BenchLab", lab_app.parent),
         *task.app_args,
         "--seed",
         str(seed),
@@ -510,17 +550,16 @@ def launch_lab(
         "--events",
         str(paths["events"]),
     ]
-    proc = subprocess.Popen(
-        args,
-        env=app_env,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
+    proc = desktop.start_app(
+        args, Path(app_env["HOME"]), paths["state"].parent / "lab.log", env=app_env
     )
     deadline = time.monotonic() + 20
-    while time.monotonic() < deadline and not paths["state"].exists():
+    while time.monotonic() < deadline and not paths["state"].exists() and proc.poll() is None:
         time.sleep(0.3)
+    if not paths["state"].exists():
+        desktop.stop_group(proc.pid)
+        proc.wait(timeout=5)
+        raise RuntimeError(f"BenchLab not ready; see {paths['state'].parent / 'lab.log'}")
     time.sleep(1.5)
     return proc
 
@@ -594,6 +633,7 @@ def run_trial(
         "seed": seed,
         "order_index": order_index,
         "started_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "codex_auth": arms.codex_auth(),
         "model": args.model,
         "reasoning_effort": args.effort,
     }
@@ -676,6 +716,13 @@ def run_trial(
         status = "infra_error"
         note = f"{type(error).__name__}: {error}"
     finally:
+        codex_home = trial_dir / "home" / ".codex"
+        if codex_home.is_dir():
+            try:
+                arms.unlink_chatgpt_auth(codex_home)
+            except RuntimeError as error:
+                status = "infra_error"
+                note = str(error)
         sentinel.stop()
         for proc in procs:
             kill_group(proc.pid)
@@ -740,44 +787,6 @@ def run_trial(
 # ---------------------------------------------------------------- main
 
 
-def start_cua_daemon(binary: Path, socket: str, state_dir: Path) -> subprocess.Popen[bytes]:
-    """Private Cua Driver daemon for the release under test (own HOME, no telemetry)."""
-    home = state_dir / "home"
-    home.mkdir(parents=True, exist_ok=True)
-    try:
-        os.unlink(socket)
-    except OSError:
-        pass
-    env = {
-        "HOME": str(home),
-        "PATH": f"/opt/homebrew/bin:{arms.CLOSED_PATH}",
-        "CUA_DRIVER_RS_TELEMETRY_ENABLED": "false",
-    }
-    log = (state_dir / "daemon.log").open("wb")
-    proc = subprocess.Popen(
-        [str(binary), "serve", "--socket", socket, "--dangerously-bypass-approvals"],
-        env=env,
-        stdin=subprocess.DEVNULL,
-        stdout=log,
-        stderr=log,
-        start_new_session=True,
-    )
-    deadline = time.monotonic() + 30
-    while time.monotonic() < deadline:
-        done = subprocess.run(
-            [str(binary), "status", "--socket", socket],
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if done.returncode == 0:
-            return proc
-        time.sleep(0.5)
-    kill_group(proc.pid)
-    raise RuntimeError("Cua Driver daemon did not become ready")
-
-
 def environment_manifest(args: argparse.Namespace) -> dict[str, Any]:
     def run(*cmd: str) -> str:
         try:
@@ -798,6 +807,7 @@ def environment_manifest(args: argparse.Namespace) -> dict[str, Any]:
             "CFBundleShortVersionString",
         ),
         "bench_repo_commit": run("git", "-C", str(REPO), "rev-parse", "HEAD"),
+        "codex_auth": arms.codex_auth(),
         "model": args.model,
         "reasoning_effort": args.effort,
         "price_assumed_usd_per_mtok": PRICE,
@@ -880,7 +890,7 @@ def main() -> int:
     import mcp_preflight
 
     if args.cua_app is not None and "cua-driver-mcp" in args.arms:
-        daemon = start_cua_daemon(
+        daemon = desktop.start_driver(
             arms.CUA_DRIVER_BIN, args.cua_socket, args.out.resolve() / "cua-daemon"
         )
     for arm in args.arms:

@@ -125,7 +125,7 @@ describe("WebCodecsSlots", () => {
   });
 
   it("says there is no video here when the shell can't stream, and opens no session", async () => {
-    const { desktop } = fakeDesktop(() => ({ ok: false, error: { message: "Live video needs cua on this computer.", code: "unsupported" } }));
+    const { desktop } = fakeDesktop(() => ({ ok: false, error: { message: "Live video needs cua on this machine.", code: "unsupported" } }));
     const { last } = slotIn(desktop);
     await flush();
     expect(last()).toEqual({ phase: "failed", reason: NO_VIDEO_HERE, opening: true, focused: false });
@@ -340,7 +340,7 @@ describe("<StreamSurface> in the Electron shell", () => {
     act(() => sessions[0]!.options.onFrame?.(1280, 800));
     await waitFor(() => expect(container.querySelector('[data-stream-state="live"]')).toBeTruthy());
     expect(container.querySelector('[data-stream-surface="local:a"] canvas[data-webcodecs="full"]')).toBeTruthy();
-    expect(getByText("Click the desktop to control it.")).toBeTruthy();
+    expect(container.querySelector("[data-video-focus]")).toBeNull();
 
     // A click gives it the keyboard; the line says how to give it back, in this platform's keys.
     vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
@@ -384,7 +384,8 @@ describe("<StreamSurface> in the Electron shell", () => {
       await waitFor(() => expect(view.container.querySelector('[data-stream-state="failed"]')).toBeTruthy());
       expect(calls).toHaveLength(1);
       await waitFor(() => expect(toasts()).toBe(1));
-      expect(view.getByText("scripted provider failure")).toBeTruthy();
+      // In the toast, and on the cover under "Could not connect".
+      expect(view.getAllByText("scripted provider failure")).toHaveLength(2);
       // A poll (the page drawn again) does not try again.
       view.rerender(ui());
       await new Promise((r) => setTimeout(r, 20));
@@ -421,7 +422,7 @@ describe("<StreamSurface> in the Electron shell", () => {
   });
 
   // The SwiftUI app's DetailApprovalTests: the open detail follows this device's approval.
-  const NOTICE: MachineAccessNotice = { kind: "needs-enrollment", status: "Not enrolled", text: "Enroll this Mac to connect to your other computers.", actionLabel: "Enroll This Mac…" };
+  const NOTICE: MachineAccessNotice = { kind: "needs-enrollment", status: "Not enrolled", text: "Enroll this Mac to connect to your other machines.", actionLabel: "Enroll This Mac…" };
   const withAccess = () => {
     const adapter = createDemoAdapter({ latencyMs: 1 });
     const ui = (access: MachineAccessNotice | null) => (
@@ -481,7 +482,7 @@ describe("<StreamSurface> in the Electron shell", () => {
   });
 
   it("keeps the plain placeholder when the shell has no video (no cua, sample data)", async () => {
-    electron(fakeDesktop(() => ({ ok: false, error: { message: "Live video needs cua on this computer.", code: "unsupported" } })).desktop);
+    electron(fakeDesktop(() => ({ ok: false, error: { message: "Live video needs cua on this machine.", code: "unsupported" } })).desktop);
     const { container, findByText, queryByText } = mount();
     expect(await findByText("The desktop opens in its own window.")).toBeTruthy();
     expect(container.querySelector('[data-stream-state="placeholder"]')).toBeTruthy();

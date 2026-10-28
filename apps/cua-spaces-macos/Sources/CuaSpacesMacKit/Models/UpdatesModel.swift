@@ -242,7 +242,7 @@ public final class SparkleUpdater: NSObject, UpdaterDriving, SPUUpdaterDelegate 
     }
 
     /// Opens `bundle` again once this process has exited, then quits.
-    private static func relaunch(_ bundle: URL) {
+    static func relaunch(_ bundle: URL) {
         let pid = ProcessInfo.processInfo.processIdentifier
         let waiter = Process()
         waiter.executableURL = URL(fileURLWithPath: "/bin/sh")

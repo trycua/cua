@@ -16,9 +16,12 @@
 //! State files (`~/.cua/sandboxes/<name>.json`) use cua-sandbox's format.
 
 pub mod byoc;
+pub mod external;
 pub mod http;
 pub mod mcp;
 pub mod placement;
+/// A new shape for a sandbox ([`Sandboxes::resize`]).
+pub use cua_vmm::Resize;
 /// Clean-up a dropped (cancelled) create hands off ([`cleanup::settle`]).
 pub use cua_vmm::cleanup;
 /// Why a local create failed, as a bounded telemetry word
@@ -26,6 +29,8 @@ pub use cua_vmm::cleanup;
 pub use cua_vmm::error::failure_kind as runtime_failure_kind;
 /// GPU options per runtime ([`gpu::GpuSupport`]).
 pub use cua_vmm::gpu;
+/// Which software runs each kind of Space here (`runtime.<kind>`).
+pub use cua_vmm::kinds as runtime_kinds;
 /// Create progress: what a create is doing (pulling, booting, waiting for
 /// the guest), reported to the [`progress::scope`] that started it.
 pub use cua_vmm::progress;
@@ -42,6 +47,7 @@ pub async fn remove_builtin_runtimes() -> std::result::Result<(), String> {
 /// Cancels a create ([`Sandboxes::create_cancellable`]).
 pub use tokio_util::sync::CancellationToken;
 pub mod power;
+pub mod profile;
 pub mod provider;
 pub mod proxy;
 pub mod refs;
@@ -64,14 +70,14 @@ pub use provider::{
 pub use refs::{Location, SandboxRef};
 pub use runtime::{
     GuestDisplay, GuestOutput, GuestScreenshot, ImageInfo, InstanceStatus, LocalEndpoints,
-    LocalInstance, LocalProbe, LocalRuntime, LocalStartSpec, LocalSummary, RuntimeError,
-    RuntimeResult,
+    LocalInstance, LocalProbe, LocalRuntime, LocalStartSpec, LocalSummary, Reclaimed, RuntimeError,
+    RuntimeResult, Shortfall, WarmHeld,
 };
 pub use sandbox::{
-    BuildFile, BuildSpec, ConnectOptionsOverride, CreateOptions, ENV_PORT, Forward, ForwardVia,
-    ImageLayer, MISSING, NetworkMode, PortTarget, Probe, ProviderKind, RegistryCredentials,
-    SPACESD_READY_TIMEOUT, Sandbox, SandboxInfo, Sandboxes, SandboxesBuilder, Service, Sidecar,
-    Status, Tunnel, placement_of_backend,
+    BuildFile, BuildSpec, CHECKPOINT_DIR, CheckpointRecord, ConnectOptionsOverride, CreateOptions,
+    ENV_PORT, Forward, ForwardVia, ImageLayer, LocalExpiry, MISSING, NetworkMode, PortTarget,
+    Probe, ProviderKind, RegistryCredentials, SPACESD_READY_TIMEOUT, Sandbox, SandboxInfo,
+    Sandboxes, SandboxesBuilder, Service, Sidecar, Status, Tunnel, placement_of_backend,
 };
 /// The one "Cua Cloud has ended" message: every Cua Cloud (`on="cloud"`,
 /// `cloud:` refs, `pool:<name>` images) entry point in the SDKs, the CLI, the
@@ -152,7 +158,7 @@ pub enum Error {
     /// MCP client (rmcp) failure.
     #[error("mcp: {0}")]
     Mcp(String),
-    /// Your own cloud account (AWS, Google Cloud, Modal) refused or failed a
+    /// Your own cloud account (AWS, Google Cloud, Hetzner, Modal) refused or failed a
     /// call: a missing permission, a quota, a region without the machine
     /// type. The message names the cloud's own error.
     #[error("your cloud: {0}")]

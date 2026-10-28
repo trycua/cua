@@ -95,8 +95,8 @@ function Tile({ tile, teleport, images }: { tile: PickerTile; teleport: Teleport
     >
       <div
         className={cn(
-          "relative flex h-26 items-center justify-center overflow-hidden rounded-lg border bg-muted/70 transition-[border-color,box-shadow]",
-          tile.selected ? "border-brand ring-2 ring-brand/40" : "hover:border-foreground/20",
+          "relative flex h-26 items-center justify-center overflow-hidden rounded-lg bg-muted/70 transition-[background-color,box-shadow]",
+          tile.selected ? "ring-2 ring-brand/60" : "hover:bg-muted",
         )}
       >
         {thumbnail ? (

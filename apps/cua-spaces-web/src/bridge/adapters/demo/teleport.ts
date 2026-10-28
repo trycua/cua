@@ -117,7 +117,7 @@ export function demoCatalog(now: number): CatalogEntry[] {
 
 export const DEMO_OPEN_WINDOWS: OpenWindow[] = [
   { windowId: 41, appId: "com.tinyspeck.slackmacgap", appName: "Slack", windowTitle: "general - Acme", supported: true, bundlePath: "/Applications/Slack.app" },
-  { windowId: 38, appId: "com.google.Chrome", appName: "Google Chrome", windowTitle: "Pull requests · trycua/cua", supported: true, bundlePath: "/Applications/Google Chrome.app" },
+  { windowId: 38, appId: "com.google.Chrome", appName: "Google Chrome", windowTitle: "Pull requests - trycua/cua", supported: true, bundlePath: "/Applications/Google Chrome.app" },
   { windowId: 12, appId: "com.microsoft.VSCode", appName: "Code", windowTitle: "main.rs - cua", supported: true, bundlePath: "/Applications/Visual Studio Code.app" },
   { windowId: 7, appId: "com.apple.finder", appName: "Finder", windowTitle: "Downloads", supported: false },
 ];

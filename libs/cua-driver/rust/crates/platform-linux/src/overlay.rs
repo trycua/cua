@@ -64,6 +64,12 @@ use cursor_overlay::{
 static CMD_TX: OnceLock<std::sync::mpsc::SyncSender<OverlayMsg>> = OnceLock::new();
 static CMD_RX_CELL: Mutex<Option<std::sync::mpsc::Receiver<OverlayMsg>>> = Mutex::new(None);
 static RENDER: Mutex<Option<RenderMap>> = Mutex::new(None);
+/// Wakes the X11 owner thread while it is parked in `poll(2)` on its X
+/// socket: `std::sync::mpsc` has no descriptor, so every message queued on
+/// [`CMD_TX`] also bumps this eventfd. Without it (eventfd unavailable) the
+/// owner keeps its bounded maintenance waits.
+#[cfg(target_os = "linux")]
+static X11_WAKE_FD: OnceLock<std::os::fd::OwnedFd> = OnceLock::new();
 static ARRIVAL_TX: Mutex<Option<HashMap<CursorKey, tokio::sync::oneshot::Sender<()>>>> =
     Mutex::new(None);
 #[cfg(all(test, target_os = "linux"))]
@@ -78,7 +84,9 @@ fn arrival_register(key: CursorKey, tx: tokio::sync::oneshot::Sender<()>) {
     }
 }
 
-fn arrival_fire(key: &CursorKey) {
+/// Arrival hook for the native Wayland renderer (`wayland::overlay`), which
+/// fires once the frame at the glide target is committed.
+pub(crate) fn arrival_fire(key: &CursorKey) {
     if let Ok(mut guard) = ARRIVAL_TX.lock() {
         if let Some(map) = guard.as_mut() {
             if let Some(tx) = map.remove(key) {
@@ -89,20 +97,6 @@ fn arrival_fire(key: &CursorKey) {
     }
 }
 
-/// Arrival hook for the native Wayland renderer (`wayland::overlay`), which
-/// fires once the frame at the glide target is committed.
-#[cfg(target_os = "linux")]
-pub(crate) fn fire_arrival(key: &CursorKey) {
-    arrival_fire(key);
-}
-
-/// Unblock every waiting pointer action; the renderer that would have fired
-/// their arrivals is gone.
-#[cfg(target_os = "linux")]
-pub(crate) fn release_arrivals() {
-    release_all_arrivals();
-}
-
 fn arrival_cancel(key: &CursorKey) {
     if let Ok(mut guard) = ARRIVAL_TX.lock() {
         if let Some(map) = guard.as_mut() {
@@ -111,7 +105,9 @@ fn arrival_cancel(key: &CursorKey) {
     }
 }
 
-fn release_all_arrivals() {
+/// Unblock every waiting pointer action; the renderer that would have fired
+/// their arrivals is gone.
+pub(crate) fn release_all_arrivals() {
     if let Ok(mut guard) = ARRIVAL_TX.lock() {
         clear_arrivals(&mut guard);
     }
@@ -127,7 +123,55 @@ fn try_send_x11_message(
     sender: Option<&std::sync::mpsc::SyncSender<OverlayMsg>>,
     msg: OverlayMsg,
 ) -> bool {
-    sender.is_some_and(|tx| tx.try_send(msg).is_ok())
+    let sent = sender.is_some_and(|tx| tx.try_send(msg).is_ok());
+    if sent {
+        notify_x11_owner();
+    }
+    sent
+}
+
+/// Create the owner's wake eventfd (once; best effort).
+#[cfg(target_os = "linux")]
+fn init_x11_wake_fd() {
+    use std::os::fd::FromRawFd;
+    if X11_WAKE_FD.get().is_some() {
+        return;
+    }
+    // SAFETY: plain syscall; a non-negative result is a fresh descriptor we own.
+    let fd = unsafe { libc::eventfd(0, libc::EFD_CLOEXEC | libc::EFD_NONBLOCK) };
+    if fd < 0 {
+        tracing::debug!(
+            "X11 overlay: eventfd unavailable; idle owner keeps bounded waits: {}",
+            std::io::Error::last_os_error()
+        );
+        return;
+    }
+    // SAFETY: `fd` was just returned by eventfd(2) and is owned by nobody else.
+    let owned = unsafe { std::os::fd::OwnedFd::from_raw_fd(fd) };
+    let _ = X11_WAKE_FD.set(owned);
+}
+
+/// Wake a parked X11 owner after queueing a message for it.
+fn notify_x11_owner() {
+    #[cfg(target_os = "linux")]
+    if let Some(fd) = X11_WAKE_FD.get() {
+        signal_eventfd(std::os::fd::AsRawFd::as_raw_fd(fd));
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn signal_eventfd(fd: std::os::fd::RawFd) {
+    let one: u64 = 1;
+    // SAFETY: writes 8 bytes from a live u64 to an eventfd. EAGAIN only means
+    // the counter is saturated, which still leaves it readable.
+    let _ = unsafe { libc::write(fd, (&one as *const u64).cast(), 8) };
+}
+
+#[cfg(target_os = "linux")]
+fn drain_eventfd(fd: std::os::fd::RawFd) {
+    let mut count: u64 = 0;
+    // SAFETY: reads at most 8 bytes into a live u64; the fd is non-blocking.
+    let _ = unsafe { libc::read(fd, (&mut count as *mut u64).cast(), 8) };
 }
 
 fn should_start_x11_overlay(wayland_display_present: bool) -> bool {
@@ -291,6 +335,8 @@ pub fn init(cfg: CursorConfig) {
     static INITIALIZED: OnceLock<()> = OnceLock::new();
     INITIALIZED.get_or_init(|| {
         let (tx, rx) = std::sync::mpsc::sync_channel(4096);
+        #[cfg(target_os = "linux")]
+        init_x11_wake_fd();
         CMD_TX
             .set(tx)
             .expect("cursor overlay sender is initialized exactly once");
@@ -564,19 +610,13 @@ fn dispatch_shell_helper_command(key: &str, cmd: &OverlayCommand, semantic: bool
     }
 }
 
-pub fn is_enabled() -> bool {
-    is_enabled_for("default")
+/// Read the render map, treating a poisoned or uninitialised map as absent.
+fn read_render<T>(f: impl FnOnce(&RenderMap) -> T) -> Option<T> {
+    RENDER.lock().ok()?.as_ref().map(f)
 }
 
 pub fn is_enabled_for(key: &str) -> bool {
-    RENDER
-        .lock()
-        .ok()
-        .and_then(|g| {
-            g.as_ref()
-                .and_then(|m| m.cursor_or_default(key).map(|rs| rs.core.visible))
-        })
-        .unwrap_or(false)
+    read_render(|map| map.is_enabled(key)).unwrap_or(false)
 }
 
 /// Truthful render acknowledgement for lifecycle inspection. This checks the
@@ -594,46 +634,16 @@ pub fn is_visible_for_session(key: &str) -> bool {
         .unwrap_or(false)
 }
 
-pub fn current_position() -> Option<(f64, f64)> {
-    current_position_for("default")
-}
-
 pub fn current_position_for(key: &str) -> Option<(f64, f64)> {
-    RENDER.lock().ok().and_then(|g| {
-        g.as_ref()
-            .and_then(|m| m.cursors.get(key))
-            .filter(|rs| rs.core.placed)
-            .map(|rs| rs.core.pos)
-    })
+    read_render(|map| map.placed_position(key)).flatten()
 }
 
 pub fn current_motion_for(key: &str) -> cursor_overlay::MotionConfig {
-    RENDER
-        .lock()
-        .ok()
-        .and_then(|guard| {
-            guard.as_ref().and_then(|map| {
-                map.cursor_or_default(key)
-                    .map(|state| state.core.motion.clone())
-            })
-        })
-        .unwrap_or_default()
+    read_render(|map| map.motion(key)).unwrap_or_default()
 }
 
-pub fn current_theme_state_for(
-    key: &str,
-) -> Option<(
-    String,
-    String,
-    String,
-    Option<String>,
-    cursor_overlay::CursorVisualState,
-)> {
-    let guard = RENDER.lock().ok()?;
-    let map = guard.as_ref()?;
-    let state = map.cursor_or_default(key)?;
-    let (id, version, profile, fallback) = state.core.active_theme_metadata();
-    Some((id, version, profile, fallback, state.core.visual.clone()))
+pub fn current_theme_state_for(key: &str) -> Option<cursor_overlay::CursorThemeState> {
+    read_render(|map| map.theme_state(key)).flatten()
 }
 
 fn seed_start_if_unplaced(key: &CursorKey, target_x: f64, target_y: f64) -> bool {
@@ -648,10 +658,6 @@ fn seed_start_if_unplaced(key: &CursorKey, target_x: f64, target_y: f64) -> bool
         f64::from(map.platform.scr_h),
     );
     map.seed_start_if_unplaced(key, target_x, target_y, Some(frame))
-}
-
-pub async fn animate_cursor_to(x: f64, y: f64) {
-    animate_cursor_to_for("default".to_owned(), x, y).await;
 }
 
 pub async fn animate_cursor_to_for(key: CursorKey, x: f64, y: f64) {
@@ -749,9 +755,7 @@ pub fn remove_cursor(key: CursorKey) {
         return;
     }
     let msg = OverlayMsg::Remove(key.clone());
-    if let Some(tx) = CMD_TX.get() {
-        let _ = tx.try_send(msg.clone());
-    }
+    let _ = try_send_x11_message(CMD_TX.get(), msg.clone());
     #[cfg(target_os = "linux")]
     if crate::wayland::is_wayland() {
         // The Wayland renderer drops the cursor without an arrival.
@@ -766,9 +770,7 @@ pub fn revive_cursor(key: CursorKey) {
         return;
     }
     let msg = OverlayMsg::Revive(key);
-    if let Some(tx) = CMD_TX.get() {
-        let _ = tx.try_send(msg.clone());
-    }
+    let _ = try_send_x11_message(CMD_TX.get(), msg.clone());
     #[cfg(target_os = "linux")]
     if crate::wayland::is_wayland() {
         dispatch_wayland_overlay_message(&msg);
@@ -930,6 +932,14 @@ fn process_render_wake(
     (arrived, had_msg)
 }
 
+/// When the parked loop must wake on its own; `None` parks until a message or
+/// an X11 event arrives.
+///
+/// `x11_events_wake` says the wait also watches the X socket, so RandR
+/// changes and protocol errors wake it without polling. A revealed cursor
+/// (`z_order_tick_needed`) keeps the poll cadence anyway: it samples the
+/// pointer for session-badge hover and reasserts z-order. Hidden, with no
+/// idle fade pending, nothing changes on a timer, so an idle overlay sleeps.
 #[cfg(target_os = "linux")]
 fn next_maintenance_deadline(
     last_tick: Instant,
@@ -938,13 +948,18 @@ fn next_maintenance_deadline(
     z_order_tick_needed: bool,
     idle_wait_interval: Option<Duration>,
     x11_event_poll_interval: Duration,
-) -> Instant {
-    let mut deadline = last_tick + x11_event_poll_interval;
+    x11_events_wake: bool,
+) -> Option<Instant> {
+    let mut deadline =
+        (z_order_tick_needed || !x11_events_wake).then(|| last_tick + x11_event_poll_interval);
+    let mut earliest = |at: Instant| {
+        deadline = Some(deadline.map_or(at, |d| d.min(at)));
+    };
     if z_order_tick_needed {
-        deadline = deadline.min(last_z_order_tick + z_order_interval);
+        earliest(last_z_order_tick + z_order_interval);
     }
     if let Some(interval) = idle_wait_interval {
-        deadline = deadline.min(last_tick + interval);
+        earliest(last_tick + interval);
     }
     deadline
 }
@@ -964,25 +979,100 @@ fn z_order_reassertion_needed(
 enum OverlayWake {
     Frame,
     Message(OverlayMsg),
+    /// The maintenance deadline passed, or the X socket became readable;
+    /// either way the loop services X11 events and ticks parked state.
     MaintenanceTimeout,
     Disconnected,
+}
+
+/// The descriptors a parked owner blocks on besides its channel.
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy)]
+struct OverlayWaitFds {
+    /// The X11 connection socket (RandR notifications, async errors, EOF).
+    x11: std::os::fd::RawFd,
+    /// [`X11_WAKE_FD`]: signalled after every message queued for the owner.
+    wake: std::os::fd::RawFd,
 }
 
 #[cfg(target_os = "linux")]
 fn wait_for_overlay_work(
     rx: &std::sync::mpsc::Receiver<OverlayMsg>,
     frame_tick_needed: bool,
-    maintenance_deadline: Instant,
+    maintenance_deadline: Option<Instant>,
+    fds: Option<OverlayWaitFds>,
 ) -> OverlayWake {
     if frame_tick_needed {
         return OverlayWake::Frame;
     }
 
-    let timeout = maintenance_deadline.saturating_duration_since(Instant::now());
-    match rx.recv_timeout(timeout) {
-        Ok(msg) => OverlayWake::Message(msg),
-        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => OverlayWake::MaintenanceTimeout,
-        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => OverlayWake::Disconnected,
+    let Some(fds) = fds else {
+        let deadline =
+            maintenance_deadline.unwrap_or_else(|| Instant::now() + X11_EVENT_POLL_INTERVAL);
+        let timeout = deadline.saturating_duration_since(Instant::now());
+        return match rx.recv_timeout(timeout) {
+            Ok(msg) => OverlayWake::Message(msg),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => OverlayWake::MaintenanceTimeout,
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => OverlayWake::Disconnected,
+        };
+    };
+
+    loop {
+        // The eventfd is drained before this receive, so a message queued
+        // after it re-signals the fd and the poll below returns at once.
+        match rx.try_recv() {
+            Ok(msg) => return OverlayWake::Message(msg),
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => return OverlayWake::Disconnected,
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+        }
+        let timeout_ms = match maintenance_deadline {
+            None => -1,
+            Some(deadline) => {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    return OverlayWake::MaintenanceTimeout;
+                }
+                // Round up: waking a hair early would spin through an
+                // immediate zero-length poll.
+                i32::try_from(remaining.as_micros().div_ceil(1000)).unwrap_or(i32::MAX)
+            }
+        };
+        let mut pollfds = [
+            libc::pollfd {
+                fd: fds.x11,
+                events: libc::POLLIN,
+                revents: 0,
+            },
+            libc::pollfd {
+                fd: fds.wake,
+                events: libc::POLLIN,
+                revents: 0,
+            },
+        ];
+        // SAFETY: `pollfds` is a live array of two initialized pollfd structs.
+        let ready = unsafe { libc::poll(pollfds.as_mut_ptr(), 2, timeout_ms) };
+        if ready < 0 {
+            let error = std::io::Error::last_os_error();
+            if error.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            tracing::warn!("X11 overlay: poll failed; treating it as a maintenance wake: {error}");
+            return OverlayWake::MaintenanceTimeout;
+        }
+        if ready == 0 {
+            return OverlayWake::MaintenanceTimeout;
+        }
+        if pollfds[1].revents != 0 {
+            drain_eventfd(fds.wake);
+        }
+        let x11 = pollfds[0].revents;
+        if x11 & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0 {
+            tracing::warn!("X11 overlay: display connection closed");
+            return OverlayWake::Disconnected;
+        }
+        if x11 & libc::POLLIN != 0 {
+            return OverlayWake::MaintenanceTimeout;
+        }
     }
 }
 
@@ -1368,7 +1458,16 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     let mut last_tick = Instant::now();
     let mut last_ztick = Instant::now();
     let mut frame_tick_needed = false;
-    let mut maintenance_deadline = last_tick + X11_EVENT_POLL_INTERVAL;
+    let mut maintenance_deadline = Some(last_tick + X11_EVENT_POLL_INTERVAL);
+    // Block on the X socket plus the wake eventfd while parked, so a hidden
+    // overlay needs no maintenance polling at all.
+    let wait_fds = X11_WAKE_FD.get().map(|wake| OverlayWaitFds {
+        x11: std::os::fd::AsRawFd::as_raw_fd(conn.stream()),
+        wake: std::os::fd::AsRawFd::as_raw_fd(wake),
+    });
+    // A RandR change read off the socket while preparing to park; serviced
+    // by the next pass instead of sitting unseen in x11rb's event queue.
+    let mut pending_screen_change = false;
     let mut last_pinned: Option<u64> = None;
     let mut last_compositor_poll = last_tick;
     // Constructed after the geometry query and window setup, so the cache can
@@ -1412,7 +1511,7 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
         // services X11/RandR events; a resting visible cursor also reasserts
         // z-order at most every 80 ms. Neither maintenance path authorizes paint.
         let (first_msg, maintenance_timeout) =
-            match wait_for_overlay_work(rx, frame_tick_needed, maintenance_deadline) {
+            match wait_for_overlay_work(rx, frame_tick_needed, maintenance_deadline, wait_fds) {
                 OverlayWake::Frame => (None, false),
                 OverlayWake::Message(msg) => (Some(msg), false),
                 OverlayWake::MaintenanceTimeout => (None, true),
@@ -1424,7 +1523,7 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
         // RandR changes before touching render state; unrelated X events remain
         // cheap and do not authorize a repaint.
         let screen_changed = match drain_x11_overlay_events(&conn, win) {
-            Ok(changed) => changed,
+            Ok(changed) => changed || std::mem::take(&mut pending_screen_change),
             Err(e) => {
                 tracing::warn!("X11 overlay event drain failed; disabling overlay: {e}");
                 break;
@@ -1677,7 +1776,28 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
             next_z_order_tick_needed,
             next_idle_wait_interval,
             X11_EVENT_POLL_INTERVAL,
+            wait_fds.is_some(),
         );
+        if !frame_tick_needed && maintenance_deadline.is_none() {
+            // Parking without a deadline: only the X socket can wake us for
+            // X11 events, and x11rb may already hold some it read while
+            // waiting for a reply this pass. Queue them now, and send every
+            // buffered request before sleeping.
+            match drain_x11_overlay_events(&conn, win) {
+                Ok(changed) => pending_screen_change |= changed,
+                Err(e) => {
+                    tracing::warn!("X11 overlay event drain failed; disabling overlay: {e}");
+                    break;
+                }
+            }
+            if pending_screen_change {
+                maintenance_deadline = Some(Instant::now());
+            }
+            if let Err(e) = conn.flush() {
+                tracing::warn!("X11 overlay flush failed; disabling overlay: {e}");
+                break;
+            }
+        }
         if frame_tick_needed {
             let elapsed = Instant::now().duration_since(last_tick);
             if let Some(remaining) = frame_dur.checked_sub(elapsed) {
@@ -3245,7 +3365,7 @@ mod tests {
         fn wait_for_cursor_move_from(x: f64, y: f64, phase: &str) -> anyhow::Result<()> {
             let deadline = Instant::now() + Duration::from_secs(3);
             while Instant::now() < deadline {
-                let position = current_position().expect("placed cursor");
+                let position = current_position_for("default").expect("placed cursor");
                 if (position.0 - x).hypot(position.1 - y) > 32.0 {
                     eprintln!(
                         "{phase}: cursor moved from ({x}, {y}) to ({}, {})",
@@ -3255,7 +3375,7 @@ mod tests {
                 }
                 std::thread::sleep(Duration::from_millis(10));
             }
-            let position = current_position().expect("placed cursor");
+            let position = current_position_for("default").expect("placed cursor");
             anyhow::bail!(
                 "cursor position remained ({}, {}) near ({x}, {y}) during {phase}",
                 position.0,
@@ -3423,6 +3543,38 @@ mod tests {
             target,
             "RandR repair",
             MapState::VIEWABLE,
+        )?;
+
+        // Hidden, the owner parks with no maintenance deadline; the RandR
+        // event on its X socket alone must wake it for the repair.
+        send_command(OverlayCommand::SetEnabled(false));
+        wait_for_bounding_shape(&conn, overlay, true, "parked hide")?;
+        std::thread::sleep(Duration::from_millis(200));
+        let repairs_before = X11_RANDR_REPAIR_COUNT.load(std::sync::atomic::Ordering::SeqCst);
+        conn.randr_set_screen_size(
+            root,
+            initial_width,
+            initial_height,
+            u32::from(initial_mm_width).saturating_add(2),
+            u32::from(initial_mm_height).saturating_add(2),
+        )?
+        .check()?;
+        conn.flush()?;
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while X11_RANDR_REPAIR_COUNT.load(std::sync::atomic::Ordering::SeqCst) <= repairs_before {
+            anyhow::ensure!(
+                Instant::now() < deadline,
+                "a parked overlay owner did not repair after the RandR configuration event"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_click_through(
+            &conn,
+            root,
+            overlay,
+            target,
+            "parked RandR repair",
+            MapState::UNMAPPED,
         )?;
         Ok(())
     }
@@ -3889,7 +4041,7 @@ mod tests {
         tx.send(test_message()).unwrap();
 
         assert!(matches!(
-            wait_for_overlay_work(&rx, true, Instant::now()),
+            wait_for_overlay_work(&rx, true, Some(Instant::now()), None),
             OverlayWake::Frame
         ));
         assert!(rx.try_recv().is_ok());
@@ -3900,7 +4052,7 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel();
         tx.send(test_message()).unwrap();
 
-        match wait_for_overlay_work(&rx, false, Instant::now()) {
+        match wait_for_overlay_work(&rx, false, Some(Instant::now()), None) {
             OverlayWake::Message(OverlayMsg::Cmd(keyed)) => assert_eq!(keyed.key, "default"),
             _ => panic!("idle wait did not return the queued command"),
         }
@@ -3910,7 +4062,12 @@ mod tests {
     fn resting_cursor_wait_times_out_for_maintenance() {
         let (_tx, rx) = std::sync::mpsc::channel();
         assert!(matches!(
-            wait_for_overlay_work(&rx, false, Instant::now() + Duration::from_millis(1)),
+            wait_for_overlay_work(
+                &rx,
+                false,
+                Some(Instant::now() + Duration::from_millis(1)),
+                None
+            ),
             OverlayWake::MaintenanceTimeout
         ));
     }
@@ -3920,7 +4077,7 @@ mod tests {
         let (_tx, rx) = std::sync::mpsc::channel();
         let deadline = Instant::now() - Duration::from_millis(1);
         assert!(matches!(
-            wait_for_overlay_work(&rx, false, deadline),
+            wait_for_overlay_work(&rx, false, Some(deadline), None),
             OverlayWake::MaintenanceTimeout
         ));
     }
@@ -3936,9 +4093,10 @@ mod tests {
             true,
             Some(Duration::from_millis(20)),
             X11_EVENT_POLL_INTERVAL,
+            false,
         );
 
-        assert_eq!(deadline, state_tick + Duration::from_millis(20));
+        assert_eq!(deadline, Some(state_tick + Duration::from_millis(20)));
     }
 
     #[test]
@@ -3962,9 +4120,201 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel();
         drop(tx);
         assert!(matches!(
-            wait_for_overlay_work(&rx, false, Instant::now()),
+            wait_for_overlay_work(&rx, false, Some(Instant::now()), None),
             OverlayWake::Disconnected
         ));
+    }
+
+    #[test]
+    fn hidden_cursor_parks_without_deadline_when_x11_events_wake_the_wait() {
+        let state_tick = Instant::now();
+        let deadline = next_maintenance_deadline(
+            state_tick,
+            state_tick,
+            Duration::from_millis(80),
+            false,
+            None,
+            X11_EVENT_POLL_INTERVAL,
+            true,
+        );
+
+        assert_eq!(deadline, None);
+    }
+
+    #[test]
+    fn revealed_cursor_keeps_poll_cadence_when_x11_events_wake_the_wait() {
+        let state_tick = Instant::now();
+        let deadline = next_maintenance_deadline(
+            state_tick,
+            state_tick,
+            Duration::from_millis(80),
+            true,
+            None,
+            X11_EVENT_POLL_INTERVAL,
+            true,
+        );
+
+        assert_eq!(deadline, Some(state_tick + X11_EVENT_POLL_INTERVAL));
+    }
+
+    #[test]
+    fn pending_idle_fade_still_bounds_a_parked_wait() {
+        let state_tick = Instant::now();
+        let deadline = next_maintenance_deadline(
+            state_tick,
+            state_tick,
+            Duration::from_millis(80),
+            false,
+            Some(Duration::from_millis(700)),
+            X11_EVENT_POLL_INTERVAL,
+            true,
+        );
+
+        assert_eq!(deadline, Some(state_tick + Duration::from_millis(700)));
+    }
+
+    /// A socketpair standing in for the X connection, plus a wake eventfd.
+    struct ParkedFds {
+        x11_ours: std::os::fd::OwnedFd,
+        x11_peer: std::os::fd::OwnedFd,
+        wake: std::os::fd::OwnedFd,
+    }
+
+    impl ParkedFds {
+        fn new() -> Self {
+            use std::os::fd::FromRawFd;
+            let mut pair = [0; 2];
+            // SAFETY: `pair` has room for the two descriptors socketpair writes.
+            let rc = unsafe {
+                libc::socketpair(
+                    libc::AF_UNIX,
+                    libc::SOCK_STREAM | libc::SOCK_CLOEXEC,
+                    0,
+                    pair.as_mut_ptr(),
+                )
+            };
+            assert_eq!(rc, 0, "socketpair: {}", std::io::Error::last_os_error());
+            // SAFETY: plain syscall.
+            let wake = unsafe { libc::eventfd(0, libc::EFD_CLOEXEC | libc::EFD_NONBLOCK) };
+            assert!(wake >= 0, "eventfd: {}", std::io::Error::last_os_error());
+            // SAFETY: each fd was just created above and is owned only here.
+            unsafe {
+                Self {
+                    x11_ours: std::os::fd::OwnedFd::from_raw_fd(pair[0]),
+                    x11_peer: std::os::fd::OwnedFd::from_raw_fd(pair[1]),
+                    wake: std::os::fd::OwnedFd::from_raw_fd(wake),
+                }
+            }
+        }
+
+        fn wait_fds(&self) -> OverlayWaitFds {
+            use std::os::fd::AsRawFd;
+            OverlayWaitFds {
+                x11: self.x11_ours.as_raw_fd(),
+                wake: self.wake.as_raw_fd(),
+            }
+        }
+    }
+
+    #[test]
+    fn parked_wait_sleeps_until_a_signalled_command_arrives() {
+        use std::os::fd::AsRawFd;
+        let fds = ParkedFds::new();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let wake = fds.wake.as_raw_fd();
+        let started = Instant::now();
+        let sender = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(150));
+            tx.send(test_message()).unwrap();
+            signal_eventfd(wake);
+            tx
+        });
+
+        match wait_for_overlay_work(&rx, false, None, Some(fds.wait_fds())) {
+            OverlayWake::Message(OverlayMsg::Cmd(keyed)) => assert_eq!(keyed.key, "default"),
+            _ => panic!("parked wait did not return the signalled command"),
+        }
+        assert!(
+            started.elapsed() >= Duration::from_millis(140),
+            "a parked wait must not wake before the command"
+        );
+        let _tx = sender.join().unwrap();
+    }
+
+    #[test]
+    fn parked_wait_returns_a_queued_command_without_blocking() {
+        let fds = ParkedFds::new();
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(test_message()).unwrap();
+        // Queued before the wait and never signalled: still returned.
+        assert!(matches!(
+            wait_for_overlay_work(&rx, false, None, Some(fds.wait_fds())),
+            OverlayWake::Message(_)
+        ));
+    }
+
+    #[test]
+    fn parked_wait_wakes_for_x11_socket_traffic() {
+        use std::os::fd::AsRawFd;
+        let fds = ParkedFds::new();
+        let (_tx, rx) = std::sync::mpsc::channel::<OverlayMsg>();
+        let byte = [0u8; 1];
+        // SAFETY: writes one byte from a live buffer to our socketpair peer.
+        let written = unsafe { libc::write(fds.x11_peer.as_raw_fd(), byte.as_ptr().cast(), 1) };
+        assert_eq!(written, 1);
+        assert!(matches!(
+            wait_for_overlay_work(&rx, false, None, Some(fds.wait_fds())),
+            OverlayWake::MaintenanceTimeout
+        ));
+    }
+
+    #[test]
+    fn parked_wait_honours_a_deadline() {
+        let fds = ParkedFds::new();
+        let (_tx, rx) = std::sync::mpsc::channel::<OverlayMsg>();
+        let deadline = Instant::now() + Duration::from_millis(30);
+        assert!(matches!(
+            wait_for_overlay_work(&rx, false, Some(deadline), Some(fds.wait_fds())),
+            OverlayWake::MaintenanceTimeout
+        ));
+        assert!(Instant::now() >= deadline);
+    }
+
+    #[test]
+    fn parked_wait_reports_a_closed_display_connection() {
+        let fds = ParkedFds::new();
+        let (_tx, rx) = std::sync::mpsc::channel::<OverlayMsg>();
+        let ParkedFds {
+            x11_ours,
+            x11_peer,
+            wake,
+        } = fds;
+        drop(x11_peer);
+        let fds = ParkedFds {
+            x11_ours,
+            // Any open fd; the peer is gone.
+            x11_peer: wake.try_clone().unwrap(),
+            wake,
+        };
+        assert!(matches!(
+            wait_for_overlay_work(&rx, false, None, Some(fds.wait_fds())),
+            OverlayWake::Disconnected
+        ));
+    }
+
+    #[test]
+    fn spurious_wake_signal_does_not_end_a_parked_wait() {
+        use std::os::fd::AsRawFd;
+        let fds = ParkedFds::new();
+        let (_tx, rx) = std::sync::mpsc::channel::<OverlayMsg>();
+        // A signal left over from a command an earlier pass already drained.
+        signal_eventfd(fds.wake.as_raw_fd());
+        let deadline = Instant::now() + Duration::from_millis(30);
+        assert!(matches!(
+            wait_for_overlay_work(&rx, false, Some(deadline), Some(fds.wait_fds())),
+            OverlayWake::MaintenanceTimeout
+        ));
+        assert!(Instant::now() >= deadline);
     }
 
     #[test]
@@ -3977,9 +4327,10 @@ mod tests {
             false,
             None,
             X11_EVENT_POLL_INTERVAL,
+            false,
         );
 
-        assert_eq!(deadline, state_tick + X11_EVENT_POLL_INTERVAL);
+        assert_eq!(deadline, Some(state_tick + X11_EVENT_POLL_INTERVAL));
     }
 
     #[test]
@@ -4006,9 +4357,10 @@ mod tests {
             true,
             None,
             X11_EVENT_POLL_INTERVAL,
+            false,
         );
 
-        assert_eq!(deadline, state_tick + X11_EVENT_POLL_INTERVAL);
+        assert_eq!(deadline, Some(state_tick + X11_EVENT_POLL_INTERVAL));
     }
 
     #[test]

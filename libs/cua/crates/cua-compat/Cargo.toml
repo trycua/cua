@@ -1,0 +1,126 @@
+[package]
+name = "cua-compat"
+description = "Run other sandbox providers' SDKs unchanged on Cua Spaces: a local gateway that speaks a provider's wire protocol (E2B, Daytona) and serves it from Cua Spaces through the cua SDK."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[features]
+default = []
+# In-process test backend over the mock cua-spacesd (tests and CI).
+testing = ["cua-spacesd-client/testing"]
+
+[dependencies]
+cua-sdk = { workspace = true, features = ["local", "spaces", "media"] }
+cua-spacesd-client.workspace = true
+cua-proto = { workspace = true, features = ["client"] }
+cua-home.workspace = true
+# The canonical Linux image, the default when a template names none.
+cua-image.workspace = true
+cua-sandbox-core.workspace = true
+async-trait.workspace = true
+axum = { workspace = true, features = ["query"] }
+base64.workspace = true
+bytes.workspace = true
+flate2 = "1"
+futures-util.workspace = true
+hex.workspace = true
+globset = "0.4"
+hmac = "0.12"
+md-5 = "0.11"
+http.workspace = true
+http-body.workspace = true
+http-body-util.workspace = true
+# Gateway::warm: the first create, made through the gateway's own API.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "http2"] }
+hyper = { workspace = true, features = ["server", "client", "http1", "http2"] }
+hyper-util = { workspace = true, features = ["server", "server-auto", "service", "tokio"] }
+pbjson-types.workspace = true
+rand.workspace = true
+regex = "1"
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring", "pem"] }
+rustls = { workspace = true }
+rustls-native-certs = "0.8"
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+subtle = "2"
+tar = "0.4"
+thiserror.workspace = true
+time = { version = "0.3", features = ["formatting", "parsing"] }
+tokio.workspace = true
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+tokio-stream.workspace = true
+tonic = { workspace = true, features = ["codegen"] }
+tonic-prost.workspace = true
+prost.workspace = true
+prost-types.workspace = true
+tower = { workspace = true }
+tracing.workspace = true
+url.workspace = true
+
+[build-dependencies]
+# Modal's gRPC server stubs, generated from the pinned client's descriptors
+# (modal-proto/). No protoc needed: the descriptor set is committed.
+tonic-prost-build.workspace = true
+prost.workspace = true
+prost-types.workspace = true
+prost-build.workspace = true
+
+[dev-dependencies]
+cua-chaos = { path = "../cua-chaos" }
+cua-spacesd-client = { workspace = true, features = ["testing"] }
+tempfile.workspace = true
+# Bounded property tests of the wire translation (PROPTEST_CASES caps the run).
+proptest = "1"
+# The generated Modal client, to drive the gateway over gRPC in tests/modal_wire.rs.
+tonic = { workspace = true, features = ["codegen", "transport"] }
+
+
+[[example]]
+name = "mock_gateway"
+required-features = ["testing"]
+
+[[test]]
+name = "gateway"
+required-features = ["testing"]
+
+[[test]]
+name = "chaos"
+required-features = ["testing"]
+
+[[test]]
+name = "e2b_pool_snapshots"
+required-features = ["testing"]
+
+[[test]]
+name = "daytona_git"
+required-features = ["testing"]
+
+[[test]]
+name = "daytona_api"
+required-features = ["testing"]
+
+[[test]]
+name = "daytona_toolbox"
+required-features = ["testing"]
+
+[[test]]
+name = "daytona_computer"
+required-features = ["testing"]
+
+[[test]]
+name = "modal_wire"
+required-features = ["testing"]
+
+[[test]]
+name = "modal_fds"
+required-features = ["testing"]
+
+[[test]]
+name = "modal_reap"
+required-features = ["testing"]

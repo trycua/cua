@@ -1,0 +1,15 @@
+[
+  {
+    "id": "direct:127.0.0.1:50279",
+    "name": "runs",
+    "spacesdVersion": "0.0.0-mock",
+    "features": [
+      "pty"
+    ],
+    "addedAt": "2026-10-24T16:35:58.441562+00:00",
+    "os": "linux",
+    "osName": "MockOS",
+    "osPrettyName": "MockOS 1.0.3 LTS",
+    "kind": "container"
+  }
+]

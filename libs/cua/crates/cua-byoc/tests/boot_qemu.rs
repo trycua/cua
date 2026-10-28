@@ -30,7 +30,7 @@
 //!   `libs/cua-spacesd`).
 //! - `CUA_BYOC_CLOUD_IMAGE`: an Ubuntu 24.04 cloud image for this machine's
 //!   architecture; default: downloaded once into
-//!   `~/projects/.cua-work/cloud-providers/boot-test/`.
+//!   `~/.cache/cua-byoc/boot-test/`.
 //! - `CUA_BYOC_BOOT_IMAGE`: the sandbox image (default
 //!   `ghcr.io/trycua/linux:24.04`).
 //!
@@ -250,7 +250,7 @@ fn image() -> String {
 
 fn work_dir() -> tempfile::TempDir {
     let home = std::env::var("HOME").unwrap();
-    let cache = PathBuf::from(home).join("projects/.cua-work/cloud-providers/boot-test");
+    let cache = PathBuf::from(home).join(".cache/cua-byoc/boot-test");
     std::fs::create_dir_all(&cache).unwrap();
     tempfile::Builder::new()
         .prefix("byoc-boot-")

@@ -4,7 +4,7 @@
 import assert from "node:assert/strict"
 import { execFileSync, spawn, spawnSync } from "node:child_process"
 import { randomBytes } from "node:crypto"
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs"
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { createConnection } from "node:net"
 import { arch, homedir } from "node:os"
 import { dirname, join, resolve } from "node:path"
@@ -270,6 +270,69 @@ export async function withDaemon(fn) {
       await cua.connect(sock).shutdownDaemon()
     } catch {}
     await Promise.race([new Promise((r) => child.once("exit", r)), sleep(15_000).then(() => child.kill())])
+    rmSync(home, { recursive: true, force: true })
+  }
+}
+
+// ---------------------------------------------------------------- cua share
+
+export const SHARE_MACHINE = "0123456789abcdef0123456789abcdef"
+
+/**
+ * A real `cua daemon` that is a signed-in relay host, with the relay and the
+ * host's cua-spacesd stood in by fixtures/share_relay.py (the daemon's own
+ * side is not mocked). The relay's owner token is `owner`, another account's
+ * `other`; no token is anonymous.
+ */
+export async function withShareDaemon(fn) {
+  const cli = binary("CUA_CLI", "cua")
+  if (!cli) skip("the cua CLI is not built")
+  const home = mkdtempSync(`/tmp/cua-share-${RUN}-`)
+  mkdirSync(join(home, "host"))
+  writeFileSync(
+    join(home, "credentials.json"),
+    JSON.stringify({ access_token: "owner", refresh_token: null, expires_at: "2099-01-01T00:00:00Z", token_type: "Bearer" }),
+  )
+  const relay = spawn(
+    "python3",
+    [join(SUITE, "fixtures", "share_relay.py"), "--gateway", join(home, "share", "gateway.sock"), "--machine-id", SHARE_MACHINE],
+    { stdio: ["ignore", "pipe", "inherit"] },
+  )
+  let daemon
+  try {
+    const first = await new Promise((res, rej) => {
+      let acc = ""
+      relay.stdout.on("data", (d) => {
+        acc += d
+        if (acc.includes("\n")) res(acc.split("\n")[0])
+      })
+      relay.once("exit", () => rej(new Error("share_relay.py exited early")))
+    })
+    const relayUrl = JSON.parse(first).url
+    writeFileSync(
+      join(home, "host", "config.json"),
+      JSON.stringify({ mode: "relay", relay_url: relayUrl, name: "share-e2e", machine_id: SHARE_MACHINE, runner: "process", driver_bin: "/bin/true", share_desktop: false }),
+    )
+    writeFileSync(join(home, "host", "host.json"), JSON.stringify({ owner: "acct-owner", owner_email: "owner@example.com" }))
+    const sock = join(home, "cua.sock")
+    daemon = spawn(cli, ["daemon", "start", "--foreground", "--socket", sock], {
+      env: { ...process.env, CUA_HOME: home, CUA_CREDENTIAL_STORE: "file", CUA_RELAY_URL: relayUrl, CUA_TELEMETRY: "0" },
+      stdio: ["ignore", "ignore", "inherit"],
+    })
+    await poll("share gateway", async () => existsSync(join(home, "share", "gateway.sock")) && existsSync(sock), { attempts: 150, delayMs: 100 })
+    const get = async (url, bearer) => {
+      const r = await fetch(url, { headers: bearer ? { authorization: `Bearer ${bearer}` } : {}, redirect: "manual" })
+      return [r.status, await r.text()]
+    }
+    return await fn({ socket: sock, relayUrl, client: () => cua.connect(sock), get })
+  } finally {
+    if (daemon) {
+      try {
+        await cua.connect(join(home, "cua.sock")).shutdownDaemon()
+      } catch {}
+      await Promise.race([new Promise((r) => daemon.once("exit", r)), sleep(15_000).then(() => daemon.kill())])
+    }
+    relay.kill()
     rmSync(home, { recursive: true, force: true })
   }
 }

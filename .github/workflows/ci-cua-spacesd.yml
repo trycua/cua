@@ -29,7 +29,9 @@ on:
       - "libs/images/windows-2022/enable-volume.ps1"
       - "libs/images/windows-2022/volume-diagnostics.ps1"
       - ".github/workflows/ci-cua-spacesd.yml"
+      - ".github/actions/linux-rust-prep/**"
       - ".github/scripts/ci_component_scope.py"
+      - ".github/scripts/ci_reuse_pr_result.py"
   push:
     branches: [main]
     paths:
@@ -55,7 +57,9 @@ on:
       - "libs/images/windows-2022/enable-volume.ps1"
       - "libs/images/windows-2022/volume-diagnostics.ps1"
       - ".github/workflows/ci-cua-spacesd.yml"
+      - ".github/actions/linux-rust-prep/**"
       - ".github/scripts/ci_component_scope.py"
+      - ".github/scripts/ci_reuse_pr_result.py"
   workflow_dispatch:
 
 permissions:
@@ -73,6 +77,8 @@ env:
   CUA_TELEMETRY: "0"
   DO_NOT_TRACK: "1"
   CARGO_TERM_COLOR: always
+  # Smaller target dir: no incremental cache in CI (disk on hosted runners).
+  CARGO_INCREMENTAL: "0"
   # Big debug test binaries (Spaces, conformance) exhaust link memory with
   # full debug info; line tables keep backtraces useful.
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
@@ -82,15 +88,20 @@ env:
 
 jobs:
   changes:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: "cua-spacesd / changes"
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
       pull-requests: read
+      actions: read
+      checks: read
     outputs:
       run: ${{ steps.scope.outputs.run }}
       matrix: ${{ steps.scope.outputs.matrix }}
+      reused: ${{ steps.reuse.outputs.reused || '[]' }}
+      legs_test: ${{ steps.legs_test.outputs.legs || steps.scope.outputs.matrix }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -112,17 +123,39 @@ jobs:
             files=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" --jq '.[].filename')
           fi
           python3 .github/scripts/ci_component_scope.py spacesd <<< "$files" | tee -a "$GITHUB_STEP_SUMMARY"
+      # Reuse results by tree: a squash-merge push whose exact tree a green pull
+      # request run of this workflow already tested skips the lanes that run
+      # did. Lanes the pull request never ran (other OSes) still run. Any doubt
+      # means "run everything": see .github/scripts/ci_reuse_pr_result.py.
+      # Rollback: set the repository variable CI_REUSE_PR_RESULTS to "off".
+      # A step that cannot finish in a minute is killed and the suites run in
+      # full: the lookup never eats the job's 5 minutes.
+      - id: reuse
+        continue-on-error: true
+        timeout-minutes: 1
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REUSE_MODE: ${{ vars.CI_REUSE_PR_RESULTS }}
+        # Floating inputs the jobs install: dtolnay/rust-toolchain@stable.
+        run: python3 .github/scripts/ci_reuse_pr_result.py run --stamp-job "cua-spacesd / changes" --float rust-stable
+      - id: legs_test
+        continue-on-error: true
+        timeout-minutes: 1
+        env:
+          REUSED: ${{ steps.reuse.outputs.reused }}
+          LEGS: ${{ steps.scope.outputs.matrix }}
+        run: python3 .github/scripts/ci_reuse_pr_result.py legs --template "fmt, clippy, test ({os})" --output legs
 
   test:
     name: fmt, clippy, test (${{ matrix.os }})
     needs: changes
-    if: needs.changes.outputs.run == 'true'
+    if: needs.changes.outputs.run == 'true' && needs.changes.outputs.legs_test != '[]'
     strategy:
       fail-fast: false
       matrix:
         # macOS 26: the ScreenCaptureKit dependency compiles Metal bindings for
         # macOS 26 APIs and needs that SDK.
-        os: ${{ fromJSON(needs.changes.outputs.matrix) }}
+        os: ${{ fromJSON(needs.changes.outputs.legs_test) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     defaults:
@@ -131,13 +164,19 @@ jobs:
         working-directory: libs/cua-spacesd
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      # The workspace's debug test binaries outgrow the root disk's 13 GB
+      # free (the linker died with SIGBUS). No-op off Linux.
+      - uses: ./.github/actions/linux-rust-prep
+        with:
+          install-deps: "false"
+          free-more: "true"
       # cua-proto (the cua.env.v1 contract) is generated at build time.
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: "libs/cua-spacesd -> target"
       - name: Install Linux build dependencies
@@ -152,14 +191,52 @@ jobs:
             libxfixes-dev libxdamage-dev libudev-dev
       - name: Format
         run: cargo fmt --all --check
+      - uses: ./.github/actions/nextest
+      # One retry; a test that passes only on the retry is reported and gets a
+      # `flaky` issue (see .github/flaky/). Doctests are not run by nextest.
       - name: Test
-        run: cargo test --workspace --locked
+        run: >-
+          "$GITHUB_WORKSPACE/.github/scripts/flaky/flaky.sh" run --suite "spacesd-${{ matrix.os }}" --format junit
+          --results target/nextest/ci/junit.xml --
+          cargo nextest run --workspace --locked --config-file "$GITHUB_WORKSPACE/.github/flaky/nextest.toml" --profile ci
+        env:
+          DYLD_FALLBACK_LIBRARY_PATH: /usr/lib/swift
+      - name: Doctests
+        run: cargo test --workspace --doc --locked
         env:
           DYLD_FALLBACK_LIBRARY_PATH: /usr/lib/swift
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
         env:
           DYLD_FALLBACK_LIBRARY_PATH: /usr/lib/swift
+      # The hosted relay builds cua-relay with its optional `hosted` feature
+      # (plan metering, Teams, the hosted Spaces API's routes): test and lint
+      # that build too (the default build is tested above).
+      - name: Format (cua-relay hosted features)
+        run: |
+          cd crates/cua-relay/src
+          rustfmt --edition 2021 --check account_erase.rs hosted.rs meter.rs org_access.rs plan_source.rs team_api.rs team_sharing.rs teams.rs
+      - name: Test (cua-relay hosted features)
+        run: |
+          "$GITHUB_WORKSPACE/.github/scripts/flaky/flaky.sh" run --suite "spacesd-hosted-${{ matrix.os }}" --format junit \
+            --results target/nextest/ci/junit.xml -- \
+            cargo nextest run --locked --config-file "$GITHUB_WORKSPACE/.github/flaky/nextest.toml" --profile ci -p cua-relay --features hosted
+          "$GITHUB_WORKSPACE/.github/scripts/flaky/flaky.sh" run --suite "spacesd-mesh-metering-${{ matrix.os }}" --format junit \
+            --results target/nextest/ci/junit.xml -- \
+            cargo nextest run --locked --config-file "$GITHUB_WORKSPACE/.github/flaky/nextest.toml" --profile ci -p cua-spacesd-server --features relay-hosted --test mesh_metering
+        env:
+          DYLD_FALLBACK_LIBRARY_PATH: /usr/lib/swift
+      - uses: ./.github/actions/flaky-upload
+        if: always()
+        with:
+          suite: spacesd-${{ matrix.os }}
+      - name: Clippy (cua-relay hosted features)
+        run: cargo clippy --locked -p cua-relay -p cua-spacesd-server --all-targets --features cua-relay/hosted,cua-spacesd-server/relay-hosted -- -D warnings
+        env:
+          DYLD_FALLBACK_LIBRARY_PATH: /usr/lib/swift
+      - name: Disk left after the build
+        if: always() && runner.os == 'Linux'
+        run: df -h / && du -sh target
       # A second screencapturekit version in the graph silently binds one
       # version's call sites to the other's Swift bridge (unmangled @_cdecl
       # symbols in an identically named static archive), which segfaults the
@@ -204,7 +281,7 @@ jobs:
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: "libs/cua-spacesd -> target"
       - name: Enable Client for NFS (as the image does)
@@ -250,7 +327,7 @@ jobs:
   relay-e2e:
     name: relay e2e (docker)
     needs: changes
-    if: needs.changes.outputs.run == 'true' && contains(needs.changes.outputs.matrix, 'ubuntu')
+    if: needs.changes.outputs.run == 'true' && contains(needs.changes.outputs.matrix, 'ubuntu') && !contains(fromJSON(needs.changes.outputs.reused), 'relay e2e (docker)')
     runs-on: ubuntu-latest
     timeout-minutes: 90
     defaults:
@@ -262,6 +339,10 @@ jobs:
       - uses: ./.github/actions/linux-rust-prep
         with:
           install-deps: "false"
+          # The conformance suite moves 1 GiB files through Docker volumes on
+          # top of the debug builds: the default cleanup left it out of disk
+          # (ENOSPC in large_transfers_via_chunks_and_signed_urls).
+          free-more: "true"
       - name: Linux core lane (unit, conformance, in-process relay, teleport e2e)
         run: scripts/ci/linux-core-tests.sh
       - name: Relay lane

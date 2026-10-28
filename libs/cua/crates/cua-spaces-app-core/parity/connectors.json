@@ -1,0 +1,57 @@
+{
+  "name": "connectors",
+  "about": "Settings, Connectors (redesign) and summoning agents in a Space: the coding apps with Connect and Connected, the Providers with Connect or Sign out, each provider's Connect sheet (an app's own sign-in, a pasted key, a key from your shell), what one Connect on an app does (its token command, its device code, or the provider's sheet), an app's page, what sending an @mention does (add, wake, or why it can't be woken), and the one agent list Home and the Agents page draw (agents in Spaces and this device's runs that haven't started).",
+  "connectors": [
+    {
+      "step": "nothing connected",
+      "input": {
+        "apps": [
+          { "agent": "claude-code", "name": "Claude Code", "installed": true, "configured": false, "skills": false, "mcp": false, "mcpConfig": "~/.claude.json" },
+          { "agent": "codex", "name": "OpenAI Codex", "installed": true, "configured": true, "skills": true, "mcp": true, "mcpConfig": "~/.codex/config.toml" },
+          { "agent": "vscode", "name": "VS Code (Copilot agent mode)", "installed": true, "configured": true, "skills": true, "mcp": true, "mcpConfig": null }
+        ],
+        "keys": { "keys": [] },
+        "shellKeys": ["ANTHROPIC_API_KEY"]
+      }
+    },
+    {
+      "step": "Claude Code signed in, an OpenAI key pasted, Codex connecting",
+      "input": {
+        "apps": [
+          { "agent": "claude-code", "name": "Claude Code", "installed": true, "configured": true, "skills": true, "mcp": true, "mcpConfig": "~/.claude.json" },
+          { "agent": "codex", "name": "OpenAI Codex", "installed": true, "configured": true, "skills": true, "mcp": true, "mcpConfig": "~/.codex/config.toml" }
+        ],
+        "keys": { "keys": [
+          { "provider": "other", "env": "CLAUDE_CODE_OAUTH_TOKEN", "last4": "", "addedMs": 1790000000000 },
+          { "provider": "openai", "env": "OPENAI_API_KEY", "last4": "3f9a", "addedMs": 1790000100000 }
+        ] },
+        "busy": [{ "id": "app:codex", "step": "signing-in" }]
+      }
+    }
+  ],
+  "sheets": ["anthropic", "openai", "github"],
+  "plans": ["claude-code", "codex", "vscode", "copilot-cli"],
+  "details": ["claude-code", "vscode"],
+  "summon": {
+    "input": {
+      "members": [{ "handle": "hermes", "harness": "hermes", "label": "Hermes" }],
+      "people": ["grace"],
+      "canAdd": true,
+      "connectors": { "apps": [{ "agent": "claude-code", "name": "Claude Code", "installed": true }], "keys": { "keys": [{ "provider": "openai", "env": "OPENAI_API_KEY", "last4": "3f9a", "addedMs": 1 }] } }
+    },
+    "texts": ["@claude fix the build", "@codex bump the timeout, @hermes review it", "cc @grace and @nobody"]
+  },
+  "agentList": {
+    "spaces": [
+      { "spaceId": "relay:a/b", "spaceName": "ubuntu-build", "members": [
+        { "handle": "hermes", "harness": "hermes", "displayName": "Hermes", "ownerId": "acct_ada", "status": "working", "activity": "bumping the retry timeout", "lastMs": 5 },
+        { "handle": "claude", "harness": "claude-code", "displayName": "Claude Code", "ownerId": "acct_grace", "status": "idle", "needsMs": [9] }
+      ] }
+    ],
+    "attempts": [
+      { "id": "a", "spaceId": "relay:x/y", "spaceName": "space-1", "harness": "claude-code", "label": "Claude Code", "job": "fix the build", "atMs": 10, "state": "not-connected", "note": "Claude Code isn't connected yet", "connectLabel": "Connect Claude Code", "app": "claude-code" },
+      { "id": "b", "spaceId": "pending:b", "spaceName": "space-2", "harness": "codex", "label": "Codex", "job": "update the README", "atMs": 11, "state": "creating" },
+      { "id": "c", "spaceId": "", "spaceName": "", "harness": "hermes", "label": "Hermes", "job": "tidy the repo", "atMs": 3, "state": "failed" }
+    ]
+  }
+}

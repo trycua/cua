@@ -49,6 +49,8 @@ export interface SpaceAgentRun {
   /** Finer phase (`thinking`, `tool`, `waiting`, ...). */
   phase: string;
   turn: number;
+  /** The run is blocked until the person acts (a sign-in, an approval). A host that cannot tell leaves it out. */
+  needsYou?: { title: string; detail: string } | null;
 }
 
 /** How a conversation view shows an event (`cua_agents::events::CATEGORIES`). */
@@ -89,6 +91,39 @@ export interface AgentEventsPage {
   caught_up: boolean;
 }
 
+/** `agents.start`: a coding agent's run in a Space (`agent_start`). */
+export interface AgentStartRequest {
+  spaceId: string;
+  /** Harness id (`claude-code`, `openai-codex`, ...). */
+  agent: string;
+  /** The task. */
+  prompt: string;
+  /** A Git URL cloned into the run's folder first, and its branch or tag. */
+  repo?: string;
+  branch?: string;
+  model?: string;
+  /** Provider key names to forward (values never cross the bridge). Saved keys the harness reads go without being named. */
+  envFromHost?: string[];
+}
+
+/** `agent_start`'s answer (snake_case, as the tool answers). */
+export interface AgentStarted {
+  run_id: string;
+  agent: string;
+  space?: string;
+  cwd?: string;
+  hint?: string;
+}
+
+/** `agent_message`'s answer: queued while a turn runs, or a new turn. */
+export interface AgentMessageSent {
+  delivered: boolean;
+  run_id: string;
+  status: AgentRunStatus;
+  phase: string;
+  reason?: string;
+}
+
 /** A coding agent on this machine, as the SDK's agent setup sees it. */
 export interface AgentSetupRow {
   /** Setup id (`claude-code`, `codex`, `hermes`, `openclaw`, ...). */
@@ -103,6 +138,10 @@ export interface AgentSetupRow {
   /** The MCP config file cua edits, when the agent has one. */
   mcpConfig: string | null;
   skillsDir: string | null;
+  /** The account it signs in with on its own (`ChatGPT` for Codex), when the setup can see that sign-in. */
+  signIn: string | null;
+  /** That sign-in is on this computer. */
+  signedIn: boolean;
 }
 
 /* ---- One persistent agent's detail ---------------------------------------------
@@ -295,7 +334,7 @@ export interface AgentDetailView {
   addRoutineLabel: string;
   access: AgentLineView[];
   accessEmpty: string;
-  /** `Allow on this computer` when this machine is set up and not granted. */
+  /** `Allow on this machine` when this machine is set up and not granted. */
   allowThisMachineLabel?: string | null;
   audit: AgentLineView[];
   error?: string | null;
@@ -308,4 +347,58 @@ export interface AgentsPageView {
   busy: boolean;
   error?: string | null;
   requestText?: string | null;
+}
+
+/**
+ * Whether each agent on This Mac is really connected (`agents.status`;
+ * `cua_agent_setup::connection::ConnectionRow`, CONTRACT §4). snake_case, as
+ * the status serializes it; the same JSON `cua connect status --json` prints
+ * and the `connect_status` MCP tool answers.
+ */
+export interface ConnectionRow {
+  id: string;
+  name: string;
+  installed: boolean;
+  version: string | null;
+  previous_version: string | null;
+  signed_in: "yes" | "no" | "unknown" | "expired";
+  sign_in: string | null;
+  mcp: "ok" | "missing" | "broken" | "stale" | "unsupported";
+  mcp_config: string | null;
+  signin_imported: boolean;
+  signin_import: "ok" | "expired" | "missing" | "unsupported";
+  state: "connected" | "attention" | "not_connected" | "not_installed";
+  problem: { line: string; action: "reconnect" | "sign_in" | "install" | "disconnect" | "none" } | null;
+  checked_at_ms: number;
+}
+
+export interface ConnectionReport {
+  agents: ConnectionRow[];
+  checked_at_ms: number;
+}
+
+/** A row as drawn (`agents.connectionRows`, `cua-spaces-app-core/src/connection.rs`). */
+export interface ConnectionRowView {
+  id: string;
+  name: string;
+  state: "connected" | "attention" | "not_connected";
+  label: string;
+  problem: boolean;
+  detail: string | null;
+  signIn: string | null;
+  /** `connect`, `reconnect`, `sign-in`, `disconnect`, `install`. */
+  action: { id: string; label: string } | null;
+}
+
+/** What Connect did for one agent (`cua_agent_setup::connection::ConnectResult`). */
+export interface ConnectResult {
+  agent: string;
+  tools_ok: boolean;
+  tools_line: string | null;
+  sign_in: {
+    imported: { source: string; env: string; label: string; expires_ms: number | null; added_ms: number } | null;
+    /** `not_signed_in`, `cancelled`, `not_yet`, `failed`. */
+    refused: string | null;
+    line: string | null;
+  } | null;
 }

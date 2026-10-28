@@ -4,26 +4,26 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { FleetBridge, ViewerConfig } from "../native/fleet";
+import type { SpacesBridge, ViewerConfig } from "../native/spacesBridge";
 import type { TransferBridge } from "../native/transfer";
-import { fakeFleetBridge } from "../test/fakeFleet";
+import { fakeSpacesBridge } from "../test/fakeSpacesBridge";
 import { SpaceViewer } from "./SpaceViewer";
 
 const SPACE = {
-  id: "cloud:aurora-1",
+  id: "direct:aurora-1",
   name: "Aurora",
 };
 
-function makeFleet(overrides: Partial<FleetBridge> = {}): FleetBridge {
+function makeBridge(overrides: Partial<SpacesBridge> = {}): SpacesBridge {
   const config: ViewerConfig = { view: "space", space: SPACE };
-  return fakeFleetBridge({
+  return fakeSpacesBridge({
     // A Space without desktop_stream shows the "update the image" message
     // instead of streaming, so the bar renders without a WebSocket.
     listSpaces: async () => [
       {
         id: SPACE.id,
         name: "aurora-1",
-        provider: "cloud",
+        provider: "direct",
         spacesdVersion: "0",
         features: [],
         reachable: true,
@@ -46,8 +46,8 @@ const TRANSFER: TransferBridge = {
   onTransfer: async () => () => {},
 };
 
-async function openMenu(fleet: FleetBridge) {
-  render(<SpaceViewer fleet={fleet} transfer={TRANSFER} />);
+async function openMenu(bridge: SpacesBridge) {
+  render(<SpaceViewer bridge={bridge} transfer={TRANSFER} />);
   const trigger = await screen.findByRole("button", { name: /launch agent/i });
   fireEvent.click(trigger);
   return trigger;
@@ -59,7 +59,7 @@ describe("SpaceViewer Launch Agent dropdown", () => {
   });
 
   it("opens the menu and lists every launchable coding agent in order", async () => {
-    await openMenu(makeFleet());
+    await openMenu(makeBridge());
     const items = screen.getAllByRole("menuitem").map((el) => el.textContent);
     expect(items).toEqual([
       "Claude Code",
@@ -74,22 +74,22 @@ describe("SpaceViewer Launch Agent dropdown", () => {
   });
 
   it("does not offer Google Antigravity, which has no interactive terminal", async () => {
-    await openMenu(makeFleet());
+    await openMenu(makeBridge());
     expect(screen.queryByRole("menuitem", { name: /antigravity/i })).toBeNull();
   });
 
   it("launches Claude Code via its teleport provider", async () => {
-    const fleet = makeFleet();
-    await openMenu(fleet);
+    const bridge = makeBridge();
+    await openMenu(bridge);
     fireEvent.click(screen.getByRole("menuitem", { name: "Claude Code" }));
 
-    expect(fleet.launchAgent).toHaveBeenCalledTimes(1);
-    expect(fleet.launchAgent).toHaveBeenCalledWith(
+    expect(bridge.launchAgent).toHaveBeenCalledTimes(1);
+    expect(bridge.launchAgent).toHaveBeenCalledWith(
       expect.objectContaining({ id: SPACE.id }),
       "claude-code",
       "Claude Code",
     );
-    expect(fleet.launchAgentTerminal).not.toHaveBeenCalled();
+    expect(bridge.launchAgentTerminal).not.toHaveBeenCalled();
     // Selecting closes the menu.
     expect(screen.queryByRole("menu")).toBeNull();
   });
@@ -103,16 +103,16 @@ describe("SpaceViewer Launch Agent dropdown", () => {
     ["Hermes", "hermes"],
     ["OpenClaw", "openclaw"],
   ])("opens %s in a terminal in the Space", async (name, harness) => {
-    const fleet = makeFleet();
-    await openMenu(fleet);
+    const bridge = makeBridge();
+    await openMenu(bridge);
     fireEvent.click(screen.getByRole("menuitem", { name }));
 
-    expect(fleet.launchAgentTerminal).toHaveBeenCalledTimes(1);
-    expect(fleet.launchAgentTerminal).toHaveBeenCalledWith(
+    expect(bridge.launchAgentTerminal).toHaveBeenCalledTimes(1);
+    expect(bridge.launchAgentTerminal).toHaveBeenCalledWith(
       expect.objectContaining({ id: SPACE.id }),
       harness,
     );
-    expect(fleet.launchAgent).not.toHaveBeenCalled();
+    expect(bridge.launchAgent).not.toHaveBeenCalled();
     expect(
       await screen.findByText(`${name} is open in a terminal in this Space; sign in there`),
     ).toBeInTheDocument();
@@ -120,7 +120,7 @@ describe("SpaceViewer Launch Agent dropdown", () => {
 
   it("keeps an installing notice up until the terminal opens", async () => {
     let finish: () => void = () => {};
-    const fleet = makeFleet({
+    const bridge = makeBridge({
       launchAgentTerminal: vi.fn(
         () =>
           new Promise<void>((resolve) => {
@@ -128,7 +128,7 @@ describe("SpaceViewer Launch Agent dropdown", () => {
           }),
       ),
     });
-    await openMenu(fleet);
+    await openMenu(bridge);
     fireEvent.click(screen.getByRole("menuitem", { name: "Goose" }));
     expect(await screen.findByText("Installing Goose in this Space…")).toBeInTheDocument();
 
@@ -139,12 +139,12 @@ describe("SpaceViewer Launch Agent dropdown", () => {
   });
 
   it("says why when a terminal launch fails", async () => {
-    const fleet = makeFleet({
+    const bridge = makeBridge({
       launchAgentTerminal: vi.fn(async () => {
         throw new Error("this Space has no xterm to open it in");
       }),
     });
-    await openMenu(fleet);
+    await openMenu(bridge);
     fireEvent.click(screen.getByRole("menuitem", { name: "Hermes" }));
     expect(
       await screen.findByText("Couldn't open Hermes: this Space has no xterm to open it in"),

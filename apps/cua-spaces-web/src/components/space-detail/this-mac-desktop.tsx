@@ -11,6 +11,24 @@ import { Button } from "@/components/ui/button";
 import { thisComputerText } from "@/lib/host-labels";
 import { cn } from "@/lib/utils";
 
+/** The row's thread on a daemon that has none: empty, read-only in effect. */
+const EMPTY: SpaceThread = {
+  status: "ready",
+  items: [],
+  entries: [],
+  members: [],
+  shares: [],
+  me: "me",
+  role: null,
+  error: null,
+  hasMoreBefore: false,
+  loadEarlier: async () => {},
+  post: async () => null,
+  answer: async () => {},
+  setRights: async () => {},
+  removeAgent: null,
+};
+
 /** Said when a message is written while the desktop is not shared, and kept in the box. */
 export const NOT_SHARING_CHAT = "Share this desktop to chat here.";
 
@@ -46,8 +64,9 @@ export function DesktopStage({ shared, nudge }: { shared: boolean; nudge?: boole
 
 /**
  * This Mac's desktop row opened: a Space's page as any other (the header, the thread with its composer,
- * the rail), with the prompt where the stream would be. The thread has no daemon behind it: writing
- * while the desktop is not shared lights the prompt and keeps the draft.
+ * the rail), with the prompt where the stream would be. The thread is the daemon's own thread of this
+ * machine's desktop row (`live`): writing while the desktop is not shared lights the prompt and keeps the
+ * draft; once it is shared, messages are posted to the thread as in any Space.
  */
 export function ThisMacCall({
   spaceName,
@@ -56,6 +75,7 @@ export function ThisMacCall({
   facts,
   more,
   identity,
+  live,
 }: {
   spaceName: string;
   shared: boolean;
@@ -63,30 +83,25 @@ export function ThisMacCall({
   facts: readonly SpaceFact[];
   more: ReactNode;
   identity: string | null;
+  /** The row's thread from the daemon; `unsupported` from a daemon that has none yet. */
+  live: SpaceThread;
 }) {
   const [nudge, setNudge] = useState(0);
+  const noThread = live.status === "unsupported";
   const thread = useMemo<SpaceThread>(
     () => ({
-      status: "ready",
-      items: [],
-      entries: [],
-      members: [],
-      shares: [],
-      me: "me",
-      role: null,
-      error: null,
-      hasMoreBefore: false,
-      loadEarlier: async () => {},
+      ...(noThread ? EMPTY : live),
       // Not shared: the prompt lights up and the draft stays in the box.
-      post: async () => {
-        setNudge((n) => n + 1);
-        throw new Error(shared ? "Chat isn't available on this Mac's own desktop yet." : NOT_SHARING_CHAT);
+      post: async (text, view) => {
+        if (!shared) {
+          setNudge((n) => n + 1);
+          throw new Error(NOT_SHARING_CHAT);
+        }
+        if (noThread) throw new Error("Chat isn't available on this Mac's own desktop yet.");
+        return live.post(text, view);
       },
-      answer: async () => {},
-      setRights: async () => {},
-      removeAgent: null,
     }),
-    [shared],
+    [shared, live, noThread],
   );
   return (
     <SpaceCall

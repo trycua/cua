@@ -127,6 +127,30 @@ describe.skipIf(!wasmBuilt)("This Mac's desktop row", () => {
     await act(async () => void fireEvent.click(document.querySelector("[data-desktop-share-button]")!));
     await waitFor(() => expect(actions).toContain("share-desktop"));
   });
+
+  it("once the desktop is shared its chat works as in any Space: the message is posted to the thread", async () => {
+    const posts: string[] = [];
+    await mountApp("/spaces/this-mac", {
+      ...withDesktop(true),
+      intercept: (op, args) => {
+        if (op === "thread.post") posts.push((args as { spaceId: string; text: string }).spaceId + ": " + (args as { text: string }).text);
+        return undefined;
+      },
+    });
+    const box = await waitFor(() => {
+      const el = document.querySelector<HTMLTextAreaElement>("textarea");
+      expect(el).not.toBeNull();
+      return el!;
+    });
+    await act(async () => void fireEvent.change(box, { target: { value: "look at my screen" } }));
+    await act(async () => void fireEvent.keyDown(box, { key: "Enter" }));
+    await waitFor(() => expect(posts).toEqual(["this-mac: look at my screen"]));
+    // It stays: the message is in the thread (not an error, not the share prompt).
+    await waitFor(() => expect(document.body.textContent).toContain("look at my screen"));
+    expect(document.querySelector("[data-this-mac-desktop][data-nudge]")).toBeNull();
+    expect(document.body.textContent).not.toContain("Chat isn't available");
+    expect(document.body.textContent).not.toContain("\u00b7");
+  });
 });
 
 describe.skipIf(!wasmBuilt)("Home's Your Spaces", () => {

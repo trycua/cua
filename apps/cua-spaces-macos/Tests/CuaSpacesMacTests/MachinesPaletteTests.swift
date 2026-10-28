@@ -92,7 +92,7 @@ struct MachinesPaletteTests {
         #expect(row.spacesLabel == "Desktop shared")
     }
 
-    /// A machine sharing its desktop and providing a Space reads "Desktop · 1 Space".
+    /// A machine sharing its desktop and providing a Space reads "Desktop and 1 Space".
     @Test func aMachineSharingItsDesktopAndSpacesReadsDesktopAndCount() throws {
         let input = try appMachinesPageInputFromJson(json: """
         {"hostOs": "macos", "now": 1800000000, "spaces": [
@@ -105,7 +105,7 @@ struct MachinesPaletteTests {
         """)
         let row = appMachinesPageRows(input: input)[1]
         #expect(row.spaces == 1)
-        #expect(row.spacesLabel == "Desktop · 1 Space")
+        #expect(row.spacesLabel == "Desktop and 1 Space")
     }
 
     /// A machine providing only Spaces reads the plain count.
@@ -140,11 +140,11 @@ struct MachinesPaletteTests {
     @Test func thePaletteRanksWithTheCore() {
         let entries = [
             AppPaletteEntry(group: "Actions", label: "New Space", hint: nil, keywords: "create add"),
-            AppPaletteEntry(group: "Go to", label: "Computers", hint: nil, keywords: "page"),
+            AppPaletteEntry(group: "Go to", label: "Machines", hint: nil, keywords: "page"),
             AppPaletteEntry(group: "Spaces", label: "Stop builder", hint: "Running", keywords: nil),
         ]
         #expect(appPaletteRank(entries: entries, query: "") == [0, 1, 2])
-        #expect(appPaletteRank(entries: entries, query: "comp") == [1])
+        #expect(appPaletteRank(entries: entries, query: "mach") == [1])
         #expect(appPaletteRank(entries: entries, query: "stop run") == [2])
     }
 }

@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Machine, Space } from "@/bridge";
-import { busyMacosSpaces, canDelete, canPower, createError, powerButton, isMachineDesktop, machineName, macosLimitText, osLabel, powerPending, realSpaces, spacePlace, spaceState, visibleSpaces } from "./spaces";
+import { busyMacosSpaces, canDelete, canPower, countedSpaces, createError, isUnsharedDesktop, listedSpaces, machineName, macosLimitText, orderSpaces, osLabel, powerButton, powerPending, realSpaces, spacePlace, spaceState, visibleSpaces, isMachineDesktop } from "./spaces";
 
 const space = (id: string, status: Space["status"], lastUsedAt: number, extra: Partial<Space> = {}): Space => ({
   id,
@@ -40,11 +40,11 @@ describe("a failed create", () => {
   const progress = (error?: string) => ({ phase: "booting", permille: 900, label: "Failed", error, cancellable: false, cancelling: false });
   const failed = space("pending:m", "suspended", 3, { os: "macos", provider: "local", progress: progress("Apple allows two macOS VMs at once.") });
 
-  it("reads Failed with its reason, first in the list, and is removed rather than deleted", () => {
+  it("reads Failed with its reason, after the running Spaces, and is removed rather than deleted", () => {
     expect(spaceState(failed)).toBe("failed");
     expect(createError(failed)).toBe("Apple allows two macOS VMs at once.");
     expect(canDelete(failed)).toBe(false);
-    expect(visibleSpaces([...SPACES, failed], "all")[0]!.id).toBe("pending:m");
+    expect(visibleSpaces([...SPACES, failed], "all").map((s) => s.id)).toEqual(["on-new", "on-old", "new", "pending:m", "powered-off", "off"]);
     expect(visibleSpaces([...SPACES, failed], "stopped").map((s) => s.id)).not.toContain("pending:m");
     // A stopped Space has no create error.
     expect(createError(SPACES[0]!)).toBeNull();
@@ -75,8 +75,8 @@ describe("macosLimitText", () => {
 });
 
 describe("visibleSpaces", () => {
-  it("orders creating, then running, then stopped, most recent first", () => {
-    expect(visibleSpaces(SPACES, "all").map((s) => s.id)).toEqual(["new", "on-new", "on-old", "powered-off", "off"]);
+  it("orders running, then creating, then stopped, most recent first", () => {
+    expect(visibleSpaces(SPACES, "all").map((s) => s.id)).toEqual(["on-new", "on-old", "new", "powered-off", "off"]);
   });
 
   it("filters by state", () => {
@@ -159,5 +159,68 @@ describe("powerButton", () => {
     expect(powerButton(noCore, { ...on, status: "deleting" })).toBeNull();
     expect(powerButton(noCore, { ...on, id: "this-mac" })).toBeNull();
     expect(powerButton(noCore, { ...on, progress: { phase: "pulling", permille: 100, label: "Downloading" } })).toBeNull();
+  });
+});
+
+describe("the Spaces list's desktop rows", () => {
+  const real = (id: string, lastUsedAt = 1) => space(id, "running", lastUsedAt, { provider: "local", id });
+  /** This Mac's desktop: running (reachable) while it is shared, suspended while it is not. */
+  const thisMac = (shared: boolean) => space("this-mac", shared ? "running" : "suspended", 1, { provider: "local" });
+  const theirs = (machine: string) => space(`relay:${machine}`, "running", 1, { provider: "relay" });
+  const ids = (list: readonly Space[]) => list.map((s) => s.id);
+
+  it("tells This Mac's shared desktop from its unshared one", () => {
+    expect(isUnsharedDesktop(thisMac(false))).toBe(true);
+    expect(isUnsharedDesktop(thisMac(true))).toBe(false);
+    expect(isUnsharedDesktop(real("a"))).toBe(false);
+    expect(isMachineDesktop(thisMac(false))).toBe(true);
+  });
+
+  it("zero Spaces and not sharing: nothing listed, so the empty state shows", () => {
+    expect(listedSpaces([thisMac(false)])).toEqual([]);
+  });
+
+  it("zero Spaces and sharing: the list holds the desktop row, and it counts", () => {
+    const listed = listedSpaces([thisMac(true)]);
+    expect(ids(listed)).toEqual(["this-mac"]);
+    expect(countedSpaces(listed)).toHaveLength(1);
+  });
+
+  it("one Space and not sharing: both rows, but the unshared desktop is never counted", () => {
+    const listed = listedSpaces([thisMac(false), real("a")]);
+    expect(ids(listed)).toEqual(["a", "this-mac"]);
+    expect(ids(countedSpaces(listed))).toEqual(["a"]);
+  });
+
+  it("Hide leaves a desktop out, and showing it again brings it back", () => {
+    const all = [thisMac(true), real("a")];
+    expect(ids(listedSpaces(all, new Set(["this-mac"])))).toEqual(["a"]);
+    expect(ids(listedSpaces(all, new Set()))).toEqual(["a", "this-mac"]);
+    // Hidden, an unshared desktop stays out too.
+    expect(ids(listedSpaces([thisMac(false), real("a")], new Set(["this-mac"])))).toEqual(["a"]);
+  });
+
+  it("another machine's desktop shows only while it shares it", () => {
+    const all = [real("a"), theirs("studio"), theirs("spare")];
+    const shares = (s: Space) => s.id !== "relay:spare";
+    expect(ids(listedSpaces(all, new Set(), shares))).toEqual(["a", "relay:studio"]);
+  });
+});
+
+describe("orderSpaces: running first, then the most recently used", () => {
+  it("puts a running Space before newer stopped ones", () => {
+    const all = [
+      space("stopped-new", "suspended", 90),
+      space("stopped-newer", "suspended", 95),
+      space("running-old", "running", 10),
+      space("running-newest", "running", 80),
+      space("being-made", "provisioning", 99),
+    ];
+    expect(orderSpaces(all).map((s) => s.id)).toEqual(["running-newest", "running-old", "being-made", "stopped-newer", "stopped-new"]);
+  });
+
+  it("lists a desktop after the Spaces in its state, and This Mac's unshared desktop last", () => {
+    const all = [space("this-mac", "suspended", 999, { provider: "local" }), space("relay:studio", "running", 999, { provider: "relay" }), space("a", "running", 1), space("b", "suspended", 2)];
+    expect(orderSpaces(all).map((s) => s.id)).toEqual(["a", "relay:studio", "b", "this-mac"]);
   });
 });

@@ -259,7 +259,12 @@ function Row({
       {mark}
       <span className="min-w-0 flex-1">
         <span className={dim ? "block truncate text-[13px] text-muted-foreground" : "block truncate text-[13px]"}>{label}</span>
-        {caption ? <span className="block truncate text-[11px] text-muted-foreground">{caption}</span> : null}
+        {/* A failed agent's reason is shown whole (wrapped, selectable), never cut with an ellipsis. */}
+        {caption ? (
+          <span data-member-caption="" className={cn("block text-[11px] text-muted-foreground", status === "failed" ? "break-words select-text" : "truncate")}>
+            {caption}
+          </span>
+        ) : null}
       </span>
     </>
   );

@@ -64,8 +64,8 @@ describe.skipIf(!wasmBuilt)("as the SwiftUI app (real routes, wasm core)", () =>
     expect(status.getAttribute("data-this-device-status")).toBe("needs-enrollment");
     expect(document.querySelector("[data-this-device-name]")?.textContent).toBe("cua's Mac Studio");
     // One Enroll…: the row's. The line under it says what it is for.
-    expect(screen.getAllByRole("button", { name: /^Trust this computer/ })).toHaveLength(1);
-    expect(document.querySelector("[data-banner-text]")?.textContent).toMatch(/Trust this computer/);
+    expect(screen.getAllByRole("button", { name: /^Trust this machine/ })).toHaveLength(1);
+    expect(document.querySelector("[data-banner-text]")?.textContent).toMatch(/Trust this machine/);
     // "Enrolled", "Revoke" and "Re-verify" are the core's words; the page says them plainly.
     expect(document.body.textContent).not.toMatch(/enroll/i);
     // The relay's refusal is what "Needs enrollment" already says.

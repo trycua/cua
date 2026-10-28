@@ -92,7 +92,7 @@ const PROVIDERS: &[Provider] = &[
         label: "Anthropic",
         env: "ANTHROPIC_API_KEY",
         also: &["CLAUDE_CODE_OAUTH_TOKEN"],
-        used_by: "Claude Code, Hermes and other apps that use Claude.",
+        used_by: "Claude Code. Hermes and other apps that use Claude need an API key.",
         key_help: "Create a key at console.anthropic.com. Every app that uses Claude can use it.",
         placeholder: "sk-ant-…",
         ways: &[CLAUDE_TOKEN, Way::Key, Way::Shell],
@@ -102,7 +102,7 @@ const PROVIDERS: &[Provider] = &[
         label: "OpenAI",
         env: "OPENAI_API_KEY",
         also: &["CODEX_AUTH_JSON"],
-        used_by: "Codex, Hermes and other apps that use OpenAI models.",
+        used_by: "Codex. Hermes and other apps that use OpenAI models need an API key.",
         key_help: "Create a key at platform.openai.com. Every app that uses OpenAI can use it.",
         placeholder: "sk-…",
         ways: &[CODEX_DEVICE, Way::Key, Way::Shell],
@@ -127,6 +127,10 @@ struct AppSignIn {
     /// The way Connect starts when none is connected (`None`: it asks with
     /// the provider's sheet).
     way: Option<Way>,
+    /// The saved credentials the app can read, as the variables a run gets
+    /// (the harness's `keys`; a drift test holds them equal). Empty: the app
+    /// takes any credential of its providers.
+    reads: &'static [&'static str],
 }
 
 const APPS: &[AppSignIn] = &[
@@ -134,26 +138,36 @@ const APPS: &[AppSignIn] = &[
         app: "claude-code",
         providers: &["anthropic"],
         way: Some(CLAUDE_TOKEN),
+        reads: &[
+            "ANTHROPIC_API_KEY",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "ANTHROPIC_AUTH_TOKEN",
+        ],
     },
     AppSignIn {
         app: "codex",
         providers: &["openai"],
         way: Some(CODEX_DEVICE),
+        reads: &["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_AUTH_JSON"],
     },
     AppSignIn {
         app: "copilot-cli",
         providers: &["github"],
         way: None,
+        reads: &[],
     },
     AppSignIn {
         app: "hermes",
         providers: &["anthropic", "openai"],
         way: None,
+        // API keys only: the Claude Code and ChatGPT sign-ins are not Hermes'.
+        reads: &["OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"],
     },
     AppSignIn {
         app: "t3code",
         providers: &["anthropic", "openai"],
         way: None,
+        reads: &[],
     },
 ];
 
@@ -248,9 +262,19 @@ impl ConnectorsInput {
 /// The saved credential that connects a provider, first match wins: the
 /// pasted key, then a sign-in token.
 fn provider_credential<'a>(input: &'a ConnectorsInput, p: &Provider) -> Option<&'a AgentKeyInput> {
-    input
-        .key(p.env)
-        .or_else(|| p.also.iter().find_map(|e| input.key(e)))
+    input.key(p.env).filter(|k| !k.expired).or_else(|| {
+        p.also
+            .iter()
+            .find_map(|e| input.key(e).filter(|k| !k.expired))
+    })
+}
+
+/// A sign-in saved for the provider has expired (and none that works is).
+fn provider_expired(input: &ConnectorsInput, p: &Provider) -> bool {
+    provider_credential(input, p).is_none()
+        && std::iter::once(p.env)
+            .chain(p.also.iter().copied())
+            .any(|e| input.key(e).is_some_and(|k| k.expired))
 }
 
 fn provider_connected(input: &ConnectorsInput, id: &str) -> bool {
@@ -259,11 +283,30 @@ fn provider_connected(input: &ConnectorsInput, id: &str) -> bool {
 
 /// The app's sign-in is in place: one of its providers is connected, or it
 /// signs in on its own.
+///
+/// Only a credential the app can read counts: a provider being connected is
+/// not enough when what is saved is a sign-in that app has no reader for (the
+/// ChatGPT sign-in is for Codex; Hermes reads an OpenAI API key, not it).
 fn app_signed_in(input: &ConnectorsInput, app: &str) -> bool {
-    match app_sign_in(app) {
-        Some(a) => a.providers.iter().any(|p| provider_connected(input, p)),
-        None => true,
+    let Some(a) = app_sign_in(app) else {
+        return true;
+    };
+    if a.reads.is_empty() {
+        return a.providers.iter().any(|p| provider_connected(input, p));
     }
+    a.reads
+        .iter()
+        .any(|k| input.key(k).is_some_and(|k| !k.expired))
+}
+
+/// An app's sign-in is saved but expired.
+fn app_expired(input: &ConnectorsInput, app: &str) -> bool {
+    app_sign_in(app).is_some_and(|a| {
+        a.providers
+            .iter()
+            .filter_map(|p| provider(p))
+            .any(|p| provider_expired(input, p))
+    })
 }
 
 fn dots(k: &AgentKeyInput) -> String {
@@ -277,7 +320,7 @@ fn dots(k: &AgentKeyInput) -> String {
 /// How a saved credential reads on its provider's row.
 fn credential_text(p: &Provider, k: &AgentKeyInput) -> String {
     match k.env.as_str() {
-        "CLAUDE_CODE_OAUTH_TOKEN" => "Claude sign-in, for Claude Code".into(),
+        "CLAUDE_CODE_OAUTH_TOKEN" => "Claude Code sign-in".into(),
         "CODEX_AUTH_JSON" => "ChatGPT sign-in, for Codex".into(),
         e if e == p.env => format!("API key {}", dots(k)),
         e => format!("{e} {}", dots(k)),
@@ -328,7 +371,7 @@ pub struct ConnectorProviderRow {
     pub label: String,
     /// `connected`, `not-connected`, `connecting`, `failed`.
     pub state: String,
-    /// "Not connected", "API key •••• 3f9a", "Claude sign-in, for Claude Code",
+    /// "Not connected", "API key •••• 3f9a", "Claude Code sign-in",
     /// "Approve in your browser…".
     pub status: String,
     /// Who uses it.
@@ -397,12 +440,19 @@ fn app_row(input: &ConnectorsInput, a: &ConnectorAppInput) -> ConnectorAppRow {
     let signed_in = app_signed_in(input, &a.agent);
     let done = a.configured && signed_in;
     let needs = app_sign_in(&a.agent).filter(|_| !signed_in).map(|s| {
-        s.providers
+        let names = s
+            .providers
             .iter()
             .filter_map(|p| provider(p))
             .map(|p| p.label)
             .collect::<Vec<_>>()
-            .join(" or ")
+            .join(" or ");
+        // An app with no sign-in of its own takes API keys: say so.
+        if s.way.is_none() && !s.reads.is_empty() {
+            format!("Needs an API key for {names}.")
+        } else {
+            format!("Needs a sign-in to {names}.")
+        }
     });
     let (state, line, btn) = if let Some(step) = busy {
         let line = match step {
@@ -432,7 +482,11 @@ fn app_row(input: &ConnectorsInput, a: &ConnectorAppInput) -> ConnectorAppRow {
     } else if a.configured {
         (
             "not-connected",
-            needs.map(|n| format!("Needs a sign-in to {n}.")),
+            if app_expired(input, &a.agent) {
+                Some("The sign-in expired. Reconnect.".to_string())
+            } else {
+                needs
+            },
             Some(button("connect", "Connect", true)),
         )
     } else {
@@ -482,6 +536,12 @@ fn provider_row(input: &ConnectorsInput, p: &Provider, can_edit: bool) -> Connec
             "connected",
             credential_text(p, k),
             button("sign-out", "Sign out", can_edit),
+        )
+    } else if provider_expired(input, p) {
+        (
+            "not-connected",
+            "Expired, reconnect".into(),
+            button("connect", "Reconnect", can_edit),
         )
     } else {
         (
@@ -775,7 +835,7 @@ pub struct ConnectorToggle {
 pub struct ConnectorSignIn {
     /// "Signs in with Anthropic".
     pub title: String,
-    /// The provider row's status for it ("Claude sign-in, for Claude Code", "Not connected").
+    /// The provider row's status for it ("Claude Code sign-in", "Not connected").
     pub status: String,
     pub connected: bool,
     /// How Connect signs it in ("Claude sign-in, through claude setup-token").
@@ -990,6 +1050,7 @@ mod tests {
             env: env.into(),
             last4: last4.into(),
             added_ms: 1_000,
+            expired: false,
         }
     }
 
@@ -1002,6 +1063,60 @@ mod tests {
             ],
             ..Default::default()
         }
+    }
+
+    /// The credentials an app reads here are the ones its harness reads
+    /// (`cua_agents::harness`), so "connected" never outruns what a run gets.
+    #[test]
+    fn what_an_app_reads_is_what_its_harness_reads() {
+        for (app, harness) in [
+            ("claude-code", "claude-code"),
+            ("codex", "openai-codex"),
+            ("hermes", "hermes"),
+        ] {
+            let a = app_sign_in(app).unwrap();
+            let h = cua_agents::harness::harness(harness).unwrap();
+            assert_eq!(a.reads, h.keys, "{app}");
+        }
+    }
+
+    #[test]
+    fn hermes_is_connected_only_by_a_credential_it_reads() {
+        let mut i = input();
+        // The ChatGPT sign-in is for Codex; Hermes can't read it.
+        i.keys.keys.push(key("CODEX_AUTH_JSON", "AAAA"));
+        assert!(app_signed_in(&i, "codex"));
+        assert!(!app_signed_in(&i, "hermes"));
+        // An OpenAI API key, or the Claude sign-in token, it reads.
+        let mut k = input();
+        k.keys.keys.push(key("OPENAI_API_KEY", "AAAA"));
+        assert!(app_signed_in(&k, "hermes"));
+        let mut t = input();
+        t.keys.keys.push(key("CLAUDE_CODE_OAUTH_TOKEN", "AAAA"));
+        // The Claude Code sign-in is Claude Code's alone.
+        assert!(app_signed_in(&t, "claude-code"));
+        assert!(!app_signed_in(&t, "hermes"));
+        assert!(!app_signed_in(&t, "codex"));
+        let mut a = input();
+        a.keys.keys.push(key("ANTHROPIC_API_KEY", "AAAA"));
+        assert!(app_signed_in(&a, "hermes") && app_signed_in(&a, "claude-code"));
+    }
+
+    #[test]
+    fn an_expired_sign_in_is_not_connected_and_says_reconnect() {
+        let mut i = input();
+        i.apps[0].configured = true;
+        let mut k = key("CLAUDE_CODE_OAUTH_TOKEN", "AAAA");
+        k.expired = true;
+        i.keys.keys.push(k);
+        assert!(!app_signed_in(&i, "claude-code"));
+        let v = view(&i);
+        let p = v.providers.iter().find(|p| p.id == "anthropic").unwrap();
+        assert_eq!(p.state, "not-connected");
+        assert_eq!(p.status, "Expired, reconnect");
+        assert_eq!(p.button.label, "Reconnect");
+        let a = v.apps.iter().find(|a| a.agent == "claude-code").unwrap();
+        assert_eq!(a.line.as_deref(), Some("The sign-in expired. Reconnect."));
     }
 
     #[test]
@@ -1046,7 +1161,7 @@ mod tests {
         assert_eq!(v.apps[0].state, "connected");
         let a = &v.providers[0];
         assert_eq!(a.state, "connected");
-        assert_eq!(a.status, "Claude sign-in, for Claude Code");
+        assert_eq!(a.status, "Claude Code sign-in");
         assert_eq!(a.button.label, "Sign out");
         assert_eq!(a.sign_out_envs, ["CLAUDE_CODE_OAUTH_TOKEN"]);
         // The sign-in token is the provider's, not an Other key.

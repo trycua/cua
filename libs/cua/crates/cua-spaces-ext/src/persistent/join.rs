@@ -585,6 +585,7 @@ impl Persistent {
             let handle = identity::free_handle("agent", |h| all.iter().any(|a| a.name == h));
             let rec = AgentRecord {
                 name: handle,
+                handle: None,
                 harness: "other".into(),
                 space: code.space.clone(),
                 model: None,

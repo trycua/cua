@@ -21,10 +21,10 @@ import { cn } from "@/lib/utils";
 export const Route = createFileRoute("/settings/devices")({ component: DevicesPage });
 
 /** `devices::labels().signed_out`, for before the core's view exists. */
-const SIGNED_OUT = "Sign in to Cua to see the devices that can reach your computers.";
+const SIGNED_OUT = "Sign in to Cua to see the devices that can reach your machines.";
 
 /**
- * Settings, Trusted devices: this computer's trust, new machines to confirm, the
+ * Settings, Trusted machines: this computer's trust, new machines to confirm, the
  * account's devices (Approve, Deny, Rename, Revoke) and Recent Access, then
  * the enroll and approval sheets. Everything shown is the app core's
  * `devices::devices_view`, as in the SwiftUI app's `DevicesSettingsView`.
@@ -42,7 +42,7 @@ function DevicesPage() {
   if (state === "error" || state === "no-view") {
     return (
       <Retry onRetry={() => void devices.refresh()} data-devices-error>
-        {devices.error ? `Couldn't read your devices: ${devices.error.message}` : "Couldn't show your devices."}
+        {devices.error ? `Couldn't read your machines: ${devices.error.message}` : "Couldn't show your machines."}
       </Retry>
     );
   }

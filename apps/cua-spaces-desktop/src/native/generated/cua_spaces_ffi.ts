@@ -8828,7 +8828,11 @@ export type AppAgentKeyInput = {
     /**
      * When it was added (Unix ms).
      */
-    addedMs: bigint
+    addedMs: bigint,
+    /**
+     * A sign-in past its expiry: not used by any run until reconnected.
+     */
+    expired: boolean
 }
 
 /**
@@ -8855,7 +8859,8 @@ const FfiConverterTypeAppAgentKeyInput = (() => {
                 provider: FfiConverterString.read(from),
                 env: FfiConverterString.read(from),
                 last4: FfiConverterString.read(from),
-                addedMs: FfiConverterUInt64.read(from)
+                addedMs: FfiConverterUInt64.read(from),
+                expired: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -8863,12 +8868,14 @@ const FfiConverterTypeAppAgentKeyInput = (() => {
             FfiConverterString.write(value.env, into);
             FfiConverterString.write(value.last4, into);
             FfiConverterUInt64.write(value.addedMs, into);
+            FfiConverterBool.write(value.expired, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.provider) +
              FfiConverterString.allocationSize(value.env) +
              FfiConverterString.allocationSize(value.last4) +
-             FfiConverterUInt64.allocationSize(value.addedMs);
+             FfiConverterUInt64.allocationSize(value.addedMs) +
+             FfiConverterBool.allocationSize(value.expired);
 
         }
     };
@@ -26871,9 +26878,9 @@ export type AppHostSetupRequest = {
      */
     allow?: Array<string>,
     /**
-     * What the machine is for: `desktop` (share this desktop, and
-     * provide Spaces on a new relay setup; the default) or `spare` (only
-     * run Spaces for your other devices).
+     * What the machine is for: `spare` (the default: other machines
+     * create Spaces here, its desktop stays private) or `desktop` (also
+     * let other machines control this desktop).
      */
     profile?: string,
     /**
@@ -26881,10 +26888,9 @@ export type AppHostSetupRequest = {
      */
     shareDesktop?: boolean,
     /**
-     * Create Spaces for your other devices (overrides the profile).
-     * `None` with the desktop profile: on for a new relay setup; a
-     * machine set up before keeps its setting (the host decides,
-     * `cua_host::default_provide_spaces`).
+     * Let other machines create Spaces here (overrides the profile).
+     * `None`: on for a new relay setup; a machine set up before keeps
+     * its setting (the host decides, `cua_host::default_provide_spaces`).
      */
     provideSpaces?: boolean
 }
@@ -28860,7 +28866,7 @@ export type AppListView = {
     empty: boolean,
     /**
      * One quiet line where the Spaces go while the list is not complete
-     * ("Reaching 6 computers…"), below what is known so far.
+     * ("Reaching 6 machines…"), below what is known so far.
      */
     reachingLine?: string
 }
@@ -29969,7 +29975,8 @@ export type AppMachinesViewToggle = {
      */
     id: string,
     /**
-     * "Provide Spaces", "Share this desktop".
+     * "Let other machines create Spaces here", "Let other machines control
+     * this desktop".
      */
     label: string,
     /**
@@ -30339,7 +30346,8 @@ export type AppMachinesViewMachine = {
      */
     noticeAction?: AppHostAction,
     /**
-     * Provide Spaces, then Share this desktop.
+     * Create Spaces here, then control this desktop (This Mac: the
+     * desktop switch only).
      */
     toggles: Array<AppMachinesViewToggle>,
     /**
@@ -30771,7 +30779,7 @@ export type AppMachinesViewRelay = {
      */
     ownerEmail?: string,
     /**
-     * It creates Spaces for your devices (`None`: it did not say).
+     * It lets your other machines create Spaces (`None`: it did not say).
      */
     providesSpaces?: boolean
 }

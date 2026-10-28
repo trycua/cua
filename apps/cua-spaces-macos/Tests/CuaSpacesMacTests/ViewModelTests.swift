@@ -280,7 +280,7 @@ struct ViewModelTests {
         let model = makeModel(host: host)
         await model.refresh()
         #expect(model.spaces.contains { $0.id == "this-mac" })
-        #expect(model.sidebar.thisMachine?.name == "This computer")
+        #expect(model.sidebar.thisMachine?.name == "This Mac")
         #expect(model.sidebar.thisMachine?.detail == "Set up for access")
         #expect(!model.sidebar.sections.flatMap(\.rows).contains { $0.id == "this-mac" })
         model.select("this-mac")
@@ -300,7 +300,7 @@ struct ViewModelTests {
         #expect(h.panel.actions.map(\.id) == [.setUp])
         h.computerName = { "Ada’s MacBook Pro" }
         await h.run(.setUp)
-        #expect(h.formView?.title == "Set up this computer")
+        #expect(h.formView?.title == "Set up this machine")
         // Name starts as what the system calls this computer.
         #expect(h.formView?.fields.first?.value == "Ada’s MacBook Pro")
         h.send(.setName(name: "Studio"))
@@ -1232,7 +1232,7 @@ struct ViewModelTests {
         #expect(detail.confirm.removeLabel == "Remove from List")
         let other = model.detail(theirs).confirm
         #expect(!other.confirmEnabled)
-        #expect(other.disabledReason == "Created on another device: delete it there, or remove it from this list.")
+        #expect(other.disabledReason == "Created on another machine: delete it there, or remove it from this list.")
 
         model.delete(mine)
         model.delete(theirs, removeOnly: true)

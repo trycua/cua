@@ -18,7 +18,7 @@ import type { AgentRunStatus, HostStatus, Space, SpaceOs, TranscriptItem } from 
 import type { DataAdapter } from "@/bridge/adapter";
 import { threadOpAvailable } from "@/bridge/ops/thread";
 
-import { isMachineDesktop, spaceState } from "./spaces";
+import { isMachineDesktop, orderSpaces, spaceState } from "./spaces";
 
 export type TaskEnding = "kept" | "thrown";
 
@@ -229,7 +229,7 @@ export interface NewKind {
 
 /** The Spaces you already have that a job can use: running ones, not a machine's own desktop (this Mac has its own row). */
 export function pickableSpaces(spaces: readonly Space[] | undefined): Space[] {
-  return (spaces ?? []).filter((s) => !isMachineDesktop(s) && spaceState(s) === "running");
+  return orderSpaces((spaces ?? []).filter((s) => !isMachineDesktop(s) && spaceState(s) === "running"));
 }
 
 /** Where a job runs unless you pick: a new Linux computer on this Mac (or the first kind this Mac can make). */
@@ -314,7 +314,7 @@ export function startErrorView(raw: string, agent: string): StartErrorView {
   if (e.includes("isn't shared"))
     return {
       title: "This Mac isn't set up for tasks yet",
-      body: "Turn on sharing for this Mac on the Computers page, then try again. Or pick another computer.",
+      body: "Turn on sharing for this Mac on the Machines page, then try again. Or pick another machine.",
       action: "set-up-host",
       retry: true,
     };

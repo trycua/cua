@@ -1142,7 +1142,7 @@ mod tests {
             cache: None,
         };
         let v = storage_section(&linux, &storage_initial());
-        assert_eq!(v.rows[0].options[0].label, "This computer");
+        assert_eq!(v.rows[0].options[0].label, "This machine");
         let t = texts(&v);
         assert!(t.contains(&"Mounted at".to_string()), "{t:?}");
         assert!(t.contains(&"~/Cua Volume".to_string()), "{t:?}");

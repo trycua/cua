@@ -10,7 +10,8 @@ import { EmptyHome } from "@/components/empty-home";
 import { useFirstSpaceMilestones } from "@/components/first-run-guide";
 import { EmptyState, Page, PageHeader } from "@/components/page";
 import { ComputerWarnings } from "@/components/resources/computer-resources";
-import type { SpaceItem } from "@/components/spaces/model";
+import { useListedSpaces } from "@/components/spaces/listed";
+import { desktopOf, type SpaceItem } from "@/components/spaces/model";
 import { BulkConfirmDialog, useBulkRemove } from "@/components/spaces/bulk-remove";
 import { SpaceList } from "@/components/spaces/space-list";
 import { SpaceContextMenu, SpaceMoreMenu, type MenuActions } from "@/components/spaces/space-menu";
@@ -28,7 +29,8 @@ import { thisComputerText } from "@/lib/host-labels";
 import { plural } from "@/lib/plural";
 import { cn } from "@/lib/utils";
 import { accessOf, isMine } from "@/lib/space-access";
-import { creatingElsewhereLine, machineName, matchesQuery, realSpaces, spaceState } from "@/lib/spaces";
+import { creatingElsewhereLine, machineName, matchesQuery, spaceState } from "@/lib/spaces";
+import { hideDesktop, showHiddenDesktops } from "@/lib/hidden-desktops";
 import { computerChoices, gridArea, nextSearch, shownSpaces, spaceMachineId, validateSpacesSearch, type SpacesSearch } from "@/lib/spaces-page";
 import { useFlag } from "@/bridge/flags";
 import { LegacySpacesPage } from "@/legacy/routes/spaces/index";
@@ -46,9 +48,9 @@ function SpacesPage() {
   const setSearch = (next: Partial<Record<keyof SpacesSearch, string | undefined>>) =>
     void navigate({ search: (prev: SpacesSearch) => nextSearch(prev, next), replace: true });
   const { data: all = [], isLoading, error, listNotice, listStatus, startSpace, stopSpace, creatingElsewhere } = useSpaces();
-  // Machines' own desktops are on Machines, not here.
+  // Your Spaces and the machines' desktops: this Mac's reads "Not sharing" while its switch is off (never counted).
   // Stable while the list is: the tiles below redraw only when their own item changes.
-  const spaces = useMemo(() => realSpaces(all), [all]);
+  const { listed: spaces, counted, hiddenCount } = useListedSpaces(all);
   const { data: machines = [] } = useMachines();
   const resources = useResources();
   const [query, setQuery] = useState("");
@@ -65,7 +67,7 @@ function SpacesPage() {
         spaces.map((space) => {
           const machine = machineName(machines, space);
           const mine = isMine(space);
-          return [space.id, { space, state: spaceState(space), access: accessOf(space, machine), mine, bytes: mine ? spaceDiskBytes(resources, space.id) : null, machine }];
+          return [space.id, { space, state: spaceState(space), access: accessOf(space, machine), mine, bytes: mine ? spaceDiskBytes(resources, space.id) : null, machine, desktop: desktopOf(space) }];
         }),
       ),
     [spaces, machines, resources],
@@ -98,7 +100,7 @@ function SpacesPage() {
     </li>
   ));
   const keyvault = useSpaceAccess(spaces);
-  const running = spaces.filter((s) => spaceState(s) === "running").length;
+  const running = counted.filter((s) => spaceState(s) === "running").length;
   // No Spaces yet (or the list could not be read): the SwiftUI app's empty home, as the first-run guide.
   // The core decides: "Create your first Space" only for a complete list with no Space. A daemon still
   // starting (an app update) or computers still answering show what is known and one quiet line instead.
@@ -108,7 +110,7 @@ function SpacesPage() {
   const empty = !error && !isLoading && (listed.empty || unread) && creatingElsewhere.length === 0;
   const guide = empty && home && home.tiles.length > 0 ? home : null;
   const reachingLine = error || unread ? null : listed.reachingLine;
-  useFirstSpaceMilestones(spaces);
+  useFirstSpaceMilestones(counted);
   const tipsLoaded = useTipsLoaded();
   // The warnings above the list and the list come from separate host reads. Draw them together once those have
   // answered, not one by one with the page jumping at each (CUA-1951).
@@ -124,7 +126,7 @@ function SpacesPage() {
   const power = (list: readonly SpaceItem[], on: boolean) => {
     for (const it of list) void (on ? startSpace : stopSpace)(it.space.id).catch(toastError(`Couldn't turn ${on ? "on" : "off"} ${it.space.name}`));
   };
-  const actions: MenuActions = { power: (it, on) => power([it], on), remove: (it) => bulk.ask([it]) };
+  const actions: MenuActions = { power: (it, on) => power([it], on), remove: (it) => bulk.ask([it]), hide: (it) => hideDesktop(it.space.id) };
   // The grid's tiles read the selection and the menus' actions through this,
   // so a tile redraws only when its own Space, pick or state changes (picking
   // one of 3,000 Spaces redrew all 3,000).
@@ -150,7 +152,7 @@ function SpacesPage() {
     <Page>
       <PageHeader
         title="Spaces"
-        description={isLoading || !listStatus.loaded ? "Loading Spaces…" : `${plural(spaces.length, "Space")} on ${plural(machines.length, "computer")}, ${running} running`}
+        description={isLoading || !listStatus.loaded ? "Loading Spaces…" : `${plural(counted.length, "Space")} on ${plural(machines.length, "machine")}, ${running} running`}
         actions={
           <Button onClick={newSpace}>
             <PlusIcon /> New Space
@@ -161,7 +163,7 @@ function SpacesPage() {
         <>
       <PageTip place="spaces" />
       {/* The page's tip goes here, above the warnings (the tips' own change places it). Then, in this order:
-          the computers' warnings, the toolbar, the grid's place. */}
+          the machines' warnings, the toolbar, the grid's place. */}
       <ComputerWarnings snapshot={resources} machines={machines} />
       {/* Then the toolbar, and under it the grid's place: the Spaces, or what stands in for them. */}
       {picked.length || bulk.progress ? (
@@ -182,6 +184,7 @@ function SpacesPage() {
           onView={(v) => setSearch({ view: v === "grid" ? undefined : v })}
           query={query}
           onQuery={setQuery}
+          hidden={hiddenCount > 0 ? { count: hiddenCount, onShow: showHiddenDesktops } : undefined}
           lead={
             view === "list" && shown.some(stoppedDeletable) ? (
               <button
@@ -259,6 +262,7 @@ function SpacesPage() {
                   </SpaceContextMenu>
                 )}
                 more={(it) => <SpaceMoreMenu item={it} actions={actions} />}
+                hide={actions.hide}
               />
               </>
             ) : (
@@ -322,7 +326,7 @@ const GridTile = memo(function GridTile({
   live: RefObject<GridLive>;
 }) {
   const actions = useMemo<MenuActions>(
-    () => ({ power: (it, on) => live.current.actions.power(it, on), remove: (it) => live.current.actions.remove(it) }),
+    () => ({ power: (it, on) => live.current.actions.power(it, on), remove: (it) => live.current.actions.remove(it), hide: (it) => live.current.actions.hide?.(it) }),
     [live],
   );
   // The checkbox reads whether it is picked and toggles it (the latest selection).
@@ -351,7 +355,8 @@ const GridTile = memo(function GridTile({
               className="opacity-0 group-focus-within/tile:opacity-100 group-hover/tile:opacity-100 group-data-[picking]/grid:opacity-100"
             />
           }
-          more={<SpaceMoreMenu item={item} actions={actions} />}
+          hide={item.desktop ? () => actions.hide?.(item) : undefined}
+          more={item.desktop ? undefined : <SpaceMoreMenu item={item} actions={actions} />}
         />
       </SpaceContextMenu>
     </li>

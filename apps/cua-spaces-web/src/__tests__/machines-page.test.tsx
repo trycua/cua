@@ -133,11 +133,17 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
     let detail = await detailOf("Ada's MacBook Pro");
     const switches = () => [...detail.querySelectorAll<HTMLElement>("[data-machine-toggle] [role=switch]")];
     expect(switches().map((s) => s.getAttribute("aria-disabled") === "true" || s.hasAttribute("data-disabled"))).toEqual([false]);
+    // One switch on this Mac's page: its desktop. "Let other machines create Spaces here" is a Settings row.
+    const labels = () => [...detail.querySelectorAll("[data-machine-toggle]")].map((t) => t.textContent);
+    expect(labels()).toEqual([expect.stringContaining("Let other machines control this desktop")]);
+    expect(detail.textContent).not.toContain("devices");
 
     // Another Mac: read-only, and where to change it.
     select("studio");
     detail = await detailOf("cua's Mac Studio");
     expect(switches().every((s) => s.hasAttribute("data-disabled"))).toBe(true);
+    // Every other machine shows both switches, read-only, in the owner's words.
+    expect(labels()).toEqual([expect.stringContaining("Let other machines create Spaces here"), expect.stringContaining("Let other machines control this desktop")]);
     expect(detail.querySelector("[data-machine-toggles-note]")?.textContent).toBe("Change this on that Mac.");
     // No Space actions on a machine.
     expect(within(detail).queryByRole("button", { name: /^(Open|Start|Stop|Teleport)/ })).toBeNull();
@@ -331,7 +337,7 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
     await router.load();
     await screen.findByText(view.summary);
     const line = (id: string) => document.querySelector(`[data-machine-id="${id}"] [data-machine-line]`)?.textContent;
-    expect([line("solo"), line("both"), line("spaces")]).toEqual(["Desktop shared", "Desktop \u00b7 2 Spaces", "1 Space running"]);
+    expect([line("solo"), line("both"), line("spaces")]).toEqual(["Desktop shared", "Desktop and 2 Spaces", "1 Space running"]);
     select("solo");
     const detail = await detailOf("solo");
     const rows = [...detail.querySelectorAll<HTMLElement>("[data-machine-spaces] [data-space-row]")];

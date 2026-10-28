@@ -422,7 +422,7 @@ describe("<StreamSurface> in the Electron shell", () => {
   });
 
   // The SwiftUI app's DetailApprovalTests: the open detail follows this device's approval.
-  const NOTICE: MachineAccessNotice = { kind: "needs-enrollment", status: "Not enrolled", text: "Enroll this Mac to connect to your other computers.", actionLabel: "Enroll This Mac…" };
+  const NOTICE: MachineAccessNotice = { kind: "needs-enrollment", status: "Not enrolled", text: "Enroll this Mac to connect to your other machines.", actionLabel: "Enroll This Mac…" };
   const withAccess = () => {
     const adapter = createDemoAdapter({ latencyMs: 1 });
     const ui = (access: MachineAccessNotice | null) => (

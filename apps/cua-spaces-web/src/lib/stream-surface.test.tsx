@@ -127,6 +127,84 @@ describe("stream surface helpers", () => {
     }
   });
 
+  // CUA-2641: the profile card (a Popover, role "dialog", marked as a hole)
+  // counted as a dialog and hid the whole desktop while it was open.
+  it("never hides a viewer or a tile for a dialog-role popup that is a hole (the profile card)", () => {
+    const slot = document.createElement("div");
+    const card = document.createElement("div");
+    card.setAttribute("role", "dialog");
+    card.setAttribute("data-video-occluder", "");
+    document.body.append(slot, card);
+    box(card, { x: 100, y: 100, width: 200, height: 120 });
+    const clip = { x: 0, y: 0, width: 400, height: 300 };
+    for (const keep of [false, true]) {
+      expect(isOccluded(slot, clip, document, 0, keep)).toBe(false);
+      expect(videoHoles(slot, clip, document, keep)).toEqual([{ x: 100, y: 100, width: 200, height: 120 }]);
+    }
+  });
+
+  // CUA-2641: dialogs (Share, the command palette) over the Space viewer: the
+  // video stays drawn with a hole where the dialog is, its dimmed backdrop is
+  // looked through, and a Space tile still hides.
+  it("keeps the Space viewer drawn under a dialog and its backdrop, and still hides a tile", () => {
+    const slot = document.createElement("div");
+    const inner = document.createElement("span");
+    slot.append(inner);
+    const dim = document.createElement("div");
+    dim.setAttribute("data-window-dim", "");
+    const dialog = document.createElement("div");
+    dialog.setAttribute("role", "dialog");
+    document.body.append(slot, dim, dialog);
+    box(dialog, { x: 100, y: 60, width: 200, height: 160 });
+    const clip = { x: 0, y: 0, width: 400, height: 300 };
+    document.elementsFromPoint = (x, y) => (x > 100 && x < 300 && y > 60 && y < 220 ? [dialog, dim, inner, slot] : [dim, inner, slot]);
+    expect(isOccluded(slot, clip, document, 0, true)).toBe(false);
+    expect(videoHoles(slot, clip, document, true)).toEqual([{ x: 100, y: 60, width: 200, height: 160 }]);
+    // A tile keeps the old rule: the dialog hides it.
+    expect(isOccluded(slot, clip, document, 0, false)).toBe(true);
+    expect(videoHoles(slot, clip, document, false)).toEqual([]);
+  });
+
+  it("reports the viewer non-interactive, not hidden, while a modal dialog is open", () => {
+    vi.stubGlobal("innerWidth", 1000);
+    vi.stubGlobal("innerHeight", 700);
+    const posted: StreamSurfaceMessage[] = [];
+    const reporter = new VideoSlotReporter({ postMessage: (m) => posted.push(m) });
+    const viewer = document.createElement("div");
+    const tile = document.createElement("div");
+    document.body.append(viewer, tile);
+    box(viewer, { x: 10, y: 200, width: 640, height: 400 });
+    box(tile, { x: 700, y: 20, width: 232, height: 145 });
+    document.elementFromPoint = () => viewer;
+    document.elementsFromPoint = () => [viewer];
+    const stop = [
+      reporter.register(viewer, { spaceId: "b", tier: "full", interactive: true, radius: 12 }, () => {}),
+      reporter.register(tile, { spaceId: "a", tier: "tile", interactive: false, radius: 8 }, () => {}),
+    ];
+    const last = (space: string) => {
+      const m = [...posted].reverse().find((x) => x.type === "surfaces" && x.update.some((u) => u.spaceId === space)) as Extract<StreamSurfaceMessage, { type: "surfaces" }>;
+      return m.update.find((u) => u.spaceId === space)!;
+    };
+    expect(last("b")).toMatchObject({ interactive: true, occluded: false });
+    const dim = document.createElement("div");
+    dim.setAttribute("data-window-dim", "");
+    const dialog = document.createElement("div");
+    dialog.setAttribute("role", "dialog");
+    document.body.append(dim, dialog);
+    box(dialog, { x: 150, y: 260, width: 300, height: 200 });
+    document.elementsFromPoint = (x, y) => (x > 150 && x < 450 && y > 260 && y < 460 ? [dialog, dim, viewer] : [dim, viewer]);
+    reporter.flush();
+    expect(last("b")).toMatchObject({ interactive: false, occluded: false, holes: [{ x: 150, y: 260, width: 300, height: 200 }] });
+    expect(last("a")).toMatchObject({ occluded: true });
+    // Closed: the viewer takes input again.
+    dim.remove();
+    dialog.remove();
+    document.elementsFromPoint = () => [viewer];
+    reporter.flush();
+    expect(last("b")).toMatchObject({ interactive: true, occluded: false, holes: [] });
+    stop.forEach((f) => f());
+  });
+
   // Regression: the Space header's "⋯" menu turned the desktop black. Base
   // UI puts a transparent full-page click catcher (`data-base-ui-inert`)
   // under an open menu; it hit every sample point, so the whole video hid.

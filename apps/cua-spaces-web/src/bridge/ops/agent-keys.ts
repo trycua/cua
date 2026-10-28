@@ -38,6 +38,8 @@ export interface AgentKeyInfo {
   last4: string;
   /** When it was added (Unix ms). */
   addedMs: number;
+  /** A sign-in past its expiry: no run gets it until it is reconnected. */
+  expired?: boolean;
 }
 
 /** A provider row (`keys::Provider`). */
@@ -124,7 +126,7 @@ export function agentKeysFromWire(raw: unknown): AgentKeysReport {
     const env = str(r.env);
     if (!env) return [];
     const added = r.added_ms ?? r.addedMs;
-    return [{ provider: providerOf(r.provider), env, last4: str(r.last4).slice(-4), addedMs: typeof added === "number" ? added : 0 }];
+    return [{ provider: providerOf(r.provider), env, last4: str(r.last4).slice(-4), addedMs: typeof added === "number" ? added : 0, ...(r.expired === true ? { expired: true } : {}) }];
   });
   const providers = (Array.isArray(o.providers) ? o.providers : []).flatMap((p): AgentKeyProviderRow[] => {
     const r = (p ?? {}) as Record<string, unknown>;

@@ -38,7 +38,7 @@ export { createAdapter, createDemoAdapter, createElectronAdapter, createTauriAda
 export { detectMode } from "./detect";
 export { loadCore, type CoreClient, type CoreParity, type CoreStatus, type ParityFlow } from "./core";
 export type { Machine, HostSetupGuide, KeyvaultAppGroup, KeyvaultViews } from "./derive";
-export { harnessName, listView, machineIdOf } from "./derive";
+export { harnessName, listView, machineIdOf, sharesDesktop } from "./derive";
 export type {
   AgentRunSummary,
   AgentState,
@@ -180,6 +180,7 @@ export {
   type ThreadAttachment,
   type ThreadAuthor,
   type ThreadEntry,
+  type ThreadFailure,
   type ThreadView,
   type ThreadPage,
   type ThreadRole,

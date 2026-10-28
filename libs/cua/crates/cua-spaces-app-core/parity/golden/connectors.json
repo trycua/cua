@@ -22,7 +22,7 @@
       ],
       "footer": "Sign-ins and keys stay on this Mac in the Keychain. Each one is only given to the apps that use it.",
       "providers": [
-        "anthropic | connected | Claude sign-in, for Claude Code | Sign out",
+        "anthropic | connected | Claude Code sign-in | Sign out",
         "openai | connected | API key •••• 3f9a | Sign out",
         "github | not-connected | Not connected | Connect"
       ],
@@ -74,7 +74,7 @@
     {
       "detail": "claude-code",
       "note": null,
-      "signIn": "Signs in with Anthropic | Claude sign-in, for Claude Code | Sign out",
+      "signIn": "Signs in with Anthropic | Claude Code sign-in | Sign out",
       "status": "Connected",
       "toggles": [
         "skills | Cua skills | true",

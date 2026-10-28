@@ -12,7 +12,8 @@ import { OsIcon } from "@/components/os-icon";
 import { SpaceCanvas } from "@/components/space-canvas";
 import { Button } from "@/components/ui/button";
 import { currentWhere, mostUsedAgent, orderTasks, startErrorView, SUGGESTIONS, taskState, TASK_STATE_TEXT, taskTitle, useAskTasks, type AskTask, type TaskState } from "@/lib/ask-first";
-import { realSpaces, spaceState } from "@/lib/spaces";
+import { useListedSpaces } from "@/components/spaces/listed";
+import { orderSpaces, realSpaces, spaceState } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
 
 import { agentName, AppMark, AskBox, TASK_AGENTS, type TaskWhere } from "./ask-box";
@@ -44,6 +45,7 @@ export function StateDot({ state }: { state: TaskState }) {
 export function AskFirstHome() {
   const tasks = useAskTasks();
   const { data: spaces } = useSpaces();
+  const listed = useListedSpaces(spaces);
   const { data: agents, agentSetup } = useAgents();
   const { kinds, spaces: pickable } = useWhereOptions();
   const { start } = useStartTask();
@@ -88,7 +90,7 @@ export function AskFirstHome() {
   // or tasks whose Spaces are gone), Home is the welcome again.
   const attempts = useAgentAttempts();
   const { chats } = useAgentChats(attempts);
-  const first = redesign ? !chats?.length && realSpaces(spaces ?? []).length === 0 : tasks.length === 0;
+  const first = redesign ? !chats?.length && listed.counted.length === 0 : tasks.length === 0;
 
   return (
     <div className="h-full overflow-y-auto [scrollbar-gutter:stable]" data-ask-first-home="">
@@ -145,7 +147,7 @@ export function AskFirstHome() {
             <YourSpacesRow />
           </>
         ) : !first && realSpaces(spaces ?? []).length > 0 ? (
-          <YourSpaces spaces={realSpaces(spaces ?? [])} />
+          <YourSpaces spaces={orderSpaces(realSpaces(spaces ?? []))} />
         ) : null}
       </div>
       {pick.dialog}

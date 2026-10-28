@@ -334,7 +334,7 @@ export interface AgentDetailView {
   addRoutineLabel: string;
   access: AgentLineView[];
   accessEmpty: string;
-  /** `Allow on this computer` when this machine is set up and not granted. */
+  /** `Allow on this machine` when this machine is set up and not granted. */
   allowThisMachineLabel?: string | null;
   audit: AgentLineView[];
   error?: string | null;

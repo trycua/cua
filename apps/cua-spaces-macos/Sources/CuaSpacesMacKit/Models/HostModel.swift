@@ -22,7 +22,7 @@ public protocol HostRunning: AnyObject, Sendable {
     func resumeSignedIn(account: String) async throws -> HostStatus
     func remove() async throws
     /// Changes what this machine shares: its desktop, and Spaces for your
-    /// other devices.
+    /// other machines.
     func configure(change: HostSettingsChange) async throws -> HostStatus
     /// Moves the host service from the old LaunchAgent into this app, as
     /// its own login item ("Cua Spaces"), keeping this machine's id,

@@ -66,7 +66,7 @@ impl OnboardingStep {
             OnboardingStep::Signin => "Sign in",
             OnboardingStep::Agents => "AI agents",
             OnboardingStep::Drive => "Cua Volume",
-            OnboardingStep::Mode => "This computer",
+            OnboardingStep::Mode => "This machine",
             OnboardingStep::Done => "Done",
         }
     }
@@ -1294,7 +1294,7 @@ pub fn view_for(s: &OnboardingState, os: SpaceOs, cli_page: bool) -> OnboardingV
         ),
         Signin => (
             "Sign in",
-            "Sign in to reach your computers and Spaces from any of your devices. You can skip this and sign in later.",
+            "Sign in to reach your machines and Spaces from any of your machines. You can skip this and sign in later.",
             "Continue",
         ),
         Agents => (
@@ -1315,7 +1315,7 @@ pub fn view_for(s: &OnboardingState, os: SpaceOs, cli_page: bool) -> OnboardingV
         ),
         Mode => (
             mode_title.as_str(),
-            "Use it only to open your other computers, or let your other devices reach it too. You can change this later.",
+            "Use it only to open your other machines, or let your other machines reach it too. You can change this later.",
             "Continue",
         ),
         Done => ("", "", "Start using Cua Spaces"),
@@ -1349,11 +1349,11 @@ pub fn view_for(s: &OnboardingState, os: SpaceOs, cli_page: bool) -> OnboardingV
                 warning: None,
             },
             Fact {
-                label: "This computer".into(),
+                label: "This machine".into(),
                 value: if s.mode == Some(OnboardingMode::Host) {
-                    "Your other devices can reach it"
+                    "Your other machines can reach it"
                 } else {
-                    "Opens your other computers"
+                    "Opens your other machines"
                 }
                 .into(),
                 copy: None,
@@ -1389,11 +1389,11 @@ pub fn view_for(s: &OnboardingState, os: SpaceOs, cli_page: bool) -> OnboardingV
             [
                 (
                     OnboardingMode::Client,
-                    format!("Just use {here} to open my other computers"),
+                    format!("Just use {here} to open my other machines"),
                 ),
                 (
                     OnboardingMode::Host,
-                    format!("Let my other devices reach {here}"),
+                    format!("Let my other machines reach {here}"),
                 ),
             ]
             .into_iter()
@@ -1468,7 +1468,7 @@ pub fn done_heading(left: usize, os: SpaceOs) -> (String, String) {
 /// The Cua CLI's one plain line (next to its name everywhere it shows).
 pub const CLI_HINT: &str = "Command-line tools for you and your agents.";
 /// Cua Volume's one plain line.
-pub const VOLUME_HINT: &str = "Shared folder: files your agents can share across your computers.";
+pub const VOLUME_HINT: &str = "Shared folder: files your agents can share across your machines.";
 
 /// Done's to-do list, in page order. Cua Volume shows wherever it can
 /// mount (its experiment need not be on: "Turn on" turns it on).
@@ -1496,7 +1496,7 @@ fn done_todos(s: &OnboardingState) -> Vec<OnboardingTodo> {
             "Account",
             match signed_in {
                 Some(id) => format!("Signed in as {id}."),
-                None => "Reach your computers from any device.".into(),
+                None => "Reach your machines from any machine.".into(),
             },
             signed_in.is_some(),
             false,
@@ -1586,7 +1586,7 @@ mod tests {
         assert!(
             v.summary
                 .iter()
-                .any(|f| f.label == "This computer" && f.value == "Opens your other computers")
+                .any(|f| f.label == "This machine" && f.value == "Opens your other machines")
         );
         // Sign in from Done, then back to Done.
         let at = reduce(
@@ -1690,8 +1690,8 @@ mod tests {
         assert_eq!(
             labels,
             [
-                "Just use this Mac to open my other computers",
-                "Let my other devices reach this Mac"
+                "Just use this Mac to open my other machines",
+                "Let my other machines reach this Mac"
             ]
         );
         assert_eq!(
@@ -1712,7 +1712,7 @@ mod tests {
             assert_eq!(v.title, "Sign in");
             assert_eq!(
                 v.lede,
-                "Sign in to reach your computers and Spaces from any of your devices. You can skip this and sign in later."
+                "Sign in to reach your machines and Spaces from any of your machines. You can skip this and sign in later."
             );
             assert!(v.can_skip);
         }

@@ -154,6 +154,8 @@ interface DemoMember {
   sessions: number;
   rights: AgentRights;
   identity: DemoIdentity;
+  /** A failed member's typed failure (the daemon's `status.failure`). */
+  failure?: Json;
 }
 
 export type DemoThreadRole = "owner" | "member" | "guest";
@@ -272,7 +274,7 @@ function demoSideThreads(now: number, me: { id: string; name: string }): [string
   ];
 }
 
-function demoConversation(now: number, owner: { id: string; name: string }, opts: { lookalike?: boolean } = {}): DemoThread {
+function demoConversation(now: number, owner: { id: string; name: string }, opts: { lookalike?: boolean; authFailed?: boolean } = {}): DemoThread {
   const ids = demoIdentities(now, owner);
   // An agent's posts carry who it was when it posted (they stay after it leaves).
   const agent = (handle: string) => ({ kind: "agent", id: `agent:${handle}`, name: handle, identity: ids[handle] });
@@ -350,6 +352,36 @@ function demoConversation(now: number, owner: { id: string; name: string }, opts
     { name: "hermes", harness: "hermes", status: "asleep", activity: null, sessions: 1, rights: { ...DEFAULT_AGENT_RIGHTS, task: "owner" }, identity: ids.hermes! },
     { name: "cursor", harness: "cursor", status: "idle", activity: null, sessions: 1, rights: { ...DEFAULT_AGENT_RIGHTS, approve: [LINUS.id] }, identity: ids.cursor! },
   ];
+  if (opts.authFailed) {
+    // What the daemon posts when an agent has no working sign-in: plain words and the typed failure (CUA-2638).
+    const asked = (text: string, handle: string, ts: number) =>
+      add({ ts_ms: ts, author: DEMO_THREAD_ME, text, mentions: [handle], task: { to: handle, session: null } });
+    const failed = (task: number, ts: number, who: ReturnType<typeof agent>, text: string, failure: Json) => {
+      add({ ts_ms: ts, author: who, reply_to: task, text, failure });
+      update(ts, task, "failed", 1, "could not start " + who.name);
+    };
+    const hi = asked("@claude hi", "claude", min(2));
+    failed(hi, min(2), CLAUDE, "I can't reach Claude yet. Connect Claude, then try again.", {
+      class: "needs_connect",
+      provider: "anthropic",
+      retryable: true,
+      message: 'Internal error: Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"OAuth token has expired. Please obtain a new token or refresh your existing token."}}',
+    });
+    const hey = asked("@hermes hey", "hermes", min(1));
+    failed(hey, min(1), HERMES, "I can't reach Claude yet. Connect Claude, then try again.", {
+      class: "needs_connect",
+      provider: "anthropic",
+      retryable: true,
+      message: 'Internal error (code -32603) {"details":"Hermes is not connected to any AI provider. Run `hermes model` to set one up, or add an API key."}',
+    });
+    for (const m of members) {
+      if (m.name === "claude" || m.name === "hermes") {
+        m.status = "failed";
+        m.activity = "Not connected";
+        m.failure = { class: "needs_connect", provider: "anthropic", retryable: true, message: "Failed to authenticate. API Error: 401" };
+      }
+    }
+  }
   if (opts.lookalike) {
     // Linus's agent names itself Claude Code: both now show their owner after the tag.
     ids.claude!.collides = true;
@@ -380,6 +412,7 @@ export function demoThreadHandlers({
   enabled,
   role = "owner",
   lookalike = false,
+  authFailed = false,
   joinRedeemMs,
   joinExpireMs,
   request = false,
@@ -391,6 +424,8 @@ export function demoThreadHandlers({
   role?: DemoThreadRole;
   /** `?demo=thread-lookalike`: Linus's agent that calls itself Claude Code. */
   lookalike?: boolean;
+  /** `?demo=thread-auth-failed`: Claude and Hermes answer with a typed "not connected" failure. */
+  authFailed?: boolean;
   /** How long after it is made an open code is redeemed (null: never). Default 12 steps. */
   joinRedeemMs?: number | null;
   /** Codes expire this long after they are made, instead of their ttl. */
@@ -399,7 +434,7 @@ export function demoThreadHandlers({
   request?: boolean;
 }): DemoHandlers<ThreadOpName> {
   const owner = role === "owner" ? DEMO_THREAD_ME : GRACE;
-  const threads = new Map<string, DemoThread>([[DEMO_THREAD_SPACE, demoConversation(now(), owner, { lookalike })], ...(role === "owner" ? demoSideThreads(now(), DEMO_THREAD_ME) : [])]);
+  const threads = new Map<string, DemoThread>([[DEMO_THREAD_SPACE, demoConversation(now(), owner, { lookalike, authFailed })], ...(role === "owner" ? demoSideThreads(now(), DEMO_THREAD_ME) : [])]);
   let codeSeq = 0;
   const redeemAfter = joinRedeemMs === undefined ? stepMs * 12 : joinRedeemMs;
   const SYSTEM = { kind: "system", id: "system:members", name: "Cua" };
@@ -483,11 +518,11 @@ export function demoThreadHandlers({
   };
   const youCan = (m: DemoMember) =>
     Object.fromEntries((["task", "control", "approve"] as const).map((r) => [r, demoHolds(m.rights[r], role, DEMO_THREAD_ME.id)])) as Record<AgentRight, boolean>;
-  const memberJson = ({ activity, rights, ...m }: DemoMember) => ({
+  const memberJson = ({ activity, rights, failure, ...m }: DemoMember) => ({
     ...m,
     rights,
     you_can: youCan({ activity, rights, ...m }),
-    status: activity ? { state: m.status, activity } : { state: m.status },
+    status: { state: m.status, ...(activity ? { activity } : {}), ...(failure ? { failure } : {}) },
   });
   const denied = (message: string) => new HostError(message, "permission_denied");
   const GUEST = "view only: guests can read this thread but cannot post, answer or claim tasks";

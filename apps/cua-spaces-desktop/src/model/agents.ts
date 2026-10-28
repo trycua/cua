@@ -381,6 +381,7 @@ export function agentKeysInput(report: Json | null, error: string | null): AppAg
       env: typeof k.env === "string" ? k.env : "",
       last4: typeof k.last4 === "string" ? k.last4 : "",
       addedMs: BigInt(typeof k.added_ms === "number" && k.added_ms >= 0 ? Math.floor(k.added_ms) : 0),
+      expired: k.expired === true,
     }))
     .filter((k) => k.env !== "");
   const unavailable = report?.available === false ? (typeof report.unavailable === "string" ? report.unavailable : "this computer can't keep keys") : undefined;

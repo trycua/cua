@@ -1062,6 +1062,235 @@ fn the_daemon_reports_the_thread_feature() {
     assert_eq!(cua_spaces_ext::thread::FEATURE, "thread.v1");
 }
 
+/// `meta.json` of the idle run, as a runner that stored the hash of the
+/// credentials it started with writes it.
+fn run_meta_with_hash(fx: &Fx, hash: &str) {
+    let meta = json!({"run_id": RUN, "harness": "claude-code", "prompt": "hi",
+                      "cwd": "/home/cua/work", "created_at": 0.0, "cred_hash": hash});
+    fx.srv.state.put_file(
+        &format!("{RUNS}/{RUN}/meta.json"),
+        meta.to_string().into_bytes(),
+    );
+}
+
+async fn run_alive(fx: &Fx) -> bool {
+    let s = fx.spaces.space(&fx.space).await.unwrap();
+    s.spacesd()
+        .unwrap()
+        .list_processes(false)
+        .await
+        .unwrap()
+        .iter()
+        .any(|p| p.tag == format!("cua-agent/{RUN}"))
+}
+
+fn forwarded_hash(key: &str) -> String {
+    cua_agents::runs::credential_hash(
+        "claude-code",
+        &std::collections::BTreeMap::from([("ANTHROPIC_API_KEY".to_string(), key.to_string())]),
+    )
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_message_reaches_the_idle_run_while_its_credentials_are_the_ones_forwarded() {
+    let fx = setup().await;
+    let (p, _proc) = member_with_idle_run(&fx).await;
+    edit_record(&fx, "ada", |r| {
+        r["env"] = json!({"ANTHROPIC_API_KEY": "sk-one"})
+    });
+    run_meta_with_hash(&fx, &forwarded_hash("sk-one"));
+    let d = p.send("ada", "again").await.unwrap();
+    assert!(!d.started, "the idle run takes it");
+    assert_eq!(inbox(&fx), vec!["again".to_string()]);
+    assert!(run_alive(&fx).await);
+}
+
+/// Reconnecting in Settings must take effect on the next message: a run that
+/// began with other credentials is ended, not reused.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_changed_credential_ends_the_idle_run_instead_of_reusing_it() {
+    let fx = setup().await;
+    let (p, _proc) = member_with_idle_run(&fx).await;
+    edit_record(&fx, "ada", |r| {
+        r["env"] = json!({"ANTHROPIC_API_KEY": "sk-new"})
+    });
+    run_meta_with_hash(&fx, &forwarded_hash("sk-old"));
+    // The mock runs no shell, so the fresh start itself can't finish here;
+    // what matters is that the old run did not get the message and is gone.
+    let _ = p.send("ada", "again").await;
+    // (Stopping a run leaves a control message, not a prompt.)
+    assert!(
+        inbox(&fx).iter().all(|t| t.is_empty()),
+        "the old run was not reused: {:?}",
+        inbox(&fx)
+    );
+    assert!(!run_alive(&fx).await, "the old run was ended");
+}
+
+/// A run whose last turn failed to authenticate is not reused either, even
+/// with the same credentials (the provider rejected them).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_run_that_failed_to_authenticate_is_not_reused() {
+    let fx = setup().await;
+    let (p, _proc) = member_with_idle_run(&fx).await;
+    edit_record(&fx, "ada", |r| {
+        r["env"] = json!({"ANTHROPIC_API_KEY": "sk-one"})
+    });
+    run_meta_with_hash(&fx, &forwarded_hash("sk-one"));
+    events(
+        &fx,
+        &[
+            ("turn_started", 2, None),
+            (
+                "error",
+                2,
+                Some("Failed to authenticate. API Error: 401 OAuth access token is invalid"),
+            ),
+            ("turn_ended", 2, None),
+        ],
+    );
+    run_state(
+        &fx,
+        json!({"status": "idle", "turn": 2, "stopReason": "error"}),
+    );
+    run_meta_with_hash(&fx, &forwarded_hash("sk-one"));
+    let _ = p.send("ada", "again").await;
+    assert!(inbox(&fx).iter().all(|t| t.is_empty()), "{:?}", inbox(&fx));
+    assert!(!run_alive(&fx).await);
+}
+
+/// A second Space of the same machine (its own mock guest).
+async fn second_space(fx: &Fx) -> (MockServer, String) {
+    let srv = MockServer::start(MockAuth::default()).await;
+    let info = fx
+        .spaces
+        .add(
+            &format!("http://{}", srv.addr),
+            None,
+            Some("room-two".into()),
+        )
+        .await
+        .unwrap();
+    (srv, info.id)
+}
+
+async fn add_claude(fx: &Fx, space: &str) -> Result<Value, (String, String)> {
+    call(
+        &fx.mcp,
+        "agent_add",
+        json!({"space": space, "name": "claude", "harness": "claude-code"}),
+    )
+    .await
+}
+
+async fn member_names(fx: &Fx, space: &str) -> Vec<(String, String)> {
+    let m = call(&fx.mcp, "agent_members", json!({"space": space}))
+        .await
+        .unwrap();
+    m["members"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| {
+            (
+                r["name"].as_str().unwrap().to_string(),
+                r["handle"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect()
+}
+
+/// Names were keys on the machine: the first Space with a `claude` owned the
+/// name and `@claude` in any other Space failed with "exists with another
+/// harness or Space". Each Space's `@claude` is its own now.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn two_spaces_each_get_their_own_claude() {
+    let fx = setup().await;
+    let (_srv2, two) = second_space(&fx).await;
+    add_claude(&fx, &fx.space).await.unwrap();
+    add_claude(&fx, &two).await.unwrap();
+    // The first keeps the plain name; the second is stored apart and still answers to `claude`.
+    assert_eq!(
+        member_names(&fx, &fx.space).await,
+        [("claude".to_string(), "claude".to_string())]
+    );
+    assert_eq!(
+        member_names(&fx, &two).await,
+        [("claude-2".to_string(), "claude".to_string())]
+    );
+    // Adding again in either Space is the same member, not a third.
+    add_claude(&fx, &two).await.unwrap();
+    assert_eq!(member_names(&fx, &two).await.len(), 1);
+    // `@claude` in the second Space is a task for the second Space's member.
+    let posted = call(
+        &fx.mcp,
+        "thread_post",
+        json!({"space": two, "text": "@claude hello"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(posted["entry"]["task"]["to"], "claude-2");
+    assert_eq!(posted["entry"]["mentions"], json!(["claude-2"]));
+    let first = call(
+        &fx.mcp,
+        "thread_post",
+        json!({"space": fx.space, "text": "@claude hello"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(first["entry"]["task"]["to"], "claude");
+}
+
+/// Deleting a Space frees its members' names.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_deleted_spaces_name_is_free_for_a_new_space() {
+    let fx = setup().await;
+    let (_srv2, two) = second_space(&fx).await;
+    add_claude(&fx, &fx.space).await.unwrap();
+    fx.spaces.remove(&fx.space).await.unwrap();
+    // The first Space is gone: `claude` is the second Space's, under its own plain name.
+    add_claude(&fx, &two).await.unwrap();
+    assert_eq!(
+        member_names(&fx, &two).await,
+        [("claude".to_string(), "claude".to_string())]
+    );
+}
+
+/// A record from before Spaces had their own names (name only) keeps working.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_old_name_only_record_still_answers_in_its_space() {
+    let fx = setup().await;
+    std::fs::create_dir_all(agents_json(&fx).parent().unwrap()).unwrap();
+    let old = json!([{
+        "name": "claude", "harness": "claude-code", "space": fx.space,
+        "created_ms": 1761000000000u64, "paused": false, "space_state": "running",
+        "cursor": 0, "saved_turn": 0, "notify": true, "saved_ms": 0
+    }]);
+    std::fs::write(agents_json(&fx), old.to_string()).unwrap();
+    assert_eq!(
+        member_names(&fx, &fx.space).await,
+        [("claude".to_string(), "claude".to_string())]
+    );
+    // Adding it again in its own Space is that record, not a new one.
+    add_claude(&fx, &fx.space).await.unwrap();
+    assert_eq!(member_names(&fx, &fx.space).await.len(), 1);
+    let posted = call(
+        &fx.mcp,
+        "thread_post",
+        json!({"space": fx.space, "text": "@claude hi"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(posted["entry"]["task"]["to"], "claude");
+    // And a second Space can have its own.
+    let (_srv2, two) = second_space(&fx).await;
+    add_claude(&fx, &two).await.unwrap();
+    assert_eq!(
+        member_names(&fx, &two).await,
+        [("claude-2".to_string(), "claude".to_string())]
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_failed_turn_fails_its_task_and_the_notification_points_at_it() {
     let fx = setup().await;
@@ -1093,7 +1322,16 @@ async fn a_failed_turn_fails_its_task_and_the_notification_points_at_it() {
         .iter()
         .find(|x| x["reply_to"] == task && x["kind"] == "message")
         .expect("a reply");
-    assert_eq!(reply["text"], "Failed: Authentication required");
+    // Plain words from the agent; the complete error rides along typed, and
+    // the harness's own words are never the summary.
+    assert_eq!(
+        reply["text"],
+        "I can't reach Claude yet. Connect Claude, then try again."
+    );
+    assert_eq!(reply["failure"]["class"], "needs_connect");
+    assert_eq!(reply["failure"]["provider"], "anthropic");
+    assert_eq!(reply["failure"]["message"], "Authentication required");
+    assert_eq!(reply["failure"]["retryable"], true);
     let update = e.iter().rev().find(|x| x["kind"] == "task_update").unwrap();
     assert_eq!(update["update"]["state"], "failed");
     let n = p

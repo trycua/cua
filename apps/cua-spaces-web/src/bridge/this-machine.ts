@@ -135,7 +135,7 @@ export class ThisMachineStore {
 
   /** Sets this computer up with the form's defaults and its own name, in
    * one step (the first run's "Set up"). Resolves to whether it worked. */
-  async quickSetUp(identity: string | null, profile = "desktop"): Promise<boolean> {
+  async quickSetUp(identity: string | null, profile = "spare"): Promise<boolean> {
     let form = hostFormInitial(this.core);
     form = hostFormReduce(this.core, form, { type: "set-profile", profile });
     this.failedRequest = null;
@@ -231,6 +231,8 @@ export interface ThisMachineHook extends ThisMachineState {
   send(action: HostFormAction): void;
   /** Resolves to whether setup worked. */
   submit(): Promise<boolean>;
+  /** Sets this machine up with the defaults (other machines can create Spaces here; its desktop stays private). */
+  quickSetUp(): Promise<boolean>;
   /** Sends the failed setup's request again. */
   retrySetUp(): Promise<boolean>;
   run(action: HostActionId): Promise<void>;
@@ -257,6 +259,7 @@ export function useThisMachine(identity: string | null): ThisMachineHook {
     closeForm: () => tm?.closeForm(),
     send: (a) => tm?.send(a),
     submit: () => tm?.submit(who) ?? Promise.resolve(false),
+    quickSetUp: () => tm?.quickSetUp(who) ?? Promise.resolve(false),
     retrySetUp: () => tm?.retrySetUp() ?? Promise.resolve(false),
     run: (a) => tm?.run(a) ?? Promise.resolve(),
     retry: () => tm?.retry() ?? Promise.resolve(),

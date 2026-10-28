@@ -425,6 +425,8 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
     act(() => (sheet.querySelector("[data-cloud-approve]") as HTMLElement).click());
     await waitFor(() => expect(calls).toEqual([["clouds.approve", { provider: "aws", approve: true }]]));
     await waitFor(() => expect(hooks.machines.view?.clouds?.pages[0]?.status).toBe("Connected"));
+    // Let the dialog finish closing so nothing settles after the test ends.
+    await waitFor(() => expect(document.querySelector("[data-cloud-approve]")).toBeNull());
   });
 
   it("lists the clouds above your machines, in the order the core gives", async () => {
@@ -547,5 +549,6 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
     await waitFor(() => expect(calls).toEqual([["clouds.approve", { provider: "aws", approve: false }]]));
     await waitFor(() => expect(hooks.machines.view?.clouds?.pages[0]?.status).toBe("Connected"));
     expect(hooks.machines.view?.clouds?.pages[0]?.settings.find((s) => s.id === "budget")?.value).toBe("$200");
+    await waitFor(() => expect(document.querySelector("[data-cloud-deny]")).toBeNull());
   });
 });

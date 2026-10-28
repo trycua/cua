@@ -23,7 +23,6 @@ import {
 } from "@/bridge";
 import { AddComputerSheet } from "@/components/add-computer-sheet";
 import { EnrollSheet, PendingDetail, PendingRow, RecentAccess, TrustSection, useMachinesAccount, usePendingActions } from "@/components/machines/account-parts";
-import { ScreenPermissionsSection } from "@/components/settings/screen-permissions-section";
 import { accessFor } from "@/lib/machines-account";
 import { CloudDetail, CloudDot } from "@/components/clouds/cloud-detail";
 import { CloudLogo } from "@/components/cloud-logo";
@@ -587,12 +586,6 @@ function MachineDetail({ machine: m, row, onRemoved }: { machine: MachinesViewMa
       </div>
 
       {m.current ? <ThisMachineExtras panel={row?.panel ?? null} progress={row?.hostProgress} part="alerts" /> : null}
-      {m.current && account?.thisMachine ? <TrustSection trust={account.thisMachine} onTrust={devices.startEnroll} /> : null}
-      {m.current ? (
-        <div className="mt-7">
-          <ScreenPermissionsSection />
-        </div>
-      ) : null}
 
       {m.spacesTitle ? (
         <>
@@ -648,6 +641,7 @@ function MachineDetail({ machine: m, row, onRemoved }: { machine: MachinesViewMa
                 </div>
               ))}
             </dl>
+            {m.current && account?.thisMachine ? <TrustSection trust={account.thisMachine} onTrust={devices.startEnroll} /> : null}
             {m.current ? <ThisMachineExtras panel={row?.panel ?? null} part="logs" /> : null}
           </div>
         ) : null}

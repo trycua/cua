@@ -127,7 +127,9 @@ async function checkDevices(page: Page, checkpoints: ParityCheckpoint[]): Promis
       const { input, now, view: v } = cp;
       await page.evaluate(([i, n]) => window.__cuaParity!.settings.showDevices(i, n), [input, now] as const);
       const step = `Machines: ${v.thisDevice.title}`;
-      // This machine's page says what the core says: its trust, and what to do about it.
+      // This machine's page says what the core says under Details: its trust, and what to do about it.
+      const toggle = page.locator("[data-machine-details-toggle]");
+      if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
       await expect(page.locator("[data-machine-trust]"), step).toHaveAttribute("data-machine-trust", v.thisDevice.kind);
       await expect(page.locator("[data-machine-trust-status]"), step).toContainText(v.thisDevice.title);
       await expect(page.locator("[data-machine-trust-action]"), step).toHaveCount(v.thisDevice.actionLabel ? 1 : 0);

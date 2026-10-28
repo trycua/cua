@@ -157,6 +157,10 @@ describe.skipIf(!wasmBuilt)("one list of machines (real routes, wasm core)", () 
 
   it("each machine's page has its recent access, and this machine's page says how far it is trusted", async () => {
     await mountApp("/machines", host([]));
+    // The trust lines live under Details, not on the page itself.
+    await waitFor(() => expect(q("[data-machine-details-toggle]")).toBeTruthy());
+    expect(q("[data-machine-trust]")).toBeNull();
+    act(() => q("[data-machine-details-toggle]")?.click());
     const trust = await waitFor(() => {
       const t = q("[data-machine-trust]");
       if (!t) throw new Error("no trust section");

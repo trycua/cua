@@ -152,7 +152,7 @@ export function TrustSection({ trust, onTrust }: { trust: ThisMachineTrust; onTr
   const status = trust.at === null ? trust.status : `${trust.status} ${dateText(trust.at)}`;
   return (
     <>
-      <h3 className="mt-7 mb-2 text-xs font-semibold text-muted-foreground">Access to your machines</h3>
+      <h3 className="mt-5 mb-2 text-xs font-semibold text-muted-foreground">Access to your machines</h3>
       <div className="border-y" data-machine-trust={trust.kind}>
         <div className="flex min-h-11 items-center justify-between gap-4 py-2.5">
           <span className={`text-[13px] ${trust.kind === "enrolled" ? "text-muted-foreground" : "text-warning"}`} data-machine-trust-status="">

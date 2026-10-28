@@ -56,6 +56,12 @@ describe.skipIf(!wasmBuilt)("as the SwiftUI app (real routes, wasm core)", () =>
     await mount("/machines", (op) =>
       op === "devices.get" ? Promise.resolve({ devices: [], audit: [], readError: NOT_ENROLLED, deviceName: "cua's Mac Studio" }) : undefined,
     );
+    const toggle = await waitFor(() => {
+      const t = document.querySelector<HTMLElement>("[data-machine-details-toggle]");
+      if (!t) throw new Error("no Details on this machine's page");
+      return t;
+    });
+    fireEvent.click(toggle);
     const status = await waitFor(() => {
       const s = document.querySelector<HTMLElement>("[data-machine-trust]");
       if (!s) throw new Error("no trust section on this machine's page");

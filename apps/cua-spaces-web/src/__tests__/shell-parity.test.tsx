@@ -67,6 +67,9 @@ describe.skipIf(!wasmBuilt)("the shell as the SwiftUI main window (real routes, 
     expect(document.querySelector("[data-shell-devices-banner]")).toBeNull();
 
     fireEvent.click(await found('[data-enroll-option="sign-in"]'));
+    await waitFor(() => expect(document.querySelector("[data-machine-details-toggle]")).toBeTruthy());
+    const details = document.querySelector<HTMLElement>("[data-machine-details-toggle]")!;
+    if (details.getAttribute("aria-expanded") !== "true") fireEvent.click(details);
     await waitFor(() => expect(document.querySelector('[data-machine-trust="enrolled"]')).toBeTruthy());
     await router.navigate({ to: "/spaces" });
     await found("[data-space-id]");

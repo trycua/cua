@@ -14,7 +14,7 @@ import { HostError, type DataAdapter } from "./adapter";
 import { BridgeContext } from "./BridgeProvider";
 import type { CoreClient } from "./core";
 import { plainThrottleError } from "./friendly-errors";
-import type { HostActionId, HostFormView as HostFormViewBase } from "./contracts/host";
+import type { HostActionId, HostFormView as HostFormViewBase, HostLimits } from "./contracts/host";
 import type { HostFormAction, HostFormState, HostRunAction, HostSetupRequest } from "./ops/host-setup";
 
 export type { HostFormAction, HostFormState, HostRunAction, HostSetupRequest } from "./ops/host-setup";
@@ -206,6 +206,18 @@ export class ThisMachineStore {
     }
   }
 
+  /** Changes the limits on the Spaces other machines create here (0 is no limit); a failure shows as a toast where it was asked. */
+  async setLimits(limits: HostLimits): Promise<void> {
+    if (this.state.busy) return;
+    this.set({ busy: true });
+    try {
+      await this.adapter.call("host.limits", limits);
+    } finally {
+      this.set({ busy: false });
+      await this.changed();
+    }
+  }
+
   /** Retry on a failed button: the same button again. */
   retry(): Promise<void> {
     return this.failedAction ? this.run(this.failedAction) : Promise.resolve();
@@ -236,6 +248,8 @@ export interface ThisMachineHook extends ThisMachineState {
   /** Sends the failed setup's request again. */
   retrySetUp(): Promise<boolean>;
   run(action: HostActionId): Promise<void>;
+  /** Changes the limits on Spaces other machines create here (0 is no limit); rejects with the failure. */
+  setLimits(limits: HostLimits): Promise<void>;
   /** Runs the failed button again. */
   retry(): Promise<void>;
   openSettings(url: string): Promise<void>;
@@ -262,6 +276,7 @@ export function useThisMachine(identity: string | null): ThisMachineHook {
     quickSetUp: () => tm?.quickSetUp(who) ?? Promise.resolve(false),
     retrySetUp: () => tm?.retrySetUp() ?? Promise.resolve(false),
     run: (a) => tm?.run(a) ?? Promise.resolve(),
+    setLimits: (l) => tm?.setLimits(l) ?? Promise.resolve(),
     retry: () => tm?.retry() ?? Promise.resolve(),
     openSettings: async (url) => {
       await tm?.openSettings(url);

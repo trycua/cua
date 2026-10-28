@@ -102,7 +102,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "spaces.thumbnail",
         // A Space's drop well: Send file… and dropped files (WebUIBridge+Files.swift).
         "spaces.chooseFiles", "spaces.droppedFiles", "spaces.sendFiles",
-        "host.setUp", "host.joinWithCode", "host.action", "host.openSettings",
+        "host.setUp", "host.joinWithCode", "host.action", "host.limits", "host.openSettings",
         "settings.get", "settings.choose", "settings.update",
         // Settings, Advanced's runtime rows (WebUIBridge+Runtimes.swift).
         "runtimes.check", "runtimes.browse",

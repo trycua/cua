@@ -104,6 +104,7 @@ export const WEBKIT_PAGE_OPS = [
   "host.setUp",
   "host.joinWithCode",
   "host.action",
+  "host.limits",
   "host.openSettings",
 ] as const satisfies readonly OpName[];
 
@@ -301,6 +302,7 @@ export function webkitPageOps(request: Request, toHostStatus: (h: WkHostState) =
     "host.setUp": host("host.setUp"),
     "host.joinWithCode": ({ code, relay }) => request("host.joinWithCode", { code, relay: relay ?? null }),
     "host.action": host("host.action"),
+    "host.limits": host("host.limits"),
     "host.openSettings": async ({ url }) => {
       if (!isSettingsPane(url)) throw new HostError("Only System Settings panes open here", "bad_args");
       await request("host.openSettings", { url });

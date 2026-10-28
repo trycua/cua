@@ -486,6 +486,18 @@ export interface HostStatus {
   provideSpaces?: boolean;
   maxSpaces?: number;
   maxMacosVms?: number;
+  /** Memory the Spaces other machines create here may use in total, in GB (0: no limit). */
+  maxMemoryGb?: number;
+  /** Disk they may use in total, in GB (0: no limit). */
+  maxDiskGb?: number;
+  /** How long such a Space may run, in minutes (0: no limit). */
+  maxRunMinutes?: number;
+  /** What those Spaces were given now, in GB. */
+  usedMemoryGb?: number;
+  usedDiskGb?: number;
+  /** This machine's own memory and disk, in GB (0: not known). */
+  totalMemoryGb?: number;
+  totalDiskGb?: number;
   recentAccess?: HostAccess[];
   accessLogError?: string | null;
   providedSpaces?: HostProvidedSpace[];
@@ -538,6 +550,34 @@ export type HostActionId =
   | "provide-spaces"
   | "stop-providing-spaces"
   | "sign-in";
+
+/** One limit on the Spaces other machines create here (`host::HostLimitRow`). */
+export interface HostLimitRow {
+  /** `max-spaces`, `max-memory`, `max-disk` or `max-run`. */
+  id: "max-spaces" | "max-memory" | "max-disk" | "max-run" | string;
+  label: string;
+  help: string;
+  /** The limit; 0 is no limit. */
+  value: number;
+  /** `Spaces`, `GB` or `minutes`. */
+  unit: string;
+  /** "2 of 4 Spaces", "12 of 32 GB"; absent for a limit about time. */
+  useText?: string | null;
+  /** This machine's own total in `unit` (memory, disk); 0 when not known. */
+  total?: number;
+  /** In use above the limit: nothing stops, new Spaces are refused. */
+  over?: boolean;
+  /** "Over limit" while `over`. */
+  overText?: string | null;
+}
+
+/** A change to the limits (`host.limits`); a missing field keeps its value, 0 is no limit. */
+export interface HostLimits {
+  maxSpaces?: number;
+  maxMemoryGb?: number;
+  maxDiskGb?: number;
+  maxRunMinutes?: number;
+}
 
 /** One of the two sharing settings (`host::HostToggle`). */
 export interface HostToggle {
@@ -602,6 +642,8 @@ export interface HostPanelView {
   accessWarning?: string | null;
   toggles?: HostToggle[];
   limits?: string | null;
+  /** The limits as number rows (Settings, Sharing), while this machine lets others create Spaces. */
+  limitRows?: HostLimitRow[];
   providedTitle?: string | null;
   provided?: HostAccessRow[];
   providedEmpty?: string | null;

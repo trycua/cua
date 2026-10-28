@@ -177,6 +177,28 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
     await waitFor(() => expect(router.state.location.pathname).toBe(`/spaces/${encodeURIComponent("relay:studio/xm")}`));
   });
 
+  it("another machine's page says, read-only, how many Spaces can be created there", async () => {
+    const view = await mockupView();
+    const h = hostDrawn(view, []);
+    const base = h.answer!;
+    h.answer = (op, out) => {
+      const rows = base(op, out);
+      return op === "machines.list"
+        ? (rows as MachineRow[]).map((m) => (m.id === "studio" ? { ...m, limits: [{ resource: "spaces", used: 2, limit: 6, reason: "" }] } : m))
+        : rows;
+    };
+    const { router } = await mountApp("/machines", h);
+    await router.load();
+    await screen.findByText(view.summary);
+    select("studio");
+    const detail = await detailOf("cua's Mac Studio");
+    const help = detail.querySelector('[data-machine-toggle-help="spaces"]');
+    expect(help?.textContent).toBe("Spaces can be created here (up to 6)");
+    expect(detail.textContent).not.toContain("\u00b7");
+    // Read-only: the switch cannot be flipped from here.
+    expect(detail.querySelector('[data-machine-toggle="spaces"] [role="switch"]')?.hasAttribute("data-disabled") || detail.querySelector('[data-machine-toggle="spaces"] [role="switch"]')?.getAttribute("aria-readonly") === "true").toBe(true);
+  });
+
   it("asks before removing a machine from the account; Cancel removes nothing", async () => {
     const view = await mockupView();
     const calls: [string, unknown][] = [];

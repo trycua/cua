@@ -104,6 +104,7 @@ export const TAURI_UNSUPPORTED: readonly OpName[] = [
   "agents.signInStart",
   "agents.signInWait",
   "host.joinWithCode",
+  "host.limits",
   ...TELEPORT_TAURI_UNSUPPORTED,
   ...KEYVAULT_MANAGE_TAURI_UNSUPPORTED,
   ...TAURI_SETTINGS_UNSUPPORTED,

@@ -661,6 +661,9 @@ cua host config [OPTIONS]
 | <span id="cua-host-config--provide-spaces"></span>`--provide-spaces` | `on` \| `off` |  | Create Spaces for your enrolled devices: on \| off. |
 | <span id="cua-host-config--max-spaces"></span>`--max-spaces` | integer |  | Provided Spaces at once (0: no limit). |
 | <span id="cua-host-config--max-macos-vms"></span>`--max-macos-vms` | integer |  | macOS VMs at once, 0 to 2 (Apple's license allows two per Mac). |
+| <span id="cua-host-config--max-memory"></span>`--max-memory` | integer |  | Memory in GB the Spaces other machines create here may use in total (0: no limit). |
+| <span id="cua-host-config--max-disk"></span>`--max-disk` | integer |  | Disk in GB the Spaces other machines create here may use in total (0: no limit). |
+| <span id="cua-host-config--max-run-time"></span>`--max-run-time` | integer |  | Minutes a Space created here by another machine may run before it is stopped (0: no limit). |
 
 **Examples**
 
@@ -670,6 +673,9 @@ cua host config
 # Stop sharing this desktop; keep providing Spaces
 cua host config --desktop off --provide-spaces on
 cua host config --max-spaces 6
+
+# Give the Spaces other machines create here at most 32 GB of memory and 200 GB of disk in total, and stop each after 8 hours (0: no limit)
+cua host config --max-memory 32 --max-disk 200 --max-run-time 480
 ```
 
 ### `cua host status`

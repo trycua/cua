@@ -18,7 +18,7 @@ export interface DemoHostSetupState {
 
 export const demoHostSetupState = (now: number, firstRun: boolean): DemoHostSetupState => ({ host: demoHostStatus(now, firstRun) });
 
-export function demoHostSetupHandlers({ state, now, wait, emit, stepMs }: DemoContext): DemoHandlers<"host.setUp" | "host.joinWithCode" | "host.action" | "host.openSettings"> {
+export function demoHostSetupHandlers({ state, now, wait, emit, stepMs }: DemoContext): DemoHandlers<"host.setUp" | "host.joinWithCode" | "host.action" | "host.limits" | "host.openSettings"> {
   const set = (host: HostStatus) => {
     state.host = host;
     emit({ type: "machines.changed" });
@@ -69,6 +69,19 @@ export function demoHostSetupHandlers({ state, now, wait, emit, stepMs }: DemoCo
       const change = HOST_SETTING_CHANGE[action];
       if (!change) throw new HostError(`${action} is not a host action`, "bad_args");
       return set({ ...h, ...change });
+    },
+    // The limits: what is given is kept, and use is counted from the Spaces provided here.
+    "host.limits": async (limits) => {
+      await wait(stepMs);
+      const h = state.host;
+      if (!h.configured) throw new HostError("This computer is not set up for access", "not_configured");
+      return set({
+        ...h,
+        maxSpaces: limits.maxSpaces ?? h.maxSpaces,
+        maxMemoryGb: limits.maxMemoryGb ?? h.maxMemoryGb,
+        maxDiskGb: limits.maxDiskGb ?? h.maxDiskGb,
+        maxRunMinutes: limits.maxRunMinutes ?? h.maxRunMinutes,
+      });
     },
     // A browser can't open System Settings; the pane only has to be one.
     "host.openSettings": ({ url }) => {

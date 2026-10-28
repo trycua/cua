@@ -432,6 +432,13 @@ export function toHostStatus(h: WkHostState): HostStatus {
     // The rest of the core's state, as the host sends it: the logs, the
     // provided Spaces, and whether sharing waits for a sign-in.
     maxMacosVms: h.maxMacosVms ?? 0,
+    maxMemoryGb: h.maxMemoryGb ?? 0,
+    maxDiskGb: h.maxDiskGb ?? 0,
+    maxRunMinutes: h.maxRunMinutes ?? 0,
+    usedMemoryGb: h.usedMemoryGb ?? 0,
+    usedDiskGb: h.usedDiskGb ?? 0,
+    totalMemoryGb: h.totalMemoryGb ?? 0,
+    totalDiskGb: h.totalDiskGb ?? 0,
     recentAccess: list(h.recentAccess) as HostStatus["recentAccess"],
     accessLogError: h.accessLogError ?? null,
     providedSpaces: list(h.providedSpaces) as HostStatus["providedSpaces"],

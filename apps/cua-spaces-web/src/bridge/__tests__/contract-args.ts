@@ -181,6 +181,7 @@ export const DEMO_ARGS: { [K in OpName]: OpArgs<K> } = {
   "host.setUp": { request: { mode: "relay" } },
   "host.joinWithCode": { code: "K7QM-4XPB-2RHD" },
   "host.action": { action: "stop-sharing" },
+  "host.limits": { maxSpaces: 6 },
   "host.openSettings": { url: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility" },
   "startup.get": {},
   "startup.act": { action: "allowAccess" },

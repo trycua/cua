@@ -101,6 +101,12 @@ pub struct SetupOptions {
     pub provide_spaces: Option<bool>,
     /// Provided Spaces at once (`None`: [`crate::provided::DEFAULT_MAX_SPACES`]).
     pub max_spaces: Option<u32>,
+    /// Memory the provided Spaces may use in total, in GB (`None`/0: no limit).
+    pub max_memory_gb: Option<u32>,
+    /// Disk the provided Spaces may use in total, in GB (`None`/0: no limit).
+    pub max_disk_gb: Option<u32>,
+    /// How long a provided Space may run, in minutes (`None`/0: no limit).
+    pub max_run_minutes: Option<u32>,
     /// The `cua` CLI the driver starts the host's cua daemon with when it
     /// is not running (default: this executable when it is `cua`, else
     /// `CUA_BIN`, else `cua` on `PATH`).
@@ -157,6 +163,9 @@ impl SetupOptions {
             share_desktop: true,
             provide_spaces: None,
             max_spaces: None,
+            max_memory_gb: None,
+            max_disk_gb: None,
+            max_run_minutes: None,
             cua_bin: None,
             allow_any_address: false,
             static_relay: None,
@@ -184,6 +193,9 @@ impl SetupOptions {
             share_desktop: true,
             provide_spaces: None,
             max_spaces: None,
+            max_memory_gb: None,
+            max_disk_gb: None,
+            max_run_minutes: None,
             cua_bin: None,
             allow_any_address: false,
             static_relay: None,
@@ -246,6 +258,15 @@ pub struct HostPolicy {
     /// macOS VMs at once on this Mac (at most two, Apple's license).
     #[serde(default = "default_max_macos")]
     pub max_macos_vms: u32,
+    /// Memory the provided Spaces may use in total, in GB (0: no limit).
+    #[serde(default)]
+    pub max_memory_gb: u32,
+    /// Disk the provided Spaces may use in total, in GB (0: no limit).
+    #[serde(default)]
+    pub max_disk_gb: u32,
+    /// How long a provided Space may run, in minutes (0: no limit).
+    #[serde(default)]
+    pub max_run_minutes: u32,
     /// Where the driver reaches (and how it starts) this machine's cua
     /// daemon, which creates the provided Spaces.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -310,6 +331,9 @@ impl HostPolicy {
             max_macos_vms: self
                 .max_macos_vms
                 .min(crate::provided::MACOS_VM_LICENSE_LIMIT),
+            max_memory_gb: self.max_memory_gb,
+            max_disk_gb: self.max_disk_gb,
+            max_run_minutes: self.max_run_minutes,
         }
     }
 }
@@ -678,6 +702,27 @@ pub struct HostStatus {
     /// macOS VMs at once (at most two).
     #[serde(default)]
     pub max_macos_vms: u32,
+    /// Memory the provided Spaces may use in total, in GB (0: no limit).
+    #[serde(default)]
+    pub max_memory_gb: u32,
+    /// Disk the provided Spaces may use in total, in GB (0: no limit).
+    #[serde(default)]
+    pub max_disk_gb: u32,
+    /// How long a provided Space may run, in minutes (0: no limit).
+    #[serde(default)]
+    pub max_run_minutes: u32,
+    /// What the provided Spaces were given now, in GB (to show as "12 of 32
+    /// GB").
+    #[serde(default)]
+    pub used_memory_gb: u32,
+    #[serde(default)]
+    pub used_disk_gb: u32,
+    /// This machine's memory and disk in GB, to show next to the limits
+    /// (0: not known).
+    #[serde(default)]
+    pub total_memory_gb: u32,
+    #[serde(default)]
+    pub total_disk_gb: u32,
     /// The Spaces this machine provides now (without their secrets).
     #[serde(default)]
     pub provided_spaces: Vec<crate::provided::ProvidedSpace>,
@@ -992,6 +1037,12 @@ pub struct HostSettingsChange {
     pub max_spaces: Option<u32>,
     /// macOS VMs at once (0 to 2).
     pub max_macos_vms: Option<u32>,
+    /// Memory the provided Spaces may use in total, in GB (0: no limit).
+    pub max_memory_gb: Option<u32>,
+    /// Disk the provided Spaces may use in total, in GB (0: no limit).
+    pub max_disk_gb: Option<u32>,
+    /// How long a provided Space may run, in minutes (0: no limit).
+    pub max_run_minutes: Option<u32>,
     /// The `cua` CLI that starts the daemon.
     pub cua_bin: Option<PathBuf>,
 }
@@ -1446,6 +1497,9 @@ impl Host {
                             .max_spaces
                             .unwrap_or(crate::provided::DEFAULT_MAX_SPACES),
                         max_macos_vms: crate::provided::MACOS_VM_LICENSE_LIMIT,
+                        max_memory_gb: opts.max_memory_gb.unwrap_or(0),
+                        max_disk_gb: opts.max_disk_gb.unwrap_or(0),
+                        max_run_minutes: opts.max_run_minutes.unwrap_or(0),
                         spaces_daemon: Some(self.spaces_daemon(opts.cua_bin.as_deref())),
                         direct: None,
                         tailnet_identity: false,
@@ -1475,6 +1529,9 @@ impl Host {
                 if let Some(m) = opts.max_spaces {
                     policy.max_spaces = m;
                 }
+                policy.max_memory_gb = opts.max_memory_gb.unwrap_or(0);
+                policy.max_disk_gb = opts.max_disk_gb.unwrap_or(0);
+                policy.max_run_minutes = opts.max_run_minutes.unwrap_or(0);
                 if opts.tailnet {
                     // The tailnet's identity: this machine's tailnet user
                     // owns it, `--allow` names other tailnet users.
@@ -1654,6 +1711,9 @@ impl Host {
             provide_spaces: false,
             max_spaces: crate::provided::DEFAULT_MAX_SPACES,
             max_macos_vms: crate::provided::MACOS_VM_LICENSE_LIMIT,
+            max_memory_gb: 0,
+            max_disk_gb: 0,
+            max_run_minutes: 0,
             spaces_daemon: Some(self.spaces_daemon(cua_bin)),
             direct: Some(DirectHosting {
                 listen: listen.to_string(),
@@ -1836,6 +1896,15 @@ impl Host {
             if let Some(m) = change.max_macos_vms {
                 p.max_macos_vms = m;
             }
+            if let Some(m) = change.max_memory_gb {
+                p.max_memory_gb = m;
+            }
+            if let Some(m) = change.max_disk_gb {
+                p.max_disk_gb = m;
+            }
+            if let Some(m) = change.max_run_minutes {
+                p.max_run_minutes = m;
+            }
             if p.spaces_daemon.is_none() || change.cua_bin.is_some() {
                 p.spaces_daemon = Some(self.spaces_daemon(change.cua_bin.as_deref()));
             }
@@ -1881,6 +1950,7 @@ impl Host {
         };
         let policy = self.policy()?;
         let manager = self.manager_for_config(&config);
+        let provided_now = crate::provided::load_provided(&self.paths.dir).unwrap_or_default();
         let mut status = HostStatus {
             configured: true,
             mode: Some(config.mode.clone()),
@@ -1896,6 +1966,14 @@ impl Host {
             max_macos_vms: policy
                 .as_ref()
                 .map_or(0, |p| p.spaces_settings().max_macos_vms),
+            max_memory_gb: policy.as_ref().map_or(0, |p| p.max_memory_gb),
+            max_disk_gb: policy.as_ref().map_or(0, |p| p.max_disk_gb),
+            max_run_minutes: policy.as_ref().map_or(0, |p| p.max_run_minutes),
+            used_memory_gb: crate::provided::gb_up(crate::provided::used_memory_mb(&provided_now)),
+            used_disk_gb: crate::provided::used_disk_gb(&provided_now).min(u64::from(u32::MAX))
+                as u32,
+            total_memory_gb: crate::sysinfo_gb::memory(),
+            total_disk_gb: crate::sysinfo_gb::disk(&self.paths.dir),
             provided_spaces: crate::provided::load_provided(&self.paths.dir)
                 .unwrap_or_default()
                 .iter()

@@ -51,6 +51,7 @@ pub mod service;
 #[cfg(test)]
 mod setup_tests;
 pub mod spaces_api;
+mod sysinfo_gb;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 #[cfg(test)]
